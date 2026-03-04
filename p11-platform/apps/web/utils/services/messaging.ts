@@ -1,9 +1,8 @@
 /**
  * TourSpark Messaging Service
- * Handles SMS (Twilio) and Email (Resend) sending
+ * Handles SMS (Telnyx) and Email (Resend) sending
  */
 
-import Twilio from 'twilio'
 import { Resend } from 'resend'
 
 // Types
@@ -35,35 +34,19 @@ export interface TemplateVariables {
   [key: string]: string | undefined
 }
 
-// Initialize clients (lazy)
-let twilioClient: Twilio.Twilio | null = null
+// Initialize Resend client (lazy)
 let resendClient: Resend | null = null
-
-function getTwilioClient(): Twilio.Twilio | null {
-  if (twilioClient) return twilioClient
-  
-  const accountSid = process.env.TWILIO_ACCOUNT_SID
-  const authToken = process.env.TWILIO_AUTH_TOKEN
-  
-  if (!accountSid || !authToken) {
-    console.warn('[Messaging] Twilio credentials not configured')
-    return null
-  }
-  
-  twilioClient = Twilio(accountSid, authToken)
-  return twilioClient
-}
 
 function getResendClient(): Resend | null {
   if (resendClient) return resendClient
-  
+
   const apiKey = process.env.RESEND_API_KEY
-  
+
   if (!apiKey) {
     console.warn('[Messaging] Resend API key not configured')
     return null
   }
-  
+
   resendClient = new Resend(apiKey)
   return resendClient
 }
@@ -73,7 +56,7 @@ function getResendClient(): Resend | null {
  * Variables are in format {{variable_name}}
  */
 export function replaceTemplateVariables(
-  template: string, 
+  template: string,
   variables: TemplateVariables
 ): string {
   return template.replace(/\{\{(\w+)\}\}/g, (match, key) => {
@@ -82,47 +65,65 @@ export function replaceTemplateVariables(
 }
 
 /**
- * Send SMS via Twilio
+ * Send SMS via Telnyx REST API
+ * https://developers.telnyx.com/docs/messaging/messages/send-receive-mms
  */
 export async function sendSMS(
   to: string,
   body: string,
   from?: string
 ): Promise<MessageResult> {
-  const client = getTwilioClient()
-  const fromNumber = from || process.env.TWILIO_PHONE_NUMBER
-  
-  if (!client || !fromNumber) {
-    // Dev mode: log instead of sending
-    console.log('[SMS Dev Mode] Would send SMS:')
-    console.log(`  To: ${to}`)
-    console.log(`  From: ${fromNumber || 'NOT_CONFIGURED'}`)
-    console.log(`  Body: ${body}`)
-    
+  const apiKey = process.env.TELNYX_API_KEY
+  const fromNumber = from || process.env.TELNYX_PHONE_NUMBER
+
+  if (!apiKey || !fromNumber) {
+    console.warn('[SMS] Telnyx not configured — set TELNYX_API_KEY and TELNYX_PHONE_NUMBER')
     return {
-      success: true,
-      messageId: `dev_${Date.now()}`,
+      success: false,
+      error: 'SMS provider not configured (missing TELNYX_API_KEY or TELNYX_PHONE_NUMBER)',
       channel: 'sms',
     }
   }
-  
+
   try {
-    const message = await client.messages.create({
-      to,
-      from: fromNumber,
-      body,
+    const response = await fetch('https://api.telnyx.com/v2/messages', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: fromNumber,
+        to,
+        text: body,
+      }),
     })
-    
-    console.log(`[SMS] Sent to ${to}: ${message.sid}`)
-    
+
+    const data = await response.json()
+
+    if (!response.ok) {
+      const errorDetail = data?.errors?.[0]?.detail
+        || data?.errors?.[0]?.title
+        || `Telnyx API error (${response.status})`
+      console.error('[SMS] Telnyx error:', errorDetail, data)
+      return {
+        success: false,
+        error: errorDetail,
+        channel: 'sms',
+      }
+    }
+
+    const messageId = data?.data?.id
+    console.log(`[SMS] Sent to ${to}: ${messageId}`)
+
     return {
       success: true,
-      messageId: message.sid,
+      messageId,
       channel: 'sms',
     }
   } catch (error) {
     console.error('[SMS] Error sending:', error)
-    
+
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
@@ -152,7 +153,7 @@ export async function sendEmail(
 ): Promise<MessageResult> {
   const client = getResendClient()
   const fromEmail = from || process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev'
-  
+
   // Validate inputs
   if (!to || !subject || !body) {
     console.error('[Email] Missing required fields:', { to: !!to, subject: !!subject, body: !!body })
@@ -162,40 +163,24 @@ export async function sendEmail(
       channel: 'email',
     }
   }
-  
+
   if (!client) {
-    // Dev mode: log instead of sending
-    console.log('[Email Dev Mode] Would send email:')
-    console.log(`  To: ${to}`)
-    console.log(`  From: ${fromEmail}`)
-    console.log(`  Subject: ${subject}`)
-    console.log(`  Body: ${body.substring(0, 200)}...`)
-    console.log(`  Has HTML: ${!!html}`)
-    console.log(`  Attachments: ${attachments?.length || 0}`)
-    if (attachments?.length) {
-      attachments.forEach(a => console.log(`    - ${a.filename} (${a.contentType})`))
-    }
-    
+    console.warn('[Email] Resend not configured — set RESEND_API_KEY')
     return {
-      success: true,
-      messageId: `dev_${Date.now()}`,
+      success: false,
+      error: 'Email provider not configured (missing RESEND_API_KEY)',
       channel: 'email',
     }
   }
-  
+
   try {
-    console.log(`[Email] Attempting to send to ${to} from ${fromEmail}`)
-    console.log(`[Email] Subject: ${subject}`)
-    console.log(`[Email] Has HTML: ${!!html}`)
-    console.log(`[Email] Attachments: ${attachments?.length || 0}`)
-    
     // Build Resend attachments format
     const resendAttachments = attachments?.map(att => ({
       filename: att.filename,
       content: Buffer.from(att.content, 'base64'),
       content_type: att.contentType
     }))
-    
+
     const result = await client.emails.send({
       from: fromEmail,
       to,
@@ -204,9 +189,7 @@ export async function sendEmail(
       ...(html && { html }),
       ...(resendAttachments?.length && { attachments: resendAttachments }),
     })
-    
-    console.log(`[Email] Resend API Response:`, JSON.stringify(result, null, 2))
-    
+
     // Resend SDK types vary by version; guard safely.
     const maybeError = (result as any)?.error
     if (maybeError) {
@@ -217,21 +200,18 @@ export async function sendEmail(
         channel: 'email',
       }
     }
-    
+
     const messageId = (result as any)?.data?.id ?? (result as any)?.id
-    console.log(`[Email] ✅ Successfully sent to ${to}, Message ID: ${messageId}`)
-    
+    console.log(`[Email] Sent to ${to}: ${messageId}`)
+
     return {
       success: true,
       messageId,
       channel: 'email',
     }
   } catch (error) {
-    console.error('[Email] ❌ Exception while sending:', error)
-    if (error instanceof Error) {
-      console.error('[Email] Error stack:', error.stack)
-    }
-    
+    console.error('[Email] Error sending:', error)
+
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
@@ -245,7 +225,7 @@ export async function sendEmail(
  */
 export async function sendMessage(options: SendMessageOptions): Promise<MessageResult> {
   const { to, channel, body, subject } = options
-  
+
   if (channel === 'sms') {
     return sendSMS(to, body, options.from)
   } else if (channel === 'email') {
@@ -258,7 +238,7 @@ export async function sendMessage(options: SendMessageOptions): Promise<MessageR
     }
     return sendEmail(to, subject, body, options.from)
   }
-  
+
   return {
     success: false,
     error: `Unknown channel: ${channel}`,
@@ -271,8 +251,7 @@ export async function sendMessage(options: SendMessageOptions): Promise<MessageR
  */
 export function isMessagingConfigured(): { sms: boolean; email: boolean } {
   return {
-    sms: !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_PHONE_NUMBER),
+    sms: !!(process.env.TELNYX_API_KEY && process.env.TELNYX_PHONE_NUMBER),
     email: !!process.env.RESEND_API_KEY,
   }
 }
-

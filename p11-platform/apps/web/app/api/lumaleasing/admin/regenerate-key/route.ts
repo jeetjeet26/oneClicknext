@@ -1,21 +1,42 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/utils/supabase/server';
 import { createServiceClient } from '@/utils/supabase/admin';
+import { validatePropertyAccess } from '@/utils/services/auth-guard';
+import { adminLimiter, getRateLimitKey, rateLimitHeaders } from '@/utils/services/rate-limiter';
+import { forbidden, unauthorized, badRequest, serverError, rateLimited } from '@/utils/services/api-helpers';
+import { auditLog, getRequestIp } from '@/utils/services/audit-logger';
 import crypto from 'crypto';
 
 export async function POST(req: NextRequest) {
   try {
-    const supabaseAuth = await createClient();
-    const { data: { user } } = await supabaseAuth.auth.getUser();
-
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    // Rate limit (stricter for key regeneration — 5/min)
+    const rlKey = getRateLimitKey(req, 'admin-regen')
+    const rl = adminLimiter.check(rlKey)
+    if (!rl.allowed) {
+      auditLog({ eventType: 'rate_limit_exceeded', ip: getRequestIp(req), resource: 'admin/regenerate-key' })
+      return rateLimited(rateLimitHeaders(rl))
     }
 
-    const { propertyId } = await req.json();
+    // Auth
+    const supabaseAuth = await createClient();
+    const { data: { user } } = await supabaseAuth.auth.getUser();
+    if (!user) return unauthorized();
 
-    if (!propertyId) {
-      return NextResponse.json({ error: 'Property ID required' }, { status: 400 });
+    const { propertyId } = await req.json();
+    if (!propertyId) return badRequest('Property ID required');
+
+    // Org ownership check — critical for key regeneration
+    const access = await validatePropertyAccess(user.id, propertyId);
+    if (!access.authorized) {
+      auditLog({
+        eventType: 'property_access_denied',
+        userId: user.id,
+        propertyId,
+        ip: getRequestIp(req),
+        resource: 'admin/regenerate-key',
+        details: { action: 'BLOCKED — attempted key regeneration on foreign property' },
+      })
+      return forbidden();
     }
 
     const supabase = createServiceClient();
@@ -23,21 +44,23 @@ export async function POST(req: NextRequest) {
 
     const { error } = await supabase
       .from('lumaleasing_config')
-      .update({ 
+      .update({
         api_key: newApiKey,
         updated_at: new Date().toISOString(),
       })
       .eq('property_id', propertyId);
 
-    if (error) {
-      console.error('Key regeneration error:', error);
-      return NextResponse.json({ error: 'Failed to regenerate key' }, { status: 500 });
-    }
+    if (error) return serverError(error);
+
+    auditLog({
+      eventType: 'api_key_regenerated',
+      userId: user.id,
+      propertyId,
+      ip: getRequestIp(req),
+    })
 
     return NextResponse.json({ apiKey: newApiKey });
   } catch (error) {
-    console.error('Key regeneration error:', error);
-    return NextResponse.json({ error: 'Failed to regenerate key' }, { status: 500 });
+    return serverError(error);
   }
 }
-

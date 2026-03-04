@@ -3,6 +3,11 @@ import { createServiceClient } from '@/utils/supabase/admin';
 import { generateTourCalendarResponse, CalendarLinks } from '@/utils/services/calendar-invite';
 import { sendEmail, EmailAttachment } from '@/utils/services/messaging';
 import { getCalendarConfig, createCalendarEvent } from '@/utils/services/google-calendar';
+import { startWorkflow } from '@/utils/services/workflow-processor';
+import { trackEngagementEvent } from '@/utils/services/engagement-tracker';
+import { tourLimiter, getRateLimitKey, rateLimitHeaders } from '@/utils/services/rate-limiter';
+import { buildCorsHeaders, corsPreflightResponse, serverError, rateLimited } from '@/utils/services/api-helpers';
+import { auditLog, getRequestIp } from '@/utils/services/audit-logger';
 
 function extractApiKey(req: NextRequest): string | null {
   const headerKey = req.headers.get('X-API-Key') || req.headers.get('x-api-key');
@@ -17,19 +22,23 @@ function extractApiKey(req: NextRequest): string | null {
   return normalized.length ? normalized : null;
 }
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, X-API-Key, X-Visitor-ID, Authorization',
-};
-
-export async function OPTIONS() {
-  return new NextResponse(null, { headers: corsHeaders });
+// Handle CORS preflight — origin-restricted in production
+export async function OPTIONS(req: NextRequest) {
+  const origin = req.headers.get('origin')
+  return corsPreflightResponse(origin, 'GET, POST, OPTIONS')
 }
 
 // GET - Fetch available tour slots
 export async function GET(req: NextRequest) {
+  const origin = req.headers.get('origin')
+  const corsHeaders = buildCorsHeaders(origin, 'GET, POST, OPTIONS')
+
   try {
+    // Rate limit
+    const rlKey = getRateLimitKey(req, 'tours-get')
+    const rl = tourLimiter.check(rlKey)
+    if (!rl.allowed) return rateLimited({ ...corsHeaders, ...rateLimitHeaders(rl) })
+
     const apiKey = extractApiKey(req);
     const { searchParams } = new URL(req.url);
     const startDate = searchParams.get('startDate');
@@ -108,17 +117,24 @@ export async function GET(req: NextRequest) {
     }, { headers: corsHeaders });
 
   } catch (error) {
-    console.error('Tours GET error:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch tour slots' },
-      { status: 500, headers: corsHeaders }
-    );
+    return serverError(error, corsHeaders);
   }
 }
 
 // POST - Book a tour
 export async function POST(req: NextRequest) {
+  const origin = req.headers.get('origin')
+  const corsHeaders = buildCorsHeaders(origin, 'GET, POST, OPTIONS')
+
   try {
+    // Rate limit — 10 per minute per IP (prevents spam bookings)
+    const rlKey = getRateLimitKey(req, 'tours-post')
+    const rl = tourLimiter.check(rlKey)
+    if (!rl.allowed) {
+      auditLog({ eventType: 'rate_limit_exceeded', ip: getRequestIp(req), resource: 'lumaleasing/tours' })
+      return rateLimited({ ...corsHeaders, ...rateLimitHeaders(rl) })
+    }
+
     const apiKey = extractApiKey(req);
 
     if (!apiKey) {
@@ -128,8 +144,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { 
-      slotId, 
+    const {
+      slotId,
       tourDate,  // YYYY-MM-DD format (for calendar widget)
       tourTime,  // HH:MM format (for calendar widget)
       leadInfo, // { first_name, last_name, email, phone }
@@ -263,6 +279,13 @@ export async function POST(req: NextRequest) {
         .single();
 
       leadId = newLead?.id || null;
+
+      // Start follow-up workflow for new leads (non-blocking)
+      if (leadId) {
+        startWorkflow(leadId, config.property_id, 'lead_created').catch(e =>
+          console.error('[LumaLeasing Tours] Workflow start failed (non-blocking):', e)
+        )
+      }
     }
 
     if (!leadId) {
@@ -325,6 +348,14 @@ export async function POST(req: NextRequest) {
         description: `Tour booked for ${bookingDate} at ${bookingTime}`,
         metadata: { booking_id: booking.id },
       });
+
+    // Track tour_scheduled engagement event (non-blocking)
+    trackEngagementEvent({
+      leadId,
+      propertyId: config.property_id,
+      eventType: 'tour_scheduled',
+      metadata: { booking_id: booking.id, source: 'lumaleasing_tour_widget' },
+    }).catch(e => console.error('[LumaLeasing Tours] Engagement tracking failed (non-blocking):', e))
 
     // Generate calendar response (Calendly-style)
     const propertyName = property?.name || 'Property Tour';
@@ -435,11 +466,7 @@ export async function POST(req: NextRequest) {
     }, { headers: corsHeaders });
 
   } catch (error) {
-    console.error('Tour booking error:', error);
-    return NextResponse.json(
-      { error: 'Failed to book tour' },
-      { status: 500, headers: corsHeaders }
-    );
+    return serverError(error, corsHeaders);
   }
 }
 

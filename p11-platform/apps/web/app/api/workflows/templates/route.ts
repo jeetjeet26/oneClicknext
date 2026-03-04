@@ -6,22 +6,33 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
+import { adminLimiter, getRateLimitKey, rateLimitHeaders } from '@/utils/services/rate-limiter'
+import { validateBody, workflowCreateSchema } from '@/utils/services/validation'
+import { unauthorized, forbidden, badRequest, serverError, rateLimited } from '@/utils/services/api-helpers'
+import { auditLog, getRequestIp } from '@/utils/services/audit-logger'
 
 // GET - List workflow templates for a property
 export async function GET(req: NextRequest) {
   try {
+    // Rate limit
+    const rlKey = getRateLimitKey(req, 'workflows-get')
+    const rl = adminLimiter.check(rlKey)
+    if (!rl.allowed) return rateLimited(rateLimitHeaders(rl))
+
     const supabase = await createClient()
     const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    if (authError || !user) return unauthorized()
 
     const searchParams = req.nextUrl.searchParams
     const propertyId = searchParams.get('propertyId')
+    if (!propertyId) return badRequest('propertyId required')
 
-    if (!propertyId) {
-      return NextResponse.json({ error: 'propertyId required' }, { status: 400 })
+    // Org ownership check
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      auditLog({ eventType: 'property_access_denied', userId: user.id, propertyId, ip: getRequestIp(req), resource: 'workflows/templates' })
+      return forbidden()
     }
 
     const serviceClient = createServiceClient()
@@ -33,33 +44,36 @@ export async function GET(req: NextRequest) {
       .eq('property_id', propertyId)
       .order('created_at', { ascending: false })
 
-    if (error) {
-      console.error('Error fetching workflows:', error)
-      return NextResponse.json({ error: 'Failed to fetch workflows' }, { status: 500 })
-    }
+    if (error) return serverError(error)
 
     return NextResponse.json({ workflows: workflows || [] })
   } catch (error) {
-    console.error('Workflow templates GET error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    return serverError(error)
   }
 }
 
 // POST - Create or seed default workflow templates
 export async function POST(req: NextRequest) {
   try {
+    // Rate limit
+    const rlKey = getRateLimitKey(req, 'workflows-post')
+    const rl = adminLimiter.check(rlKey)
+    if (!rl.allowed) return rateLimited(rateLimitHeaders(rl))
+
     const supabase = await createClient()
     const { data: { user }, error: authError } = await supabase.auth.getUser()
+    if (authError || !user) return unauthorized()
 
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const rawBody = await req.json()
+    const { propertyId, seedDefaults } = rawBody
 
-    const body = await req.json()
-    const { propertyId, seedDefaults } = body
+    if (!propertyId) return badRequest('propertyId required')
 
-    if (!propertyId) {
-      return NextResponse.json({ error: 'propertyId required' }, { status: 400 })
+    // Org ownership check
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      auditLog({ eventType: 'property_access_denied', userId: user.id, propertyId, ip: getRequestIp(req), resource: 'workflows/templates/create' })
+      return forbidden()
     }
 
     const serviceClient = createServiceClient()
@@ -139,15 +153,12 @@ export async function POST(req: NextRequest) {
       // Insert templates (ignore conflicts)
       const { error: templatesError } = await serviceClient
         .from('follow_up_templates')
-        .upsert(defaultTemplates, { 
+        .upsert(defaultTemplates, {
           onConflict: 'property_id,slug',
-          ignoreDuplicates: true 
+          ignoreDuplicates: true
         })
 
-      if (templatesError) {
-        console.error('Error creating templates:', templatesError)
-        return NextResponse.json({ error: 'Failed to create templates' }, { status: 500 })
-      }
+      if (templatesError) return serverError(templatesError)
 
       // Now create the 3 default workflow definitions
       const defaultWorkflows = [
@@ -157,7 +168,7 @@ export async function POST(req: NextRequest) {
           description: 'Automated follow-up sequence for new leads',
           trigger_on: 'lead_created',
           steps: [
-            { id: 0, delay_hours: 0.083, action: 'sms', template_slug: 'new-lead-welcome' }, // 5 min
+            { id: 0, delay_hours: 0.083, action: 'sms', template_slug: 'new-lead-welcome' },
             { id: 1, delay_hours: 24, action: 'email', template_slug: 'new-lead-email' },
             { id: 2, delay_hours: 48, action: 'sms', template_slug: 'new-lead-reminder' }
           ],
@@ -195,12 +206,11 @@ export async function POST(req: NextRequest) {
         .insert(defaultWorkflows)
         .select()
 
-      if (workflowsError) {
-        console.error('Error creating workflows:', workflowsError)
-        return NextResponse.json({ error: 'Failed to create workflows' }, { status: 500 })
-      }
+      if (workflowsError) return serverError(workflowsError)
 
-      return NextResponse.json({ 
+      auditLog({ eventType: 'workflow_triggered', userId: user.id, propertyId, details: { action: 'seed_defaults' } })
+
+      return NextResponse.json({
         success: true,
         message: 'Default workflows and templates created',
         workflows: createdWorkflows,
@@ -208,13 +218,14 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    // If not seeding defaults, create a custom workflow
-    const { name, description, trigger_on, steps, exit_conditions, is_active } = body
+    // If not seeding defaults, create a custom workflow — validate input
+    const validation = validateBody(rawBody, workflowCreateSchema)
+    if (!validation.success) return badRequest(validation.error)
+
+    const { name, description, trigger_on, steps, exit_conditions, is_active } = validation.data
 
     if (!name || !trigger_on || !steps) {
-      return NextResponse.json({ 
-        error: 'name, trigger_on, and steps are required' 
-      }, { status: 400 })
+      return badRequest('name, trigger_on, and steps are required')
     }
 
     const { data: workflow, error } = await serviceClient
@@ -231,36 +242,48 @@ export async function POST(req: NextRequest) {
       .select()
       .single()
 
-    if (error) {
-      console.error('Error creating workflow:', error)
-      return NextResponse.json({ error: 'Failed to create workflow' }, { status: 500 })
-    }
+    if (error) return serverError(error)
 
     return NextResponse.json({ workflow }, { status: 201 })
   } catch (error) {
-    console.error('Workflow templates POST error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    return serverError(error)
   }
 }
 
 // PATCH - Update a workflow template
 export async function PATCH(req: NextRequest) {
   try {
+    // Rate limit
+    const rlKey = getRateLimitKey(req, 'workflows-patch')
+    const rl = adminLimiter.check(rlKey)
+    if (!rl.allowed) return rateLimited(rateLimitHeaders(rl))
+
     const supabase = await createClient()
     const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    if (authError || !user) return unauthorized()
 
     const body = await req.json()
     const { workflowId, is_active, name, description, steps, exit_conditions } = body
 
-    if (!workflowId) {
-      return NextResponse.json({ error: 'workflowId required' }, { status: 400 })
-    }
+    if (!workflowId) return badRequest('workflowId required')
 
     const serviceClient = createServiceClient()
+
+    // Look up the workflow to get its property_id for access check
+    const { data: existingWorkflow } = await serviceClient
+      .from('workflow_definitions')
+      .select('property_id')
+      .eq('id', workflowId)
+      .single()
+
+    if (!existingWorkflow) return badRequest('Workflow not found')
+
+    // Org ownership check
+    const access = await validatePropertyAccess(user.id, existingWorkflow.property_id)
+    if (!access.authorized) {
+      auditLog({ eventType: 'property_access_denied', userId: user.id, propertyId: existingWorkflow.property_id, ip: getRequestIp(req), resource: 'workflows/templates/update' })
+      return forbidden()
+    }
 
     const updateData: Record<string, unknown> = {
       updated_at: new Date().toISOString()
@@ -279,15 +302,10 @@ export async function PATCH(req: NextRequest) {
       .select()
       .single()
 
-    if (error) {
-      console.error('Error updating workflow:', error)
-      return NextResponse.json({ error: 'Failed to update workflow' }, { status: 500 })
-    }
+    if (error) return serverError(error)
 
     return NextResponse.json({ workflow })
   } catch (error) {
-    console.error('Workflow templates PATCH error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    return serverError(error)
   }
 }
-

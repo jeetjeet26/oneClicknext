@@ -980,7 +980,22 @@ class ScrapingCoordinator:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
-                loop.run_until_complete(processor.process_job(job_id, force_refresh))
+                logger.info(f"[Job {job_id}] Starting brand intelligence extraction for {len(competitors)} competitors")
+                result = loop.run_until_complete(processor.process_job(job_id, force_refresh))
+                logger.info(f"[Job {job_id}] Completed: {result}")
+            except Exception as e:
+                logger.error(f"[Job {job_id}] Fatal error in background thread: {e}", exc_info=True)
+                # Mark job as failed
+                try:
+                    from utils.supabase_client import get_supabase_client
+                    supabase = get_supabase_client()
+                    supabase.table('competitor_scrape_jobs').update({
+                        'status': 'failed',
+                        'error_message': f'Background thread error: {str(e)}',
+                        'completed_at': datetime.now(timezone.utc).isoformat()
+                    }).eq('id', job_id).execute()
+                except Exception as update_error:
+                    logger.error(f"[Job {job_id}] Failed to update job status: {update_error}")
             finally:
                 loop.close()
         
@@ -988,7 +1003,7 @@ class ScrapingCoordinator:
         thread = threading.Thread(target=run_job, daemon=True)
         thread.start()
         
-        logger.info(f"Started brand intelligence job {job_id} for {len(competitors)} competitors")
+        logger.info(f"Started brand intelligence job {job_id} for {len(competitors)} competitors in background thread")
         
         return job_id
     

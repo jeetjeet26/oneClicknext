@@ -1,22 +1,37 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/utils/supabase/server';
 import { createServiceClient } from '@/utils/supabase/admin';
+import { validatePropertyAccess } from '@/utils/services/auth-guard';
+import { adminLimiter, getRateLimitKey, rateLimitHeaders } from '@/utils/services/rate-limiter';
+import { validateBody, adminConfigUpdateSchema } from '@/utils/services/validation';
+import { forbidden, unauthorized, badRequest, serverError, rateLimited } from '@/utils/services/api-helpers';
+import { auditLog, getRequestIp } from '@/utils/services/audit-logger';
 
-// GET - Fetch config for property (authenticated)
+// GET - Fetch config for property (authenticated + authorized)
 export async function GET(req: NextRequest) {
   try {
+    // Rate limit
+    const rlKey = getRateLimitKey(req, 'admin-config')
+    const rl = adminLimiter.check(rlKey)
+    if (!rl.allowed) {
+      auditLog({ eventType: 'rate_limit_exceeded', ip: getRequestIp(req), resource: 'admin/config' })
+      return rateLimited(rateLimitHeaders(rl))
+    }
+
+    // Auth
     const supabaseAuth = await createClient();
     const { data: { user } } = await supabaseAuth.auth.getUser();
-
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    if (!user) return unauthorized();
 
     const { searchParams } = new URL(req.url);
     const propertyId = searchParams.get('propertyId');
+    if (!propertyId) return badRequest('Property ID required');
 
-    if (!propertyId) {
-      return NextResponse.json({ error: 'Property ID required' }, { status: 400 });
+    // Org ownership check
+    const access = await validatePropertyAccess(user.id, propertyId);
+    if (!access.authorized) {
+      auditLog({ eventType: 'property_access_denied', userId: user.id, propertyId, ip: getRequestIp(req), resource: 'admin/config' })
+      return forbidden();
     }
 
     const supabase = createServiceClient();
@@ -36,35 +51,42 @@ export async function GET(req: NextRequest) {
         .select()
         .single();
 
-      if (error) {
-        console.error('Failed to create config:', error);
-        return NextResponse.json({ error: 'Failed to create config' }, { status: 500 });
-      }
-
+      if (error) return serverError(error);
       config = newConfig;
     }
 
+    auditLog({ eventType: 'property_access_granted', userId: user.id, propertyId, resource: 'admin/config' })
     return NextResponse.json({ config });
   } catch (error) {
-    console.error('Config fetch error:', error);
-    return NextResponse.json({ error: 'Failed to fetch config' }, { status: 500 });
+    return serverError(error);
   }
 }
 
-// PUT - Update config (authenticated)
+// PUT - Update config (authenticated + authorized)
 export async function PUT(req: NextRequest) {
   try {
+    // Rate limit
+    const rlKey = getRateLimitKey(req, 'admin-config')
+    const rl = adminLimiter.check(rlKey)
+    if (!rl.allowed) return rateLimited(rateLimitHeaders(rl))
+
+    // Auth
     const supabaseAuth = await createClient();
     const { data: { user } } = await supabaseAuth.auth.getUser();
+    if (!user) return unauthorized();
 
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    // Validate input
+    const body = await req.json();
+    const validation = validateBody(body, adminConfigUpdateSchema);
+    if (!validation.success) return badRequest(validation.error);
 
-    const { propertyId, config } = await req.json();
+    const { propertyId, config } = validation.data;
 
-    if (!propertyId || !config) {
-      return NextResponse.json({ error: 'Property ID and config required' }, { status: 400 });
+    // Org ownership check
+    const access = await validatePropertyAccess(user.id, propertyId);
+    if (!access.authorized) {
+      auditLog({ eventType: 'property_access_denied', userId: user.id, propertyId, ip: getRequestIp(req), resource: 'admin/config/update' })
+      return forbidden();
     }
 
     const supabase = createServiceClient();
@@ -95,15 +117,11 @@ export async function PUT(req: NextRequest) {
       })
       .eq('property_id', propertyId);
 
-    if (error) {
-      console.error('Config update error:', error);
-      return NextResponse.json({ error: 'Failed to update config' }, { status: 500 });
-    }
+    if (error) return serverError(error);
 
+    auditLog({ eventType: 'config_updated', userId: user.id, propertyId, ip: getRequestIp(req) })
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('Config update error:', error);
-    return NextResponse.json({ error: 'Failed to update config' }, { status: 500 });
+    return serverError(error);
   }
 }
-

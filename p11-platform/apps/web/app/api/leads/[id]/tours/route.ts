@@ -563,9 +563,9 @@ async function sendTourConfirmation(
       }
     }
 
-    // TODO: Also send SMS if phone available (when Twilio is configured)
+    // TODO: Also send SMS if phone available (when Telnyx is configured)
     if (lead.phone && !lead.email) {
-      console.log(`[Tour Confirmation] SMS would be sent to ${lead.phone} (Twilio not configured)`)
+      console.log(`[Tour Confirmation] SMS would be sent to ${lead.phone} (Telnyx not configured)`)
     }
 
     return true

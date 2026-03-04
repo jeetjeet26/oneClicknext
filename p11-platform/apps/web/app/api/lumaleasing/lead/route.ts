@@ -1,20 +1,31 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/utils/supabase/admin';
+import { leadLimiter, getRateLimitKey, rateLimitHeaders } from '@/utils/services/rate-limiter';
+import { buildCorsHeaders, corsPreflightResponse, serverError, rateLimited, badRequest } from '@/utils/services/api-helpers';
+import { validateBody, leadCaptureSchema } from '@/utils/services/validation';
+import { auditLog, getRequestIp } from '@/utils/services/audit-logger';
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, X-API-Key, X-Visitor-ID',
-};
-
-export async function OPTIONS() {
-  return new NextResponse(null, { headers: corsHeaders });
+// Handle CORS preflight — origin-restricted in production
+export async function OPTIONS(req: NextRequest) {
+  const origin = req.headers.get('origin')
+  return corsPreflightResponse(origin, 'POST, OPTIONS', 'Content-Type, X-API-Key, X-Visitor-ID')
 }
 
 // POST - Capture lead information
 export async function POST(req: NextRequest) {
+  const origin = req.headers.get('origin')
+  const corsHeaders = buildCorsHeaders(origin, 'POST, OPTIONS', 'Content-Type, X-API-Key, X-Visitor-ID')
+
   try {
-    const apiKey = req.headers.get('X-API-Key');
+    // Rate limit — 15 per minute per IP
+    const rlKey = getRateLimitKey(req, 'lead')
+    const rl = leadLimiter.check(rlKey)
+    if (!rl.allowed) {
+      auditLog({ eventType: 'rate_limit_exceeded', ip: getRequestIp(req), resource: 'lumaleasing/lead' })
+      return rateLimited({ ...corsHeaders, ...rateLimitHeaders(rl) })
+    }
+
+    const apiKey = req.headers.get('X-API-Key') || req.headers.get('x-api-key');
 
     if (!apiKey) {
       return NextResponse.json(
@@ -23,20 +34,27 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const body = await req.json();
-    
+    // Validate input with Zod
+    const rawBody = await req.json();
+    const validation = validateBody(rawBody, leadCaptureSchema);
+    if (!validation.success) {
+      return badRequest(validation.error, corsHeaders);
+    }
+
+    const body = validation.data;
+
     // Support both direct fields and leadInfo wrapper
     const leadInfo = body.leadInfo || body;
     const sessionId = body.sessionId;
     const conversationId = body.conversationId;
-    
+
     const firstName = leadInfo.first_name || leadInfo.firstName || '';
     const lastName = leadInfo.last_name || leadInfo.lastName || '';
-    const email = leadInfo.email || '';
-    const phone = leadInfo.phone || '';
-    const moveInDate = leadInfo.moveInDate;
-    const bedroomPreference = leadInfo.bedroomPreference;
-    const notes = leadInfo.notes;
+    const email = leadInfo.email || (body as Record<string, string>).email || '';
+    const phone = leadInfo.phone || (body as Record<string, string>).phone || '';
+    const moveInDate = (leadInfo as Record<string, string>).moveInDate;
+    const bedroomPreference = (leadInfo as Record<string, string>).bedroomPreference;
+    const notes = (leadInfo as Record<string, string>).notes;
 
     if (!email && !phone) {
       return NextResponse.json(
@@ -104,14 +122,17 @@ export async function POST(req: NextRequest) {
         .single();
 
       if (error) {
-        console.error('Lead creation error:', error);
-        return NextResponse.json(
-          { error: 'Failed to save information' },
-          { status: 500, headers: corsHeaders }
-        );
+        return serverError(error, corsHeaders);
       }
 
       leadId = newLead?.id;
+
+      auditLog({
+        eventType: 'lead_created',
+        propertyId: config.property_id,
+        ip: getRequestIp(req),
+        details: { source: 'lumaleasing_widget', hasEmail: !!email, hasPhone: !!phone },
+      })
     }
 
     // Add notes as activity if provided
@@ -135,9 +156,9 @@ export async function POST(req: NextRequest) {
     if (sessionId && leadId) {
       await supabase
         .from('widget_sessions')
-        .update({ 
-          lead_id: leadId, 
-          converted_at: new Date().toISOString() 
+        .update({
+          lead_id: leadId,
+          converted_at: new Date().toISOString()
         })
         .eq('id', sessionId);
 
@@ -163,11 +184,6 @@ export async function POST(req: NextRequest) {
     }, { headers: corsHeaders });
 
   } catch (error) {
-    console.error('Lead capture error:', error);
-    return NextResponse.json(
-      { error: 'Failed to save lead information' },
-      { status: 500, headers: corsHeaders }
-    );
+    return serverError(error);
   }
 }
-

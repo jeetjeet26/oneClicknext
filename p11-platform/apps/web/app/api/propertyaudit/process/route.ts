@@ -264,26 +264,28 @@ export async function POST(req: NextRequest) {
     const results: ScoredAnswer[] = []
     const errors: string[] = []
 
-    // Process each query
+    // Process each query (respect per-query run_count)
     for (const query of queries) {
-      try {
-        const context: ConnectorContext = {
-          queryId: query.id,
-          queryText: query.text,
-          brandName,
-          brandDomains,
-          competitors,
-          propertyLocation
-        }
+      const runCount = Math.max(1, Number(query.run_count || 1))
+      for (let attempt = 0; attempt < runCount; attempt += 1) {
+        try {
+          const context: ConnectorContext = {
+            queryId: query.id,
+            queryText: query.text,
+            brandName,
+            brandDomains,
+            competitors,
+            propertyLocation
+          }
 
-        let answer = null as any
-        let raw: unknown = null
-        let naturalResponseText: string | null = null
-        let analysisMethod: string = 'structured'
-        let searchSources: WebSearchSource[] = []
+          let answer = null as any
+          let raw: unknown = null
+          let naturalResponseText: string | null = null
+          let analysisMethod: string = 'structured'
+          let searchSources: WebSearchSource[] = []
 
-        if (auditMode === 'natural') {
-          analysisMethod = 'natural_two_phase'
+          if (auditMode === 'natural') {
+            analysisMethod = 'natural_two_phase'
 
           // Phase 1: Natural response (no property context is provided to the model)
           const natural = await naturalConnector.getNaturalResponse(context.queryText)
@@ -301,99 +303,100 @@ export async function POST(req: NextRequest) {
             competitors: context.competitors,
           })
 
-          answer = analyzed.envelope.answer_block
-          raw = {
-            audit_mode: auditMode,
-            phase1: natural.rawResponse,
-            phase2: analyzed.raw,
-            analysis: analyzed.envelope.analysis,
-            searchSources: searchSources, // Store for reference
+            answer = analyzed.envelope.answer_block
+            raw = {
+              audit_mode: auditMode,
+              phase1: natural.rawResponse,
+              phase2: analyzed.raw,
+              analysis: analyzed.envelope.analysis,
+              searchSources: searchSources, // Store for reference
+            }
+            
+            console.log(`[geo] Query "${context.queryText.slice(0, 50)}..." - ${searchSources.length} web sources found`)
+          } else {
+            const structured = await structuredConnector.invoke(context)
+            answer = structured.answer
+            raw = structured.raw
           }
-          
-          console.log(`[geo] Query "${context.queryText.slice(0, 50)}..." - ${searchSources.length} web sources found`)
-        } else {
-          const structured = await structuredConnector.invoke(context)
-          answer = structured.answer
-          raw = structured.raw
-        }
 
-        // Score the answer
-        const scoredAnswer = scoreAnswer(answer, {
-          brandName,
-          brandDomains,
-          competitors
-        })
-
-        results.push(scoredAnswer)
-
-        // Insert answer
-        const { data: insertedAnswer, error: answerError } = await supabase
-          .from('geo_answers')
-          .insert({
-            run_id: runId,
-            query_id: query.id,
-            presence: scoredAnswer.presence,
-            llm_rank: scoredAnswer.llmRank,
-            link_rank: scoredAnswer.linkRank,
-            sov: scoredAnswer.sov,
-            flags: scoredAnswer.flags,
-            answer_summary: answer.answer_summary,
-            ordered_entities: answer.ordered_entities,
-            raw_json: raw,
-            natural_response: naturalResponseText,
-            analysis_method: analysisMethod
+          // Score the answer
+          const scoredAnswer = scoreAnswer(answer, {
+            brandName,
+            brandDomains,
+            competitors
           })
-          .select()
-          .single()
 
-        if (answerError) {
-          console.error('Error inserting answer:', answerError)
-          continue
-        }
+          results.push(scoredAnswer)
 
-        // Insert citations - combine LLM-extracted citations with web search sources
-        const llmCitations = answer.citations.map((citation: { url: string; domain: string; entity_ref?: string }) => ({
-          answer_id: insertedAnswer.id,
-          url: citation.url,
-          domain: citation.domain,
-          is_brand_domain: brandDomains.some((bd: string) => 
-            citation.domain.includes(bd.replace(/^www\./, ''))
-          ),
-          entity_ref: citation.entity_ref || null
-        }))
+          // Insert answer
+          const { data: insertedAnswer, error: answerError } = await supabase
+            .from('geo_answers')
+            .insert({
+              run_id: runId,
+              query_id: query.id,
+              presence: scoredAnswer.presence,
+              llm_rank: scoredAnswer.llmRank,
+              link_rank: scoredAnswer.linkRank,
+              sov: scoredAnswer.sov,
+              flags: scoredAnswer.flags,
+              answer_summary: answer.answer_summary,
+              ordered_entities: answer.ordered_entities,
+              raw_json: raw,
+              natural_response: naturalResponseText,
+              analysis_method: analysisMethod
+            })
+            .select()
+            .single()
+
+          if (answerError) {
+            console.error('Error inserting answer:', answerError)
+            continue
+          }
+
+          // Insert citations - combine LLM-extracted citations with web search sources
+          const llmCitations = answer.citations.map((citation: { url: string; domain: string; entity_ref?: string }) => ({
+            answer_id: insertedAnswer.id,
+            url: citation.url,
+            domain: citation.domain,
+            is_brand_domain: brandDomains.some((bd: string) => 
+              citation.domain.includes(bd.replace(/^www\./, ''))
+            ),
+            entity_ref: citation.entity_ref || null
+          }))
 
         // Extract citations from web search sources by matching to entities
-        const webSearchCitations = extractCitationsFromSources(
-          searchSources,
-          answer.ordered_entities || [],
-          brandDomains
-        ).map(citation => ({
-          answer_id: insertedAnswer.id,
-          url: citation.url,
-          domain: citation.domain,
-          is_brand_domain: citation.is_brand_domain,
-          entity_ref: citation.entity_ref || null
-        }))
+          const webSearchCitations = extractCitationsFromSources(
+            searchSources,
+            answer.ordered_entities || [],
+            brandDomains
+          ).map(citation => ({
+            answer_id: insertedAnswer.id,
+            url: citation.url,
+            domain: citation.domain,
+            is_brand_domain: citation.is_brand_domain,
+            entity_ref: citation.entity_ref || null
+          }))
 
         // Combine and dedupe by URL
-        const allCitations = [...llmCitations]
-        const existingUrls = new Set(llmCitations.map((c: { url: string }) => c.url))
-        for (const wsCitation of webSearchCitations) {
-          if (!existingUrls.has(wsCitation.url)) {
-            allCitations.push(wsCitation)
-            existingUrls.add(wsCitation.url)
+          const allCitations = [...llmCitations]
+          const existingUrls = new Set(llmCitations.map((c: { url: string }) => c.url))
+          for (const wsCitation of webSearchCitations) {
+            if (!existingUrls.has(wsCitation.url)) {
+              allCitations.push(wsCitation)
+              existingUrls.add(wsCitation.url)
+            }
           }
-        }
 
-        if (allCitations.length > 0) {
-          console.log(`[geo] Inserting ${allCitations.length} citations (${llmCitations.length} from LLM, ${webSearchCitations.length} from web search)`)
-          await supabase
-            .from('geo_citations')
-            .insert(allCitations)
+          if (allCitations.length > 0) {
+            console.log(`[geo] Inserting ${allCitations.length} citations (${llmCitations.length} from LLM, ${webSearchCitations.length} from web search)`)
+            await supabase
+              .from('geo_citations')
+              .insert(allCitations)
+          }
+        } catch (error) {
+          console.error(`Error processing query ${query.id}:`, error)
+          errors.push(`Query ${query.id}: ${error instanceof Error ? error.message : 'Unknown error'}`)
         }
-      } catch (error) {
-        console.error(`Error processing query ${query.id}:`, error)
-        errors.push(`Query ${query.id}: ${error instanceof Error ? error.message : 'Unknown error'}`)
       }
     }
 

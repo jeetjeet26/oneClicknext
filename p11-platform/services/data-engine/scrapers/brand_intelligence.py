@@ -579,6 +579,8 @@ class CompetitorBatchProcessor:
         Returns:
             Job result summary
         """
+        logger.info(f"[Job {job_id}] Starting process_job")
+        
         # Get job details
         job_result = self.supabase.table('competitor_scrape_jobs').select(
             '*'
@@ -590,6 +592,8 @@ class CompetitorBatchProcessor:
         job = job_result.data
         competitor_ids = job.get('competitor_ids', [])
         
+        logger.info(f"[Job {job_id}] Found {len(competitor_ids)} competitor IDs")
+        
         if not competitor_ids:
             return {'success': True, 'processed': 0, 'message': 'No competitors to process'}
         
@@ -598,6 +602,8 @@ class CompetitorBatchProcessor:
             'status': JobStatus.PROCESSING.value,
             'started_at': datetime.now(timezone.utc).isoformat()
         }).eq('id', job_id).execute()
+        
+        logger.info(f"[Job {job_id}] Updated status to PROCESSING")
         
         # Get competitor details
         competitors_result = self.supabase.table('competitors').select(
@@ -608,6 +614,8 @@ class CompetitorBatchProcessor:
         
         # Filter to only those with website URLs
         competitors_with_urls = [c for c in competitors if c.get('website_url')]
+        
+        logger.info(f"[Job {job_id}] {len(competitors_with_urls)}/{len(competitors)} have website URLs")
         
         if not competitors_with_urls:
             self._complete_job(job_id, 0, 0, "No competitors with website URLs")
@@ -620,6 +628,8 @@ class CompetitorBatchProcessor:
         failed = 0
         
         for i, competitor in enumerate(competitors_with_urls):
+            logger.info(f"[Job {job_id}] Processing {i+1}/{len(competitors_with_urls)}: {competitor.get('name')}")
+            
             try:
                 async with self._semaphore:
                     success = await self._process_single_competitor(
@@ -629,9 +639,11 @@ class CompetitorBatchProcessor:
                 
                 if success:
                     processed += 1
+                    logger.info(f"[Job {job_id}] ✓ {competitor.get('name')} - SUCCESS ({processed}/{len(competitors_with_urls)})")
                     self._update_job_progress(job_id, processed, failed, competitor['id'], None)
                 else:
                     failed += 1
+                    logger.warning(f"[Job {job_id}] ✗ {competitor.get('name')} - FAILED ({failed} failures)")
                     self._update_job_progress(job_id, processed, failed, None, competitor['id'])
                 
                 # Rate limiting between competitors
@@ -639,7 +651,7 @@ class CompetitorBatchProcessor:
                     await asyncio.sleep(self.DELAY_BETWEEN_COMPETITORS)
                     
             except Exception as e:
-                logger.error(f"Error processing competitor {competitor['id']}: {e}")
+                logger.error(f"[Job {job_id}] Error processing competitor {competitor.get('name')}: {e}", exc_info=True)
                 failed += 1
                 self._update_job_progress(
                     job_id, processed, failed, None, competitor['id'],
@@ -647,15 +659,20 @@ class CompetitorBatchProcessor:
                 )
         
         # Complete job
+        logger.info(f"[Job {job_id}] Completing job: {processed} processed, {failed} failed")
         self._complete_job(job_id, processed, failed)
         
-        return {
+        result = {
             'success': True,
             'job_id': job_id,
             'total': len(competitors_with_urls),
             'processed': processed,
             'failed': failed
         }
+        
+        logger.info(f"[Job {job_id}] COMPLETED: {result}")
+        
+        return result
     
     async def _process_single_competitor(
         self,

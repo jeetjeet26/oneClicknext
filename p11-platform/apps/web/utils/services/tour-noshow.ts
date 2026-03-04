@@ -5,6 +5,8 @@
 
 import { createServiceClient } from '@/utils/supabase/admin'
 import { sendMessage, type TemplateVariables } from './messaging'
+import { startWorkflow } from './workflow-processor'
+import { trackEngagementEvent } from './engagement-tracker'
 import { format, parseISO, subHours, isBefore } from 'date-fns'
 
 export interface TourForNoShow {
@@ -141,6 +143,18 @@ export async function processTourNoShows(): Promise<NoShowResult> {
 
         result.markedNoShow++
         console.log(`[TourNoShow] Marked tour ${tour.id} as no-show`)
+
+        // Track no-show engagement event and trigger workflow (non-blocking)
+        trackEngagementEvent({
+          leadId: tour.lead_id,
+          propertyId: tour.property_id,
+          eventType: 'tour_no_show',
+          metadata: { tour_id: tour.id },
+        }).catch(e => console.error('[TourNoShow] Engagement tracking failed:', e))
+
+        startWorkflow(tour.lead_id, tour.property_id, 'tour_no_show').catch(e =>
+          console.error('[TourNoShow] Workflow start failed:', e)
+        )
 
         // Update lead status back to contacted
         await supabase

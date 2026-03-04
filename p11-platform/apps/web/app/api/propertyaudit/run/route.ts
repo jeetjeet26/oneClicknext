@@ -30,18 +30,21 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json()
-    const { propertyId, surfaces = ['openai', 'claude'] } = body
+    const { propertyId, surfaces = ['openai', 'claude'], executionCount = 1 } = body
 
     if (!propertyId) {
       return NextResponse.json({ error: 'propertyId required' }, { status: 400 })
     }
 
+    // Validate executionCount
+    const validExecutionCount = Math.max(1, Math.min(5, parseInt(executionCount as any) || 1))
+
     const serviceClient = createServiceClient()
 
     // Get query count for this property
-    const { count: queryCount } = await serviceClient
+    const { data: queryRows, count: queryCount } = await serviceClient
       .from('geo_queries')
-      .select('*', { count: 'exact', head: true })
+      .select('id', { count: 'exact' })
       .eq('property_id', propertyId)
       .eq('is_active', true)
 
@@ -51,6 +54,9 @@ export async function POST(req: NextRequest) {
         code: 'NO_QUERIES'
       }, { status: 400 })
     }
+
+    // Apply global execution count to all queries
+    const totalQueryExecutions = queryCount * validExecutionCount
 
     // Create runs for each surface with shared batch_id
     const runs: GeoRun[] = []
@@ -72,7 +78,8 @@ export async function POST(req: NextRequest) {
           surface: typedSurface,
           model_name: modelNames[typedSurface],
           status: 'queued',
-          query_count: queryCount,
+          query_count: totalQueryExecutions,
+          execution_count: validExecutionCount,
           started_at: new Date().toISOString(),
           batch_id: batchId,
           batch_size: surfaces.length
@@ -190,7 +197,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       success: true,
       runs,
-      message: `Created ${runs.length} run(s) for ${queryCount} queries. Processing started.`,
+      message: `Created ${runs.length} run(s) for ${queryCount} queries × ${validExecutionCount} executions = ${totalQueryExecutions} total LLM calls. Processing started.`,
     })
   } catch (error) {
     console.error('PropertyAudit Run POST Error:', error)

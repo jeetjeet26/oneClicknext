@@ -11,7 +11,7 @@ export { QueryTable, QueryFilters, CreateQueryModal, ExportMenu, QueryPerformanc
 export { AnswerPreview } from './answer'
 
 // Run
-export { RunDetails, RunStatusIndicator } from './run'
+export { RunDetails, RunStatusIndicator, RunAuditModal } from './run'
 
 // Insights
 export { CompetitorInsights } from './insights'
@@ -20,7 +20,7 @@ export { CompetitorInsights } from './insights'
 export { ContentRecommendations } from './recommendations'
 
 // Dashboard
-export { AlertBanner, useGeoAlerts, QueryTypeRings, ModelComparisonCard, InsightsPanel, useGeoInsights, type Alert, type GeoInsight } from './dashboard'
+export { AlertBanner, useGeoAlerts, QueryTypeRings, ModelComparisonCard, InsightsPanel, useGeoInsights, AiOverviewCard, type Alert, type GeoInsight } from './dashboard'
 
 // Competitive
 export { PositioningMatrix } from './competitive'

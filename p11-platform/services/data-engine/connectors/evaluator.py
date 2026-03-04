@@ -274,6 +274,115 @@ def aggregate_scores(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+# ============================================================================
+# AI Overview Visibility Checker
+# ============================================================================
+
+import os
+import httpx
+import logging
+from typing import Tuple
+import urllib.parse
+
+logger = logging.getLogger(__name__)
+
+
+async def check_ai_overview_visibility(
+    query_text: str,
+    location: str = None
+) -> Tuple[bool, Optional[str]]:
+    """
+    Check if a query triggers an AI Overview on Google Search.
+    Uses SerpAPI to fetch search results and detect AI Overview presence.
+    
+    Args:
+        query_text: The search query to check
+        location: Optional location for geo-targeted search (e.g., "San Diego, CA")
+    
+    Returns:
+        Tuple of (is_visible, source_url)
+        - is_visible: True if AI Overview was detected
+        - source_url: URL of the main source cited in AI Overview (if visible)
+    """
+    serpapi_key = os.environ.get('SERPAPI_API_KEY')
+    
+    if not serpapi_key:
+        logger.warning("[AI Overview] SERPAPI_API_KEY not set, skipping AI Overview check")
+        return (False, None)
+    
+    try:
+        # Build SerpAPI request
+        params = {
+            'api_key': serpapi_key,
+            'engine': 'google',
+            'q': query_text,
+            'gl': 'us',
+            'hl': 'en',
+            'num': 10,
+        }
+        
+        # Add location if provided
+        if location:
+            params['location'] = location
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                'https://serpapi.com/search.json',
+                params=params
+            )
+            response.raise_for_status()
+            data = response.json()
+        
+        # Check for AI Overview / SGE / Featured Snippet with AI content
+        # SerpAPI returns AI Overview data in different keys depending on format
+        ai_overview_visible = False
+        source_url = None
+        
+        # Check for AI Overview (Google SGE)
+        if 'ai_overview' in data:
+            ai_overview = data['ai_overview']
+            ai_overview_visible = True
+            
+            # Extract source URL if available
+            if isinstance(ai_overview, dict):
+                sources = ai_overview.get('sources', [])
+                if sources and len(sources) > 0:
+                    source_url = sources[0].get('link') or sources[0].get('url')
+        
+        # Also check for answer_box which sometimes contains AI-generated content
+        if not ai_overview_visible and 'answer_box' in data:
+            answer_box = data['answer_box']
+            # Check if it's an AI-style answer (has snippet with no direct attribution)
+            if answer_box.get('type') in ['organic_result', 'ai_answer']:
+                ai_overview_visible = True
+                source_url = answer_box.get('link')
+        
+        # Check for knowledge_graph with AI features
+        if not ai_overview_visible and 'knowledge_graph' in data:
+            kg = data['knowledge_graph']
+            # Knowledge graphs with detailed descriptions often indicate AI overview
+            if kg.get('description') and len(kg.get('description', '')) > 200:
+                ai_overview_visible = True
+                source_url = kg.get('website') or kg.get('source', {}).get('link')
+        
+        logger.info(
+            f"[AI Overview] Query: '{query_text[:50]}...' -> "
+            f"Visible: {ai_overview_visible}, Source: {source_url}"
+        )
+        
+        return (ai_overview_visible, source_url)
+        
+    except httpx.TimeoutException:
+        logger.warning(f"[AI Overview] Timeout checking query: {query_text[:50]}...")
+        return (False, None)
+    except httpx.HTTPStatusError as e:
+        logger.error(f"[AI Overview] HTTP error {e.response.status_code}: {e}")
+        return (False, None)
+    except Exception as e:
+        logger.error(f"[AI Overview] Error checking visibility: {e}")
+        return (False, None)
+
+
 
 
 

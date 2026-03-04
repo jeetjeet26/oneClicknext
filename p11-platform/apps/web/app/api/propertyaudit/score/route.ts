@@ -55,6 +55,8 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'propertyId required' }, { status: 400 })
     }
 
+    console.log('[Score API] Fetching score for property:', propertyId)
+
     // Get latest completed runs per surface
     const { data: latestRuns, error: runsError } = await supabase
       .from('geo_runs')
@@ -105,9 +107,16 @@ export async function GET(req: NextRequest) {
     const scores = [openaiScore, claudeScore].filter(Boolean) as SurfaceScore[]
     
     if (scores.length === 0) {
+      console.log('[Score API] No completed runs found for property:', propertyId)
       return NextResponse.json({
         score: null,
         message: 'No completed runs found. Run an audit first.',
+      }, {
+        headers: {
+          'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0',
+        }
       })
     }
 
@@ -151,7 +160,14 @@ export async function GET(req: NextRequest) {
       trend,
     }
 
-    return NextResponse.json({ score: summary })
+    console.log('[Score API] Returning score for property:', propertyId, 'Score:', summary.overallScore)
+    return NextResponse.json({ score: summary }, {
+      headers: {
+        'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+      }
+    })
   } catch (error) {
     console.error('PropertyAudit Score GET Error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

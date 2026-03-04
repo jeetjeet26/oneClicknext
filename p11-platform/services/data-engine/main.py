@@ -14,12 +14,14 @@ import os
 # Import routers
 from routers.brand_intelligence import router as brand_intelligence_router
 from routers.crm_integration import router as crm_integration_router
+from routers.scraper import router as scraper_router
 
 app = FastAPI(title="P11 Data Engine", version="1.0.0")
 
 # Mount routers
 app.include_router(brand_intelligence_router)
 app.include_router(crm_integration_router)
+app.include_router(scraper_router)
 
 # CORS middleware
 app.add_middleware(
@@ -173,6 +175,17 @@ async def root():
             "sync_property": "POST /sync-marketing-data",
             "sync_all": "POST /sync-all-properties",
             "job_status": "GET /import-jobs/{job_id}",
+            "scraper": {
+                "discover": "POST /scraper/discover",
+                "refresh_pricing": "POST /scraper/refresh-pricing",
+                "website_batch": "POST /scraper/website/batch",
+                "website_refresh": "POST /scraper/website/refresh",
+                "apartments_batch": "POST /scraper/apartments-com/batch",
+                "apartments_refresh": "POST /scraper/apartments-com/refresh",
+                "apartments_discover": "POST /scraper/apartments-com/discover",
+                "apartments_find": "POST /scraper/apartments-com/find-listings",
+                "status": "GET /scraper/status"
+            },
             "brand_intelligence": {
                 "get_for_property": "GET /scraper/brand-intelligence/property/{property_id}",
                 "get_for_competitor": "GET /scraper/brand-intelligence/competitor/{competitor_id}",

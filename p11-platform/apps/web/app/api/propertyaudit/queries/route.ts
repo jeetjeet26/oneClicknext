@@ -5,6 +5,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { aggregateAnswersByQuery } from '@/utils/propertyaudit/reporting'
 
 export interface GeoQuery {
   id: string
@@ -13,6 +14,7 @@ export interface GeoQuery {
   type: 'branded' | 'category' | 'comparison' | 'local' | 'faq' | 'voice_search'
   geo: string | null
   weight: number
+  runCount: number
   isActive: boolean
   createdAt: string
   updatedAt: string
@@ -78,16 +80,35 @@ export async function GET(req: NextRequest) {
         // Fetch answers for these runs
         const { data: answers } = await supabase
           .from('geo_answers')
-          .select('query_id, presence, llm_rank, link_rank, sov')
+          .select('query_id, presence, llm_rank, link_rank, sov, flags, created_at, geo_queries (id, text, type)')
           .in('run_id', runIds)
 
-        // Map answers by query_id (take first/latest)
-        answers?.forEach(answer => {
+        const aggregated = aggregateAnswersByQuery(answers || [], queries, new Map())
+        aggregated.forEach(answer => {
           if (!answersMap.has(answer.query_id)) {
             answersMap.set(answer.query_id, answer)
           }
         })
       }
+    }
+
+    // Fetch AI Overview visibility data (for ALL property queries, independent of runs)
+    let aiOverviewMap = new Map<string, { visible: boolean; sourceUrl?: string | null }>()
+    if (includePerformance) {
+      // Fetch all AI Overview data for this property, not limited to specific query IDs
+      // This allows AI Overview visibility to work independently of historical audit runs
+      const { data: aiOverviews } = await supabase
+        .from('geo_ai_overviews')
+        .select('query_id, visible, source_url, observed_at')
+        .eq('property_id', propertyId)
+        .order('observed_at', { ascending: false })
+
+      // Keep only latest per query
+      ;(aiOverviews || []).forEach((row: { query_id: string; visible: boolean; source_url?: string | null }) => {
+        if (row.query_id && !aiOverviewMap.has(row.query_id)) {
+          aiOverviewMap.set(row.query_id, { visible: row.visible, sourceUrl: row.source_url })
+        }
+      })
     }
 
     // Group by type for easy consumption
@@ -103,13 +124,19 @@ export async function GET(req: NextRequest) {
     // Merge performance data with queries
     const queriesWithPerformance = queries?.map(q => {
       const answer = answersMap.get(q.id)
+      const aiOverview = aiOverviewMap.get(q.id)
       return {
         ...formatQuery(q),
         ...(answer ? {
           presence: answer.presence,
           llmRank: answer.llm_rank,
           linkRank: answer.link_rank,
-          sov: answer.sov
+          sov: answer.sov,
+          presenceRate: answer.presence_rate
+        } : {}),
+        ...(aiOverview ? {
+          aiOverviewVisible: aiOverview.visible,
+          aiOverviewSource: aiOverview.sourceUrl
         } : {})
       }
     }) || []
@@ -289,6 +316,7 @@ async function generateQueryPanel(supabase: Awaited<ReturnType<typeof createClie
     type: string
     geo: string | null
     weight: number
+    run_count: number
     is_active: boolean
   }> = []
 
@@ -300,17 +328,17 @@ async function generateQueryPanel(supabase: Awaited<ReturnType<typeof createClie
   // 1. BRANDED QUERIES (4 queries) - Keep as-is
   // ============================================================================
   queries.push(
-    { property_id: propertyId, text: `What is ${propertyName}?`, type: 'branded', geo: cityState, weight: 1.5, is_active: true },
-    { property_id: propertyId, text: `Is ${propertyName} a good place to live?`, type: 'branded', geo: cityState, weight: 1.5, is_active: true },
-    { property_id: propertyId, text: `${propertyName} reviews`, type: 'branded', geo: cityState, weight: 1.5, is_active: true },
-    { property_id: propertyId, text: `${propertyName} apartments`, type: 'branded', geo: cityState, weight: 1.5, is_active: true },
+    { property_id: propertyId, text: `What is ${propertyName}?`, type: 'branded', geo: cityState, weight: 1.5, run_count: 1, is_active: true },
+    { property_id: propertyId, text: `Is ${propertyName} a good place to live?`, type: 'branded', geo: cityState, weight: 1.5, run_count: 1, is_active: true },
+    { property_id: propertyId, text: `${propertyName} reviews`, type: 'branded', geo: cityState, weight: 1.5, run_count: 1, is_active: true },
+    { property_id: propertyId, text: `${propertyName} apartments`, type: 'branded', geo: cityState, weight: 1.5, run_count: 1, is_active: true },
   )
 
   // ============================================================================
   // 2. GENERIC CATEGORY QUERIES (1-2 queries) - Reduced for benchmarking only
   // ============================================================================
   queries.push(
-    { property_id: propertyId, text: `Best apartments in ${city}`, type: 'category', geo: cityState, weight: 0.8, is_active: true },
+    { property_id: propertyId, text: `Best apartments in ${city}`, type: 'category', geo: cityState, weight: 0.8, run_count: 1, is_active: true },
   )
 
   // ============================================================================
@@ -323,8 +351,8 @@ async function generateQueryPanel(supabase: Awaited<ReturnType<typeof createClie
   } else {
     // Fallback if no amenities: use generic but neighborhood-specific
     queries.push(
-      { property_id: propertyId, text: `Modern apartments in ${neighborhood}`, type: 'category', geo: cityState, weight: 1.2, is_active: true },
-      { property_id: propertyId, text: `Newly built apartments ${neighborhood}`, type: 'category', geo: cityState, weight: 1.2, is_active: true },
+      { property_id: propertyId, text: `Modern apartments in ${neighborhood}`, type: 'category', geo: cityState, weight: 1.2, run_count: 1, is_active: true },
+      { property_id: propertyId, text: `Newly built apartments ${neighborhood}`, type: 'category', geo: cityState, weight: 1.2, run_count: 1, is_active: true },
     )
   }
 
@@ -332,9 +360,9 @@ async function generateQueryPanel(supabase: Awaited<ReturnType<typeof createClie
   // 4. NEIGHBORHOOD-SPECIFIC QUERIES (NEW - 3 queries)
   // ============================================================================
   queries.push(
-    { property_id: propertyId, text: `Best place to live in ${neighborhood}`, type: 'local', geo: cityState, weight: 1.3, is_active: true },
-    { property_id: propertyId, text: `${neighborhood} apartment communities`, type: 'local', geo: cityState, weight: 1.3, is_active: true },
-    { property_id: propertyId, text: `Moving to ${neighborhood} - apartment recommendations`, type: 'local', geo: cityState, weight: 1.2, is_active: true },
+    { property_id: propertyId, text: `Best place to live in ${neighborhood}`, type: 'local', geo: cityState, weight: 1.3, run_count: 1, is_active: true },
+    { property_id: propertyId, text: `${neighborhood} apartment communities`, type: 'local', geo: cityState, weight: 1.3, run_count: 1, is_active: true },
+    { property_id: propertyId, text: `Moving to ${neighborhood} - apartment recommendations`, type: 'local', geo: cityState, weight: 1.2, run_count: 1, is_active: true },
   )
 
   // ============================================================================
@@ -355,6 +383,7 @@ async function generateQueryPanel(supabase: Awaited<ReturnType<typeof createClie
             type: 'category',
             geo: cityState,
             weight: 1.5, // High weight - unique differentiator
+            run_count: 1,
             is_active: true,
           })
         }
@@ -374,6 +403,7 @@ async function generateQueryPanel(supabase: Awaited<ReturnType<typeof createClie
         type: 'category',
         geo: cityState,
         weight: 1.3,
+        run_count: 1,
         is_active: true,
       })
     })
@@ -390,6 +420,7 @@ async function generateQueryPanel(supabase: Awaited<ReturnType<typeof createClie
         type: 'comparison',
         geo: cityState,
         weight: 1.3,
+        run_count: 1,
         is_active: true,
       })
     }
@@ -400,7 +431,7 @@ async function generateQueryPanel(supabase: Awaited<ReturnType<typeof createClie
   // ============================================================================
   if (street) {
     queries.push(
-      { property_id: propertyId, text: `Apartments near ${street}`, type: 'local', geo: cityState, weight: 1.2, is_active: true },
+      { property_id: propertyId, text: `Apartments near ${street}`, type: 'local', geo: cityState, weight: 1.2, run_count: 1, is_active: true },
     )
   }
 
@@ -409,9 +440,9 @@ async function generateQueryPanel(supabase: Awaited<ReturnType<typeof createClie
   // Make voice search queries more specific
   // ============================================================================
   queries.push(
-    { property_id: propertyId, text: `How do I apply to ${propertyName}?`, type: 'voice_search', geo: cityState, weight: 1.1, is_active: true },
-    { property_id: propertyId, text: `What amenities does ${propertyName} have?`, type: 'voice_search', geo: cityState, weight: 1.1, is_active: true },
-    { property_id: propertyId, text: `Tell me about ${propertyName}`, type: 'voice_search', geo: cityState, weight: 1.1, is_active: true },
+    { property_id: propertyId, text: `How do I apply to ${propertyName}?`, type: 'voice_search', geo: cityState, weight: 1.1, run_count: 1, is_active: true },
+    { property_id: propertyId, text: `What amenities does ${propertyName} have?`, type: 'voice_search', geo: cityState, weight: 1.1, run_count: 1, is_active: true },
+    { property_id: propertyId, text: `Tell me about ${propertyName}`, type: 'voice_search', geo: cityState, weight: 1.1, run_count: 1, is_active: true },
   )
 
   // Add specific voice queries if amenities available
@@ -423,6 +454,7 @@ async function generateQueryPanel(supabase: Awaited<ReturnType<typeof createClie
       type: 'voice_search',
       geo: cityState,
       weight: 1.2,
+      run_count: 1,
       is_active: true,
     })
   } else {
@@ -432,6 +464,7 @@ async function generateQueryPanel(supabase: Awaited<ReturnType<typeof createClie
       type: 'voice_search',
       geo: cityState,
       weight: 1.1,
+      run_count: 1,
       is_active: true,
     })
   }
@@ -455,6 +488,7 @@ function generateAmenityCombinations(
   type: string
   geo: string
   weight: number
+  run_count: number
   is_active: boolean
 }> {
   const combos: Array<{ text: string; weight: number }> = []
@@ -531,13 +565,14 @@ function generateAmenityCombinations(
     })
   }
 
-  // Convert to full query objects
+  // Convert to full query objects (run_count included for type compatibility)
   return combos.slice(0, 6).map(combo => ({
     property_id: propertyId,
     text: combo.text,
-    type: 'category',
+    type: 'category' as const,
     geo: cityState,
     weight: combo.weight,
+    run_count: 1,
     is_active: true,
   }))
 }
@@ -642,6 +677,7 @@ function formatQuery(query: Record<string, unknown>): GeoQuery {
     type: query.type as GeoQuery['type'],
     geo: query.geo as string | null,
     weight: query.weight as number,
+    runCount: (query.run_count as number) || 1,
     isActive: query.is_active as boolean,
     createdAt: query.created_at as string,
     updatedAt: query.updated_at as string,

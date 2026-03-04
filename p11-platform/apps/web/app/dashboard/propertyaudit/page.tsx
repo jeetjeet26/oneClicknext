@@ -23,6 +23,8 @@ import {
   PositioningMatrix,
   QueryPerformanceCards,
   ReportBuilder,
+  AiOverviewCard,
+  RunAuditModal,
   type QueryRow,
 } from '@/components/propertyaudit'
 import {
@@ -99,6 +101,12 @@ export default function PropertyAuditPage() {
   const [queries, setQueries] = useState<QueryRow[]>([])
   const [runs, setRuns] = useState<GeoRun[]>([])
   const [competitors, setCompetitors] = useState<Array<{ name: string; domain: string; mentionCount: number; avgRank: number }>>([])
+  const [aiOverviewSummary, setAiOverviewSummary] = useState<{
+    totalTracked: number
+    visibleCount: number
+    visibilityPct: number
+    byType: Array<{ type: string; visiblePct: number }>
+  } | null>(null)
   const [loading, setLoading] = useState(true)
   const [isRunning, setIsRunning] = useState(false)
   const [isGeneratingQueries, setIsGeneratingQueries] = useState(false)
@@ -107,6 +115,7 @@ export default function PropertyAuditPage() {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
   const [queryView, setQueryView] = useState<'table' | 'cards'>('table')
   const [showReportBuilder, setShowReportBuilder] = useState(false)
+  const [showRunAuditModal, setShowRunAuditModal] = useState(false)
 
   // Generate alerts and insights
   const alerts = useGeoAlerts(score, runs, competitors)
@@ -114,6 +123,12 @@ export default function PropertyAuditPage() {
 
   useEffect(() => {
     if (currentProperty?.id) {
+      // Clear existing data immediately when property changes
+      setScore(null)
+      setQueries([])
+      setRuns([])
+      setCompetitors([])
+      setAiOverviewSummary(null)
       fetchData()
     }
   }, [currentProperty?.id])
@@ -127,7 +142,8 @@ export default function PropertyAuditPage() {
         fetchScore(),
         fetchQueries(),
         fetchRuns(),
-        fetchCompetitors()
+        fetchCompetitors(),
+        fetchAiOverviews()
       ])
     } finally {
       setLoading(false)
@@ -135,15 +151,25 @@ export default function PropertyAuditPage() {
   }
 
   const fetchScore = async () => {
-    const res = await fetch(`/api/propertyaudit/score?propertyId=${currentProperty?.id}`)
+    const res = await fetch(`/api/propertyaudit/score?propertyId=${currentProperty?.id}`, {
+      cache: 'no-store',
+      headers: {
+        'Cache-Control': 'no-cache',
+      }
+    })
     const data = await res.json()
-    if (res.ok && data.score) {
-      setScore(data.score)
+    console.log('[PropertyAudit] Fetched score for property:', currentProperty?.id, data)
+    if (res.ok) {
+      setScore(data.score || null)
+    } else {
+      setScore(null)
     }
   }
 
   const fetchQueries = async () => {
-    const res = await fetch(`/api/propertyaudit/queries?propertyId=${currentProperty?.id}`)
+    const res = await fetch(`/api/propertyaudit/queries?propertyId=${currentProperty?.id}`, {
+      cache: 'no-store'
+    })
     const data = await res.json()
     if (res.ok) {
       setQueries(data.queries || [])
@@ -151,7 +177,9 @@ export default function PropertyAuditPage() {
   }
 
   const fetchRuns = async () => {
-    const res = await fetch(`/api/propertyaudit/runs?propertyId=${currentProperty?.id}`)
+    const res = await fetch(`/api/propertyaudit/runs?propertyId=${currentProperty?.id}`, {
+      cache: 'no-store'
+    })
     const data = await res.json()
     if (res.ok) {
       setRuns(data.runs || [])
@@ -188,6 +216,40 @@ export default function PropertyAuditPage() {
     }
   }
 
+  const fetchAiOverviews = async () => {
+    const res = await fetch(`/api/propertyaudit/ai-overviews?propertyId=${currentProperty?.id}`)
+    const data = await res.json()
+    if (res.ok && data.data) {
+      // Build summary from raw data
+      const overviews = data.data as Array<{ query_id: string; visible: boolean; source_url?: string }>
+      const total = overviews.length
+      const visible = overviews.filter(o => o.visible).length
+      
+      // Group by query type (we'll need to match with queries)
+      const typeVisibility = new Map<string, { total: number; visible: number }>()
+      overviews.forEach(overview => {
+        const query = queries.find(q => q.id === overview.query_id)
+        if (query) {
+          const type = query.type
+          const entry = typeVisibility.get(type) || { total: 0, visible: 0 }
+          entry.total += 1
+          if (overview.visible) entry.visible += 1
+          typeVisibility.set(type, entry)
+        }
+      })
+      
+      setAiOverviewSummary({
+        totalTracked: total,
+        visibleCount: visible,
+        visibilityPct: total > 0 ? Math.round((visible / total) * 100) : 0,
+        byType: Array.from(typeVisibility.entries()).map(([type, entry]) => ({
+          type,
+          visiblePct: entry.total > 0 ? Math.round((entry.visible / entry.total) * 100) : 0
+        }))
+      })
+    }
+  }
+
   const generateQueryPanel = async () => {
     if (!currentProperty?.id) return
 
@@ -212,7 +274,7 @@ export default function PropertyAuditPage() {
     }
   }
 
-  const runAudit = async () => {
+  const runAudit = async (config: { surfaces: ('openai' | 'claude')[]; executionCount: number }) => {
     if (!currentProperty?.id) return
 
     setIsRunning(true)
@@ -222,7 +284,8 @@ export default function PropertyAuditPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           propertyId: currentProperty.id,
-          surfaces: ['openai', 'claude']
+          surfaces: config.surfaces,
+          executionCount: config.executionCount
         })
       })
 
@@ -364,7 +427,7 @@ export default function PropertyAuditPage() {
             runId={runs.find(r => r.status === 'completed')?.id || null}
           />
           <button
-            onClick={runAudit}
+            onClick={() => setShowRunAuditModal(true)}
             disabled={isRunning || queries.length === 0}
             className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
@@ -538,8 +601,8 @@ export default function PropertyAuditPage() {
                   />
                 )}
 
-                {/* Model Comparison + Query Type Rings */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Model Comparison + Query Type Rings + AI Overview */}
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                   {/* Model Comparison */}
                   <ModelComparisonCard
                     openai={score?.surfaces.openai || null}
@@ -554,6 +617,12 @@ export default function PropertyAuditPage() {
                     </h3>
                     <QueryTypeRings queries={queries} />
                   </div>
+
+                  {/* AI Overview Visibility */}
+                  <AiOverviewCard 
+                    summary={aiOverviewSummary}
+                    isLoading={loading}
+                  />
                 </div>
 
                 {/* Trend Chart */}
@@ -852,6 +921,13 @@ export default function PropertyAuditPage() {
         onClose={() => setShowReportBuilder(false)}
         propertyId={currentProperty?.id || ''}
         propertyName={currentProperty?.name || 'Property'}
+      />
+
+      <RunAuditModal
+        isOpen={showRunAuditModal}
+        onClose={() => setShowRunAuditModal(false)}
+        onSubmit={runAudit}
+        queryCount={queries.length}
       />
     </div>
   )

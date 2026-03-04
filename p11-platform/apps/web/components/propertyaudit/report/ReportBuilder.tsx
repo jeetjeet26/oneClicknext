@@ -89,11 +89,8 @@ export function ReportBuilder({ isOpen, onClose, propertyId, propertyName }: Rep
       if (res.ok) {
         const blob = await res.blob()
         const url = window.URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = `GEO-Report-${propertyName}-${Date.now()}.pdf`
-        a.click()
-        window.URL.revokeObjectURL(url)
+        // Open HTML report in new tab - user can print to PDF from browser
+        window.open(url, '_blank')
         
         // If schedule enabled, show success message
         if (config.schedule) {
@@ -311,11 +308,11 @@ export function ReportBuilder({ isOpen, onClose, propertyId, propertyName }: Rep
             {isGenerating ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
-                Generating PDF...
+                Generating Report...
               </>
             ) : (
               <>
-                <Download className="w-4 h-4" />
+                <FileText className="w-4 h-4" />
                 Generate Report
               </>
             )}

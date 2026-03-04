@@ -268,8 +268,27 @@ Output ONLY valid JSON, no markdown."""
             'expectedState': context.get('propertyLocation', {}).get('state')
         })
         
+        # Merge Phase 1 web sources into citations for SOV calculation
+        answer_block = analyzed['envelope']['answer_block']
+        existing_citations = answer_block.get('citations', [])
+        existing_urls = {c.get('url') for c in existing_citations if c.get('url')}
+        
+        # Add web search sources as citations (for SOV calculation)
+        for source in search_sources:
+            if source.get('url') and source['url'] not in existing_urls:
+                existing_citations.append({
+                    'url': source['url'],
+                    'domain': source.get('domain', ''),
+                    'entity_ref': None
+                })
+                existing_urls.add(source['url'])
+        
+        answer_block['citations'] = existing_citations
+        
+        logger.info(f"[Claude-Natural] Two-phase complete: {len(search_sources)} web sources, {len(existing_citations)} total citations")
+        
         return {
-            'answer': analyzed['envelope']['answer_block'],
+            'answer': answer_block,
             'raw': {
                 'audit_mode': 'natural',
                 'phase1': phase1_raw,

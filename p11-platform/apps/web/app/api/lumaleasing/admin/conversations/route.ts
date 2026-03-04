@@ -1,22 +1,34 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/utils/supabase/server';
 import { createServiceClient } from '@/utils/supabase/admin';
+import { validatePropertyAccess } from '@/utils/services/auth-guard';
+import { adminLimiter, getRateLimitKey, rateLimitHeaders } from '@/utils/services/rate-limiter';
+import { forbidden, unauthorized, badRequest, serverError, rateLimited } from '@/utils/services/api-helpers';
+import { auditLog, getRequestIp } from '@/utils/services/audit-logger';
 
 export async function GET(req: NextRequest) {
   try {
+    // Rate limit
+    const rlKey = getRateLimitKey(req, 'admin-convos')
+    const rl = adminLimiter.check(rlKey)
+    if (!rl.allowed) return rateLimited(rateLimitHeaders(rl))
+
+    // Auth
     const supabaseAuth = await createClient();
     const { data: { user } } = await supabaseAuth.auth.getUser();
-
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    if (!user) return unauthorized();
 
     const { searchParams } = new URL(req.url);
     const propertyId = searchParams.get('propertyId');
-    const limit = parseInt(searchParams.get('limit') || '50');
+    const limit = Math.min(parseInt(searchParams.get('limit') || '50'), 100); // Cap at 100
 
-    if (!propertyId) {
-      return NextResponse.json({ error: 'Property ID required' }, { status: 400 });
+    if (!propertyId) return badRequest('Property ID required');
+
+    // Org ownership check
+    const access = await validatePropertyAccess(user.id, propertyId);
+    if (!access.authorized) {
+      auditLog({ eventType: 'property_access_denied', userId: user.id, propertyId, ip: getRequestIp(req), resource: 'admin/conversations' })
+      return forbidden();
     }
 
     const supabase = createServiceClient();
@@ -44,17 +56,14 @@ export async function GET(req: NextRequest) {
       .order('created_at', { ascending: false })
       .limit(limit);
 
-    if (error) {
-      console.error('Conversations fetch error:', error);
-      return NextResponse.json({ error: 'Failed to fetch conversations' }, { status: 500 });
-    }
+    if (error) return serverError(error);
 
     // Transform data
     const transformedConversations = (conversations || []).map((conv) => {
       const leadData = conv.leads ? (Array.isArray(conv.leads) ? conv.leads[0] : conv.leads) : null
       const lead: { first_name: string; last_name: string; email: string } | null = leadData || null
       const messages: { id: string; content: string; created_at: string }[] | null = Array.isArray(conv.messages) ? conv.messages : null
-      const lastMessage = messages && messages.length > 0 
+      const lastMessage = messages && messages.length > 0
         ? messages.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0]
         : null;
 
@@ -71,8 +80,6 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ conversations: transformedConversations });
   } catch (error) {
-    console.error('Conversations fetch error:', error);
-    return NextResponse.json({ error: 'Failed to fetch conversations' }, { status: 500 });
+    return serverError(error);
   }
 }
-

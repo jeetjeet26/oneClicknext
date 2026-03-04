@@ -77,32 +77,46 @@ class PropertyAuditExecutor:
             # 5. Get property config for domains
             config = self._get_property_config(run['property_id'], property_data['name'])
             
-            # 6. Process each query
+            # 6. Process each query (use global execution_count from run)
             results = []
             errors = []
-            total_queries = len(queries)
+            execution_count = max(1, int(run.get('execution_count') or 1))
+            total_executions = len(queries) * execution_count
+            executed = 0
             
-            for idx, query in enumerate(queries):
-                try:
-                    logger.info(f"[PropertyAudit] Processing query {idx+1}/{total_queries}: {query['text'][:50]}...")
-                    
-                    # Update progress
-                    progress_pct = int((idx / total_queries) * 100)
-                    self._update_progress(run_id, progress_pct, idx)
-                    
-                    # Process query (this will call LLM connectors)
-                    result = await self._process_query(
-                        run=run,
-                        query=query,
-                        property_data=property_data,
-                        config=config
-                    )
-                    
-                    results.append(result)
-                    
-                except Exception as e:
-                    logger.error(f"[PropertyAudit] Error processing query {query['id']}: {e}")
-                    errors.append(f"Query {query['id']}: {str(e)}")
+            for query in queries:
+                for attempt in range(execution_count):
+                    try:
+                        executed += 1
+                        logger.info(
+                            f"[PropertyAudit] Processing query ({executed}/{total_executions}) "
+                            f"[{attempt+1}/{execution_count}]: {query['text'][:50]}..."
+                        )
+                        
+                        # Update progress
+                        progress_pct = int(((executed - 1) / max(1, total_executions)) * 100)
+                        self._update_progress(run_id, progress_pct, executed - 1)
+                        
+                        # Process query (this will call LLM connectors)
+                        result = await self._process_query(
+                            run=run,
+                            query=query,
+                            property_data=property_data,
+                            config=config
+                        )
+                        
+                        results.append(result)
+                        
+                        # Check AI Overview visibility (only on first execution per query to avoid rate limits)
+                        if attempt == 0:
+                            await self._check_and_store_ai_overview(
+                                property_id=run['property_id'],
+                                query=query
+                            )
+                        
+                    except Exception as e:
+                        logger.error(f"[PropertyAudit] Error processing query {query['id']}: {e}")
+                        errors.append(f"Query {query['id']}: {str(e)}")
             
             # 7. Calculate aggregate scores
             aggregate = self._calculate_aggregate_scores(results)
@@ -411,6 +425,56 @@ class PropertyAuditExecutor:
             'breakdown': aggregate.get('breakdown', {}),
             'query_scores': query_scores
         }).execute()
+    
+    async def _check_and_store_ai_overview(self, property_id: str, query: Dict):
+        """
+        Check AI Overview visibility for a query and store the result.
+        This is called once per query (not per execution) to avoid rate limits.
+        """
+        from connectors.evaluator import check_ai_overview_visibility
+        
+        try:
+            # Use geo location from query if available
+            location = query.get('geo') or None
+            query_text = query.get('text', '')
+            
+            if not query_text:
+                logger.warning(f"[AI Overview] Skipping check for query {query['id']}: empty text")
+                return
+            
+            # Check visibility
+            visible, source_url = await check_ai_overview_visibility(
+                query_text=query_text,
+                location=location
+            )
+            
+            # Insert or update in geo_ai_overviews table
+            # First check if a record already exists for this property/query combo
+            existing = self.supabase.table('geo_ai_overviews')\
+                .select('id')\
+                .eq('property_id', property_id)\
+                .eq('query_id', query['id'])\
+                .order('observed_at', desc=True)\
+                .limit(1)\
+                .execute()
+            
+            # Insert new observation (we keep history, not update)
+            self.supabase.table('geo_ai_overviews').insert({
+                'property_id': property_id,
+                'query_id': query['id'],
+                'visible': visible,
+                'source_url': source_url,
+                'observed_at': datetime.utcnow().isoformat()
+            }).execute()
+            
+            logger.info(
+                f"[AI Overview] Stored visibility for query {query['id']}: "
+                f"visible={visible}, source={source_url}"
+            )
+            
+        except Exception as e:
+            # Don't fail the entire run for AI Overview errors
+            logger.error(f"[AI Overview] Error checking query {query['id']}: {e}")
 
 
 

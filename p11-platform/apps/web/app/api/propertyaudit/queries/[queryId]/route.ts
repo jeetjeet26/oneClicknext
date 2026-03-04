@@ -21,7 +21,7 @@ export async function PATCH(
 
     const { queryId } = await params
     const body = await req.json()
-    const { text, type, weight, geo, isActive } = body
+    const { text, type, weight, geo, isActive, runCount } = body
 
     const updateData: Record<string, unknown> = { updated_at: new Date().toISOString() }
 
@@ -30,6 +30,7 @@ export async function PATCH(
     if (weight !== undefined) updateData.weight = weight
     if (geo !== undefined) updateData.geo = geo
     if (isActive !== undefined) updateData.is_active = isActive
+    if (runCount !== undefined) updateData.run_count = runCount
 
     const { data: query, error } = await supabase
       .from('geo_queries')
@@ -52,6 +53,7 @@ export async function PATCH(
         type: query.type,
         geo: query.geo,
         weight: query.weight,
+        runCount: query.run_count,
         isActive: query.is_active,
         createdAt: query.created_at,
         updatedAt: query.updated_at

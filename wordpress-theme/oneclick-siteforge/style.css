@@ -1,0 +1,132 @@
+/*
+Theme Name: oneClick SiteForge
+Theme URI: https://oneclickcommunities.com/
+Description: Production-ready WordPress theme for apartment community websites with 14 custom ACF blocks. Built for the oneClick SaaS platform.
+Version: 1.0.0
+Author: oneClick Communities
+Author URI: https://oneclickcommunities.com/
+License: GPL-2.0+
+License URI: https://www.gnu.org/licenses/gpl-2.0.html
+Text Domain: oneclick-siteforge
+Domain Path: /languages
+Requires: 5.9
+Requires ACF: 6.0
+Tested up to: 6.4
+*/
+
+:root {
+  --color-primary: #1B365D;
+  --color-secondary: #7A8B6F;
+  --color-accent: #C5A572;
+  --color-bg: #FAFAF7;
+  --color-text: #2D2D2D;
+  --color-light-gray: #F5F5F2;
+  --color-medium-gray: #D3D3CF;
+  --color-border: #E0E0DB;
+  --color-white: #FFFFFF;
+  --color-success: #4CAF50;
+  --color-error: #F44336;
+
+  --font-heading: 'Cormorant Garamond', serif;
+  --font-body: 'Inter', sans-serif;
+
+  --spacing-xs: 0.5rem;
+  --spacing-sm: 1rem;
+  --spacing-md: 1.5rem;
+  --spacing-lg: 2rem;
+  --spacing-xl: 3rem;
+  --spacing-xxl: 4rem;
+
+  --max-width: 1200px;
+  --container-padding: 2rem;
+
+  --transition: all 0.3s ease;
+  --border-radius: 4px;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: var(--font-body);
+  color: var(--color-text);
+  background-color: var(--color-bg);
+  line-height: 1.6;
+  font-size: 16px;
+}
+
+a {
+  color: var(--color-primary);
+  text-decoration: none;
+  transition: var(--transition);
+}
+
+a:hover {
+  color: var(--color-accent);
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-heading);
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--color-primary);
+}
+
+h1 {
+  font-size: 3rem;
+  margin-bottom: var(--spacing-lg);
+}
+
+h2 {
+  font-size: 2.5rem;
+  margin-bottom: var(--spacing-lg);
+}
+
+h3 {
+  font-size: 1.75rem;
+  margin-bottom: var(--spacing-md);
+}
+
+h4 {
+  font-size: 1.25rem;
+  margin-bottom: var(--spacing-md);
+}
+
+p {
+  margin-bottom: var(--spacing-md);
+}
+
+.site-container {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: 0 var(--container-padding);
+}
+
+@media (max-width: 768px) {
+  h1 {
+    font-size: 2rem;
+  }
+
+  h2 {
+    font-size: 1.75rem;
+  }
+
+  h3 {
+    font-size: 1.25rem;
+  }
+
+  body {
+    font-size: 14px;
+  }
+
+  :root {
+    --container-padding: 1rem;
+  }
+}

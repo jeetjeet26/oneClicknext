@@ -3,6 +3,12 @@ import { createServiceClient } from '@/utils/supabase/admin';
 import { sendEmail } from '@/utils/services/messaging';
 import { syncLeadToCRM } from '@/utils/services/crm-sync';
 import { getCalendarConfig, createCalendarEvent } from '@/utils/services/google-calendar';
+import { startWorkflow } from '@/utils/services/workflow-processor';
+import { trackEngagementEvent } from '@/utils/services/engagement-tracker';
+import { chatLimiter, getRateLimitKey, rateLimitHeaders } from '@/utils/services/rate-limiter';
+import { buildCorsHeaders, corsPreflightResponse, serverError, rateLimited, badRequest } from '@/utils/services/api-helpers';
+import { validateBody, chatRequestSchema } from '@/utils/services/validation';
+import { auditLog, getRequestIp } from '@/utils/services/audit-logger';
 import OpenAI from 'openai';
 
 // Type for extracted conversation data
@@ -232,6 +238,13 @@ Write a professional CRM note (no bullet points, just flowing text):`;
             }
           }
 
+          // Start follow-up workflow for new leads (non-blocking)
+          if (leadId) {
+            startWorkflow(leadId, propertyId, 'lead_created').catch(e =>
+              console.error('[LumaLeasing Chat] Workflow start failed (non-blocking):', e)
+            )
+          }
+
           // Update session and conversation with lead
           if (sessionId) {
             const { error: sessionError } = await supabase
@@ -299,6 +312,14 @@ Write a professional CRM note (no bullet points, just flowing text):`;
             description: `Tour booked for ${tourData.date} at ${tourTime} via AI chat`,
             metadata: { booking_id: booking.id, source: 'lumaleasing_extraction' },
           });
+
+          // Track tour_scheduled engagement event (non-blocking)
+          trackEngagementEvent({
+            leadId,
+            propertyId,
+            eventType: 'tour_scheduled',
+            metadata: { booking_id: booking.id, source: 'lumaleasing_chat_extraction' },
+          }).catch(e => console.error('[LumaLeasing Chat] Tour engagement tracking failed (non-blocking):', e))
 
           // Update lead status
           await supabase
@@ -412,20 +433,25 @@ function extractApiKey(req: NextRequest): string | null {
   return normalized.length ? normalized : null;
 }
 
-// CORS headers for cross-origin widget requests
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, X-API-Key, X-Visitor-ID, Authorization',
-};
-
-// Handle CORS preflight
-export async function OPTIONS() {
-  return new NextResponse(null, { headers: corsHeaders });
+// Handle CORS preflight — origin-restricted in production
+export async function OPTIONS(req: NextRequest) {
+  const origin = req.headers.get('origin')
+  return corsPreflightResponse(origin, 'POST, OPTIONS')
 }
 
 export async function POST(req: NextRequest) {
+  const origin = req.headers.get('origin')
+  const corsHeaders = buildCorsHeaders(origin, 'POST, OPTIONS')
+
   try {
+    // Rate limit — 20 requests/minute per IP (protects OpenAI spend)
+    const rlKey = getRateLimitKey(req, 'chat')
+    const rl = chatLimiter.check(rlKey)
+    if (!rl.allowed) {
+      auditLog({ eventType: 'rate_limit_exceeded', ip: getRequestIp(req), resource: 'lumaleasing/chat' })
+      return rateLimited({ ...corsHeaders, ...rateLimitHeaders(rl) })
+    }
+
     const apiKey = extractApiKey(req);
     const visitorId = req.headers.get('X-Visitor-ID');
 
@@ -436,11 +462,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { 
-      messages, 
-      sessionId,
-      leadInfo, // { first_name, last_name, email, phone }
-    } = await req.json();
+    // Validate input with Zod
+    const rawBody = await req.json();
+    const validation = validateBody(rawBody, chatRequestSchema);
+    if (!validation.success) {
+      return badRequest(validation.error, corsHeaders);
+    }
+
+    const { messages, sessionId, leadInfo } = validation.data;
 
     const lastMessage = messages[messages.length - 1]?.content;
     if (!lastMessage) {
@@ -559,6 +588,11 @@ export async function POST(req: NextRequest) {
           } catch (crmError) {
             console.error('[LumaLeasing] CRM sync failed (non-blocking):', crmError);
           }
+
+          // Start follow-up workflow for new leads (non-blocking)
+          startWorkflow(leadId, propertyId, 'lead_created').catch(e =>
+            console.error('[LumaLeasing Chat] Workflow start failed (non-blocking):', e)
+          )
         }
       }
 
@@ -626,6 +660,16 @@ export async function POST(req: NextRequest) {
           .single();
 
         conversationId = newConv?.id;
+
+        // Track chat_started engagement event for new conversations (non-blocking)
+        if (leadId && conversationId) {
+          trackEngagementEvent({
+            leadId,
+            propertyId,
+            eventType: 'chat_started',
+            metadata: { conversation_id: conversationId, source: 'lumaleasing_widget' },
+          }).catch(e => console.error('[LumaLeasing Chat] Chat started tracking failed (non-blocking):', e))
+        }
       }
     }
 
@@ -745,7 +789,7 @@ Remember: You represent ${propertyName}. Provide exceptional customer service wi
         supabase,
         messages,
         propertyId,
-        activeSessionId,
+        activeSessionId || null,
         conversationId,
         leadId,
         config
@@ -780,19 +824,19 @@ Remember: You represent ${propertyName}. Provide exceptional customer service wi
       shouldPromptLeadCapture,
       leadCapturePrompt: shouldPromptLeadCapture ? config.lead_capture_prompt : null,
       wantsTour,
-      _debug: {
-        extractionRan,
-        extractionError,
-        hasLeadId: !!leadId,
-      }
+      // Debug info only in development
+      ...(process.env.NODE_ENV !== 'production' ? {
+        _debug: {
+          extractionRan,
+          extractionError,
+          hasLeadId: !!leadId,
+        }
+      } : {})
     }, { headers: corsHeaders });
 
   } catch (error) {
     console.error('LumaLeasing Chat Error:', error);
-    return NextResponse.json(
-      { error: 'Failed to process message' },
-      { status: 500, headers: corsHeaders }
-    );
+    return serverError(error, corsHeaders);
   }
 }
 

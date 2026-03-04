@@ -2,3 +2,4 @@ export { AlertBanner, useGeoAlerts, type Alert, type AlertType } from './AlertBa
 export { QueryTypeRings } from './QueryTypeRings'
 export { ModelComparisonCard } from './ModelComparisonCard'
 export { InsightsPanel, useGeoInsights, type GeoInsight } from './InsightsPanel'
+export { AiOverviewCard } from './AiOverviewCard'

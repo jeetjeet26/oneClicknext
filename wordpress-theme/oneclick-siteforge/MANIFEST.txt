@@ -1,0 +1,224 @@
+oneClick SiteForge - WordPress Theme
+=====================================
+
+THEME INFORMATION
+-----------------
+Name: oneClick SiteForge
+Version: 1.0.0
+Author: oneClick Communities
+License: GPL-2.0+
+Requires: WordPress 5.9+, PHP 7.4+, ACF Pro 6.0+
+Status: Production Ready
+
+INCLUDED FILES
+--------------
+
+Root Files:
+  ✓ style.css (3.5 KB) - Theme declaration and base styles
+  ✓ functions.php (10.2 KB) - Theme setup and ACF block registration
+  ✓ theme.json (5.8 KB) - Block editor settings and design tokens
+  ✓ header.php (2.1 KB) - Site header with navigation
+  ✓ footer.php (3.8 KB) - Site footer with social links
+  ✓ index.php (1.9 KB) - Fallback template
+  ✓ page.php (1.2 KB) - Page template
+  ✓ README.md (14.5 KB) - Complete documentation
+  ✓ DEPLOYMENT.md (16.2 KB) - Production deployment guide
+  ✓ QUICKSTART.md (8.9 KB) - 5-minute setup guide
+
+Block Templates (14 total):
+  ✓ blocks/top-slides.php - Hero image slider with Swiper.js
+  ✓ blocks/text-section.php - Rich text content section
+  ✓ blocks/content-grid.php - Responsive card grid layout
+  ✓ blocks/feature-section.php - Image + text split layout
+  ✓ blocks/links.php - CTA button group
+  ✓ blocks/plans-availability.php - Floor plan browser with filters
+  ✓ blocks/form.php - Lead capture form (contact/tour)
+  ✓ blocks/gallery.php - Photo gallery with lightbox
+  ✓ blocks/image.php - Single hero image with caption
+  ✓ blocks/map.php - Google Maps embed
+  ✓ blocks/poi.php - Points of interest map
+  ✓ blocks/menu.php - Sub-navigation menu
+  ✓ blocks/accordion-section.php - Expandable FAQ/list
+  ✓ blocks/html-section.php - Raw HTML embed
+
+Utility Files:
+  ✓ inc/template-tags.php - Template utility functions
+  ✓ inc/block-utilities.php - Block helper functions
+
+Stylesheets (2 files):
+  ✓ assets/css/blocks.css (19.4 KB) - All block styling
+  ✓ assets/css/layout.css (12.8 KB) - Header/footer styling
+
+JavaScript Files (7 total):
+  ✓ assets/js/slider.js (1.2 KB) - Swiper.js slider integration
+  ✓ assets/js/accordion.js (2.8 KB) - Accordion expand/collapse
+  ✓ assets/js/gallery.js (1.1 KB) - GLightbox integration
+  ✓ assets/js/poi-map.js (4.5 KB) - Points of interest map
+  ✓ assets/js/plans.js (6.2 KB) - Floor plans browser
+  ✓ assets/js/form-handler.js (3.4 KB) - Form submission handler
+  ✓ assets/js/mobile-menu.js (1.8 KB) - Mobile navigation toggle
+
+Configuration:
+  ✓ acf-json/.gitkeep - ACF field group sync directory
+
+TOTAL FILES: 34
+TOTAL SIZE: ~140 KB
+
+FEATURES
+--------
+
+14 ACF Blocks:
+  1. Hero Image Slider - Full-width carousel with text overlay
+  2. Rich Text Content - Flexible text sections
+  3. Card Grid Layout - Responsive 2/3/4 column grids
+  4. Image + Text Split - Two-column feature sections
+  5. CTA Button Group - Styled button clusters
+  6. Floor Plan Browser - Interactive property listings
+  7. Lead Capture Form - Contact/tour request forms
+  8. Photo Gallery - Lightbox gallery with grid/masonry
+  9. Single Hero Image - Full-width images with captions
+  10. Google Maps Embed - Property location maps
+  11. Points of Interest - Nearby amenities map
+  12. Sub-Navigation - Horizontal pill menus
+  13. Expandable FAQ - Accordion sections
+  14. Raw HTML - Custom embed support
+
+Design System:
+  ✓ Luxury typography (Cormorant Garamond + Inter)
+  ✓ Professional color palette (Navy, Sage, Gold, White)
+  ✓ Responsive breakpoints (768px, 1024px, 1200px)
+  ✓ Complete CSS custom properties for easy customization
+  ✓ Generous whitespace and elegant layouts
+
+Accessibility:
+  ✓ WCAG 2.1 AA compliant
+  ✓ Semantic HTML structure
+  ✓ ARIA labels and roles
+  ✓ Keyboard navigation support
+  ✓ Screen reader optimization
+  ✓ Color contrast ratios
+
+External Libraries (CDN):
+  ✓ Google Fonts - Typography
+  ✓ FontAwesome 6 - Icons
+  ✓ Swiper.js 10.3.1 - Slider functionality
+  ✓ GLightbox 3.2.0 - Gallery lightbox
+  ✓ Google Maps API - Maps and POI
+
+Theme Options:
+  ✓ Property information (name, address, coordinates)
+  ✓ Contact details (phone, email)
+  ✓ API configuration (Google Maps, lead capture, Yardi/RentCafe)
+  ✓ Social media links (Facebook, Instagram, Twitter, LinkedIn)
+
+PRODUCTION READY
+----------------
+
+✓ All PHP files properly escaped and secured
+✓ ACF Pro integration tested
+✓ Responsive mobile design (mobile-first)
+✓ Performance optimized
+✓ SEO friendly structure
+✓ Form validation and sanitization
+✓ Error handling on missing fields
+✓ Lazy loading for images
+✓ Minified CSS/JS ready
+✓ Cross-browser compatible
+
+DEPLOYMENT CHECKLIST
+--------------------
+
+Pre-Deployment:
+  [ ] WordPress 5.9+ running
+  [ ] ACF Pro 6.0+ installed
+  [ ] PHP 7.4+ enabled
+  [ ] HTTPS configured
+  [ ] Database backed up
+
+Setup:
+  [ ] Upload theme to /wp-content/themes/
+  [ ] Activate theme in WordPress
+  [ ] Configure Theme Settings
+  [ ] Create homepage
+  [ ] Set homepage in Reading settings
+  [ ] Create main navigation menu
+
+Configuration:
+  [ ] Add Google Maps API key
+  [ ] Set lead capture API endpoint
+  [ ] Enter property information
+  [ ] Add social media links
+  [ ] Add navigation menu items
+
+Testing:
+  [ ] All blocks render correctly
+  [ ] Forms submit successfully
+  [ ] Maps display properly
+  [ ] Mobile responsive
+  [ ] Page load time acceptable
+  [ ] No console errors
+
+SUPPORT DOCUMENTATION
+---------------------
+
+README.md
+  - Complete feature documentation
+  - File structure explanation
+  - Customization guide
+  - Troubleshooting tips
+
+DEPLOYMENT.md
+  - Step-by-step deployment guide
+  - API key setup instructions
+  - Security hardening checklist
+  - Performance optimization tips
+  - Monitoring and maintenance schedule
+
+QUICKSTART.md
+  - 30-second setup guide
+  - Common block usage examples
+  - Theme settings reference
+  - Tips and tricks
+
+VERSION HISTORY
+---------------
+
+1.0.0 - Initial Release
+  - All 14 blocks functional
+  - Complete theme styling
+  - Mobile responsive design
+  - Full documentation
+  - Production ready
+
+CONTACT
+-------
+
+For support and questions:
+  Web: https://oneclickcommunities.com
+  Email: support@oneclickcommunities.com
+
+LICENSE
+-------
+
+GPL-2.0+ License
+See WordPress.org for details
+
+INSTALLATION INSTRUCTIONS
+--------------------------
+
+1. Upload oneclick-siteforge/ to /wp-content/themes/
+2. Activate theme in WordPress Admin
+3. Install ACF Pro if not already installed
+4. Go to Dashboard > Theme Settings
+5. Fill in required configuration
+6. Create your first page and add blocks
+7. See QUICKSTART.md for detailed instructions
+
+---
+
+Thank you for using oneClick SiteForge!
+
+For the complete experience, read:
+  1. QUICKSTART.md (get started in 5 minutes)
+  2. README.md (detailed documentation)
+  3. DEPLOYMENT.md (production deployment)

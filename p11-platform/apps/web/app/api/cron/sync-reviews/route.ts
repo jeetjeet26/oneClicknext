@@ -6,6 +6,24 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
+async function fetchWithRetry(url: string, options: RequestInit, maxAttempts = 2): Promise<Response> {
+  let lastError: Error | undefined
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const res = await fetch(url, options)
+      return res
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err))
+      if (attempt < maxAttempts) {
+        const delay = 1000 * attempt
+        console.warn(`[Review Sync] Retry ${attempt}/${maxAttempts} after ${delay}ms`)
+        await new Promise(resolve => setTimeout(resolve, delay))
+      }
+    }
+  }
+  throw lastError
+}
+
 // Vercel CRON - runs every hour
 // Configure in vercel.json: { "crons": [{ "path": "/api/cron/sync-reviews", "schedule": "0 * * * *" }] }
 
@@ -60,7 +78,7 @@ export async function GET(request: NextRequest) {
 
     for (const connection of connections) {
       try {
-        const syncRes = await fetch(`${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/api/reviewflow/sync`, {
+        const syncRes = await fetchWithRetry(`${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/api/reviewflow/sync`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({

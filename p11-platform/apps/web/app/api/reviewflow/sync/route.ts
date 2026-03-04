@@ -483,6 +483,65 @@ async function analyzeReviewsBatch(reviews: { id: string; review_text: string; r
 
       console.log(`✅ Analyzed review ${review.id}: ${analysis.sentiment} (${analysis.sentimentScore})`)
 
+      // Auto-generate draft response for eligible positive reviews
+      if (analysis.sentiment === 'positive' && review.rating >= 4) {
+        try {
+          const { data: rfConfig } = await supabase
+            .from('reviewflow_config')
+            .select('auto_respond_positive, auto_respond_threshold, property_personality, default_tone')
+            .eq('property_id', review.property_id)
+            .single()
+
+          if (rfConfig?.auto_respond_positive && review.rating >= (rfConfig.auto_respond_threshold || 4)) {
+            const { data: property } = await supabase
+              .from('properties')
+              .select('name')
+              .eq('id', review.property_id)
+              .single()
+
+            const tone = rfConfig.default_tone || 'friendly'
+
+            const responsePrompt = `You are responding to an online review for ${property?.name || 'our apartment community'}.
+${rfConfig.property_personality ? `Property personality: ${rfConfig.property_personality}` : ''}
+Guidelines:
+- Be ${tone} in tone. Keep the response between 50-150 words.
+- Thank them for their kind words. Mention specific things they appreciated.
+- Make it feel personal and genuine, not templated.
+- ${review.reviewer_name ? `Address them by name: ${review.reviewer_name}` : 'Do not assume their name'}
+${analysis.topics.length > 0 ? `- Reference these topics: ${analysis.topics.join(', ')}` : ''}
+Rating: ${review.rating}/5`
+
+            const completion = await openai.chat.completions.create({
+              model: 'gpt-4o-mini',
+              messages: [
+                { role: 'system', content: responsePrompt },
+                { role: 'user', content: `Write a response to this review:\n\n"${review.review_text}"` }
+              ],
+              temperature: 0.7,
+              max_tokens: 300
+            })
+
+            const responseText = completion.choices[0].message.content
+            if (responseText) {
+              await supabase.from('review_responses').insert({
+                review_id: review.id,
+                response_text: responseText,
+                response_type: 'ai_generated',
+                status: 'draft',
+                tone,
+                ai_model: 'gpt-4o-mini',
+              })
+              await supabase.from('reviews')
+                .update({ response_status: 'draft_ready', updated_at: new Date().toISOString() })
+                .eq('id', review.id)
+              console.log(`✅ Auto-generated draft response for review ${review.id}`)
+            }
+          }
+        } catch (autoRespondError) {
+          console.error(`Auto-respond failed for review ${review.id} (non-blocking):`, autoRespondError)
+        }
+      }
+
       // Create ticket for negative/urgent reviews
       if (analysis.sentiment === 'negative' || analysis.isUrgent) {
         await supabase.from('review_tickets').upsert({

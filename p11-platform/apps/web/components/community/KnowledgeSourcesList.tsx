@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { 
+import {
   FileText,
   Globe,
   Database,
@@ -18,10 +18,14 @@ import {
   Home,
   Shield,
   DollarSign,
-  FileEdit
+  FileEdit,
+  Link,
+  Type
 } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import { ManualPricingModal } from './ManualPricingModal'
+import { AddWebsiteUrlsModal } from './AddWebsiteUrlsModal'
+import { PasteTextModal } from './PasteTextModal'
 
 type KnowledgeSource = {
   id: string
@@ -86,6 +90,8 @@ export function KnowledgeSourcesList({
   const [isScrapingPricing, setIsScrapingPricing] = useState(false)
   const [scrapeResult, setScrapeResult] = useState<any>(null)
   const [showManualPricingModal, setShowManualPricingModal] = useState(false)
+  const [showAddWebsiteUrlsModal, setShowAddWebsiteUrlsModal] = useState(false)
+  const [showPasteTextModal, setShowPasteTextModal] = useState(false)
 
   const handleRefresh = async () => {
     setIsRefreshing(true)
@@ -230,7 +236,7 @@ export function KnowledgeSourcesList({
             <FolderOpen className="h-5 w-5 text-slate-400" />
             Knowledge Sources
           </h3>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             {hasWebsiteSource && (
               <button
                 onClick={handleRefresh}
@@ -242,9 +248,25 @@ export function KnowledgeSourcesList({
               </button>
             )}
             <button
+              onClick={() => setShowAddWebsiteUrlsModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors"
+              title="Add new website URLs to scrape"
+            >
+              <Link className="h-4 w-4" />
+              Add URLs
+            </button>
+            <button
+              onClick={() => setShowPasteTextModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 rounded-lg transition-colors"
+              title="Paste text content directly"
+            >
+              <Type className="h-4 w-4" />
+              Paste Text
+            </button>
+            <button
               onClick={handleScrapePricing}
               disabled={isScrapingPricing}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors disabled:opacity-50"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-purple-600 hover:text-purple-700 hover:bg-purple-50 rounded-lg transition-colors disabled:opacity-50"
               title="Scrape pricing and floorplan data from property website"
             >
               <DollarSign className={`h-4 w-4 ${isScrapingPricing ? 'animate-pulse' : ''}`} />
@@ -252,7 +274,7 @@ export function KnowledgeSourcesList({
             </button>
             <button
               onClick={() => setShowManualPricingModal(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-purple-600 hover:text-purple-700 hover:bg-purple-50 rounded-lg transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-amber-600 hover:text-amber-700 hover:bg-amber-50 rounded-lg transition-colors"
               title="Extract pricing from pasted text using AI"
             >
               <FileEdit className="h-4 w-4" />
@@ -260,7 +282,7 @@ export function KnowledgeSourcesList({
             </button>
             <button
               onClick={onUploadClick}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 rounded-lg transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-slate-600 hover:text-slate-700 hover:bg-slate-50 rounded-lg transition-colors"
             >
               <Upload className="h-4 w-4" />
               Upload
@@ -359,6 +381,30 @@ export function KnowledgeSourcesList({
           onClose={() => setShowManualPricingModal(false)}
           onSuccess={() => {
             setShowManualPricingModal(false)
+            onRefresh?.()
+          }}
+        />
+      )}
+
+      {/* Add Website URLs Modal */}
+      {showAddWebsiteUrlsModal && (
+        <AddWebsiteUrlsModal
+          propertyId={propertyId}
+          onClose={() => setShowAddWebsiteUrlsModal(false)}
+          onSuccess={() => {
+            setShowAddWebsiteUrlsModal(false)
+            onRefresh?.()
+          }}
+        />
+      )}
+
+      {/* Paste Text Modal */}
+      {showPasteTextModal && (
+        <PasteTextModal
+          propertyId={propertyId}
+          onClose={() => setShowPasteTextModal(false)}
+          onSuccess={() => {
+            setShowPasteTextModal(false)
             onRefresh?.()
           }}
         />

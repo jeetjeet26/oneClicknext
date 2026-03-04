@@ -341,10 +341,27 @@ class OpenAINaturalConnector:
             'expectedState': context.get('propertyLocation', {}).get('state')
         })
         
-        logger.info(f"[OpenAINatural] Two-phase complete: {len(search_sources)} web sources")
+        # Merge Phase 1 web sources into citations for SOV calculation
+        answer_block = analyzed['envelope']['answer_block']
+        existing_citations = answer_block.get('citations', [])
+        existing_urls = {c.get('url') for c in existing_citations if c.get('url')}
+        
+        # Add web search sources as citations (for SOV calculation)
+        for source in search_sources:
+            if source.get('url') and source['url'] not in existing_urls:
+                existing_citations.append({
+                    'url': source['url'],
+                    'domain': source.get('domain', extract_domain_from_url(source['url'])),
+                    'entity_ref': None  # Web search sources don't have entity refs
+                })
+                existing_urls.add(source['url'])
+        
+        answer_block['citations'] = existing_citations
+        
+        logger.info(f"[OpenAINatural] Two-phase complete: {len(search_sources)} web sources, {len(existing_citations)} total citations")
         
         return {
-            'answer': analyzed['envelope']['answer_block'],
+            'answer': answer_block,
             'raw': {
                 'audit_mode': 'natural',
                 'phase1': phase1_raw,
