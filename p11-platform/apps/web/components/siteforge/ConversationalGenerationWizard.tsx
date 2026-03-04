@@ -140,9 +140,14 @@ export function ConversationalGenerationWizard({
           userMessage: null
         })
       })
-      
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        throw new Error(errData.error || `Planning failed: ${res.status}`)
+      }
+
       const data = await res.json()
-      
+
       setConversation([{
         role: 'assistant',
         content: data.aiResponse,
@@ -176,20 +181,25 @@ export function ConversationalGenerationWizard({
         body: JSON.stringify({
           propertyId,
           brandContext: analysis?.brandContext,
-          conversationHistory: [...conversation, userMsg],
+          conversationHistory: conversation,
           userMessage: userInput
         })
       })
-      
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        throw new Error(errData.error || `Chat failed: ${res.status}`)
+      }
+
       const data = await res.json()
-      
+
       // Add AI response
       setConversation(prev => [...prev, {
         role: 'assistant',
         content: data.aiResponse,
         timestamp: new Date().toISOString()
       }])
-      
+
       // Check if ready to generate
       if (data.readyToGenerate) {
         // Move to confirmation immediately
@@ -197,9 +207,15 @@ export function ConversationalGenerationWizard({
           setPhase('confirmation')
         }, 500)
       }
-      
+
     } catch (error) {
       console.error('Send message error:', error)
+      // Show error in chat so user knows something went wrong
+      setConversation(prev => [...prev, {
+        role: 'assistant',
+        content: `⚠️ Something went wrong: ${error instanceof Error ? error.message : 'Failed to send message'}. Please try again.`,
+        timestamp: new Date().toISOString()
+      }])
     } finally {
       setLoading(false)
     }

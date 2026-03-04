@@ -75,9 +75,17 @@ What would you like to emphasize or adjust in this plan?`
 
     // Build message history
     const messages: Anthropic.MessageParam[] = []
-    
-    // Add conversation history (must alternate user/assistant)
+
+    // Add conversation history (must alternate user/assistant, must start with user)
     if (conversationHistory && conversationHistory.length > 0) {
+      // If history starts with assistant (the initial AI response), prepend
+      // the original user context so Claude has the full conversation
+      if (conversationHistory[0].role === 'assistant') {
+        messages.push({
+          role: 'user',
+          content: `Please present your initial plan for the website.\n\nHere's the brand analysis:\n${initialContext}`
+        })
+      }
       for (const msg of conversationHistory) {
         messages.push({
           role: msg.role as 'user' | 'assistant',
@@ -85,14 +93,14 @@ What would you like to emphasize or adjust in this plan?`
         })
       }
     }
-    
+
     // Add user's new message (or initial request if first turn)
     if (userMessage) {
       messages.push({
         role: 'user',
         content: userMessage
       })
-    } else {
+    } else if (messages.length === 0) {
       // First message - user asks for initial plan
       messages.push({
         role: 'user',
