@@ -7,21 +7,22 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/utils/supabase/admin'
+import { validateCronAuth } from '@/utils/services/api-helpers'
+import { finishCronJobRun, startCronJobRun } from '@/utils/services/cron-job-runs'
 
 // Data engine service URL (Python FastAPI)
 const DATA_ENGINE_URL = process.env.DATA_ENGINE_URL || 'http://localhost:8000'
 
-// Verify CRON secret to prevent unauthorized access
-const CRON_SECRET = process.env.CRON_SECRET
-
 export async function GET(req: NextRequest) {
-  try {
-    // Verify CRON secret
-    const authHeader = req.headers.get('authorization')
-    if (CRON_SECRET && authHeader !== `Bearer ${CRON_SECRET}`) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+  const authError = validateCronAuth(req)
+  if (authError) return authError
 
+  const run = await startCronJobRun({
+    jobName: 'scrape-competitors',
+    requestId: req.headers.get('x-request-id'),
+  })
+
+  try {
     const supabase = createServiceClient()
 
     // Get all properties with scraping enabled
@@ -32,10 +33,19 @@ export async function GET(req: NextRequest) {
 
     if (configError) {
       console.error('Error fetching scrape configs:', configError)
+      await finishCronJobRun(run, {
+        status: 'failed',
+        error: 'Database error',
+        summary: { operation: 'fetch_scrape_configs' },
+      })
       return NextResponse.json({ error: 'Database error' }, { status: 500 })
     }
 
     if (!configs || configs.length === 0) {
+      await finishCronJobRun(run, {
+        status: 'success',
+        summary: { total: 0, processed: 0, scheduled: 0 },
+      })
       return NextResponse.json({
         success: true,
         message: 'No properties configured for scraping',
@@ -66,6 +76,10 @@ export async function GET(req: NextRequest) {
     })
 
     if (propertiesToScrape.length === 0) {
+      await finishCronJobRun(run, {
+        status: 'success',
+        summary: { total: configs.length, processed: 0, scheduled: 0 },
+      })
       return NextResponse.json({
         success: true,
         message: 'No properties due for scraping',
@@ -84,7 +98,16 @@ export async function GET(req: NextRequest) {
       if (!response.ok) {
         const errorText = await response.text()
         console.error('[CRON] Data engine error:', errorText)
-        
+        await finishCronJobRun(run, {
+          status: 'failed',
+          error: errorText,
+          summary: {
+            total: configs.length,
+            scheduled: propertiesToScrape.length,
+            operation: 'refresh_all',
+          },
+        })
+
         // Log the error but don't fail completely
         return NextResponse.json({
           success: false,
@@ -99,6 +122,14 @@ export async function GET(req: NextRequest) {
 
       console.log(`[CRON] Refresh complete:`, result)
 
+      await finishCronJobRun(run, {
+        status: 'success',
+        summary: {
+          total: configs.length,
+          processed: propertiesToScrape.length,
+        },
+      })
+
       return NextResponse.json({
         success: true,
         message: `Refreshed ${propertiesToScrape.length} properties`,
@@ -109,7 +140,16 @@ export async function GET(req: NextRequest) {
 
     } catch (fetchError) {
       console.error('[CRON] Failed to reach data engine:', fetchError)
-      
+      await finishCronJobRun(run, {
+        status: 'failed',
+        error: 'Could not connect to scraping service',
+        summary: {
+          total: configs.length,
+          scheduled: propertiesToScrape.length,
+          operation: 'connect_data_engine',
+        },
+      })
+
       return NextResponse.json({
         success: false,
         message: 'Data engine service unavailable',
@@ -121,6 +161,11 @@ export async function GET(req: NextRequest) {
 
   } catch (error) {
     console.error('[CRON] Unexpected error:', error)
+    await finishCronJobRun(run, {
+      status: 'failed',
+      error: error instanceof Error ? error.message : 'Unknown error',
+      summary: { operation: 'run_scrape_competitors' },
+    })
     return NextResponse.json({ 
       error: 'Internal server error',
       details: error instanceof Error ? error.message : 'Unknown error'

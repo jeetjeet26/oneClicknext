@@ -6,6 +6,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
+
+const DATA_ENGINE_DISPATCH_TIMEOUT_MS = 15000
+const TYPESCRIPT_PROCESS_TIMEOUT_MS = 600000
 
 export interface GeoRun {
   id: string
@@ -17,6 +21,73 @@ export interface GeoRun {
   startedAt: string
   finishedAt: string | null
   errorMessage: string | null
+}
+
+function isTypeScriptFallbackEnabled() {
+  return process.env.PROPERTYAUDIT_ALLOW_TYPESCRIPT_FALLBACK === 'true'
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+async function readResponseError(response: Response): Promise<string> {
+  try {
+    const body = await response.json()
+    if (typeof body?.details === 'string' && body.details.length > 0) {
+      return `${body.error || response.statusText}: ${body.details}`
+    }
+    if (typeof body?.error === 'string' && body.error.length > 0) {
+      return body.error
+    }
+  } catch {
+    // Fall back to plain text below.
+  }
+
+  const text = await response.text().catch(() => '')
+  return text || `Request failed with ${response.status}`
+}
+
+async function markDispatchFailed(
+  serviceClient: ReturnType<typeof createServiceClient>,
+  runId: string,
+  message: string
+) {
+  await serviceClient
+    .from('geo_runs')
+    .update({
+      status: 'failed',
+      error_message: message,
+      finished_at: new Date().toISOString(),
+    })
+    .eq('id', runId)
+}
+
+async function triggerTypeScriptProcessor(options: {
+  baseUrl: string
+  cronSecret: string
+  runId: string
+}) {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), TYPESCRIPT_PROCESS_TIMEOUT_MS)
+
+  try {
+    const response = await fetch(`${options.baseUrl}/api/propertyaudit/process`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${options.cronSecret}`,
+      },
+      body: JSON.stringify({ runId: options.runId }),
+      signal: controller.signal,
+    })
+
+    if (!response.ok) {
+      throw new Error(await readResponseError(response))
+    }
+  } finally {
+    clearTimeout(timeoutId)
+  }
 }
 
 // POST: Trigger a new GEO audit run
@@ -36,13 +107,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'propertyId required' }, { status: 400 })
     }
 
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
     // Validate executionCount
-    const validExecutionCount = Math.max(1, Math.min(5, parseInt(executionCount as any) || 1))
+    const validExecutionCount = Math.max(1, Math.min(5, Number(executionCount) || 1))
 
     const serviceClient = createServiceClient()
 
     // Get query count for this property
-    const { data: queryRows, count: queryCount } = await serviceClient
+    const { count: queryCount } = await serviceClient
       .from('geo_queries')
       .select('id', { count: 'exact' })
       .eq('property_id', propertyId)
@@ -57,6 +133,15 @@ export async function POST(req: NextRequest) {
 
     // Apply global execution count to all queries
     const totalQueryExecutions = queryCount * validExecutionCount
+    const useDataEngine = process.env.PROPERTYAUDIT_USE_DATA_ENGINE === 'true'
+    const cronSecret = process.env.CRON_SECRET
+
+    if (!useDataEngine && !cronSecret) {
+      return NextResponse.json(
+        { error: 'CRON_SECRET is required for TypeScript PropertyAudit processing' },
+        { status: 500 }
+      )
+    }
 
     // Create runs for each surface with shared batch_id
     const runs: GeoRun[] = []
@@ -82,7 +167,6 @@ export async function POST(req: NextRequest) {
           execution_count: validExecutionCount,
           started_at: new Date().toISOString(),
           batch_id: batchId,
-          batch_size: surfaces.length
         })
         .select()
         .single()
@@ -103,10 +187,9 @@ export async function POST(req: NextRequest) {
 
     // Trigger processing - prefer batch execution for parallel processing
     // Feature flag: Use data-engine or TypeScript processor
-    const USE_DATA_ENGINE = process.env.PROPERTYAUDIT_USE_DATA_ENGINE === 'true'
-    const baseUrl = req.nextUrl.origin
+    const baseUrl = req.nextUrl?.origin || new URL(req.url).origin
     
-    if (USE_DATA_ENGINE) {
+    if (useDataEngine) {
       // ============================================================
       // PARALLEL EXECUTION: Fire separate HTTP requests for each run
       // HTTP-level parallelism is more reliable than in-process asyncio
@@ -114,6 +197,7 @@ export async function POST(req: NextRequest) {
       // ============================================================
       const dataEngineUrl = process.env.DATA_ENGINE_URL || 'http://localhost:8000'
       const apiKey = process.env.DATA_ENGINE_API_KEY
+      const canFallbackToTypeScript = isTypeScriptFallbackEnabled() && Boolean(cronSecret)
       
       if (!apiKey) {
         console.warn('⚠️  DATA_ENGINE_API_KEY not set - data-engine may reject request')
@@ -125,47 +209,77 @@ export async function POST(req: NextRequest) {
       const promises = runs.map(run => {
         console.log(`🚀 [PropertyAudit] Starting ${run.surface.toUpperCase()} run ${run.id}`)
         
-        return fetch(`${dataEngineUrl}/jobs/propertyaudit/run`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-API-Key': apiKey || '',
-            'X-Correlation-ID': run.id,
-          },
-          body: JSON.stringify({ 
-            run_id: run.id,
-            surface: run.surface,
-            batch_id: batchId  // Include batch_id for cross-model analysis later
-          }),
-        })
-          .then(response => {
+        return (async () => {
+          const controller = new AbortController()
+          const timeoutId = setTimeout(() => controller.abort(), DATA_ENGINE_DISPATCH_TIMEOUT_MS)
+
+          try {
+            const response = await fetch(`${dataEngineUrl}/jobs/propertyaudit/run`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-API-Key': apiKey || '',
+                'X-Correlation-ID': run.id,
+              },
+              body: JSON.stringify({ 
+                run_id: run.id,
+                surface: run.surface,
+                batch_id: batchId  // Include batch_id for cross-model analysis later
+              }),
+              signal: controller.signal,
+            })
+
             if (!response.ok) {
-              throw new Error(`Data-engine returned ${response.status}`)
+              throw new Error(await readResponseError(response))
             }
-            return response.json()
-          })
-          .then(data => {
+
+            const data = await response.json()
             console.log(`✅ [PropertyAudit] ${run.surface.toUpperCase()} run ${run.id} accepted:`, data)
-            return { success: true, run, data }
-          })
-          .catch(async (err) => {
-            console.error(`❌ [PropertyAudit] ${run.surface.toUpperCase()} run ${run.id} failed:`, err)
-            await serviceClient
-              .from('geo_runs')
-              .update({ 
-                status: 'failed', 
-                error_message: `Data-engine error: ${err.message}`,
-                finished_at: new Date().toISOString()
-              })
-              .eq('id', run.id)
-            return { success: false, run, error: err.message }
-          })
+            return { success: true, run, mode: 'data_engine' as const, data }
+          } catch (error) {
+            const dispatchError = getErrorMessage(error)
+            console.error(`❌ [PropertyAudit] ${run.surface.toUpperCase()} run ${run.id} failed:`, error)
+
+            if (canFallbackToTypeScript && cronSecret) {
+              console.warn(
+                `⚠️ [PropertyAudit] Opt-in TypeScript fallback enabled for ${run.id}: ${dispatchError}`
+              )
+
+              try {
+                await triggerTypeScriptProcessor({
+                  baseUrl,
+                  cronSecret,
+                  runId: run.id,
+                })
+
+                return {
+                  success: true,
+                  run,
+                  mode: 'typescript_fallback' as const,
+                  fallbackReason: dispatchError,
+                }
+              } catch (fallbackError) {
+                const combinedError = `Data-engine dispatch failed (${dispatchError}); TypeScript fallback failed (${getErrorMessage(fallbackError)})`
+                await markDispatchFailed(serviceClient, run.id, combinedError)
+                return { success: false, run, mode: 'failed' as const, error: combinedError }
+              }
+            }
+
+            await markDispatchFailed(serviceClient, run.id, `Data-engine dispatch failed: ${dispatchError}`)
+            return { success: false, run, mode: 'failed' as const, error: dispatchError }
+          } finally {
+            clearTimeout(timeoutId)
+          }
+        })()
       })
       
       // Don't await - let them run in background
       Promise.all(promises).then(results => {
         const succeeded = results.filter(r => r.success).length
-        console.log(`✅ [PropertyAudit] Batch ${batchId}: ${succeeded}/${runs.length} runs accepted by data-engine`)
+        const fallbackCount = results.filter(r => r.mode === 'typescript_fallback').length
+        console.log(
+          `✅ [PropertyAudit] Batch ${batchId}: ${succeeded}/${runs.length} runs dispatched (${fallbackCount} via TypeScript fallback)`
+        )
       })
       
     } else {
@@ -174,29 +288,28 @@ export async function POST(req: NextRequest) {
       // ============================================================
       for (const run of runs) {
         console.log(`⚠️  [PropertyAudit] Using TypeScript processor (legacy) for run ${run.id}`)
-        
-        const controller = new AbortController()
-        const timeoutId = setTimeout(() => controller.abort(), 600000) // 10 minute timeout
-        
-        fetch(`${baseUrl}/api/propertyaudit/process`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ runId: run.id }),
-          signal: controller.signal,
+
+        if (!cronSecret) {
+          await markDispatchFailed(serviceClient, run.id, 'CRON_SECRET missing for TypeScript processing')
+          continue
+        }
+
+        void triggerTypeScriptProcessor({
+          baseUrl,
+          cronSecret,
+          runId: run.id,
+        }).catch(async (error) => {
+          const message = getErrorMessage(error)
+          console.error(`Failed to trigger processing for run ${run.id}:`, error)
+          await markDispatchFailed(serviceClient, run.id, `TypeScript processor dispatch failed: ${message}`)
         })
-          .then(() => clearTimeout(timeoutId))
-          .catch(err => {
-            clearTimeout(timeoutId)
-            if (err.name !== 'AbortError') {
-              console.error(`Failed to trigger processing for run ${run.id}:`, err)
-            }
-          })
       }
     }
 
     return NextResponse.json({
       success: true,
       runs,
+      processorMode: useDataEngine ? 'data_engine' : 'typescript',
       message: `Created ${runs.length} run(s) for ${queryCount} queries × ${validExecutionCount} executions = ${totalQueryExecutions} total LLM calls. Processing started.`,
     })
   } catch (error) {
@@ -222,6 +335,22 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: 'runId required' }, { status: 400 })
     }
 
+    const serviceClient = createServiceClient()
+    const { data: runRecord, error: runFetchError } = await serviceClient
+      .from('geo_runs')
+      .select('id, property_id')
+      .eq('id', runId)
+      .single()
+
+    if (runFetchError || !runRecord) {
+      return NextResponse.json({ error: 'Run not found' }, { status: 404 })
+    }
+
+    const access = await validatePropertyAccess(user.id, runRecord.property_id)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
     const updateData: Record<string, unknown> = {}
     
     if (status) {
@@ -235,7 +364,6 @@ export async function PATCH(req: NextRequest) {
       updateData.error_message = errorMessage
     }
 
-    const serviceClient = createServiceClient()
     const { data: run, error } = await serviceClient
       .from('geo_runs')
       .update(updateData)

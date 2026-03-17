@@ -1,5 +1,6 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { NextRequest, NextResponse } from 'next/server'
 
 // GET - Get a single property with all details (contacts, integrations, documents)
@@ -19,6 +20,11 @@ export async function GET(
   const { id } = await params
 
   try {
+    const access = await validatePropertyAccess(user.id, id)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
     // Get user's profile to find their organization
     const { data: profile } = await supabase
       .from('profiles')
@@ -89,7 +95,7 @@ export async function GET(
         acc.get(key)!.chunk_count++
       }
       return acc
-    }, new Map<string, { id: string; name: string; source: string; created_at: string; chunk_count: number }>())
+    }, new Map<string, { id: string; name: string; source: string; created_at: string | null; chunk_count: number }>())
 
     const documentsList = documents ? Array.from(documents.values()) : []
 

@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { createClient as createSupabaseClient } from '@supabase/supabase-js'
+import { createClient as createServerClient } from '@/utils/supabase/server'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
-const supabase = createClient(
+const supabase = createSupabaseClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
@@ -9,20 +11,36 @@ const supabase = createClient(
 // GET - Fetch content assets
 export async function GET(request: NextRequest) {
   try {
+    const authClient = await createServerClient()
+    const {
+      data: { user },
+      error: authError,
+    } = await authClient.auth.getUser()
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const { searchParams } = new URL(request.url)
     const propertyId = searchParams.get('propertyId')
     const assetType = searchParams.get('assetType')
     const tags = searchParams.get('tags')?.split(',')
     const folder = searchParams.get('folder')
     const aiGenerated = searchParams.get('aiGenerated')
-    const limit = parseInt(searchParams.get('limit') || '50')
-    const offset = parseInt(searchParams.get('offset') || '0')
+    const requestedLimit = Number.parseInt(searchParams.get('limit') || '50', 10)
+    const requestedOffset = Number.parseInt(searchParams.get('offset') || '0', 10)
+    const limit = Number.isFinite(requestedLimit) ? Math.min(100, Math.max(1, requestedLimit)) : 50
+    const offset = Number.isFinite(requestedOffset) ? Math.max(0, requestedOffset) : 0
 
     if (!propertyId) {
       return NextResponse.json(
         { error: 'Property ID required' },
         { status: 400 }
       )
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     let query = supabase
@@ -77,6 +95,15 @@ export async function GET(request: NextRequest) {
 // POST - Upload a new asset
 export async function POST(request: NextRequest) {
   try {
+    const authClient = await createServerClient()
+    const {
+      data: { user },
+      error: authError,
+    } = await authClient.auth.getUser()
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const body = await request.json()
     const {
       propertyId,
@@ -91,8 +118,7 @@ export async function POST(request: NextRequest) {
       durationSeconds,
       format,
       tags,
-      folder,
-      uploadedBy
+      folder
     } = body
 
     if (!propertyId || !name || !assetType || !fileUrl) {
@@ -100,6 +126,11 @@ export async function POST(request: NextRequest) {
         { error: 'Missing required fields' },
         { status: 400 }
       )
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     const { data, error } = await supabase
@@ -119,7 +150,7 @@ export async function POST(request: NextRequest) {
         tags: tags || [],
         folder,
         is_ai_generated: false,
-        uploaded_by: uploadedBy
+        uploaded_by: user.id
       })
       .select()
       .single()
@@ -149,6 +180,15 @@ export async function POST(request: NextRequest) {
 // PATCH - Update an asset
 export async function PATCH(request: NextRequest) {
   try {
+    const authClient = await createServerClient()
+    const {
+      data: { user },
+      error: authError,
+    } = await authClient.auth.getUser()
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const body = await request.json()
     const {
       assetId,
@@ -164,6 +204,24 @@ export async function PATCH(request: NextRequest) {
         { error: 'Asset ID required' },
         { status: 400 }
       )
+    }
+
+    const { data: existingAsset, error: existingAssetError } = await supabase
+      .from('content_assets')
+      .select('id, property_id')
+      .eq('id', assetId)
+      .single()
+
+    if (existingAssetError || !existingAsset) {
+      return NextResponse.json(
+        { error: 'Asset not found' },
+        { status: 404 }
+      )
+    }
+
+    const access = await validatePropertyAccess(user.id, existingAsset.property_id)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     const updateData: Record<string, unknown> = {
@@ -208,6 +266,15 @@ export async function PATCH(request: NextRequest) {
 // DELETE - Delete an asset
 export async function DELETE(request: NextRequest) {
   try {
+    const authClient = await createServerClient()
+    const {
+      data: { user },
+      error: authError,
+    } = await authClient.auth.getUser()
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const { searchParams } = new URL(request.url)
     const assetId = searchParams.get('assetId')
 
@@ -216,6 +283,24 @@ export async function DELETE(request: NextRequest) {
         { error: 'Asset ID required' },
         { status: 400 }
       )
+    }
+
+    const { data: existingAsset, error: existingAssetError } = await supabase
+      .from('content_assets')
+      .select('id, property_id')
+      .eq('id', assetId)
+      .single()
+
+    if (existingAssetError || !existingAsset) {
+      return NextResponse.json(
+        { error: 'Asset not found' },
+        { status: 404 }
+      )
+    }
+
+    const access = await validatePropertyAccess(user.id, existingAsset.property_id)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     const { error } = await supabase

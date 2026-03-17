@@ -5,16 +5,52 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/utils/supabase/admin'
+import { ensureCalendarWatch, getCalendarConfig } from '@/utils/services/google-calendar'
+import { verifySignedGoogleOAuthState } from '@/utils/services/google-oauth-state'
+import { createRequestContext } from '@/utils/services/request-context'
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
 const GOOGLE_REDIRECT_URI = process.env.NEXT_PUBLIC_APP_URL 
   ? `${process.env.NEXT_PUBLIC_APP_URL}/api/lumaleasing/calendar/callback`
   : 'http://localhost:3000/api/lumaleasing/calendar/callback'
 
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 
+function redirectWithHeaders(location: URL | string, headers: Record<string, string>) {
+  const response = NextResponse.redirect(location)
+  Object.entries(headers).forEach(([key, value]) => {
+    response.headers.set(key, value)
+  })
+
+  return response
+}
+
+function dashboardRedirect(
+  headers: Record<string, string>,
+  options?: {
+    errorCode?: string
+    params?: Record<string, string>
+  }
+) {
+  const url = new URL('/dashboard/lumaleasing', APP_URL)
+
+  if (options?.errorCode) {
+    url.searchParams.set('error', options.errorCode)
+  }
+
+  Object.entries(options?.params || {}).forEach(([key, value]) => {
+    url.searchParams.set(key, value)
+  })
+
+  return redirectWithHeaders(url, headers)
+}
+
 export async function GET(request: NextRequest) {
+  const ctx = createRequestContext(request, '/api/lumaleasing/calendar/callback')
+  ctx.logStart()
+
   try {
     const { searchParams } = new URL(request.url)
     const code = searchParams.get('code')
@@ -23,28 +59,65 @@ export async function GET(request: NextRequest) {
 
     // Handle user denial
     if (error) {
-      console.error('[GoogleCalendar] OAuth error:', error)
-      return NextResponse.redirect(
-        `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/dashboard/lumaleasing?error=calendar_denied`
-      )
+      ctx.logSuccess(307, { reason: 'google_oauth_error', providerError: error })
+      return dashboardRedirect(ctx.responseHeaders, { errorCode: 'calendar_denied' })
     }
 
     if (!code || !state) {
-      return NextResponse.json(
-        { error: 'Missing authorization code or state' },
-        { status: 400 }
-      )
+      ctx.logSuccess(307, { reason: 'missing_code_or_state' })
+      return dashboardRedirect(ctx.responseHeaders, { errorCode: 'invalid_callback' })
     }
 
-    // Decode state parameter
-    const stateData = JSON.parse(Buffer.from(state, 'base64').toString('utf-8'))
-    const { propertyId, profileId } = stateData
+    if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
+      ctx.logError(500, new Error('Missing Google OAuth credentials'))
+      return dashboardRedirect(ctx.responseHeaders, { errorCode: 'calendar_not_configured' })
+    }
 
-    if (!propertyId || !profileId) {
-      return NextResponse.json(
-        { error: 'Invalid state parameter' },
-        { status: 400 }
-      )
+    let propertyId: string
+    let profileId: string
+
+    try {
+      const verifiedState = verifySignedGoogleOAuthState(state)
+      propertyId = verifiedState.propertyId
+      profileId = verifiedState.profileId
+    } catch (stateError) {
+      const reason =
+        stateError instanceof Error &&
+        stateError.message === 'OAuth state has expired'
+          ? 'expired_state'
+          : 'invalid_state'
+
+      ctx.logSuccess(307, {
+        reason,
+        error: stateError instanceof Error ? stateError.message : String(stateError),
+      })
+      return dashboardRedirect(ctx.responseHeaders, { errorCode: reason })
+    }
+
+    const supabase = createServiceClient()
+    const [{ data: profile, error: profileError }, { data: property, error: propertyError }] =
+      await Promise.all([
+        supabase
+          .from('profiles')
+          .select('org_id')
+          .eq('id', profileId)
+          .single(),
+        supabase
+          .from('properties')
+          .select('org_id')
+          .eq('id', propertyId)
+          .single(),
+      ])
+
+    if (
+      profileError ||
+      propertyError ||
+      !profile?.org_id ||
+      !property?.org_id ||
+      profile.org_id !== property.org_id
+    ) {
+      ctx.logSuccess(307, { reason: 'state_access_invalid', propertyId, profileId })
+      return dashboardRedirect(ctx.responseHeaders, { errorCode: 'state_access_invalid' })
     }
 
     // Exchange authorization code for tokens
@@ -55,8 +128,8 @@ export async function GET(request: NextRequest) {
       },
       body: new URLSearchParams({
         code,
-        client_id: GOOGLE_CLIENT_ID || '',
-        client_secret: GOOGLE_CLIENT_SECRET || '',
+        client_id: GOOGLE_CLIENT_ID,
+        client_secret: GOOGLE_CLIENT_SECRET,
         redirect_uri: GOOGLE_REDIRECT_URI,
         grant_type: 'authorization_code',
       }),
@@ -65,19 +138,21 @@ export async function GET(request: NextRequest) {
     if (!tokenResponse.ok) {
       const errorText = await tokenResponse.text()
       console.error('[GoogleCalendar] Token exchange failed:', errorText)
-      return NextResponse.redirect(
-        `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/dashboard/lumaleasing?error=token_exchange_failed`
-      )
+      ctx.logSuccess(307, {
+        reason: 'token_exchange_failed',
+        propertyId,
+        profileId,
+        providerStatus: tokenResponse.status,
+      })
+      return dashboardRedirect(ctx.responseHeaders, { errorCode: 'token_exchange_failed' })
     }
 
     const tokens = await tokenResponse.json()
     const { access_token, refresh_token, expires_in } = tokens
 
-    if (!access_token || !refresh_token) {
-      console.error('[GoogleCalendar] Missing tokens in response')
-      return NextResponse.redirect(
-        `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/dashboard/lumaleasing?error=missing_tokens`
-      )
+    if (!access_token || !refresh_token || typeof expires_in !== 'number') {
+      ctx.logSuccess(307, { reason: 'missing_tokens', propertyId, profileId })
+      return dashboardRedirect(ctx.responseHeaders, { errorCode: 'missing_tokens' })
     }
 
     // Get user's email from Google Calendar API
@@ -87,8 +162,8 @@ export async function GET(request: NextRequest) {
       },
     })
 
-    let googleEmail = 'unknown@gmail.com'
     let timezone = 'America/Chicago'
+    let googleEmail: string | null = null
 
     if (calendarResponse.ok) {
       const calendarData = await calendarResponse.json()
@@ -103,23 +178,29 @@ export async function GET(request: NextRequest) {
       
       if (userinfoResponse.ok) {
         const userinfo = await userinfoResponse.json()
-        googleEmail = userinfo.email || googleEmail
+        googleEmail =
+          typeof userinfo?.email === 'string' && userinfo.email.length > 0
+            ? userinfo.email
+            : null
       }
+    }
+
+    if (!googleEmail) {
+      ctx.logSuccess(307, { reason: 'userinfo_failed', propertyId, profileId })
+      return dashboardRedirect(ctx.responseHeaders, { errorCode: 'userinfo_failed' })
     }
 
     // Calculate token expiration
     const tokenExpiresAt = new Date(Date.now() + expires_in * 1000).toISOString()
 
     // Store tokens in database
-    const supabase = createServiceClient()
-
     // Check if calendar config already exists
     const { data: existing } = await supabase
       .from('agent_calendars')
       .select('id')
       .eq('property_id', propertyId)
       .eq('profile_id', profileId)
-      .single()
+      .maybeSingle()
 
     if (existing) {
       // Update existing config
@@ -141,9 +222,13 @@ export async function GET(request: NextRequest) {
 
       if (updateError) {
         console.error('[GoogleCalendar] Failed to update calendar:', updateError)
-        return NextResponse.redirect(
-          `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/dashboard/lumaleasing?error=database_error`
-        )
+        ctx.logSuccess(307, {
+          reason: 'database_error',
+          propertyId,
+          profileId,
+          operation: 'update_agent_calendar',
+        })
+        return dashboardRedirect(ctx.responseHeaders, { errorCode: 'database_error' })
       }
     } else {
       // Create new config
@@ -164,21 +249,43 @@ export async function GET(request: NextRequest) {
 
       if (insertError) {
         console.error('[GoogleCalendar] Failed to create calendar:', insertError)
-        return NextResponse.redirect(
-          `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/dashboard/lumaleasing?error=database_error`
-        )
+        ctx.logSuccess(307, {
+          reason: 'database_error',
+          propertyId,
+          profileId,
+          operation: 'insert_agent_calendar',
+        })
+        return dashboardRedirect(ctx.responseHeaders, { errorCode: 'database_error' })
       }
     }
 
+    let watchRegistered = false
+    try {
+      const calendarConfig = await getCalendarConfig(propertyId)
+      if (calendarConfig) {
+        watchRegistered = Boolean(await ensureCalendarWatch(calendarConfig))
+      }
+    } catch (watchError) {
+      console.error('[GoogleCalendar] Failed to set up push watch:', watchError)
+    }
+
     // Success! Redirect back to dashboard
-    return NextResponse.redirect(
-      `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/dashboard/lumaleasing?success=calendar_connected&email=${encodeURIComponent(googleEmail)}`
-    )
+    ctx.logSuccess(307, {
+      propertyId,
+      profileId,
+      googleEmail,
+      success: 'calendar_connected',
+      watchRegistered,
+    })
+    return dashboardRedirect(ctx.responseHeaders, {
+      params: {
+        success: 'calendar_connected',
+        email: googleEmail,
+      },
+    })
 
   } catch (error) {
-    console.error('[GoogleCalendar] OAuth callback error:', error)
-    return NextResponse.redirect(
-      `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/dashboard/lumaleasing?error=callback_failed`
-    )
+    ctx.logError(500, error, { operation: 'google_calendar_oauth_callback' })
+    return dashboardRedirect(ctx.responseHeaders, { errorCode: 'callback_failed' })
   }
 }

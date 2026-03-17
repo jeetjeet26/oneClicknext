@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { createClient } from '@/utils/supabase/server'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import OpenAI from 'openai'
 import { extractText } from 'unpdf'
+import { upsertManagedKnowledgeSource } from '@/utils/services/knowledge-sources'
 import { 
   uploadFileAsset, 
   STORAGE_BUCKETS,
@@ -76,8 +78,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'propertyId is required' }, { status: 400 })
     }
 
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
     // Check file type - PDF, TXT, MD supported
-    const allowedTypes = ['text/plain', 'text/markdown', 'application/pdf']
     const isPdf = file.type === 'application/pdf' || file.name.endsWith('.pdf')
     const isTxt = file.type === 'text/plain' || file.name.endsWith('.txt')
     const isMd = file.type === 'text/markdown' || file.name.endsWith('.md')
@@ -201,11 +207,40 @@ export async function POST(req: NextRequest) {
     }))
 
     // Insert into database
-    const { error: insertError } = await supabase.from('documents').insert(payload)
+    const { error: insertError } = await supabase.from('documents').insert(payload as never)
     
     if (insertError) {
       console.error('Document insert error:', insertError)
       return NextResponse.json({ error: 'Failed to store document' }, { status: 500 })
+    }
+
+    let knowledgeSourceId: string
+    try {
+      const knowledgeSource = await upsertManagedKnowledgeSource(supabase, {
+        propertyId,
+        sourceType: 'document',
+        sourceName: documentTitle,
+        sourceUrl: originalFileUrl || null,
+        fileName: file.name,
+        fileType: file.type || getMimeTypeFromExtension(file.name),
+        fileSize: file.size,
+        status: 'completed',
+        documentsCreated: chunks.length,
+        extractedData: {
+          brand_origin: 'client_provided_material',
+          title: documentTitle,
+          original_file_path: originalFilePath || null,
+          uploaded_by: user.id,
+          uploaded_at: new Date().toISOString(),
+        },
+      })
+      knowledgeSourceId = knowledgeSource.id
+    } catch (knowledgeSourceError) {
+      console.error('Knowledge source upsert error:', knowledgeSourceError)
+      return NextResponse.json(
+        { error: 'Failed to create knowledge source record for uploaded document' },
+        { status: 500 }
+      )
     }
 
     return NextResponse.json({ 
@@ -214,6 +249,7 @@ export async function POST(req: NextRequest) {
       title: documentTitle,
       chunks: chunks.length,
       characters: textContent.length,
+      knowledgeSourceId,
       originalFileUrl,
       originalFileStored: !!originalFileUrl,
     })

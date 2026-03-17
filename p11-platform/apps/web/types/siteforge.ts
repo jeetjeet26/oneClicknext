@@ -344,9 +344,48 @@ export interface WebsiteStatusResponse {
   progress: number
   currentStep?: string
   errorMessage?: string
+  brandReadiness?: {
+    degraded: boolean
+    source: string | null
+    confidence: number | null
+    blockers: string[]
+  }
+  deploymentReadiness?: {
+    ready: boolean
+    mode: 'cloudways' | 'existing_wordpress' | 'unconfigured'
+    blockers: string[]
+  }
   siteArchitecture?: SiteArchitecture
   wpUrl?: string
   wpAdminUrl?: string
+  deploymentDiagnostics?: {
+    workflow: 'siteforge_wordpress_deploy'
+    status: 'success' | 'failed'
+    provider: 'cloudways' | 'existing_wordpress' | 'local_simulation'
+    startedAt: string
+    completedAt: string
+    pagesAttempted: number
+    assetsAttempted: number
+    verification: {
+      enabled: true
+      status: 'passed' | 'failed'
+      message?: string
+    }
+    target?: {
+      url: string
+      adminUrl: string
+      instanceId: string
+    }
+    deploySource: {
+      field: 'blueprint' | 'pages_generated'
+      blueprintVersion: number | null
+      blueprintUpdatedAt: string | null
+    }
+    error?: {
+      message: string
+      category: 'verification' | 'configuration' | 'provisioning' | 'unknown'
+    }
+  }
 }
 
 export interface RegenerateRequest {

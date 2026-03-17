@@ -105,6 +105,7 @@ export function ReviewStep() {
           notes: i.notes || null,
         })),
         documentCount: documents.length,
+        existingPropertyId: !editMode.isEditing ? createdPropertyId : null,
       }
 
       // Use different endpoint for edit vs create

@@ -6,6 +6,8 @@
 import { createServiceClient } from '@/utils/supabase/admin'
 import { sendMessage, replaceTemplateVariables, type TemplateVariables } from './messaging'
 
+const WORKFLOW_PROCESSING_LEASE_MS = 5 * 60 * 1000
+
 /**
  * Retry helper with exponential backoff
  */
@@ -69,6 +71,50 @@ export interface ProcessResult {
   errors: string[]
 }
 
+async function claimWorkflowProcessingLease(
+  supabase: ReturnType<typeof createServiceClient>,
+  workflowId: string,
+  currentStep: number
+): Promise<boolean> {
+  const now = new Date()
+  const nowIso = now.toISOString()
+  const leaseExpiryIso = new Date(now.getTime() + WORKFLOW_PROCESSING_LEASE_MS).toISOString()
+
+  const { data, error } = await supabase
+    .from('lead_workflows')
+    .update({
+      processing_started_at: nowIso,
+      processing_expires_at: leaseExpiryIso,
+      updated_at: nowIso,
+    })
+    .eq('id', workflowId)
+    .eq('status', 'active')
+    .eq('current_step', currentStep)
+    .or(`processing_expires_at.is.null,processing_expires_at.lt.${nowIso}`)
+    .select('id')
+    .maybeSingle()
+
+  if (error) {
+    throw error
+  }
+
+  return Boolean(data?.id)
+}
+
+async function clearWorkflowProcessingLease(
+  supabase: ReturnType<typeof createServiceClient>,
+  workflowId: string
+) {
+  await supabase
+    .from('lead_workflows')
+    .update({
+      processing_started_at: null,
+      processing_expires_at: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', workflowId)
+}
+
 /**
  * Process all pending workflow actions
  * Should be called by a CRON job every 10 minutes
@@ -83,6 +129,8 @@ export async function processWorkflows(): Promise<ProcessResult> {
   }
 
   try {
+    const nowIso = new Date().toISOString()
+
     // Get all active workflows that are due for next action
     const { data: workflows, error } = await supabase
       .from('lead_workflows')
@@ -111,7 +159,8 @@ export async function processWorkflows(): Promise<ProcessResult> {
         )
       `)
       .eq('status', 'active')
-      .lte('next_action_at', new Date().toISOString())
+      .lte('next_action_at', nowIso)
+      .or(`processing_expires_at.is.null,processing_expires_at.lt.${nowIso}`)
       .limit(100) // Process in batches
 
     if (error) {
@@ -183,119 +232,162 @@ async function processWorkflowStep(
   }
 
   const currentStep = steps[currentStepIndex]
+  let leaseClaimed = false
 
-  // Get template for this step
-  const { data: template, error: templateError } = await supabase
-    .from('follow_up_templates')
-    .select('*')
-    .eq('property_id', definition.property_id)
-    .eq('slug', currentStep.template_slug)
-    .single()
+  try {
+    const claimed = await claimWorkflowProcessingLease(supabase, workflow.id, currentStepIndex)
+    if (!claimed) {
+      console.log(`[Workflow] Skipping workflow ${workflow.id}; processing lease already claimed`)
+      return { success: true }
+    }
+    leaseClaimed = true
 
-  if (templateError || !template) {
-    console.error(`[Workflow] Template not found: ${currentStep.template_slug}`)
-    return { success: false, error: `Template not found: ${currentStep.template_slug}` }
-  }
+    // Idempotency guard: if this step was already sent successfully, advance without re-sending.
+    const { data: existingAction } = await supabase
+      .from('workflow_actions')
+      .select('id, status')
+      .eq('lead_workflow_id', workflow.id)
+      .eq('step_number', currentStepIndex)
+      .eq('status', 'sent')
+      .maybeSingle()
 
-  // Get property info
-  const { data: property } = await supabase
-    .from('properties')
-    .select('name, settings')
-    .eq('id', definition.property_id)
-    .single()
+    if (existingAction) {
+      await advanceWorkflow(supabase, workflow, steps)
+      leaseClaimed = false
+      return { success: true }
+    }
 
-  // Prepare template variables
-  const variables: TemplateVariables = {
-    first_name: lead.first_name,
-    last_name: lead.last_name,
-    property_name: property?.name || 'Our Property',
-    tour_link: `${process.env.NEXT_PUBLIC_SITE_URL}/book-tour/${lead.id}`,
-  }
-
-  // Replace variables in template
-  const messageBody = replaceTemplateVariables(template.body, variables)
-  const messageSubject = template.subject 
-    ? replaceTemplateVariables(template.subject, variables) 
-    : undefined
-
-  // Determine recipient
-  const recipient = currentStep.action === 'sms' ? lead.phone : lead.email
-  if (!recipient) {
-    console.warn(`[Workflow] No ${currentStep.action} address for lead ${lead.id}`)
-    // Skip this step and move to next
-    await advanceWorkflow(supabase, workflow, steps)
-    return { success: true }
-  }
-
-  // Send message with retry
-  const sendResult = await withRetry(() => sendMessage({
-    to: recipient,
-    channel: currentStep.action as 'sms' | 'email',
-    body: messageBody,
-    subject: messageSubject,
-    propertyName: property?.name,
-  }))
-
-  // Log the action
-  await supabase.from('workflow_actions').insert({
-    lead_workflow_id: workflow.id,
-    step_number: currentStepIndex,
-    action_type: currentStep.action,
-    template_id: template.id,
-    status: sendResult.success ? 'sent' : 'failed',
-    external_id: sendResult.messageId,
-    error_message: sendResult.error,
-  })
-
-  // Also log to messages/conversations for visibility
-  if (sendResult.success) {
-    // Get or create conversation
-    let conversationId: string
-
-    const { data: existingConv } = await supabase
-      .from('conversations')
-      .select('id')
-      .eq('lead_id', lead.id)
-      .eq('channel', currentStep.action)
+    // Get template for this step
+    const { data: template, error: templateError } = await supabase
+      .from('follow_up_templates')
+      .select('*')
+      .eq('property_id', definition.property_id)
+      .eq('slug', currentStep.template_slug)
       .single()
 
-    if (existingConv) {
-      conversationId = existingConv.id
+    if (templateError || !template) {
+      console.error(`[Workflow] Template not found: ${currentStep.template_slug}`)
+      await clearWorkflowProcessingLease(supabase, workflow.id)
+      leaseClaimed = false
+      return { success: false, error: `Template not found: ${currentStep.template_slug}` }
+    }
+
+    // Get property info
+    const { data: property } = await supabase
+      .from('properties')
+      .select('name, settings')
+      .eq('id', definition.property_id)
+      .single()
+
+    // Prepare template variables
+    const variables: TemplateVariables = {
+      first_name: lead.first_name,
+      last_name: lead.last_name,
+      property_name: property?.name || 'Our Property',
+      tour_link: `${process.env.NEXT_PUBLIC_SITE_URL}/dashboard/leads`,
+    }
+
+    // Replace variables in template
+    const messageBody = replaceTemplateVariables(template.body, variables)
+    const messageSubject = template.subject
+      ? replaceTemplateVariables(template.subject, variables)
+      : undefined
+
+    // Determine recipient
+    const recipient = currentStep.action === 'sms' ? lead.phone : lead.email
+    if (!recipient) {
+      console.warn(`[Workflow] No ${currentStep.action} address for lead ${lead.id}`)
+      // Skip this step and move to next
+      await advanceWorkflow(supabase, workflow, steps)
+      leaseClaimed = false
+      return { success: true }
+    }
+
+    // Send message with retry
+    const sendResult = await withRetry(() => sendMessage({
+      to: recipient,
+      channel: currentStep.action as 'sms' | 'email',
+      body: messageBody,
+      subject: messageSubject,
+      propertyName: property?.name,
+    }))
+
+    // Log the action
+    await supabase.from('workflow_actions').insert({
+      lead_workflow_id: workflow.id,
+      step_number: currentStepIndex,
+      action_type: currentStep.action,
+      template_id: template.id,
+      status: sendResult.success ? 'sent' : 'failed',
+      external_id: sendResult.messageId,
+      error_message: sendResult.error,
+    })
+
+    // Only advance on successful delivery. Keep step pending on failure so cron can retry.
+    if (sendResult.success) {
+      await advanceWorkflow(supabase, workflow, steps)
+      leaseClaimed = false
     } else {
-      const { data: newConv } = await supabase
-        .from('conversations')
-        .insert({
-          lead_id: lead.id,
-          property_id: definition.property_id,
-          channel: currentStep.action,
-        })
-        .select('id')
-        .single()
-      conversationId = newConv?.id || ''
+      await clearWorkflowProcessingLease(supabase, workflow.id)
+      leaseClaimed = false
     }
 
-    if (conversationId) {
-      await supabase.from('messages').insert({
-        conversation_id: conversationId,
-        role: 'assistant',
-        content: messageBody,
-      })
+    // Auxiliary visibility writes are best-effort and should not cause a successful send to retry.
+    if (sendResult.success) {
+      try {
+        // Get or create conversation
+        let conversationId: string
+
+        const { data: existingConv } = await supabase
+          .from('conversations')
+          .select('id')
+          .eq('lead_id', lead.id)
+          .eq('channel', currentStep.action)
+          .single()
+
+        if (existingConv) {
+          conversationId = existingConv.id
+        } else {
+          const { data: newConv } = await supabase
+            .from('conversations')
+            .insert({
+              lead_id: lead.id,
+              property_id: definition.property_id,
+              channel: currentStep.action,
+            })
+            .select('id')
+            .single()
+          conversationId = newConv?.id || ''
+        }
+
+        if (conversationId) {
+          await supabase.from('messages').insert({
+            conversation_id: conversationId,
+            role: 'assistant',
+            content: messageBody,
+          })
+        }
+
+        // Update lead's last_contacted_at
+        await supabase
+          .from('leads')
+          .update({
+            last_contacted_at: new Date().toISOString(),
+            status: lead.status === 'new' ? 'contacted' : lead.status,
+          })
+          .eq('id', lead.id)
+      } catch (visibilityError) {
+        console.error('[Workflow] Non-blocking visibility write failed:', visibilityError)
+      }
     }
 
-    // Update lead's last_contacted_at
-    await supabase
-      .from('leads')
-      .update({ 
-        last_contacted_at: new Date().toISOString(),
-        status: lead.status === 'new' ? 'contacted' : lead.status,
-      })
-      .eq('id', lead.id)
+    return { success: sendResult.success, error: sendResult.error }
+  } catch (error) {
+    if (leaseClaimed) {
+      await clearWorkflowProcessingLease(supabase, workflow.id)
+    }
+    throw error
   }
-
-  // Advance to next step
-  await advanceWorkflow(supabase, workflow, steps)
-
-  return { success: sendResult.success, error: sendResult.error }
 }
 
 /**
@@ -318,6 +410,8 @@ async function advanceWorkflow(
         status: 'completed',
         last_action_at: now.toISOString(),
         next_action_at: null,
+        processing_started_at: null,
+        processing_expires_at: null,
         updated_at: now.toISOString(),
       })
       .eq('id', workflow.id)
@@ -332,6 +426,8 @@ async function advanceWorkflow(
         current_step: nextStepIndex,
         last_action_at: now.toISOString(),
         next_action_at: nextActionAt.toISOString(),
+        processing_started_at: null,
+        processing_expires_at: null,
         updated_at: now.toISOString(),
       })
       .eq('id', workflow.id)
@@ -350,6 +446,8 @@ async function updateWorkflowStatus(
     .from('lead_workflows')
     .update({
       status,
+      processing_started_at: null,
+      processing_expires_at: null,
       updated_at: new Date().toISOString(),
       next_action_at: status === 'active' ? new Date().toISOString() : null,
     })
@@ -507,7 +605,7 @@ export async function startWorkflow(
     .eq('property_id', propertyId)
     .eq('trigger_on', trigger)
     .eq('is_active', true)
-    .single()
+    .maybeSingle()
 
   // If no workflow found, auto-seed defaults and retry
   if (error || !workflow) {
@@ -519,7 +617,7 @@ export async function startWorkflow(
       .eq('property_id', propertyId)
       .eq('trigger_on', trigger)
       .eq('is_active', true)
-      .single()
+      .maybeSingle()
 
     workflow = retry.data
     error = retry.error
@@ -529,9 +627,26 @@ export async function startWorkflow(
     return { success: false, error: 'No active workflow found after seeding defaults' }
   }
 
-  const steps = workflow.steps as WorkflowStep[]
+  const steps = workflow.steps as unknown as WorkflowStep[]
+  if (!Array.isArray(steps) || steps.length === 0) {
+    return { success: false, error: 'Workflow has no executable steps' }
+  }
   const firstStep = steps[0]
   const nextActionAt = new Date(Date.now() + (firstStep?.delay_hours || 0) * 60 * 60 * 1000)
+
+  // Prevent duplicate active workflows for same lead + workflow definition.
+  const { data: existing } = await supabase
+    .from('lead_workflows')
+    .select('id')
+    .eq('lead_id', leadId)
+    .eq('workflow_id', workflow.id)
+    .in('status', ['active', 'paused'])
+    .limit(1)
+    .maybeSingle()
+
+  if (existing?.id) {
+    return { success: true, workflowId: existing.id }
+  }
 
   // Create lead workflow
   const { data: leadWorkflow, error: insertError } = await supabase
@@ -542,11 +657,26 @@ export async function startWorkflow(
       current_step: 0,
       status: 'active',
       next_action_at: nextActionAt.toISOString(),
+      processing_started_at: null,
+      processing_expires_at: null,
     })
     .select('id')
     .single()
 
   if (insertError) {
+    const { data: existingAfterInsertError } = await supabase
+      .from('lead_workflows')
+      .select('id')
+      .eq('lead_id', leadId)
+      .eq('workflow_id', workflow.id)
+      .in('status', ['active', 'paused'])
+      .limit(1)
+      .maybeSingle()
+
+    if (existingAfterInsertError?.id) {
+      return { success: true, workflowId: existingAfterInsertError.id }
+    }
+
     return { success: false, error: insertError.message }
   }
 

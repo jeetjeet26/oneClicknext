@@ -25,7 +25,8 @@ async function scrapeAndSaveWebsiteKnowledge(
   propertyId: string,
   websiteUrl: string,
   additionalUrls: string[] = [],
-  propertyName: string
+  propertyName: string,
+  forwardedCookie?: string | null
 ): Promise<{ success: boolean; documentsCreated: number; error?: string }> {
   try {
     // Collect all URLs to scrape
@@ -36,9 +37,17 @@ async function scrapeAndSaveWebsiteKnowledge(
 
     // Call the internal scrape API with propertyId
     const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (process.env.INTERNAL_API_KEY) {
+      headers.Authorization = `Bearer ${process.env.INTERNAL_API_KEY}`
+    }
+    if (forwardedCookie) {
+      headers.cookie = forwardedCookie
+    }
+
     const response = await fetch(`${baseUrl}/api/onboarding/scrape-website`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ 
         urls: urlsToScrape, 
         propertyId  // Pass propertyId so it saves to DB
@@ -90,6 +99,7 @@ interface AddPropertyRequestBody {
   contacts: ContactInput[]
   integrations?: IntegrationInput[]
   documentCount?: number
+  existingPropertyId?: string | null
   // Legacy support for community naming
   community?: PropertyInput
 }
@@ -107,7 +117,7 @@ export async function POST(request: Request) {
     const body: AddPropertyRequestBody = await request.json()
     // Support both 'property' and legacy 'community' naming
     const property = body.property || body.community
-    const { contacts, integrations = [] } = body
+    const { contacts, integrations = [], existingPropertyId = null } = body
 
     if (!property?.name?.trim()) {
       return NextResponse.json({ error: 'Property name is required' }, { status: 400 })
@@ -132,38 +142,84 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'You must belong to an organization to add properties' }, { status: 400 })
     }
 
-    // Create property with all profile data consolidated
-    const { data: newProperty, error: propertyError } = await adminClient
-      .from('properties')
-      .insert({
-        org_id: profile.org_id,
-        name: property.name.trim(),
-        address: property.address ? {
-          street: property.address.street || null,
-          city: property.address.city || null,
-          state: property.address.state || null,
-          zip: property.address.zip || null,
-        } : null,
-        settings: {
-          timezone: 'America/Los_Angeles',
-        },
-        // Profile data now directly on properties table
-        property_type: property.type || null,
-        website_url: property.websiteUrl || null,
-        unit_count: property.unitCount || null,
-        year_built: property.yearBuilt || null,
-        amenities: property.amenities || [],
-        onboarding_completed_at: new Date().toISOString(),
-      })
-      .select()
-      .single()
+    if (profile.role !== 'admin' && profile.role !== 'manager') {
+      return NextResponse.json({ error: 'Only admins and managers can add properties' }, { status: 403 })
+    }
 
-    if (propertyError) {
+    const propertyPayload = {
+      name: property.name.trim(),
+      address: property.address ? {
+        street: property.address.street || null,
+        city: property.address.city || null,
+        state: property.address.state || null,
+        zip: property.address.zip || null,
+      } : null,
+      settings: {
+        timezone: 'America/Los_Angeles',
+      },
+      property_type: property.type || null,
+      website_url: property.websiteUrl || null,
+      unit_count: property.unitCount || null,
+      year_built: property.yearBuilt || null,
+      amenities: property.amenities || [],
+      onboarding_completed_at: new Date().toISOString(),
+    }
+
+    let newProperty: { id: string } & Record<string, unknown> | null = null
+    let propertyError: { message?: string } | null = null
+
+    if (existingPropertyId) {
+      // Canonical identity path: update the already-created property instead of creating a second row.
+      const { data: existingProperty, error: existingPropertyError } = await adminClient
+        .from('properties')
+        .select('id')
+        .eq('id', existingPropertyId)
+        .eq('org_id', profile.org_id)
+        .single()
+
+      if (existingPropertyError || !existingProperty) {
+        return NextResponse.json(
+          { error: 'Existing property not found for this organization' },
+          { status: 404 }
+        )
+      }
+
+      const updateResult = await adminClient
+        .from('properties')
+        .update(propertyPayload)
+        .eq('id', existingPropertyId)
+        .select()
+        .single()
+
+      newProperty = updateResult.data as ({ id: string } & Record<string, unknown>) | null
+      propertyError = updateResult.error as { message?: string } | null
+    } else {
+      const insertResult = await adminClient
+        .from('properties')
+        .insert({
+          org_id: profile.org_id,
+          ...propertyPayload,
+        })
+        .select()
+        .single()
+
+      newProperty = insertResult.data as ({ id: string } & Record<string, unknown>) | null
+      propertyError = insertResult.error as { message?: string } | null
+    }
+
+    if (propertyError || !newProperty) {
       console.error('Error creating property:', propertyError)
       return NextResponse.json({ error: 'Failed to create property' }, { status: 500 })
     }
 
     // Create contacts
+    if (existingPropertyId) {
+      await adminClient
+        .from('property_contacts')
+        .delete()
+        .eq('property_id', newProperty.id)
+    }
+
     if (contacts && contacts.length > 0) {
       const contactsToInsert = contacts.map((c, index) => ({
         property_id: newProperty.id,
@@ -194,6 +250,13 @@ export async function POST(request: Request) {
     }
 
     // Create integration records
+    if (existingPropertyId) {
+      await adminClient
+        .from('integration_credentials')
+        .delete()
+        .eq('property_id', newProperty.id)
+    }
+
     if (integrations && integrations.length > 0) {
       const integrationsToInsert = integrations.map(i => ({
         property_id: newProperty.id,
@@ -213,38 +276,56 @@ export async function POST(request: Request) {
       }
     }
 
-    // Create default onboarding tasks
-    try {
-      await adminClient.rpc('create_default_onboarding_tasks', {
-        p_property_id: newProperty.id
-      })
-    } catch (taskError) {
-      console.error('Error creating onboarding tasks:', taskError)
+    if (!existingPropertyId) {
+      // Create default onboarding tasks only for a new property record.
+      try {
+        await adminClient.rpc('create_default_onboarding_tasks', {
+          p_property_id: newProperty.id
+        })
+      } catch (taskError) {
+        console.error('Error creating onboarding tasks:', taskError)
+      }
     }
 
-    // Create knowledge source record for intake form
-    const { error: knowledgeError } = await adminClient
-      .from('knowledge_sources')
-      .insert({
-        property_id: newProperty.id,
-        source_type: 'intake_form',
-        source_name: 'Add Property Intake Form',
-        status: 'completed',
-        extracted_data: {
-          property: {
-            name: property.name,
-            type: property.type,
-            unitCount: property.unitCount,
-            yearBuilt: property.yearBuilt,
-            amenities: property.amenities,
-            websiteUrl: property.websiteUrl,
-          },
+    // Create/update knowledge source record for intake form.
+    const intakePayload = {
+      source_name: 'Add Property Intake Form',
+      status: 'completed',
+      extracted_data: {
+        property: {
+          name: property.name,
+          type: property.type,
+          unitCount: property.unitCount,
+          yearBuilt: property.yearBuilt,
+          amenities: property.amenities,
+          websiteUrl: property.websiteUrl,
         },
-        last_synced_at: new Date().toISOString(),
-      })
+      },
+      last_synced_at: new Date().toISOString(),
+    }
 
-    if (knowledgeError) {
-      console.error('Error creating knowledge source:', knowledgeError)
+    const { data: existingIntakeSource } = await adminClient
+      .from('knowledge_sources')
+      .select('id')
+      .eq('property_id', newProperty.id)
+      .eq('source_type', 'intake_form')
+      .maybeSingle()
+
+    const knowledgeResult = existingIntakeSource
+      ? await adminClient
+          .from('knowledge_sources')
+          .update(intakePayload)
+          .eq('id', existingIntakeSource.id)
+      : await adminClient
+          .from('knowledge_sources')
+          .insert({
+            property_id: newProperty.id,
+            source_type: 'intake_form',
+            ...intakePayload,
+          })
+
+    if (knowledgeResult.error) {
+      console.error('Error creating knowledge source:', knowledgeResult.error)
     }
 
     // If website URL was provided, scrape and save to knowledge base
@@ -254,7 +335,8 @@ export async function POST(request: Request) {
         newProperty.id,
         property.websiteUrl,
         property.additionalUrls || [],
-        property.name
+        property.name,
+        request.headers.get('cookie')
       )
       if (scrapeResult.success) {
         console.log(`Website scrape complete: ${scrapeResult.documentsCreated} documents created`)
@@ -266,6 +348,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       success: true,
       property: newProperty,
+      reusedExistingProperty: Boolean(existingPropertyId),
     })
   } catch (error) {
     console.error('Add property error:', error)

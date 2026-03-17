@@ -49,7 +49,7 @@ interface Stats {
   periodDays: number
 }
 
-export function ReviewStats({ propertyId, days = 30 }: ReviewStatsProps) {
+export function ReviewStats({ propertyId, days = 0 }: ReviewStatsProps) {
   const [stats, setStats] = useState<Stats | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -107,7 +107,7 @@ export function ReviewStats({ propertyId, days = 30 }: ReviewStatsProps) {
           iconBg="bg-indigo-50 dark:bg-indigo-900/20"
           label="Total Reviews"
           value={stats.totalReviews}
-          sublabel={`Last ${stats.periodDays} days`}
+          sublabel={stats.periodDays > 0 ? `Last ${stats.periodDays} days` : 'All time'}
         />
         <StatCard
           icon={Clock}

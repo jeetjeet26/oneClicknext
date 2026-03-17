@@ -161,16 +161,7 @@ export async function buildPropertyReportData(
   const aiOverviewMap = await fetchAiOverviews(supabase, propertyId, (queries || []).map(q => q.id))
   const aggregatedAnswers = aggregateAnswersByQuery(rawAnswers, queries || [], aiOverviewMap)
 
-  const { data: insights } = await supabase
-    .rpc('get_insights', { property_id: propertyId, run_ids: runIds })
-    .single()
-
-  const competitors = (insights?.competitors || []).map((comp: any) => ({
-    name: comp.name,
-    domain: comp.domain,
-    mentionCount: comp.mentionCount,
-    avgRank: comp.avgRank
-  }))
+  const competitors = buildCompetitorsFromAnswers(rawAnswers)
 
   const scores = (runs || [])
     .map((r: ReportRun) => r.geo_scores?.[0])

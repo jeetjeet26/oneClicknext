@@ -1,6 +1,13 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { NextRequest, NextResponse } from 'next/server'
+import {
+  forbidden,
+  notFound,
+  serverError,
+  unauthorized,
+} from '@/utils/services/api-helpers'
+import { createRequestContext } from '@/utils/services/request-context'
 
 type OrgSettings = {
   timezone?: string
@@ -17,14 +24,26 @@ type UserPreferences = {
   accent_color?: 'indigo' | 'purple' | 'blue' | 'emerald'
 }
 
+function asObject(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {}
+  }
+
+  return value as Record<string, unknown>
+}
+
 // GET - Fetch settings for the current user's organization and preferences
 export async function GET(request: NextRequest) {
+  const ctx = createRequestContext(request, '/api/settings')
+  ctx.logStart()
+
   const supabaseAuth = await createClient()
   
   const { data: { user }, error: authError } = await supabaseAuth.auth.getUser()
   
   if (authError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    ctx.logSuccess(401, { reason: 'unauthorized' })
+    return unauthorized(ctx.responseHeaders)
   }
 
   const supabase = createServiceClient()
@@ -38,7 +57,8 @@ export async function GET(request: NextRequest) {
       .single()
 
     if (profileError || !profile?.org_id) {
-      return NextResponse.json({ error: 'Profile not found' }, { status: 404 })
+      ctx.logSuccess(404, { reason: 'profile_not_found' })
+      return notFound('Profile', ctx.responseHeaders)
     }
 
     // Get organization settings
@@ -52,29 +72,38 @@ export async function GET(request: NextRequest) {
       throw orgError
     }
 
-    return NextResponse.json({
-      organization: {
-        id: org.id,
-        name: org.name,
-        subscription_tier: org.subscription_tier,
-        settings: org.settings || {},
+    ctx.logSuccess(200, { orgId: profile.org_id })
+
+    return NextResponse.json(
+      {
+        organization: {
+          id: org.id,
+          name: org.name,
+          subscription_tier: org.subscription_tier,
+          settings: org.settings || {},
+        },
+        preferences: profile.preferences || {},
       },
-      preferences: profile.preferences || {},
-    })
+      { headers: ctx.responseHeaders }
+    )
   } catch (error) {
-    console.error('Settings fetch error:', error)
-    return NextResponse.json({ error: 'Failed to fetch settings' }, { status: 500 })
+    ctx.logError(500, error, { operation: 'fetch_settings' })
+    return serverError(error, ctx.responseHeaders)
   }
 }
 
 // PATCH - Update settings
 export async function PATCH(request: NextRequest) {
+  const ctx = createRequestContext(request, '/api/settings')
+  ctx.logStart()
+
   const supabaseAuth = await createClient()
   
   const { data: { user }, error: authError } = await supabaseAuth.auth.getUser()
   
   if (authError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    ctx.logSuccess(401, { reason: 'unauthorized' })
+    return unauthorized(ctx.responseHeaders)
   }
 
   const supabase = createServiceClient()
@@ -94,7 +123,8 @@ export async function PATCH(request: NextRequest) {
       .single()
 
     if (!profile?.org_id) {
-      return NextResponse.json({ error: 'Profile not found' }, { status: 404 })
+      ctx.logSuccess(404, { reason: 'profile_not_found' })
+      return notFound('Profile', ctx.responseHeaders)
     }
 
     const results: { organization?: boolean; preferences?: boolean } = {}
@@ -102,9 +132,8 @@ export async function PATCH(request: NextRequest) {
     // Update organization settings (admin/manager only for org settings)
     if (organization) {
       if (!['admin', 'manager'].includes(profile.role || '')) {
-        return NextResponse.json({ 
-          error: 'Insufficient permissions to update organization settings' 
-        }, { status: 403 })
+        ctx.logSuccess(403, { reason: 'insufficient_permissions' })
+        return forbidden(ctx.responseHeaders)
       }
 
       const orgUpdate: Record<string, unknown> = {}
@@ -121,11 +150,14 @@ export async function PATCH(request: NextRequest) {
           .eq('id', profile.org_id)
           .single()
 
+        const currentOrgSettings = asObject(currentOrg?.settings)
+        const currentNotifications = asObject(currentOrgSettings.notifications)
+
         orgUpdate.settings = {
-          ...(currentOrg?.settings || {}),
+          ...currentOrgSettings,
           ...organization.settings,
           notifications: {
-            ...(currentOrg?.settings?.notifications || {}),
+            ...currentNotifications,
             ...(organization.settings.notifications || {}),
           },
         }
@@ -151,8 +183,9 @@ export async function PATCH(request: NextRequest) {
         .eq('id', user.id)
         .single()
 
+      const currentPreferences = asObject(currentProfile?.preferences)
       const newPreferences = {
-        ...(currentProfile?.preferences || {}),
+        ...currentPreferences,
         ...preferences,
       }
 
@@ -165,15 +198,18 @@ export async function PATCH(request: NextRequest) {
       results.preferences = true
     }
 
-    return NextResponse.json({ 
-      success: true,
-      updated: results,
-    })
+    ctx.logSuccess(200, { updated: results })
+
+    return NextResponse.json(
+      { 
+        success: true,
+        updated: results,
+      },
+      { headers: ctx.responseHeaders }
+    )
   } catch (error) {
-    console.error('Settings update error:', error)
-    return NextResponse.json({ 
-      error: error instanceof Error ? error.message : 'Failed to update settings' 
-    }, { status: 500 })
+    ctx.logError(500, error, { operation: 'update_settings' })
+    return serverError(error, ctx.responseHeaders)
   }
 }
 

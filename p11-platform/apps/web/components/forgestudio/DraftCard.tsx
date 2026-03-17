@@ -38,6 +38,12 @@ interface ContentDraft {
   scheduled_for: string | null
   created_at: string
   variations: string[]
+  generation_params?: {
+    readiness?: {
+      state?: string
+      blockers?: string[]
+    }
+  }
 }
 
 interface DraftCardProps {
@@ -53,8 +59,9 @@ interface DraftCardProps {
 
 const STATUS_STYLES: Record<string, { bg: string; text: string; label: string }> = {
   draft: { bg: 'bg-slate-100 dark:bg-slate-700', text: 'text-slate-600 dark:text-slate-400', label: 'Draft' },
+  draft_partial: { bg: 'bg-orange-100 dark:bg-orange-500/20', text: 'text-orange-700 dark:text-orange-300', label: 'Partial Draft' },
   generating: { bg: 'bg-blue-100 dark:bg-blue-500/20', text: 'text-blue-600 dark:text-blue-400', label: 'Generating' },
-  pending_review: { bg: 'bg-amber-100 dark:bg-amber-500/20', text: 'text-amber-600 dark:text-amber-400', label: 'Pending Review' },
+  pending_review: { bg: 'bg-amber-100 dark:bg-amber-500/20', text: 'text-amber-600 dark:text-amber-400', label: 'Ready for Review' },
   approved: { bg: 'bg-green-100 dark:bg-green-500/20', text: 'text-green-600 dark:text-green-400', label: 'Approved' },
   scheduled: { bg: 'bg-violet-100 dark:bg-violet-500/20', text: 'text-violet-600 dark:text-violet-400', label: 'Scheduled' },
   published: { bg: 'bg-emerald-100 dark:bg-emerald-500/20', text: 'text-emerald-600 dark:text-emerald-400', label: 'Published' },
@@ -82,6 +89,9 @@ export function DraftCard({ draft, onApprove, onReject, onEdit, onDelete, onSche
   const [publishing, setPublishing] = useState(false)
 
   const statusStyle = STATUS_STYLES[draft.status] || STATUS_STYLES.draft
+  const readinessBlockers = Array.isArray(draft.generation_params?.readiness?.blockers)
+    ? draft.generation_params?.readiness?.blockers || []
+    : []
   const PlatformIcon = PLATFORM_ICONS[draft.platform] || FileText
   const platformColor = PLATFORM_COLORS[draft.platform] || 'text-slate-500'
 
@@ -236,11 +246,12 @@ export function DraftCard({ draft, onApprove, onReject, onEdit, onDelete, onSche
         )}
 
         {/* Actions */}
-        {(draft.status === 'draft' || draft.status === 'pending_review') && (
+        {(draft.status === 'draft' || draft.status === 'draft_partial' || draft.status === 'pending_review') && (
           <div className="flex gap-2 pt-3 border-t border-slate-100 dark:border-slate-700">
             <button
               onClick={() => onApprove?.(draft.id)}
-              className="flex-1 flex items-center justify-center gap-1 py-2 bg-green-500 hover:bg-green-600 text-white text-sm rounded-lg transition-colors"
+              disabled={draft.status !== 'pending_review'}
+              className="flex-1 flex items-center justify-center gap-1 py-2 bg-green-500 hover:bg-green-600 text-white text-sm rounded-lg transition-colors disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Check className="w-4 h-4" /> Approve
             </button>
@@ -250,6 +261,12 @@ export function DraftCard({ draft, onApprove, onReject, onEdit, onDelete, onSche
             >
               <X className="w-4 h-4" /> Reject
             </button>
+          </div>
+        )}
+
+        {draft.status === 'draft_partial' && readinessBlockers.length > 0 && (
+          <div className="mt-2 rounded-lg bg-orange-50 px-2.5 py-2 text-xs text-orange-700 dark:bg-orange-500/10 dark:text-orange-300">
+            Missing: {readinessBlockers.slice(0, 3).join(', ')}
           </div>
         )}
 

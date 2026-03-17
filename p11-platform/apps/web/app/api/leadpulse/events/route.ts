@@ -6,64 +6,43 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
-
-export type EventType =
-  | 'chat_started'
-  | 'chat_message_sent'
-  | 'email_opened'
-  | 'email_clicked'
-  | 'sms_replied'
-  | 'tour_scheduled'
-  | 'tour_completed'
-  | 'tour_no_show'
-  | 'application_started'
-  | 'application_submitted'
-  | 'document_viewed'
-  | 'price_check'
-  | 'unit_favorited'
-  | 'repeat_visit'
-  | 'call_inbound'
-  | 'call_outbound_answered'
-
-const EVENT_WEIGHTS: Record<EventType, number> = {
-  chat_started: 5,
-  chat_message_sent: 3,
-  email_opened: 8,
-  email_clicked: 15,
-  sms_replied: 20,
-  tour_scheduled: 25,
-  tour_completed: 35,
-  tour_no_show: -25,
-  application_started: 30,
-  application_submitted: 40,
-  document_viewed: 10,
-  price_check: 12,
-  unit_favorited: 15,
-  repeat_visit: 10,
-  call_inbound: 20,
-  call_outbound_answered: 18,
-}
+import { EVENT_WEIGHTS, type EventType } from '@/utils/services/leadpulse-events'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
+import {
+  badRequest,
+  forbidden,
+  notFound,
+  serverError,
+  unauthorized,
+} from '@/utils/services/api-helpers'
+import { createRequestContext } from '@/utils/services/request-context'
 
 // POST: Record an engagement event
 export async function POST(req: NextRequest) {
+  const ctx = createRequestContext(req, '/api/leadpulse/events')
+  ctx.logStart()
+
   try {
     const supabase = await createClient()
     const { data: { user }, error: authError } = await supabase.auth.getUser()
 
     if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      ctx.logSuccess(401, { reason: 'unauthorized' })
+      return unauthorized(ctx.responseHeaders)
     }
 
     const body = await req.json()
     const { leadId, eventType, metadata, propertyId } = body
 
     if (!leadId || !eventType) {
-      return NextResponse.json({ error: 'leadId and eventType required' }, { status: 400 })
+      ctx.logSuccess(400, { reason: 'missing_lead_or_event_type' })
+      return badRequest('leadId and eventType required', ctx.responseHeaders)
     }
 
     // Validate event type
     if (!Object.keys(EVENT_WEIGHTS).includes(eventType)) {
-      return NextResponse.json({ error: 'Invalid eventType' }, { status: 400 })
+      ctx.logSuccess(400, { reason: 'invalid_event_type', eventType })
+      return badRequest('Invalid eventType', ctx.responseHeaders)
     }
 
     const serviceClient = createServiceClient()
@@ -76,7 +55,23 @@ export async function POST(req: NextRequest) {
       .single()
 
     if (leadError || !lead) {
-      return NextResponse.json({ error: 'Lead not found' }, { status: 404 })
+      ctx.logSuccess(404, { reason: 'lead_not_found', leadId })
+      return notFound('Lead', ctx.responseHeaders)
+    }
+
+    const effectivePropertyId = propertyId || lead.property_id
+    if (!effectivePropertyId) {
+      ctx.logSuccess(404, { reason: 'property_not_found', leadId })
+      return notFound('Property', ctx.responseHeaders)
+    }
+    const access = await validatePropertyAccess(user.id, effectivePropertyId)
+    if (!access.authorized) {
+      ctx.logSuccess(403, {
+        reason: 'forbidden',
+        propertyId: effectivePropertyId,
+        leadId,
+      })
+      return forbidden(ctx.responseHeaders)
     }
 
     // Insert event
@@ -84,7 +79,7 @@ export async function POST(req: NextRequest) {
       .from('lead_engagement_events')
       .insert({
         lead_id: leadId,
-        property_id: propertyId || lead.property_id,
+        property_id: effectivePropertyId,
         event_type: eventType,
         metadata: metadata || {},
         score_weight: EVENT_WEIGHTS[eventType as EventType],
@@ -93,39 +88,57 @@ export async function POST(req: NextRequest) {
       .single()
 
     if (eventError) {
-      console.error('Error inserting event:', eventError)
-      return NextResponse.json({ error: 'Failed to record event' }, { status: 500 })
+      ctx.logError(500, eventError, {
+        operation: 'record_lead_event',
+        leadId,
+        eventType,
+      })
+      return serverError(eventError, ctx.responseHeaders)
     }
 
     // Optionally trigger rescore (can be async/queued in production)
     const { data: scoreId } = await serviceClient
       .rpc('score_lead', { p_lead_id: leadId })
 
-    return NextResponse.json({
-      success: true,
-      event: {
-        id: event.id,
-        leadId: event.lead_id,
-        eventType: event.event_type,
-        scoreWeight: event.score_weight,
-        createdAt: event.created_at,
-      },
+    ctx.logSuccess(200, {
+      leadId,
+      eventType,
+      eventId: event.id,
       rescored: !!scoreId,
     })
+
+    return NextResponse.json(
+      {
+        success: true,
+        event: {
+          id: event.id,
+          leadId: event.lead_id,
+          eventType: event.event_type,
+          scoreWeight: event.score_weight,
+          createdAt: event.created_at,
+        },
+        rescored: !!scoreId,
+      },
+      { headers: ctx.responseHeaders }
+    )
   } catch (error) {
-    console.error('LeadPulse Events POST Error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    ctx.logError(500, error, { operation: 'record_lead_event' })
+    return serverError(error, ctx.responseHeaders)
   }
 }
 
 // GET: Get events for a lead
 export async function GET(req: NextRequest) {
+  const ctx = createRequestContext(req, '/api/leadpulse/events')
+  ctx.logStart()
+
   try {
     const supabase = await createClient()
     const { data: { user }, error: authError } = await supabase.auth.getUser()
 
     if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      ctx.logSuccess(401, { reason: 'unauthorized' })
+      return unauthorized(ctx.responseHeaders)
     }
 
     const searchParams = req.nextUrl.searchParams
@@ -133,7 +146,31 @@ export async function GET(req: NextRequest) {
     const limit = parseInt(searchParams.get('limit') || '50')
 
     if (!leadId) {
-      return NextResponse.json({ error: 'leadId required' }, { status: 400 })
+      ctx.logSuccess(400, { reason: 'missing_lead_id' })
+      return badRequest('leadId required', ctx.responseHeaders)
+    }
+
+    const serviceClient = createServiceClient()
+    const { data: lead, error: leadError } = await serviceClient
+      .from('leads')
+      .select('property_id')
+      .eq('id', leadId)
+      .single()
+
+    if (leadError || !lead) {
+      ctx.logSuccess(404, { reason: 'lead_not_found', leadId })
+      return notFound('Lead', ctx.responseHeaders)
+    }
+
+    if (!lead.property_id) {
+      ctx.logSuccess(404, { reason: 'property_not_found', leadId })
+      return notFound('Property', ctx.responseHeaders)
+    }
+
+    const access = await validatePropertyAccess(user.id, lead.property_id)
+    if (!access.authorized) {
+      ctx.logSuccess(403, { reason: 'forbidden', leadId, propertyId: lead.property_id })
+      return forbidden(ctx.responseHeaders)
     }
 
     const { data: events, error } = await supabase
@@ -144,22 +181,27 @@ export async function GET(req: NextRequest) {
       .limit(limit)
 
     if (error) {
-      console.error('Error fetching events:', error)
-      return NextResponse.json({ error: 'Failed to fetch events' }, { status: 500 })
+      ctx.logError(500, error, { operation: 'fetch_lead_events', leadId })
+      return serverError(error, ctx.responseHeaders)
     }
 
-    return NextResponse.json({
-      events: events.map(e => ({
-        id: e.id,
-        eventType: e.event_type,
-        metadata: e.metadata,
-        scoreWeight: e.score_weight,
-        createdAt: e.created_at,
-      })),
-    })
+    ctx.logSuccess(200, { leadId, eventCount: events.length })
+
+    return NextResponse.json(
+      {
+        events: events.map(e => ({
+          id: e.id,
+          eventType: e.event_type,
+          metadata: e.metadata,
+          scoreWeight: e.score_weight,
+          createdAt: e.created_at,
+        })),
+      },
+      { headers: ctx.responseHeaders }
+    )
   } catch (error) {
-    console.error('LeadPulse Events GET Error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    ctx.logError(500, error, { operation: 'fetch_lead_events' })
+    return serverError(error, ctx.responseHeaders)
   }
 }
 

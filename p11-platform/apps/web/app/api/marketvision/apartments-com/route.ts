@@ -5,8 +5,20 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
 const DATA_ENGINE_URL = process.env.DATA_ENGINE_URL || 'http://localhost:8000'
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
+}
+
+function getApartmentsComUrl(ilsListings: unknown): string | null {
+  const listings = asRecord(ilsListings)
+  return typeof listings?.apartments_com === 'string' ? listings.apartments_com : null
+}
 
 // POST: Trigger apartments.com scraping
 export async function POST(req: NextRequest) {
@@ -23,6 +35,39 @@ export async function POST(req: NextRequest) {
 
     if (!action) {
       return NextResponse.json({ error: 'action required' }, { status: 400 })
+    }
+
+    const propertyScopedActions = new Set(['refresh_batch', 'discover', 'find_listings'])
+    const competitorScopedActions = new Set(['refresh_single', 'add_listing'])
+
+    if (propertyScopedActions.has(action)) {
+      if (!propertyId) {
+        return NextResponse.json({ error: 'propertyId required' }, { status: 400 })
+      }
+      const access = await validatePropertyAccess(user.id, propertyId)
+      if (!access.authorized) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+      }
+    }
+
+    if (competitorScopedActions.has(action)) {
+      if (!competitorId) {
+        return NextResponse.json({ error: 'competitorId required' }, { status: 400 })
+      }
+      const { data: competitor } = await supabase
+        .from('competitors')
+        .select('property_id')
+        .eq('id', competitorId)
+        .single()
+
+      if (!competitor || typeof competitor.property_id !== 'string') {
+        return NextResponse.json({ error: 'Competitor not found' }, { status: 404 })
+      }
+
+      const access = await validatePropertyAccess(user.id, competitor.property_id)
+      if (!access.authorized) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+      }
     }
 
     // Route to appropriate action
@@ -69,7 +114,7 @@ export async function GET(req: NextRequest) {
       // Get single competitor's apartments.com info
       const { data: competitor, error } = await supabase
         .from('competitors')
-        .select('id, name, ils_listings, last_scraped_at')
+        .select('id, name, ils_listings, last_scraped_at, property_id')
         .eq('id', competitorId)
         .single()
 
@@ -77,7 +122,16 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ error: 'Competitor not found' }, { status: 404 })
       }
 
-      const apartmentsComUrl = competitor.ils_listings?.apartments_com
+      if (typeof competitor.property_id !== 'string') {
+        return NextResponse.json({ error: 'Competitor property mapping is invalid' }, { status: 400 })
+      }
+
+      const access = await validatePropertyAccess(user.id, competitor.property_id)
+      if (!access.authorized) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+      }
+
+      const apartmentsComUrl = getApartmentsComUrl(competitor.ils_listings)
       
       return NextResponse.json({
         competitorId: competitor.id,
@@ -89,6 +143,11 @@ export async function GET(req: NextRequest) {
     }
 
     if (propertyId) {
+      const access = await validatePropertyAccess(user.id, propertyId)
+      if (!access.authorized) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+      }
+
       // Get all competitors with apartments.com status
       const { data: competitors, error } = await supabase
         .from('competitors')
@@ -114,7 +173,8 @@ export async function GET(req: NextRequest) {
       }
 
       for (const comp of competitors || []) {
-        const hasListing = !!comp.ils_listings?.apartments_com
+        const apartmentsComUrl = getApartmentsComUrl(comp.ils_listings)
+        const hasListing = Boolean(apartmentsComUrl)
         if (hasListing) {
           summary.withApartmentsCom++
         } else {
@@ -125,7 +185,7 @@ export async function GET(req: NextRequest) {
           id: comp.id,
           name: comp.name,
           hasApartmentsComListing: hasListing,
-          apartmentsComUrl: comp.ils_listings?.apartments_com || null,
+          apartmentsComUrl,
           lastScrapedAt: comp.last_scraped_at
         })
       }
@@ -162,7 +222,7 @@ async function refreshSingleCompetitor(
     return NextResponse.json({ error: 'Competitor not found' }, { status: 404 })
   }
 
-  const apartmentsComUrl = url || competitor.ils_listings?.apartments_com
+  const apartmentsComUrl = url || getApartmentsComUrl(competitor.ils_listings)
 
   if (!apartmentsComUrl) {
     return NextResponse.json({ 
@@ -199,7 +259,7 @@ async function refreshSingleCompetitor(
         .update({ 
           last_scraped_at: new Date().toISOString(),
           ils_listings: { 
-            ...competitor.ils_listings, 
+            ...(asRecord(competitor.ils_listings) ?? {}), 
             apartments_com: apartmentsComUrl 
           }
         })
@@ -220,7 +280,7 @@ async function refreshSingleCompetitor(
         .from('competitors')
         .update({ 
           ils_listings: { 
-            ...competitor.ils_listings, 
+            ...(asRecord(competitor.ils_listings) ?? {}), 
             apartments_com: url 
           }
         })
@@ -256,7 +316,7 @@ async function refreshBatchCompetitors(
     return NextResponse.json({ error: 'Failed to fetch competitors' }, { status: 500 })
   }
 
-  const competitorsWithUrls = competitors?.filter(c => c.ils_listings?.apartments_com) || []
+  const competitorsWithUrls = competitors?.filter(c => Boolean(getApartmentsComUrl(c.ils_listings))) || []
 
   if (competitorsWithUrls.length === 0) {
     return NextResponse.json({
@@ -382,7 +442,7 @@ async function addListing(
 
   // Update ILS listings
   const updatedListings = {
-    ...(competitor.ils_listings || {}),
+    ...(asRecord(competitor.ils_listings) ?? {}),
     apartments_com: url
   }
 

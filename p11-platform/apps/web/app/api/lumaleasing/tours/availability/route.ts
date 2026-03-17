@@ -6,7 +6,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { getCalendarConfig, fetchBusyTimes, generateAvailableSlots, type AvailableSlot } from '@/utils/services/google-calendar'
-import { addDays, startOfDay, endOfDay, format, parseISO } from 'date-fns'
+import { addDays, startOfDay, endOfDay, format, isValid, parseISO } from 'date-fns'
+import { createRequestContext } from '@/utils/services/request-context'
+import { getRateLimitKey, publicReadLimiter, rateLimitHeaders } from '@/utils/services/rate-limiter'
+import {
+  badRequest,
+  buildCorsHeaders,
+  corsPreflightResponse,
+  rateLimited,
+  serverError,
+} from '@/utils/services/api-helpers'
 
 function extractApiKey(req: NextRequest): string | null {
   const headerKey = req.headers.get('X-API-Key') || req.headers.get('x-api-key')
@@ -21,27 +30,50 @@ function extractApiKey(req: NextRequest): string | null {
   return normalized.length ? normalized : null
 }
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, X-API-Key, X-Visitor-ID, Authorization',
+const MAX_AVAILABILITY_RANGE_DAYS = 31
+
+function parseDateParam(value: string | null, fallback: Date, mode: 'start' | 'end'): Date {
+  if (!value) {
+    return fallback
+  }
+
+  const parsed = parseISO(value)
+  if (!isValid(parsed)) {
+    throw new Error(`Invalid ${mode}Date`)
+  }
+
+  return mode === 'start' ? startOfDay(parsed) : endOfDay(parsed)
 }
 
-export async function OPTIONS() {
-  return new NextResponse(null, { headers: corsHeaders })
+export async function OPTIONS(req: NextRequest) {
+  const origin = req.headers.get('origin')
+  return corsPreflightResponse(origin, 'GET, OPTIONS')
 }
 
 export async function GET(req: NextRequest) {
+  const ctx = createRequestContext(req, '/api/lumaleasing/tours/availability')
+  ctx.logStart()
+  const origin = req.headers.get('origin')
+  const corsHeaders = buildCorsHeaders(origin, 'GET, OPTIONS')
+  const responseHeaders = { ...corsHeaders, ...ctx.responseHeaders }
   try {
+    const rlKey = getRateLimitKey(req, 'lumaleasing-tours-availability')
+    const rl = publicReadLimiter.check(rlKey)
+    if (!rl.allowed) {
+      ctx.logSuccess(429, { reason: 'rate_limited' })
+      return rateLimited({ ...responseHeaders, ...rateLimitHeaders(rl) })
+    }
+
     const apiKey = extractApiKey(req)
     const { searchParams } = new URL(req.url)
     const startDate = searchParams.get('startDate')
     const endDate = searchParams.get('endDate')
 
     if (!apiKey) {
+      ctx.logSuccess(401, { reason: 'missing_api_key' })
       return NextResponse.json(
         { error: 'API key required' },
-        { status: 401, headers: corsHeaders }
+        { status: 401, headers: responseHeaders }
       )
     }
 
@@ -56,43 +88,82 @@ export async function GET(req: NextRequest) {
       .single()
 
     if (configError || !config || !config.tours_enabled) {
+      ctx.logSuccess(404, { reason: 'tours_unavailable' })
       return NextResponse.json(
         { error: 'Tours not available for this property' },
-        { status: 404, headers: corsHeaders }
+        { status: 404, headers: responseHeaders }
       )
     }
 
     const propertyId = config.property_id
+    if (!propertyId) {
+      ctx.logSuccess(404, { reason: 'property_not_found' })
+      return NextResponse.json(
+        { error: 'Property not found' },
+        { status: 404, headers: responseHeaders }
+      )
+    }
 
     // Get Google Calendar configuration
     const calendarConfig = await getCalendarConfig(propertyId)
 
     if (!calendarConfig) {
+      ctx.logSuccess(503, { reason: 'calendar_not_connected', propertyId })
       return NextResponse.json(
         { 
           error: 'Google Calendar not connected', 
           fallback: true,
           message: 'Property manager has not connected their calendar yet. Please call to schedule.' 
         },
-        { status: 503, headers: corsHeaders }
+        { status: 503, headers: responseHeaders }
       )
     }
 
     // Check token health
     if (calendarConfig.token_status !== 'healthy') {
+      ctx.logSuccess(503, { reason: 'calendar_unhealthy', propertyId })
       return NextResponse.json(
         { 
           error: 'Calendar authorization expired', 
           fallback: true,
           message: 'Tour booking is temporarily unavailable. Please call to schedule.' 
         },
-        { status: 503, headers: corsHeaders }
+        { status: 503, headers: responseHeaders }
       )
     }
 
-    // Default to next 14 days
-    const start = startDate ? parseISO(startDate) : startOfDay(new Date())
-    const end = endDate ? parseISO(endDate) : endOfDay(addDays(new Date(), 14))
+    // Default to the next 14 days, anchored from the requested start when provided.
+    let start: Date
+    let end: Date
+
+    try {
+      start = parseDateParam(startDate, startOfDay(new Date()), 'start')
+      end = parseDateParam(
+        endDate,
+        endOfDay(addDays(start, 14)),
+        'end'
+      )
+    } catch (dateError) {
+      ctx.logSuccess(400, {
+        reason: 'invalid_date_range',
+        error: dateError instanceof Error ? dateError.message : String(dateError),
+      })
+      return badRequest('Invalid startDate or endDate', responseHeaders)
+    }
+
+    if (start > end) {
+      ctx.logSuccess(400, { reason: 'start_after_end' })
+      return badRequest('startDate must be on or before endDate', responseHeaders)
+    }
+
+    const rangeDays = Math.ceil((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000))
+    if (rangeDays > MAX_AVAILABILITY_RANGE_DAYS) {
+      ctx.logSuccess(400, { reason: 'range_too_large', rangeDays })
+      return badRequest(
+        `Date range cannot exceed ${MAX_AVAILABILITY_RANGE_DAYS} days`,
+        responseHeaders
+      )
+    }
 
     // Fetch busy times from Google Calendar
     const busyTimes = await fetchBusyTimes(calendarConfig, start, end)
@@ -116,6 +187,11 @@ export async function GET(req: NextRequest) {
       currentDate = addDays(currentDate, 1)
     }
 
+    ctx.logSuccess(200, {
+      propertyId,
+      availableDateCount: availableDates.length,
+    })
+
     return NextResponse.json({
       success: true,
       availableDates,
@@ -123,13 +199,13 @@ export async function GET(req: NextRequest) {
       timezone: calendarConfig.timezone,
       tourDuration: calendarConfig.tour_duration_minutes,
       bufferMinutes: calendarConfig.buffer_minutes,
-    }, { headers: corsHeaders })
+    }, { headers: responseHeaders })
 
   } catch (error) {
-    console.error('[TourAvailability] Error:', error)
-    
+    ctx.logError(500, error, { operation: 'fetch_tour_availability' })
+
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-    
+
     // Check if it's a calendar authorization error
     if (errorMessage.includes('revoked') || errorMessage.includes('expired')) {
       return NextResponse.json(
@@ -138,16 +214,10 @@ export async function GET(req: NextRequest) {
           fallback: true,
           message: 'Calendar authorization expired. Please call to schedule your tour.' 
         },
-        { status: 503, headers: corsHeaders }
+        { status: 503, headers: responseHeaders }
       )
     }
 
-    return NextResponse.json(
-      { 
-        error: 'Failed to fetch tour availability',
-        details: errorMessage,
-      },
-      { status: 500, headers: corsHeaders }
-    )
+    return serverError(error, responseHeaders)
   }
 }

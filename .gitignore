@@ -28,6 +28,10 @@ build/
 .env.test.local
 .env.production.local
 
+# Local Supabase runtime artifacts
+p11-platform/supabase/.temp/
+p11-platform/supabase/.branches/
+
 # Credentials - NEVER commit these
 *.json
 !package.json

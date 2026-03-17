@@ -5,13 +5,14 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
 // Data engine service URL (Python FastAPI)
 const DATA_ENGINE_URL = process.env.DATA_ENGINE_URL || 'http://localhost:8000'
 
 // GET: Get brand intelligence for a specific competitor
 export async function GET(
-  req: NextRequest,
+  _req: NextRequest,
   { params }: { params: Promise<{ competitorId: string }> }
 ) {
   try {
@@ -26,6 +27,21 @@ export async function GET(
 
     if (!competitorId) {
       return NextResponse.json({ error: 'competitorId required' }, { status: 400 })
+    }
+
+    const { data: competitor } = await supabase
+      .from('competitors')
+      .select('property_id')
+      .eq('id', competitorId)
+      .single()
+
+    if (!competitor || typeof competitor.property_id !== 'string') {
+      return NextResponse.json({ error: 'Competitor not found' }, { status: 404 })
+    }
+
+    const access = await validatePropertyAccess(user.id, competitor.property_id)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     // Call data-engine to get competitor intelligence
@@ -74,7 +90,7 @@ export async function GET(
 
 // DELETE: Clear brand intelligence for a competitor
 export async function DELETE(
-  req: NextRequest,
+  _req: NextRequest,
   { params }: { params: Promise<{ competitorId: string }> }
 ) {
   try {
@@ -89,6 +105,21 @@ export async function DELETE(
 
     if (!competitorId) {
       return NextResponse.json({ error: 'competitorId required' }, { status: 400 })
+    }
+
+    const { data: competitor } = await supabase
+      .from('competitors')
+      .select('property_id')
+      .eq('id', competitorId)
+      .single()
+
+    if (!competitor || typeof competitor.property_id !== 'string') {
+      return NextResponse.json({ error: 'Competitor not found' }, { status: 404 })
+    }
+
+    const access = await validatePropertyAccess(user.id, competitor.property_id)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     // Delete brand intelligence directly from Supabase

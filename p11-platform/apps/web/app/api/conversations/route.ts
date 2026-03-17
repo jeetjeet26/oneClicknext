@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
+
+function safeTimestamp(value: string | null | undefined): number {
+  if (!value) return 0
+  const timestamp = new Date(value).getTime()
+  return Number.isNaN(timestamp) ? 0 : timestamp
+}
 
 // GET - List conversations for a property
 export async function GET(req: NextRequest) {
@@ -20,6 +27,11 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'propertyId is required' }, { status: 400 })
   }
 
+  const access = await validatePropertyAccess(user.id, propertyId)
+  if (!access.authorized) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+
   const supabase = createServiceClient()
 
   try {
@@ -32,8 +44,6 @@ export async function GET(req: NextRequest) {
           channel,
           created_at,
           is_human_mode,
-          human_agent_id,
-          human_started_at,
           lead:leads(first_name, last_name, email, phone),
           messages(id, role, content, created_at)
         `)
@@ -47,8 +57,8 @@ export async function GET(req: NextRequest) {
 
       // Sort messages by created_at
       if (conversation?.messages) {
-        conversation.messages.sort((a: { created_at: string }, b: { created_at: string }) => 
-          new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+        conversation.messages.sort((a, b) =>
+          safeTimestamp(a.created_at) - safeTimestamp(b.created_at)
         )
       }
 
@@ -63,7 +73,6 @@ export async function GET(req: NextRequest) {
         channel,
         created_at,
         is_human_mode,
-        human_agent_id,
         lead:leads(id, first_name, last_name),
         messages(id, content, role, created_at)
       `)
@@ -84,20 +93,21 @@ export async function GET(req: NextRequest) {
     // Process conversations to get preview and message count
     const processedConversations = (conversations || []).map(conv => {
       const messages = conv.messages || []
-      const lastMessage = messages.sort((a: { created_at: string }, b: { created_at: string }) => 
-        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      const lastMessage = messages.sort((a, b) =>
+        safeTimestamp(b.created_at) - safeTimestamp(a.created_at)
       )[0]
+      const lastMessageContent = lastMessage?.content ?? ''
 
       return {
         id: conv.id,
         channel: conv.channel,
         created_at: conv.created_at,
         is_human_mode: conv.is_human_mode,
-        human_agent_id: conv.human_agent_id,
+        human_agent_id: null,
         lead: conv.lead,
         messageCount: messages.length,
         lastMessage: lastMessage ? {
-          content: lastMessage.content.slice(0, 50) + (lastMessage.content.length > 50 ? '...' : ''),
+          content: lastMessageContent.slice(0, 50) + (lastMessageContent.length > 50 ? '...' : ''),
           role: lastMessage.role,
           created_at: lastMessage.created_at,
         } : null,
@@ -130,6 +140,25 @@ export async function DELETE(req: NextRequest) {
   const supabase = createServiceClient()
 
   try {
+    const { data: conversation, error: conversationError } = await supabase
+      .from('conversations')
+      .select('id, property_id')
+      .eq('id', conversationId)
+      .single()
+
+    if (conversationError || !conversation) {
+      return NextResponse.json({ error: 'Conversation not found' }, { status: 404 })
+    }
+
+    if (typeof conversation.property_id !== 'string') {
+      return NextResponse.json({ error: 'Conversation not found' }, { status: 404 })
+    }
+
+    const access = await validatePropertyAccess(user.id, conversation.property_id)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
     // Delete messages first (due to FK constraint)
     await supabase
       .from('messages')

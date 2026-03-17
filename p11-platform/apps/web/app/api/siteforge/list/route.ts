@@ -4,6 +4,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
 // Transform snake_case database fields to camelCase for frontend
 function transformWebsite(website: Record<string, unknown>) {
@@ -64,14 +65,9 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Property not found' }, { status: 404 })
     }
 
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('org_id')
-      .eq('id', user.id)
-      .single()
-
-    if (profile?.org_id !== property.org_id) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 })
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     // Fetch all websites for this property

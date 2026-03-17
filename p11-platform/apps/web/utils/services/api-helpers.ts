@@ -62,6 +62,42 @@ export function serverError(internalError?: unknown, headers?: Record<string, st
   return safeError('Internal server error', 500, internalError, headers)
 }
 
+// ─── CRON Auth ──────────────────────────────────────────────────────────────
+
+/**
+ * Validate CRON secret for scheduled job endpoints.
+ * When CRON_SECRET is set, requires Bearer token.
+ * When unset (e.g. local dev), allows.
+ * Returns 401 response on failure, null when ok.
+ */
+export function validateCronAuth(request: Request): NextResponse | null {
+  const cronSecret = process.env.CRON_SECRET
+  if (!cronSecret) return null
+  const authHeader = request.headers.get('authorization')
+  if (authHeader === `Bearer ${cronSecret}`) return null
+  return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+}
+
+/**
+ * Returns true only when a CRON secret exists and the caller supplied it.
+ * Use this for routes that support both cron and authenticated user callers.
+ */
+export function hasValidCronAuth(request: Request): boolean {
+  const cronSecret = process.env.CRON_SECRET
+  if (!cronSecret) return false
+  return request.headers.get('authorization') === `Bearer ${cronSecret}`
+}
+
+/**
+ * Validate internal server-to-server API key.
+ * Returns true only when INTERNAL_API_KEY exists and caller supplied it.
+ */
+export function hasValidInternalApiKey(request: Request): boolean {
+  const internalApiKey = process.env.INTERNAL_API_KEY
+  if (!internalApiKey) return false
+  return request.headers.get('authorization') === `Bearer ${internalApiKey}`
+}
+
 // ─── CORS Helpers ──────────────────────────────────────────────────────────
 
 /**

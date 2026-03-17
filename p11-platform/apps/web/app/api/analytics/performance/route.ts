@@ -1,8 +1,18 @@
 import { createClient } from '@/utils/supabase/server'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { NextRequest, NextResponse } from 'next/server'
 
+type PerformanceRow = {
+  date: string
+  channel_id: string | null
+  impressions: number | string | null
+  clicks: number | string | null
+  spend: number | string | null
+  conversions: number | string | null
+}
+
 // Helper to aggregate performance data
-function aggregateData(data: any[]) {
+function aggregateData(data: PerformanceRow[]) {
   const dateMap = new Map<string, {
     date: string
     impressions: number
@@ -102,6 +112,11 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'propertyId is required' }, { status: 400 })
   }
 
+  const access = await validatePropertyAccess(user.id, propertyId)
+  if (!access.authorized) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+
   try {
     // Fetch current period data
     let currentQuery = supabase
@@ -124,7 +139,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: currentError.message }, { status: 500 })
     }
 
-    const current = aggregateData(currentData || [])
+    const current = aggregateData((currentData || []) as PerformanceRow[])
 
     // If comparison is enabled, fetch previous period data
     let comparison = null
@@ -150,7 +165,7 @@ export async function GET(request: NextRequest) {
         .order('date', { ascending: true })
 
       if (!prevError && prevData) {
-        const previous = aggregateData(prevData)
+        const previous = aggregateData(prevData as PerformanceRow[])
         
         comparison = {
           previousPeriod: {

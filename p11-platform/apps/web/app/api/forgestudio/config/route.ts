@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { createClient as createServerClient } from '@/utils/supabase/server'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -9,6 +11,15 @@ const supabase = createClient(
 // GET - Fetch ForgeStudio config for a property
 export async function GET(request: NextRequest) {
   try {
+    const authClient = await createServerClient()
+    const {
+      data: { user },
+      error: authError,
+    } = await authClient.auth.getUser()
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const { searchParams } = new URL(request.url)
     const propertyId = searchParams.get('propertyId')
 
@@ -17,6 +28,11 @@ export async function GET(request: NextRequest) {
         { error: 'Property ID required' },
         { status: 400 }
       )
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     const { data, error } = await supabase
@@ -79,6 +95,15 @@ export async function GET(request: NextRequest) {
 // POST - Create or update ForgeStudio config
 export async function POST(request: NextRequest) {
   try {
+    const authClient = await createServerClient()
+    const {
+      data: { user },
+      error: authError,
+    } = await authClient.auth.getUser()
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const body = await request.json()
     const { propertyId, ...configData } = body
 
@@ -87,6 +112,11 @@ export async function POST(request: NextRequest) {
         { error: 'Property ID required' },
         { status: 400 }
       )
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     // Check if config exists

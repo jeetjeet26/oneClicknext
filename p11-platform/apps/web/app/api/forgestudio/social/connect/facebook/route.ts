@@ -1,16 +1,34 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { createClient } from '@/utils/supabase/server'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
+import { createSignedForgeStudioOAuthState } from '@/utils/services/forgestudio-oauth-state'
 import { getMetaCredentials } from '@/utils/forgestudio/social-config'
 
 // Facebook OAuth - Start the connection flow
 // This redirects to Meta's OAuth page (same app as Instagram)
 export async function GET(request: NextRequest) {
   try {
+    const supabaseAuth = await createClient()
+    const { data: { user }, error: authError } = await supabaseAuth.auth.getUser()
+    if (authError || !user) {
+      return NextResponse.redirect(
+        `${process.env.NEXT_PUBLIC_SITE_URL}/dashboard/forgestudio?tab=connections&error=${encodeURIComponent('Unauthorized')}`
+      )
+    }
+
     const { searchParams } = new URL(request.url)
     const propertyId = searchParams.get('propertyId')
 
     if (!propertyId) {
       return NextResponse.redirect(
         `${process.env.NEXT_PUBLIC_SITE_URL}/dashboard/forgestudio?tab=connections&error=${encodeURIComponent('Property ID required')}`
+      )
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.redirect(
+        `${process.env.NEXT_PUBLIC_SITE_URL}/dashboard/forgestudio?tab=connections&error=${encodeURIComponent('Forbidden')}`
       )
     }
 
@@ -25,8 +43,7 @@ export async function GET(request: NextRequest) {
 
     const redirectUri = `${process.env.NEXT_PUBLIC_SITE_URL}/api/forgestudio/social/callback/facebook`
     
-    // Store propertyId in state for the callback
-    const state = Buffer.from(JSON.stringify({ propertyId })).toString('base64')
+    const state = createSignedForgeStudioOAuthState({ propertyId })
 
     // Facebook requires pages_manage_posts for posting
     const scopes = [

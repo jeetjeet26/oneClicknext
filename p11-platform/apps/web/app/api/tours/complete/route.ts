@@ -13,23 +13,36 @@ import { adminLimiter, getRateLimitKey, rateLimitHeaders } from '@/utils/service
 import { validateBody, tourCompleteSchema } from '@/utils/services/validation'
 import { unauthorized, forbidden, badRequest, notFound, serverError, rateLimited } from '@/utils/services/api-helpers'
 import { auditLog, getRequestIp } from '@/utils/services/audit-logger'
+import { createRequestContext } from '@/utils/services/request-context'
 
 export async function POST(req: NextRequest) {
+  const ctx = createRequestContext(req, '/api/tours/complete')
+  ctx.logStart()
+
   try {
     // Rate limit
     const rlKey = getRateLimitKey(req, 'tour-complete')
     const rl = adminLimiter.check(rlKey)
-    if (!rl.allowed) return rateLimited(rateLimitHeaders(rl))
+    if (!rl.allowed) {
+      ctx.logSuccess(429, { reason: 'rate_limited' })
+      return rateLimited({ ...rateLimitHeaders(rl), ...ctx.responseHeaders })
+    }
 
     // Auth
     const supabase = await createClient()
     const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) return unauthorized()
+    if (authError || !user) {
+      ctx.logSuccess(401, { reason: 'unauthorized' })
+      return unauthorized(ctx.responseHeaders)
+    }
 
     // Validate input
     const rawBody = await req.json()
     const validation = validateBody(rawBody, tourCompleteSchema)
-    if (!validation.success) return badRequest(validation.error)
+    if (!validation.success) {
+      ctx.logSuccess(400, { reason: 'validation_failed' })
+      return badRequest(validation.error, ctx.responseHeaders)
+    }
 
     const { tourId, notes } = validation.data
 
@@ -44,6 +57,11 @@ export async function POST(req: NextRequest) {
 
     if (tourError || !tour) return notFound('Tour')
 
+    if (!tour.property_id || !tour.lead_id) {
+      ctx.logSuccess(404, { reason: 'tour_relationship_missing', tourId })
+      return notFound('Tour', ctx.responseHeaders)
+    }
+
     // Org ownership check — ensure user's org owns this property
     const access = await validatePropertyAccess(user.id, tour.property_id)
     if (!access.authorized) {
@@ -54,11 +72,13 @@ export async function POST(req: NextRequest) {
         ip: getRequestIp(req),
         resource: 'tours/complete',
       })
-      return forbidden()
+      ctx.logSuccess(403, { reason: 'forbidden', propertyId: tour.property_id, tourId })
+      return forbidden(ctx.responseHeaders)
     }
 
     if (tour.status === 'completed') {
-      return badRequest('Tour already completed')
+      ctx.logSuccess(400, { reason: 'already_completed', tourId })
+      return badRequest('Tour already completed', ctx.responseHeaders)
     }
 
     const now = new Date().toISOString()
@@ -111,15 +131,25 @@ export async function POST(req: NextRequest) {
       details: { tourId, leadId: tour.lead_id },
     })
 
-    return NextResponse.json({
-      success: true,
-      tour: {
-        id: tourId,
-        status: 'completed',
-        completedAt: now,
-      },
+    ctx.logSuccess(200, {
+      tourId,
+      leadId: tour.lead_id,
+      propertyId: tour.property_id,
     })
+
+    return NextResponse.json(
+      {
+        success: true,
+        tour: {
+          id: tourId,
+          status: 'completed',
+          completedAt: now,
+        },
+      },
+      { headers: ctx.responseHeaders }
+    )
   } catch (error) {
-    return serverError(error)
+    ctx.logError(500, error, { operation: 'complete_tour' })
+    return serverError(error, ctx.responseHeaders)
   }
 }

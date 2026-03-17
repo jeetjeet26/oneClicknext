@@ -170,7 +170,7 @@ p11-platform/
 
 - Node.js 20.11+
 - Python 3.11+
-- Supabase project
+- Docker (for local Supabase) or a hosted Supabase project
 - OpenAI API key
 - Twilio account (for SMS)
 - Resend account (for email)
@@ -192,7 +192,7 @@ pip install -r requirements.txt
 
 ### 3. Environment Variables
 
-Create `apps/web/.env.local`:
+Create the shared `p11-platform/.env` file used by both the web app and data engine:
 
 ```env
 # Supabase
@@ -221,21 +221,95 @@ GOOGLE_APPLICATION_CREDENTIALS=path/to/service-account.json
 NEXT_PUBLIC_SITE_URL=http://localhost:3000
 ```
 
-### 4. Run Migrations
+### 4. Initialize Local Supabase
 
 ```bash
-cd supabase
-# Migrations applied via Supabase MCP (already done!)
+cd p11-platform
+npm run supabase:reset
 ```
 
-### 5. Start Development Server
+This will:
+
+- Start the local Supabase stack
+- Apply all migrations in `supabase/migrations/`
+- Seed deterministic local fixtures from `supabase/seed.sql`
+- Generate `p11-platform/.env.local` so web and data-engine use the local database
+
+Seeded local login:
+
+- Email: `local-admin@p11.test`
+- Password: `local-dev-password`
+
+### 5. Start The Local Stack
 
 ```bash
-cd apps/web
-npm run dev
+cd p11-platform
+npm run local:start
 ```
+
+This starts:
+
+- The web app on <http://localhost:3000>
+- The data engine on <http://localhost:8000>
+- Local Supabase on <http://127.0.0.1:54321>
 
 Visit <http://localhost:3000> — authenticated users land at `/dashboard`.
+
+### 6. Run Local Smoke Coverage
+
+```bash
+cd p11-platform
+npm run smoke:local
+```
+
+This runs Playwright smoke coverage against the seeded local stack, including:
+
+- unauthenticated redirect to login
+- seeded local sign-in into an authenticated app route
+- seeded LumaLeasing tour availability via local fixtures
+
+### 7. Inspect Recent Cron Runs
+
+After local cron-backed routes run, recent executions are persisted in `cron_job_runs`.
+
+- Signed-in visibility endpoint: `GET /api/cron/runs?limit=20`
+- Recorded routes now include `app/api/cron/*`, `app/api/tours/reminders`, `app/api/tours/noshow`, and `app/api/workflows/process`
+- Each record includes `job_name`, `status`, `started_at`, `duration_ms`, `summary`, and `error`
+
+### 8. Public Widget Hardening
+
+The main anonymous LumaLeasing/widget routes now have explicit validation and rate-limit coverage:
+
+- `GET /api/lumaleasing/config`
+- `POST /api/lumaleasing/chat`
+- `POST /api/lumaleasing/lead`
+- `GET|POST /api/lumaleasing/tours`
+- `GET /api/lumaleasing/tours/availability`
+- `POST /api/lumaleasing/email/webhook`
+
+### 9. Failure-Injection Coverage
+
+Targeted local failure-injection coverage now verifies:
+
+- provider-down booking behavior when Google Calendar event creation fails
+- service-down cron behavior when the data-engine scraping service is unavailable
+
+---
+
+## P0 Roadmap Context
+
+Current priority remains local-first, but local `P0` closure is now complete.
+
+- Local smoke/e2e coverage now exists via `npm run smoke:local`.
+- Local cron/job visibility now exists via `GET /api/cron/runs`.
+- Critical public-route validation/rate-limit review is now in place for the main anonymous widget routes.
+- Failure-injection coverage now exists for provider-down and service-down conditions.
+
+For now, treat Sentry, hosted monitoring, PITR, staging, CI, and other hosted rollout work as the next deferred hosted-ops candidates rather than local blockers.
+
+The Python data-engine and ETL flows are still important, but they are not the pacing item for `P0` unless they block those remaining local tasks.
+
+See [`docs/P0_LOCAL_CONTINUATION_CONTEXT.md`](../docs/P0_LOCAL_CONTINUATION_CONTEXT.md) and [`../.cursor/plans/AUTONOMY_FOUNDATION_ROADMAP.md`](../.cursor/plans/AUTONOMY_FOUNDATION_ROADMAP.md).
 
 ---
 
@@ -490,22 +564,29 @@ GET    /api/marketvision/brand-intelligence/[competitorId]
 ## 🧪 Development
 
 ```bash
-# Start web app
+# Reset local Supabase, reapply migrations, reseed fixtures, and refresh .env.local
+cd p11-platform
+npm run supabase:reset
+
+# Show local Supabase status and URLs
+cd p11-platform
+npm run supabase:status
+
+# Stop local Supabase containers
+cd p11-platform
+npm run supabase:stop
+
+# Start the shared local stack
+cd p11-platform
+npm run local:start
+
+# Start only the web app
 cd apps/web
 npm run dev
 
-# Start data engine (Python)
+# Start only the data engine
 cd services/data-engine
-python -m uvicorn main:app --reload --port 8000
-
-# Type check
-npm run type-check
-
-# Lint
-npm run lint
-
-# Build
-npm run build
+./start.sh
 ```
 
 ---

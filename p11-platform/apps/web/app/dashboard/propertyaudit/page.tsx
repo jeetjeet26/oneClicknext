@@ -116,9 +116,11 @@ export default function PropertyAuditPage() {
   const [queryView, setQueryView] = useState<'table' | 'cards'>('table')
   const [showReportBuilder, setShowReportBuilder] = useState(false)
   const [showRunAuditModal, setShowRunAuditModal] = useState(false)
+  const [dismissedAlertIds, setDismissedAlertIds] = useState<string[]>([])
 
   // Generate alerts and insights
   const alerts = useGeoAlerts(score, runs, competitors)
+  const visibleAlerts = alerts.filter(alert => !dismissedAlertIds.includes(alert.id))
   const insights = useGeoInsights(score, queries, runs)
 
   useEffect(() => {
@@ -379,6 +381,8 @@ export default function PropertyAuditPage() {
       visibility: r.score!.visibilityPct
     }))
 
+  const latestCompletedRun = runs.find(r => r.status === 'completed') || null
+
   // Build comparison data for dumbbell
   const comparisonData = queries
     .filter(q => q.score !== undefined)
@@ -449,10 +453,10 @@ export default function PropertyAuditPage() {
       )}
 
       {/* Alert Banners */}
-      {alerts.length > 0 && (
+      {visibleAlerts.length > 0 && (
         <AlertBanner 
-          alerts={alerts}
-          onDismiss={(id) => console.log('Dismissed alert:', id)}
+          alerts={visibleAlerts}
+          onDismiss={(id) => setDismissedAlertIds(prev => [...prev, id])}
         />
       )}
 
@@ -783,7 +787,13 @@ export default function PropertyAuditPage() {
                   sov: q.sov || null,
                   score: q.score || 0,
                 }))}
-                onViewAnswer={(id) => console.log('View answer:', id)}
+                onViewAnswer={(id) => {
+                  setQueryView('table')
+                  const el = document.getElementById(`query-row-${id}`)
+                  if (el) {
+                    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                  }
+                }}
                 onOptimizeQuery={(id) => setActiveTab('recommendations')}
                 onAddSimilar={(text) => setShowCreateModal(true)}
               />
@@ -834,7 +844,7 @@ export default function PropertyAuditPage() {
             </div>
             {runs.length === 0 ? (
               <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-8 text-center text-gray-500">
-                No runs yet. Click "Run Audit" to start tracking.
+                No runs yet. Click &quot;Run Audit&quot; to start tracking.
               </div>
             ) : (
               <div className="grid gap-4">
@@ -921,6 +931,11 @@ export default function PropertyAuditPage() {
         onClose={() => setShowReportBuilder(false)}
         propertyId={currentProperty?.id || ''}
         propertyName={currentProperty?.name || 'Property'}
+        runId={latestCompletedRun?.id || null}
+        runSummary={latestCompletedRun ? {
+          surface: latestCompletedRun.surface,
+          startedAt: latestCompletedRun.startedAt,
+        } : null}
       />
 
       <RunAuditModal

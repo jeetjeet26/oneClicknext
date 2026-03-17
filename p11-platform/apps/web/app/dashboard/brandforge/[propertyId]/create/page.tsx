@@ -31,9 +31,8 @@ export default function BrandForgeCreatePage({
     }
   }
 
-  function handleComplete(brandAsset: any) {
-    // Redirect to property overview
-    router.push('/dashboard/community')
+  function handleComplete() {
+    router.prefetch(`/dashboard/brandforge/${propertyId}`)
   }
 
   if (loading) {

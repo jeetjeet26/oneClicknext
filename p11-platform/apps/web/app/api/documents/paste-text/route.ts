@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { createClient } from '@/utils/supabase/server'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
+import { upsertManagedKnowledgeSource } from '@/utils/services/knowledge-sources'
 import OpenAI from 'openai'
 
 const MAX_CHUNK = 800
@@ -65,28 +67,12 @@ export async function POST(req: NextRequest) {
       }, { status: 400 })
     }
 
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
     const supabase = createServiceClient()
-
-    // Verify user has access to this property
-    const { data: property } = await supabase
-      .from('properties')
-      .select('id, name, org_id')
-      .eq('id', propertyId)
-      .single()
-
-    if (!property) {
-      return NextResponse.json({ error: 'Property not found' }, { status: 404 })
-    }
-
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('org_id')
-      .eq('id', user.id)
-      .single()
-
-    if (profile?.org_id !== property.org_id) {
-      return NextResponse.json({ error: 'Access denied' }, { status: 403 })
-    }
 
     const documentTitle = title || 'Pasted Text Content'
     
@@ -137,49 +123,33 @@ export async function POST(req: NextRequest) {
     }))
 
     // Insert into database
-    const { error: insertError } = await supabase.from('documents').insert(payload)
+    const { error: insertError } = await supabase.from('documents').insert(payload as never)
     
     if (insertError) {
       console.error('Document insert error:', insertError)
       return NextResponse.json({ error: 'Failed to store document' }, { status: 500 })
     }
 
-    // Create or update knowledge_sources entry for pasted text
-    const { data: existingSource } = await supabase
-      .from('knowledge_sources')
-      .select('id, documents_created')
-      .eq('property_id', propertyId)
-      .eq('source_type', 'manual')
-      .eq('source_name', 'Pasted Text Content')
-      .single()
-
-    if (existingSource) {
-      // Update existing entry
-      await supabase
-        .from('knowledge_sources')
-        .update({
-          documents_created: (existingSource.documents_created || 0) + chunks.length,
-          last_synced_at: new Date().toISOString(),
-          status: 'completed'
-        })
-        .eq('id', existingSource.id)
-    } else {
-      // Create new entry
-      await supabase
-        .from('knowledge_sources')
-        .insert({
-          property_id: propertyId,
-          source_type: 'manual',
-          source_name: 'Pasted Text Content',
-          status: 'completed',
-          documents_created: chunks.length,
-          extracted_data: {
-            method: 'paste_text',
-            title: documentTitle,
-            content_length: textContent.length,
-          },
-          last_synced_at: new Date().toISOString()
-        })
+    try {
+      await upsertManagedKnowledgeSource(supabase, {
+        propertyId,
+        sourceType: 'manual',
+        sourceName: 'Pasted Text Content',
+        status: 'completed',
+        documentsCreated: chunks.length,
+        extractedData: {
+          brand_origin: 'client_provided_material',
+          method: 'paste_text',
+          title: documentTitle,
+          content_length: textContent.length,
+        },
+      })
+    } catch (knowledgeSourceError) {
+      console.error('Knowledge source upsert error:', knowledgeSourceError)
+      return NextResponse.json(
+        { error: 'Failed to create knowledge source record for pasted text' },
+        { status: 500 }
+      )
     }
 
     return NextResponse.json({ 

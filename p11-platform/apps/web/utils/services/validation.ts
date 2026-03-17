@@ -37,9 +37,11 @@ export const chatRequestSchema = z.object({
 // ─── LumaLeasing Tour Booking ─────────────────────────────────────────────
 
 export const tourBookingSchema = z.object({
-  slotId: safeString(100).optional(),
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD'),
-  time: z.string().regex(/^\d{2}:\d{2}$/, 'Time must be HH:MM'),
+  slotId: safeString(100).optional().nullable(),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD').optional(),
+  time: z.string().regex(/^\d{2}:\d{2}$/, 'Time must be HH:MM').optional(),
+  tourDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD').optional(),
+  tourTime: z.string().regex(/^\d{2}:\d{2}$/, 'Time must be HH:MM').optional(),
   leadInfo: z.object({
     firstName: safeString(100).optional().default(''),
     first_name: safeString(100).optional().default(''),
@@ -52,8 +54,20 @@ export const tourBookingSchema = z.object({
     notes: safeString(1000).optional(),
   }),
   notes: safeString(1000).optional(),
+  specialRequests: safeString(1000).optional(),
   sessionId: safeString(100).optional().nullable(),
   conversationId: safeString(100).optional().nullable(),
+}).superRefine((data, ctx) => {
+  const effectiveDate = data.tourDate || data.date
+  const effectiveTime = data.tourTime || data.time
+
+  if (!data.slotId && (!effectiveDate || !effectiveTime)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Either slotId or tourDate+tourTime are required',
+      path: ['slotId'],
+    })
+  }
 })
 
 // ─── LumaLeasing Lead Capture ─────────────────────────────────────────────
@@ -118,6 +132,21 @@ export const adminConfigUpdateSchema = z.object({
     timezone: safeString(50).optional(),
     is_active: z.boolean().optional(),
   }),
+})
+
+export const apiKeyRegenerateSchema = z.object({
+  propertyId: uuidField,
+})
+
+// ─── Gmail Pub/Sub Webhook ─────────────────────────────────────────────────
+
+export const gmailWebhookSchema = z.object({
+  message: z.object({
+    data: safeString(10_000),
+    messageId: safeString(255).optional(),
+    publishTime: safeString(100).optional(),
+  }),
+  subscription: safeString(500).optional(),
 })
 
 // ─── Workflow Template ────────────────────────────────────────────────────

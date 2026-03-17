@@ -79,19 +79,43 @@ CREATE INDEX IF NOT EXISTS idx_blueprint_versions_website ON siteforge_blueprint
 ALTER TABLE siteforge_blueprint_versions ENABLE ROW LEVEL SECURITY;
 
 -- Add policies
-CREATE POLICY IF NOT EXISTS "Users view org blueprint versions"
-ON siteforge_blueprint_versions FOR SELECT USING (
-  EXISTS (
-    SELECT 1 FROM profiles
-    JOIN property_websites ON property_websites.id = siteforge_blueprint_versions.website_id
-    JOIN properties ON properties.id = property_websites.property_id
-    WHERE profiles.id = auth.uid()
-    AND profiles.org_id = properties.org_id
-  )
-);
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_policies
+    where schemaname = 'public'
+      and tablename = 'siteforge_blueprint_versions'
+      and policyname = 'Users view org blueprint versions'
+  ) then
+    create policy "Users view org blueprint versions"
+    on siteforge_blueprint_versions for select using (
+      exists (
+        select 1 from profiles
+        join property_websites on property_websites.id = siteforge_blueprint_versions.website_id
+        join properties on properties.id = property_websites.property_id
+        where profiles.id = auth.uid()
+        and profiles.org_id = properties.org_id
+      )
+    );
+  end if;
+end
+$$;
 
-CREATE POLICY IF NOT EXISTS "Service role full access blueprint versions" 
-ON siteforge_blueprint_versions FOR ALL USING (auth.role() = 'service_role');
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_policies
+    where schemaname = 'public'
+      and tablename = 'siteforge_blueprint_versions'
+      and policyname = 'Service role full access blueprint versions'
+  ) then
+    create policy "Service role full access blueprint versions"
+    on siteforge_blueprint_versions for all using (auth.role() = 'service_role');
+  end if;
+end
+$$;
 
 -- Add comments
 COMMENT ON COLUMN property_websites.blueprint IS 

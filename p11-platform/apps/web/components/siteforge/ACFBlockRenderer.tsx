@@ -27,6 +27,11 @@ interface BlockRendererProps {
   designSystem?: DesignSystem
 }
 
+type CriticalPreviewState = {
+  degraded: boolean
+  reason?: string
+}
+
 /**
  * Map semantic section types to ACF block types
  * Used as fallback when Architecture Agent doesn't specify block
@@ -52,6 +57,38 @@ const semanticTypeToBlock: Record<string, string> = {
   'intro': 'acf/text-section',
   'about': 'acf/text-section',
   'text': 'acf/text-section',
+}
+
+export function getCriticalPreviewState(
+  blockType: string,
+  content: Record<string, unknown> | null | undefined
+): CriticalPreviewState {
+  const normalized = blockType.toLowerCase()
+
+  if (normalized === 'acf/top-slides') {
+    const slides = Array.isArray(content?.slides) ? content.slides : []
+    if (slides.length === 0) {
+      return { degraded: true, reason: 'missing_hero_slides' }
+    }
+  }
+
+  if (normalized === 'acf/map') {
+    const hasAddress = typeof content?.address === 'string' && content.address.trim().length > 0
+    const hasCoordinates =
+      typeof content?.latitude === 'number' && typeof content?.longitude === 'number'
+    if (!hasAddress && !hasCoordinates) {
+      return { degraded: true, reason: 'missing_map_location' }
+    }
+  }
+
+  if (normalized === 'acf/plans-availability') {
+    const floorPlans = Array.isArray(content?.floor_plans) ? content.floor_plans : []
+    if (floorPlans.length === 0) {
+      return { degraded: true, reason: 'missing_floor_plan_inventory' }
+    }
+  }
+
+  return { degraded: false }
 }
 
 /**
@@ -155,27 +192,22 @@ function HeroSlides({ content, designSystem }: { content: any; designSystem?: De
   const colors = designSystem?.colors || {}
   const typography = designSystem?.typography || {}
   
-  // Handle empty slides with fallback
+  // Do not fake complete hero output when content is missing.
   if (slides.length === 0) {
     return (
-      <div 
-        className="relative rounded-lg overflow-hidden p-12 text-white"
-        style={{ 
-          background: colors.primary 
-            ? `linear-gradient(135deg, ${colors.primary} 0%, ${colors.secondary || colors.primary} 100%)`
-            : 'linear-gradient(135deg, #1F2937 0%, #111827 100%)'
-        }}
-      >
-        <div className="max-w-2xl">
-          <h2 
-            className="text-3xl md:text-4xl font-bold mb-3"
-            style={{ fontFamily: typography.headingFont ? `'${typography.headingFont}', serif` : undefined }}
-          >
-            Hero Content Pending
-          </h2>
-          <p className="text-lg text-gray-300 mb-6">
-            Click to edit and add your property's headline, tagline, and call-to-action.
-          </p>
+      <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 p-6">
+        <h2
+          className="text-lg font-semibold text-amber-900 dark:text-amber-100"
+          style={{ fontFamily: typography.headingFont ? `'${typography.headingFont}', serif` : undefined }}
+        >
+          Hero block is missing structured slide content
+        </h2>
+        <p className="mt-2 text-sm text-amber-800 dark:text-amber-200">
+          Preview intentionally avoids placeholder headline/CTA rendering for this critical section.
+          Edit this section to add real hero slides before deploy.
+        </p>
+        <div className="mt-3 text-xs text-amber-700 dark:text-amber-300">
+          Required: slides[headline, subheadline, cta_text, cta_link]
         </div>
       </div>
     )
@@ -441,20 +473,44 @@ function FormSection({ content, designSystem }: { content: any; designSystem?: D
 }
 
 /**
- * Map Section - Google Maps placeholder
+ * Map Section - explicit degraded state, no fake live map rendering
  */
 function MapSection({ content, designSystem }: { content: any; designSystem?: DesignSystem }) {
+  const address = typeof content.address === 'string' ? content.address : ''
+  const hasCoordinates =
+    typeof content.latitude === 'number' && typeof content.longitude === 'number'
+  const hasLocation = address.trim().length > 0 || hasCoordinates
+
+  if (!hasLocation) {
+    return (
+      <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 p-6">
+        <h4 className="text-sm font-semibold text-amber-900 dark:text-amber-100">
+          Map location not configured
+        </h4>
+        <p className="mt-2 text-sm text-amber-800 dark:text-amber-200">
+          Preview skips map placeholders for this critical block. Provide address or coordinates to
+          render a trustworthy location summary.
+        </p>
+      </div>
+    )
+  }
+
   return (
-    <div className="p-4">
-      <div className="bg-gray-200 dark:bg-gray-700 rounded-lg aspect-video flex items-center justify-center">
-        <div className="text-center">
-          <span className="text-4xl mb-2 block">🗺️</span>
-          <span className="text-gray-500 dark:text-gray-400">
-            Google Maps (Zoom: {content.zoom_level || 15})
-          </span>
-          {content.show_directions && (
-            <p className="text-sm text-gray-400 mt-1">With directions enabled</p>
-          )}
+    <div className="p-4 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
+      <h4 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Location block</h4>
+      <div className="mt-2 text-sm text-gray-700 dark:text-gray-300 space-y-1">
+        {address && <p>Address: {address}</p>}
+        {hasCoordinates && (
+          <p>
+            Coordinates: {content.latitude}, {content.longitude}
+          </p>
+        )}
+        <p>Zoom: {content.zoom_level || 15}</p>
+        {content.show_directions && (
+          <p className="text-xs text-gray-500 dark:text-gray-400">Directions enabled</p>
+        )}
+        <div className="pt-1 text-xs text-gray-500 dark:text-gray-400">
+          Live map tiles are intentionally omitted in preview.
         </div>
       </div>
     </div>
@@ -581,36 +637,62 @@ function MenuSection({ content, designSystem }: { content: any; designSystem?: D
 }
 
 /**
- * Plans Availability - Interactive floor plans placeholder
+ * Plans Availability - explicit readiness view, no fake inventory placeholders
  */
 function PlansAvailability({ content, designSystem }: { content: any; designSystem?: DesignSystem }) {
   const colors = designSystem?.colors || {}
   const typography = designSystem?.typography || {}
+  const floorPlans = Array.isArray(content.floor_plans) ? content.floor_plans : []
   
   // Generate gradient from brand colors
   const gradientFrom = colors.primary ? `${colors.primary}10` : 'rgb(238 242 255)'
   const gradientTo = colors.secondary ? `${colors.secondary}10` : 'rgb(250 245 255)'
+
+  if (floorPlans.length === 0) {
+    return (
+      <div
+        className="rounded-lg p-8"
+        style={{ background: `linear-gradient(135deg, ${gradientFrom} 0%, ${gradientTo} 100%)` }}
+      >
+        <h4
+          className="text-lg font-semibold text-gray-900 dark:text-white mb-2"
+          style={{ fontFamily: typography.headingFont ? `'${typography.headingFont}', serif` : undefined }}
+        >
+          Floor plan inventory unavailable
+        </h4>
+        <p
+          className="text-sm text-gray-700 dark:text-gray-300"
+          style={{ fontFamily: typography.bodyFont ? `'${typography.bodyFont}', sans-serif` : undefined }}
+        >
+          This block depends on real PMS floor-plan data. Preview omits synthetic plans so deploy
+          readiness is explicit.
+        </p>
+        <p className="text-xs text-gray-500 mt-2">
+          Data source: {content.data_source || 'yardi'}
+        </p>
+      </div>
+    )
+  }
   
   return (
     <div 
       className="rounded-lg p-8 text-center"
       style={{ background: `linear-gradient(135deg, ${gradientFrom} 0%, ${gradientTo} 100%)` }}
     >
-      <span className="text-4xl mb-4 block">🏠</span>
       <h4 
         className="text-lg font-semibold text-gray-900 dark:text-white mb-2"
         style={{ fontFamily: typography.headingFont ? `'${typography.headingFont}', serif` : undefined }}
       >
-        Interactive Floor Plans
+        Floor Plans Available
       </h4>
+      <p className="text-sm text-gray-700 dark:text-gray-300">
+        {floorPlans.length} plan{floorPlans.length === 1 ? '' : 's'} in preview data
+      </p>
       <p 
         className="text-gray-600 dark:text-gray-400 text-sm"
         style={{ fontFamily: typography.bodyFont ? `'${typography.bodyFont}', sans-serif` : undefined }}
       >
         Data source: {content.data_source || 'yardi'}
-      </p>
-      <p className="text-xs text-gray-400 mt-2">
-        (Connects to property management system)
       </p>
     </div>
   )

@@ -1,0 +1,15 @@
+---
+description: Keep Docker scoped to local Supabase unless full-stack parity is explicitly needed
+alwaysApply: true
+---
+
+# Docker Local Dev Scope
+
+- Follow the local-first guidance in `.cursor/plans/AUTONOMY_FOUNDATION_ROADMAP.md` and `docs/P0_LOCAL_CONTINUATION_CONTEXT.md`.
+- Default local development shape:
+- Use Docker for local Supabase and its supporting services.
+- Run `p11-platform/apps/web` natively for normal development, debugging, tests, and hot reload.
+- Run `p11-platform/services/data-engine` natively for normal development, debugging, and Python environment management.
+- Do not propose or introduce full-stack Docker/container orchestration as the default local workflow unless the task explicitly requires stronger local/prod parity.
+- Prefer improving the native developer loop first; only expand Docker scope when native setup drift or parity needs become a concrete problem.
+- When documenting or automating local setup, keep the default path aligned with `npm run supabase:reset` and `npm run local:start` from `p11-platform`.

@@ -3,8 +3,8 @@
 // Provides vector search, LLM access, property context
 // Created: December 16, 2025
 
-import { createClient } from '@supabase/supabase-js'
 import Anthropic from '@anthropic-ai/sdk'
+import { createServiceClient } from '@/utils/supabase/admin'
 
 export interface VectorSearchResult {
   id: string
@@ -24,10 +24,7 @@ export interface PropertyKnowledge {
  * Provides: Vector search, LLM access, property context
  */
 export abstract class BaseAgent {
-  protected supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  )
+  protected supabase = createServiceClient()
   
   protected anthropic = new Anthropic({
     apiKey: process.env.ANTHROPIC_API_KEY!
@@ -99,7 +96,12 @@ export abstract class BaseAgent {
             throw new Error(`Supabase RPC error: ${error.message}`)
           }
           
-          return (data || []).map((result: any) => ({
+          return (data || []).map((result: {
+            id: string
+            content: string
+            metadata?: Record<string, unknown> | null
+            similarity: number
+          }) => ({
             id: result.id,
             content: result.content,
             metadata: result.metadata || {},
@@ -291,7 +293,7 @@ export abstract class BaseAgent {
       let lines = response.split('\n')
       
       // Find start and end of JSON
-      let startIdx = lines.findIndex(l => l.trim().startsWith('{') || l.trim().startsWith('['))
+      const startIdx = lines.findIndex(l => l.trim().startsWith('{') || l.trim().startsWith('['))
       let endIdx = lines.length - 1
       for (let i = lines.length - 1; i >= 0; i--) {
         if (lines[i].trim().endsWith('}') || lines[i].trim().endsWith(']')) {
@@ -374,7 +376,7 @@ export abstract class BaseAgent {
             .from('property_brand_assets')
             .select('*')
             .eq('property_id', this.propertyId)
-            .single()
+            .maybeSingle()
           
           if (error) {
             // Log specific error details
@@ -389,7 +391,7 @@ export abstract class BaseAgent {
           }
           
           if (!data) {
-            console.warn('⚠️ [getBrandForgeData] No brand assets found for property:', this.propertyId)
+            console.log('ℹ️ [getBrandForgeData] No brand assets found for property:', this.propertyId)
             return null
           }
           

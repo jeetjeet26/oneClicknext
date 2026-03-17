@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { getMetaCredentials } from '@/utils/forgestudio/social-config'
+import { verifySignedForgeStudioOAuthState } from '@/utils/services/forgestudio-oauth-state'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -31,10 +32,10 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    // Decode state to get propertyId
+    // Verify signed state and extract property context
     let propertyId: string
     try {
-      const stateData = JSON.parse(Buffer.from(state, 'base64').toString())
+      const stateData = verifySignedForgeStudioOAuthState(state)
       propertyId = stateData.propertyId
     } catch {
       return NextResponse.redirect(

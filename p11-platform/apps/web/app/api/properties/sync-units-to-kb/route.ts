@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { syncPropertyUnitsToKnowledgeBase } from '@/utils/property-units-kb-sync'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
 export async function POST(req: NextRequest) {
   try {
     const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
     
-    if (!user) {
+    if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
     
@@ -17,25 +18,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Property ID required' }, { status: 400 })
     }
     
-    // Verify user has access to this property
-    const { data: property } = await supabase
-      .from('properties')
-      .select('id, org_id')
-      .eq('id', propertyId)
-      .single()
-    
-    if (!property) {
-      return NextResponse.json({ error: 'Property not found' }, { status: 404 })
-    }
-    
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('org_id')
-      .eq('id', user.id)
-      .single()
-    
-    if (profile?.org_id !== property.org_id) {
-      return NextResponse.json({ error: 'Access denied' }, { status: 403 })
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
     
     // Sync units to knowledge base
@@ -53,10 +38,10 @@ export async function POST(req: NextRequest) {
       message: 'Property units synced to knowledge base'
     })
     
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Sync units to KB error:', error)
     return NextResponse.json(
-      { error: error.message || 'Failed to sync units' },
+      { error: error instanceof Error ? error.message : 'Failed to sync units' },
       { status: 500 }
     )
   }

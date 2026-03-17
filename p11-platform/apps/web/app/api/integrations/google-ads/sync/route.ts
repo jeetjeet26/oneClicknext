@@ -4,25 +4,91 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 const GOOGLE_ADS_API_VERSION = 'v18'
 
+class AdSyncError extends Error {
+  retryable: boolean
+
+  constructor(message: string, retryable: boolean) {
+    super(message)
+    this.name = 'AdSyncError'
+    this.retryable = retryable
+  }
+}
+
+function isRetryableStatus(status: number): boolean {
+  return status === 429 || status >= 500
+}
+
+function inferRetryableGoogleError(message: string): boolean {
+  const normalized = message.toLowerCase()
+  return (
+    normalized.includes('timeout') ||
+    normalized.includes('temporar') ||
+    normalized.includes('rate limit') ||
+    normalized.includes('too many requests') ||
+    normalized.includes('fetch failed') ||
+    normalized.includes('network') ||
+    normalized.includes('http 5') ||
+    normalized.includes('api error 5') ||
+    normalized.includes('token exchange failed: 5')
+  )
+}
+
+function toAdSyncError(error: unknown, fallback: string): AdSyncError {
+  if (error instanceof AdSyncError) {
+    return error
+  }
+
+  if (error instanceof Error) {
+    return new AdSyncError(error.message, inferRetryableGoogleError(error.message))
+  }
+
+  return new AdSyncError(fallback, true)
+}
+
+function requireGoogleAdsEnv(name: string): string {
+  const value = process.env[name]
+  if (!value) {
+    throw new AdSyncError(`${name} not configured`, false)
+  }
+  return value
+}
+
+async function fetchWithRetry(url: string, init: RequestInit, attempts = 3): Promise<Response> {
+  let lastError: unknown
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      const res = await fetch(url, init)
+      if (res.ok || res.status < 500) return res
+      lastError = new Error(`HTTP ${res.status}`)
+    } catch (error) {
+      lastError = error
+    }
+    await new Promise(resolve => setTimeout(resolve, 300 * (i + 1)))
+  }
+  throw lastError instanceof Error ? lastError : new Error('Fetch failed')
+}
+
 async function getAccessToken(): Promise<string> {
-  const response = await fetch(GOOGLE_TOKEN_URL, {
+  const response = await fetchWithRetry(GOOGLE_TOKEN_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
-      client_id: process.env.GOOGLE_ADS_CLIENT_ID!,
-      client_secret: process.env.GOOGLE_ADS_CLIENT_SECRET!,
-      refresh_token: process.env.GOOGLE_ADS_REFRESH_TOKEN!,
+      client_id: requireGoogleAdsEnv('GOOGLE_ADS_CLIENT_ID'),
+      client_secret: requireGoogleAdsEnv('GOOGLE_ADS_CLIENT_SECRET'),
+      refresh_token: requireGoogleAdsEnv('GOOGLE_ADS_REFRESH_TOKEN'),
       grant_type: 'refresh_token',
     }),
-  })
+  }, 3)
 
   if (!response.ok) {
-    throw new Error(`Token exchange failed: ${response.status}`)
+    throw new AdSyncError(`Token exchange failed: ${response.status}`, isRetryableStatus(response.status))
   }
 
   const data = await response.json()
@@ -47,6 +113,7 @@ async function fetchCampaignPerformance(
   startDate: string,
   endDate: string
 ): Promise<CampaignRow[]> {
+  const developerToken = requireGoogleAdsEnv('GOOGLE_ADS_DEVELOPER_TOKEN')
   const query = `
     SELECT
       campaign.id,
@@ -65,23 +132,27 @@ async function fetchCampaignPerformance(
   const cleanCustomerId = customerId.replace(/-/g, '')
   const cleanLoginId = loginCustomerId.replace(/-/g, '')
 
-  const response = await fetch(
+  const response = await fetchWithRetry(
     `https://googleads.googleapis.com/${GOOGLE_ADS_API_VERSION}/customers/${cleanCustomerId}/googleAds:searchStream`,
     {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${accessToken}`,
-        'developer-token': process.env.GOOGLE_ADS_DEVELOPER_TOKEN!,
+        'developer-token': developerToken,
         'login-customer-id': cleanLoginId,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ query }),
-    }
+    },
+    3
   )
 
   if (!response.ok) {
     const errorText = await response.text()
-    throw new Error(`Google Ads API error ${response.status}: ${errorText}`)
+    throw new AdSyncError(
+      `Google Ads API error ${response.status}: ${errorText}`,
+      isRetryableStatus(response.status)
+    )
   }
 
   const data = await response.json()
@@ -99,6 +170,49 @@ async function fetchCampaignPerformance(
   return rows
 }
 
+async function markConnectionSyncFailure(
+  connectionId: string,
+  errorMessage: string
+) {
+  const supabase = createServiceClient()
+  const { data: connection } = await supabase
+    .from('ad_account_connections')
+    .select('error_count')
+    .eq('id', connectionId)
+    .single()
+
+  await supabase
+    .from('ad_account_connections')
+    .update({
+      error_count: (connection?.error_count || 0) + 1,
+      last_error: errorMessage,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', connectionId)
+}
+
+async function markConnectionSyncSuccess(
+  connectionId: string,
+  importedRows: number
+) {
+  const nowIso = new Date().toISOString()
+  const payload: Record<string, string | number | null> = {
+    last_synced_at: nowIso,
+    error_count: 0,
+    last_error: null,
+    updated_at: nowIso,
+  }
+
+  if (importedRows > 0) {
+    payload.last_imported_at = nowIso
+  }
+
+  await createServiceClient()
+    .from('ad_account_connections')
+    .update(payload)
+    .eq('id', connectionId)
+}
+
 /**
  * Sync Google Ads performance data for a specific ad connection
  */
@@ -107,10 +221,10 @@ export async function syncGoogleAdsConnection(
   accountId: string,
   propertyId: string,
   daysBack: number = 7
-): Promise<{ synced: number; error?: string }> {
+): Promise<{ synced: number; error?: string; retryable?: boolean }> {
   try {
     const accessToken = await getAccessToken()
-    const mccId = process.env.GOOGLE_ADS_CUSTOMER_ID!
+    const mccId = requireGoogleAdsEnv('GOOGLE_ADS_CUSTOMER_ID')
 
     const endDate = new Date().toISOString().split('T')[0]
     const startDate = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
@@ -124,6 +238,7 @@ export async function syncGoogleAdsConnection(
     )
 
     if (rows.length === 0) {
+      await markConnectionSyncSuccess(connectionId, 0)
       return { synced: 0 }
     }
 
@@ -145,6 +260,7 @@ export async function syncGoogleAdsConnection(
 
     // Upsert in batches of 50
     let synced = 0
+    let upsertErrorMessage: string | null = null
     for (let i = 0; i < records.length; i += 50) {
       const batch = records.slice(i, i + 50)
       const { error } = await supabase
@@ -153,28 +269,39 @@ export async function syncGoogleAdsConnection(
 
       if (error) {
         console.error('[Google Ads Sync] Upsert error:', error)
+        upsertErrorMessage = error.message
+        break
       } else {
         synced += batch.length
       }
     }
 
-    // Update last_sync_at on the connection
-    await supabase
-      .from('ad_account_connections')
-      .update({ last_sync_at: new Date().toISOString() })
-      .eq('id', connectionId)
+    if (upsertErrorMessage) {
+      await markConnectionSyncFailure(connectionId, upsertErrorMessage)
+      return { synced, error: upsertErrorMessage, retryable: true }
+    }
+
+    await markConnectionSyncSuccess(connectionId, synced)
 
     return { synced }
   } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : 'Unknown error'
+    const syncError = toAdSyncError(err, 'Unknown error')
+    const errorMsg = syncError.message
     console.error(`[Google Ads Sync] Failed for account ${accountId}:`, errorMsg)
-    return { synced: 0, error: errorMsg }
+    await markConnectionSyncFailure(connectionId, errorMsg)
+    return { synced: 0, error: errorMsg, retryable: syncError.retryable }
   }
 }
 
 // POST: Manual sync trigger (authenticated)
 export async function POST(req: NextRequest) {
   try {
+    const supabaseAuth = await createClient()
+    const { data: { user }, error: authError } = await supabaseAuth.auth.getUser()
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const { connectionId, accountId, propertyId, daysBack } = await req.json()
 
     if (!connectionId || !accountId || !propertyId) {
@@ -184,12 +311,18 @@ export async function POST(req: NextRequest) {
       )
     }
 
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
     const result = await syncGoogleAdsConnection(connectionId, accountId, propertyId, daysBack || 7)
 
     return NextResponse.json({
       success: !result.error,
       synced: result.synced,
       error: result.error,
+      retryable: result.retryable ?? false,
     })
   } catch (error) {
     console.error('[Google Ads Sync] POST error:', error)

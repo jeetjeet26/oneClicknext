@@ -37,6 +37,9 @@ interface Review {
     title: string
     priority: string
     status: string
+    resolution_notes?: string | null
+    resolved_at?: string | null
+    created_at?: string | null
   }>
 }
 
@@ -52,9 +55,29 @@ export function ReviewDetailDrawer({ review, onClose, onUpdate }: ReviewDetailDr
   const [editedText, setEditedText] = useState('')
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [providerPostId, setProviderPostId] = useState('')
+  const [providerPostUrl, setProviderPostUrl] = useState('')
+  const [providerNotes, setProviderNotes] = useState('')
 
   const latestResponse = review.review_responses?.[0]
   const ticket = review.review_tickets?.[0]
+  const providerPostAudit = review.review_tickets?.find((candidate) =>
+    candidate.title.toLowerCase().includes('provider response posted')
+  )
+  const parsedProviderAudit = (() => {
+    if (!providerPostAudit?.resolution_notes) return null
+    try {
+      const parsed = JSON.parse(providerPostAudit.resolution_notes) as {
+        provider_post_url?: string
+        provider_post_id?: string
+        confirmed_at?: string
+      }
+      return parsed
+    } catch {
+      return null
+    }
+  })()
 
   const handleCopyResponse = async () => {
     if (latestResponse) {
@@ -67,6 +90,7 @@ export function ReviewDetailDrawer({ review, onClose, onUpdate }: ReviewDetailDr
   const handleApproveResponse = async () => {
     if (!latestResponse) return
     setActionLoading('approve')
+    setActionError(null)
     
     try {
       const res = await fetch('/api/reviewflow/respond', {
@@ -82,9 +106,13 @@ export function ReviewDetailDrawer({ review, onClose, onUpdate }: ReviewDetailDr
       if (res.ok) {
         onUpdate?.()
         setEditingResponse(null)
+      } else {
+        const data = await res.json().catch(() => ({}))
+        setActionError(data.error || 'Failed to approve response')
       }
     } catch (error) {
       console.error('Error approving response:', error)
+      setActionError(error instanceof Error ? error.message : 'Failed to approve response')
     } finally {
       setActionLoading(null)
     }
@@ -93,6 +121,7 @@ export function ReviewDetailDrawer({ review, onClose, onUpdate }: ReviewDetailDr
   const handlePostResponse = async () => {
     if (!latestResponse) return
     setActionLoading('post')
+    setActionError(null)
 
     try {
       const res = await fetch('/api/reviewflow/respond', {
@@ -100,15 +129,23 @@ export function ReviewDetailDrawer({ review, onClose, onUpdate }: ReviewDetailDr
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           responseId: latestResponse.id,
-          action: 'post'
+          action: 'post',
+          manualConfirmed: true,
+          providerPostId: providerPostId.trim() || undefined,
+          providerPostUrl: providerPostUrl.trim() || undefined,
+          providerNotes: providerNotes.trim() || undefined,
         })
       })
 
       if (res.ok) {
         onUpdate?.()
+      } else {
+        const data = await res.json().catch(() => ({}))
+        setActionError(data.error || 'Failed to mark response as posted')
       }
     } catch (error) {
       console.error('Error posting response:', error)
+      setActionError(error instanceof Error ? error.message : 'Failed to mark response as posted')
     } finally {
       setActionLoading(null)
     }
@@ -257,6 +294,12 @@ export function ReviewDetailDrawer({ review, onClose, onUpdate }: ReviewDetailDr
                   </p>
                 )}
 
+                {actionError && (
+                  <div className="mt-3 rounded-lg bg-red-50 dark:bg-red-900/20 px-3 py-2 text-sm text-red-700 dark:text-red-300">
+                    {actionError}
+                  </div>
+                )}
+
                 {/* Action Buttons */}
                 <div className="flex items-center gap-2 mt-4 pt-4 border-t border-indigo-200 dark:border-indigo-800">
                   {latestResponse.status === 'draft' && (
@@ -319,36 +362,61 @@ export function ReviewDetailDrawer({ review, onClose, onUpdate }: ReviewDetailDr
                   )}
 
                   {latestResponse.status === 'approved' && (
-                    <>
-                      <button
-                        onClick={handlePostResponse}
-                        disabled={actionLoading === 'post'}
-                        className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50"
-                      >
-                        {actionLoading === 'post' ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <Send className="w-4 h-4" />
-                        )}
-                        Post Response
-                      </button>
-                      <button
-                        onClick={handleCopyResponse}
-                        className="flex items-center gap-2 px-4 py-2 border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
-                      >
-                        {copied ? (
-                          <>
-                            <Check className="w-4 h-4 text-emerald-500" />
-                            Copied!
-                          </>
-                        ) : (
-                          <>
-                            <Copy className="w-4 h-4" />
-                            Copy
-                          </>
-                        )}
-                      </button>
-                    </>
+                    <div className="w-full space-y-3">
+                      <div className="rounded-lg bg-slate-100 dark:bg-slate-800 px-3 py-2 text-xs text-slate-600 dark:text-slate-300">
+                        Copy and post this response in the review platform, then confirm it here.
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <input
+                          value={providerPostUrl}
+                          onChange={(e) => setProviderPostUrl(e.target.value)}
+                          placeholder="Provider post URL"
+                          className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm"
+                        />
+                        <input
+                          value={providerPostId}
+                          onChange={(e) => setProviderPostId(e.target.value)}
+                          placeholder="Provider post ID"
+                          className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm"
+                        />
+                        <input
+                          value={providerNotes}
+                          onChange={(e) => setProviderNotes(e.target.value)}
+                          placeholder="Optional posting notes"
+                          className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm sm:col-span-2"
+                        />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={handlePostResponse}
+                          disabled={actionLoading === 'post' || (!providerPostId.trim() && !providerPostUrl.trim())}
+                          className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50"
+                        >
+                          {actionLoading === 'post' ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <Send className="w-4 h-4" />
+                          )}
+                          Mark Posted
+                        </button>
+                        <button
+                          onClick={handleCopyResponse}
+                          className="flex items-center gap-2 px-4 py-2 border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+                        >
+                          {copied ? (
+                            <>
+                              <Check className="w-4 h-4 text-emerald-500" />
+                              Copied!
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-4 h-4" />
+                              Copy
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
                   )}
 
                   {latestResponse.status === 'posted' && (
@@ -375,6 +443,37 @@ export function ReviewDetailDrawer({ review, onClose, onUpdate }: ReviewDetailDr
               </div>
             )}
           </div>
+
+          {providerPostAudit && (
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-900/40 dark:bg-emerald-900/20">
+              <h3 className="text-sm font-medium text-emerald-900 dark:text-emerald-200">
+                Provider Post Audit
+              </h3>
+              <p className="mt-1 text-xs text-emerald-800 dark:text-emerald-300">
+                Confirmed {parsedProviderAudit?.confirmed_at
+                  ? format(new Date(parsedProviderAudit.confirmed_at), 'MMM d, yyyy h:mm a')
+                  : providerPostAudit.resolved_at
+                    ? format(new Date(providerPostAudit.resolved_at), 'MMM d, yyyy h:mm a')
+                    : 'recently'}
+              </p>
+              <div className="mt-3 space-y-1 text-xs text-emerald-900 dark:text-emerald-200">
+                <p>Ticket: {providerPostAudit.id}</p>
+                {parsedProviderAudit?.provider_post_id && (
+                  <p>Provider Post ID: {parsedProviderAudit.provider_post_id}</p>
+                )}
+                {parsedProviderAudit?.provider_post_url && (
+                  <a
+                    href={parsedProviderAudit.provider_post_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 text-emerald-700 underline hover:text-emerald-800 dark:text-emerald-300"
+                  >
+                    Open provider post evidence
+                  </a>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Response Generator Modal */}

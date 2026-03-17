@@ -1,6 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { createClient } from '@/utils/supabase/server'
 import { createAdminClient } from '@/utils/supabase/admin'
-import OpenAI from 'openai'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
+import {
+  badRequest,
+  forbidden,
+  serverError,
+  unauthorized,
+} from '@/utils/services/api-helpers'
+import { finishCronJobRun, startCronJobRun } from '@/utils/services/cron-job-runs'
+import { createRequestContext } from '@/utils/services/request-context'
 
 /**
  * Knowledge Refresh CRON Job
@@ -21,14 +30,53 @@ import OpenAI from 'openai'
 const MAX_PROPERTIES_PER_RUN = 10 // Limit to avoid timeout
 const DAYS_STALE_THRESHOLD = 7 // Consider knowledge stale after 7 days
 
+function getIngestUrls(source: { source_url?: string | null; extracted_data?: unknown }): string[] {
+  const extractedData =
+    source.extracted_data && typeof source.extracted_data === 'object' && !Array.isArray(source.extracted_data)
+      ? (source.extracted_data as Record<string, unknown>)
+      : {}
+
+  const urlsFromExtractedData = Array.isArray(extractedData.ingested_urls)
+    ? extractedData.ingested_urls.filter((u): u is string => typeof u === 'string' && u.trim().length > 0)
+    : []
+
+  const fallbackUrl = typeof source.source_url === 'string' && source.source_url.trim().length > 0
+    ? [source.source_url]
+    : []
+
+  return Array.from(new Set([...urlsFromExtractedData, ...fallbackUrl]))
+}
+
 export async function GET(request: NextRequest) {
+  const ctx = createRequestContext(request, '/api/cron/knowledge-refresh')
+  ctx.logStart()
+
+  if (
+    process.env.CRON_SECRET &&
+    request.headers.get('authorization') !== `Bearer ${process.env.CRON_SECRET}`
+  ) {
+    ctx.logSuccess(401, { reason: 'invalid_cron_auth' })
+    return unauthorized(ctx.responseHeaders)
+  }
+
+  const run = await startCronJobRun({
+    jobName: 'knowledge-refresh',
+    requestId: request.headers.get('x-request-id'),
+  })
+
   try {
-    // Verify CRON secret for security
-    const authHeader = request.headers.get('authorization')
-    const cronSecret = process.env.CRON_SECRET
-    
-    if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const internalApiKey = process.env.INTERNAL_API_KEY
+    if (!internalApiKey) {
+      ctx.logError(500, new Error('INTERNAL_API_KEY missing'), { operation: 'validate_env' })
+      await finishCronJobRun(run, {
+        status: 'failed',
+        error: 'INTERNAL_API_KEY is required for knowledge refresh',
+        summary: { operation: 'validate_env' },
+      })
+      return NextResponse.json(
+        { error: 'INTERNAL_API_KEY is required for knowledge refresh' },
+        { status: 500, headers: ctx.responseHeaders }
+      )
     }
 
     const adminClient = createAdminClient()
@@ -44,6 +92,7 @@ export async function GET(request: NextRequest) {
         id,
         property_id,
         source_url,
+        extracted_data,
         last_synced_at,
         properties!inner (
           id,
@@ -55,16 +104,29 @@ export async function GET(request: NextRequest) {
       .limit(MAX_PROPERTIES_PER_RUN)
 
     if (sourceError) {
-      console.error('Error fetching stale sources:', sourceError)
-      return NextResponse.json({ error: 'Failed to fetch stale sources' }, { status: 500 })
+      ctx.logError(500, sourceError, { operation: 'fetch_stale_sources' })
+      await finishCronJobRun(run, {
+        status: 'failed',
+        error: 'Failed to fetch stale sources',
+        summary: { operation: 'fetch_stale_sources' },
+      })
+      return serverError(sourceError, ctx.responseHeaders)
     }
 
     if (!staleSources || staleSources.length === 0) {
-      return NextResponse.json({
-        success: true,
-        message: 'No stale knowledge sources to refresh',
-        processed: 0,
+      await finishCronJobRun(run, {
+        status: 'success',
+        summary: { processed: 0, successful: 0, failed: 0 },
       })
+      ctx.logSuccess(200, { processed: 0, successful: 0, failed: 0 })
+      return NextResponse.json(
+        {
+          success: true,
+          message: 'No stale knowledge sources to refresh',
+          processed: 0,
+        },
+        { headers: ctx.responseHeaders }
+      )
     }
 
     const results: Array<{
@@ -78,11 +140,12 @@ export async function GET(request: NextRequest) {
     // Process each stale source
     for (const source of staleSources) {
       try {
-        if (!source.source_url) {
+        const refreshUrls = getIngestUrls(source)
+        if (refreshUrls.length === 0) {
           const props = Array.isArray(source.properties) ? source.properties[0] : source.properties
           results.push({
-            propertyId: source.property_id,
-            propertyName: props?.name || 'Unknown',
+            propertyId: source.property_id ?? 'unknown',
+            propertyName: props?.name ?? 'Unknown',
             success: false,
             error: 'No source URL configured',
           })
@@ -94,11 +157,14 @@ export async function GET(request: NextRequest) {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${process.env.INTERNAL_API_KEY || 'internal'}`,
+            Authorization: `Bearer ${internalApiKey}`,
+            ...(request.headers.get('cookie')
+              ? { cookie: request.headers.get('cookie') as string }
+              : {}),
           },
           body: JSON.stringify({
             propertyId: source.property_id,
-            websiteUrl: source.source_url,
+            urls: refreshUrls,
             isRefresh: true, // Flag to indicate this is a refresh, not initial scrape
           }),
         })
@@ -107,8 +173,8 @@ export async function GET(request: NextRequest) {
           const errorData = await scrapeResponse.json()
           const props = Array.isArray(source.properties) ? source.properties[0] : source.properties
           results.push({
-            propertyId: source.property_id,
-            propertyName: props?.name || 'Unknown',
+            propertyId: source.property_id ?? 'unknown',
+            propertyName: props?.name ?? 'Unknown',
             success: false,
             error: errorData.error || 'Scrape failed',
           })
@@ -124,14 +190,14 @@ export async function GET(request: NextRequest) {
             last_synced_at: new Date().toISOString(),
             status: 'completed',
             documents_created: scrapeResult.documentsCreated || 0,
-            processing_notes: `Refreshed at ${new Date().toISOString()}`,
+            processing_notes: `Refreshed ${refreshUrls.length} URL(s) at ${new Date().toISOString()}`,
           })
           .eq('id', source.id)
 
         const props = Array.isArray(source.properties) ? source.properties[0] : source.properties
         results.push({
-          propertyId: source.property_id,
-          propertyName: props?.name || 'Unknown',
+          propertyId: source.property_id ?? 'unknown',
+          propertyName: props?.name ?? 'Unknown',
           success: true,
           changes: scrapeResult.changes || [],
         })
@@ -140,50 +206,90 @@ export async function GET(request: NextRequest) {
         // This would be a good place to add notification logic
         if (scrapeResult.changes && scrapeResult.changes.length > 0) {
           // TODO: Send notification about changes
-          console.log(`Changes detected for property ${source.property_id}:`, scrapeResult.changes)
+          ctx.logSuccess(200, {
+            operation: 'knowledge_refresh_changes_detected',
+            propertyId: source.property_id ?? 'unknown',
+            changes: scrapeResult.changes.length,
+          })
         }
 
       } catch (error) {
-        console.error(`Error processing property ${source.property_id}:`, error)
+        ctx.logError(500, error, {
+          operation: 'knowledge_refresh_property',
+          propertyId: source.property_id ?? 'unknown',
+        })
         const props = Array.isArray(source.properties) ? source.properties[0] : source.properties
         results.push({
-          propertyId: source.property_id,
-          propertyName: props?.name || 'Unknown',
+          propertyId: source.property_id ?? 'unknown',
+          propertyName: props?.name ?? 'Unknown',
           success: false,
           error: error instanceof Error ? error.message : 'Unknown error',
         })
       }
     }
 
-    // Log summary
     const successful = results.filter(r => r.success).length
     const failed = results.filter(r => !r.success).length
-    console.log(`Knowledge refresh complete: ${successful} succeeded, ${failed} failed`)
 
-    return NextResponse.json({
-      success: true,
-      processed: results.length,
-      successful,
-      failed,
-      results,
+    await finishCronJobRun(run, {
+      status: 'success',
+      summary: {
+        processed: results.length,
+        successful,
+        failed,
+      },
     })
 
+    ctx.logSuccess(200, { processed: results.length, successful, failed })
+    return NextResponse.json(
+      {
+        success: true,
+        processed: results.length,
+        successful,
+        failed,
+        results,
+      },
+      { headers: ctx.responseHeaders }
+    )
+
   } catch (error) {
-    console.error('Knowledge refresh CRON error:', error)
-    return NextResponse.json({ 
-      error: error instanceof Error ? error.message : 'Server error' 
-    }, { status: 500 })
+    ctx.logError(500, error, { operation: 'run_knowledge_refresh' })
+    await finishCronJobRun(run, {
+      status: 'failed',
+      error: error instanceof Error ? error.message : 'Server error',
+      summary: { operation: 'run_knowledge_refresh' },
+    })
+    return serverError(error, ctx.responseHeaders)
   }
 }
 
 // POST endpoint for manual trigger
 export async function POST(request: NextRequest) {
+  const ctx = createRequestContext(request, '/api/cron/knowledge-refresh')
+  ctx.logStart()
   try {
     const { propertyId } = await request.json()
-    
+
     if (!propertyId) {
       // If no propertyId, run the full CRON job
       return GET(request)
+    }
+
+    const supabaseAuth = await createClient()
+    const {
+      data: { user },
+      error: authError,
+    } = await supabaseAuth.auth.getUser()
+
+    if (authError || !user) {
+      ctx.logSuccess(401, { reason: 'unauthorized' })
+      return unauthorized(ctx.responseHeaders)
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      ctx.logSuccess(403, { reason: 'forbidden_property_access', propertyId, userId: user.id })
+      return forbidden(ctx.responseHeaders)
     }
 
     // Otherwise, refresh just one property
@@ -197,22 +303,35 @@ export async function POST(request: NextRequest) {
       .single()
 
     if (error || !source) {
-      return NextResponse.json({ error: 'No website knowledge source found for this property' }, { status: 404 })
+      ctx.logSuccess(404, { reason: 'website_source_not_found', propertyId })
+      return NextResponse.json(
+        { error: 'No website knowledge source found for this property' },
+        { status: 404, headers: ctx.responseHeaders }
+      )
     }
 
     if (!source.source_url) {
-      return NextResponse.json({ error: 'No website URL configured for this property' }, { status: 400 })
+      const refreshUrls = getIngestUrls(source)
+      if (refreshUrls.length === 0) {
+        ctx.logSuccess(400, { reason: 'missing_source_url', propertyId })
+        return badRequest('No website URL configured for this property', ctx.responseHeaders)
+      }
     }
+
+    const refreshUrls = getIngestUrls(source)
 
     // Trigger scrape
     const scrapeResponse = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/onboarding/scrape-website`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        ...(request.headers.get('cookie')
+          ? { cookie: request.headers.get('cookie') as string }
+          : {}),
       },
       body: JSON.stringify({
         propertyId,
-        websiteUrl: source.source_url,
+        urls: refreshUrls,
         isRefresh: true,
       }),
     })
@@ -220,7 +339,14 @@ export async function POST(request: NextRequest) {
     const result = await scrapeResponse.json()
 
     if (!scrapeResponse.ok) {
-      return NextResponse.json({ error: result.error || 'Refresh failed' }, { status: scrapeResponse.status })
+      ctx.logSuccess(scrapeResponse.status, {
+        reason: 'scrape_refresh_failed',
+        propertyId,
+      })
+      return NextResponse.json(
+        { error: result.error || 'Refresh failed' },
+        { status: scrapeResponse.status, headers: ctx.responseHeaders }
+      )
     }
 
     // Update source record
@@ -232,16 +358,18 @@ export async function POST(request: NextRequest) {
       })
       .eq('id', source.id)
 
-    return NextResponse.json({
-      success: true,
-      ...result,
-    })
+    ctx.logSuccess(200, { propertyId, operation: 'manual_refresh' })
+    return NextResponse.json(
+      {
+        success: true,
+        ...result,
+      },
+      { headers: ctx.responseHeaders }
+    )
 
   } catch (error) {
-    console.error('Manual knowledge refresh error:', error)
-    return NextResponse.json({ 
-      error: error instanceof Error ? error.message : 'Server error' 
-    }, { status: 500 })
+    ctx.logError(500, error, { operation: 'manual_knowledge_refresh' })
+    return serverError(error, ctx.responseHeaders)
   }
 }
 

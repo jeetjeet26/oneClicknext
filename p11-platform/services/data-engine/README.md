@@ -2,6 +2,16 @@
 
 ETL pipelines for marketing data ingestion AND long-running job execution for P11 Platform. Handles PropertyAudit GEO intelligence, review analysis, and more.
 
+## Current Roadmap Context
+
+The data-engine is still an active part of the platform, but it is not currently the pacing item for local-first `P0` closure.
+
+- Current `P0` priority is finishing local smoke/e2e coverage, cron/job visibility, public-route validation/rate-limit review, and failure-injection coverage.
+- Keep the data-engine in that path when it is required to complete those local flows.
+- Otherwise, broader ETL and Python contract alignment should be revisited during hosted-ops hardening or `P1`, rather than displacing the remaining local `P0` work.
+
+See [`docs/P0_LOCAL_CONTINUATION_CONTEXT.md`](../../../docs/P0_LOCAL_CONTINUATION_CONTEXT.md) and [`../../../.cursor/plans/AUTONOMY_FOUNDATION_ROADMAP.md`](../../../.cursor/plans/AUTONOMY_FOUNDATION_ROADMAP.md).
+
 ## 🆕 New: PropertyAudit Job Execution (Dec 2025)
 
 The data-engine now handles PropertyAudit runs that previously timed out on Vercel. Features:

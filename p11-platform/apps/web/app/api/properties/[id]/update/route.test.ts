@@ -1,0 +1,64 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { NextRequest } from 'next/server'
+
+const authGetUserMock = vi.fn()
+const createClientMock = vi.fn()
+const createServiceClientMock = vi.fn()
+const validatePropertyAccessMock = vi.fn()
+
+vi.mock('@/utils/supabase/server', () => ({
+  createClient: createClientMock,
+}))
+
+vi.mock('@/utils/supabase/admin', () => ({
+  createServiceClient: createServiceClientMock,
+}))
+
+vi.mock('@/utils/services/auth-guard', () => ({
+  validatePropertyAccess: validatePropertyAccessMock,
+}))
+
+describe('properties [id]/update route auth', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    createClientMock.mockResolvedValue({
+      auth: { getUser: authGetUserMock },
+    })
+    createServiceClientMock.mockReturnValue({
+      from: vi.fn(),
+    })
+  })
+
+  it('PUT returns 401 when unauthenticated', async () => {
+    authGetUserMock.mockResolvedValue({ data: { user: null }, error: null })
+
+    const { PUT } = await import('./route')
+    const response = await PUT(
+      new Request('http://localhost/api/properties/property-1/update', {
+        method: 'PUT',
+        body: JSON.stringify({ property: { name: 'Updated' } }),
+      }) as NextRequest,
+      { params: Promise.resolve({ id: 'property-1' }) }
+    )
+
+    expect(response.status).toBe(401)
+    await expect(response.json()).resolves.toEqual({ error: 'Unauthorized' })
+  })
+
+  it('PUT returns 403 when property access is denied', async () => {
+    authGetUserMock.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
+    validatePropertyAccessMock.mockResolvedValue({ authorized: false })
+
+    const { PUT } = await import('./route')
+    const response = await PUT(
+      new Request('http://localhost/api/properties/property-1/update', {
+        method: 'PUT',
+        body: JSON.stringify({ property: { name: 'Updated' } }),
+      }) as NextRequest,
+      { params: Promise.resolve({ id: 'property-1' }) }
+    )
+
+    expect(response.status).toBe(403)
+    await expect(response.json()).resolves.toEqual({ error: 'Forbidden' })
+  })
+})

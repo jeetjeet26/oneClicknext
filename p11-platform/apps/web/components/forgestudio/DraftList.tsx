@@ -52,6 +52,12 @@ interface ContentDraft {
   scheduled_for: string | null
   created_at: string
   variations: string[]
+  generation_params?: {
+    readiness?: {
+      state?: string
+      blockers?: string[]
+    }
+  }
 }
 
 interface DraftListProps {
@@ -63,6 +69,7 @@ interface DraftListProps {
 const STATUS_FILTERS = [
   { id: 'all', label: 'All', icon: FileText },
   { id: 'draft', label: 'Drafts', icon: FileText },
+  { id: 'draft_partial', label: 'Partial', icon: Clock },
   { id: 'pending_review', label: 'Pending', icon: Clock },
   { id: 'approved', label: 'Approved', icon: Check },
   { id: 'scheduled', label: 'Scheduled', icon: Clock },

@@ -71,8 +71,9 @@ export async function processTourNoShows(): Promise<NoShowResult> {
     // Look for scheduled tours that ended more than 1 hour ago
     // (giving some buffer for late arrivals)
     const cutoffTime = subHours(now, 1)
-    const todayStr = format(now, 'yyyy-MM-dd')
-    const yesterdayStr = format(subHours(now, 24), 'yyyy-MM-dd')
+    const lookbackDates = Array.from({ length: 7 }, (_, idx) =>
+      format(subHours(now, idx * 24), 'yyyy-MM-dd')
+    )
 
     // Find tours that should be marked as no-show
     const { data: potentialNoShows, error: fetchError } = await supabase
@@ -101,7 +102,7 @@ export async function processTourNoShows(): Promise<NoShowResult> {
         )
       `)
       .eq('status', 'scheduled')
-      .or(`tour_date.eq.${todayStr},tour_date.eq.${yesterdayStr}`)
+      .in('tour_date', lookbackDates)
 
     if (fetchError) {
       console.error('[TourNoShow] Error fetching tours:', fetchError)

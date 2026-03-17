@@ -5,7 +5,15 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { createServiceClient } from '@/utils/supabase/admin'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { buildCharts, buildRunReportData } from '@/utils/propertyaudit/reporting'
+import type { ReportAnswer } from '@/utils/propertyaudit/reporting'
+
+type ReportingClient = {
+  from: (table: string) => unknown
+  rpc: (fn: string, args: Record<string, unknown>) => unknown
+}
 
 export async function GET(req: NextRequest) {
   try {
@@ -24,7 +32,43 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'runId required' }, { status: 400 })
     }
 
-    const reportData = await buildRunReportData(supabase, runId)
+    if (format !== 'markdown' && format !== 'html') {
+      return NextResponse.json(
+        { error: 'Invalid format. Allowed values: markdown, html' },
+        { status: 400 }
+      )
+    }
+
+    const serviceClient = createServiceClient()
+    const { data: run, error: runError } = await serviceClient
+      .from('geo_runs')
+      .select('property_id, status')
+      .eq('id', runId)
+      .single()
+
+    if (runError || !run?.property_id) {
+      return NextResponse.json({ error: 'Run not found' }, { status: 404 })
+    }
+
+    const access = await validatePropertyAccess(user.id, run.property_id)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
+    if (run.status !== 'completed') {
+      return NextResponse.json(
+        {
+          error: 'Export requires a completed run',
+          currentStatus: run.status,
+        },
+        { status: 409 }
+      )
+    }
+
+    const reportData = await buildRunReportData(
+      serviceClient as unknown as ReportingClient,
+      runId
+    )
     if (!reportData) {
       return NextResponse.json({ error: 'Run not found' }, { status: 404 })
     }
@@ -169,7 +213,7 @@ function generateMarkdown(data: Awaited<ReturnType<typeof buildRunReportData>>):
     
     if (answer.ordered_entities && answer.ordered_entities.length > 0) {
       lines.push(`**Entities:**`)
-      answer.ordered_entities.forEach((entity: any) => {
+      answer.ordered_entities.forEach((entity) => {
         lines.push(`- ${entity.position}. ${entity.name} (${entity.domain})`)
       })
       lines.push(``)
@@ -177,7 +221,7 @@ function generateMarkdown(data: Awaited<ReturnType<typeof buildRunReportData>>):
     
     if (answer.geo_citations && answer.geo_citations.length > 0) {
       lines.push(`**Citations:**`)
-      answer.geo_citations.forEach((citation: any, i: number) => {
+      answer.geo_citations.forEach((citation, i: number) => {
         const brandTag = citation.is_brand_domain ? ' 🏷️' : ''
         lines.push(`${i + 1}. ${citation.domain}${brandTag}`)
         lines.push(`   ${citation.url}`)
@@ -217,7 +261,8 @@ function generateHTML(data: Awaited<ReturnType<typeof buildRunReportData>>): str
     insights,
     narrative,
     trends,
-    competitors
+    competitors,
+    aiOverviewSummary
   } = data
 
   const charts = buildCharts({
@@ -320,7 +365,7 @@ function generateHTML(data: Awaited<ReturnType<typeof buildRunReportData>>): str
   </div>
 
   <h2>Query Results (${answers.length})</h2>
-  ${answers.map((answer: any, idx: number) => {
+  ${answers.map((answer: ReportAnswer, idx: number) => {
     const query = answer.geo_queries
     return `
     <div class="query-card">
@@ -335,7 +380,7 @@ function generateHTML(data: Awaited<ReturnType<typeof buildRunReportData>>): str
       
       ${answer.ordered_entities && answer.ordered_entities.length > 0 ? `
         <h4>Entities:</h4>
-        ${answer.ordered_entities.map((entity: any) => `
+        ${answer.ordered_entities.map((entity) => `
           <div class="entity">
             <strong>${entity.position}. ${escapeHtml(entity.name)}</strong> (${escapeHtml(entity.domain)})
             <p style="margin: 5px 0 0 0; font-size: 14px;">${escapeHtml(entity.rationale || '—')}</p>
@@ -345,7 +390,7 @@ function generateHTML(data: Awaited<ReturnType<typeof buildRunReportData>>): str
       
       ${answer.geo_citations && answer.geo_citations.length > 0 ? `
         <h4>Citations:</h4>
-        ${answer.geo_citations.map((citation: any, i: number) => `
+        ${answer.geo_citations.map((citation, i: number) => `
           <div class="citation ${citation.is_brand_domain ? 'brand-citation' : ''}">
             <strong>${i + 1}. ${escapeHtml(citation.domain)}</strong>${citation.is_brand_domain ? ' (Your Brand)' : ''}
             <br/><small>${escapeHtml(citation.url)}</small>

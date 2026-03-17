@@ -6,15 +6,48 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/utils/supabase/admin'
+import {
+  serverError,
+  unauthorized,
+} from '@/utils/services/api-helpers'
+import { finishCronJobRun, startCronJobRun } from '@/utils/services/cron-job-runs'
 import { syncGoogleAdsConnection } from '@/app/api/integrations/google-ads/sync/route'
 import { syncMetaAdsConnection } from '@/app/api/integrations/meta-ads/sync/route'
+import { createRequestContext } from '@/utils/services/request-context'
+
+type SyncAdsResult = { synced: number; error?: string; retryable?: boolean }
+
+async function runConnectionSync(
+  fn: () => Promise<SyncAdsResult>,
+  attempts = 2
+): Promise<SyncAdsResult> {
+  let result = await fn()
+
+  for (let attempt = 1; attempt < attempts; attempt += 1) {
+    if (!result.error || !result.retryable) {
+      return result
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 300 * attempt))
+    result = await fn()
+  }
+
+  return result
+}
 
 export async function GET(req: NextRequest) {
-  // Verify cron secret
-  const authHeader = req.headers.get('authorization')
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const ctx = createRequestContext(req, '/api/cron/sync-ads')
+  ctx.logStart()
+
+  if (process.env.CRON_SECRET && req.headers.get('authorization') !== `Bearer ${process.env.CRON_SECRET}`) {
+    ctx.logSuccess(401, { reason: 'invalid_cron_auth' })
+    return unauthorized(ctx.responseHeaders)
   }
+
+  const run = await startCronJobRun({
+    jobName: 'sync-ads',
+    requestId: req.headers.get('x-request-id'),
+  })
 
   const supabase = createServiceClient()
 
@@ -26,31 +59,47 @@ export async function GET(req: NextRequest) {
       .eq('is_active', true)
 
     if (error) {
-      console.error('[Ad Sync Cron] Failed to fetch connections:', error)
-      return NextResponse.json({ error: 'Failed to fetch connections' }, { status: 500 })
+      ctx.logError(500, error, { operation: 'fetch_connections' })
+      await finishCronJobRun(run, {
+        status: 'failed',
+        error: 'Failed to fetch connections',
+        summary: { operation: 'fetch_connections' },
+      })
+      return serverError(error, ctx.responseHeaders)
     }
 
     if (!connections || connections.length === 0) {
-      console.log('[Ad Sync Cron] No active ad connections to sync')
-      return NextResponse.json({ message: 'No connections to sync', synced: 0 })
+      await finishCronJobRun(run, {
+        status: 'success',
+        summary: { totalConnections: 0, totalSynced: 0, failures: 0 },
+      })
+      ctx.logSuccess(200, { totalConnections: 0, totalSynced: 0, failures: 0 })
+      return NextResponse.json(
+        { message: 'No connections to sync', synced: 0 },
+        { headers: ctx.responseHeaders }
+      )
     }
 
-    console.log(`[Ad Sync Cron] Processing ${connections.length} active connections`)
-
-    const results: Array<{ platform: string; accountId: string; synced: number; error?: string }> = []
+    const results: Array<{ platform: string; accountId: string; synced: number; error?: string; retryable?: boolean }> = []
 
     for (const conn of connections) {
-      let result: { synced: number; error?: string }
+      let result: SyncAdsResult
 
       switch (conn.platform) {
         case 'google_ads':
-          result = await syncGoogleAdsConnection(conn.id, conn.account_id, conn.property_id)
+          result = await runConnectionSync(
+            () => syncGoogleAdsConnection(conn.id, conn.account_id, conn.property_id),
+            2
+          )
           break
         case 'meta_ads':
-          result = await syncMetaAdsConnection(conn.id, conn.account_id, conn.property_id)
+          result = await runConnectionSync(
+            () => syncMetaAdsConnection(conn.id, conn.account_id, conn.property_id),
+            2
+          )
           break
         default:
-          result = { synced: 0, error: `Unsupported platform: ${conn.platform}` }
+          result = { synced: 0, error: `Unsupported platform: ${conn.platform}`, retryable: false }
       }
 
       results.push({
@@ -58,23 +107,52 @@ export async function GET(req: NextRequest) {
         accountId: conn.account_id,
         synced: result.synced,
         error: result.error,
+        retryable: result.retryable,
       })
     }
 
     const totalSynced = results.reduce((sum, r) => sum + r.synced, 0)
     const failures = results.filter(r => r.error)
+    const retryableFailures = failures.filter(r => r.retryable)
+    const permanentFailures = failures.filter(r => !r.retryable)
 
-    console.log(`[Ad Sync Cron] Complete: ${totalSynced} rows synced, ${failures.length} failures`)
+    await finishCronJobRun(run, {
+      status: 'success',
+      summary: {
+        totalConnections: connections.length,
+        totalSynced,
+        failures: failures.length,
+        retryableFailures: retryableFailures.length,
+        permanentFailures: permanentFailures.length,
+      },
+    })
 
-    return NextResponse.json({
-      success: true,
+    ctx.logSuccess(200, {
       totalConnections: connections.length,
       totalSynced,
       failures: failures.length,
-      results,
+      retryableFailures: retryableFailures.length,
+      permanentFailures: permanentFailures.length,
     })
+    return NextResponse.json(
+      {
+        success: true,
+        totalConnections: connections.length,
+        totalSynced,
+        failures: failures.length,
+        retryableFailures: retryableFailures.length,
+        permanentFailures: permanentFailures.length,
+        results,
+      },
+      { headers: ctx.responseHeaders }
+    )
   } catch (err) {
-    console.error('[Ad Sync Cron] Fatal error:', err)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    ctx.logError(500, err, { operation: 'run_sync_ads' })
+    await finishCronJobRun(run, {
+      status: 'failed',
+      error: err instanceof Error ? err.message : 'Internal server error',
+      summary: { operation: 'run_sync_ads' },
+    })
+    return serverError(err, ctx.responseHeaders)
   }
 }

@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { createClient } from '@/utils/supabase/server'
+import { createServiceClient } from '@/utils/supabase/admin'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
+import { hasValidCronAuth } from '@/utils/services/api-helpers'
 import OpenAI from 'openai'
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
@@ -275,6 +273,27 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    const isCronRequest = hasValidCronAuth(request)
+
+    if (!isCronRequest) {
+      const supabaseAuth = await createClient()
+      const {
+        data: { user },
+        error: authError,
+      } = await supabaseAuth.auth.getUser()
+
+      if (authError || !user) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      }
+
+      const access = await validatePropertyAccess(user.id, propertyId)
+      if (!access.authorized) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+      }
+    }
+
+    const supabase = createServiceClient()
+
     // Get the connection details
     let query = supabase
       .from('review_platform_connections')
@@ -455,10 +474,27 @@ export async function POST(request: NextRequest) {
 }
 
 // Analyze reviews directly with OpenAI (no HTTP calls)
-async function analyzeReviewsBatch(reviews: { id: string; review_text: string; rating: number; property_id: string; reviewer_name: string }[]) {
+async function analyzeReviewsBatch(
+  reviews: {
+    id: string
+    review_text: string
+    rating: number | null
+    property_id: string | null
+    reviewer_name: string | null
+  }[]
+) {
+  const supabase = createServiceClient()
+
   for (const review of reviews) {
     try {
-      console.log(`Analyzing review ${review.id} from ${review.reviewer_name}...`)
+      if (!review.property_id) {
+        console.warn(`Skipping review ${review.id}: missing property_id`)
+        continue
+      }
+
+      const reviewerName = review.reviewer_name || 'Anonymous'
+      const ratingValue = review.rating ?? 0
+      console.log(`Analyzing review ${review.id} from ${reviewerName}...`)
       
       // Get sentiment analysis from OpenAI
       const analysis = await analyzeReviewSentiment(review.review_text, review.rating)
@@ -471,7 +507,7 @@ async function analyzeReviewsBatch(reviews: { id: string; review_text: string; r
           sentiment_score: analysis.sentimentScore,
           topics: analysis.topics,
           is_urgent: analysis.isUrgent,
-          auto_respond_eligible: analysis.sentiment === 'positive' && review.rating >= 4,
+          auto_respond_eligible: analysis.sentiment === 'positive' && ratingValue >= 4,
           updated_at: new Date().toISOString()
         })
         .eq('id', review.id)
@@ -484,7 +520,7 @@ async function analyzeReviewsBatch(reviews: { id: string; review_text: string; r
       console.log(`✅ Analyzed review ${review.id}: ${analysis.sentiment} (${analysis.sentimentScore})`)
 
       // Auto-generate draft response for eligible positive reviews
-      if (analysis.sentiment === 'positive' && review.rating >= 4) {
+      if (analysis.sentiment === 'positive' && ratingValue >= 4) {
         try {
           const { data: rfConfig } = await supabase
             .from('reviewflow_config')
@@ -492,7 +528,7 @@ async function analyzeReviewsBatch(reviews: { id: string; review_text: string; r
             .eq('property_id', review.property_id)
             .single()
 
-          if (rfConfig?.auto_respond_positive && review.rating >= (rfConfig.auto_respond_threshold || 4)) {
+          if (rfConfig?.auto_respond_positive && ratingValue >= (rfConfig.auto_respond_threshold || 4)) {
             const { data: property } = await supabase
               .from('properties')
               .select('name')
@@ -509,7 +545,7 @@ Guidelines:
 - Make it feel personal and genuine, not templated.
 - ${review.reviewer_name ? `Address them by name: ${review.reviewer_name}` : 'Do not assume their name'}
 ${analysis.topics.length > 0 ? `- Reference these topics: ${analysis.topics.join(', ')}` : ''}
-Rating: ${review.rating}/5`
+Rating: ${ratingValue}/5`
 
             const completion = await openai.chat.completions.create({
               model: 'gpt-4o-mini',
@@ -548,8 +584,8 @@ Rating: ${review.rating}/5`
           review_id: review.id,
           property_id: review.property_id,
           title: analysis.isUrgent 
-            ? `🚨 URGENT: Review from ${review.reviewer_name || 'Anonymous'}`
-            : `Negative review from ${review.reviewer_name || 'Anonymous'}`,
+            ? `🚨 URGENT: Review from ${reviewerName}`
+            : `Negative review from ${reviewerName}`,
           description: analysis.summary,
           priority: analysis.isUrgent ? 'urgent' : (analysis.sentimentScore < -0.5 ? 'high' : 'medium'),
           status: 'open'

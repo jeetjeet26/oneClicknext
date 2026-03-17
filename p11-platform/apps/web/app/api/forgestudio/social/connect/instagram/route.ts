@@ -1,16 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import crypto from 'crypto'
+import { createClient as createSupabaseClient } from '@supabase/supabase-js'
+import { createClient as createServerClient } from '@/utils/supabase/server'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
+import { createSignedForgeStudioOAuthState } from '@/utils/services/forgestudio-oauth-state'
 
-const supabase = createClient(
+const supabase = createSupabaseClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
 // Helper to decrypt stored secrets
 function decrypt(encrypted: string): string {
-  if (!encrypted.startsWith('enc_')) return encrypted
-  const mixed = encrypted.slice(4)
-  return Buffer.from(mixed, 'base64').toString('utf-8')
+  if (encrypted.startsWith('enc_')) {
+    return Buffer.from(encrypted.slice(4), 'base64').toString('utf-8')
+  }
+  if (!encrypted.startsWith('encv1:')) return encrypted
+  const key = crypto.createHash('sha256').update(process.env.ENCRYPTION_KEY || 'p11-platform-default-key-change-me').digest()
+  const [, ivB64, tagB64, dataB64] = encrypted.split(':')
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(ivB64, 'base64'))
+  decipher.setAuthTag(Buffer.from(tagB64, 'base64'))
+  return Buffer.concat([
+    decipher.update(Buffer.from(dataB64, 'base64')),
+    decipher.final()
+  ]).toString('utf-8')
 }
 
 // Get Meta credentials from DB or env
@@ -48,6 +61,14 @@ async function getMetaCredentials(propertyId: string): Promise<{
 // This redirects to Meta's OAuth page
 export async function GET(request: NextRequest) {
   try {
+    const authClient = await createServerClient()
+    const { data: { user }, error: authError } = await authClient.auth.getUser()
+    if (authError || !user) {
+      return NextResponse.redirect(
+        `${process.env.NEXT_PUBLIC_SITE_URL}/dashboard/forgestudio?tab=connections&error=${encodeURIComponent('Unauthorized')}`
+      )
+    }
+
     const { searchParams } = new URL(request.url)
     const propertyId = searchParams.get('propertyId')
 
@@ -55,6 +76,13 @@ export async function GET(request: NextRequest) {
       // Redirect back with error instead of returning JSON
       return NextResponse.redirect(
         `${process.env.NEXT_PUBLIC_SITE_URL}/dashboard/forgestudio?tab=connections&error=${encodeURIComponent('Property ID required')}`
+      )
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.redirect(
+        `${process.env.NEXT_PUBLIC_SITE_URL}/dashboard/forgestudio?tab=connections&error=${encodeURIComponent('Forbidden')}`
       )
     }
 
@@ -70,8 +98,7 @@ export async function GET(request: NextRequest) {
 
     const redirectUri = `${process.env.NEXT_PUBLIC_SITE_URL}/api/forgestudio/social/callback/instagram`
     
-    // Store propertyId in state for the callback
-    const state = Buffer.from(JSON.stringify({ propertyId })).toString('base64')
+    const state = createSignedForgeStudioOAuthState({ propertyId })
 
     // Required scopes for Instagram posting via Facebook Pages
     const scopes = [

@@ -1,17 +1,23 @@
 """
 Shared configuration loader for the data-engine.
-Loads environment variables from BOTH root and local .env files.
-Local .env values override root .env values.
+Loads environment variables from shared root overlays and service-local files.
+More specific local files override broader shared files.
 """
 import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Load environment files in order (root first, then local overlay)
-# Path: services/data-engine/utils/config.py -> p11-platform/.env
+# Load environment files in order:
+# 1) p11-platform/.env
+# 2) services/data-engine/.env
+# 3) p11-platform/.env.local
+# 4) services/data-engine/.env.local
 ROOT_DIR = Path(__file__).resolve().parents[3]
 ROOT_ENV = ROOT_DIR / ".env"
-LOCAL_ENV = Path(__file__).resolve().parents[1] / ".env"
+ROOT_ENV_LOCAL = ROOT_DIR / ".env.local"
+LOCAL_DIR = Path(__file__).resolve().parents[1]
+LOCAL_ENV = LOCAL_DIR / ".env"
+LOCAL_ENV_LOCAL = LOCAL_DIR / ".env.local"
 
 loaded_files = []
 
@@ -20,10 +26,20 @@ if ROOT_ENV.exists():
     load_dotenv(ROOT_ENV, override=False)
     loaded_files.append(str(ROOT_ENV))
 
-# Load local .env if it exists (overrides root values)
+# Load service-local .env if it exists (overrides root defaults)
 if LOCAL_ENV.exists():
     load_dotenv(LOCAL_ENV, override=True)
     loaded_files.append(str(LOCAL_ENV))
+
+# Load shared root .env.local if it exists (overrides non-local defaults)
+if ROOT_ENV_LOCAL.exists():
+    load_dotenv(ROOT_ENV_LOCAL, override=True)
+    loaded_files.append(str(ROOT_ENV_LOCAL))
+
+# Load service-local .env.local if it exists (highest priority)
+if LOCAL_ENV_LOCAL.exists():
+    load_dotenv(LOCAL_ENV_LOCAL, override=True)
+    loaded_files.append(str(LOCAL_ENV_LOCAL))
 
 if loaded_files:
     print(f"[OK] Loaded environment from: {', '.join(loaded_files)}")

@@ -1,18 +1,33 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { createClient as createServerClient } from '@/utils/supabase/server'
+import { createServiceClient } from '@/utils/supabase/admin'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
+const supabase = createServiceClient()
 
 // GET - Fetch content templates
 export async function GET(request: NextRequest) {
   try {
+    const authClient = await createServerClient()
+    const {
+      data: { user },
+      error: authError,
+    } = await authClient.auth.getUser()
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const { searchParams } = new URL(request.url)
     const propertyId = searchParams.get('propertyId')
     const contentType = searchParams.get('contentType')
     const platform = searchParams.get('platform')
+
+    if (propertyId) {
+      const access = await validatePropertyAccess(user.id, propertyId)
+      if (!access.authorized) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+      }
+    }
 
     let query = supabase
       .from('content_templates')
@@ -61,6 +76,15 @@ export async function GET(request: NextRequest) {
 // POST - Create a custom template
 export async function POST(request: NextRequest) {
   try {
+    const authClient = await createServerClient()
+    const {
+      data: { user },
+      error: authError,
+    } = await authClient.auth.getUser()
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const body = await request.json()
     const {
       propertyId,
@@ -78,6 +102,13 @@ export async function POST(request: NextRequest) {
         { error: 'Missing required fields: name, contentType, promptTemplate' },
         { status: 400 }
       )
+    }
+
+    if (propertyId) {
+      const access = await validatePropertyAccess(user.id, propertyId)
+      if (!access.authorized) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+      }
     }
 
     const { data, error } = await supabase
@@ -121,6 +152,15 @@ export async function POST(request: NextRequest) {
 // DELETE - Delete a template
 export async function DELETE(request: NextRequest) {
   try {
+    const authClient = await createServerClient()
+    const {
+      data: { user },
+      error: authError,
+    } = await authClient.auth.getUser()
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const { searchParams } = new URL(request.url)
     const templateId = searchParams.get('templateId')
 
@@ -129,6 +169,31 @@ export async function DELETE(request: NextRequest) {
         { error: 'Template ID required' },
         { status: 400 }
       )
+    }
+
+    const { data: existingTemplate, error: existingTemplateError } = await supabase
+      .from('content_templates')
+      .select('id, property_id')
+      .eq('id', templateId)
+      .single()
+
+    if (existingTemplateError || !existingTemplate) {
+      return NextResponse.json(
+        { error: 'Template not found' },
+        { status: 404 }
+      )
+    }
+
+    if (!existingTemplate.property_id) {
+      return NextResponse.json(
+        { error: 'Forbidden' },
+        { status: 403 }
+      )
+    }
+
+    const access = await validatePropertyAccess(user.id, existingTemplate.property_id)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     const { error } = await supabase

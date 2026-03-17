@@ -28,7 +28,7 @@
   let config = null;
   let isOpen = false;
   let messages = [];
-  let sessionId = null;
+  let sessionId = getStoredSessionId();
   let conversationId = null;
   let leadCaptured = false;
   let leadInfo = { firstName: '', lastName: '', email: '', phone: '' };
@@ -40,6 +40,7 @@
   let calendarData = null;
   let selectedDate = null;
   let selectedTime = null;
+  let calendarViewDate = null;
 
   // Get or create visitor ID
   function getVisitorId() {
@@ -50,6 +51,24 @@
       localStorage.setItem(key, id);
     }
     return id;
+  }
+
+  function getStoredSessionId() {
+    try {
+      return localStorage.getItem('lumaleasing_session_id');
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function setStoredSessionId(id) {
+    sessionId = id || null;
+    try {
+      if (id) localStorage.setItem('lumaleasing_session_id', id);
+      else localStorage.removeItem('lumaleasing_session_id');
+    } catch (e) {
+      // Ignore storage errors; widget can still function in-memory.
+    }
   }
 
   // Process queued commands
@@ -792,8 +811,10 @@
   function renderMonthView() {
     const gradient = `linear-gradient(135deg, ${config.primaryColor}, ${config.secondaryColor})`;
     const today = new Date();
-    const currentMonth = today.getMonth();
-    const currentYear = today.getFullYear();
+    const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+    const viewDate = calendarViewDate || today;
+    const currentMonth = viewDate.getMonth();
+    const currentYear = viewDate.getFullYear();
 
     // Build calendar grid
     const firstDay = new Date(currentYear, currentMonth, 1);
@@ -824,7 +845,7 @@
       const dateObj = new Date(currentYear, currentMonth, day);
       const dateStr = dateObj.toISOString().split('T')[0];
       const isAvailable = calendarData.availableDates.includes(dateStr);
-      const isPast = dateObj < today.setHours(0, 0, 0, 0);
+      const isPast = dateObj.getTime() < todayStart;
       const isToday = dateObj.toDateString() === today.toDateString();
 
       let dayClass = 'll-calendar-day';
@@ -857,7 +878,11 @@
         </div>
         <div class="ll-calendar-content">
           <div class="ll-calendar-header">
-            <h3>${new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(today)}</h3>
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+              <button class="ll-button-secondary" onclick="window.lumaleasing_prevMonth()" style="padding:6px 10px;">←</button>
+              <h3 style="margin:0;">${new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(viewDate)}</h3>
+              <button class="ll-button-secondary" onclick="window.lumaleasing_nextMonth()" style="padding:6px 10px;">→</button>
+            </div>
             <p class="ll-calendar-subtitle">Select a day to see available times</p>
           </div>
           ${calendarGrid}
@@ -1174,6 +1199,21 @@
     const text = input.value.trim();
     input.value = '';
 
+    // Enforce email capture before chat when configured.
+    if (config.requireEmailBeforeChat && !leadCaptured && !leadInfo.email) {
+      const requiredEmail = extractContactInfo(text);
+      if (!requiredEmail || !requiredEmail.email) {
+        messages.push({
+          id: Date.now().toString(),
+          role: 'assistant',
+          content: config.leadCapturePrompt || 'Before we continue, could you share your email so our team can follow up with accurate pricing and availability?',
+          timestamp: new Date()
+        });
+        renderWidget();
+        return;
+      }
+    }
+
     // Check for tour intent FIRST
     if (detectTourIntent(text) && widgetMode === 'chat') {
       // Add user message
@@ -1212,6 +1252,7 @@
       // Switch to calendar mode
       calendarData = availability;
       widgetMode = 'calendar';
+      calendarViewDate = new Date();
       renderWidget();
       return;
     }
@@ -1258,7 +1299,7 @@
 
       const data = await response.json();
 
-      if (data.sessionId) sessionId = data.sessionId;
+      if (data.sessionId) setStoredSessionId(data.sessionId);
       if (data.conversationId) conversationId = data.conversationId;
 
       if (data.content) {
@@ -1275,6 +1316,15 @@
           id: (Date.now() + 2).toString(),
           role: 'system',
           content: 'A team member will respond shortly. Thanks for your patience!',
+          timestamp: new Date()
+        });
+      }
+
+      if (data.shouldPromptLeadCapture && data.leadCapturePrompt && !leadCaptured) {
+        messages.push({
+          id: (Date.now() + 3).toString(),
+          role: 'assistant',
+          content: data.leadCapturePrompt,
           timestamp: new Date()
         });
       }
@@ -1332,6 +1382,18 @@
     renderWidget();
   };
 
+  window.lumaleasing_prevMonth = function() {
+    const base = calendarViewDate || new Date();
+    calendarViewDate = new Date(base.getFullYear(), base.getMonth() - 1, 1);
+    renderWidget();
+  };
+
+  window.lumaleasing_nextMonth = function() {
+    const base = calendarViewDate || new Date();
+    calendarViewDate = new Date(base.getFullYear(), base.getMonth() + 1, 1);
+    renderWidget();
+  };
+
   window.lumaleasing_selectTime = function(timeStr) {
     selectedTime = timeStr;
     widgetMode = 'confirmation';
@@ -1348,6 +1410,7 @@
     selectedDate = null;
     selectedTime = null;
     calendarData = null;
+    calendarViewDate = null;
     renderWidget();
   };
 
@@ -1363,8 +1426,9 @@
       return;
     }
 
+    let button = null;
     try {
-      const button = document.querySelector('.ll-button-primary');
+      button = document.querySelector('.ll-button-primary');
       if (button) {
         button.disabled = true;
         button.textContent = 'Booking...';

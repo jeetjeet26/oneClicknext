@@ -446,6 +446,7 @@ export function QueryTable({
                 {(groupBy === 'none' || expandedGroups.has(group.key)) && group.items.map((query) => (
                   <React.Fragment key={query.id}>
                     <tr 
+                      id={`query-row-${query.id}`}
                       className={`hover:bg-gray-50 dark:hover:bg-gray-800/50 ${!query.isActive ? 'opacity-50' : ''} cursor-pointer`}
                       onClick={() => toggleRowExpansion(query.id)}
                     >

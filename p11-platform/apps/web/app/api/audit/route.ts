@@ -71,6 +71,10 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Profile not found' }, { status: 404 })
   }
 
+  if (typeof profile.org_id !== 'string') {
+    return NextResponse.json({ error: 'Profile not found' }, { status: 404 })
+  }
+
   // Only admins can view audit logs
   if (profile.role !== 'admin') {
     return NextResponse.json({ error: 'Forbidden - Admin access required' }, { status: 403 })
@@ -150,6 +154,10 @@ export async function POST(request: NextRequest) {
     .single()
 
   if (profileError || !profile) {
+    return NextResponse.json({ error: 'Profile not found' }, { status: 404 })
+  }
+
+  if (typeof profile.org_id !== 'string') {
     return NextResponse.json({ error: 'Profile not found' }, { status: 404 })
   }
 

@@ -12,61 +12,68 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { processWorkflows } from '@/utils/services/workflow-processor'
-
-// Verify CRON secret to prevent unauthorized access
-function verifyCronSecret(request: NextRequest): boolean {
-  const authHeader = request.headers.get('authorization')
-  const cronSecret = process.env.CRON_SECRET
-  
-  // In development, allow without secret
-  if (process.env.NODE_ENV === 'development') {
-    return true
-  }
-  
-  // If no secret configured, deny access in production
-  if (!cronSecret) {
-    console.warn('[Workflow API] CRON_SECRET not configured')
-    return false
-  }
-  
-  return authHeader === `Bearer ${cronSecret}`
-}
+import { finishCronJobRun, startCronJobRun } from '@/utils/services/cron-job-runs'
+import {
+  validateCronAuth,
+  serverError,
+  unauthorized,
+} from '@/utils/services/api-helpers'
+import { createRequestContext } from '@/utils/services/request-context'
 
 export async function GET(request: NextRequest) {
-  // Verify authorization
-  if (!verifyCronSecret(request)) {
-    return NextResponse.json(
-      { error: 'Unauthorized' },
-      { status: 401 }
-    )
+  const ctx = createRequestContext(request, '/api/workflows/process')
+  ctx.logStart()
+
+  const authError = validateCronAuth(request)
+  if (authError) {
+    ctx.logSuccess(401, { reason: 'invalid_cron_secret' })
+    return unauthorized(ctx.responseHeaders)
   }
 
-  console.log('[Workflow API] Starting workflow processing...')
+  const run = await startCronJobRun({
+    jobName: 'workflows-process',
+    requestId: ctx.requestId,
+  })
+
   const startTime = Date.now()
 
   try {
     const result = await processWorkflows()
     const duration = Date.now() - startTime
 
-    console.log(`[Workflow API] Completed in ${duration}ms`)
-
-    return NextResponse.json({
-      success: true,
-      ...result,
-      duration_ms: duration,
-      timestamp: new Date().toISOString(),
+    ctx.logSuccess(200, {
+      processed: result.processed,
+      succeeded: result.succeeded,
+      failed: result.failed,
+      durationMs: duration,
     })
-  } catch (error) {
-    console.error('[Workflow API] Error:', error)
-    
+
+    await finishCronJobRun(run, {
+      status: 'success',
+      summary: {
+        processed: result.processed,
+        succeeded: result.succeeded,
+        failed: result.failed,
+      },
+    })
+
     return NextResponse.json(
       {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
+        success: true,
+        ...result,
+        duration_ms: duration,
         timestamp: new Date().toISOString(),
       },
-      { status: 500 }
+      { headers: ctx.responseHeaders }
     )
+  } catch (error) {
+    ctx.logError(500, error, { operation: 'process_workflows' })
+    await finishCronJobRun(run, {
+      status: 'failed',
+      error: error instanceof Error ? error.message : 'Unknown error',
+      summary: { operation: 'process_workflows' },
+    })
+    return serverError(error, ctx.responseHeaders)
   }
 }
 

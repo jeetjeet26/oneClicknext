@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { createAdminClient } from '@/utils/supabase/admin'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
 export async function GET(request: NextRequest) {
   try {
@@ -15,6 +16,11 @@ export async function GET(request: NextRequest) {
     
     if (!propertyId) {
       return NextResponse.json({ error: 'propertyId is required' }, { status: 400 })
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     const adminClient = createAdminClient()
@@ -52,6 +58,11 @@ export async function POST(request: NextRequest) {
 
     if (!propertyId || !contact) {
       return NextResponse.json({ error: 'propertyId and contact are required' }, { status: 400 })
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     if (!contact.name?.trim() || !contact.email?.trim()) {
@@ -108,6 +119,21 @@ export async function PUT(request: NextRequest) {
 
     const adminClient = createAdminClient()
 
+    const { data: existingContact, error: existingContactError } = await adminClient
+      .from('property_contacts')
+      .select('id, property_id')
+      .eq('id', contactId)
+      .single()
+
+    if (existingContactError || !existingContact) {
+      return NextResponse.json({ error: 'Contact not found' }, { status: 404 })
+    }
+
+    const access = await validatePropertyAccess(user.id, existingContact.property_id)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
     const { data, error } = await adminClient
       .from('property_contacts')
       .update({
@@ -154,6 +180,21 @@ export async function DELETE(request: NextRequest) {
     }
 
     const adminClient = createAdminClient()
+
+    const { data: existingContact, error: existingContactError } = await adminClient
+      .from('property_contacts')
+      .select('id, property_id')
+      .eq('id', contactId)
+      .single()
+
+    if (existingContactError || !existingContact) {
+      return NextResponse.json({ error: 'Contact not found' }, { status: 404 })
+    }
+
+    const access = await validatePropertyAccess(user.id, existingContact.property_id)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
 
     const { error } = await adminClient
       .from('property_contacts')

@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { createClient as createSupabaseClient } from '@supabase/supabase-js'
+import { createClient as createServerClient } from '@/utils/supabase/server'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { GoogleAuth } from 'google-auth-library'
 import path from 'path'
 
-const supabase = createClient(
+const supabase = createSupabaseClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
@@ -18,6 +20,27 @@ if (process.env.GOOGLE_APPLICATION_CREDENTIALS && projectId) {
     keyFile: credentialsPath,
     scopes: ['https://www.googleapis.com/auth/cloud-platform']
   })
+}
+
+type BrandData = Record<string, unknown>
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null
+  }
+  return value as Record<string, unknown>
+}
+
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : []
+}
+
+function asString(value: unknown): string | null {
+  return typeof value === 'string' ? value : null
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 // Generate image using Vertex AI Imagen 3
@@ -71,13 +94,15 @@ async function generateImage(
   }
 
   const data = await response.json()
-  const predictions = data.predictions || []
+  const predictions: unknown[] = Array.isArray(data.predictions) ? data.predictions : []
   
   return predictions
-    .filter((p: any) => p.bytesBase64Encoded)
-    .map((p: any) => ({
-      base64Data: p.bytesBase64Encoded,
-      mimeType: p.mimeType || 'image/png'
+    .map((prediction: unknown) => asRecord(prediction))
+    .filter((prediction): prediction is Record<string, unknown> => prediction !== null)
+    .filter((prediction) => typeof prediction.bytesBase64Encoded === 'string')
+    .map((prediction) => ({
+      base64Data: prediction.bytesBase64Encoded as string,
+      mimeType: asString(prediction.mimeType) || 'image/png'
     }))
 }
 
@@ -113,6 +138,12 @@ async function uploadToStorage(
 
 export async function POST(request: NextRequest) {
   try {
+    const authClient = await createServerClient()
+    const { data: { user }, error: authError } = await authClient.auth.getUser()
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const body = await request.json()
     const {
       brandAssetId,
@@ -121,6 +152,8 @@ export async function POST(request: NextRequest) {
       brandData // The brand strategy data from conversation
     } = body
 
+    const safeBrandData: BrandData = asRecord(brandData) ?? {}
+
     if (!brandAssetId || !propertyId || !type) {
       return NextResponse.json(
         { error: 'Missing required fields: brandAssetId, propertyId, type' },
@@ -128,13 +161,28 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
     const results: { type: string; url: string; prompt: string }[] = []
     const folder = `${propertyId}/brand`
+
+    const { data: brandAsset } = await supabase
+      .from('property_brand_assets')
+      .select('id, property_id')
+      .eq('id', brandAssetId)
+      .single()
+
+    if (!brandAsset || brandAsset.property_id !== propertyId) {
+      return NextResponse.json({ error: 'Brand asset not found for property' }, { status: 404 })
+    }
 
     if (type === 'logo') {
       // Generate logo based on brand data
       // Generate 2 variations at a time to stay within quota
-      const logoPrompt = buildLogoPrompt(brandData)
+      const logoPrompt = buildLogoPrompt(safeBrandData)
       
       const logoUrls: string[] = []
       
@@ -166,9 +214,10 @@ export async function POST(request: NextRequest) {
               console.error(`Logo variation ${batch * 2 + i} upload failed:`, err)
             }
           }
-        } catch (err: any) {
-          console.error(`Logo batch ${batch} failed:`, err?.message || err)
-          if (err?.message?.includes('Quota exceeded')) {
+        } catch (err: unknown) {
+          const message = getErrorMessage(err)
+          console.error(`Logo batch ${batch} failed:`, message)
+          if (message.includes('Quota exceeded')) {
             break
           }
         }
@@ -180,7 +229,7 @@ export async function POST(request: NextRequest) {
           .from('property_brand_assets')
           .update({
             section_6_logo: {
-              ...brandData.section_6_logo,
+              ...(asRecord(safeBrandData.section_6_logo) ?? {}),
               logoUrl: logoUrls[0], // Primary logo
               logoVariations: logoUrls, // All variations
               generatedAt: new Date().toISOString()
@@ -193,7 +242,7 @@ export async function POST(request: NextRequest) {
 
     if (type === 'moodboard') {
       // Generate mood board images - limit to 4 to stay within quota
-      const moodPrompts = buildMoodboardPrompts(brandData).slice(0, 4)
+      const moodPrompts = buildMoodboardPrompts(safeBrandData).slice(0, 4)
 
       const moodboardUrls: string[] = []
 
@@ -219,10 +268,11 @@ export async function POST(request: NextRequest) {
             moodboardUrls.push(url)
             results.push({ type: 'moodboard', url, prompt: moodPrompts[i] })
           }
-        } catch (err: any) {
-          console.error(`Moodboard image ${i} failed:`, err?.message || err)
+        } catch (err: unknown) {
+          const message = getErrorMessage(err)
+          console.error(`Moodboard image ${i} failed:`, message)
           // If quota exceeded, wait longer before next request
-          if (err?.message?.includes('Quota exceeded')) {
+          if (message.includes('Quota exceeded')) {
             await new Promise(resolve => setTimeout(resolve, 10000))
           }
         }
@@ -235,7 +285,7 @@ export async function POST(request: NextRequest) {
           .update({
             vision_board_url: moodboardUrls[0], // Primary mood board
             section_9_design_elements: {
-              ...brandData.section_9_design_elements,
+              ...(asRecord(safeBrandData.section_9_design_elements) ?? {}),
               moodboardUrls,
               generatedAt: new Date().toISOString()
             },
@@ -247,7 +297,7 @@ export async function POST(request: NextRequest) {
 
     if (type === 'photo_examples') {
       // Generate "Yep" photo examples
-      const yepPrompts = buildPhotoYepPrompts(brandData)
+      const yepPrompts = buildPhotoYepPrompts(safeBrandData)
       const yepUrls: string[] = []
 
       for (let i = 0; i < yepPrompts.length; i++) {
@@ -278,7 +328,7 @@ export async function POST(request: NextRequest) {
           .from('property_brand_assets')
           .update({
             section_10_photo_yep: {
-              ...brandData.section_10_photo_yep,
+              ...(asRecord(safeBrandData.section_10_photo_yep) ?? {}),
               generatedPhotos: yepUrls,
               generatedAt: new Date().toISOString()
             },
@@ -305,12 +355,17 @@ export async function POST(request: NextRequest) {
 
 // Build logo prompt from brand data
 // Best practice: Generate ICON ONLY, no text (text rendering in AI is unreliable)
-function buildLogoPrompt(brandData: any): string {
-  const personality = brandData?.conversation_summary?.brandPersonality || 'modern and sophisticated'
-  const colors = brandData?.section_8_colors?.primary?.[0]?.name || 'gold and sage green'
-  const colorHex = brandData?.section_8_colors?.primary?.[0]?.hex || '#C9A962'
-  const logoStyle = brandData?.section_6_logo?.style || 'minimalist'
-  const logoConcept = brandData?.section_6_logo?.concept || 'abstract geometric symbol'
+function buildLogoPrompt(brandData: BrandData): string {
+  const summary = asRecord(brandData.conversation_summary)
+  const colorsSection = asRecord(brandData.section_8_colors)
+  const primaryColor = asRecord(asArray(colorsSection?.primary)[0])
+  const logoSection = asRecord(brandData.section_6_logo)
+
+  const personality = asArray(summary?.brandPersonality).map(item => asString(item)).filter((item): item is string => Boolean(item)).join(', ') || 'modern and sophisticated'
+  const colors = asString(primaryColor?.name) || 'gold and sage green'
+  const colorHex = asString(primaryColor?.hex) || '#C9A962'
+  const logoStyle = asString(logoSection?.style) || 'minimalist'
+  const logoConcept = asString(logoSection?.concept) || 'abstract geometric symbol'
 
   // Extract key visual elements from concept
   const conceptKeywords = logoConcept.toLowerCase()
@@ -343,11 +398,15 @@ Requirements:
 }
 
 // Build moodboard prompts from brand data
-function buildMoodboardPrompts(brandData: any): string[] {
-  const personality = brandData?.conversation_summary?.brandPersonality || 'warm and sophisticated'
-  const targetAudience = brandData?.conversation_summary?.targetAudience || 'young professionals'
-  const colorMood = brandData?.section_8_colors?.palette || 'warm earth tones'
-  const photoMood = brandData?.section_10_photo_yep?.mood || 'aspirational and authentic'
+function buildMoodboardPrompts(brandData: BrandData): string[] {
+  const summary = asRecord(brandData.conversation_summary)
+  const colorsSection = asRecord(brandData.section_8_colors)
+  const photoSection = asRecord(brandData.section_10_photo_yep)
+
+  const personality = asArray(summary?.brandPersonality).map(item => asString(item)).filter((item): item is string => Boolean(item)).join(', ') || 'warm and sophisticated'
+  const targetAudience = asString(summary?.targetAudience) || 'young professionals'
+  const colorMood = asString(colorsSection?.palette) || 'warm earth tones'
+  const photoMood = asString(photoSection?.mood) || 'aspirational and authentic'
 
   const baseStyle = `${personality} luxury apartment lifestyle, ${colorMood}, ${photoMood}, professional real estate photography`
 
@@ -362,16 +421,18 @@ function buildMoodboardPrompts(brandData: any): string[] {
 }
 
 // Build photo "Yep" prompts from brand data
-function buildPhotoYepPrompts(brandData: any): string[] {
-  const examples = brandData?.section_10_photo_yep?.examples || []
-  const mood = brandData?.section_10_photo_yep?.mood || 'warm, authentic, aspirational'
-  const target = brandData?.section_3_target_audience?.primary || 'young professionals and families'
+function buildPhotoYepPrompts(brandData: BrandData): string[] {
+  const photoSection = asRecord(brandData.section_10_photo_yep)
+  const audienceSection = asRecord(brandData.section_3_target_audience)
+  const examples = asArray(photoSection?.examples).map(item => asString(item)).filter((item): item is string => Boolean(item))
+  const mood = asString(photoSection?.mood) || 'warm, authentic, aspirational'
+  const target = asString(audienceSection?.primary) || 'young professionals and families'
 
   const baseStyle = `professional real estate photography, ${mood}, natural lighting, high quality`
 
   // If we have specific examples from the brand book, use those
   if (examples.length > 0) {
-    return examples.slice(0, 4).map((example: string) => 
+    return examples.slice(0, 4).map((example) => 
       `${example}, ${baseStyle}, showing ${target}`
     )
   }

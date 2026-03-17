@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/utils/supabase/admin';
+import { getRateLimitKey, publicReadLimiter, rateLimitHeaders } from '@/utils/services/rate-limiter';
+import { rateLimited, serverError } from '@/utils/services/api-helpers';
+import { createRequestContext } from '@/utils/services/request-context';
+import type { Json } from '@/types/supabase';
 
 function extractApiKey(req: NextRequest): string | null {
   const headerKey = req.headers.get('X-API-Key') || req.headers.get('x-api-key');
@@ -21,19 +25,40 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'Content-Type, X-API-Key, Authorization',
 };
 
+function asBusinessHours(
+  value: Json
+): Record<string, { start: string; end: string } | null> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {}
+  }
+
+  return value as Record<string, { start: string; end: string } | null>
+}
+
 export async function OPTIONS() {
   return new NextResponse(null, { headers: corsHeaders });
 }
 
 // Public endpoint - returns widget configuration (no sensitive data)
 export async function GET(req: NextRequest) {
+  const ctx = createRequestContext(req, '/api/lumaleasing/config')
+  ctx.logStart()
+  const responseHeaders = { ...corsHeaders, ...ctx.responseHeaders }
   try {
+    const rlKey = getRateLimitKey(req, 'lumaleasing-config')
+    const rl = publicReadLimiter.check(rlKey)
+    if (!rl.allowed) {
+      ctx.logSuccess(429, { reason: 'rate_limited' })
+      return rateLimited({ ...responseHeaders, ...rateLimitHeaders(rl) })
+    }
+
     const apiKey = extractApiKey(req);
 
     if (!apiKey) {
+      ctx.logSuccess(401, { reason: 'missing_api_key' })
       return NextResponse.json(
         { error: 'API key required' },
-        { status: 401, headers: corsHeaders }
+        { status: 401, headers: responseHeaders }
       );
     }
 
@@ -64,25 +89,40 @@ export async function GET(req: NextRequest) {
       .single();
 
     if (error || !config) {
-      console.error('[LumaLeasing] Config fetch failed', { error, hasConfig: Boolean(config) });
+      ctx.logError(404, error || 'Missing config', {
+        operation: 'fetch_lumaleasing_public_config',
+        hasConfig: Boolean(config),
+      })
       return NextResponse.json(
         { error: 'Invalid API key or config not found' },
-        { status: 404, headers: corsHeaders }
+        { status: 404, headers: responseHeaders }
       );
     }
 
     if (!config.is_active) {
+      ctx.logSuccess(403, { reason: 'widget_inactive' })
       return NextResponse.json(
         { error: 'Widget is not active' },
-        { status: 403, headers: corsHeaders }
+        { status: 403, headers: responseHeaders }
       );
     }
 
     // Check if currently within business hours
     const isWithinBusinessHours = checkBusinessHours(
-      config.business_hours,
-      config.timezone
+      asBusinessHours(config.business_hours),
+      config.timezone || 'America/Chicago'
     );
+
+    const propertyName = (() => {
+      const props = config.properties
+      if (Array.isArray(props)) return props[0]?.name
+      return props?.name
+    })()
+
+    ctx.logSuccess(200, {
+      propertyName: propertyName || null,
+      isOnline: isWithinBusinessHours,
+    })
 
     return NextResponse.json({
       config: {
@@ -99,23 +139,16 @@ export async function GET(req: NextRequest) {
         collectPhone: config.collect_phone,
         leadCapturePrompt: config.lead_capture_prompt,
         toursEnabled: config.tours_enabled,
-        propertyName: (() => {
-          const props = config.properties
-          if (Array.isArray(props)) return props[0]?.name
-          return (props as any)?.name
-        })(),
+        propertyName,
       },
       isOnline: isWithinBusinessHours,
       businessHours: config.business_hours,
       timezone: config.timezone,
-    }, { headers: corsHeaders });
+    }, { headers: responseHeaders });
 
   } catch (error) {
-    console.error('Config fetch error:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch config' },
-      { status: 500, headers: corsHeaders }
-    );
+    ctx.logError(500, error, { operation: 'fetch_lumaleasing_public_config' })
+    return serverError(error, responseHeaders);
   }
 }
 

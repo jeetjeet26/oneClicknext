@@ -1,16 +1,30 @@
 import { createClient } from '@/utils/supabase/server'
 import { NextRequest, NextResponse } from 'next/server'
 import { startWorkflow } from '@/utils/services/workflow-processor'
+import { syncLeadToCRM } from '@/utils/services/crm-sync'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { logAuditEvent } from '@/utils/audit'
+import {
+  badRequest,
+  forbidden,
+  notFound,
+  serverError,
+  unauthorized,
+} from '@/utils/services/api-helpers'
+import { createRequestContext } from '@/utils/services/request-context'
 
 export async function GET(request: NextRequest) {
+  const ctx = createRequestContext(request, '/api/leads')
+  ctx.logStart()
+
   try {
     const supabase = await createClient()
     
     // Verify authentication
     const { data: { user }, error: authError } = await supabase.auth.getUser()
     if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      ctx.logSuccess(401, { reason: 'unauthorized' })
+      return unauthorized(ctx.responseHeaders)
     }
 
     const { searchParams } = new URL(request.url)
@@ -21,11 +35,18 @@ export async function GET(request: NextRequest) {
     const sortBy = searchParams.get('sortBy') || 'created_at'
     const sortOrder = searchParams.get('sortOrder') || 'desc'
     const page = parseInt(searchParams.get('page') || '1')
-    const limit = parseInt(searchParams.get('limit') || '25')
+    const limit = Math.min(Math.max(parseInt(searchParams.get('limit') || '25'), 1), 100)
     const offset = (page - 1) * limit
 
     if (!propertyId) {
-      return NextResponse.json({ error: 'Property ID is required' }, { status: 400 })
+      ctx.logSuccess(400, { reason: 'missing_property_id' })
+      return badRequest('Property ID is required', ctx.responseHeaders)
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      ctx.logSuccess(403, { reason: 'forbidden', propertyId })
+      return forbidden(ctx.responseHeaders)
     }
 
     // Build query
@@ -58,8 +79,8 @@ export async function GET(request: NextRequest) {
     const { data: leads, error, count } = await query
 
     if (error) {
-      console.error('Error fetching leads:', error)
-      return NextResponse.json({ error: 'Failed to fetch leads' }, { status: 500 })
+      ctx.logError(500, error, { operation: 'fetch_leads', propertyId })
+      return serverError(error, ctx.responseHeaders)
     }
 
     // Get distinct sources for filters
@@ -78,38 +99,53 @@ export async function GET(request: NextRequest) {
       .eq('property_id', propertyId)
 
     const statusSummary = statusCounts?.reduce((acc, lead) => {
+      if (!lead.status) return acc
       acc[lead.status] = (acc[lead.status] || 0) + 1
       return acc
     }, {} as Record<string, number>) || {}
 
-    return NextResponse.json({
-      leads: leads || [],
-      pagination: {
-        page,
-        limit,
-        total: count || 0,
-        totalPages: Math.ceil((count || 0) / limit),
-      },
-      filters: {
-        sources: uniqueSources,
-        statuses: ['new', 'contacted', 'tour_booked', 'leased', 'lost'],
-      },
-      statusSummary,
+    ctx.logSuccess(200, {
+      propertyId,
+      page,
+      limit,
+      total: count || 0,
     })
+
+    return NextResponse.json(
+      {
+        leads: leads || [],
+        pagination: {
+          page,
+          limit,
+          total: count || 0,
+          totalPages: Math.ceil((count || 0) / limit),
+        },
+        filters: {
+          sources: uniqueSources,
+          statuses: ['new', 'contacted', 'tour_booked', 'toured', 'leased', 'lost'],
+        },
+        statusSummary,
+      },
+      { headers: ctx.responseHeaders }
+    )
   } catch (error) {
-    console.error('Leads API error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    ctx.logError(500, error, { operation: 'fetch_leads' })
+    return serverError(error, ctx.responseHeaders)
   }
 }
 
 export async function POST(request: NextRequest) {
+  const ctx = createRequestContext(request, '/api/leads')
+  ctx.logStart()
+
   try {
     const supabase = await createClient()
     
     // Verify authentication
     const { data: { user }, error: authError } = await supabase.auth.getUser()
     if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      ctx.logSuccess(401, { reason: 'unauthorized' })
+      return unauthorized(ctx.responseHeaders)
     }
 
     const body = await request.json()
@@ -127,13 +163,22 @@ export async function POST(request: NextRequest) {
 
     // Validation
     if (!propertyId) {
-      return NextResponse.json({ error: 'Property ID is required' }, { status: 400 })
+      ctx.logSuccess(400, { reason: 'missing_property_id' })
+      return badRequest('Property ID is required', ctx.responseHeaders)
     }
     if (!firstName || !lastName) {
-      return NextResponse.json({ error: 'First and last name are required' }, { status: 400 })
+      ctx.logSuccess(400, { reason: 'missing_name' })
+      return badRequest('First and last name are required', ctx.responseHeaders)
     }
     if (!email && !phone) {
-      return NextResponse.json({ error: 'Email or phone is required' }, { status: 400 })
+      ctx.logSuccess(400, { reason: 'missing_contact_method' })
+      return badRequest('Email or phone is required', ctx.responseHeaders)
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      ctx.logSuccess(403, { reason: 'forbidden', propertyId })
+      return forbidden(ctx.responseHeaders)
     }
 
     // Create lead
@@ -155,18 +200,34 @@ export async function POST(request: NextRequest) {
       .single()
 
     if (error) {
-      console.error('Error creating lead:', error)
-      return NextResponse.json({ error: 'Failed to create lead' }, { status: 500 })
+      ctx.logError(500, error, { operation: 'create_lead', propertyId })
+      return serverError(error, ctx.responseHeaders)
     }
 
-    // Start workflow for new lead (if auto-workflow is enabled)
+    // CRM sync and workflow start are non-blocking; isolate them so one failure
+    // does not suppress the other automation side effect.
+    try {
+      await syncLeadToCRM(propertyId, lead.id, {
+        first_name: firstName,
+        last_name: lastName,
+        email: email || undefined,
+        phone: phone || undefined,
+        source: source || 'manual',
+        status: 'new',
+        move_in_date: moveInDate || undefined,
+        bedrooms: bedrooms || undefined,
+        notes: notes || undefined,
+      })
+    } catch (crmSyncError) {
+      console.error('[Leads API] Failed to sync lead to CRM:', crmSyncError)
+    }
+
     try {
       const workflowResult = await startWorkflow(lead.id, propertyId, 'lead_created')
       if (workflowResult.success) {
         console.log(`[Leads API] Started workflow ${workflowResult.workflowId} for lead ${lead.id}`)
       }
     } catch (workflowError) {
-      // Don't fail lead creation if workflow fails
       console.error('[Leads API] Failed to start workflow:', workflowError)
     }
 
@@ -180,21 +241,27 @@ export async function POST(request: NextRequest) {
       request
     })
 
-    return NextResponse.json({ lead }, { status: 201 })
+    ctx.logSuccess(201, { propertyId, leadId: lead.id })
+
+    return NextResponse.json({ lead }, { status: 201, headers: ctx.responseHeaders })
   } catch (error) {
-    console.error('Lead creation error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    ctx.logError(500, error, { operation: 'create_lead' })
+    return serverError(error, ctx.responseHeaders)
   }
 }
 
 export async function PATCH(request: NextRequest) {
+  const ctx = createRequestContext(request, '/api/leads')
+  ctx.logStart()
+
   try {
     const supabase = await createClient()
     
     // Verify authentication
     const { data: { user }, error: authError } = await supabase.auth.getUser()
     if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      ctx.logSuccess(401, { reason: 'unauthorized' })
+      return unauthorized(ctx.responseHeaders)
     }
 
     const body = await request.json()
@@ -212,7 +279,34 @@ export async function PATCH(request: NextRequest) {
     } = body
 
     if (!leadId) {
-      return NextResponse.json({ error: 'Lead ID is required' }, { status: 400 })
+      ctx.logSuccess(400, { reason: 'missing_lead_id' })
+      return badRequest('Lead ID is required', ctx.responseHeaders)
+    }
+
+    const { data: existingLead, error: leadError } = await supabase
+      .from('leads')
+      .select('property_id')
+      .eq('id', leadId)
+      .single()
+
+    if (leadError || !existingLead) {
+      ctx.logSuccess(404, { reason: 'lead_not_found', leadId })
+      return notFound('Lead', ctx.responseHeaders)
+    }
+
+    if (!existingLead.property_id) {
+      ctx.logSuccess(404, { reason: 'property_not_found', leadId })
+      return notFound('Property', ctx.responseHeaders)
+    }
+
+    const access = await validatePropertyAccess(user.id, existingLead.property_id)
+    if (!access.authorized) {
+      ctx.logSuccess(403, {
+        reason: 'forbidden',
+        propertyId: existingLead.property_id,
+        leadId,
+      })
+      return forbidden(ctx.responseHeaders)
     }
 
     const updateData: Record<string, unknown> = {
@@ -220,9 +314,10 @@ export async function PATCH(request: NextRequest) {
     }
 
     if (status) {
-      const validStatuses = ['new', 'contacted', 'tour_booked', 'leased', 'lost']
+      const validStatuses = ['new', 'contacted', 'tour_booked', 'toured', 'leased', 'lost']
       if (!validStatuses.includes(status)) {
-        return NextResponse.json({ error: 'Invalid status' }, { status: 400 })
+        ctx.logSuccess(400, { reason: 'invalid_status', status })
+        return badRequest('Invalid status', ctx.responseHeaders)
       }
       updateData.status = status
       
@@ -235,7 +330,13 @@ export async function PATCH(request: NextRequest) {
       if (status === 'leased' || status === 'lost') {
         await supabase
           .from('lead_workflows')
-          .update({ status: status === 'leased' ? 'converted' : 'stopped' })
+          .update({
+            status: status === 'leased' ? 'converted' : 'stopped',
+            next_action_at: null,
+            processing_started_at: null,
+            processing_expires_at: null,
+            updated_at: new Date().toISOString(),
+          })
           .eq('lead_id', leadId)
           .eq('status', 'active')
       }
@@ -258,8 +359,8 @@ export async function PATCH(request: NextRequest) {
       .single()
 
     if (error) {
-      console.error('Error updating lead:', error)
-      return NextResponse.json({ error: 'Failed to update lead' }, { status: 500 })
+      ctx.logError(500, error, { operation: 'update_lead', leadId })
+      return serverError(error, ctx.responseHeaders)
     }
 
     // Log audit event
@@ -272,10 +373,12 @@ export async function PATCH(request: NextRequest) {
       request
     })
 
-    return NextResponse.json({ lead })
+    ctx.logSuccess(200, { leadId, status: status || null })
+
+    return NextResponse.json({ lead }, { headers: ctx.responseHeaders })
   } catch (error) {
-    console.error('Lead update error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    ctx.logError(500, error, { operation: 'update_lead' })
+    return serverError(error, ctx.responseHeaders)
   }
 }
 

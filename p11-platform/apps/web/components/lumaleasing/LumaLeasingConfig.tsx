@@ -1,10 +1,10 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   Save, Copy, Check, RefreshCw, Eye, Palette, MessageSquare, 
-  Clock, UserPlus, Calendar, Code, ExternalLink, Loader2,
-  Settings, Sparkles, CheckCircle, AlertCircle
+  UserPlus, Calendar, Code, ExternalLink, Loader2,
+  Sparkles, CheckCircle, AlertCircle, Mail, XCircle, Wrench
 } from 'lucide-react';
 import { usePropertyContext } from '../layout/PropertyContext';
 
@@ -32,6 +32,39 @@ interface WidgetConfig {
   is_active: boolean;
 }
 
+interface EmailLifecycleSummary {
+  total_threads: number;
+  awaiting_internal_reply: number;
+  awaiting_internal_reply_overdue: number;
+  awaiting_lead_reply: number;
+  active: number;
+  other: number;
+  latest_thread_activity_at: string | null;
+}
+
+interface PendingEmailThreadPreview {
+  id: string;
+  status: string | null;
+  subject: string | null;
+  last_message_at: string | null;
+  message_count: number | null;
+  lead_id: string | null;
+  overdue: boolean;
+  overdue_days: number | null;
+}
+
+interface RecoveryBooking {
+  id: string;
+  lead: { name: string; email: string | null; phone: string | null } | null;
+  scheduled_date: string;
+  scheduled_time: string;
+  duration_minutes: number | null;
+  status: string | null;
+  can_cancel: boolean;
+  can_reschedule: boolean;
+  calendar_event: { id: string; google_event_id: string; sync_status: string | null } | null;
+}
+
 const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 
 const TIMEZONES = [
@@ -49,17 +82,126 @@ export function LumaLeasingConfig() {
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
   const [activeTab, setActiveTab] = useState<'branding' | 'behavior' | 'leads' | 'tours' | 'embed'>('branding');
-  const [previewOpen, setPreviewOpen] = useState(false);
   const [calendarStatus, setCalendarStatus] = useState<{
     connected: boolean;
     email?: string;
-    status?: string;
-    lastCheck?: string;
+    token_status?: string;
+    last_health_check_at?: string;
+    webhook_capability?: {
+      mode: 'push_watch' | 'unconfigured';
+      ready: boolean;
+      blockers: string[];
+      watch_expires_at: string | null;
+      watch_ttl_minutes: number | null;
+      watch_last_message_number: number | null;
+    };
+    calendar_sync?: {
+      total_events: number;
+      synced_events: number;
+      failed_events: number;
+      external_drift_events: number;
+      external_missing_events: number;
+      external_cancelled_events: number;
+      missing_event_bookings: number;
+      degraded: boolean;
+    };
   } | null>(null);
+  const [emailStatus, setEmailStatus] = useState<{
+    connected: boolean;
+    message?: string;
+    email?: string;
+    token_status?: string;
+    auto_reply_enabled?: boolean;
+    webhook_capability?: {
+      mode: 'push_watch' | 'unconfigured';
+      ready: boolean;
+      blockers: string[];
+      watch_expires_at: string | null;
+      watch_ttl_minutes: number | null;
+      history_id: string | null;
+    };
+    thread_lifecycle?: EmailLifecycleSummary;
+    pending_threads_preview?: PendingEmailThreadPreview[];
+  } | null>(null);
+  const [resolvingThreadId, setResolvingThreadId] = useState<string | null>(null);
+  const [repairingThreads, setRepairingThreads] = useState(false);
+  const [repairingCalendarSync, setRepairingCalendarSync] = useState(false);
+  const [recoveringBookingId, setRecoveringBookingId] = useState<string | null>(null);
+  const [recoveryBookings, setRecoveryBookings] = useState<RecoveryBooking[]>([]);
+  const [recoveryDrafts, setRecoveryDrafts] = useState<Record<string, { date: string; time: string }>>({});
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
+
+  const loadConfig = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/lumaleasing/admin/config?propertyId=${currentProperty.id}`);
+      const data = await res.json();
+      setConfig(data.config);
+    } catch (error) {
+      console.error('Failed to load config:', error);
+    } finally {
+      setLoading(false);
+    }
+  }, [currentProperty.id]);
+
+  const loadCalendarStatus = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/lumaleasing/calendar/status?propertyId=${currentProperty.id}`);
+      if (res.ok) {
+        const data = await res.json();
+        setCalendarStatus(data);
+      }
+    } catch (error) {
+      console.error('Failed to load calendar status:', error);
+    }
+  }, [currentProperty.id]);
+
+  const loadEmailStatus = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/lumaleasing/email/status?propertyId=${currentProperty.id}`);
+      if (res.ok) {
+        const data = await res.json();
+        setEmailStatus(data);
+      }
+    } catch (error) {
+      console.error('Failed to load email status:', error);
+    }
+  }, [currentProperty.id]);
+
+  const loadRecoveryBookings = useCallback(async () => {
+    try {
+      setRecoveryError(null);
+      const res = await fetch(`/api/lumaleasing/tours/recovery?propertyId=${currentProperty.id}`);
+      if (!res.ok) {
+        const payload = await res.json().catch(() => null);
+        throw new Error(payload?.error || 'Failed to load booking recovery data');
+      }
+      const data = await res.json();
+      const bookings = (data.bookings || []) as RecoveryBooking[];
+      setRecoveryBookings(bookings);
+      setRecoveryDrafts((prev) => {
+        const next = { ...prev };
+        for (const booking of bookings) {
+          if (!next[booking.id]) {
+            next[booking.id] = {
+              date: booking.scheduled_date,
+              time: booking.scheduled_time.slice(0, 5),
+            };
+          }
+        }
+        return next;
+      });
+    } catch (error) {
+      console.error('Failed to load booking recovery data:', error);
+      setRecoveryError(error instanceof Error ? error.message : 'Failed to load booking recovery data');
+    }
+  }, [currentProperty.id]);
 
   useEffect(() => {
     loadConfig();
     loadCalendarStatus();
+    loadEmailStatus();
+    loadRecoveryBookings();
     
     // Check for OAuth callback success/error in URL params
     if (typeof window !== 'undefined') {
@@ -73,35 +215,127 @@ export function LumaLeasingConfig() {
         loadCalendarStatus();
         // Clean URL
         window.history.replaceState({}, '', window.location.pathname);
+      } else if (success === 'email_connected' && email) {
+        alert(`Gmail connected successfully! (${email})`);
+        loadEmailStatus();
+        // Clean URL
+        window.history.replaceState({}, '', window.location.pathname);
       } else if (error) {
         alert(`Failed to connect Google Calendar: ${error}`);
         window.history.replaceState({}, '', window.location.pathname);
       }
     }
-  }, [currentProperty.id]);
+  }, [loadCalendarStatus, loadConfig, loadEmailStatus, loadRecoveryBookings]);
 
-  const loadConfig = async () => {
-    setLoading(true);
+  const resolveEmailThread = async (threadId: string) => {
     try {
-      const res = await fetch(`/api/lumaleasing/admin/config?propertyId=${currentProperty.id}`);
-      const data = await res.json();
-      setConfig(data.config);
+      setResolvingThreadId(threadId);
+      const res = await fetch(`/api/lumaleasing/email/threads/${threadId}/status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'resolved' }),
+      });
+
+      if (!res.ok) {
+        const errorPayload = await res.json().catch(() => null);
+        throw new Error(errorPayload?.error || 'Failed to resolve thread');
+      }
+
+      await loadEmailStatus();
     } catch (error) {
-      console.error('Failed to load config:', error);
+      console.error('Failed to resolve email thread:', error);
+      alert(error instanceof Error ? error.message : 'Failed to resolve email thread');
     } finally {
-      setLoading(false);
+      setResolvingThreadId(null);
     }
   };
 
-  const loadCalendarStatus = async () => {
+  const repairThreadLifecycle = async () => {
     try {
-      const res = await fetch(`/api/lumaleasing/calendar/status?propertyId=${currentProperty.id}`);
-      if (res.ok) {
-        const data = await res.json();
-        setCalendarStatus(data);
+      setRepairingThreads(true);
+      const res = await fetch('/api/lumaleasing/email/threads/repair', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          propertyId: currentProperty.id,
+          action: 'resolve_overdue_internal_replies',
+        }),
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(payload?.error || 'Failed to repair email lifecycle');
       }
+      await loadEmailStatus();
+      alert(`Lifecycle repair complete. Repaired ${payload?.repaired || 0} overdue threads.`);
     } catch (error) {
-      console.error('Failed to load calendar status:', error);
+      console.error('Failed to repair thread lifecycle:', error);
+      alert(error instanceof Error ? error.message : 'Failed to repair thread lifecycle');
+    } finally {
+      setRepairingThreads(false);
+    }
+  };
+
+  const repairCalendarSync = async () => {
+    try {
+      setRepairingCalendarSync(true);
+      const res = await fetch('/api/lumaleasing/calendar/reconcile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ propertyId: currentProperty.id }),
+      });
+
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(payload?.error || 'Failed to repair calendar sync');
+      }
+
+      await loadCalendarStatus();
+      alert(
+        `Calendar repair complete. Created ${payload?.created || 0}, repaired ${payload?.repaired || 0}, failed ${payload?.failed || 0}.`
+      );
+    } catch (error) {
+      console.error('Failed to repair calendar sync:', error);
+      alert(error instanceof Error ? error.message : 'Failed to repair calendar sync');
+    } finally {
+      setRepairingCalendarSync(false);
+    }
+  };
+
+  const runBookingRecovery = async (bookingId: string, action: 'cancel' | 'reschedule') => {
+    try {
+      setRecoveringBookingId(bookingId);
+      setRecoveryError(null);
+      const draft = recoveryDrafts[bookingId];
+      const body: Record<string, string> = {
+        propertyId: currentProperty.id,
+        bookingId,
+        action,
+      };
+      if (action === 'reschedule') {
+        body.rescheduleDate = draft?.date || '';
+        body.rescheduleTime = draft?.time || '';
+      }
+      const res = await fetch('/api/lumaleasing/tours/recovery', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(payload?.error || 'Recovery action failed');
+      }
+      await loadRecoveryBookings();
+      await loadCalendarStatus();
+      alert(
+        action === 'cancel'
+          ? 'Booking cancelled successfully.'
+          : 'Booking rescheduled successfully.'
+      );
+    } catch (error) {
+      console.error('Failed to run booking recovery:', error);
+      setRecoveryError(error instanceof Error ? error.message : 'Failed to run booking recovery');
+    } finally {
+      setRecoveringBookingId(null);
     }
   };
 
@@ -214,7 +448,7 @@ export function LumaLeasingConfig() {
         </div>
         <div className="flex items-center gap-3">
           <button
-            onClick={() => setPreviewOpen(true)}
+            onClick={() => window.open(`/lumaleasing/demo?apiKey=${config.api_key}`, '_blank', 'noopener,noreferrer')}
             className="flex items-center gap-2 px-4 py-2 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
           >
             <Eye className="w-4 h-4" />
@@ -429,6 +663,158 @@ export function LumaLeasingConfig() {
         {/* Leads Tab */}
         {activeTab === 'leads' && (
           <div className="space-y-6 max-w-2xl">
+            {/* Gmail Integration Card */}
+            <div className="bg-gradient-to-br from-emerald-50 to-teal-50 border border-emerald-100 rounded-xl p-6">
+              <div className="flex items-start gap-4">
+                <div className="flex-shrink-0">
+                  <div className="w-12 h-12 bg-emerald-600 rounded-lg flex items-center justify-center">
+                    <Mail className="w-6 h-6 text-white" />
+                  </div>
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-lg font-semibold text-slate-900 mb-2">Gmail Inbox Integration</h3>
+                  <p className="text-sm text-slate-600 mb-4">
+                    Connect Gmail to sync inbound lead replies and keep thread lifecycle states visible for leasing follow-up.
+                  </p>
+
+                  {emailStatus?.connected ? (
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2 text-sm bg-white/60 rounded-lg p-3">
+                        <CheckCircle className="w-4 h-4 text-green-600 flex-shrink-0" />
+                        <div>
+                          <div className="font-medium text-slate-900">{emailStatus.email}</div>
+                          <div className="text-xs text-slate-600">
+                            Status:{' '}
+                            <span className={`font-medium ${
+                              emailStatus.token_status === 'healthy' ? 'text-green-600' :
+                              emailStatus.token_status === 'expiring_soon' ? 'text-yellow-600' :
+                              'text-red-600'
+                            }`}>
+                              {emailStatus.token_status}
+                            </span>
+                          </div>
+                          {emailStatus.webhook_capability && (
+                            <div className="text-xs text-slate-600 mt-1">
+                              Webhook:{' '}
+                              <span
+                                className={`font-medium ${
+                                  emailStatus.webhook_capability.ready ? 'text-green-600' : 'text-amber-700'
+                                }`}
+                              >
+                                {emailStatus.webhook_capability.ready ? 'ready' : 'degraded'}
+                              </span>
+                              {emailStatus.webhook_capability.watch_ttl_minutes !== null && (
+                                <span>
+                                  {' '}
+                                  • watch TTL {emailStatus.webhook_capability.watch_ttl_minutes}m
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-3">
+                        <div className="rounded-lg bg-white/70 p-3 border border-emerald-100">
+                          <p className="text-xs text-slate-500">Awaiting Internal Reply</p>
+                          <p className="text-lg font-semibold text-slate-900">
+                            {emailStatus.thread_lifecycle?.awaiting_internal_reply || 0}
+                          </p>
+                        </div>
+                        <div className="rounded-lg bg-white/70 p-3 border border-amber-100">
+                          <p className="text-xs text-slate-500">Overdue Internal Reply</p>
+                          <p className="text-lg font-semibold text-amber-700">
+                            {emailStatus.thread_lifecycle?.awaiting_internal_reply_overdue || 0}
+                          </p>
+                        </div>
+                        <div className="rounded-lg bg-white/70 p-3 border border-emerald-100">
+                          <p className="text-xs text-slate-500">Awaiting Lead Reply</p>
+                          <p className="text-lg font-semibold text-slate-900">
+                            {emailStatus.thread_lifecycle?.awaiting_lead_reply || 0}
+                          </p>
+                        </div>
+                      </div>
+
+                      {(emailStatus.pending_threads_preview || []).length > 0 && (
+                        <div className="rounded-lg bg-white/70 p-3 border border-emerald-100">
+                          <p className="text-xs font-medium text-slate-700 mb-2">Pending Thread Preview</p>
+                          <div className="space-y-2">
+                            {(emailStatus.pending_threads_preview || []).slice(0, 5).map((thread) => (
+                              <div key={thread.id} className="flex items-center justify-between gap-2 p-2 rounded bg-slate-50/80">
+                                <div className="min-w-0">
+                                  <p className="text-xs font-medium text-slate-800 truncate">
+                                    {thread.subject || 'No subject'}
+                                  </p>
+                                  <p className="text-[11px] text-slate-500">
+                                    {thread.status || 'unknown'} • {thread.message_count || 0} messages
+                                    {thread.overdue && thread.overdue_days
+                                      ? ` • overdue ${thread.overdue_days}d`
+                                      : ''}
+                                  </p>
+                                </div>
+                                <button
+                                  onClick={() => resolveEmailThread(thread.id)}
+                                  disabled={resolvingThreadId === thread.id}
+                                  className="text-[11px] px-2 py-1 rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+                                >
+                                  {resolvingThreadId === thread.id ? 'Resolving...' : 'Resolve'}
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {(emailStatus.thread_lifecycle?.awaiting_internal_reply_overdue || 0) > 0 && (
+                        <button
+                          onClick={repairThreadLifecycle}
+                          disabled={repairingThreads}
+                          className="flex items-center gap-2 bg-white text-slate-900 px-4 py-2 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors text-sm font-medium disabled:opacity-60"
+                        >
+                          <Wrench className={`w-4 h-4 ${repairingThreads ? 'animate-spin' : ''}`} />
+                          {repairingThreads
+                            ? 'Repairing Thread Lifecycle...'
+                            : 'Resolve Overdue Internal Replies'}
+                        </button>
+                      )}
+
+                      {emailStatus.webhook_capability && !emailStatus.webhook_capability.ready && (
+                        <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                          Webhook capability degraded: {emailStatus.webhook_capability.blockers.join(', ')}.
+                          Inbound thread updates may be delayed until watch and history cursor are healthy.
+                        </div>
+                      )}
+
+                      {emailStatus.token_status !== 'healthy' && (
+                        <div className="flex items-center gap-3">
+                          <AlertCircle className="w-5 h-5 text-amber-600" />
+                          <div className="flex-1">
+                            <p className="text-sm text-amber-900 font-medium">Action Required</p>
+                            <p className="text-xs text-amber-700">Your Gmail connection needs to be refreshed</p>
+                          </div>
+                          <button
+                            onClick={() => window.location.href = `/api/lumaleasing/email/connect?propertyId=${currentProperty.id}`}
+                            className="flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded-lg hover:bg-emerald-700 transition-colors text-sm font-medium"
+                          >
+                            <RefreshCw className="w-4 h-4" />
+                            Reconnect
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => window.location.href = `/api/lumaleasing/email/connect?propertyId=${currentProperty.id}`}
+                      className="flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded-lg hover:bg-emerald-700 transition-colors font-medium"
+                    >
+                      <Mail className="w-4 h-4" />
+                      Connect Gmail
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-2">Lead Capture Prompt</label>
               <textarea
@@ -506,17 +892,57 @@ export function LumaLeasingConfig() {
                           <div className="font-medium text-slate-900">{calendarStatus.email}</div>
                           <div className="text-xs text-slate-600">
                             Status: <span className={`font-medium ${
-                              calendarStatus.status === 'healthy' ? 'text-green-600' :
-                              calendarStatus.status === 'expiring_soon' ? 'text-yellow-600' :
+                              calendarStatus.token_status === 'healthy' ? 'text-green-600' :
+                              calendarStatus.token_status === 'expiring_soon' ? 'text-yellow-600' :
                               'text-red-600'
-                            }`}>{calendarStatus.status}</span>
-                            {calendarStatus.lastCheck && (
-                              <span> • Last checked: {new Date(calendarStatus.lastCheck).toLocaleString()}</span>
+                            }`}>{calendarStatus.token_status}</span>
+                            {calendarStatus.last_health_check_at && (
+                              <span> • Last checked: {new Date(calendarStatus.last_health_check_at).toLocaleString()}</span>
                             )}
                           </div>
+                          {calendarStatus.webhook_capability && (
+                            <div className="text-xs text-slate-600 mt-1">
+                              Webhook:{' '}
+                              <span
+                                className={`font-medium ${
+                                  calendarStatus.webhook_capability.ready ? 'text-green-600' : 'text-amber-700'
+                                }`}
+                              >
+                                {calendarStatus.webhook_capability.ready ? 'ready' : 'degraded'}
+                              </span>
+                              {calendarStatus.webhook_capability.watch_ttl_minutes !== null && (
+                                <span>
+                                  {' '}
+                                  • watch TTL {calendarStatus.webhook_capability.watch_ttl_minutes}m
+                                </span>
+                              )}
+                            </div>
+                          )}
                         </div>
                       </div>
-                      {calendarStatus.status !== 'healthy' && (
+                      {calendarStatus.calendar_sync && (
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="rounded-lg bg-white/70 p-3 border border-indigo-100">
+                            <p className="text-xs text-slate-500">Synced Calendar Events</p>
+                            <p className="text-lg font-semibold text-slate-900">
+                              {calendarStatus.calendar_sync.synced_events}
+                            </p>
+                          </div>
+                          <div className="rounded-lg bg-white/70 p-3 border border-indigo-100">
+                            <p className="text-xs text-slate-500">Sync Issues</p>
+                            <p className={`text-lg font-semibold ${
+                              calendarStatus.calendar_sync.degraded ? 'text-amber-700' : 'text-slate-900'
+                            }`}>
+                              {calendarStatus.calendar_sync.failed_events +
+                                calendarStatus.calendar_sync.external_drift_events +
+                                calendarStatus.calendar_sync.external_missing_events +
+                                calendarStatus.calendar_sync.external_cancelled_events +
+                                calendarStatus.calendar_sync.missing_event_bookings}
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                      {calendarStatus.token_status !== 'healthy' && (
                         <div className="flex items-center gap-3">
                           <AlertCircle className="w-5 h-5 text-amber-600" />
                           <div className="flex-1">
@@ -530,6 +956,29 @@ export function LumaLeasingConfig() {
                             <RefreshCw className="w-4 h-4" />
                             Reconnect
                           </button>
+                        </div>
+                      )}
+                      {calendarStatus.webhook_capability && !calendarStatus.webhook_capability.ready && (
+                        <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                          Calendar webhook degraded: {calendarStatus.webhook_capability.blockers.join(', ')}.
+                          External Google Calendar edits may not propagate until watch health is restored.
+                        </div>
+                      )}
+                      {calendarStatus.calendar_sync?.degraded && (
+                        <div className="space-y-3">
+                          <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                            Some bookings are not fully synced to Google Calendar yet, or the linked Google events were changed outside P11. New bookings still work, but operator follow-up may be required.
+                          </div>
+                          {calendarStatus.token_status === 'healthy' && (
+                            <button
+                              onClick={repairCalendarSync}
+                              disabled={repairingCalendarSync}
+                              className="flex items-center gap-2 bg-white text-slate-900 px-4 py-2 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors text-sm font-medium disabled:opacity-60"
+                            >
+                              <RefreshCw className={`w-4 h-4 ${repairingCalendarSync ? 'animate-spin' : ''}`} />
+                              {repairingCalendarSync ? 'Repairing Calendar Sync...' : 'Repair Calendar Sync'}
+                            </button>
+                          )}
                         </div>
                       )}
                     </div>
@@ -551,6 +1000,102 @@ export function LumaLeasingConfig() {
                   )}
                 </div>
               </div>
+            </div>
+
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <h4 className="text-sm font-semibold text-slate-900">Booking Recovery</h4>
+                  <p className="text-xs text-slate-600">
+                    Recover from booking issues with operator-triggered reschedule and cancel actions.
+                  </p>
+                </div>
+                <button
+                  onClick={loadRecoveryBookings}
+                  disabled={recoveringBookingId !== null}
+                  className="text-xs px-3 py-1.5 rounded border border-slate-300 text-slate-700 hover:bg-white disabled:opacity-60"
+                >
+                  Refresh
+                </button>
+              </div>
+
+              {recoveryError && (
+                <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2 mb-3">
+                  {recoveryError}
+                </div>
+              )}
+
+              {recoveryBookings.length === 0 ? (
+                <p className="text-xs text-slate-500">No bookings available for recovery actions.</p>
+              ) : (
+                <div className="space-y-3">
+                  {recoveryBookings.slice(0, 8).map((booking) => (
+                    <div key={booking.id} className="rounded-lg border border-slate-200 bg-white p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-medium text-slate-900">
+                            {booking.lead?.name || 'Unknown lead'} • {booking.scheduled_date} {booking.scheduled_time.slice(0, 5)}
+                          </p>
+                          <p className="text-xs text-slate-500 mt-1">
+                            Status: {booking.status || 'unknown'} • Calendar:{' '}
+                            {booking.calendar_event?.sync_status || 'not_synced'}
+                          </p>
+                        </div>
+                        <span className="text-[11px] text-slate-500 font-mono">{booking.id.slice(0, 8)}</span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 mt-3">
+                        <input
+                          type="date"
+                          value={recoveryDrafts[booking.id]?.date || ''}
+                          onChange={(e) =>
+                            setRecoveryDrafts((prev) => ({
+                              ...prev,
+                              [booking.id]: {
+                                date: e.target.value,
+                                time: prev[booking.id]?.time || booking.scheduled_time.slice(0, 5),
+                              },
+                            }))
+                          }
+                          className="px-2 py-1.5 border border-slate-200 rounded text-xs"
+                        />
+                        <input
+                          type="time"
+                          value={recoveryDrafts[booking.id]?.time || ''}
+                          onChange={(e) =>
+                            setRecoveryDrafts((prev) => ({
+                              ...prev,
+                              [booking.id]: {
+                                date: prev[booking.id]?.date || booking.scheduled_date,
+                                time: e.target.value,
+                              },
+                            }))
+                          }
+                          className="px-2 py-1.5 border border-slate-200 rounded text-xs"
+                        />
+                      </div>
+
+                      <div className="flex items-center gap-2 mt-3">
+                        <button
+                          onClick={() => runBookingRecovery(booking.id, 'reschedule')}
+                          disabled={!booking.can_reschedule || recoveringBookingId === booking.id}
+                          className="text-xs px-3 py-1.5 rounded bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
+                        >
+                          {recoveringBookingId === booking.id ? 'Working...' : 'Reschedule'}
+                        </button>
+                        <button
+                          onClick={() => runBookingRecovery(booking.id, 'cancel')}
+                          disabled={!booking.can_cancel || recoveringBookingId === booking.id}
+                          className="text-xs px-3 py-1.5 rounded bg-white border border-rose-300 text-rose-700 hover:bg-rose-50 disabled:opacity-50 flex items-center gap-1"
+                        >
+                          <XCircle className="w-3 h-3" />
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Tour Settings */}

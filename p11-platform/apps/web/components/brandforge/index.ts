@@ -6,4 +6,5 @@ export { BrandDisplay } from './BrandDisplay'
 export { PropertyBrandInsightsCard } from './PropertyBrandInsightsCard'
 export { BrandForgeCompetitorCard } from './BrandForgeCompetitorCard'
 export type { BrandForgeCompetitor } from './BrandForgeCompetitorCard'
+export type { BrandForgeCompletionResult } from './types'
 

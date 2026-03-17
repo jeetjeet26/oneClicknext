@@ -5,10 +5,26 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { syncLeadToCRM } from '@/utils/services/crm-sync'
 
 // Data engine configuration
 const DATA_ENGINE_URL = process.env.DATA_ENGINE_URL || 'http://localhost:8000'
 const DATA_ENGINE_API_KEY = process.env.DATA_ENGINE_API_KEY || ''
+
+type ReplayableLead = {
+  id: string
+  property_id: string | null
+  first_name: string | null
+  last_name: string | null
+  email: string | null
+  phone: string | null
+  source: string | null
+  status: string | null
+  move_in_date: string | null
+  bedrooms: number | null
+  notes: string | null
+  crm_sync_retry_count: number | null
+}
 
 /**
  * Helper to call data-engine with proper auth
@@ -220,6 +236,118 @@ export async function POST(request: NextRequest) {
           lead_ids: params.leadIds,
         }
         break
+
+      case 'dead-letter-list': {
+        const leadLimit =
+          typeof params.limit === 'number' && Number.isFinite(params.limit)
+            ? Math.min(Math.max(params.limit, 1), 100)
+            : 25
+
+        const { data: leads, error: leadsError } = await supabase
+          .from('leads')
+          .select(
+            'id, first_name, last_name, email, crm_sync_status, crm_sync_error, crm_sync_retry_count, crm_dead_lettered_at, crm_synced_at'
+          )
+          .eq('property_id', propertyId)
+          .eq('crm_sync_status', 'dead_lettered')
+          .order('crm_dead_lettered_at', { ascending: false })
+          .limit(leadLimit)
+
+        if (leadsError) {
+          return NextResponse.json({ error: leadsError.message }, { status: 500 })
+        }
+
+        return NextResponse.json({
+          success: true,
+          leads: leads || [],
+        })
+      }
+
+      case 'requeue-dead-letter': {
+        const leadIds = Array.isArray(params.leadIds)
+          ? params.leadIds.filter((id): id is string => typeof id === 'string' && id.length > 0)
+          : []
+
+        if (leadIds.length === 0) {
+          return NextResponse.json(
+            { error: 'leadIds array is required for requeue action' },
+            { status: 400 }
+          )
+        }
+
+        const nowIso = new Date().toISOString()
+        const { data: updatedLeads, error: updateError } = await supabase
+          .from('leads')
+          .update({
+            crm_sync_status: 'retrying',
+            crm_sync_error: null,
+            crm_sync_next_retry_at: nowIso,
+            crm_dead_lettered_at: null,
+          })
+          .eq('property_id', propertyId)
+          .eq('crm_sync_status', 'dead_lettered')
+          .in('id', leadIds)
+          .select('id')
+
+        if (updateError) {
+          return NextResponse.json({ error: updateError.message }, { status: 500 })
+        }
+
+        return NextResponse.json({
+          success: true,
+          requeued: (updatedLeads || []).length,
+          leadIds: (updatedLeads || []).map((lead) => lead.id),
+        })
+      }
+
+      case 'replay-dead-letter-now': {
+        const leadId = typeof params.leadId === 'string' ? params.leadId : ''
+        if (!leadId) {
+          return NextResponse.json({ error: 'leadId is required' }, { status: 400 })
+        }
+
+        const { data: lead, error: leadError } = await supabase
+          .from('leads')
+          .select(
+            'id, property_id, first_name, last_name, email, phone, source, status, move_in_date, bedrooms, notes, crm_sync_retry_count'
+          )
+          .eq('id', leadId)
+          .eq('property_id', propertyId)
+          .maybeSingle()
+
+        if (leadError) {
+          return NextResponse.json({ error: leadError.message }, { status: 500 })
+        }
+
+        if (!lead) {
+          return NextResponse.json({ error: 'Lead not found for property' }, { status: 404 })
+        }
+
+        const typedLead = lead as ReplayableLead
+        const replay = await syncLeadToCRM(
+          propertyId,
+          typedLead.id,
+          {
+            first_name: typedLead.first_name || undefined,
+            last_name: typedLead.last_name || undefined,
+            email: typedLead.email || undefined,
+            phone: typedLead.phone || undefined,
+            source: typedLead.source || undefined,
+            status: typedLead.status || undefined,
+            move_in_date: typedLead.move_in_date || undefined,
+            bedrooms: typedLead.bedrooms ?? undefined,
+            notes: typedLead.notes || undefined,
+          },
+          {
+            attempt: typedLead.crm_sync_retry_count ?? 0,
+          }
+        )
+
+        return NextResponse.json({
+          success: replay.success,
+          replay,
+        })
+      }
 
       default:
         return NextResponse.json(

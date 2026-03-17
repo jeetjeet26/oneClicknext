@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import crypto from 'crypto'
+import { createClient as createSupabaseClient } from '@supabase/supabase-js'
+import { createClient as createServerClient } from '@/utils/supabase/server'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
-const supabase = createClient(
+const supabase = createSupabaseClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
@@ -9,22 +12,41 @@ const supabase = createClient(
 // Simple encryption/decryption for app secrets
 // In production, use a proper KMS like AWS KMS or Vault
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'p11-platform-default-key-change-me'
+const KEY = crypto.createHash('sha256').update(ENCRYPTION_KEY).digest()
 
 function encrypt(text: string): string {
-  // Simple base64 encoding with key mixing - replace with proper encryption in production
-  const mixed = Buffer.from(text).toString('base64')
-  return `enc_${mixed}`
+  const iv = crypto.randomBytes(12)
+  const cipher = crypto.createCipheriv('aes-256-gcm', KEY, iv)
+  const encrypted = Buffer.concat([cipher.update(text, 'utf8'), cipher.final()])
+  const tag = cipher.getAuthTag()
+  return `encv1:${iv.toString('base64')}:${tag.toString('base64')}:${encrypted.toString('base64')}`
 }
 
 function decrypt(encrypted: string): string {
-  if (!encrypted.startsWith('enc_')) return encrypted
-  const mixed = encrypted.slice(4)
-  return Buffer.from(mixed, 'base64').toString('utf-8')
+  // Backward compatibility for legacy base64 values.
+  if (encrypted.startsWith('enc_')) {
+    return Buffer.from(encrypted.slice(4), 'base64').toString('utf-8')
+  }
+  if (!encrypted.startsWith('encv1:')) return encrypted
+  const [, ivB64, tagB64, dataB64] = encrypted.split(':')
+  const decipher = crypto.createDecipheriv('aes-256-gcm', KEY, Buffer.from(ivB64, 'base64'))
+  decipher.setAuthTag(Buffer.from(tagB64, 'base64'))
+  const decrypted = Buffer.concat([
+    decipher.update(Buffer.from(dataB64, 'base64')),
+    decipher.final(),
+  ])
+  return decrypted.toString('utf-8')
 }
 
 // GET - Check if OAuth config exists for a property/platform
 export async function GET(request: NextRequest) {
   try {
+    const authClient = await createServerClient()
+    const { data: { user }, error: authError } = await authClient.auth.getUser()
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const { searchParams } = new URL(request.url)
     const propertyId = searchParams.get('propertyId')
     const platform = searchParams.get('platform') || 'meta'
@@ -34,6 +56,11 @@ export async function GET(request: NextRequest) {
         { error: 'Property ID required' },
         { status: 400 }
       )
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     // Check database for stored config
@@ -74,6 +101,12 @@ export async function GET(request: NextRequest) {
 // POST - Save OAuth credentials for a property
 export async function POST(request: NextRequest) {
   try {
+    const authClient = await createServerClient()
+    const { data: { user }, error: authError } = await authClient.auth.getUser()
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const body = await request.json()
     const { propertyId, platform, appId, appSecret } = body
 
@@ -82,6 +115,11 @@ export async function POST(request: NextRequest) {
         { error: 'Missing required fields: propertyId, platform, appId, appSecret' },
         { status: 400 }
       )
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     // Validate platform
@@ -142,6 +180,12 @@ export async function POST(request: NextRequest) {
 // DELETE - Remove OAuth credentials for a property
 export async function DELETE(request: NextRequest) {
   try {
+    const authClient = await createServerClient()
+    const { data: { user }, error: authError } = await authClient.auth.getUser()
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const { searchParams } = new URL(request.url)
     const propertyId = searchParams.get('propertyId')
     const platform = searchParams.get('platform') || 'meta'
@@ -151,6 +195,11 @@ export async function DELETE(request: NextRequest) {
         { error: 'Property ID required' },
         { status: 400 }
       )
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     const { error } = await supabase

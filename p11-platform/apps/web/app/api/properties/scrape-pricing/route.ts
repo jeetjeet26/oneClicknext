@@ -1,15 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { syncPropertyUnitsToKnowledgeBase } from '@/utils/property-units-kb-sync'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
 const DATA_ENGINE_URL = process.env.DATA_ENGINE_URL || 'http://localhost:8001'
 
 export async function POST(req: NextRequest) {
   try {
     const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
     
-    if (!user) {
+    if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
     
@@ -19,26 +20,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Property ID required' }, { status: 400 })
     }
     
-    // Verify user has access to this property
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
     const { data: property } = await supabase
       .from('properties')
-      .select('id, name, website_url, org_id')
+      .select('id, website_url')
       .eq('id', propertyId)
       .single()
     
     if (!property) {
       return NextResponse.json({ error: 'Property not found' }, { status: 404 })
-    }
-    
-    // Verify user is in the same org
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('org_id')
-      .eq('id', user.id)
-      .single()
-    
-    if (profile?.org_id !== property.org_id) {
-      return NextResponse.json({ error: 'Access denied' }, { status: 403 })
     }
     
     // Call data-engine to scrape
@@ -112,10 +106,10 @@ export async function POST(req: NextRequest) {
     
     return NextResponse.json(result)
     
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Property scrape error:', error)
     return NextResponse.json(
-      { error: error.message || 'Failed to scrape property' },
+      { error: error instanceof Error ? error.message : 'Failed to scrape property' },
       { status: 500 }
     )
   }

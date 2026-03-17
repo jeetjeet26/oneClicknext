@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import Anthropic from '@anthropic-ai/sdk'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY!
@@ -33,6 +34,11 @@ export async function POST(request: NextRequest) {
         { error: 'propertyId and brandContext required' },
         { status: 400 }
       )
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     // Build conversation for Claude

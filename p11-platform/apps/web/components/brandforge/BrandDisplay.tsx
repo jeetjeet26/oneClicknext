@@ -107,6 +107,13 @@ export function BrandDisplay({ propertyId }: BrandDisplayProps) {
         </div>
       </div>
 
+      {brandAsset.statusMessage && (
+        <p className="mt-4 text-sm text-slate-600">{brandAsset.statusMessage}</p>
+      )}
+      {brandAsset.nextRecommendedAction && (
+        <p className="mt-1 text-xs text-slate-500">{brandAsset.nextRecommendedAction}</p>
+      )}
+
       {/* Actions */}
       <div className="mt-4 flex gap-2">
         <Link
@@ -123,6 +130,7 @@ export function BrandDisplay({ propertyId }: BrandDisplayProps) {
             className="px-4 py-2 border border-purple-300 text-purple-700 rounded-lg hover:bg-purple-50 text-sm font-medium flex items-center gap-2"
           >
             <Download className="w-4 h-4" />
+            Export
           </a>
         )}
       </div>

@@ -1,5 +1,6 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
+import type { Database } from '@/types/supabase'
 
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({
@@ -7,15 +8,17 @@ export async function middleware(request: NextRequest) {
   })
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  const supabasePublishableKey =
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
   // If env vars are missing, don't hard-crash the entire app in middleware.
   // This commonly happens in local dev when env files aren't being loaded into the Edge runtime.
-  if (!supabaseUrl || !supabaseAnonKey) {
+  if (!supabaseUrl || !supabasePublishableKey) {
     console.error(
       [
         '[middleware] Missing Supabase env vars.',
-        'Required: NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY.',
+        'Required: NEXT_PUBLIC_SUPABASE_URL and either NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY or NEXT_PUBLIC_SUPABASE_ANON_KEY.',
         'Fix: ensure they exist in p11-platform/.env (shared) OR apps/web/.env.local, then restart `npm run dev`.',
       ].join(' ')
     )
@@ -23,9 +26,9 @@ export async function middleware(request: NextRequest) {
     return supabaseResponse
   }
 
-  const supabase = createServerClient(
+  const supabase = createServerClient<Database>(
     supabaseUrl,
-    supabaseAnonKey,
+    supabasePublishableKey,
     {
       cookies: {
         getAll() {

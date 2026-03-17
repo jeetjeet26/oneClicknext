@@ -1,14 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { createClient } from '@/utils/supabase/server'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
+async function getAuthenticatedUser() {
+  const supabase = await createClient()
+  const { data: { user }, error } = await supabase.auth.getUser()
+  return { supabase, user, error }
+}
 
 // GET - List platform connections for a property
 export async function GET(request: NextRequest) {
   try {
+    const { supabase, user, error: authError } = await getAuthenticatedUser()
     const { searchParams } = new URL(request.url)
     const propertyId = searchParams.get('propertyId')
 
@@ -17,6 +20,15 @@ export async function GET(request: NextRequest) {
         { error: 'propertyId is required' },
         { status: 400 }
       )
+    }
+
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     const { data, error } = await supabase
@@ -44,6 +56,7 @@ export async function GET(request: NextRequest) {
 // POST - Create a new platform connection
 export async function POST(request: NextRequest) {
   try {
+    const { supabase, user, error: authError } = await getAuthenticatedUser()
     const body = await request.json()
     const { 
       propertyId, 
@@ -68,6 +81,15 @@ export async function POST(request: NextRequest) {
         { error: 'propertyId and platform are required' },
         { status: 400 }
       )
+    }
+
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     // Validate platform
@@ -177,6 +199,7 @@ export async function POST(request: NextRequest) {
 // PATCH - Update a platform connection
 export async function PATCH(request: NextRequest) {
   try {
+    const { supabase, user, error: authError } = await getAuthenticatedUser()
     const body = await request.json()
     const { 
       connectionId,
@@ -196,6 +219,29 @@ export async function PATCH(request: NextRequest) {
         { error: 'connectionId is required' },
         { status: 400 }
       )
+    }
+
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    const { data: existingConnection, error: existingConnectionError } = await supabase
+      .from('review_platform_connections')
+      .select('id, property_id')
+      .eq('id', connectionId)
+      .single()
+
+    if (existingConnectionError || !existingConnection) {
+      return NextResponse.json({ error: 'Connection not found' }, { status: 404 })
+    }
+
+    if (typeof existingConnection.property_id !== 'string') {
+      return NextResponse.json({ error: 'Connection not found' }, { status: 404 })
+    }
+
+    const access = await validatePropertyAccess(user.id, existingConnection.property_id)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     const updateData: Record<string, unknown> = {
@@ -239,6 +285,7 @@ export async function PATCH(request: NextRequest) {
 // DELETE - Remove a platform connection
 export async function DELETE(request: NextRequest) {
   try {
+    const { supabase, user, error: authError } = await getAuthenticatedUser()
     const { searchParams } = new URL(request.url)
     const connectionId = searchParams.get('connectionId')
 
@@ -247,6 +294,29 @@ export async function DELETE(request: NextRequest) {
         { error: 'connectionId is required' },
         { status: 400 }
       )
+    }
+
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    const { data: existingConnection, error: existingConnectionError } = await supabase
+      .from('review_platform_connections')
+      .select('id, property_id')
+      .eq('id', connectionId)
+      .single()
+
+    if (existingConnectionError || !existingConnection) {
+      return NextResponse.json({ error: 'Connection not found' }, { status: 404 })
+    }
+
+    if (typeof existingConnection.property_id !== 'string') {
+      return NextResponse.json({ error: 'Connection not found' }, { status: 404 })
+    }
+
+    const access = await validatePropertyAccess(user.id, existingConnection.property_id)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     const { error } = await supabase

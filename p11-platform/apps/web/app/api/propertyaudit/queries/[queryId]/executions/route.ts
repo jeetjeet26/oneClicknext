@@ -6,6 +6,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
 export interface ExecutionData {
   id: string
@@ -43,6 +44,36 @@ export interface ExecutionAggregates {
   surfaces: Record<string, number>
 }
 
+interface ExecutionAnswerRow {
+  id: string
+  run_id: string
+  presence: boolean
+  llm_rank: number | null
+  link_rank: number | null
+  sov: number | null
+  flags: unknown
+  answer_summary: string | null
+  ordered_entities: unknown
+  analysis_method: string | null
+  natural_response: string | null
+  created_at: string | null
+  geo_runs:
+    | {
+        id: string
+        surface: string | null
+        model_name: string | null
+        execution_count?: number | null
+      }
+    | null
+  geo_citations:
+    | Array<{
+        url: string
+        domain: string
+        is_brand_domain: boolean | null
+      }>
+    | null
+}
+
 // GET /api/propertyaudit/queries/[queryId]/executions
 export async function GET(
   req: NextRequest,
@@ -57,8 +88,26 @@ export async function GET(
     }
 
     const { queryId } = await params
-    const { searchParams } = new URL(req.url)
-    const limit = Math.min(100, parseInt(searchParams.get('limit') || '50', 10))
+    const { searchParams } = req.nextUrl
+    const requestedLimit = Number.parseInt(searchParams.get('limit') || '50', 10)
+    const limit = Number.isFinite(requestedLimit)
+      ? Math.min(100, Math.max(1, requestedLimit))
+      : 50
+
+    const { data: query, error: queryError } = await supabase
+      .from('geo_queries')
+      .select('property_id')
+      .eq('id', queryId)
+      .single()
+
+    if (queryError || !query) {
+      return NextResponse.json({ error: 'Query not found' }, { status: 404 })
+    }
+
+    const access = await validatePropertyAccess(user.id, query.property_id)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
 
     // Fetch all answers for this query with run info and citations
     const { data: answers, error: answersError } = await supabase
@@ -98,24 +147,26 @@ export async function GET(
     }
 
     // Transform to API response format
-    const executions: ExecutionData[] = (answers || []).map((answer: any) => ({
+    const executions: ExecutionData[] = ((answers || []) as unknown as ExecutionAnswerRow[]).map((answer) => ({
       id: answer.id,
       runId: answer.run_id,
       surface: answer.geo_runs?.surface || 'unknown',
       modelName: answer.geo_runs?.model_name || null,
-      presence: answer.presence || false,
+      presence: Boolean(answer.presence),
       llmRank: answer.llm_rank,
       linkRank: answer.link_rank,
       sov: answer.sov,
-      flags: answer.flags || [],
+      flags: Array.isArray(answer.flags)
+        ? answer.flags.filter((flag): flag is string => typeof flag === 'string')
+        : [],
       answerSummary: answer.answer_summary,
-      orderedEntities: answer.ordered_entities || [],
-      citations: (answer.geo_citations || []).map((c: any) => ({
-        url: c.url,
-        domain: c.domain,
-        isBrandDomain: c.is_brand_domain || false
+      orderedEntities: parseOrderedEntities(answer.ordered_entities),
+      citations: (answer.geo_citations || []).map((citation) => ({
+        url: citation.url,
+        domain: citation.domain,
+        isBrandDomain: Boolean(citation.is_brand_domain),
       })),
-      createdAt: answer.created_at,
+      createdAt: answer.created_at || new Date(0).toISOString(),
       analysisMethod: answer.analysis_method,
       naturalResponse: answer.natural_response
     }))
@@ -180,4 +231,27 @@ function median(values: number[]): number | null {
     return (sorted[mid - 1] + sorted[mid]) / 2
   }
   return sorted[mid]
+}
+
+function parseOrderedEntities(value: unknown): ExecutionData['orderedEntities'] {
+  if (!Array.isArray(value)) return []
+
+  return value.reduce<ExecutionData['orderedEntities']>((acc, entry) => {
+    if (!entry || typeof entry !== 'object') return acc
+      const record = entry as Record<string, unknown>
+    if (
+      typeof record.name !== 'string' ||
+      typeof record.domain !== 'string' ||
+      typeof record.position !== 'number'
+    ) {
+      return acc
+    }
+    acc.push({
+        name: record.name,
+        domain: record.domain,
+        position: record.position,
+        rationale: typeof record.rationale === 'string' ? record.rationale : null,
+    })
+    return acc
+  }, [])
 }

@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { BrandAgent } from '@/utils/siteforge/agents'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
 export async function GET(request: NextRequest) {
   try {
@@ -35,14 +36,9 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Property not found' }, { status: 404 })
     }
 
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('org_id')
-      .eq('id', user.id)
-      .single()
-
-    if (profile?.org_id !== property.org_id) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 })
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     // Run Brand Agent analysis

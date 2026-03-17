@@ -40,6 +40,16 @@ interface LeadWithScore extends Lead {
     completenessScore: number
     behaviorScore: number
     factors: { factor: string; impact: string; type: 'positive' | 'negative' | 'neutral' }[]
+    workflowOutcomes?: {
+      workflowStatus: string | null
+      pending: number
+      sent: number
+      skipped: number
+      failed: number
+      retried: number
+      nextActionAt: string | null
+      lastActionAt: string | null
+    }
     scoredAt: string
     modelVersion: string
   }
@@ -183,7 +193,7 @@ export default function LeadPulsePage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
             <Sparkles className="w-7 h-7 text-indigo-500" />
-            <span className="text-gray-900 dark:text-gray-900">LeadPulse</span>
+            <span className="text-gray-900 dark:text-gray-100">LeadPulse</span>
           </h1>
           <p className="text-gray-700 dark:text-gray-300 mt-1">
             AI-powered lead scoring and prioritization
@@ -377,19 +387,49 @@ export default function LeadPulsePage() {
                 <p className="text-sm text-gray-500 mt-2">Loading score details...</p>
               </div>
             ) : selectedLead.scoreDetails ? (
-              <ScoreBreakdown
-                totalScore={selectedLead.scoreDetails.totalScore}
-                engagementScore={selectedLead.scoreDetails.engagementScore}
-                timingScore={selectedLead.scoreDetails.timingScore}
-                sourceScore={selectedLead.scoreDetails.sourceScore}
-                completenessScore={selectedLead.scoreDetails.completenessScore}
-                behaviorScore={selectedLead.scoreDetails.behaviorScore}
-                factors={selectedLead.scoreDetails.factors}
-                scoredAt={selectedLead.scoreDetails.scoredAt}
-                modelVersion={selectedLead.scoreDetails.modelVersion}
-                onRescore={rescoreSelectedLead}
-                isRescoring={loadingScore}
-              />
+              <>
+                <ScoreBreakdown
+                  totalScore={selectedLead.scoreDetails.totalScore}
+                  engagementScore={selectedLead.scoreDetails.engagementScore}
+                  timingScore={selectedLead.scoreDetails.timingScore}
+                  sourceScore={selectedLead.scoreDetails.sourceScore}
+                  completenessScore={selectedLead.scoreDetails.completenessScore}
+                  behaviorScore={selectedLead.scoreDetails.behaviorScore}
+                  factors={selectedLead.scoreDetails.factors}
+                  scoredAt={selectedLead.scoreDetails.scoredAt}
+                  modelVersion={selectedLead.scoreDetails.modelVersion}
+                  onRescore={rescoreSelectedLead}
+                  isRescoring={loadingScore}
+                />
+
+                {selectedLead.scoreDetails.workflowOutcomes && (
+                  <div className="rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+                    <h4 className="text-sm font-semibold text-gray-900 dark:text-white">
+                      Workflow Outcome Context
+                    </h4>
+                    <p className="mt-1 text-xs text-gray-500">
+                      Status: {selectedLead.scoreDetails.workflowOutcomes.workflowStatus || 'none'}
+                    </p>
+                    <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+                      <div className="rounded bg-gray-100 px-2 py-1 dark:bg-gray-700">
+                        Pending: {selectedLead.scoreDetails.workflowOutcomes.pending}
+                      </div>
+                      <div className="rounded bg-green-100 px-2 py-1 text-green-800 dark:bg-green-900/40 dark:text-green-300">
+                        Sent: {selectedLead.scoreDetails.workflowOutcomes.sent}
+                      </div>
+                      <div className="rounded bg-gray-100 px-2 py-1 dark:bg-gray-700">
+                        Skipped: {selectedLead.scoreDetails.workflowOutcomes.skipped}
+                      </div>
+                      <div className="rounded bg-red-100 px-2 py-1 text-red-800 dark:bg-red-900/40 dark:text-red-300">
+                        Failed: {selectedLead.scoreDetails.workflowOutcomes.failed}
+                      </div>
+                      <div className="rounded bg-indigo-100 px-2 py-1 text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-300">
+                        Retried: {selectedLead.scoreDetails.workflowOutcomes.retried}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </>
             ) : (
               <div className="text-center py-8">
                 <Zap className="w-8 h-8 text-gray-300 mx-auto mb-2" />

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { createClient as createServerClient } from '@/utils/supabase/server'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { GoogleAuth } from 'google-auth-library'
 import path from 'path'
 import { 
@@ -294,6 +296,15 @@ async function generateVideoWithVertexAI(
 
 export async function POST(request: NextRequest) {
   try {
+    const authClient = await createServerClient()
+    const {
+      data: { user },
+      error: authError,
+    } = await authClient.auth.getUser()
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const body = await request.json()
     const {
       propertyId,
@@ -318,6 +329,11 @@ export async function POST(request: NextRequest) {
         { error: 'Missing required fields: propertyId, generationType, prompt' },
         { status: 400 }
       )
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     // Validate generation type

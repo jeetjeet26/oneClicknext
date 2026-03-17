@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { createAdminClient } from '@/utils/supabase/admin'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
 /**
  * POST /api/community/scrape-website
@@ -25,6 +26,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'websiteUrl is required' }, { status: 400 })
     }
 
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
     const adminClient = createAdminClient()
 
     // Verify property exists and user has access
@@ -38,25 +44,23 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Property not found' }, { status: 404 })
     }
 
-    // Verify user belongs to the same org
-    const { data: profile } = await adminClient
-      .from('profiles')
-      .select('org_id, role')
-      .eq('id', user.id)
-      .single()
-
-    if (!profile || profile.org_id !== property.org_id) {
-      return NextResponse.json({ error: 'Access denied' }, { status: 403 })
-    }
-
     // Collect all URLs to scrape
     const urlsToScrape = [websiteUrl, ...additionalUrls].filter(u => u?.trim())
 
     // Call the internal scrape API with propertyId
     const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (process.env.INTERNAL_API_KEY) {
+      headers.Authorization = `Bearer ${process.env.INTERNAL_API_KEY}`
+    }
+    const cookieHeader = request.headers.get('cookie')
+    if (cookieHeader) {
+      headers.cookie = cookieHeader
+    }
+
     const scrapeResponse = await fetch(`${baseUrl}/api/onboarding/scrape-website`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ 
         urls: urlsToScrape, 
         propertyId  // Pass propertyId so it saves to DB
@@ -72,11 +76,11 @@ export async function POST(request: NextRequest) {
 
     const scrapeResult = await scrapeResponse.json()
 
-    // Also update community profile with website URL if not set
+    // Keep canonical setup truth on properties (avoid splitting identity with community_profiles).
     await adminClient
-      .from('community_profiles')
+      .from('properties')
       .update({ website_url: websiteUrl })
-      .eq('property_id', propertyId)
+      .eq('id', propertyId)
       .is('website_url', null)
 
     return NextResponse.json({

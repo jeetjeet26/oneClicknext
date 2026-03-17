@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import OpenAI from 'openai'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
 interface ExtractedUnit {
   unitType: string
@@ -79,7 +80,7 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json()
-    const { content, competitorId, action } = body
+    const { content, competitorId, propertyId, action } = body
 
     if (!content || typeof content !== 'string') {
       return NextResponse.json({ error: 'Content is required' }, { status: 400 })
@@ -95,6 +96,30 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ 
         error: 'Content too long - please paste a smaller portion of the page' 
       }, { status: 400 })
+    }
+
+    if (competitorId) {
+      const { data: competitor } = await supabase
+        .from('competitors')
+        .select('property_id')
+        .eq('id', competitorId)
+        .single()
+
+      if (!competitor || typeof competitor.property_id !== 'string') {
+        return NextResponse.json({ error: 'Competitor not found' }, { status: 404 })
+      }
+
+      const access = await validatePropertyAccess(user.id, competitor.property_id)
+      if (!access.authorized) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+      }
+    } else if (propertyId) {
+      const access = await validatePropertyAccess(user.id, propertyId)
+      if (!access.authorized) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+      }
+    } else {
+      return NextResponse.json({ error: 'propertyId or competitorId required' }, { status: 400 })
     }
 
     // Initialize OpenAI

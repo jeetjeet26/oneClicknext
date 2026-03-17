@@ -21,11 +21,9 @@ const ALLOWED_TYPES = [
   'application/pdf',
   'text/plain',
   'text/markdown',
-  'application/msword',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 ]
 
-const FILE_EXTENSIONS = ['.pdf', '.txt', '.md', '.doc', '.docx']
+const FILE_EXTENSIONS = ['.pdf', '.txt', '.md']
 
 function generateId() {
   return Math.random().toString(36).substring(2, 9)
@@ -97,7 +95,16 @@ function DocumentCard({ doc, onRemove }: DocumentCardProps) {
 }
 
 export function KnowledgeStep() {
-  const { formData, addDocument, removeDocument, goToNextStep, goToPreviousStep, createdPropertyId } = useAddProperty()
+  const {
+    formData,
+    addDocument,
+    updateDocument,
+    removeDocument,
+    goToNextStep,
+    goToPreviousStep,
+    createdPropertyId,
+    editMode,
+  } = useAddProperty()
   const { documents } = formData
   const [isDragging, setIsDragging] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
@@ -106,13 +113,54 @@ export function KnowledgeStep() {
 
   const validateFile = (file: File): string | null => {
     if (!ALLOWED_TYPES.includes(file.type) && !FILE_EXTENSIONS.some(ext => file.name.endsWith(ext))) {
-      return `${file.name}: Unsupported file type. Please use PDF, TXT, MD, or DOC files.`
+      return `${file.name}: Unsupported file type. Please use PDF, TXT, or MD files.`
     }
     if (file.size > 10 * 1024 * 1024) {
       return `${file.name}: File too large. Maximum size is 10MB.`
     }
     return null
   }
+
+  const targetPropertyId = editMode.isEditing ? editMode.propertyId || null : createdPropertyId
+
+  const uploadDocumentFile = useCallback(async (docId: string, file: File, propertyId: string) => {
+    updateDocument(docId, { status: 'uploading', error: undefined })
+
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('propertyId', propertyId)
+      formData.append('title', file.name.replace(/\.[^/.]+$/, ''))
+
+      const response = await fetch('/api/documents/upload', {
+        method: 'POST',
+        body: formData,
+      })
+
+      const result = await response.json()
+      if (!response.ok) {
+        throw new Error(result.error || 'Upload failed')
+      }
+
+      updateDocument(docId, {
+        status: 'completed',
+        chunks: typeof result.chunks === 'number' ? result.chunks : undefined,
+        metadata: {
+          ...(typeof result.knowledgeSourceId === 'string'
+            ? { knowledgeSourceId: result.knowledgeSourceId }
+            : {}),
+          ...(typeof result.originalFileUrl === 'string'
+            ? { originalFileUrl: result.originalFileUrl }
+            : {}),
+        },
+      })
+    } catch (error) {
+      updateDocument(docId, {
+        status: 'error',
+        error: error instanceof Error ? error.message : 'Upload failed',
+      })
+    }
+  }, [updateDocument])
 
   const handleFiles = useCallback((files: FileList | File[]) => {
     setUploadError(null)
@@ -135,12 +183,22 @@ export function KnowledgeStep() {
         name: file.name,
         size: file.size,
         type: file.type,
-        status: 'pending'
+        status: 'pending',
       }
 
       addDocument(doc)
+
+      if (!targetPropertyId) {
+        updateDocument(doc.id, {
+          status: 'error',
+          error: 'Property must be created before uploading documents',
+        })
+        continue
+      }
+
+      void uploadDocumentFile(doc.id, file, targetPropertyId)
     }
-  }, [documents, addDocument])
+  }, [documents, addDocument, targetPropertyId, updateDocument, uploadDocumentFile])
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -299,7 +357,7 @@ export function KnowledgeStep() {
                 {isDragging ? 'Drop files here' : 'Drag & drop files here'}
               </p>
               <p className="text-sm text-slate-500">
-                or click to browse • PDF, TXT, MD, DOC • Max 10MB each
+                or click to browse • PDF, TXT, MD • Max 10MB each
               </p>
             </div>
           </div>

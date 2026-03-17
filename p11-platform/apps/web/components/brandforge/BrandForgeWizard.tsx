@@ -6,6 +6,7 @@ import { ConversationInterface } from './ConversationInterface'
 import { SectionReview } from './SectionReview'
 import { CompletionView } from './CompletionView'
 import { BrandForgeCompetitorCard, type BrandForgeCompetitor } from './BrandForgeCompetitorCard'
+import type { BrandForgeCompletionResult } from './types'
 
 interface BrandForgeWizardProps {
   propertyId: string
@@ -44,6 +45,7 @@ export function BrandForgeWizard({
   const [currentSection, setCurrentSection] = useState<number>(1)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [completionResult, setCompletionResult] = useState<BrandForgeCompletionResult | null>(null)
   
   // Settings
   const [radiusMiles, setRadiusMiles] = useState(3)
@@ -85,9 +87,10 @@ export function BrandForgeWizard({
     setStep('generation')
   }
 
-  function handleAllSectionsComplete(brandAsset: any) {
+  function handleAllSectionsComplete(result: BrandForgeCompletionResult) {
+    setCompletionResult(result)
     setStep('complete')
-    onComplete(brandAsset)
+    onComplete(result)
   }
 
   return (
@@ -343,7 +346,11 @@ export function BrandForgeWizard({
 
       {/* Step 6: Complete */}
       {step === 'complete' && brandAssetId && (
-        <CompletionView brandAssetId={brandAssetId} />
+        <CompletionView
+          propertyId={propertyId}
+          brandAssetId={brandAssetId}
+          completionResult={completionResult}
+        />
       )}
     </div>
   )

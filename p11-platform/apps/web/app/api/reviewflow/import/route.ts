@@ -1,13 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
+import { createClient } from '@/utils/supabase/server'
+import { createServiceClient } from '@/utils/supabase/admin'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
 export async function POST(request: NextRequest) {
   try {
+    const supabaseAuth = await createClient()
+    const {
+      data: { user },
+      error: authError,
+    } = await supabaseAuth.auth.getUser()
+
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const formData = await request.formData()
     const file = formData.get('file') as File
     const propertyId = formData.get('propertyId') as string
@@ -18,6 +25,13 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       )
     }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
+    const supabase = createServiceClient()
 
     // Parse CSV
     const text = await file.text()

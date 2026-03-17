@@ -1,5 +1,6 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { NextRequest, NextResponse } from 'next/server'
 import { logAuditEvent } from '@/utils/audit'
 
@@ -20,6 +21,11 @@ export async function PUT(
   const { id: propertyId } = await params
 
   try {
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
     const body = await request.json()
     // Support both 'property' and legacy 'community' naming
     const propertyData = body.property || body.community
@@ -36,8 +42,10 @@ export async function PUT(
       return NextResponse.json({ error: 'No organization found' }, { status: 400 })
     }
 
+    const userRole = profile.role || ''
+
     // Check if user has permission
-    if (!['admin', 'manager'].includes(profile.role)) {
+    if (!['admin', 'manager'].includes(userRole)) {
       return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 })
     }
 

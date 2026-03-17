@@ -5,6 +5,14 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
+
+interface AiOverviewRow {
+  query_id: string
+  visible: boolean
+  source_url: string | null
+  observed_at: string | null
+}
 
 export async function GET(req: NextRequest) {
   try {
@@ -22,6 +30,11 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'propertyId required' }, { status: 400 })
     }
 
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
     const { data, error } = await supabase
       .from('geo_ai_overviews')
       .select('query_id, visible, source_url, observed_at')
@@ -33,8 +46,8 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Failed to fetch AI Overviews' }, { status: 500 })
     }
 
-    const latestByQuery = new Map<string, any>()
-    ;(data || []).forEach(row => {
+    const latestByQuery = new Map<string, AiOverviewRow>()
+    ;((data || []) as AiOverviewRow[]).forEach((row) => {
       if (!latestByQuery.has(row.query_id)) {
         latestByQuery.set(row.query_id, row)
       }
@@ -64,6 +77,25 @@ export async function POST(req: NextRequest) {
 
     if (!propertyId || !queryId) {
       return NextResponse.json({ error: 'propertyId and queryId required' }, { status: 400 })
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
+    const { data: query, error: queryError } = await supabase
+      .from('geo_queries')
+      .select('id')
+      .eq('id', queryId)
+      .eq('property_id', propertyId)
+      .single()
+
+    if (queryError || !query) {
+      return NextResponse.json(
+        { error: 'queryId does not belong to propertyId' },
+        { status: 400 }
+      )
     }
 
     const { data, error } = await supabase

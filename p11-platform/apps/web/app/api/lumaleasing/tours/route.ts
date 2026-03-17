@@ -1,13 +1,36 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/utils/supabase/admin';
-import { generateTourCalendarResponse, CalendarLinks } from '@/utils/services/calendar-invite';
+import { generateTourCalendarResponse } from '@/utils/services/calendar-invite';
 import { sendEmail, EmailAttachment } from '@/utils/services/messaging';
-import { getCalendarConfig, createCalendarEvent } from '@/utils/services/google-calendar';
+import {
+  getCalendarConfig,
+  createCalendarEvent,
+  fetchBusyTimes,
+  generateAvailableSlots,
+} from '@/utils/services/google-calendar';
 import { startWorkflow } from '@/utils/services/workflow-processor';
 import { trackEngagementEvent } from '@/utils/services/engagement-tracker';
 import { tourLimiter, getRateLimitKey, rateLimitHeaders } from '@/utils/services/rate-limiter';
-import { buildCorsHeaders, corsPreflightResponse, serverError, rateLimited } from '@/utils/services/api-helpers';
+import {
+  badRequest,
+  buildCorsHeaders,
+  corsPreflightResponse,
+  serverError,
+  rateLimited,
+} from '@/utils/services/api-helpers';
 import { auditLog, getRequestIp } from '@/utils/services/audit-logger';
+import { createRequestContext } from '@/utils/services/request-context';
+import { tourBookingSchema, validateBody } from '@/utils/services/validation';
+import { endOfDay, parseISO, startOfDay } from 'date-fns';
+
+type TourSlotRow = {
+  id: string
+  slot_date: string
+  start_time: string
+  end_time: string
+  max_bookings: number | null
+  current_bookings: number | null
+}
 
 function extractApiKey(req: NextRequest): string | null {
   const headerKey = req.headers.get('X-API-Key') || req.headers.get('x-api-key');
@@ -22,6 +45,24 @@ function extractApiKey(req: NextRequest): string | null {
   return normalized.length ? normalized : null;
 }
 
+function normalizeLeadInfo(leadInfo: {
+  firstName?: string
+  first_name?: string
+  lastName?: string
+  last_name?: string
+  email: string
+  phone?: string
+  notes?: string
+}) {
+  return {
+    first_name: leadInfo.first_name || leadInfo.firstName || '',
+    last_name: leadInfo.last_name || leadInfo.lastName || '',
+    email: leadInfo.email,
+    phone: leadInfo.phone || '',
+    notes: leadInfo.notes,
+  }
+}
+
 // Handle CORS preflight — origin-restricted in production
 export async function OPTIONS(req: NextRequest) {
   const origin = req.headers.get('origin')
@@ -30,14 +71,20 @@ export async function OPTIONS(req: NextRequest) {
 
 // GET - Fetch available tour slots
 export async function GET(req: NextRequest) {
+  const ctx = createRequestContext(req, '/api/lumaleasing/tours')
+  ctx.logStart()
   const origin = req.headers.get('origin')
   const corsHeaders = buildCorsHeaders(origin, 'GET, POST, OPTIONS')
+  const responseHeaders = { ...corsHeaders, ...ctx.responseHeaders }
 
   try {
     // Rate limit
     const rlKey = getRateLimitKey(req, 'tours-get')
     const rl = tourLimiter.check(rlKey)
-    if (!rl.allowed) return rateLimited({ ...corsHeaders, ...rateLimitHeaders(rl) })
+    if (!rl.allowed) {
+      ctx.logSuccess(429, { reason: 'rate_limited', mode: 'get' })
+      return rateLimited({ ...responseHeaders, ...rateLimitHeaders(rl) })
+    }
 
     const apiKey = extractApiKey(req);
     const { searchParams } = new URL(req.url);
@@ -45,9 +92,10 @@ export async function GET(req: NextRequest) {
     const endDate = searchParams.get('endDate');
 
     if (!apiKey) {
+      ctx.logSuccess(401, { reason: 'missing_api_key', mode: 'get' })
       return NextResponse.json(
         { error: 'API key required' },
-        { status: 401, headers: corsHeaders }
+        { status: 401, headers: responseHeaders }
       );
     }
 
@@ -62,11 +110,22 @@ export async function GET(req: NextRequest) {
       .single();
 
     if (!config || !config.tours_enabled) {
+      ctx.logSuccess(404, { reason: 'tours_not_available', mode: 'get' })
       return NextResponse.json(
         { error: 'Tours not available' },
-        { status: 404, headers: corsHeaders }
+        { status: 404, headers: responseHeaders }
       );
     }
+
+    if (!config.property_id) {
+      ctx.logSuccess(404, { reason: 'property_not_found', mode: 'get' })
+      return NextResponse.json(
+        { error: 'Property not found' },
+        { status: 404, headers: responseHeaders }
+      );
+    }
+
+    const propertyId = config.property_id
 
     // Default to next 14 days
     const start = startDate || new Date().toISOString().split('T')[0];
@@ -76,7 +135,7 @@ export async function GET(req: NextRequest) {
     const { data: slots, error } = await supabase
       .from('tour_slots')
       .select('id, slot_date, start_time, end_time, max_bookings, current_bookings')
-      .eq('property_id', config.property_id)
+      .eq('property_id', propertyId)
       .eq('is_available', true)
       .gte('slot_date', start)
       .lte('slot_date', end)
@@ -84,22 +143,22 @@ export async function GET(req: NextRequest) {
       .order('start_time', { ascending: true });
 
     if (error) {
-      console.error('Slots fetch error:', error);
+      ctx.logError(500, error, { operation: 'fetch_tour_slots' })
       return NextResponse.json(
         { error: 'Failed to fetch slots' },
-        { status: 500, headers: corsHeaders }
+        { status: 500, headers: responseHeaders }
       );
     }
 
     // Filter out fully booked slots and format response
-    const availableSlots = (slots || [])
-      .filter(slot => slot.current_bookings < slot.max_bookings)
+    const availableSlots = ((slots || []) as TourSlotRow[])
+      .filter(slot => (slot.current_bookings || 0) < (slot.max_bookings || 0))
       .map(slot => ({
         id: slot.id,
         date: slot.slot_date,
         startTime: slot.start_time,
         endTime: slot.end_time,
-        available: slot.max_bookings - slot.current_bookings,
+        available: (slot.max_bookings || 0) - (slot.current_bookings || 0),
       }));
 
     // Group by date for easier frontend consumption
@@ -111,20 +170,30 @@ export async function GET(req: NextRequest) {
       groupedSlots[slot.date].push(slot);
     });
 
+    ctx.logSuccess(200, {
+      mode: 'get',
+      slotCount: availableSlots.length,
+      propertyId,
+    })
+
     return NextResponse.json({
       slots: groupedSlots,
       tourDuration: config.tour_duration_minutes,
-    }, { headers: corsHeaders });
+    }, { headers: responseHeaders });
 
   } catch (error) {
-    return serverError(error, corsHeaders);
+    ctx.logError(500, error, { operation: 'fetch_tour_slots' })
+    return serverError(error, responseHeaders);
   }
 }
 
 // POST - Book a tour
 export async function POST(req: NextRequest) {
+  const ctx = createRequestContext(req, '/api/lumaleasing/tours')
+  ctx.logStart()
   const origin = req.headers.get('origin')
   const corsHeaders = buildCorsHeaders(origin, 'GET, POST, OPTIONS')
+  const responseHeaders = { ...corsHeaders, ...ctx.responseHeaders }
 
   try {
     // Rate limit — 10 per minute per IP (prevents spam bookings)
@@ -132,42 +201,43 @@ export async function POST(req: NextRequest) {
     const rl = tourLimiter.check(rlKey)
     if (!rl.allowed) {
       auditLog({ eventType: 'rate_limit_exceeded', ip: getRequestIp(req), resource: 'lumaleasing/tours' })
-      return rateLimited({ ...corsHeaders, ...rateLimitHeaders(rl) })
+      ctx.logSuccess(429, { reason: 'rate_limited', mode: 'post' })
+      return rateLimited({ ...responseHeaders, ...rateLimitHeaders(rl) })
     }
 
     const apiKey = extractApiKey(req);
 
     if (!apiKey) {
+      ctx.logSuccess(401, { reason: 'missing_api_key', mode: 'post' })
       return NextResponse.json(
         { error: 'API key required' },
-        { status: 401, headers: corsHeaders }
+        { status: 401, headers: responseHeaders }
       );
+    }
+
+    const rawBody = await req.json();
+    const validation = validateBody(rawBody, tourBookingSchema)
+    if (!validation.success) {
+      ctx.logSuccess(400, { reason: 'invalid_request_body', mode: 'post' })
+      return badRequest(validation.error, responseHeaders)
     }
 
     const {
       slotId,
-      tourDate,  // YYYY-MM-DD format (for calendar widget)
-      tourTime,  // HH:MM format (for calendar widget)
-      leadInfo, // { first_name, last_name, email, phone }
+      date,
+      time,
+      tourDate,
+      tourTime,
+      leadInfo: rawLeadInfo,
       specialRequests,
+      notes,
       sessionId,
       conversationId,
-    } = await req.json();
-
-    // Support both slot-based booking and direct date/time booking
-    if (!leadInfo?.email) {
-      return NextResponse.json(
-        { error: 'Email is required' },
-        { status: 400, headers: corsHeaders }
-      );
-    }
-
-    if (!slotId && (!tourDate || !tourTime)) {
-      return NextResponse.json(
-        { error: 'Either slotId or tourDate+tourTime are required' },
-        { status: 400, headers: corsHeaders }
-      );
-    }
+    } = validation.data
+    const leadInfo = normalizeLeadInfo(rawLeadInfo)
+    const effectiveTourDate = tourDate || date || null
+    const effectiveTourTime = tourTime || time || null
+    const effectiveSpecialRequests = specialRequests || notes || leadInfo.notes || null
 
     const supabase = createServiceClient();
 
@@ -177,6 +247,7 @@ export async function POST(req: NextRequest) {
       .select(`
         property_id, 
         tours_enabled,
+        tour_duration_minutes,
         properties(
           id,
           name,
@@ -189,11 +260,23 @@ export async function POST(req: NextRequest) {
       .single();
 
     if (!config || !config.tours_enabled) {
+      ctx.logSuccess(404, { reason: 'tours_not_available', mode: 'post' })
       return NextResponse.json(
         { error: 'Tours not available' },
-        { status: 404, headers: corsHeaders }
+        { status: 404, headers: responseHeaders }
       );
     }
+
+    if (!config.property_id) {
+      ctx.logSuccess(404, { reason: 'property_not_found', mode: 'post' })
+      return NextResponse.json(
+        { error: 'Property not found' },
+        { status: 404, headers: responseHeaders }
+      );
+    }
+
+    const propertyId = config.property_id
+    const configuredTourDuration = config.tour_duration_minutes || 30
 
     // Extract property info
     const propertyData = config.properties ? (Array.isArray(config.properties) ? config.properties[0] : config.properties) : null
@@ -203,11 +286,14 @@ export async function POST(req: NextRequest) {
       address?: { street?: string; full?: string }
       website_url?: string 
     } | null = propertyData || null;
+    const propertyName = property?.name || 'Property Tour';
+    const propertyAddress = property?.address?.street || property?.address?.full || undefined;
 
     // Get slot info (if slot-based booking) or use direct date/time
-    let slot = null;
-    let bookingDate = tourDate;
-    let bookingTime = tourTime;
+    let slot: TourSlotRow | null = null;
+    let bookingDate = effectiveTourDate;
+    let bookingTime = effectiveTourTime;
+    let validatedConversationId: string | null = null;
     
     if (slotId) {
       // Slot-based booking (legacy method)
@@ -215,30 +301,122 @@ export async function POST(req: NextRequest) {
         .from('tour_slots')
         .select('*')
         .eq('id', slotId)
-        .eq('property_id', config.property_id)
+        .eq('property_id', propertyId)
         .eq('is_available', true)
         .single();
 
-      if (!slotData || slotData.current_bookings >= slotData.max_bookings) {
+      const typedSlotData = slotData as TourSlotRow | null
+
+      if (!typedSlotData || (typedSlotData.current_bookings || 0) >= (typedSlotData.max_bookings || 0)) {
+        ctx.logSuccess(409, { reason: 'slot_unavailable', slotId })
         return NextResponse.json(
           { error: 'This time slot is no longer available' },
-          { status: 409, headers: corsHeaders }
+          { status: 409, headers: responseHeaders }
         );
       }
       
-      slot = slotData;
+      slot = typedSlotData;
       bookingDate = slot.slot_date;
       bookingTime = slot.start_time;
     } else {
       // Direct date/time booking (calendar widget)
+      if (!bookingDate || !bookingTime) {
+        ctx.logSuccess(400, { reason: 'missing_slot_or_datetime', mode: 'post' })
+        return badRequest('Either slotId or tourDate+tourTime are required', responseHeaders)
+      }
+
       // Validate date is not in the past
-      const tourDateTime = new Date(`${tourDate}T${tourTime}`);
+      const tourDateTime = new Date(`${bookingDate}T${bookingTime}:00`);
       if (tourDateTime < new Date()) {
+        ctx.logSuccess(400, { reason: 'tour_in_past', bookingDate, bookingTime })
         return NextResponse.json(
           { error: 'Cannot book tours in the past' },
-          { status: 400, headers: corsHeaders }
+          { status: 400, headers: responseHeaders }
         );
       }
+
+      const calendarConfig = await getCalendarConfig(propertyId)
+      if (!calendarConfig) {
+        ctx.logSuccess(503, { reason: 'calendar_not_connected', propertyId, mode: 'post' })
+        return NextResponse.json(
+          {
+            error: 'Google Calendar not connected',
+            fallback: true,
+            message: 'Property manager has not connected their calendar yet. Please call to schedule.',
+          },
+          { status: 503, headers: responseHeaders }
+        )
+      }
+
+      if (calendarConfig.token_status !== 'healthy') {
+        ctx.logSuccess(503, { reason: 'calendar_unhealthy', propertyId, mode: 'post' })
+        return NextResponse.json(
+          {
+            error: 'Calendar authorization expired',
+            fallback: true,
+            message: 'Tour booking is temporarily unavailable. Please call to schedule.',
+          },
+          { status: 503, headers: responseHeaders }
+        )
+      }
+
+      const targetDate = parseISO(bookingDate)
+      const busyTimes = await fetchBusyTimes(
+        calendarConfig,
+        startOfDay(targetDate),
+        endOfDay(targetDate)
+      )
+      const availableSlots = generateAvailableSlots(
+        startOfDay(targetDate),
+        calendarConfig,
+        busyTimes
+      )
+      const selectedSlot = availableSlots.find(
+        (availableSlot) => availableSlot.time === bookingTime
+      )
+
+      if (!selectedSlot?.available) {
+        ctx.logSuccess(409, {
+          reason: 'direct_time_unavailable',
+          propertyId,
+          bookingDate,
+          bookingTime,
+        })
+        return NextResponse.json(
+          { error: 'This time is no longer available' },
+          { status: 409, headers: responseHeaders }
+        )
+      }
+    }
+
+    if (sessionId) {
+      const { data: session } = await supabase
+        .from('widget_sessions')
+        .select('id')
+        .eq('id', sessionId)
+        .eq('property_id', propertyId)
+        .maybeSingle()
+
+      if (!session) {
+        ctx.logSuccess(400, { reason: 'invalid_session_id', sessionId, propertyId })
+        return badRequest('Invalid sessionId for this property', responseHeaders)
+      }
+    }
+
+    if (conversationId) {
+      const { data: conversation } = await supabase
+        .from('conversations')
+        .select('id')
+        .eq('id', conversationId)
+        .eq('property_id', propertyId)
+        .maybeSingle()
+
+      if (!conversation) {
+        ctx.logSuccess(400, { reason: 'invalid_conversation_id', conversationId, propertyId })
+        return badRequest('Invalid conversationId for this property', responseHeaders)
+      }
+
+      validatedConversationId = conversation.id
     }
 
     // Get or create lead
@@ -247,7 +425,7 @@ export async function POST(req: NextRequest) {
     const { data: existingLead } = await supabase
       .from('leads')
       .select('id')
-      .eq('property_id', config.property_id)
+      .eq('property_id', propertyId)
       .eq('email', leadInfo.email)
       .single();
 
@@ -267,7 +445,7 @@ export async function POST(req: NextRequest) {
       const { data: newLead } = await supabase
         .from('leads')
         .insert({
-          property_id: config.property_id,
+          property_id: propertyId,
           first_name: leadInfo.first_name || '',
           last_name: leadInfo.last_name || '',
           email: leadInfo.email,
@@ -282,17 +460,70 @@ export async function POST(req: NextRequest) {
 
       // Start follow-up workflow for new leads (non-blocking)
       if (leadId) {
-        startWorkflow(leadId, config.property_id, 'lead_created').catch(e =>
+        startWorkflow(leadId, propertyId, 'lead_created').catch(e =>
           console.error('[LumaLeasing Tours] Workflow start failed (non-blocking):', e)
         )
       }
     }
 
     if (!leadId) {
+      ctx.logError(500, 'Failed to create lead', { operation: 'book_tour' })
       return NextResponse.json(
         { error: 'Failed to create lead' },
-        { status: 500, headers: corsHeaders }
+        { status: 500, headers: responseHeaders }
       );
+    }
+
+    const { data: existingBooking } = await supabase
+      .from('tour_bookings')
+      .select('id, scheduled_date, scheduled_time, status, duration_minutes')
+      .eq('property_id', propertyId)
+      .eq('lead_id', leadId)
+      .eq('scheduled_date', bookingDate)
+      .eq('scheduled_time', bookingTime)
+      .in('status', ['scheduled', 'confirmed'])
+      .maybeSingle()
+
+    if (existingBooking) {
+      const duplicateCalendarResponse = generateTourCalendarResponse({
+        propertyName,
+        propertyAddress,
+        tourDate: existingBooking.scheduled_date,
+        tourTime: existingBooking.scheduled_time,
+        tourType: 'in_person',
+        durationMinutes: existingBooking.duration_minutes || configuredTourDuration,
+        prospectName: `${leadInfo.first_name || ''} ${leadInfo.last_name || ''}`.trim() || 'Guest',
+        prospectEmail: leadInfo.email,
+        propertyEmail: process.env.RESEND_FROM_EMAIL,
+        specialRequests: effectiveSpecialRequests || undefined,
+      });
+
+      ctx.logSuccess(200, {
+        mode: 'post',
+        bookingId: existingBooking.id,
+        propertyId,
+        leadId,
+        duplicate: true,
+      })
+
+      return NextResponse.json({
+        success: true,
+        duplicate: true,
+        booking: {
+          id: existingBooking.id,
+          date: existingBooking.scheduled_date,
+          time: existingBooking.scheduled_time,
+          status: existingBooking.status,
+        },
+        calendar: {
+          google: duplicateCalendarResponse.calendarLinks.google,
+          outlook: duplicateCalendarResponse.calendarLinks.outlook,
+          office365: duplicateCalendarResponse.calendarLinks.office365,
+          yahoo: duplicateCalendarResponse.calendarLinks.yahoo,
+          icsDownload: duplicateCalendarResponse.calendarLinks.icsDownload,
+        },
+        message: `This tour was already confirmed for ${formatDate(existingBooking.scheduled_date)} at ${formatTime(existingBooking.scheduled_time)}.`,
+      }, { headers: responseHeaders });
     }
 
     // Update session with lead if provided
@@ -300,34 +531,43 @@ export async function POST(req: NextRequest) {
       await supabase
         .from('widget_sessions')
         .update({ lead_id: leadId, converted_at: new Date().toISOString() })
-        .eq('id', sessionId);
+        .eq('id', sessionId)
+        .eq('property_id', propertyId);
+    }
+
+    if (validatedConversationId) {
+      await supabase
+        .from('conversations')
+        .update({ lead_id: leadId })
+        .eq('id', validatedConversationId)
+        .eq('property_id', propertyId);
     }
 
     // Create booking
     const { data: booking, error: bookingError } = await supabase
       .from('tour_bookings')
       .insert({
-        property_id: config.property_id,
+        property_id: propertyId,
         lead_id: leadId,
         slot_id: slotId || null,
         scheduled_date: bookingDate,
         scheduled_time: bookingTime,
         duration_minutes: slot ? 
           (new Date(`1970-01-01T${slot.end_time}Z`).getTime() - new Date(`1970-01-01T${slot.start_time}Z`).getTime()) / 60000 :
-          30, // Default 30 min for calendar widget bookings
-        special_requests: specialRequests || null,
+          configuredTourDuration,
+        special_requests: effectiveSpecialRequests || null,
         source: 'lumaleasing',
-        booked_via_conversation_id: conversationId || null,
+        booked_via_conversation_id: validatedConversationId,
         status: 'confirmed',
       })
       .select()
       .single();
 
     if (bookingError) {
-      console.error('Booking error:', bookingError);
+      ctx.logError(500, bookingError, { operation: 'create_booking', leadId })
       return NextResponse.json(
         { error: 'Failed to create booking' },
-        { status: 500, headers: corsHeaders }
+        { status: 500, headers: responseHeaders }
       );
     }
 
@@ -335,7 +575,7 @@ export async function POST(req: NextRequest) {
     if (slotId && slot) {
       await supabase
         .from('tour_slots')
-        .update({ current_bookings: slot.current_bookings + 1 })
+        .update({ current_bookings: (slot.current_bookings || 0) + 1 })
         .eq('id', slotId);
     }
 
@@ -352,14 +592,12 @@ export async function POST(req: NextRequest) {
     // Track tour_scheduled engagement event (non-blocking)
     trackEngagementEvent({
       leadId,
-      propertyId: config.property_id,
+      propertyId,
       eventType: 'tour_scheduled',
       metadata: { booking_id: booking.id, source: 'lumaleasing_tour_widget' },
     }).catch(e => console.error('[LumaLeasing Tours] Engagement tracking failed (non-blocking):', e))
 
     // Generate calendar response (Calendly-style)
-    const propertyName = property?.name || 'Property Tour';
-    const propertyAddress = property?.address?.street || property?.address?.full;
     const durationMinutes = booking.duration_minutes || 30;
 
     const calendarResponse = generateTourCalendarResponse({
@@ -372,12 +610,12 @@ export async function POST(req: NextRequest) {
       prospectName: `${leadInfo.first_name || ''} ${leadInfo.last_name || ''}`.trim() || 'Guest',
       prospectEmail: leadInfo.email,
       propertyEmail: process.env.RESEND_FROM_EMAIL,
-      specialRequests: specialRequests
+      specialRequests: effectiveSpecialRequests || undefined
     });
 
     // Create Google Calendar event (if calendar connected)
     try {
-      const calendarConfig = await getCalendarConfig(config.property_id)
+      const calendarConfig = await getCalendarConfig(propertyId)
       
       if (calendarConfig && calendarConfig.token_status === 'healthy') {
         console.log(`[LumaLeasing Tours] Creating Google Calendar event for booking ${booking.id}`)
@@ -389,19 +627,27 @@ export async function POST(req: NextRequest) {
           prospectPhone: leadInfo.phone,
           tourDate: booking.scheduled_date,
           tourTime: booking.scheduled_time.substring(0, 5), // Convert HH:MM:SS to HH:MM
-          specialRequests: specialRequests,
+          specialRequests: effectiveSpecialRequests || undefined,
           propertyAddress,
         })
 
         // Store event ID for two-way sync
-        await supabase
+        const { error: calendarEventStoreError } = await supabase
           .from('calendar_events')
           .insert({
             agent_calendar_id: calendarConfig.id,
             tour_booking_id: booking.id,
             google_event_id: calendarEvent.eventId,
             sync_status: 'synced',
+            last_synced_at: new Date().toISOString(),
           })
+
+        if (calendarEventStoreError) {
+          console.error(
+            `[LumaLeasing Tours] ⚠️ Failed to store calendar sync row for booking ${booking.id}:`,
+            calendarEventStoreError
+          )
+        }
 
         console.log(`[LumaLeasing Tours] ✅ Created Google Calendar event: ${calendarEvent.eventId}`)
       } else {
@@ -410,6 +656,15 @@ export async function POST(req: NextRequest) {
     } catch (calendarError) {
       // Calendar event creation is non-blocking - don't fail the booking
       console.error(`[LumaLeasing Tours] ⚠️ Google Calendar event creation failed (non-blocking):`, calendarError)
+      await supabase.from('lead_activities').insert({
+        lead_id: leadId,
+        type: 'calendar_sync_failed',
+        description: `Google Calendar sync failed for booking ${booking.id}`,
+        metadata: {
+          booking_id: booking.id,
+          reason: calendarError instanceof Error ? calendarError.message : 'unknown_error',
+        },
+      })
     }
 
     // Send confirmation email with .ics calendar attachment
@@ -446,6 +701,13 @@ export async function POST(req: NextRequest) {
       console.error('[LumaLeasing Tours] Email error:', err);
     });
 
+    ctx.logSuccess(200, {
+      mode: 'post',
+      bookingId: booking.id,
+      propertyId,
+      leadId,
+    })
+
     return NextResponse.json({
       success: true,
       booking: {
@@ -463,10 +725,11 @@ export async function POST(req: NextRequest) {
         icsDownload: calendarResponse.calendarLinks.icsDownload,
       },
       message: `Great! Your tour is confirmed for ${formatDate(booking.scheduled_date)} at ${formatTime(booking.scheduled_time)}. We've sent a confirmation with a calendar invite to ${leadInfo.email}.`,
-    }, { headers: corsHeaders });
+    }, { headers: responseHeaders });
 
   } catch (error) {
-    return serverError(error, corsHeaders);
+    ctx.logError(500, error, { operation: 'book_tour' })
+    return serverError(error, responseHeaders);
   }
 }
 

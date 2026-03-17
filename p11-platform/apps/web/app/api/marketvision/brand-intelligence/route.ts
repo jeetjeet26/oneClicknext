@@ -5,6 +5,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
 // Data engine service URL (Python FastAPI)
 const DATA_ENGINE_URL = process.env.DATA_ENGINE_URL || 'http://localhost:8000'
@@ -80,6 +81,11 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'propertyId required' }, { status: 400 })
     }
 
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
     // Call data-engine to get brand intelligence
     const response = await fetch(
       `${DATA_ENGINE_URL}/scraper/brand-intelligence/property/${propertyId}?include_raw=${includeRaw}`,
@@ -137,7 +143,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'propertyId required' }, { status: 400 })
     }
 
-    // Validate property belongs to user's org
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
     const { data: property, error: propError } = await supabase
       .from('properties')
       .select('id, name, org_id')

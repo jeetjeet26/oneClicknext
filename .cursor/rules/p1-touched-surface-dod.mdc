@@ -1,0 +1,17 @@
+---
+description: Apply touched-surface definition of done for P1 product work in web and Supabase
+globs: p11-platform/{apps/web,supabase}/**/*
+alwaysApply: false
+---
+
+# P1 Touched-Surface Definition Of Done
+
+- When touching a `P1` product surface, finish the product behavior and also review the touched path for foundation drift before calling the work complete.
+- Limit cleanup to the files and flow you are already changing; do not start a repo-wide consistency refactor as part of unrelated product work.
+- For changed routes and services, preserve or improve `P0` expectations in the touched path: tenant-safe auth/property scoping, validation, request tracing/logging, deterministic error handling, and health-aware dependency behavior.
+- For cron jobs, outbound messaging, workflow actions, scoring, deploy/publish flows, or any other side-effecting path, add or update automated tests in the touched area.
+- If the touched product path depends on files that belong in the trusted foundation surface, keep `p11-platform/apps/web/scripts/foundation-files.mjs` aligned.
+- If the touched code uses a nonstandard Supabase client pattern, normalize it to the shared helpers in `p11-platform/apps/web/utils/supabase/` while you are there.
+- If the work changes schema needs, follow the full schema-truth flow: verify with MCP, add/apply a migration, regenerate types, sync `p11-platform/apps/web/types/supabase.ts`, and stamp the migration version.
+- If the touched change affects a critical local operator or user happy path, add or update local smoke coverage so the path stays reproducible.
+- Prefer small opportunistic improvements in the touched product area over large framework-style abstractions unless the task explicitly calls for a broader refactor.

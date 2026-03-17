@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
+import { hasValidInternalApiKey } from '@/utils/services/api-helpers'
+import { upsertManagedKnowledgeSource } from '@/utils/services/knowledge-sources'
+import type { Json } from '@/types/supabase'
 import OpenAI from 'openai'
 import * as cheerio from 'cheerio'
 
@@ -59,13 +63,6 @@ const AMENITY_KEYWORDS = [
   'balcony', 'patio', 'fireplace', 'hardwood', 'walk-in closet',
   'ceiling fan', 'air conditioning', 'central heat', 'gated', 'security'
 ]
-
-// Helper to normalize URLs
-function normalizeUrl(baseUrl: string, path: string): string {
-  if (path.startsWith('http')) return path
-  const base = new URL(baseUrl)
-  return new URL(path, base).toString()
-}
 
 // Helper to clean text
 function cleanText(text: string | undefined | null): string {
@@ -356,15 +353,38 @@ async function enhanceWithAI(
 
 export async function POST(req: NextRequest) {
   try {
-    // Auth check
-    const supabase = await createClient()
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const isInternalCall = hasValidInternalApiKey(req)
+    let userId: string | null = null
+
+    if (!isInternalCall) {
+      const supabase = await createClient()
+      const {
+        data: { user },
+        error: authError,
+      } = await supabase.auth.getUser()
+
+      if (authError || !user) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      }
+
+      userId = user.id
     }
 
-    const { urls, propertyId } = await req.json()
+    const { urls, websiteUrl, propertyId } = await req.json()
+
+    if (isInternalCall && !propertyId) {
+      return NextResponse.json(
+        { error: 'propertyId is required for internal calls' },
+        { status: 400 }
+      )
+    }
+
+    if (propertyId && userId) {
+      const access = await validatePropertyAccess(userId, propertyId)
+      if (!access.authorized) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+      }
+    }
 
     // Accept either 'urls' array or legacy 'websiteUrl' string
     let urlsToScrape: string[] = []
@@ -372,6 +392,8 @@ export async function POST(req: NextRequest) {
       urlsToScrape = urls
     } else if (typeof urls === 'string') {
       urlsToScrape = [urls]
+    } else if (typeof websiteUrl === 'string') {
+      urlsToScrape = [websiteUrl]
     }
 
     if (urlsToScrape.length === 0) {
@@ -448,6 +470,8 @@ export async function POST(req: NextRequest) {
       }, { status: 400 })
     }
 
+    const ingestedUrls = validatedUrls.map(url => url.toString())
+
     // Use first URL's origin as the base for property identification
     const baseUrl = validatedUrls[0]
 
@@ -460,6 +484,7 @@ export async function POST(req: NextRequest) {
       rawChunks: [],
       pagesScraped: scrapedContent.length,
     }
+  const chunkSourceUrls: string[] = []
 
     const allAmenities = new Set<string>()
     const allUnitTypes = new Set<string>()
@@ -512,7 +537,8 @@ export async function POST(req: NextRequest) {
       // Create chunks for RAG
       const chunks = chunkContent(page.content)
       for (const chunk of chunks) {
-        result.rawChunks.push(`[Source: ${page.pageType} page]\n${chunk}`)
+        result.rawChunks.push(`[Source URL: ${page.url} | Page Type: ${page.pageType}]\n${chunk}`)
+        chunkSourceUrls.push(page.url)
       }
     }
 
@@ -538,6 +564,7 @@ export async function POST(req: NextRequest) {
     if (propertyId && result.rawChunks.length > 0) {
       const adminClient = createServiceClient()
       const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+      const ingestionRunId = new Date().toISOString()
 
       // Generate embeddings for chunks
       const BATCH_SIZE = 100
@@ -552,19 +579,30 @@ export async function POST(req: NextRequest) {
         allEmbeddings.push(...embeddingResponse.data.map(e => e.embedding))
       }
 
+      // Idempotent refresh semantics: replace prior website_scrape chunks for this source.
+      await adminClient
+        .from('documents')
+        .delete()
+        .eq('property_id', propertyId)
+        .eq('metadata->>source_type', 'website_scrape')
+        .eq('metadata->>source_origin', baseUrl.origin)
+
       // Insert documents
       const payload = result.rawChunks.map((chunk, idx) => ({
         content: chunk,
         metadata: {
           title: `Website Content - ${result.propertyName || 'Community'}`,
-          source: baseUrl.origin,
+          source: chunkSourceUrls[idx] || baseUrl.origin,
+          source_origin: baseUrl.origin,
           source_type: 'website_scrape',
+          brand_origin: 'client_provided_material',
+          ingestion_run_id: ingestionRunId,
           chunk_index: idx,
           total_chunks: result.rawChunks.length,
           scraped_at: new Date().toISOString(),
-        },
+        } as Json,
         property_id: propertyId,
-        embedding: allEmbeddings[idx],
+        embedding: `[${allEmbeddings[idx].join(',')}]`,
       }))
 
       const { error: insertError } = await adminClient.from('documents').insert(payload)
@@ -575,50 +613,55 @@ export async function POST(req: NextRequest) {
         result.documentsCreated = result.rawChunks.length
       }
 
-      // Create knowledge source record
-      const { error: sourceError } = await adminClient.from('knowledge_sources').insert({
-        property_id: propertyId,
-        source_type: 'website',
-        source_name: `Website: ${baseUrl.origin}`,
-        source_url: baseUrl.origin,
-        status: 'completed',
-        documents_created: result.rawChunks.length,
-        extracted_data: {
-          propertyName: result.propertyName,
-          amenities: result.amenities,
-          petPolicy: result.petPolicy,
-          unitTypes: result.unitTypes,
-          specials: result.specials,
-          contactInfo: result.contactInfo,
-          brandVoice: result.brandVoice,
-          targetAudience: result.targetAudience,
-        },
-        last_synced_at: new Date().toISOString(),
-      })
+      const extractedData = {
+        brand_origin: 'client_provided_material',
+        propertyName: result.propertyName ?? null,
+        refresh_mode: 'replace_by_source_origin',
+        ingestion_run_id: ingestionRunId,
+        ingested_urls: ingestedUrls,
+        amenities: result.amenities,
+        petPolicy: result.petPolicy ?? null,
+        unitTypes: result.unitTypes,
+        specials: result.specials,
+        contactInfo: result.contactInfo ?? null,
+        brandVoice: result.brandVoice ?? null,
+        targetAudience: result.targetAudience ?? null,
+      } as Json
 
-      if (sourceError) {
-        console.error('Failed to create knowledge source:', sourceError)
+      try {
+        await upsertManagedKnowledgeSource(adminClient, {
+          propertyId,
+          sourceType: 'website',
+          sourceName: `Website: ${baseUrl.origin}`,
+          sourceUrl: baseUrl.origin,
+          status: 'completed',
+          documentsCreated: result.rawChunks.length,
+          extractedData,
+        })
+      } catch (sourceError) {
+        console.error('Failed to upsert knowledge source:', sourceError)
       }
 
-      // Update community profile with extracted data if available
-      const { error: profileError } = await adminClient
-        .from('community_profiles')
+      // Keep setup truth on properties; avoid community_profiles drift.
+      const { error: propertyUpdateError } = await adminClient
+        .from('properties')
         .update({
           website_url: baseUrl.origin,
           amenities: result.amenities.length > 0 ? result.amenities : undefined,
-          pet_policy: result.petPolicy || undefined,
+          pet_policy: (result.petPolicy ?? null) as unknown as Json,
           brand_voice: result.brandVoice || undefined,
           target_audience: result.targetAudience || undefined,
         })
-        .eq('property_id', propertyId)
+        .eq('id', propertyId)
 
-      if (profileError) {
-        console.error('Failed to update community profile:', profileError)
+      if (propertyUpdateError) {
+        console.error('Failed to update property after website scrape:', propertyUpdateError)
       }
     }
 
     // Don't return raw chunks in API response (too large)
-    const { rawChunks, ...responseData } = result
+    const { rawChunks: _rawChunks, ...responseData } = result
+    void _rawChunks
 
     return NextResponse.json({
       ...responseData,

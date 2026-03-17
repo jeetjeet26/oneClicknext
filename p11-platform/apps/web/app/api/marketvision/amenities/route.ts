@@ -5,6 +5,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
 // Base amenities list (used when no scraped data exists)
 const BASE_AMENITIES = [
@@ -29,6 +30,11 @@ export async function GET(req: NextRequest) {
 
     if (!propertyId) {
       return NextResponse.json({ error: 'propertyId required' }, { status: 400 })
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     // Collect amenities from multiple sources

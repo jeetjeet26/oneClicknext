@@ -30,7 +30,7 @@ import { PasteTextModal } from './PasteTextModal'
 type KnowledgeSource = {
   id: string
   property_id: string
-  source_type: 'intake_form' | 'document' | 'website' | 'integration' | 'manual'
+  source_type: 'intake_form' | 'document' | 'website' | 'integration' | 'manual' | 'brand_book'
   source_name: string
   source_url: string | null
   file_name: string | null
@@ -60,6 +60,7 @@ const SOURCE_TYPE_CONFIG = {
   website: { icon: Globe, label: 'Website', color: 'text-emerald-500' },
   integration: { icon: Database, label: 'Integration', color: 'text-amber-500' },
   manual: { icon: FileText, label: 'Manual Entry', color: 'text-slate-500' },
+  brand_book: { icon: Sparkles, label: 'Brand Book', color: 'text-fuchsia-500' },
 }
 
 const STATUS_CONFIG = {
@@ -331,6 +332,13 @@ export function KnowledgeSourcesList({
                 const statusConfig = STATUS_CONFIG[source.status]
                 const TypeIcon = typeConfig.icon
                 const StatusIcon = statusConfig.icon
+                const sourceBrandOrigin = source.extracted_data?.brand_origin
+                const brandOriginLabel =
+                  sourceBrandOrigin === 'generated_brandforge'
+                    ? 'AI generated'
+                    : sourceBrandOrigin === 'client_provided_material'
+                      ? 'Client provided'
+                      : null
 
                 return (
                   <div
@@ -345,6 +353,12 @@ export function KnowledgeSourcesList({
                         <p className="font-medium text-slate-900 text-sm">{source.source_name}</p>
                         <div className="flex items-center gap-2 mt-0.5">
                           <span className="text-xs text-slate-500">{typeConfig.label}</span>
+                          {brandOriginLabel && (
+                            <>
+                              <span className="text-slate-300">•</span>
+                              <span className="text-xs text-slate-500">{brandOriginLabel}</span>
+                            </>
+                          )}
                           {source.documents_created > 0 && (
                             <>
                               <span className="text-slate-300">•</span>

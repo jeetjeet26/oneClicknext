@@ -5,6 +5,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
 export interface GeoRunWithScore {
   id: string
@@ -29,6 +30,19 @@ export interface GeoRunWithScore {
   } | null
 }
 
+function isValidSurface(value: unknown): value is GeoRunWithScore['surface'] {
+  return value === 'openai' || value === 'claude'
+}
+
+function isValidStatus(value: unknown): value is GeoRunWithScore['status'] {
+  return (
+    value === 'queued' ||
+    value === 'running' ||
+    value === 'completed' ||
+    value === 'failed'
+  )
+}
+
 // GET: List runs for a property with scores
 export async function GET(req: NextRequest) {
   try {
@@ -49,6 +63,18 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'propertyId required' }, { status: 400 })
     }
 
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
+    if (surface && surface !== 'openai' && surface !== 'claude') {
+      return NextResponse.json(
+        { error: 'Invalid surface. Allowed values: openai, claude' },
+        { status: 400 }
+      )
+    }
+
     // Fetch runs with scores
     let query = supabase
       .from('geo_runs')
@@ -66,7 +92,7 @@ export async function GET(req: NextRequest) {
       .order('started_at', { ascending: false })
       .range(offset, offset + limit - 1)
 
-    if (surface) {
+    if (surface === 'openai' || surface === 'claude') {
       query = query.eq('surface', surface)
     }
 
@@ -78,7 +104,8 @@ export async function GET(req: NextRequest) {
     }
 
     // Calculate diffs between consecutive runs
-    const runsWithDiffs: GeoRunWithScore[] = (runs || []).map((run, index) => {
+    const runsWithDiffs = (runs || [])
+      .map((run, index): GeoRunWithScore | null => {
       const scoreData = run.geo_scores?.[0]
       const currentScore = scoreData?.overall_score || 0
       const currentVisibility = scoreData?.visibility_pct || 0
@@ -103,13 +130,23 @@ export async function GET(req: NextRequest) {
         }
       }
 
+      if (
+        !run.id ||
+        !run.property_id ||
+        !run.started_at ||
+        !isValidSurface(run.surface) ||
+        !isValidStatus(run.status)
+      ) {
+        return null
+      }
+
       return {
         id: run.id,
         propertyId: run.property_id,
         surface: run.surface,
-        modelName: run.model_name,
+        modelName: run.model_name || 'unknown',
         status: run.status,
-        queryCount: run.query_count,
+        queryCount: run.query_count || 0,
         startedAt: run.started_at,
         finishedAt: run.finished_at,
         score: scoreData ? {
@@ -121,7 +158,8 @@ export async function GET(req: NextRequest) {
         } : null,
         diff,
       }
-    })
+      })
+      .filter((run): run is GeoRunWithScore => run !== null)
 
     // Get latest scores per surface for summary
     const latestOpenai = runsWithDiffs.find(r => r.surface === 'openai' && r.score)

@@ -9,19 +9,38 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { ACFBlockRenderer, type DesignSystem } from './ACFBlockRenderer'
-import type { GeneratedPage } from '@/types/siteforge'
+import type { GeneratedPage, WebsiteStatusResponse } from '@/types/siteforge'
 
 type WebsitePreviewData = {
   websiteId: string
-  property?: ({ name?: string } & Record<string, unknown>) | null
+  property?: ({ id?: string; name?: string } & Record<string, unknown>) | null
   generationStatus?: string
   brandSource?: string
   brandConfidence?: number
-  siteArchitecture?: { designDecisions?: any; designSystem?: DesignSystem } | null
+  brandReadiness?: WebsiteStatusResponse['brandReadiness']
+  deploymentReadiness?: WebsiteStatusResponse['deploymentReadiness']
+  siteArchitecture?: {
+    designDecisions?: {
+      colorStrategy?: string
+      imageStrategy?: string
+      contentDensity?: string
+      conversionOptimization?: string[]
+    }
+    designSystem?: DesignSystem
+  } | null
   designSystem?: DesignSystem
   pagesGenerated?: GeneratedPage[]
   assets?: unknown[]
+  deploymentDiagnostics?: WebsiteStatusResponse['deploymentDiagnostics']
   wpUrl?: string
   wpAdminUrl?: string
   createdAt?: string
@@ -32,13 +51,71 @@ interface WebsitePreviewProps {
   websiteId: string
 }
 
+type RollbackPreview = {
+  canRollback: boolean
+  currentVersion: number
+  rollbackToVersion?: number
+  rollbackToWebsiteId?: string
+  message?: string
+}
+
+function getDeploymentRemediationTips(
+  diagnostics: WebsiteStatusResponse['deploymentDiagnostics']
+): string[] {
+  if (!diagnostics) {
+    return []
+  }
+
+  if (diagnostics.status === 'success') {
+    return ['Deployment is verified. Open the live site and spot-check hero content, media, and navigation.']
+  }
+
+  const category = diagnostics.error?.category
+  if (category === 'verification') {
+    return [
+      'Confirm required WordPress namespaces are available (wp/v2 and configured ACF/Yoast requirements).',
+      'Check that generated pages were published and are reachable via /wp-json/wp/v2/pages.',
+      'Re-run deployment after fixing missing pages, media uploads, or site settings permissions.',
+    ]
+  }
+
+  if (category === 'configuration') {
+    return [
+      'Verify deployment credentials are set (Cloudways keys or existing WordPress URL + app password).',
+      'Confirm WordPress credentials have API access and can read/write pages and settings.',
+      'Retry deployment after updating environment variables and restarting local services.',
+    ]
+  }
+
+  if (category === 'provisioning') {
+    return [
+      'Check Cloudways API availability, key permissions, and region/instance limits.',
+      'Review Cloudways operation status for server/app provisioning delays or failures.',
+      'Retry deployment once Cloudways provisioning completes successfully.',
+    ]
+  }
+
+  return [
+    'Review deployment diagnostics and server logs for the first failing step.',
+    'Validate WordPress and provider credentials, then retry deployment.',
+  ]
+}
+
 export function WebsitePreview({ websiteId }: WebsitePreviewProps) {
   const [website, setWebsite] = useState<WebsitePreviewData | null>(null)
   const [selectedPage, setSelectedPage] = useState<string>('')
   const [loading, setLoading] = useState(true)
   const [deleting, setDeleting] = useState(false)
   const [deploying, setDeploying] = useState(false)
+  const [regenerating, setRegenerating] = useState(false)
+  const [rollingBack, setRollingBack] = useState(false)
+  const [rollbackDialogOpen, setRollbackDialogOpen] = useState(false)
+  const [rollbackPreviewLoading, setRollbackPreviewLoading] = useState(false)
+  const [rollbackPreview, setRollbackPreview] = useState<RollbackPreview | null>(null)
   const [deployError, setDeployError] = useState<string | null>(null)
+  const [deploymentDiagnostics, setDeploymentDiagnostics] = useState<
+    WebsiteStatusResponse['deploymentDiagnostics']
+  >()
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(null)
   const [editInstruction, setEditInstruction] = useState<string>('')
   const [editing, setEditing] = useState(false)
@@ -50,6 +127,7 @@ export function WebsitePreview({ websiteId }: WebsitePreviewProps) {
       const response = await fetch(`/api/siteforge/preview/${websiteId}`)
       const data = (await response.json()) as WebsitePreviewData
       setWebsite(data)
+      setDeploymentDiagnostics(data.deploymentDiagnostics)
       // Set initial page to first page
       if ((data.pagesGenerated?.length || 0) > 0 && !selectedPage) {
         setSelectedPage(data.pagesGenerated?.[0]?.slug || '')
@@ -87,7 +165,53 @@ export function WebsitePreview({ websiteId }: WebsitePreviewProps) {
   }
 
   const handleRegenerate = () => {
-    alert('Regenerate functionality coming soon! This will create a new version of your site with different content.')
+    const propertyId =
+      website?.property && typeof website.property.id === 'string'
+        ? website.property.id
+        : null
+
+    if (!propertyId) {
+      alert('Cannot regenerate: missing property context for this website.')
+      return
+    }
+
+    if (!confirm('Generate a fresh website version for this property?')) {
+      return
+    }
+
+    setRegenerating(true)
+    setDeployError(null)
+
+    void (async () => {
+      try {
+        const response = await fetch('/api/siteforge/generate', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            propertyId,
+          }),
+        })
+        const data = await response.json()
+        if (!response.ok) {
+          alert(data.error || 'Failed to start regeneration')
+          return
+        }
+
+        if (typeof data.websiteId !== 'string' || data.websiteId.length === 0) {
+          alert('Regeneration started but no website id was returned.')
+          return
+        }
+
+        window.location.href = `/dashboard/siteforge/${data.websiteId}`
+      } catch (error) {
+        console.error('Regenerate error:', error)
+        alert('Failed to start regeneration')
+      } finally {
+        setRegenerating(false)
+      }
+    })()
   }
 
   const handleEdit = () => {
@@ -95,7 +219,7 @@ export function WebsitePreview({ websiteId }: WebsitePreviewProps) {
     alert('Tip: Click a section below, then describe what you want changed.')
   }
 
-  const handleApplyEdit = async (pageSlug: string) => {
+  const handleApplyEdit = async () => {
     if (!selectedSectionId) {
       setEditError('Select a section to edit first.')
       return
@@ -143,6 +267,7 @@ export function WebsitePreview({ websiteId }: WebsitePreviewProps) {
     
     setDeploying(true)
     setDeployError(null)
+    setDeploymentDiagnostics(undefined)
     
     try {
       const response = await fetch(`/api/siteforge/deploy/${websiteId}`, {
@@ -162,34 +287,98 @@ export function WebsitePreview({ websiteId }: WebsitePreviewProps) {
       }
       
       // Start polling for deployment status
+      let finished = false
       const pollDeployment = setInterval(async () => {
         const statusResponse = await fetch(`/api/siteforge/status/${websiteId}`)
-        const statusData = await statusResponse.json()
+        const statusData = (await statusResponse.json()) as WebsiteStatusResponse
+        if (statusData.deploymentDiagnostics) {
+          setDeploymentDiagnostics(statusData.deploymentDiagnostics)
+        }
         
         if (statusData.status === 'complete') {
+          finished = true
           clearInterval(pollDeployment)
+          clearTimeout(deploymentTimeout)
           setDeploying(false)
           loadWebsite() // Refresh to show WP URL
         } else if (statusData.status === 'deploy_failed') {
+          finished = true
           clearInterval(pollDeployment)
+          clearTimeout(deploymentTimeout)
           setDeploying(false)
-          setDeployError(statusData.errorMessage || 'Deployment failed')
+          setDeployError(
+            statusData.deploymentDiagnostics?.error?.message ||
+              statusData.errorMessage ||
+              'Deployment failed'
+          )
         }
       }, 2000)
       
       // Timeout after 5 minutes
-      setTimeout(() => {
-        clearInterval(pollDeployment)
-        if (deploying) {
-          setDeploying(false)
-          setDeployError('Deployment timed out. Please check the status and try again.')
+      const deploymentTimeout = setTimeout(() => {
+        if (finished) {
+          return
         }
+        clearInterval(pollDeployment)
+        setDeploying(false)
+        setDeployError('Deployment timed out. Please check the status and try again.')
       }, 300000)
       
     } catch (error) {
       console.error('Deploy error:', error)
       setDeployError('Failed to start deployment')
       setDeploying(false)
+    }
+  }
+
+  const handleOpenRollbackDialog = async () => {
+    setRollbackDialogOpen(true)
+    setRollbackPreviewLoading(true)
+    setRollbackPreview(null)
+    setDeployError(null)
+    try {
+      const response = await fetch(`/api/siteforge/rollback/${websiteId}`)
+      const data = await response.json()
+      if (!response.ok) {
+        setDeployError(data.error || 'Failed to load rollback preview')
+        setRollbackDialogOpen(false)
+        return
+      }
+      setRollbackPreview(data as RollbackPreview)
+    } catch (error) {
+      console.error('Rollback preview error:', error)
+      setDeployError('Failed to load rollback preview')
+      setRollbackDialogOpen(false)
+    } finally {
+      setRollbackPreviewLoading(false)
+    }
+  }
+
+  const handleConfirmRollback = async () => {
+    if (!rollbackPreview?.canRollback) {
+      return
+    }
+    setRollingBack(true)
+    setDeployError(null)
+    try {
+      const response = await fetch(`/api/siteforge/rollback/${websiteId}`, {
+        method: 'POST',
+      })
+      const data = await response.json()
+
+      if (!response.ok) {
+        setDeployError(data.error || 'Rollback failed')
+        return
+      }
+
+      setRollbackDialogOpen(false)
+      await loadWebsite()
+      alert(data.message || 'Rollback complete.')
+    } catch (error) {
+      console.error('Rollback error:', error)
+      setDeployError('Failed to rollback website')
+    } finally {
+      setRollingBack(false)
     }
   }
 
@@ -210,6 +399,10 @@ export function WebsitePreview({ websiteId }: WebsitePreviewProps) {
   }
 
   const pages: GeneratedPage[] = website.pagesGenerated || []
+  const diagnostics = deploymentDiagnostics
+  const remediationTips = getDeploymentRemediationTips(diagnostics)
+  const brandReadiness = website.brandReadiness
+  const deploymentReadiness = website.deploymentReadiness
   
   // Get design system from website data (can be at top level or in siteArchitecture)
   const designSystem: DesignSystem | undefined = 
@@ -293,6 +486,43 @@ export function WebsitePreview({ websiteId }: WebsitePreviewProps) {
           </CardContent>
         </Card>
       </div>
+
+      {(brandReadiness?.degraded || deploymentReadiness?.ready === false) && (
+        <Card className="border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20">
+          <CardHeader>
+            <CardTitle className="text-amber-900 dark:text-amber-100">
+              Degraded Context Warnings
+            </CardTitle>
+            <CardDescription className="text-amber-800 dark:text-amber-200">
+              Site generation or deploy confidence is reduced; review before publishing.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm text-amber-900 dark:text-amber-100">
+            {brandReadiness?.degraded && (
+              <div>
+                <p className="font-medium">Brand context is weak</p>
+                <p className="text-xs mt-1">
+                  Source: {brandReadiness.source || 'unknown'} | Confidence:{' '}
+                  {brandReadiness.confidence === null
+                    ? 'missing'
+                    : `${Math.round(brandReadiness.confidence * 100)}%`}
+                </p>
+                <p className="text-xs mt-1">
+                  Blockers: {brandReadiness.blockers.join(', ')}
+                </p>
+              </div>
+            )}
+            {deploymentReadiness?.ready === false && (
+              <div>
+                <p className="font-medium">Deployment provider is not configured</p>
+                <p className="text-xs mt-1">
+                  Missing: {deploymentReadiness.blockers.join(', ')}
+                </p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Page Preview */}
       <Card>
@@ -394,7 +624,7 @@ export function WebsitePreview({ websiteId }: WebsitePreviewProps) {
                                 onClick={(e) => {
                                   e.preventDefault()
                                   e.stopPropagation()
-                                  handleApplyEdit(page.slug)
+                                  handleApplyEdit()
                                 }}
                                 disabled={editing}
                               >
@@ -492,21 +722,101 @@ export function WebsitePreview({ websiteId }: WebsitePreviewProps) {
         </Card>
       )}
 
+      {/* Deployment Diagnostics */}
+      {diagnostics && (
+        <Card className={diagnostics.status === 'failed'
+          ? 'border-red-200 dark:border-red-800'
+          : 'border-green-200 dark:border-green-800'
+        }>
+          <CardHeader>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <CardTitle>Deployment Diagnostics</CardTitle>
+                <CardDescription>
+                  Last WordPress deployment verification snapshot
+                </CardDescription>
+              </div>
+              <div className="flex items-center gap-2">
+                <Badge variant={diagnostics.status === 'failed' ? 'destructive' : 'success'}>
+                  {diagnostics.status === 'failed' ? 'Failed' : 'Successful'}
+                </Badge>
+                <Badge variant={diagnostics.verification.status === 'failed' ? 'destructive' : 'outline'}>
+                  Verification: {diagnostics.verification.status}
+                </Badge>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+              <div>
+                <p className="text-gray-500 dark:text-gray-400">Provider</p>
+                <p className="font-medium">{diagnostics.provider}</p>
+              </div>
+              <div>
+                <p className="text-gray-500 dark:text-gray-400">Pages Verified</p>
+                <p className="font-medium">{diagnostics.pagesAttempted}</p>
+              </div>
+              <div>
+                <p className="text-gray-500 dark:text-gray-400">Assets Verified</p>
+                <p className="font-medium">{diagnostics.assetsAttempted}</p>
+              </div>
+              <div>
+                <p className="text-gray-500 dark:text-gray-400">Completed</p>
+                <p className="font-medium">
+                  {new Date(diagnostics.completedAt).toLocaleString()}
+                </p>
+              </div>
+            </div>
+
+            {diagnostics.error && (
+              <div className="rounded-md border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 px-3 py-2">
+                <p className="text-xs uppercase tracking-wide text-red-700 dark:text-red-300">
+                  {diagnostics.error.category}
+                </p>
+                <p className="text-sm text-red-700 dark:text-red-300">
+                  {diagnostics.error.message}
+                </p>
+              </div>
+            )}
+
+            {remediationTips.length > 0 && (
+              <div className="rounded-md border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 px-3 py-2">
+                <p className="text-xs uppercase tracking-wide text-gray-600 dark:text-gray-300">
+                  Retry Guidance
+                </p>
+                <ul className="mt-2 list-disc pl-5 text-sm text-gray-700 dark:text-gray-300 space-y-1">
+                  {remediationTips.map((tip, idx) => (
+                    <li key={`${idx}-${tip}`}>{tip}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {/* Actions */}
       <div className="flex justify-between">
         <Button 
           variant="destructive" 
           onClick={handleDelete}
-          disabled={deleting || deploying}
+          disabled={deleting || deploying || regenerating || rollingBack}
         >
           {deleting ? 'Deleting...' : 'Delete Website'}
         </Button>
         <div className="flex space-x-3">
-          <Button variant="outline" onClick={handleRegenerate} disabled={deploying}>
-            Regenerate Site
+          <Button variant="outline" onClick={handleRegenerate} disabled={deploying || regenerating || rollingBack}>
+            {regenerating ? 'Regenerating...' : 'Regenerate Site'}
           </Button>
-          <Button variant="outline" onClick={handleEdit} disabled={deploying}>
+          <Button variant="outline" onClick={handleEdit} disabled={deploying || regenerating || rollingBack}>
             Edit Content
+          </Button>
+          <Button
+            variant="outline"
+            onClick={handleOpenRollbackDialog}
+            disabled={deploying || regenerating || rollingBack}
+          >
+            {rollingBack ? 'Rolling Back...' : 'Rollback Version'}
           </Button>
           
           {/* Show different button based on status */}
@@ -516,10 +826,14 @@ export function WebsitePreview({ websiteId }: WebsitePreviewProps) {
                 View Live Site →
               </a>
             </Button>
-          ) : website.generationStatus === 'deploying' || deploying ? (
+          ) : website.generationStatus === 'deploying' || deploying || regenerating || rollingBack ? (
             <Button disabled>
               <span className="animate-spin mr-2">⏳</span>
-              Deploying...
+              {regenerating
+                ? 'Regenerating...'
+                : rollingBack
+                  ? 'Rolling Back...'
+                  : 'Deploying...'}
             </Button>
           ) : (
             <Button onClick={handleDeploy}>
@@ -528,6 +842,55 @@ export function WebsitePreview({ websiteId }: WebsitePreviewProps) {
           )}
         </div>
       </div>
+
+      <Dialog open={rollbackDialogOpen} onOpenChange={setRollbackDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Confirm Rollback</DialogTitle>
+            <DialogDescription>
+              Restore this website from the previous saved version before redeploying.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="px-6 py-4 text-sm text-gray-700 dark:text-gray-300 space-y-3">
+            {rollbackPreviewLoading ? (
+              <p>Loading rollback target...</p>
+            ) : rollbackPreview?.canRollback ? (
+              <>
+                <p>
+                  You are about to roll back from version{' '}
+                  <strong>{rollbackPreview.currentVersion}</strong> to version{' '}
+                  <strong>{rollbackPreview.rollbackToVersion}</strong>.
+                </p>
+                {rollbackPreview.rollbackToWebsiteId && (
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    Source website snapshot: {rollbackPreview.rollbackToWebsiteId}
+                  </p>
+                )}
+              </>
+            ) : (
+              <p>{rollbackPreview?.message || 'No previous version is available for rollback.'}</p>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setRollbackDialogOpen(false)}
+              disabled={rollingBack}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleConfirmRollback}
+              disabled={rollbackPreviewLoading || rollingBack || !rollbackPreview?.canRollback}
+            >
+              {rollingBack ? 'Rolling Back...' : 'Confirm Rollback'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

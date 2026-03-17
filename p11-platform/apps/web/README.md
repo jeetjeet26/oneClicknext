@@ -1,15 +1,16 @@
 # P11 Console (Next.js App)
 
-The unified dashboard for P11 Autonomous Agency products. Built with Next.js 14 (App Router), Tailwind CSS, Supabase, and OpenAI.
+The unified dashboard for P11 Autonomous Agency products. Built with Next.js 16 (App Router), React 19, Tailwind CSS 4, Supabase, and OpenAI.
 
 ## 🚀 Quickstart
 
 ```bash
-cd p11-platform
-cp .env.example .env        # Fill in your credentials (shared across all apps)
-cd apps/web
+cd p11-platform/apps/web
 npm install
-npm run dev
+cd ../..
+# Create p11-platform/.env with your shared credentials first
+npm run supabase:reset
+npm run local:start
 ```
 
 Visit http://localhost:3000 — authenticated users land in `/dashboard`.
@@ -37,10 +38,9 @@ Visit http://localhost:3000 — authenticated users land in `/dashboard`.
 ## 🔧 Environment Variables
 
 Environment variables are loaded from the **root** `p11-platform/.env` file (shared across all apps).
+When using local Supabase, `npm run supabase:reset` also generates `p11-platform/.env.local` with safe local overrides so the app points at the local stack instead of your hosted project.
 
-```bash
-cp ../../../.env.example ../.env  # From apps/web, copy root example
-```
+Create `p11-platform/.env` manually with the shared credentials your local stack needs.
 
 Key variables:
 
@@ -52,7 +52,22 @@ Key variables:
 | `OPENAI_API_KEY` | OpenAI API key | ✅ |
 | `NEXT_PUBLIC_SITE_URL` | App URL for auth redirects | Optional |
 
-See `p11-platform/.env.example` for the complete list with detailed comments.
+The key values are the shared app secrets in `p11-platform/.env`, while `p11-platform/.env.local` is generated automatically for local Supabase overrides.
+
+## 🧪 Local Supabase
+
+From `p11-platform/`:
+
+```bash
+npm run supabase:reset
+```
+
+This starts local Supabase, reapplies migrations, seeds deterministic demo fixtures, and writes `p11-platform/.env.local`.
+
+Seeded local login:
+
+- Email: `local-admin@p11.test`
+- Password: `local-dev-password`
 
 ## 📁 Project Structure
 
@@ -118,18 +133,56 @@ Returns: { timeSeries, channels, totals }
 ## 🧪 Development
 
 ```bash
+# Reset and reseed local Supabase
+cd p11-platform
+npm run supabase:reset
+
+# Run local smoke coverage against the seeded stack
+cd p11-platform
+npm run smoke:local
+
+# Start the shared local stack from p11-platform/
+cd p11-platform
+npm run local:start
+
 # Start dev server
+cd apps/web
 npm run dev
 
-# Type check
-npm run type-check
+# Run foundation tests
+npm test
 
-# Lint
+# Lint the hardened foundation files only
+npm run lint:foundation
+
+# Typecheck the hardened foundation files only
+npm run typecheck:foundation
+
+# Run the current local quality gate for the hardened platform surface
+npm run check:foundation
+```
+
+```bash
+# Run Playwright smoke coverage directly from apps/web
+npm run test:smoke
+```
+
+Recent cron-backed executions are persisted in `cron_job_runs` and exposed to signed-in users via:
+
+```bash
+GET /api/cron/runs?limit=20
+```
+
+```bash
+# Full repo lint (currently includes older debt outside the foundation slice)
 npm run lint
+
+# Full TypeScript typecheck is not yet a reliable gate while broader schema/code
+# alignment is still in progress.
 ```
 
 ## 📚 Related
 
 - **Data Engine** - Python ETL pipelines in `services/data-engine/`
-- **Progress Report** - See `/Progress_Analysis_Report.md`
-- **Roadmap** - See `/Linear_Implementation_Summary.md`
+- **Platform Overview** - See `docs/P11_PLATFORM.md`
+- **Product Specs** - See `docs/product-specs/`

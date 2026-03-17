@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { createAdminClient } from '@/utils/supabase/admin'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
 export async function GET(request: NextRequest) {
   try {
@@ -15,6 +16,11 @@ export async function GET(request: NextRequest) {
     
     if (!propertyId) {
       return NextResponse.json({ error: 'propertyId is required' }, { status: 400 })
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     const adminClient = createAdminClient()
@@ -77,6 +83,11 @@ export async function PUT(request: NextRequest) {
 
     if (!propertyId) {
       return NextResponse.json({ error: 'propertyId is required' }, { status: 400 })
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     const adminClient = createAdminClient()

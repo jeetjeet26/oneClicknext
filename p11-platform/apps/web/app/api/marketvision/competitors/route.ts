@@ -5,6 +5,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
 export interface Competitor {
   id: string
@@ -70,6 +71,11 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'propertyId required' }, { status: 400 })
     }
 
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
     // Build query - include brand intelligence for highlighted amenities
     // NOTE: Supabase's typed select-string parser is whitespace sensitive in some setups,
     // so keep the select strings compact (no spaces after commas).
@@ -133,6 +139,11 @@ export async function POST(req: NextRequest) {
 
     if (!propertyId || !name) {
       return NextResponse.json({ error: 'propertyId and name required' }, { status: 400 })
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     // Helper to convert empty strings to null for integer fields
@@ -231,6 +242,21 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: 'Competitor id required' }, { status: 400 })
     }
 
+    const { data: existingCompetitor } = await supabase
+      .from('competitors')
+      .select('property_id')
+      .eq('id', id)
+      .single()
+
+    if (!existingCompetitor || typeof existingCompetitor.property_id !== 'string') {
+      return NextResponse.json({ error: 'Competitor not found' }, { status: 404 })
+    }
+
+    const access = await validatePropertyAccess(user.id, existingCompetitor.property_id)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
     // Helper to convert empty strings to null for integer fields
     const toIntOrNull = (val: unknown): number | null => {
       if (val === '' || val === null || val === undefined) return null
@@ -291,6 +317,21 @@ export async function DELETE(req: NextRequest) {
 
     if (!id) {
       return NextResponse.json({ error: 'Competitor id required' }, { status: 400 })
+    }
+
+    const { data: existingCompetitor } = await supabase
+      .from('competitors')
+      .select('property_id')
+      .eq('id', id)
+      .single()
+
+    if (!existingCompetitor || typeof existingCompetitor.property_id !== 'string') {
+      return NextResponse.json({ error: 'Competitor not found' }, { status: 404 })
+    }
+
+    const access = await validatePropertyAccess(user.id, existingCompetitor.property_id)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     const { error } = await supabase

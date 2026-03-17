@@ -2,15 +2,27 @@ import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { NextRequest, NextResponse } from 'next/server'
 import { logAuditEvent } from '@/utils/audit'
+import {
+  badRequest,
+  forbidden,
+  notFound,
+  serverError,
+  unauthorized,
+} from '@/utils/services/api-helpers'
+import { createRequestContext } from '@/utils/services/request-context'
 
 // GET - Fetch team members for the current user's organization
 export async function GET(request: NextRequest) {
+  const ctx = createRequestContext(request, '/api/team')
+  ctx.logStart()
+
   const supabaseAuth = await createClient()
   
   const { data: { user }, error: authError } = await supabaseAuth.auth.getUser()
   
   if (authError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    ctx.logSuccess(401, { reason: 'unauthorized' })
+    return unauthorized(ctx.responseHeaders)
   }
 
   const supabase = createServiceClient()
@@ -24,7 +36,8 @@ export async function GET(request: NextRequest) {
       .single()
 
     if (profileError || !currentProfile?.org_id) {
-      return NextResponse.json({ error: 'Profile not found' }, { status: 404 })
+      ctx.logSuccess(404, { reason: 'profile_not_found' })
+      return notFound('Profile', ctx.responseHeaders)
     }
 
     // Fetch all team members in the same organization
@@ -44,7 +57,6 @@ export async function GET(request: NextRequest) {
     }
 
     // Get auth user info for emails (need to use admin API)
-    const memberIds = members?.map(m => m.id) || []
     const { data: authUsers } = await supabase.auth.admin.listUsers()
 
     // Map profiles to include email from auth users
@@ -60,21 +72,30 @@ export async function GET(request: NextRequest) {
       }
     }) || []
 
-    return NextResponse.json({ members: teamMembers })
+    ctx.logSuccess(200, {
+      orgId: currentProfile.org_id,
+      memberCount: teamMembers.length,
+    })
+
+    return NextResponse.json({ members: teamMembers }, { headers: ctx.responseHeaders })
   } catch (error) {
-    console.error('Team fetch error:', error)
-    return NextResponse.json({ error: 'Failed to fetch team' }, { status: 500 })
+    ctx.logError(500, error, { operation: 'fetch_team' })
+    return serverError(error, ctx.responseHeaders)
   }
 }
 
 // POST - Invite a new team member
 export async function POST(request: NextRequest) {
+  const ctx = createRequestContext(request, '/api/team')
+  ctx.logStart()
+
   const supabaseAuth = await createClient()
   
   const { data: { user }, error: authError } = await supabaseAuth.auth.getUser()
   
   if (authError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    ctx.logSuccess(401, { reason: 'unauthorized' })
+    return unauthorized(ctx.responseHeaders)
   }
 
   const supabase = createServiceClient()
@@ -83,7 +104,8 @@ export async function POST(request: NextRequest) {
     const { email, role } = await request.json()
 
     if (!email) {
-      return NextResponse.json({ error: 'Email is required' }, { status: 400 })
+      ctx.logSuccess(400, { reason: 'missing_email' })
+      return badRequest('Email is required', ctx.responseHeaders)
     }
 
     // Validate role
@@ -98,16 +120,18 @@ export async function POST(request: NextRequest) {
       .single()
 
     if (profileError || !currentProfile?.org_id) {
-      return NextResponse.json({ error: 'Profile not found' }, { status: 404 })
+      ctx.logSuccess(404, { reason: 'profile_not_found' })
+      return notFound('Profile', ctx.responseHeaders)
     }
 
     // Only admins can invite new members
     if (currentProfile.role !== 'admin') {
-      return NextResponse.json({ error: 'Only admins can invite team members' }, { status: 403 })
+      ctx.logSuccess(403, { reason: 'insufficient_permissions' })
+      return forbidden(ctx.responseHeaders)
     }
 
     // Get organization name for the invite email
-    const { data: org } = await supabase
+    await supabase
       .from('organizations')
       .select('name')
       .eq('id', currentProfile.org_id)
@@ -129,9 +153,11 @@ export async function POST(request: NextRequest) {
     if (inviteError) {
       // Check if user already exists
       if (inviteError.message?.includes('already registered')) {
-        return NextResponse.json({ 
-          error: 'This email is already registered. Ask them to request access.' 
-        }, { status: 400 })
+        ctx.logSuccess(400, { reason: 'already_registered', email })
+        return badRequest(
+          'This email is already registered. Ask them to request access.',
+          ctx.responseHeaders
+        )
       }
       throw inviteError
     }
@@ -156,27 +182,38 @@ export async function POST(request: NextRequest) {
       request
     })
 
-    return NextResponse.json({ 
-      success: true, 
-      message: `Invitation sent to ${email}`,
-      user: inviteData?.user
+    ctx.logSuccess(200, {
+      invitedUserId: inviteData?.user?.id || null,
+      email,
+      role: memberRole,
     })
+
+    return NextResponse.json(
+      { 
+        success: true, 
+        message: `Invitation sent to ${email}`,
+        user: inviteData?.user
+      },
+      { headers: ctx.responseHeaders }
+    )
   } catch (error) {
-    console.error('Team invite error:', error)
-    return NextResponse.json({ 
-      error: error instanceof Error ? error.message : 'Failed to send invitation' 
-    }, { status: 500 })
+    ctx.logError(500, error, { operation: 'invite_team_member' })
+    return serverError(error, ctx.responseHeaders)
   }
 }
 
 // PATCH - Update a team member's role
 export async function PATCH(request: NextRequest) {
+  const ctx = createRequestContext(request, '/api/team')
+  ctx.logStart()
+
   const supabaseAuth = await createClient()
   
   const { data: { user }, error: authError } = await supabaseAuth.auth.getUser()
   
   if (authError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    ctx.logSuccess(401, { reason: 'unauthorized' })
+    return unauthorized(ctx.responseHeaders)
   }
 
   const supabase = createServiceClient()
@@ -185,13 +222,15 @@ export async function PATCH(request: NextRequest) {
     const { memberId, role } = await request.json()
 
     if (!memberId || !role) {
-      return NextResponse.json({ error: 'memberId and role are required' }, { status: 400 })
+      ctx.logSuccess(400, { reason: 'missing_member_or_role' })
+      return badRequest('memberId and role are required', ctx.responseHeaders)
     }
 
     // Validate role
     const validRoles = ['admin', 'manager', 'viewer']
     if (!validRoles.includes(role)) {
-      return NextResponse.json({ error: 'Invalid role' }, { status: 400 })
+      ctx.logSuccess(400, { reason: 'invalid_role', role })
+      return badRequest('Invalid role', ctx.responseHeaders)
     }
 
     // Get current user's profile
@@ -201,8 +240,9 @@ export async function PATCH(request: NextRequest) {
       .eq('id', user.id)
       .single()
 
-    if (!currentProfile || currentProfile.role !== 'admin') {
-      return NextResponse.json({ error: 'Only admins can change roles' }, { status: 403 })
+    if (!currentProfile?.org_id || currentProfile.role !== 'admin') {
+      ctx.logSuccess(403, { reason: 'insufficient_permissions' })
+      return forbidden(ctx.responseHeaders)
     }
 
     // Prevent self-demotion if only admin
@@ -214,9 +254,11 @@ export async function PATCH(request: NextRequest) {
         .eq('role', 'admin')
 
       if (adminCount === 1) {
-        return NextResponse.json({ 
-          error: 'Cannot demote the only admin. Promote another admin first.' 
-        }, { status: 400 })
+        ctx.logSuccess(400, { reason: 'only_admin_demote_blocked', memberId })
+        return badRequest(
+          'Cannot demote the only admin. Promote another admin first.',
+          ctx.responseHeaders
+        )
       }
     }
 
@@ -248,21 +290,27 @@ export async function PATCH(request: NextRequest) {
       request
     })
 
-    return NextResponse.json({ success: true })
+    ctx.logSuccess(200, { memberId, newRole: role })
+
+    return NextResponse.json({ success: true }, { headers: ctx.responseHeaders })
   } catch (error) {
-    console.error('Role update error:', error)
-    return NextResponse.json({ error: 'Failed to update role' }, { status: 500 })
+    ctx.logError(500, error, { operation: 'update_team_role' })
+    return serverError(error, ctx.responseHeaders)
   }
 }
 
 // DELETE - Remove a team member
 export async function DELETE(request: NextRequest) {
+  const ctx = createRequestContext(request, '/api/team')
+  ctx.logStart()
+
   const supabaseAuth = await createClient()
   
   const { data: { user }, error: authError } = await supabaseAuth.auth.getUser()
   
   if (authError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    ctx.logSuccess(401, { reason: 'unauthorized' })
+    return unauthorized(ctx.responseHeaders)
   }
 
   const supabase = createServiceClient()
@@ -272,12 +320,14 @@ export async function DELETE(request: NextRequest) {
     const memberId = searchParams.get('memberId')
 
     if (!memberId) {
-      return NextResponse.json({ error: 'memberId is required' }, { status: 400 })
+      ctx.logSuccess(400, { reason: 'missing_member_id' })
+      return badRequest('memberId is required', ctx.responseHeaders)
     }
 
     // Prevent self-removal
     if (memberId === user.id) {
-      return NextResponse.json({ error: 'Cannot remove yourself' }, { status: 400 })
+      ctx.logSuccess(400, { reason: 'self_removal_blocked', memberId })
+      return badRequest('Cannot remove yourself', ctx.responseHeaders)
     }
 
     // Get current user's profile
@@ -287,8 +337,9 @@ export async function DELETE(request: NextRequest) {
       .eq('id', user.id)
       .single()
 
-    if (!currentProfile || currentProfile.role !== 'admin') {
-      return NextResponse.json({ error: 'Only admins can remove members' }, { status: 403 })
+    if (!currentProfile?.org_id || currentProfile.role !== 'admin') {
+      ctx.logSuccess(403, { reason: 'insufficient_permissions' })
+      return forbidden(ctx.responseHeaders)
     }
 
     // Get member info for audit log before removal
@@ -317,10 +368,12 @@ export async function DELETE(request: NextRequest) {
       request
     })
 
-    return NextResponse.json({ success: true })
+    ctx.logSuccess(200, { memberId })
+
+    return NextResponse.json({ success: true }, { headers: ctx.responseHeaders })
   } catch (error) {
-    console.error('Remove member error:', error)
-    return NextResponse.json({ error: 'Failed to remove member' }, { status: 500 })
+    ctx.logError(500, error, { operation: 'remove_team_member' })
+    return serverError(error, ctx.responseHeaders)
   }
 }
 

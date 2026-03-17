@@ -1,4 +1,5 @@
 import { createClient } from '@/utils/supabase/server'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { NextRequest, NextResponse } from 'next/server'
 
 type CampaignMetrics = {
@@ -24,12 +25,6 @@ type CampaignTrend = {
   conversions: number
 }
 
-// Calculate percentage change
-function calculateChange(current: number, previous: number): number | null {
-  if (previous === 0) return current > 0 ? 100 : null
-  return ((current - previous) / previous) * 100
-}
-
 export async function GET(request: NextRequest) {
   const supabase = await createClient()
   
@@ -48,6 +43,11 @@ export async function GET(request: NextRequest) {
 
   if (!propertyId) {
     return NextResponse.json({ error: 'propertyId is required' }, { status: 400 })
+  }
+
+  const access = await validatePropertyAccess(user.id, propertyId)
+  if (!access.authorized) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
   try {

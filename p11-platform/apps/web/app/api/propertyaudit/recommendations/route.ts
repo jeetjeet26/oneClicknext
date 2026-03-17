@@ -5,6 +5,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { generateRecommendations } from '@/utils/propertyaudit/recommendation-engine'
 
 // GET: Generate recommendations for a property
@@ -25,25 +26,8 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'propertyId required' }, { status: 400 })
     }
 
-    // Verify user has access to this property
-    const { data: property, error: propertyError } = await supabase
-      .from('properties')
-      .select('id, org_id')
-      .eq('id', propertyId)
-      .single()
-
-    if (propertyError || !property) {
-      return NextResponse.json({ error: 'Property not found' }, { status: 404 })
-    }
-
-    // Verify user belongs to the same org
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('org_id')
-      .eq('id', user.id)
-      .single()
-
-    if (!profile || profile.org_id !== property.org_id) {
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 

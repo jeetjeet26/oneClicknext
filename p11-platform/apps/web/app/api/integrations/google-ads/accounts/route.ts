@@ -1,6 +1,6 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
-import { NextRequest, NextResponse } from 'next/server'
+import { NextResponse } from 'next/server'
 
 // Google Ads API endpoint for listing accessible customers
 const GOOGLE_ADS_API_VERSION = 'v18'
@@ -145,7 +145,7 @@ function formatCustomerId(id: string): string {
 }
 
 // GET - List all Google Ads accounts accessible via MCC
-export async function GET(request: NextRequest) {
+export async function GET() {
   const supabaseAuth = await createClient()
   
   const { data: { user }, error: authError } = await supabaseAuth.auth.getUser()
@@ -168,8 +168,10 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'No organization found' }, { status: 400 })
     }
 
+    const userRole = profile.role ?? ''
+
     // Check if user has permission
-    if (!['admin', 'manager'].includes(profile.role)) {
+    if (!['admin', 'manager'].includes(userRole)) {
       return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 })
     }
 

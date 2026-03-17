@@ -5,6 +5,10 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { badRequest, forbidden, serverError, unauthorized } from '@/utils/services/api-helpers'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
+import { createSignedGoogleOAuthState } from '@/utils/services/google-oauth-state'
+import { createRequestContext } from '@/utils/services/request-context'
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID
 const GOOGLE_REDIRECT_URI = process.env.NEXT_PUBLIC_APP_URL 
@@ -18,15 +22,21 @@ const SCOPES = [
 ].join(' ')
 
 export async function GET(request: NextRequest) {
+  const ctx = createRequestContext(request, '/api/lumaleasing/calendar/connect')
+  ctx.logStart()
+
   try {
     const { searchParams } = new URL(request.url)
     const propertyId = searchParams.get('propertyId')
 
     if (!propertyId) {
-      return NextResponse.json(
-        { error: 'Property ID required' },
-        { status: 400 }
-      )
+      ctx.logSuccess(400, { reason: 'missing_property_id' })
+      return badRequest('Property ID required', ctx.responseHeaders)
+    }
+
+    if (!GOOGLE_CLIENT_ID) {
+      ctx.logError(500, new Error('Missing GOOGLE_CLIENT_ID'))
+      return serverError(undefined, ctx.responseHeaders)
     }
 
     // Verify user has access to this property
@@ -34,48 +44,24 @@ export async function GET(request: NextRequest) {
     const { data: { user }, error: authError } = await supabase.auth.getUser()
 
     if (authError || !user) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
-    }
-
-    // Verify user belongs to property's organization
-    const { data: property } = await supabase
-      .from('properties')
-      .select('id, org_id')
-      .eq('id', propertyId)
-      .single()
-
-    if (!property) {
-      return NextResponse.json(
-        { error: 'Property not found' },
-        { status: 404 }
-      )
-    }
-
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('id, org_id, role')
-      .eq('id', user.id)
-      .single()
-
-    if (!profile || profile.org_id !== property.org_id) {
-      return NextResponse.json(
-        { error: 'You do not have access to this property' },
-        { status: 403 }
-      )
+      ctx.logSuccess(401, { reason: 'unauthorized' })
+      return unauthorized(ctx.responseHeaders)
     }
 
     // Build OAuth URL with state parameter
-    const state = Buffer.from(JSON.stringify({
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      ctx.logSuccess(403, { reason: 'forbidden', propertyId, userId: user.id })
+      return forbidden(ctx.responseHeaders)
+    }
+
+    const state = createSignedGoogleOAuthState({
       propertyId,
       profileId: user.id,
-      timestamp: Date.now(),
-    })).toString('base64')
+    })
 
     const authUrl = new URL(GOOGLE_AUTH_URL)
-    authUrl.searchParams.set('client_id', GOOGLE_CLIENT_ID || '')
+    authUrl.searchParams.set('client_id', GOOGLE_CLIENT_ID)
     authUrl.searchParams.set('redirect_uri', GOOGLE_REDIRECT_URI)
     authUrl.searchParams.set('response_type', 'code')
     authUrl.searchParams.set('scope', SCOPES)
@@ -84,13 +70,16 @@ export async function GET(request: NextRequest) {
     authUrl.searchParams.set('state', state)
 
     // Redirect to Google OAuth consent screen
-    return NextResponse.redirect(authUrl.toString())
+    const response = NextResponse.redirect(authUrl.toString())
+    Object.entries(ctx.responseHeaders).forEach(([key, value]) => {
+      response.headers.set(key, value)
+    })
+
+    ctx.logSuccess(307, { propertyId, userId: user.id })
+    return response
 
   } catch (error) {
-    console.error('[GoogleCalendar] OAuth initiation error:', error)
-    return NextResponse.json(
-      { error: 'Failed to initiate OAuth flow' },
-      { status: 500 }
-    )
+    ctx.logError(500, error, { operation: 'google_calendar_oauth_initiation' })
+    return serverError(error, ctx.responseHeaders)
   }
 }

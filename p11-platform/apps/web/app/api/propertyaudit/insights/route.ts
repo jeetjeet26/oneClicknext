@@ -5,6 +5,37 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
+
+interface InsightCitation {
+  domain: string
+  is_brand_domain: boolean | null
+}
+
+interface InsightAnswer {
+  id: string
+  presence: boolean
+  llm_rank: number | null
+  ordered_entities: unknown
+  geo_citations: InsightCitation[] | null
+}
+
+interface InsightRun {
+  id: string
+  surface: string | null
+  batch_id: string | null
+  status: string | null
+  started_at: string | null
+  finished_at: string | null
+  cross_model_analysis: unknown
+  geo_answers: InsightAnswer[] | null
+}
+
+interface OrderedEntity {
+  name: string
+  domain: string
+  position: number
+}
 
 export async function GET(req: NextRequest) {
   try {
@@ -23,6 +54,11 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'propertyId required' }, { status: 400 })
     }
 
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
     // Get latest completed runs with batch info and cross-model analysis
     let runsQuery = supabase
       .from('geo_runs')
@@ -30,7 +66,6 @@ export async function GET(req: NextRequest) {
         id,
         surface,
         batch_id,
-        batch_size,
         status,
         started_at,
         finished_at,
@@ -50,22 +85,22 @@ export async function GET(req: NextRequest) {
       .order('started_at', { ascending: false })
       .limit(10)  // Get more to check batch status
 
-    if (surface && surface !== 'both') {
+    if (surface === 'openai' || surface === 'claude') {
       runsQuery = runsQuery.eq('surface', surface)
     }
 
     const { data: allRuns, error: runsError } = await runsQuery
+    const typedRuns = (allRuns ?? []) as unknown as InsightRun[]
     
     // Check batch completion status
-    const latestBatchId = allRuns?.[0]?.batch_id
+    const latestBatchId = typedRuns[0]?.batch_id
     let batchComplete = true
     let batchStatus = 'complete'
     
     if (latestBatchId) {
-      const batchRuns = allRuns.filter((r: any) => r.batch_id === latestBatchId)
-      const completedRuns = batchRuns.filter((r: any) => r.status === 'completed')
-      const failedRuns = batchRuns.filter((r: any) => r.status === 'failed')
-      const runningRuns = batchRuns.filter((r: any) => r.status === 'running')
+      const batchRuns = typedRuns.filter((run) => run.batch_id === latestBatchId)
+      const completedRuns = batchRuns.filter((run) => run.status === 'completed')
+      const runningRuns = batchRuns.filter((run) => run.status === 'running')
       
       if (runningRuns.length > 0) {
         batchComplete = false
@@ -79,7 +114,7 @@ export async function GET(req: NextRequest) {
     }
     
     // Only use completed runs for insights
-    const runs = allRuns?.filter((r: any) => r.status === 'completed')
+    const runs = typedRuns.filter((run) => run.status === 'completed')
 
     if (runsError) {
       console.error('Error fetching runs:', runsError)
@@ -97,10 +132,10 @@ export async function GET(req: NextRequest) {
     const domainMap = new Map<string, { count: number; isBrandDomain: boolean }>()
 
     runs?.forEach((run) => {
-      run.geo_answers?.forEach((answer: any) => {
+      run.geo_answers?.forEach((answer) => {
         // Process entities
-        if (answer.ordered_entities && Array.isArray(answer.ordered_entities)) {
-          answer.ordered_entities.forEach((entity: any) => {
+        const entities = parseOrderedEntities(answer.ordered_entities)
+        entities.forEach((entity) => {
             // Use domain if available, otherwise use entity name as key
             // This prevents grouping all entities with empty domains together
             const domain = entity.domain && entity.domain.trim() !== '' 
@@ -118,17 +153,16 @@ export async function GET(req: NextRequest) {
             }
             const comp = competitorMap.get(key)!
             comp.mentions.push(entity.position)
-          })
-        }
+        })
 
         // Process citations
-        if (answer.geo_citations && Array.isArray(answer.geo_citations)) {
-          answer.geo_citations.forEach((citation: any) => {
+        const citations = parseCitations(answer.geo_citations)
+        citations.forEach((citation) => {
             const domain = citation.domain
             if (!domainMap.has(domain)) {
               domainMap.set(domain, {
                 count: 0,
-                isBrandDomain: citation.is_brand_domain
+                isBrandDomain: Boolean(citation.is_brand_domain)
               })
             }
             domainMap.get(domain)!.count++
@@ -137,8 +171,7 @@ export async function GET(req: NextRequest) {
             if (competitorMap.has(domain)) {
               competitorMap.get(domain)!.citationCount++
             }
-          })
-        }
+        })
       })
     })
 
@@ -175,7 +208,7 @@ export async function GET(req: NextRequest) {
     const brandSOV = totalCitations > 0 ? (brandCitations / totalCitations) * 100 : 0
 
     // Extract cross-model analysis from batch runs
-    const crossModelAnalysis = allRuns?.find((r: any) => r.cross_model_analysis)?.cross_model_analysis || null
+    const crossModelAnalysis = typedRuns.find((run) => run.cross_model_analysis)?.cross_model_analysis || null
 
     return NextResponse.json({
       competitors,
@@ -195,15 +228,44 @@ export async function GET(req: NextRequest) {
       },
       // Cross-model analysis results (if available)
       crossModelAnalysis: crossModelAnalysis ? {
-        agreementRate: crossModelAnalysis.agreement_rate,
-        scoreComparison: crossModelAnalysis.score_comparison,
-        visibilityComparison: crossModelAnalysis.visibility_comparison,
-        recommendations: crossModelAnalysis.recommendations
+        agreementRate: getAnalysisField(crossModelAnalysis, 'agreement_rate'),
+        scoreComparison: getAnalysisField(crossModelAnalysis, 'score_comparison'),
+        visibilityComparison: getAnalysisField(crossModelAnalysis, 'visibility_comparison'),
+        recommendations: getAnalysisField(crossModelAnalysis, 'recommendations')
       } : null
     })
   } catch (error) {
     console.error('PropertyAudit Insights Error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
+}
+
+function parseOrderedEntities(value: unknown): OrderedEntity[] {
+  if (!Array.isArray(value)) return []
+
+  return value
+    .map((entry) => {
+      if (!entry || typeof entry !== 'object') return null
+      const record = entry as Record<string, unknown>
+      if (typeof record.name !== 'string') return null
+      if (typeof record.domain !== 'string') return null
+      if (typeof record.position !== 'number') return null
+      return {
+        name: record.name,
+        domain: record.domain,
+        position: record.position,
+      }
+    })
+    .filter((entry): entry is OrderedEntity => entry !== null)
+}
+
+function parseCitations(value: InsightCitation[] | null): InsightCitation[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((citation) => typeof citation.domain === 'string' && citation.domain.length > 0)
+}
+
+function getAnalysisField(analysis: unknown, field: string): unknown {
+  if (!analysis || typeof analysis !== 'object') return null
+  return (analysis as Record<string, unknown>)[field] ?? null
 }
 

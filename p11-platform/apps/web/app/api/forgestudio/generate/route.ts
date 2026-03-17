@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { createClient as createServerClient } from '@/utils/supabase/server'
+import { createServiceClient } from '@/utils/supabase/admin'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import OpenAI from 'openai'
 import { GoogleAuth } from 'google-auth-library'
 import path from 'path'
@@ -7,11 +9,9 @@ import {
   uploadAndSaveGeneratedAsset, 
   STORAGE_BUCKETS 
 } from '@/utils/storage'
+import { evaluateForgeStudioDraftReadiness } from '@/utils/services/forgestudio-draft-readiness'
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
+const supabase = createServiceClient()
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY!
@@ -294,6 +294,12 @@ Respond in JSON format:
 
 export async function POST(request: NextRequest) {
   try {
+    const authClient = await createServerClient()
+    const { data: { user }, error: authError } = await authClient.auth.getUser()
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const body = await request.json()
     const {
       propertyId,
@@ -313,6 +319,11 @@ export async function POST(request: NextRequest) {
         { error: 'Missing required fields: propertyId, contentType' },
         { status: 400 }
       )
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     // Get property details
@@ -372,7 +383,7 @@ ${variables?.details ? `Additional details: ${variables.details}` : ''}
     const textContent = await generateTextContent(
       contentType,
       fullPrompt,
-      config?.brand_voice,
+      config?.brand_voice ?? undefined,
       config?.creativity_level || 0.7
     )
 
@@ -389,7 +400,7 @@ ${variables?.details ? `Additional details: ${variables.details}` : ''}
         if (mediaType === 'image' && !sourceImageUrl) {
           try {
             const geminiResult = await generateWithGemini(mediaPrompt, {
-              style: mediaStyle || config?.default_style,
+              style: mediaStyle || config?.nanobanana_default_style || undefined,
               aspectRatio
             })
             usedProvider = 'gemini_imagen'
@@ -429,7 +440,7 @@ ${variables?.details ? `Additional details: ${variables.details}` : ''}
         } else if (mediaType === 'video') {
           // For videos, use Vertex AI Veo
           const videoResult = await generateVideoWithVertexAI(mediaPrompt, {
-            style: mediaStyle || config?.default_style,
+            style: mediaStyle || config?.nanobanana_default_style || undefined,
             aspectRatio,
             sourceImageUrl
           })
@@ -474,7 +485,7 @@ ${variables?.details ? `Additional details: ${variables.details}` : ''}
           const geminiResult = await generateWithGemini(
             `Transform this image: ${mediaPrompt}`,
             {
-              style: mediaStyle || config?.default_style,
+              style: mediaStyle || config?.nanobanana_default_style || undefined,
               aspectRatio
             }
           )
@@ -515,6 +526,14 @@ ${variables?.details ? `Additional details: ${variables.details}` : ''}
     }
 
     // Create content draft
+    const readiness = evaluateForgeStudioDraftReadiness({
+      caption: textContent.caption,
+      platform,
+      contentType,
+      mediaType: generateMedia ? mediaType : 'none',
+      mediaUrls,
+    })
+
     const { data: draft, error: draftError } = await supabase
       .from('content_drafts')
       .insert({
@@ -535,9 +554,13 @@ ${variables?.details ? `Additional details: ${variables.details}` : ''}
         generation_params: {
           templateId,
           variables,
-          creativityLevel: config?.creativity_level
+          creativityLevel: config?.creativity_level,
+          readiness: {
+            state: readiness.state,
+            blockers: readiness.blockers,
+          },
         },
-        status: 'draft'
+        status: readiness.isReady ? 'pending_review' : 'draft_partial'
       })
       .select()
       .single()
@@ -554,7 +577,8 @@ ${variables?.details ? `Additional details: ${variables.details}` : ''}
       success: true,
       draft,
       content: textContent,
-      mediaGenerated: mediaUrls.length > 0
+      mediaGenerated: mediaUrls.length > 0,
+      draftReadiness: readiness,
     })
 
   } catch (error) {

@@ -26,6 +26,13 @@ type Integration = {
   last_sync_at: string | null
   last_error: string | null
   notes: string | null
+  statusSource?: 'verified_state' | 'manual_unverified'
+  readiness?: {
+    mode: 'verified_state' | 'manual_unverified'
+    ready: boolean
+    blockers: string[]
+    checkedAt: string
+  }
 }
 
 type Props = {
@@ -246,6 +253,11 @@ function IntegrationItem({
             <StatusIcon className="h-3 w-3" />
             {statusConfig.label}
           </span>
+          {integration.statusSource === 'verified_state' && (
+            <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-indigo-50 text-indigo-600">
+              Auto-verified
+            </span>
+          )}
           <ChevronRight className={`h-4 w-4 text-slate-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
         </div>
       </button>
@@ -265,6 +277,13 @@ function IntegrationItem({
             <div className="mt-3 p-3 bg-red-50 rounded-lg border border-red-100">
               <p className="text-xs font-medium text-red-700 mb-1">Error:</p>
               <p className="text-xs text-red-600">{integration.last_error}</p>
+            </div>
+          )}
+
+          {integration.readiness?.mode === 'verified_state' && integration.readiness.blockers.length > 0 && (
+            <div className="mt-3 p-3 bg-amber-50 rounded-lg border border-amber-100">
+              <p className="text-xs font-medium text-amber-700 mb-1">Verification blockers:</p>
+              <p className="text-xs text-amber-600">{integration.readiness.blockers.join(', ')}</p>
             </div>
           )}
 

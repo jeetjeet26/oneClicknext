@@ -9,6 +9,7 @@ import { createServiceClient } from '@/utils/supabase/admin'
 import { generateBlueprintPatches } from '@/utils/siteforge/llm-patch-generator'
 import { applyBlueprintPatch } from '@/utils/siteforge/blueprint'
 import type { SiteBlueprint } from '@/types/siteforge'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
 export async function POST(
   request: NextRequest,
@@ -16,6 +17,11 @@ export async function POST(
 ) {
   try {
     const supabase = await createClient()
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const { websiteId } = await params
     const { sectionId, userIntent } = await request.json()
     
@@ -29,7 +35,7 @@ export async function POST(
     // Get current blueprint
     const { data: website, error: websiteError } = await supabase
       .from('property_websites')
-      .select('blueprint, version, property_id, org_id')
+      .select('blueprint, version, property_id')
       .eq('id', websiteId)
       .single()
     
@@ -37,46 +43,42 @@ export async function POST(
       return NextResponse.json({ error: 'Website not found' }, { status: 404 })
     }
     
-    // Verify access (user must have access to property's org)
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    if (typeof website.property_id !== 'string') {
+      return NextResponse.json({ error: 'Website property mapping is invalid' }, { status: 400 })
     }
-    
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('org_id')
-      .eq('id', user.id)
-      .single()
-    
-    if (profile?.org_id !== website.org_id) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 })
+
+    const access = await validatePropertyAccess(user.id, website.property_id)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
+
+    const currentBlueprint = website.blueprint as unknown as SiteBlueprint
     
     // Generate patches using LLM
     const patches = await generateBlueprintPatches(
-      website.blueprint as SiteBlueprint,
+      currentBlueprint,
       sectionId,
       userIntent
     )
     
     // Apply patches to blueprint
     const updatedBlueprint = applyBlueprintPatch(
-      website.blueprint as SiteBlueprint,
+      currentBlueprint,
       patches
     )
     
     // Save new version
     const newVersion = (website.version || 1) + 1
+    const updatePayload = {
+      blueprint: updatedBlueprint,
+      version: newVersion,
+      updated_at: new Date().toISOString()
+    }
     
     const serviceClient = createServiceClient()
     await serviceClient
       .from('property_websites')
-      .update({
-        blueprint: updatedBlueprint,
-        version: newVersion,
-        updated_at: new Date().toISOString()
-      })
+      .update(updatePayload as never)
       .eq('id', websiteId)
     
     // Log edit action

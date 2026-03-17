@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import OpenAI from 'openai'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || '')
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
@@ -23,6 +24,11 @@ export async function POST(req: NextRequest) {
 
     if (!propertyId) {
       return NextResponse.json({ error: 'propertyId required' }, { status: 400 })
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     // Check if property has documents

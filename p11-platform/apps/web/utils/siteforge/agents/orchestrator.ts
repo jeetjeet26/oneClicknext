@@ -10,7 +10,7 @@ import { PhotoAgent, type PhotoStrategy, type PhotoManifest } from './photo-agen
 import { ContentAgent, type GeneratedPage } from './content-agent'
 import { QualityAgent, type QualityReport } from './quality-agent'
 import { WordPressMcpClient } from '@/utils/mcp/wordpress-client'
-import { createClient } from '@supabase/supabase-js'
+import { createServiceClient } from '@/utils/supabase/admin'
 
 export interface SiteBlueprint {
   version: number
@@ -44,10 +44,7 @@ export interface GenerationProgress {
  * Manages agent collaboration and workflow
  */
 export class SiteForgeOrchestrator {
-  private supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  )
+  private supabase = createServiceClient()
   
   private agents: {
     brand: BrandAgent

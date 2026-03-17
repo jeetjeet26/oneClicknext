@@ -1,5 +1,6 @@
 import { createClient } from '@/utils/supabase/server';
 import { NextRequest, NextResponse } from 'next/server';
+import { validatePropertyAccess } from '@/utils/services/auth-guard';
 
 /**
  * POST /api/marketvision/import
@@ -48,30 +49,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Verify property access
-    const { data: property, error: propError } = await supabase
-      .from('properties')
-      .select('id, name, org_id')
-      .eq('id', property_id)
-      .single();
-
-    if (propError || !property) {
+    const access = await validatePropertyAccess(user.id, property_id);
+    if (!access.authorized) {
       return NextResponse.json(
-        { error: 'Property not found' },
-        { status: 404 }
-      );
-    }
-
-    // Check if user has access to this property
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('org_id')
-      .eq('id', user.id)
-      .single();
-
-    if (profile?.org_id !== property.org_id) {
-      return NextResponse.json(
-        { error: 'Access denied' },
+        { error: 'Forbidden' },
         { status: 403 }
       );
     }
@@ -190,7 +171,15 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    if (propertyId) {
+      const access = await validatePropertyAccess(user.id, propertyId);
+      if (!access.authorized) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+      }
+    }
+
     let data, error;
+    let scopedPropertyId = propertyId;
 
     if (jobId) {
       const result = await supabase
@@ -200,6 +189,10 @@ export async function GET(request: NextRequest) {
         .single();
       data = result.data;
       error = result.error;
+
+      if (!propertyId) {
+        scopedPropertyId = (result.data as { property_id?: string | null } | null)?.property_id ?? null;
+      }
     } else if (propertyId) {
       const result = await supabase
         .from('import_jobs')
@@ -209,6 +202,17 @@ export async function GET(request: NextRequest) {
         .limit(10);
       data = result.data;
       error = result.error;
+    }
+
+    if (!propertyId) {
+      if (typeof scopedPropertyId !== 'string') {
+        return NextResponse.json({ error: 'Job not found' }, { status: 404 });
+      }
+
+      const access = await validatePropertyAccess(user.id, scopedPropertyId);
+      if (!access.authorized) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+      }
     }
 
     if (error) {

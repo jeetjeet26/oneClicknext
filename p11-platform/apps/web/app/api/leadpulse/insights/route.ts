@@ -5,6 +5,14 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
+import {
+  forbidden,
+  notFound,
+  serverError,
+  unauthorized,
+} from '@/utils/services/api-helpers'
+import { createRequestContext } from '@/utils/services/request-context'
 
 export interface ScoreDistribution {
   bucket: string
@@ -30,17 +38,29 @@ export interface ScoreInsights {
 }
 
 export async function GET(req: NextRequest) {
+  const ctx = createRequestContext(req, '/api/leadpulse/insights')
+  ctx.logStart()
+
   try {
     const supabase = await createClient()
     const { data: { user }, error: authError } = await supabase.auth.getUser()
 
     if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      ctx.logSuccess(401, { reason: 'unauthorized' })
+      return unauthorized(ctx.responseHeaders)
     }
 
     const searchParams = req.nextUrl.searchParams
     const propertyId = searchParams.get('propertyId')
     const days = parseInt(searchParams.get('days') || '30')
+
+    if (propertyId) {
+      const access = await validatePropertyAccess(user.id, propertyId)
+      if (!access.authorized) {
+        ctx.logSuccess(403, { reason: 'forbidden', propertyId })
+        return forbidden(ctx.responseHeaders)
+      }
+    }
 
     // Get user's profile to check org access
     const { data: profile } = await supabase
@@ -50,7 +70,13 @@ export async function GET(req: NextRequest) {
       .single()
 
     if (!profile) {
-      return NextResponse.json({ error: 'Profile not found' }, { status: 404 })
+      ctx.logSuccess(404, { reason: 'profile_not_found' })
+      return notFound('Profile', ctx.responseHeaders)
+    }
+
+    if (!profile.org_id) {
+      ctx.logSuccess(404, { reason: 'org_not_found' })
+      return notFound('Organization', ctx.responseHeaders)
     }
 
     // Build base query for leads
@@ -66,16 +92,20 @@ export async function GET(req: NextRequest) {
     const { data: leads, count: totalLeads } = await leadsQuery
 
     if (!leads || totalLeads === 0) {
-      return NextResponse.json({
-        insights: {
-          totalLeads: 0,
-          scoredLeads: 0,
-          avgScore: 0,
-          distribution: [],
-          topFactors: { positive: [], negative: [] },
-          recentTrend: [],
-        }
-      })
+      ctx.logSuccess(200, { propertyId: propertyId || null, totalLeads: 0 })
+      return NextResponse.json(
+        {
+          insights: {
+            totalLeads: 0,
+            scoredLeads: 0,
+            avgScore: 0,
+            distribution: [],
+            topFactors: { positive: [], negative: [] },
+            recentTrend: [],
+          }
+        },
+        { headers: ctx.responseHeaders }
+      )
     }
 
     // Calculate distribution
@@ -187,10 +217,16 @@ export async function GET(req: NextRequest) {
       recentTrend,
     }
 
-    return NextResponse.json({ insights })
+    ctx.logSuccess(200, {
+      propertyId: propertyId || null,
+      totalLeads: totalLeads || 0,
+      scoredLeads: scoredLeads.length,
+    })
+
+    return NextResponse.json({ insights }, { headers: ctx.responseHeaders })
   } catch (error) {
-    console.error('LeadPulse Insights Error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    ctx.logError(500, error, { operation: 'leadpulse_insights' })
+    return serverError(error, ctx.responseHeaders)
   }
 }
 

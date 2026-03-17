@@ -15,8 +15,17 @@ import logging
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from supabase import Client
+from postgrest.exceptions import APIError
 
 logger = logging.getLogger(__name__)
+
+
+def _is_no_rows_error(error: Exception) -> bool:
+    code = getattr(error, 'code', None)
+    if code == 'PGRST116':
+        return True
+    message = str(error)
+    return 'PGRST116' in message and '0 rows' in message
 
 class PropertyAuditExecutor:
     """
@@ -208,14 +217,18 @@ class PropertyAuditExecutor:
     
     def _get_property_config(self, property_id: str, property_name: str) -> Dict:
         """Get or create property config for domains."""
-        response = self.supabase.table('geo_property_config')\
-            .select('domains, competitor_domains')\
-            .eq('property_id', property_id)\
-            .single()\
-            .execute()
-        
-        if response.data:
-            return response.data
+        try:
+            response = self.supabase.table('geo_property_config')\
+                .select('domains, competitor_domains')\
+                .eq('property_id', property_id)\
+                .single()\
+                .execute()
+
+            if response.data:
+                return response.data
+        except APIError as error:
+            if not _is_no_rows_error(error):
+                raise
         
         # Auto-create config if it doesn't exist
         logger.info(f"[PropertyAudit] Creating default config for property {property_id}")

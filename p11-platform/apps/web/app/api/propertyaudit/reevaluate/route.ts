@@ -5,12 +5,45 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import type { Json } from '@/types/supabase'
+import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
-import { scoreAnswer, aggregateScores, type ScoredAnswer } from '@/utils/propertyaudit'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
+import { AnswerBlockSchema, scoreAnswer, aggregateScores, type ScoredAnswer } from '@/utils/propertyaudit'
+
+function normalizeAnswerBlock(
+  orderedEntities: unknown,
+  citations: Array<{ url: string; domain: string; entity_ref: string }>,
+  answerSummary: string | null
+) {
+  const candidate = {
+    ordered_entities: Array.isArray(orderedEntities) ? orderedEntities : [],
+    citations: citations.map((citation) => ({
+      url: citation.url,
+      domain: citation.domain,
+      entity_ref: citation.entity_ref || '',
+    })),
+    answer_summary: answerSummary || '',
+    notes: { flags: [] as const },
+  }
+
+  const parsed = AnswerBlockSchema.safeParse(candidate)
+  return parsed.success ? parsed.data : null
+}
 
 // POST: Re-evaluate a specific run
 export async function POST(req: NextRequest) {
   try {
+    const supabaseAuth = await createClient()
+    const {
+      data: { user },
+      error: authError,
+    } = await supabaseAuth.auth.getUser()
+
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const body = await req.json()
     const { runId } = body
 
@@ -38,6 +71,11 @@ export async function POST(req: NextRequest) {
 
     if (runError || !run) {
       return NextResponse.json({ error: 'Run not found' }, { status: 404 })
+    }
+
+    const access = await validatePropertyAccess(user.id, run.property_id)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     // Get property for brand context
@@ -74,16 +112,38 @@ export async function POST(req: NextRequest) {
 
     const results: ScoredAnswer[] = []
     const answers = run.geo_answers || []
+    const answerIds = answers.map((a: { id: string }) => a.id)
+
+    const { data: citationsRows } = await supabase
+      .from('geo_citations')
+      .select('answer_id, url, domain, entity_ref')
+      .in('answer_id', answerIds)
+
+    const citationsByAnswer = new Map<string, Array<{ url: string; domain: string; entity_ref: string }>>()
+    for (const row of citationsRows || []) {
+      if (!citationsByAnswer.has(row.answer_id)) {
+        citationsByAnswer.set(row.answer_id, [])
+      }
+      citationsByAnswer.get(row.answer_id)?.push({
+        url: row.url,
+        domain: row.domain,
+        entity_ref: row.entity_ref ?? '',
+      })
+    }
 
     // Re-evaluate each answer
     for (const answer of answers) {
       try {
         // Reconstruct AnswerBlock from stored data
-        const answerBlock = {
-          ordered_entities: answer.ordered_entities || [],
-          citations: [], // Citations are in separate table, not needed for evaluation
-          answer_summary: answer.answer_summary || '',
-          notes: { flags: [] }
+        const answerBlock = normalizeAnswerBlock(
+          answer.ordered_entities,
+          citationsByAnswer.get(answer.id) || [],
+          answer.answer_summary
+        )
+
+        if (!answerBlock) {
+          console.warn(`Skipping answer ${answer.id}: invalid answer shape`)
+          continue
         }
 
         // Re-score with updated evaluator
@@ -123,6 +183,12 @@ export async function POST(req: NextRequest) {
       sov: breakdownTotals.sov / results.length,
       accuracy: breakdownTotals.accuracy / results.length
     } : { position: 0, link: 0, sov: 0, accuracy: 0 }
+    const breakdownJson = breakdown as unknown as Json
+    const queryScoresJson = results.map(r => ({
+      score: r.score,
+      presence: r.presence,
+      breakdown: r.breakdown
+    })) as unknown as Json
 
     // Update or create score
     const { data: existingScore } = await supabase
@@ -141,12 +207,8 @@ export async function POST(req: NextRequest) {
           avg_llm_rank: aggregate.avgLlmRank,
           avg_link_rank: aggregate.avgLinkRank,
           avg_sov: aggregate.avgSov,
-          breakdown,
-          query_scores: results.map(r => ({
-            score: r.score,
-            presence: r.presence,
-            breakdown: r.breakdown
-          }))
+          breakdown: breakdownJson,
+          query_scores: queryScoresJson
         })
         .eq('id', existingScore.id)
     } else {
@@ -160,12 +222,8 @@ export async function POST(req: NextRequest) {
           avg_llm_rank: aggregate.avgLlmRank,
           avg_link_rank: aggregate.avgLinkRank,
           avg_sov: aggregate.avgSov,
-          breakdown,
-          query_scores: results.map(r => ({
-            score: r.score,
-            presence: r.presence,
-            breakdown: r.breakdown
-          }))
+          breakdown: breakdownJson,
+          query_scores: queryScoresJson
         })
     }
 

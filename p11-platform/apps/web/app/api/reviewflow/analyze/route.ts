@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import OpenAI from 'openai'
 
 const openai = new OpenAI({
@@ -66,25 +67,33 @@ Respond ONLY with valid JSON in this format:
 
 export async function POST(request: NextRequest) {
   const supabase = await createClient()
-  const body = await request.json()
-  
-  const { reviewId, reviewText, rating } = body
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
 
-  if (!reviewId && !reviewText) {
+  if (authError || !user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const body = await request.json()
+
+  const { reviewId, reviewText, rating, propertyId } = body
+
+  let textToAnalyze: string = typeof reviewText === 'string' ? reviewText : ''
+  let reviewRating: number | null = typeof rating === 'number' ? rating : null
+  let reviewPropertyId: string | null = typeof propertyId === 'string' ? propertyId : null
+  let reviewerName: string | null = null
+
+  if (!reviewId && (!textToAnalyze || !reviewPropertyId)) {
     return NextResponse.json(
-      { error: 'Either reviewId or reviewText is required' },
+      { error: 'reviewId or (reviewText and propertyId) is required' },
       { status: 400 }
     )
   }
 
-  let textToAnalyze = reviewText
-  let reviewRating = rating
-
   // If reviewId is provided, fetch the review
-  if (reviewId && !reviewText) {
+  if (reviewId) {
     const { data: review, error } = await supabase
       .from('reviews')
-      .select('review_text, rating')
+      .select('review_text, rating, property_id, reviewer_name')
       .eq('id', reviewId)
       .single()
 
@@ -92,8 +101,31 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Review not found' }, { status: 404 })
     }
 
-    textToAnalyze = review.review_text
+    if (typeof review.property_id !== 'string') {
+      return NextResponse.json({ error: 'Review not found' }, { status: 404 })
+    }
+
+    const access = await validatePropertyAccess(user.id, review.property_id)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
+    textToAnalyze = review.review_text || ''
     reviewRating = review.rating
+    reviewPropertyId = review.property_id
+    reviewerName = review.reviewer_name
+  } else {
+    if (typeof reviewPropertyId !== 'string') {
+      return NextResponse.json({ error: 'propertyId is required' }, { status: 400 })
+    }
+    const access = await validatePropertyAccess(user.id, reviewPropertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+  }
+
+  if (!textToAnalyze) {
+    return NextResponse.json({ error: 'Review text is required' }, { status: 400 })
   }
 
   // Analyze the review
@@ -118,27 +150,19 @@ export async function POST(request: NextRequest) {
     }
 
     // If negative/urgent, create a ticket
-    if (analysis.sentiment === 'negative' || analysis.isUrgent) {
-      const { data: review } = await supabase
-        .from('reviews')
-        .select('property_id, reviewer_name')
-        .eq('id', reviewId)
-        .single()
-
-      if (review) {
-        await supabase.from('review_tickets').upsert({
-          review_id: reviewId,
-          property_id: review.property_id,
-          title: analysis.isUrgent 
-            ? `🚨 URGENT: Review from ${review.reviewer_name || 'Anonymous'}`
-            : `Negative review from ${review.reviewer_name || 'Anonymous'}`,
-          description: analysis.summary,
-          priority: analysis.isUrgent ? 'urgent' : (analysis.sentimentScore < -0.5 ? 'high' : 'medium'),
-          status: 'open'
-        }, {
-          onConflict: 'review_id'
-        })
-      }
+    if ((analysis.sentiment === 'negative' || analysis.isUrgent) && reviewPropertyId) {
+      await supabase.from('review_tickets').upsert({
+        review_id: reviewId,
+        property_id: reviewPropertyId,
+        title: analysis.isUrgent
+          ? `🚨 URGENT: Review from ${reviewerName || 'Anonymous'}`
+          : `Negative review from ${reviewerName || 'Anonymous'}`,
+        description: analysis.summary,
+        priority: analysis.isUrgent ? 'urgent' : (analysis.sentimentScore < -0.5 ? 'high' : 'medium'),
+        status: 'open'
+      }, {
+        onConflict: 'review_id'
+      })
     }
   }
 

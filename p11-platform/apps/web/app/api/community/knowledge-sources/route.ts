@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { createAdminClient } from '@/utils/supabase/admin'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
 export async function GET(request: NextRequest) {
   try {
@@ -15,6 +16,11 @@ export async function GET(request: NextRequest) {
     
     if (!propertyId) {
       return NextResponse.json({ error: 'propertyId is required' }, { status: 400 })
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     const adminClient = createAdminClient()
@@ -42,7 +48,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Get unique document titles for categorization
-    const { data: documents, error: docsError } = await adminClient
+    const { data: documents } = await adminClient
       .from('documents')
       .select('metadata')
       .eq('property_id', propertyId)
@@ -57,7 +63,10 @@ export async function GET(request: NextRequest) {
     }
 
     documents?.forEach(doc => {
-      const title = doc.metadata?.title as string || 'Unknown'
+      const metadata = doc.metadata && typeof doc.metadata === 'object' && !Array.isArray(doc.metadata)
+        ? (doc.metadata as Record<string, unknown>)
+        : {}
+      const title = typeof metadata.title === 'string' ? metadata.title : 'Unknown'
       if (!uniqueTitles.has(title)) {
         uniqueTitles.add(title)
         // Simple categorization based on title keywords
@@ -156,6 +165,11 @@ export async function POST(request: NextRequest) {
 
     if (!propertyId || !sourceType || !sourceName) {
       return NextResponse.json({ error: 'propertyId, sourceType, and sourceName are required' }, { status: 400 })
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     const adminClient = createAdminClient()

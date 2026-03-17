@@ -116,6 +116,18 @@ export const leadLimiter = createRateLimiter({
   maxRequests: 15,
 })
 
+/** Public widget reads: 60 per minute per IP */
+export const publicReadLimiter = createRateLimiter({
+  windowMs: 60_000,
+  maxRequests: 60,
+})
+
+/** Webhooks: 30 per minute per IP/source */
+export const webhookLimiter = createRateLimiter({
+  windowMs: 60_000,
+  maxRequests: 30,
+})
+
 /** Admin endpoints: 60 per minute per user (generous for dashboard usage) */
 export const adminLimiter = createRateLimiter({
   windowMs: 60_000,

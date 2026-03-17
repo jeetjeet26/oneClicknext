@@ -1,7 +1,30 @@
 import { createClient } from '@/utils/supabase/server'
+import type { Json } from '@/types/supabase'
 import { NextRequest, NextResponse } from 'next/server'
 import { Resend } from 'resend'
 import { format, subDays, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subWeeks, subMonths } from 'date-fns'
+import { validateCronAuth } from '@/utils/services/api-helpers'
+
+type SupabaseClient = Awaited<ReturnType<typeof createClient>>
+
+interface ReportTotals {
+  impressions: number
+  clicks: number
+  spend: number
+  conversions: number
+  ctr: number
+  cpa: number
+}
+
+interface ReportChannel extends ReportTotals {
+  channel: string
+}
+
+interface ReportAnalyticsData {
+  totals: ReportTotals
+  channels: ReportChannel[]
+  rowCount: number
+}
 
 // Initialize Resend client
 function getResendClient(): Resend | null {
@@ -11,29 +34,6 @@ function getResendClient(): Resend | null {
     return null
   }
   return new Resend(apiKey)
-}
-
-// CRON authorization check
-function isAuthorizedCron(request: NextRequest): boolean {
-  // Check for CRON secret in header (for scheduled jobs)
-  const cronSecret = request.headers.get('x-cron-secret')
-  if (cronSecret && cronSecret === process.env.CRON_SECRET) {
-    return true
-  }
-  
-  // Check for authorization header (for Vercel cron)
-  const authHeader = request.headers.get('authorization')
-  if (authHeader === `Bearer ${process.env.CRON_SECRET}`) {
-    return true
-  }
-  
-  // In development, allow without auth
-  if (process.env.NODE_ENV === 'development') {
-    console.log('[Reports CRON] Dev mode - skipping auth')
-    return true
-  }
-  
-  return false
 }
 
 // Calculate date range based on type
@@ -86,12 +86,15 @@ function getDateRange(dateRangeType: string, scheduleType: string): { start: Dat
 
 // Fetch analytics data for a property
 async function fetchAnalyticsData(
-  supabase: any,
+  supabase: SupabaseClient,
   propertyId: string,
   startDate: string,
   endDate: string,
-  includeComparison: boolean
-) {
+  _includeComparison: boolean
+): Promise<ReportAnalyticsData | null> {
+  // Reserved for comparison-period support in follow-up implementation.
+  void _includeComparison
+
   const { data: currentData, error } = await supabase
     .from('fact_marketing_performance')
     .select('*')
@@ -155,7 +158,7 @@ async function fetchAnalyticsData(
 function generateEmailHtml(
   propertyName: string,
   dateRange: { start: string; end: string },
-  data: { totals: any; channels: any[] },
+  data: { totals: ReportTotals; channels: ReportChannel[] },
   reportName: string
 ): string {
   const formatCurrency = (val: number) => `$${val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -285,10 +288,8 @@ function generateEmailHtml(
 
 // POST - Process and send due reports (CRON endpoint)
 export async function POST(request: NextRequest) {
-  // Verify CRON authorization
-  if (!isAuthorizedCron(request)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  const authError = validateCronAuth(request)
+  if (authError) return authError
 
   const supabase = await createClient()
   const resend = getResendClient()
@@ -377,7 +378,7 @@ export async function POST(request: NextRequest) {
 
         // Send emails
         let sentCount = 0
-        let errors: string[] = []
+        const errors: string[] = []
 
         if (resend) {
           for (const recipient of report.recipients) {
@@ -409,7 +410,7 @@ export async function POST(request: NextRequest) {
             error_message: errors.length > 0 ? errors.join('; ') : null,
             report_date_start: startDate,
             report_date_end: endDate,
-            metrics_snapshot: analyticsData?.totals || null,
+            metrics_snapshot: (analyticsData?.totals || null) as Json | null,
             completed_at: new Date().toISOString(),
           })
           .eq('id', historyRecord.id)
@@ -468,9 +469,8 @@ export async function POST(request: NextRequest) {
 
 // GET - Check status of scheduled reports (for manual testing)
 export async function GET(request: NextRequest) {
-  if (!isAuthorizedCron(request)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  const authError = validateCronAuth(request)
+  if (authError) return authError
 
   const supabase = await createClient()
 
@@ -495,18 +495,19 @@ export async function GET(request: NextRequest) {
     }
 
     const now = new Date()
-    const dueCount = (reports || []).filter(r => new Date(r.next_run_at) <= now).length
+    const isDue = (nextRunAt: string | null) => !!nextRunAt && new Date(nextRunAt) <= now
+    const dueCount = (reports || []).filter(r => isDue(r.next_run_at)).length
 
     return NextResponse.json({
       totalActive: reports?.length || 0,
       dueNow: dueCount,
       reports: reports?.map(r => ({
         ...r,
-        isDue: new Date(r.next_run_at) <= now,
+        isDue: isDue(r.next_run_at),
         recipientCount: r.recipients?.length || 0,
       })),
     })
-  } catch (err) {
+  } catch {
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }

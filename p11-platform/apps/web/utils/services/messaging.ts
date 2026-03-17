@@ -34,6 +34,26 @@ export interface TemplateVariables {
   [key: string]: string | undefined
 }
 
+interface TelnyxApiError {
+  detail?: string
+  title?: string
+}
+
+interface TelnyxResponseBody {
+  data?: {
+    id?: string
+  }
+  errors?: TelnyxApiError[]
+}
+
+interface ResendSendResultShape {
+  data?: {
+    id?: string
+  } | null
+  id?: string
+  error?: string | { message?: string } | null
+}
+
 // Initialize Resend client (lazy)
 let resendClient: Resend | null = null
 
@@ -59,9 +79,44 @@ export function replaceTemplateVariables(
   template: string,
   variables: TemplateVariables
 ): string {
-  return template.replace(/\{\{(\w+)\}\}/g, (match, key) => {
-    return variables[key] || match
-  })
+  // Support both legacy {var} and canonical {{var}} formats.
+  return template
+    .replace(/\{\{(\w+)\}\}/g, (match, key) => variables[key] || match)
+    .replace(/\{(\w+)\}/g, (match, key) => variables[key] || match)
+}
+
+async function parseJsonSafe<T>(response: Response): Promise<T | null> {
+  const text = await response.text()
+  if (!text) {
+    return null
+  }
+
+  try {
+    return JSON.parse(text) as T
+  } catch {
+    return null
+  }
+}
+
+function getResendErrorMessage(result: ResendSendResultShape): string | null {
+  const maybeError = result.error
+  if (!maybeError) {
+    return null
+  }
+
+  if (typeof maybeError === 'string') {
+    return maybeError
+  }
+
+  if (typeof maybeError === 'object' && typeof maybeError.message === 'string') {
+    return maybeError.message
+  }
+
+  return JSON.stringify(maybeError)
+}
+
+function getResendMessageId(result: ResendSendResultShape): string | undefined {
+  return result.data?.id ?? result.id
 }
 
 /**
@@ -99,7 +154,7 @@ export async function sendSMS(
       }),
     })
 
-    const data = await response.json()
+    const data = await parseJsonSafe<TelnyxResponseBody>(response)
 
     if (!response.ok) {
       const errorDetail = data?.errors?.[0]?.detail
@@ -190,18 +245,18 @@ export async function sendEmail(
       ...(resendAttachments?.length && { attachments: resendAttachments }),
     })
 
-    // Resend SDK types vary by version; guard safely.
-    const maybeError = (result as any)?.error
-    if (maybeError) {
-      console.error('[Email] Resend API returned error:', maybeError)
+    const resendResult = result as ResendSendResultShape
+    const resendError = getResendErrorMessage(resendResult)
+    if (resendError) {
+      console.error('[Email] Resend API returned error:', resendError)
       return {
         success: false,
-        error: typeof maybeError === 'string' ? maybeError : JSON.stringify(maybeError),
+        error: resendError,
         channel: 'email',
       }
     }
 
-    const messageId = (result as any)?.data?.id ?? (result as any)?.id
+    const messageId = getResendMessageId(resendResult)
     console.log(`[Email] Sent to ${to}: ${messageId}`)
 
     return {

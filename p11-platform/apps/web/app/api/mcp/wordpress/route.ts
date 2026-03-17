@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { exec } from 'child_process'
 import { promisify } from 'util'
 import path from 'path'
+import { createClient } from '@/utils/supabase/server'
 
 const execAsync = promisify(exec)
 
@@ -15,6 +16,12 @@ const execAsync = promisify(exec)
  */
 export async function POST(request: NextRequest) {
   try {
+    const supabase = await createClient()
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const { tool, arguments: args } = await request.json()
     
     if (!tool) {
@@ -236,6 +243,12 @@ function getMockResponse(tool: string, args: Record<string, unknown>): unknown {
 }
 
 export async function GET() {
+  const supabase = await createClient()
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+  if (authError || !user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
   return NextResponse.json({
     service: 'WordPress MCP Bridge',
     status: 'ready',

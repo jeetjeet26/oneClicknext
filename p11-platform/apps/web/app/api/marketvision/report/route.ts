@@ -5,6 +5,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
 export interface MarketReport {
   generatedAt: string
@@ -59,6 +60,11 @@ export async function GET(req: NextRequest) {
 
     if (!propertyId) {
       return NextResponse.json({ error: 'propertyId required' }, { status: 400 })
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     // Get property info
@@ -165,13 +171,14 @@ export async function GET(req: NextRequest) {
         competitor: (() => {
           const c = a.competitor as unknown
           const competitorObj = Array.isArray(c) ? c[0] : c
-          return (competitorObj as any)?.name as string || 'Unknown'
+          const competitorRecord = competitorObj as Record<string, unknown> | null
+          return (typeof competitorRecord?.name === 'string' ? competitorRecord.name : 'Unknown')
         })(),
         type: a.alert_type as 'price_drop' | 'price_increase',
         oldValue: (a.data as Record<string, unknown>).old_price as number,
         newValue: (a.data as Record<string, unknown>).new_price as number,
         changePercent: (a.data as Record<string, unknown>).change_percent as number,
-        date: a.created_at
+        date: a.created_at || new Date().toISOString()
       }))
 
     // Calculate market trend
@@ -263,6 +270,11 @@ export async function POST(req: NextRequest) {
 
     if (!propertyId || !insightType || !data) {
       return NextResponse.json({ error: 'propertyId, insightType, and data required' }, { status: 400 })
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     const { data: insight, error } = await supabase

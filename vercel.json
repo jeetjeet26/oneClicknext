@@ -15,7 +15,7 @@
     },
     {
       "path": "/api/cron/publish-scheduled",
-      "schedule": "0 */6 * * *"
+      "schedule": "*/15 * * * *"
     },
     {
       "path": "/api/tours/reminders",
@@ -24,6 +24,22 @@
     {
       "path": "/api/cron/sync-ads",
       "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/tours/noshow",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/reports/send",
+      "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/cron/knowledge-refresh",
+      "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/cron/scrape-competitors",
+      "schedule": "0 3 * * *"
     }
   ]
 }

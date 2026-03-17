@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import OpenAI from 'openai'
 
 const openai = new OpenAI({
@@ -59,8 +60,26 @@ Detected Sentiment: ${sentiment}`
   return completion.choices[0].message.content || 'Thank you for your review. We value your feedback.'
 }
 
+function parseTone(value: unknown, fallback: ResponseTone = 'professional'): ResponseTone {
+  if (value === 'professional' || value === 'empathetic' || value === 'friendly' || value === 'apologetic') {
+    return value
+  }
+  return fallback
+}
+
+function normalizeOptionalString(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : null
+}
+
 export async function POST(request: NextRequest) {
   const supabase = await createClient()
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+  if (authError || !user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
   const body = await request.json()
   
   const { reviewId, tone = 'professional', customPrompt } = body
@@ -86,6 +105,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Review not found' }, { status: 404 })
   }
 
+  if (typeof review.property_id !== 'string') {
+    return NextResponse.json({ error: 'Review not found' }, { status: 404 })
+  }
+
+  const access = await validatePropertyAccess(user.id, review.property_id)
+  if (!access.authorized) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+
   // Fetch ReviewFlow config for property personality
   const { data: config } = await supabase
     .from('reviewflow_config')
@@ -96,15 +124,18 @@ export async function POST(request: NextRequest) {
   // Generate the response
   let responseText: string
   try {
+    const resolvedTone = parseTone(tone, parseTone(config?.default_tone))
     responseText = await generateResponse({
-      reviewText: review.review_text,
-      rating: review.rating,
+      reviewText: review.review_text || '',
+      rating: typeof review.rating === 'number' ? review.rating : null,
       sentiment: review.sentiment || 'neutral',
-      topics: review.topics || [],
-      propertyName: review.properties?.name,
-      propertyPersonality: config?.property_personality,
-      tone: tone || config?.default_tone || 'professional',
-      reviewerName: review.reviewer_name
+      topics: Array.isArray(review.topics)
+        ? review.topics.filter((topic): topic is string => typeof topic === 'string')
+        : [],
+      propertyName: review.properties?.name || undefined,
+      propertyPersonality: config?.property_personality || undefined,
+      tone: resolvedTone,
+      reviewerName: review.reviewer_name || undefined
     })
   } catch (aiError) {
     console.error('OpenAI error:', aiError)
@@ -121,7 +152,7 @@ export async function POST(request: NextRequest) {
       response_text: responseText,
       response_type: 'ai_generated',
       status: 'draft',
-      tone,
+      tone: parseTone(tone),
       ai_model: 'gpt-4o-mini',
       generation_prompt: customPrompt || null
     })
@@ -160,7 +191,39 @@ export async function PATCH(request: NextRequest) {
   }
 
   // Get current user
-  const { data: { user } } = await supabase.auth.getUser()
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+  if (authError || !user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const { data: existingResponse, error: existingResponseError } = await supabase
+    .from('review_responses')
+    .select(`
+      id,
+      review_id,
+      status,
+      reviews (
+        property_id
+      )
+    `)
+    .eq('id', responseId)
+    .single()
+
+  if (existingResponseError || !existingResponse) {
+    return NextResponse.json({ error: 'Response not found' }, { status: 404 })
+  }
+
+  const responsePropertyId = Array.isArray(existingResponse.reviews)
+    ? existingResponse.reviews[0]?.property_id
+    : existingResponse.reviews?.property_id
+  if (typeof responsePropertyId !== 'string') {
+    return NextResponse.json({ error: 'Response not found' }, { status: 404 })
+  }
+
+  const access = await validatePropertyAccess(user.id, responsePropertyId)
+  if (!access.authorized) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
 
   if (action === 'approve') {
     const { data, error } = await supabase
@@ -168,7 +231,7 @@ export async function PATCH(request: NextRequest) {
       .update({
         status: 'approved',
         response_text: editedText || undefined,
-        approved_by: user?.id,
+        approved_by: user.id,
         approved_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       })
@@ -181,7 +244,7 @@ export async function PATCH(request: NextRequest) {
     }
 
     // Update review status
-    if (data) {
+    if (data && typeof data.review_id === 'string') {
       await supabase
         .from('reviews')
         .update({ 
@@ -195,7 +258,7 @@ export async function PATCH(request: NextRequest) {
   }
 
   if (action === 'reject') {
-    const { data, error } = await supabase
+    const { error } = await supabase
       .from('review_responses')
       .update({
         status: 'rejected',
@@ -214,12 +277,97 @@ export async function PATCH(request: NextRequest) {
   }
 
   if (action === 'post') {
-    // Mark as posted (actual platform posting would be implemented separately)
+    if (existingResponse.status !== 'approved') {
+      return NextResponse.json(
+        { error: 'Only approved responses can be marked as posted' },
+        { status: 409 }
+      )
+    }
+
+    if (body.manualConfirmed !== true) {
+      return NextResponse.json(
+        { error: 'manualConfirmed is required to mark a response as posted' },
+        { status: 400 }
+      )
+    }
+
+    const providerPostId = normalizeOptionalString(body.providerPostId)
+    const providerPostUrl = normalizeOptionalString(body.providerPostUrl)
+    const providerNotes = normalizeOptionalString(body.providerNotes)
+
+    if (!providerPostId && !providerPostUrl) {
+      return NextResponse.json(
+        { error: 'providerPostId or providerPostUrl is required to confirm provider-side execution' },
+        { status: 400 }
+      )
+    }
+
+    const nowIso = new Date().toISOString()
+    const { data: responseForPosting, error: responseForPostingError } = await supabase
+      .from('review_responses')
+      .select(`
+        review_id,
+        reviews (
+          id,
+          platform,
+          property_id
+        )
+      `)
+      .eq('id', responseId)
+      .single()
+
+    if (responseForPostingError || !responseForPosting) {
+      return NextResponse.json({ error: 'Response not found' }, { status: 404 })
+    }
+
+    const responseReview = Array.isArray(responseForPosting.reviews)
+      ? responseForPosting.reviews[0]
+      : responseForPosting.reviews
+    const reviewId = typeof responseForPosting.review_id === 'string' ? responseForPosting.review_id : null
+    const reviewPropertyId = typeof responseReview?.property_id === 'string' ? responseReview.property_id : null
+    const reviewPlatform = typeof responseReview?.platform === 'string' ? responseReview.platform : 'unknown'
+    if (!reviewId || !reviewPropertyId) {
+      return NextResponse.json({ error: 'Response review is missing property context' }, { status: 409 })
+    }
+
+    // Create an auditable provider execution record before status mutation.
+    const { data: auditTicket, error: auditTicketError } = await supabase
+      .from('review_tickets')
+      .insert({
+        review_id: reviewId,
+        property_id: reviewPropertyId,
+        title: `Provider response posted (${reviewPlatform})`,
+        description: 'Provider-side response execution was operator-confirmed for this approved response.',
+        priority: 'low',
+        status: 'resolved',
+        resolution_notes: JSON.stringify({
+          action: 'provider_post_confirmed',
+          response_id: responseId,
+          provider_post_id: providerPostId,
+          provider_post_url: providerPostUrl,
+          provider_notes: providerNotes,
+          confirmed_by: user.id,
+          confirmed_at: nowIso,
+          mode: 'manual_confirmed',
+        }),
+      })
+      .select('id')
+      .single()
+
+    if (auditTicketError || !auditTicket?.id) {
+      return NextResponse.json(
+        { error: auditTicketError?.message || 'Failed to persist provider execution audit record' },
+        { status: 500 }
+      )
+    }
+
+    // Provider posting is still operator-manual for now. This endpoint records
+    // explicit evidence + audit ticket after the operator posts externally.
     const { data, error } = await supabase
       .from('review_responses')
       .update({
         status: 'posted',
-        posted_at: new Date().toISOString(),
+        posted_at: nowIso,
         updated_at: new Date().toISOString()
       })
       .eq('id', responseId)
@@ -227,11 +375,13 @@ export async function PATCH(request: NextRequest) {
       .single()
 
     if (error) {
+      // Best-effort rollback of audit ticket to avoid stale confirmation records.
+      await supabase.from('review_tickets').delete().eq('id', auditTicket.id)
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
 
     // Update review status
-    if (data) {
+    if (data && typeof data.review_id === 'string') {
       await supabase
         .from('reviews')
         .update({ 
@@ -241,7 +391,16 @@ export async function PATCH(request: NextRequest) {
         .eq('id', data.review_id)
     }
 
-    return NextResponse.json({ success: true, status: 'posted' })
+    return NextResponse.json({
+      success: true,
+      status: 'posted',
+      postingMode: 'manual_confirmed',
+      auditTicketId: auditTicket.id,
+      providerEvidence: {
+        providerPostId,
+        providerPostUrl,
+      },
+    })
   }
 
   return NextResponse.json({ error: 'Invalid action' }, { status: 400 })

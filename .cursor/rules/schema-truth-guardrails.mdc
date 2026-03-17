@@ -1,0 +1,18 @@
+---
+description: Prevent Supabase schema/type drift and enforce route safety checks
+alwaysApply: true
+---
+
+# Schema Truth Guardrails
+
+- Before changing any Supabase-backed route/service, verify live schema with MCP SQL (`information_schema`).
+- If code needs missing tables/columns, create migration in `p11-platform/supabase/migrations`, then apply with MCP `apply_migration`.
+- After schema changes, regenerate types with MCP `generate_typescript_types` and sync `p11-platform/apps/web/types/supabase.ts`.
+- After syncing types, run `npm run schema:types:stamp` from `p11-platform/apps/web` to stamp the latest migration version into `types/supabase.ts`.
+- Do not ship route code that references fields/tables missing from generated Supabase types.
+- For side-effect routes (cron, outbound messaging, scoring, workflow actions), add/maintain tests and include trusted files in `p11-platform/apps/web/scripts/foundation-files.mjs`.
+- Required validation from `p11-platform/apps/web`:
+  - `npm run check:schema-types-sync`
+  - `npm run check:schema-truth`
+  - `npm run check:foundation`
+- If checks fail, resolve schema/type drift first; do not bypass with broad `any`/unsafe casts.

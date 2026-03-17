@@ -1,6 +1,15 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { NextRequest, NextResponse } from 'next/server'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
+import {
+  badRequest,
+  forbidden,
+  notFound,
+  serverError,
+  unauthorized,
+} from '@/utils/services/api-helpers'
+import { createRequestContext } from '@/utils/services/request-context'
 
 type ActivityType = 
   | 'note' 
@@ -22,18 +31,44 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const ctx = createRequestContext(request, '/api/leads/[id]/activities')
+  ctx.logStart()
   const { id: leadId } = await params
   const supabaseAuth = await createClient()
   
   const { data: { user }, error: authError } = await supabaseAuth.auth.getUser()
   
   if (authError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    ctx.logSuccess(401, { reason: 'unauthorized' })
+    return unauthorized(ctx.responseHeaders)
   }
 
   const supabase = createServiceClient()
 
   try {
+    const { data: lead, error: leadError } = await supabase
+      .from('leads')
+      .select('property_id')
+      .eq('id', leadId)
+      .single()
+
+    if (leadError || !lead) {
+      ctx.logSuccess(404, { reason: 'lead_not_found', leadId })
+      return notFound('Lead', ctx.responseHeaders)
+    }
+
+    const leadPropertyId = lead.property_id
+    if (!leadPropertyId) {
+      ctx.logSuccess(404, { reason: 'property_not_found', leadId })
+      return notFound('Property', ctx.responseHeaders)
+    }
+
+    const access = await validatePropertyAccess(user.id, leadPropertyId)
+    if (!access.authorized) {
+      ctx.logSuccess(403, { reason: 'forbidden', leadId, propertyId: lead.property_id })
+      return forbidden(ctx.responseHeaders)
+    }
+
     // Fetch activities with creator info
     const { data: activities, error } = await supabase
       .from('lead_activities')
@@ -49,13 +84,22 @@ export async function GET(
       .limit(100)
 
     if (error) {
-      throw error
+      ctx.logError(500, error, { operation: 'fetch_lead_activities', leadId })
+      return serverError(error, ctx.responseHeaders)
     }
 
-    return NextResponse.json({ activities: activities || [] })
+    ctx.logSuccess(200, {
+      leadId,
+      activityCount: activities?.length || 0,
+    })
+
+    return NextResponse.json(
+      { activities: activities || [] },
+      { headers: ctx.responseHeaders }
+    )
   } catch (error) {
-    console.error('Activities fetch error:', error)
-    return NextResponse.json({ error: 'Failed to fetch activities' }, { status: 500 })
+    ctx.logError(500, error, { operation: 'fetch_lead_activities' })
+    return serverError(error, ctx.responseHeaders)
   }
 }
 
@@ -64,24 +108,51 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const ctx = createRequestContext(request, '/api/leads/[id]/activities')
+  ctx.logStart()
   const { id: leadId } = await params
   const supabaseAuth = await createClient()
   
   const { data: { user }, error: authError } = await supabaseAuth.auth.getUser()
   
   if (authError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    ctx.logSuccess(401, { reason: 'unauthorized' })
+    return unauthorized(ctx.responseHeaders)
   }
 
   const supabase = createServiceClient()
 
   try {
+    const { data: lead, error: leadError } = await supabase
+      .from('leads')
+      .select('property_id')
+      .eq('id', leadId)
+      .single()
+
+    if (leadError || !lead) {
+      ctx.logSuccess(404, { reason: 'lead_not_found', leadId })
+      return notFound('Lead', ctx.responseHeaders)
+    }
+
+    const leadPropertyId = lead.property_id
+    if (!leadPropertyId) {
+      ctx.logSuccess(404, { reason: 'property_not_found', leadId })
+      return notFound('Property', ctx.responseHeaders)
+    }
+
+    const access = await validatePropertyAccess(user.id, leadPropertyId)
+    if (!access.authorized) {
+      ctx.logSuccess(403, { reason: 'forbidden', leadId, propertyId: lead.property_id })
+      return forbidden(ctx.responseHeaders)
+    }
+
     const body = await request.json()
     const { type, description, metadata } = body
 
     // Validation
     if (!type || !description) {
-      return NextResponse.json({ error: 'Type and description are required' }, { status: 400 })
+      ctx.logSuccess(400, { reason: 'missing_type_or_description', leadId })
+      return badRequest('Type and description are required', ctx.responseHeaders)
     }
 
     const validTypes: ActivityType[] = [
@@ -101,7 +172,8 @@ export async function POST(
     ]
 
     if (!validTypes.includes(type)) {
-      return NextResponse.json({ error: 'Invalid activity type' }, { status: 400 })
+      ctx.logSuccess(400, { reason: 'invalid_activity_type', leadId, type })
+      return badRequest('Invalid activity type', ctx.responseHeaders)
     }
 
     // Create activity
@@ -124,14 +196,23 @@ export async function POST(
       .single()
 
     if (activityError) {
-      console.error('Activity creation error:', activityError)
-      return NextResponse.json({ error: 'Failed to create activity' }, { status: 500 })
+      ctx.logError(500, activityError, { operation: 'create_lead_activity', leadId })
+      return serverError(activityError, ctx.responseHeaders)
     }
 
-    return NextResponse.json({ activity }, { status: 201 })
+    ctx.logSuccess(201, {
+      leadId,
+      activityId: activity.id,
+      activityType: type,
+    })
+
+    return NextResponse.json(
+      { activity },
+      { status: 201, headers: ctx.responseHeaders }
+    )
   } catch (error) {
-    console.error('Activity creation error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    ctx.logError(500, error, { operation: 'create_lead_activity' })
+    return serverError(error, ctx.responseHeaders)
   }
 }
 

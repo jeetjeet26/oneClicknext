@@ -1,5 +1,23 @@
 import { createClient } from '@/utils/supabase/server';
 import { NextRequest, NextResponse } from 'next/server';
+import { validatePropertyAccess } from '@/utils/services/auth-guard';
+
+type AdAccountConnection = {
+  platform: string | null;
+  account_id: string | null;
+  is_active: boolean | null;
+};
+
+type PerformanceRow = {
+  channel_id?: string | null;
+  channel?: string | null;
+  campaign_id?: string | null;
+  campaign_name?: string | null;
+  spend?: number | null;
+  clicks?: number | null;
+  impressions?: number | null;
+  conversions?: number | null;
+};
 
 /**
  * GET /api/marketvision/[propertyId]
@@ -19,6 +37,11 @@ export async function GET(
 ) {
   const supabase = await createClient();
   const { propertyId } = await params;
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   
   const searchParams = request.nextUrl.searchParams;
   const dateRange = searchParams.get('dateRange') || '30d';
@@ -26,6 +49,11 @@ export async function GET(
   const realtime = searchParams.get('realtime') === 'true';
   
   try {
+    const access = await validatePropertyAccess(user.id, propertyId);
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
     // Calculate date filter
     const daysAgo = parseInt(dateRange.replace('d', '')) || 30;
     const startDate = new Date();
@@ -71,11 +99,14 @@ export async function GET(
     }
     
     // Get account IDs by platform
-    const googleAccount = property.ad_account_connections?.find(
-      (c: any) => c.platform === 'google_ads' && c.is_active
+    const adAccountConnections = Array.isArray(property.ad_account_connections)
+      ? (property.ad_account_connections as AdAccountConnection[])
+      : [];
+    const googleAccount = adAccountConnections.find(
+      (c) => c.platform === 'google_ads' && c.is_active === true
     );
-    const metaAccount = property.ad_account_connections?.find(
-      (c: any) => c.platform === 'meta_ads' && c.is_active
+    const metaAccount = adAccountConnections.find(
+      (c) => c.platform === 'meta_ads' && c.is_active === true
     );
     
     // Fetch historical data from fact_marketing_performance
@@ -141,11 +172,26 @@ export async function GET(
 /**
  * Aggregate performance data for dashboard display
  */
-function aggregatePerformance(data: any[]) {
-  const by_channel: Record<string, any> = {};
-  const by_campaign: Record<string, any> = {};
+function aggregatePerformance(data: PerformanceRow[]) {
+  const by_channel: Record<string, {
+    channel: string;
+    spend: number;
+    clicks: number;
+    impressions: number;
+    conversions: number;
+    campaigns: Set<string>;
+  }> = {};
+  const by_campaign: Record<string, {
+    campaign_id: string;
+    campaign_name: string;
+    channel: string;
+    spend: number;
+    clicks: number;
+    impressions: number;
+    conversions: number;
+  }> = {};
   
-  let totals = {
+  const totals = {
     spend: 0,
     clicks: 0,
     impressions: 0,
@@ -155,29 +201,30 @@ function aggregatePerformance(data: any[]) {
   data.forEach(row => {
     // By channel (using channel_id from existing schema)
     const channel = row.channel_id || row.channel || 'unknown';
-    if (!by_channel[channel]) {
-      by_channel[channel] = {
-        channel: channel,
-        spend: 0,
-        clicks: 0,
-        impressions: 0,
-        conversions: 0,
-        campaigns: new Set(),
-      };
-    }
-    by_channel[channel].spend += row.spend || 0;
-    by_channel[channel].clicks += row.clicks || 0;
-    by_channel[channel].impressions += row.impressions || 0;
-    by_channel[channel].conversions += row.conversions || 0;
-    by_channel[channel].campaigns.add(row.campaign_id);
+    const campaignId = row.campaign_id || 'unknown';
+    const campaignName = row.campaign_name || 'Unknown campaign';
+    const channelBucket = by_channel[channel] ?? {
+      channel,
+      spend: 0,
+      clicks: 0,
+      impressions: 0,
+      conversions: 0,
+      campaigns: new Set<string>(),
+    };
+    by_channel[channel] = channelBucket;
+    channelBucket.spend += row.spend || 0;
+    channelBucket.clicks += row.clicks || 0;
+    channelBucket.impressions += row.impressions || 0;
+    channelBucket.conversions += row.conversions || 0;
+    channelBucket.campaigns.add(campaignId);
     
     // By campaign
-    const campaignKey = `${channel}_${row.campaign_id}`;
+    const campaignKey = `${channel}_${campaignId}`;
     if (!by_campaign[campaignKey]) {
       by_campaign[campaignKey] = {
-        campaign_id: row.campaign_id,
-        campaign_name: row.campaign_name,
-        channel: channel,
+        campaign_id: campaignId,
+        campaign_name: campaignName,
+        channel,
         spend: 0,
         clicks: 0,
         impressions: 0,
@@ -196,14 +243,16 @@ function aggregatePerformance(data: any[]) {
     totals.conversions += row.conversions || 0;
   });
   
-  // Convert Sets to counts
-  Object.values(by_channel).forEach((ch: any) => {
-    ch.campaign_count = ch.campaigns.size;
-    delete ch.campaigns;
+  const byChannelOutput = Object.values(by_channel).map((channelRow) => {
+    const { campaigns, ...rest } = channelRow;
+    return {
+      ...rest,
+      campaign_count: campaigns.size,
+    };
   });
   
   return {
-    by_channel: Object.values(by_channel),
+    by_channel: byChannelOutput,
     by_campaign: Object.values(by_campaign),
     totals,
   };

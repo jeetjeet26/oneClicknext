@@ -4,14 +4,10 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
-
-type WebsiteWithOrg = {
-  id: string
-  properties: { org_id: string | null } | Array<{ org_id: string | null }>
-}
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
 export async function DELETE(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: { params: Promise<{ websiteId: string }> }
 ) {
   try {
@@ -31,12 +27,7 @@ export async function DELETE(
     // Verify user has access before deleting
     const { data: website, error: fetchError } = await supabase
       .from('property_websites')
-      .select(`
-        id,
-        properties!inner (
-          org_id
-        )
-      `)
+      .select('id, property_id')
       .eq('id', websiteId)
       .single()
 
@@ -44,21 +35,13 @@ export async function DELETE(
       return NextResponse.json({ error: 'Website not found' }, { status: 404 })
     }
 
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('org_id')
-      .eq('id', user.id)
-      .single()
+    if (typeof website.property_id !== 'string') {
+      return NextResponse.json({ error: 'Website property mapping is invalid' }, { status: 400 })
+    }
 
-    const websiteProperties = (website as WebsiteWithOrg).properties
-    const websiteOrgId = Array.isArray(websiteProperties)
-      ? websiteProperties[0]?.org_id
-      : websiteProperties?.org_id
-
-    const profileOrgId = (profile as { org_id: string | null } | null)?.org_id
-
-    if (!websiteOrgId || !profileOrgId || profileOrgId !== websiteOrgId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 })
+    const access = await validatePropertyAccess(user.id, website.property_id)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     // Delete website (cascades to assets and generations via FK)

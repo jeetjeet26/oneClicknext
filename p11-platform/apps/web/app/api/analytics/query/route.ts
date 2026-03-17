@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import OpenAI from 'openai'
 
 // Define the schema that OpenAI will use to generate SQL
@@ -59,9 +60,15 @@ function validateSQL(sql: string): { valid: boolean; error?: string } {
     }
   }
   
-  // Check for multiple statements
-  if (sql.includes(';') && sql.indexOf(';') !== sql.length - 1) {
+  // Check for multiple statements (allow at most one trailing semicolon)
+  const withoutTrailing = sql.trim().replace(/;+\s*$/, '')
+  if (withoutTrailing.includes(';')) {
     return { valid: false, error: 'Multiple SQL statements not allowed' }
+  }
+
+  // Enforce tenant filter presence.
+  if (!upperSQL.includes('PROPERTY_ID')) {
+    return { valid: false, error: 'Query must include a property_id filter' }
   }
   
   return { valid: true }
@@ -85,6 +92,11 @@ export async function POST(req: NextRequest) {
 
     if (!propertyId) {
       return NextResponse.json({ error: 'propertyId is required' }, { status: 400 })
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     // Initialize OpenAI
@@ -113,7 +125,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Clean SQL (remove markdown code blocks if present)
-    let cleanSQL = generatedSQL
+    const cleanSQL = generatedSQL
       .replace(/```sql\n?/gi, '')
       .replace(/```\n?/g, '')
       .trim()
@@ -173,12 +185,14 @@ export async function POST(req: NextRequest) {
       }, { status: 500 })
     }
 
+    const resultRows = Array.isArray(data) ? data : []
+
     return NextResponse.json({
       success: true,
       question,
       sql: cleanSQL,
-      data: data || [],
-      rowCount: data?.length || 0,
+      data: resultRows,
+      rowCount: resultRows.length,
     })
 
   } catch (error) {

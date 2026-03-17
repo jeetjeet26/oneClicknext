@@ -1,18 +1,86 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { createClient as createServerClient } from '@/utils/supabase/server'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
+import { hasValidCronAuth } from '@/utils/services/api-helpers'
+import { evaluateForgeStudioDraftReadiness } from '@/utils/services/forgestudio-draft-readiness'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
+class PublishProviderError extends Error {
+  retryable: boolean
+
+  constructor(message: string, retryable: boolean) {
+    super(message)
+    this.name = 'PublishProviderError'
+    this.retryable = retryable
+  }
+}
+
+function isRetryableProviderStatus(status: number): boolean {
+  return status === 429 || status >= 500
+}
+
+function inferRetryableError(message: string): boolean {
+  const normalized = message.toLowerCase()
+  return (
+    normalized.includes('timeout') ||
+    normalized.includes('temporar') ||
+    normalized.includes('rate limit') ||
+    normalized.includes('too many requests') ||
+    normalized.includes('network') ||
+    normalized.includes('fetch failed') ||
+    normalized.includes('connection reset') ||
+    normalized.includes('service unavailable')
+  )
+}
+
+function toPublishProviderError(error: unknown, fallback: string): PublishProviderError {
+  if (error instanceof PublishProviderError) {
+    return error
+  }
+
+  if (error instanceof Error) {
+    return new PublishProviderError(error.message, inferRetryableError(error.message))
+  }
+
+  return new PublishProviderError(fallback, true)
+}
+
+function buildProviderError(status: number, message: string): PublishProviderError {
+  return new PublishProviderError(message, isRetryableProviderStatus(status))
+}
+
 // POST - Publish content to connected social accounts
 export async function POST(request: NextRequest) {
   try {
+    const isCronRequest = hasValidCronAuth(request)
+    let userId: string | null = null
+    const requestId = request.headers.get('x-request-id')
+
+    if (!isCronRequest) {
+      const authClient = await createServerClient()
+      const {
+        data: { user },
+        error: authError,
+      } = await authClient.auth.getUser()
+
+      if (authError || !user) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      }
+      userId = user.id
+    }
+
     const body = await request.json()
     const { draftId, connectionIds } = body
+    const uniqueConnectionIds = Array.isArray(connectionIds)
+      ? [...new Set(connectionIds.filter((value): value is string => typeof value === 'string' && value.length > 0))]
+      : []
 
-    if (!draftId || !connectionIds?.length) {
+    if (!draftId || uniqueConnectionIds.length === 0) {
       return NextResponse.json(
         { error: 'Draft ID and connection IDs required' },
         { status: 400 }
@@ -33,16 +101,65 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    if (!draft.property_id) {
+      return NextResponse.json(
+        { error: 'Draft is missing property association' },
+        { status: 400 }
+      )
+    }
+
+    if (userId) {
+      const access = await validatePropertyAccess(userId, draft.property_id)
+      if (!access.authorized) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+      }
+    }
+
+    if (draft.status !== 'approved' && draft.status !== 'scheduled') {
+      return NextResponse.json(
+        { error: 'Only approved or scheduled drafts can be published' },
+        { status: 409 }
+      )
+    }
+
+    const readiness = evaluateForgeStudioDraftReadiness({
+      caption: draft.caption,
+      platform: draft.platform,
+      contentType: draft.content_type,
+      mediaType: draft.media_type,
+      mediaUrls: draft.media_urls,
+    })
+    if (!readiness.isReady) {
+      return NextResponse.json(
+        {
+          error: 'Draft is not ready to publish',
+          blockers: readiness.blockers,
+        },
+        { status: 409 }
+      )
+    }
+
+    if (!isCronRequest && draft.status === 'scheduled' && draft.scheduled_for) {
+      const scheduledForMs = Date.parse(draft.scheduled_for)
+      if (!Number.isNaN(scheduledForMs) && scheduledForMs > Date.now()) {
+        return NextResponse.json(
+          { error: 'Scheduled drafts cannot be published before their scheduled time' },
+          { status: 409 }
+        )
+      }
+    }
+
     // Get the connections
     const { data: connections, error: connError } = await supabase
       .from('social_connections')
       .select('*')
-      .in('id', connectionIds)
+      .in('id', uniqueConnectionIds)
       .eq('is_active', true)
+      .eq('property_id', draft.property_id)
 
-    if (connError || !connections?.length) {
+    if (connError || !connections?.length || connections.length !== uniqueConnectionIds.length) {
       return NextResponse.json(
-        { error: 'No valid connections found' },
+        { error: 'Some requested connections are invalid, inactive, or belong to another property' },
         { status: 400 }
       )
     }
@@ -51,14 +168,58 @@ export async function POST(request: NextRequest) {
       connectionId: string
       platform: string
       success: boolean
+      retryable?: boolean
+      skipped?: boolean
       postId?: string
       postUrl?: string
       error?: string
     }> = []
+    const initiatedVia = isCronRequest ? 'cron' : 'operator'
 
     // Publish to each connection
     for (const connection of connections) {
+      const actionTimestamp = new Date().toISOString()
       try {
+        const { data: existingPublished } = await supabase
+          .from('published_posts')
+          .select('platform_post_id, platform_post_url')
+          .eq('content_draft_id', draftId)
+          .eq('social_connection_id', connection.id)
+          .eq('status', 'published')
+          .limit(1)
+          .maybeSingle()
+
+        if (existingPublished) {
+          // Keep an explicit audit trail for no-op idempotent publish calls.
+          await supabase
+            .from('published_posts')
+            .insert({
+              content_draft_id: draftId,
+              social_connection_id: connection.id,
+              platform_post_id: existingPublished.platform_post_id,
+              platform_post_url: existingPublished.platform_post_url,
+              status: 'skipped',
+              engagement_metrics: {
+                action: 'publish',
+                result: 'skipped_existing_post',
+                initiated_via: initiatedVia,
+                initiated_by: userId,
+                request_id: requestId,
+                attempted_at: actionTimestamp,
+              },
+            })
+
+          results.push({
+            connectionId: connection.id,
+            platform: connection.platform,
+            success: true,
+            skipped: true,
+            postId: existingPublished.platform_post_id || undefined,
+            postUrl: existingPublished.platform_post_url || undefined,
+          })
+          continue
+        }
+
         let result: { postId: string; postUrl: string }
 
         switch (connection.platform) {
@@ -72,7 +233,7 @@ export async function POST(request: NextRequest) {
             result = await publishToLinkedIn(connection, draft)
             break
           default:
-            throw new Error(`Unsupported platform: ${connection.platform}`)
+            throw new PublishProviderError(`Unsupported platform: ${connection.platform}`, false)
         }
 
         // Save published post record
@@ -84,7 +245,15 @@ export async function POST(request: NextRequest) {
             platform_post_id: result.postId,
             platform_post_url: result.postUrl,
             status: 'published',
-            published_at: new Date().toISOString()
+            published_at: actionTimestamp,
+            engagement_metrics: {
+              action: 'publish',
+              result: 'published',
+              initiated_via: initiatedVia,
+              initiated_by: userId,
+              request_id: requestId,
+              attempted_at: actionTimestamp,
+            },
           })
 
         // Update last used
@@ -102,7 +271,8 @@ export async function POST(request: NextRequest) {
         })
 
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Publishing failed'
+        const publishError = toPublishProviderError(error, 'Publishing failed')
+        const errorMessage = publishError.message
         
         // Update error count
         await supabase
@@ -120,13 +290,23 @@ export async function POST(request: NextRequest) {
             content_draft_id: draftId,
             social_connection_id: connection.id,
             status: 'failed',
-            error_message: errorMessage
+            error_message: errorMessage,
+            engagement_metrics: {
+              action: 'publish',
+              result: 'failed',
+              retryable: publishError.retryable,
+              initiated_via: initiatedVia,
+              initiated_by: userId,
+              request_id: requestId,
+              attempted_at: actionTimestamp,
+            },
           })
 
         results.push({
           connectionId: connection.id,
           platform: connection.platform,
           success: false,
+          retryable: publishError.retryable,
           error: errorMessage
         })
       }
@@ -134,6 +314,8 @@ export async function POST(request: NextRequest) {
 
     // Update draft status if all published successfully
     const allSuccess = results.every(r => r.success)
+    const retryableFailures = results.filter(r => !r.success && r.retryable)
+    const permanentFailures = results.filter(r => !r.success && !r.retryable)
     if (allSuccess) {
       await supabase
         .from('content_drafts')
@@ -146,6 +328,8 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       success: allSuccess,
+      retryableFailureCount: retryableFailures.length,
+      permanentFailureCount: permanentFailures.length,
       results
     })
 
@@ -172,6 +356,9 @@ async function publishToInstagram(
   }
 ): Promise<{ postId: string; postUrl: string }> {
   const { account_id, page_access_token } = connection
+  if (!account_id || !page_access_token) {
+    throw new PublishProviderError('Instagram connection is missing required credentials', false)
+  }
   const fullCaption = `${draft.caption}\n\n${draft.hashtags.map(h => `#${h}`).join(' ')}`
 
   // Instagram requires media to be hosted at a public URL
@@ -198,8 +385,11 @@ async function publishToInstagram(
   
   const containerData = await containerRes.json()
   
-  if (containerData.error) {
-    throw new Error(containerData.error.message || 'Failed to create media container')
+  if (!containerRes.ok || containerData.error) {
+    throw buildProviderError(
+      containerRes.status,
+      containerData.error?.message || 'Failed to create media container'
+    )
   }
 
   const containerId = containerData.id
@@ -219,8 +409,11 @@ async function publishToInstagram(
 
   const publishData = await publishRes.json()
 
-  if (publishData.error) {
-    throw new Error(publishData.error.message || 'Failed to publish to Instagram')
+  if (!publishRes.ok || publishData.error) {
+    throw buildProviderError(
+      publishRes.status,
+      publishData.error?.message || 'Failed to publish to Instagram'
+    )
   }
 
   return {
@@ -243,6 +436,9 @@ async function publishToFacebook(
   }
 ): Promise<{ postId: string; postUrl: string }> {
   const { page_id, page_access_token } = connection
+  if (!page_id || !page_access_token) {
+    throw new PublishProviderError('Facebook connection is missing required credentials', false)
+  }
   const message = `${draft.caption}\n\n${draft.hashtags.map(h => `#${h}`).join(' ')}`
 
   let endpoint = `https://graph.facebook.com/v18.0/${page_id}/feed`
@@ -265,8 +461,11 @@ async function publishToFacebook(
 
   const data = await res.json()
 
-  if (data.error) {
-    throw new Error(data.error.message || 'Failed to publish to Facebook')
+  if (!res.ok || data.error) {
+    throw buildProviderError(
+      res.status,
+      data.error?.message || 'Failed to publish to Facebook'
+    )
   }
 
   return {
@@ -289,10 +488,28 @@ async function publishToLinkedIn(
   }
 ): Promise<{ postId: string; postUrl: string }> {
   const { account_id, access_token } = connection
+  if (!account_id || !access_token) {
+    throw new PublishProviderError('LinkedIn connection is missing required credentials', false)
+  }
   const text = `${draft.caption}\n\n${draft.hashtags.map(h => `#${h}`).join(' ')}`
 
+  type LinkedInPostData = {
+    author: string
+    lifecycleState: 'PUBLISHED'
+    specificContent: {
+      'com.linkedin.ugc.ShareContent': {
+        shareCommentary: { text: string }
+        shareMediaCategory: 'IMAGE' | 'NONE'
+        media?: Array<{ status: 'READY'; originalUrl: string }>
+      }
+    }
+    visibility: {
+      'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC'
+    }
+  }
+
   // LinkedIn v2 API - UGC Posts
-  const postData: any = {
+  const postData: LinkedInPostData = {
     author: `urn:li:person:${account_id}`,
     lifecycleState: 'PUBLISHED',
     specificContent: {
@@ -330,7 +547,10 @@ async function publishToLinkedIn(
   const data = await res.json()
 
   if (!res.ok || data.error) {
-    throw new Error(data.message || data.error || 'Failed to publish to LinkedIn')
+    throw buildProviderError(
+      res.status,
+      data.message || data.error || 'Failed to publish to LinkedIn'
+    )
   }
 
   const postId = data.id

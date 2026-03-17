@@ -2,15 +2,34 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/utils/supabase/admin';
 import { createClient } from '@/utils/supabase/server';
 import OpenAI from 'openai';
+import { validatePropertyAccess } from '@/utils/services/auth-guard';
 
 export async function POST(req: NextRequest) {
   try {
     // Auth check
     const supabaseAuth = await createClient();
-    const { data: { user } } = await supabaseAuth.auth.getUser();
+    const { data: { user }, error: authError } = await supabaseAuth.auth.getUser();
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
 
     const { messages, propertyId, conversationId, isHumanMessage } = await req.json();
-    const lastMessage = messages[messages.length - 1].content;
+
+    if (!propertyId) {
+      return NextResponse.json({ error: 'propertyId is required' }, { status: 400 });
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId);
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
+    const messageList = Array.isArray(messages) ? messages : [];
+    const last = messageList[messageList.length - 1];
+    if (!last || typeof last.content !== 'string') {
+      return NextResponse.json({ error: 'messages are required' }, { status: 400 });
+    }
+    const lastMessage = last.content;
 
     // 1. Initialize Clients
     const supabase = createServiceClient();
@@ -19,7 +38,12 @@ export async function POST(req: NextRequest) {
     // 2. Get or create conversation
     let activeConversationId = conversationId;
     
-    if (!activeConversationId && user) {
+    if (!activeConversationId) {
+      const userEmail = typeof user.email === 'string' ? user.email : null;
+      if (!userEmail) {
+        return NextResponse.json({ error: 'User email is required' }, { status: 400 });
+      }
+
       // Check if there's a lead for this user (or create one for demo purposes)
       let leadId: string | null = null;
       
@@ -28,7 +52,7 @@ export async function POST(req: NextRequest) {
         .from('leads')
         .select('id')
         .eq('property_id', propertyId)
-        .eq('email', user.email)
+        .eq('email', userEmail)
         .single();
       
       if (existingLead) {
@@ -39,7 +63,7 @@ export async function POST(req: NextRequest) {
           .from('leads')
           .insert({
             property_id: propertyId,
-            email: user.email,
+            email: userEmail,
             first_name: user.user_metadata?.full_name?.split(' ')[0] || 'User',
             last_name: user.user_metadata?.full_name?.split(' ').slice(1).join(' ') || '',
             source: 'AI Chat',
@@ -114,7 +138,7 @@ export async function POST(req: NextRequest) {
 
     // 5. Search Knowledge Base (Supabase Vector)
     const { data: documents, error: matchError } = await supabase.rpc('match_documents', {
-      query_embedding: embedding,
+      query_embedding: embedding as unknown as string,
       match_threshold: 0.5,
       match_count: 3,
       filter_property: propertyId
@@ -168,7 +192,7 @@ export async function POST(req: NextRequest) {
       model: 'gpt-4o-mini',
       messages: [
         { role: 'system', content: systemPrompt },
-        ...messages.map((m: { role: string; content: string }) => ({ 
+        ...messageList.map((m: { role: string; content: string }) => ({ 
           role: m.role as 'user' | 'assistant', 
           content: m.content 
         }))

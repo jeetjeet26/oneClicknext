@@ -4,12 +4,23 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
+import {
+  badRequest,
+  forbidden,
+  serverError,
+  unauthorized,
+  hasValidCronAuth,
+} from '@/utils/services/api-helpers'
+import { createRequestContext } from '@/utils/services/request-context'
+import type { Json } from '@/types/supabase'
 import { OpenAIConnector } from '@/utils/propertyaudit/openai-connector'
 import { ClaudeConnector } from '@/utils/propertyaudit/claude-connector'
 import { OpenAINaturalConnector } from '@/utils/propertyaudit/openai-natural-connector'
 import { ClaudeNaturalConnector } from '@/utils/propertyaudit/claude-natural-connector'
-import { scoreAnswer, aggregateScores, type ConnectorContext, type ScoredAnswer, type WebSearchSource, type AnswerEntity } from '@/utils/propertyaudit'
+import { scoreAnswer, aggregateScores, type AnswerBlock, type ConnectorContext, type ScoredAnswer, type WebSearchSource, type AnswerEntity } from '@/utils/propertyaudit'
 
 /**
  * Extract citations from web search sources by matching domains to entities
@@ -124,14 +135,73 @@ function inferDomainFromName(name: string): string | null {
   return null
 }
 
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'Unknown error'
+}
+
+async function markRunFailed(
+  supabase: ReturnType<typeof createServiceClient>,
+  runId: string,
+  message: string
+) {
+  await supabase
+    .from('geo_runs')
+    .update({
+      status: 'failed',
+      error_message: message,
+      finished_at: new Date().toISOString(),
+    })
+    .eq('id', runId)
+}
+
+async function claimQueuedRun(
+  supabase: ReturnType<typeof createServiceClient>,
+  runId: string,
+  enableWebSearch: boolean
+) {
+  const { data, error } = await supabase
+    .from('geo_runs')
+    .update({
+      status: 'running',
+      uses_web_search: enableWebSearch,
+      error_message: null,
+      finished_at: null,
+      progress_pct: 0,
+      current_query_index: 0,
+    })
+    .eq('id', runId)
+    .eq('status', 'queued')
+    .select('*')
+    .maybeSingle()
+
+  if (error) {
+    throw error
+  }
+
+  return data
+}
+
 // POST: Process a queued run
 export async function POST(req: NextRequest) {
+  const ctx = createRequestContext(req, '/api/propertyaudit/process')
+  ctx.logStart()
+
   try {
+    const isInternal = hasValidCronAuth(req)
+
+    const supabaseAuth = await createClient()
+    const { data: { user }, error: authError } = await supabaseAuth.auth.getUser()
+    if (!isInternal && (authError || !user)) {
+      ctx.logSuccess(401, { reason: 'unauthorized' })
+      return unauthorized(ctx.responseHeaders)
+    }
+
     const body = await req.json()
     const { runId } = body
 
     if (!runId) {
-      return NextResponse.json({ error: 'runId required' }, { status: 400 })
+      ctx.logSuccess(400, { reason: 'missing_run_id' })
+      return badRequest('runId required', ctx.responseHeaders)
     }
 
     const supabase = createServiceClient()
@@ -144,320 +214,373 @@ export async function POST(req: NextRequest) {
       .single()
 
     if (runError || !run) {
-      return NextResponse.json({ error: 'Run not found' }, { status: 404 })
+      ctx.logSuccess(404, { reason: 'run_not_found', runId })
+      return NextResponse.json(
+        { error: 'Run not found' },
+        { status: 404, headers: ctx.responseHeaders }
+      )
     }
 
-    if (run.status !== 'queued') {
-      return NextResponse.json({ error: 'Run is not in queued state' }, { status: 400 })
+    if (!isInternal && user) {
+      const access = await validatePropertyAccess(user.id, run.property_id)
+      if (!access.authorized) {
+        ctx.logSuccess(403, {
+          reason: 'forbidden_property_access',
+          runId,
+          propertyId: run.property_id,
+          userId: user.id,
+        })
+        return forbidden(ctx.responseHeaders)
+      }
     }
 
-    // Update status to running and set web search flag
     const enableWebSearch = process.env.GEO_ENABLE_WEB_SEARCH === 'true'
-    await supabase
-      .from('geo_runs')
-      .update({ 
-        status: 'running',
-        uses_web_search: enableWebSearch
-      })
-      .eq('id', runId)
+    const claimedRun = await claimQueuedRun(supabase, runId, enableWebSearch)
 
-    // Get queries for the property
-    const { data: queries, error: queriesError } = await supabase
-      .from('geo_queries')
-      .select('*')
-      .eq('property_id', run.property_id)
-      .eq('is_active', true)
-
-    if (queriesError || !queries || queries.length === 0) {
-      await supabase
+    if (!claimedRun) {
+      const { data: latestRun } = await supabase
         .from('geo_runs')
-        .update({ 
-          status: 'failed', 
-          error_message: 'No active queries found',
-          finished_at: new Date().toISOString()
-        })
+        .select('status')
         .eq('id', runId)
-      return NextResponse.json({ error: 'No active queries found' }, { status: 400 })
-    }
-
-    // Get property for brand context with full location details
-    const { data: property } = await supabase
-      .from('properties')
-      .select('name, address, website_url')
-      .eq('id', run.property_id)
-      .single()
-
-    if (!property) {
-      await supabase
-        .from('geo_runs')
-        .update({ 
-          status: 'failed', 
-          error_message: 'Property not found',
-          finished_at: new Date().toISOString()
-        })
-        .eq('id', runId)
-      return NextResponse.json({ error: 'Property not found' }, { status: 404 })
-    }
-
-    // Extract location details from JSONB address
-    const address = property.address as { city?: string; state?: string; street?: string; zip?: string } | null
-    const propertyLocation = {
-      city: address?.city || '',
-      state: address?.state || '',
-      fullAddress: [address?.street, address?.city, address?.state, address?.zip]
-        .filter(Boolean)
-        .join(', '),
-      websiteUrl: property.website_url || ''
-    }
-
-    console.log(`[geo] Property location context: ${propertyLocation.city}, ${propertyLocation.state}`)
-
-    // Get property config for domains
-    let { data: config } = await supabase
-      .from('geo_property_config')
-      .select('domains, competitor_domains')
-      .eq('property_id', run.property_id)
-      .single()
-
-    // Auto-create config if it doesn't exist
-    if (!config) {
-      console.log(`[geo] No config found for property ${run.property_id}, creating default config`)
-      
-      // Try to infer domain from property name
-      const inferredDomain = inferDomainFromName(property.name)
-      
-      const { data: newConfig, error: createError } = await supabase
-        .from('geo_property_config')
-        .insert({
-          property_id: run.property_id,
-          domains: inferredDomain ? [inferredDomain] : [],
-          competitor_domains: [],
-          is_active: true
-        })
-        .select()
         .single()
 
-      if (!createError && newConfig) {
-        config = newConfig
-        console.log(`[geo] Created config with domain: ${inferredDomain || 'none'}`)
-      }
+      return NextResponse.json(
+        {
+          error: 'Run already started or finished',
+          currentStatus: latestRun?.status || run.status,
+        },
+        { status: 409, headers: ctx.responseHeaders }
+      )
     }
 
-    // Build brand context
-    const brandName = property.name
-    const brandDomains = config?.domains || []
-    const competitors = config?.competitor_domains || []
+    try {
+      // Get queries for the property
+      const { data: queries, error: queriesError } = await supabase
+        .from('geo_queries')
+        .select('*')
+        .eq('property_id', claimedRun.property_id)
+        .eq('is_active', true)
 
-    console.log(`[geo] Brand context: name="${brandName}", domains=[${brandDomains.join(', ')}]`)
-    console.log(`[geo] Web search: ${enableWebSearch ? 'enabled' : 'disabled'}`)
+      if (queriesError || !queries || queries.length === 0) {
+        await markRunFailed(supabase, runId, 'No active queries found')
+        ctx.logSuccess(400, { reason: 'no_active_queries', runId, propertyId: claimedRun.property_id })
+        return badRequest('No active queries found', ctx.responseHeaders)
+      }
 
-    const auditModeRaw = (process.env.GEO_AUDIT_MODE || 'structured').toLowerCase()
-    const auditMode = auditModeRaw === 'natural' ? 'natural' : 'structured'
-    console.log(`[geo] Audit mode: ${auditMode}`)
+      // Get property for brand context with full location details
+      const { data: property } = await supabase
+        .from('properties')
+        .select('name, address, website_url')
+        .eq('id', claimedRun.property_id)
+        .single()
 
-    // Get connectors
-    const structuredConnector =
-      run.surface === 'openai' ? new OpenAIConnector() : new ClaudeConnector()
-    const naturalConnector =
-      run.surface === 'openai' ? new OpenAINaturalConnector() : new ClaudeNaturalConnector()
+      if (!property) {
+        await markRunFailed(supabase, runId, 'Property not found')
+        ctx.logSuccess(404, { reason: 'property_not_found', runId, propertyId: claimedRun.property_id })
+        return NextResponse.json(
+          { error: 'Property not found' },
+          { status: 404, headers: ctx.responseHeaders }
+        )
+      }
 
-    const results: ScoredAnswer[] = []
-    const errors: string[] = []
+      // Extract location details from JSONB address
+      const address = property.address as { city?: string; state?: string; street?: string; zip?: string } | null
+      const propertyLocation = {
+        city: address?.city || '',
+        state: address?.state || '',
+        fullAddress: [address?.street, address?.city, address?.state, address?.zip]
+          .filter(Boolean)
+          .join(', '),
+        websiteUrl: property.website_url || ''
+      }
 
-    // Process each query (respect per-query run_count)
-    for (const query of queries) {
-      const runCount = Math.max(1, Number(query.run_count || 1))
-      for (let attempt = 0; attempt < runCount; attempt += 1) {
-        try {
-          const context: ConnectorContext = {
-            queryId: query.id,
-            queryText: query.text,
-            brandName,
-            brandDomains,
-            competitors,
-            propertyLocation
-          }
+      console.log(`[geo] Property location context: ${propertyLocation.city}, ${propertyLocation.state}`)
 
-          let answer = null as any
-          let raw: unknown = null
-          let naturalResponseText: string | null = null
-          let analysisMethod: string = 'structured'
-          let searchSources: WebSearchSource[] = []
+      // Get property config for domains
+      let { data: config } = await supabase
+        .from('geo_property_config')
+        .select('domains, competitor_domains')
+        .eq('property_id', claimedRun.property_id)
+        .single()
 
-          if (auditMode === 'natural') {
-            analysisMethod = 'natural_two_phase'
-
-          // Phase 1: Natural response (no property context is provided to the model)
-          const natural = await naturalConnector.getNaturalResponse(context.queryText)
-          naturalResponseText = natural.text
-          searchSources = natural.searchSources || []
-
-          // Phase 2: Analyze response and extract structured GEO fields
-          const analyzed = await naturalConnector.analyzeResponse({
-            naturalResponse: natural.text,
-            brandName: context.brandName,
-            queryText: context.queryText,
-            expectedCity: context.propertyLocation?.city,
-            expectedState: context.propertyLocation?.state,
-            brandDomains: context.brandDomains,
-            competitors: context.competitors,
+      // Auto-create config if it doesn't exist
+      if (!config) {
+        console.log(`[geo] No config found for property ${claimedRun.property_id}, creating default config`)
+        
+        // Try to infer domain from property name
+        const inferredDomain = inferDomainFromName(property.name)
+        
+        const { data: newConfig, error: createError } = await supabase
+          .from('geo_property_config')
+          .insert({
+            property_id: claimedRun.property_id,
+            domains: inferredDomain ? [inferredDomain] : [],
+            competitor_domains: [],
+            is_active: true
           })
+          .select()
+          .single()
 
-            answer = analyzed.envelope.answer_block
-            raw = {
-              audit_mode: auditMode,
-              phase1: natural.rawResponse,
-              phase2: analyzed.raw,
-              analysis: analyzed.envelope.analysis,
-              searchSources: searchSources, // Store for reference
-            }
-            
-            console.log(`[geo] Query "${context.queryText.slice(0, 50)}..." - ${searchSources.length} web sources found`)
-          } else {
-            const structured = await structuredConnector.invoke(context)
-            answer = structured.answer
-            raw = structured.raw
-          }
-
-          // Score the answer
-          const scoredAnswer = scoreAnswer(answer, {
-            brandName,
-            brandDomains,
-            competitors
-          })
-
-          results.push(scoredAnswer)
-
-          // Insert answer
-          const { data: insertedAnswer, error: answerError } = await supabase
-            .from('geo_answers')
-            .insert({
-              run_id: runId,
-              query_id: query.id,
-              presence: scoredAnswer.presence,
-              llm_rank: scoredAnswer.llmRank,
-              link_rank: scoredAnswer.linkRank,
-              sov: scoredAnswer.sov,
-              flags: scoredAnswer.flags,
-              answer_summary: answer.answer_summary,
-              ordered_entities: answer.ordered_entities,
-              raw_json: raw,
-              natural_response: naturalResponseText,
-              analysis_method: analysisMethod
-            })
-            .select()
-            .single()
-
-          if (answerError) {
-            console.error('Error inserting answer:', answerError)
-            continue
-          }
-
-          // Insert citations - combine LLM-extracted citations with web search sources
-          const llmCitations = answer.citations.map((citation: { url: string; domain: string; entity_ref?: string }) => ({
-            answer_id: insertedAnswer.id,
-            url: citation.url,
-            domain: citation.domain,
-            is_brand_domain: brandDomains.some((bd: string) => 
-              citation.domain.includes(bd.replace(/^www\./, ''))
-            ),
-            entity_ref: citation.entity_ref || null
-          }))
-
-        // Extract citations from web search sources by matching to entities
-          const webSearchCitations = extractCitationsFromSources(
-            searchSources,
-            answer.ordered_entities || [],
-            brandDomains
-          ).map(citation => ({
-            answer_id: insertedAnswer.id,
-            url: citation.url,
-            domain: citation.domain,
-            is_brand_domain: citation.is_brand_domain,
-            entity_ref: citation.entity_ref || null
-          }))
-
-        // Combine and dedupe by URL
-          const allCitations = [...llmCitations]
-          const existingUrls = new Set(llmCitations.map((c: { url: string }) => c.url))
-          for (const wsCitation of webSearchCitations) {
-            if (!existingUrls.has(wsCitation.url)) {
-              allCitations.push(wsCitation)
-              existingUrls.add(wsCitation.url)
-            }
-          }
-
-          if (allCitations.length > 0) {
-            console.log(`[geo] Inserting ${allCitations.length} citations (${llmCitations.length} from LLM, ${webSearchCitations.length} from web search)`)
-            await supabase
-              .from('geo_citations')
-              .insert(allCitations)
-          }
-        } catch (error) {
-          console.error(`Error processing query ${query.id}:`, error)
-          errors.push(`Query ${query.id}: ${error instanceof Error ? error.message : 'Unknown error'}`)
+        if (!createError && newConfig) {
+          config = newConfig
+          console.log(`[geo] Created config with domain: ${inferredDomain || 'none'}`)
         }
       }
+
+      // Build brand context
+      const brandName = property.name
+      const brandDomains = config?.domains || []
+      const competitors = config?.competitor_domains || []
+
+      console.log(`[geo] Brand context: name="${brandName}", domains=[${brandDomains.join(', ')}]`)
+      console.log(`[geo] Web search: ${enableWebSearch ? 'enabled' : 'disabled'}`)
+
+      const auditModeRaw = (process.env.GEO_AUDIT_MODE || 'structured').toLowerCase()
+      const auditMode = auditModeRaw === 'natural' ? 'natural' : 'structured'
+      console.log(`[geo] Audit mode: ${auditMode}`)
+
+      // Get connectors
+      const structuredConnector =
+        claimedRun.surface === 'openai' ? new OpenAIConnector() : new ClaudeConnector()
+      const naturalConnector =
+        claimedRun.surface === 'openai' ? new OpenAINaturalConnector() : new ClaudeNaturalConnector()
+
+      const results: ScoredAnswer[] = []
+      const errors: string[] = []
+      const totalAttempts = queries.reduce(
+        (sum, query) => sum + Math.max(1, Number(query.run_count || 1)),
+        0
+      )
+      let processedAttempts = 0
+
+      // Process each query (respect per-query run_count)
+      for (const query of queries) {
+        const runCount = Math.max(1, Number(query.run_count || 1))
+        for (let attempt = 0; attempt < runCount; attempt += 1) {
+          try {
+            const context: ConnectorContext = {
+              queryId: query.id,
+              queryText: query.text,
+              brandName,
+              brandDomains,
+              competitors,
+              propertyLocation
+            }
+
+            let answer: AnswerBlock = {
+              citations: [],
+              ordered_entities: [],
+              answer_summary: '',
+              notes: { flags: [] },
+            }
+            let raw: unknown = null
+            let naturalResponseText: string | null = null
+            let analysisMethod: string = 'structured'
+            let searchSources: WebSearchSource[] = []
+
+            if (auditMode === 'natural') {
+              analysisMethod = 'natural_two_phase'
+
+              // Phase 1: Natural response (no property context is provided to the model)
+              const natural = await naturalConnector.getNaturalResponse(context.queryText)
+              naturalResponseText = natural.text
+              searchSources = natural.searchSources || []
+
+              // Phase 2: Analyze response and extract structured GEO fields
+              const analyzed = await naturalConnector.analyzeResponse({
+                naturalResponse: natural.text,
+                brandName: context.brandName,
+                queryText: context.queryText,
+                expectedCity: context.propertyLocation?.city,
+                expectedState: context.propertyLocation?.state,
+                brandDomains: context.brandDomains,
+                competitors: context.competitors,
+              })
+
+              answer = analyzed.envelope.answer_block
+              raw = {
+                audit_mode: auditMode,
+                phase1: natural.rawResponse,
+                phase2: analyzed.raw,
+                analysis: analyzed.envelope.analysis,
+                searchSources: searchSources, // Store for reference
+              }
+              
+              console.log(`[geo] Query "${context.queryText.slice(0, 50)}..." - ${searchSources.length} web sources found`)
+            } else {
+              const structured = await structuredConnector.invoke(context)
+              answer = structured.answer
+              raw = structured.raw
+            }
+
+            // Score the answer
+            const scoredAnswer = scoreAnswer(answer, {
+              brandName,
+              brandDomains,
+              competitors
+            })
+
+            results.push(scoredAnswer)
+
+            // Insert answer
+            const { data: insertedAnswer, error: answerError } = await supabase
+              .from('geo_answers')
+              .insert({
+                run_id: runId,
+                query_id: query.id,
+                presence: scoredAnswer.presence,
+                llm_rank: scoredAnswer.llmRank,
+                link_rank: scoredAnswer.linkRank,
+                sov: scoredAnswer.sov,
+                flags: scoredAnswer.flags as unknown as Json,
+                answer_summary: answer.answer_summary,
+                ordered_entities: answer.ordered_entities as unknown as Json,
+                raw_json: raw as Json,
+                natural_response: naturalResponseText,
+                analysis_method: analysisMethod
+              })
+              .select()
+              .single()
+
+            if (answerError) {
+              console.error('Error inserting answer:', answerError)
+              continue
+            }
+
+            // Insert citations - combine LLM-extracted citations with web search sources
+            const llmCitations = answer.citations.map((citation) => ({
+              answer_id: insertedAnswer.id,
+              url: citation.url,
+              domain: citation.domain,
+              is_brand_domain: brandDomains.some((bd: string) => 
+                citation.domain.includes(bd.replace(/^www\./, ''))
+              ),
+              entity_ref: citation.entity_ref || null
+            }))
+
+            // Extract citations from web search sources by matching to entities
+            const webSearchCitations = extractCitationsFromSources(
+              searchSources,
+              answer.ordered_entities || [],
+              brandDomains
+            ).map(citation => ({
+              answer_id: insertedAnswer.id,
+              url: citation.url,
+              domain: citation.domain,
+              is_brand_domain: citation.is_brand_domain,
+              entity_ref: citation.entity_ref || null
+            }))
+
+            // Combine and dedupe by URL
+            const allCitations = [...llmCitations]
+            const existingUrls = new Set(llmCitations.map((c: { url: string }) => c.url))
+            for (const wsCitation of webSearchCitations) {
+              if (!existingUrls.has(wsCitation.url)) {
+                allCitations.push(wsCitation)
+                existingUrls.add(wsCitation.url)
+              }
+            }
+
+            if (allCitations.length > 0) {
+              console.log(`[geo] Inserting ${allCitations.length} citations (${llmCitations.length} from LLM, ${webSearchCitations.length} from web search)`)
+              await supabase
+                .from('geo_citations')
+                .insert(allCitations)
+            }
+          } catch (error) {
+            console.error(`Error processing query ${query.id}:`, error)
+            errors.push(`Query ${query.id}: ${getErrorMessage(error)}`)
+          } finally {
+            processedAttempts += 1
+            await supabase
+              .from('geo_runs')
+              .update({
+                current_query_index: processedAttempts,
+                progress_pct:
+                  totalAttempts > 0
+                    ? Math.min(99, Math.round((processedAttempts / totalAttempts) * 100))
+                    : 0,
+              })
+              .eq('id', runId)
+          }
+        }
+      }
+
+      // Calculate aggregate scores
+      const aggregate = aggregateScores(results)
+
+      // Build score breakdown from results
+      const breakdownTotals = results.reduce((acc, r) => ({
+        position: acc.position + (r.breakdown?.position || 0),
+        link: acc.link + (r.breakdown?.link || 0),
+        sov: acc.sov + (r.breakdown?.sov || 0),
+        accuracy: acc.accuracy + (r.breakdown?.accuracy || 0)
+      }), { position: 0, link: 0, sov: 0, accuracy: 0 })
+
+      const breakdown = results.length > 0 ? {
+        position: breakdownTotals.position / results.length,
+        link: breakdownTotals.link / results.length,
+        sov: breakdownTotals.sov / results.length,
+        accuracy: breakdownTotals.accuracy / results.length
+      } : { position: 0, link: 0, sov: 0, accuracy: 0 }
+
+      // Insert score
+      await supabase
+        .from('geo_scores')
+        .insert({
+          run_id: runId,
+          overall_score: aggregate.overallScore,
+          visibility_pct: aggregate.visibilityPct,
+          avg_llm_rank: aggregate.avgLlmRank,
+          avg_link_rank: aggregate.avgLinkRank,
+          avg_sov: aggregate.avgSov,
+          breakdown: breakdown as unknown as Json,
+          query_scores: results.map(r => ({
+            score: r.score,
+            presence: r.presence,
+            breakdown: r.breakdown
+          })) as unknown as Json
+        })
+
+      // Update run status
+      const finalStatus = errors.length > 0 && results.length === 0 ? 'failed' : 'completed'
+      await supabase
+        .from('geo_runs')
+        .update({
+          status: finalStatus,
+          finished_at: new Date().toISOString(),
+          error_message: errors.length > 0 ? errors.join('; ') : null,
+          progress_pct: 100,
+          current_query_index: totalAttempts,
+        })
+        .eq('id', runId)
+
+      ctx.logSuccess(200, {
+        runId,
+        processed: results.length,
+        errors: errors.length,
+        score: aggregate.overallScore,
+      })
+      return NextResponse.json(
+        {
+          success: true,
+          runId,
+          processed: results.length,
+          errors: errors.length,
+          score: aggregate.overallScore,
+          visibility: aggregate.visibilityPct,
+        },
+        { headers: ctx.responseHeaders }
+      )
+    } catch (error) {
+      const message = getErrorMessage(error)
+      await markRunFailed(supabase, runId, message)
+      ctx.logError(500, error, { operation: 'process_propertyaudit_run', runId })
+      return serverError(error, ctx.responseHeaders)
     }
-
-    // Calculate aggregate scores
-    const aggregate = aggregateScores(results)
-
-    // Build score breakdown from results
-    const breakdownTotals = results.reduce((acc, r) => ({
-      position: acc.position + (r.breakdown?.position || 0),
-      link: acc.link + (r.breakdown?.link || 0),
-      sov: acc.sov + (r.breakdown?.sov || 0),
-      accuracy: acc.accuracy + (r.breakdown?.accuracy || 0)
-    }), { position: 0, link: 0, sov: 0, accuracy: 0 })
-
-    const breakdown = results.length > 0 ? {
-      position: breakdownTotals.position / results.length,
-      link: breakdownTotals.link / results.length,
-      sov: breakdownTotals.sov / results.length,
-      accuracy: breakdownTotals.accuracy / results.length
-    } : { position: 0, link: 0, sov: 0, accuracy: 0 }
-
-    // Insert score
-    await supabase
-      .from('geo_scores')
-      .insert({
-        run_id: runId,
-        overall_score: aggregate.overallScore,
-        visibility_pct: aggregate.visibilityPct,
-        avg_llm_rank: aggregate.avgLlmRank,
-        avg_link_rank: aggregate.avgLinkRank,
-        avg_sov: aggregate.avgSov,
-        breakdown,
-        query_scores: results.map(r => ({
-          score: r.score,
-          presence: r.presence,
-          breakdown: r.breakdown
-        }))
-      })
-
-    // Update run status
-    const finalStatus = errors.length > 0 && results.length === 0 ? 'failed' : 'completed'
-    await supabase
-      .from('geo_runs')
-      .update({
-        status: finalStatus,
-        finished_at: new Date().toISOString(),
-        error_message: errors.length > 0 ? errors.join('; ') : null
-      })
-      .eq('id', runId)
-
-    return NextResponse.json({
-      success: true,
-      runId,
-      processed: results.length,
-      errors: errors.length,
-      score: aggregate.overallScore,
-      visibility: aggregate.visibilityPct
-    })
   } catch (error) {
-    console.error('PropertyAudit Process Error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    ctx.logError(500, error, { operation: 'propertyaudit_process_entry' })
+    return serverError(error, ctx.responseHeaders)
   }
 }
 

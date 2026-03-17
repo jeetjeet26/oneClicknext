@@ -130,6 +130,13 @@ function FormalBrandBookCard({ brandAsset, propertyId }: any) {
         </div>
       </div>
 
+      {brandAsset.statusMessage && (
+        <p className="mb-4 text-sm text-gray-500">{brandAsset.statusMessage}</p>
+      )}
+      {brandAsset.nextRecommendedAction && (
+        <p className="mb-4 text-xs text-gray-500">{brandAsset.nextRecommendedAction}</p>
+      )}
+
       {/* Footer */}
       <div className="flex items-center justify-between pt-4 border-t border-gray-100">
         <div className="text-xs text-gray-500">
@@ -151,7 +158,7 @@ function FormalBrandBookCard({ brandAsset, propertyId }: any) {
               className="text-sm text-indigo-600 hover:text-indigo-700 font-medium flex items-center gap-1"
             >
               <Download className="w-3.5 h-3.5" />
-              Download
+              Export
             </a>
           )}
         </div>

@@ -1,6 +1,6 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
-import { NextRequest, NextResponse } from 'next/server'
+import { NextResponse } from 'next/server'
 
 type MetaAdAccount = {
   id: string
@@ -14,13 +14,22 @@ type MetaAdAccount = {
   linked_property_name?: string | null
 }
 
+type MetaGraphAdAccount = {
+  id: string
+  name: string
+  account_status: number
+  currency: string
+  timezone_name: string
+  amount_spent: string
+}
+
 /**
  * GET /api/integrations/meta-ads/accounts
  * 
  * Fetches Meta (Facebook/Instagram) ad accounts using direct API call.
  * Returns accounts with their connection status.
  */
-export async function GET(request: NextRequest) {
+export async function GET() {
   const supabaseAuth = await createClient()
   
   const { data: { user }, error: authError } = await supabaseAuth.auth.getUser()
@@ -43,8 +52,10 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'No organization found' }, { status: 400 })
     }
 
+    const userRole = profile.role ?? ''
+
     // Check if user has permission
-    if (!['admin', 'manager'].includes(profile.role)) {
+    if (!['admin', 'manager'].includes(userRole)) {
       return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 })
     }
 
@@ -80,7 +91,8 @@ export async function GET(request: NextRequest) {
       .eq('org_id', profile.org_id)
 
     // Map accounts with their connection status
-    const accountsWithStatus: MetaAdAccount[] = accounts.map((account: any) => {
+    const typedAccounts = accounts as MetaGraphAdAccount[]
+    const accountsWithStatus: MetaAdAccount[] = typedAccounts.map((account) => {
       // Remove 'act_' prefix for storage
       const accountId = account.id.replace('act_', '')
       

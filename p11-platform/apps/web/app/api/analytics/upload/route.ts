@@ -1,9 +1,9 @@
 import { createClient } from '@/utils/supabase/server'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { NextRequest, NextResponse } from 'next/server'
 import { 
   parseMarketingCSV, 
   parseExtendedReport,
-  extractDateRangeFromFilename,
   type MarketingPlatform,
   type ParsedMarketingRow,
   type ExtendedMetricsRow
@@ -88,17 +88,11 @@ export async function POST(request: NextRequest): Promise<NextResponse<UploadRes
       )
     }
 
-    // Verify user has access to this property
-    const { data: property, error: propError } = await supabase
-      .from('properties')
-      .select('id, name, org_id')
-      .eq('id', propertyId)
-      .single()
-
-    if (propError || !property) {
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
       return NextResponse.json(
-        { success: false, message: 'Property not found', errors: ['Invalid property ID or access denied'] },
-        { status: 404 }
+        { success: false, message: 'Forbidden', errors: ['Property access denied'] },
+        { status: 403 }
       )
     }
 
@@ -402,6 +396,11 @@ export async function GET(request: NextRequest) {
 
   if (!propertyId) {
     return NextResponse.json({ error: 'propertyId is required' }, { status: 400 })
+  }
+
+  const access = await validatePropertyAccess(user.id, propertyId)
+  if (!access.authorized) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
   try {

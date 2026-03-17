@@ -2,8 +2,37 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { createAdminClient } from '@/utils/supabase/admin'
 import { GoogleGenerativeAI } from '@google/generative-ai'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || '')
+
+type DraftSection = {
+  step: number
+  name: string
+  data: Record<string, unknown>
+  version?: number
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null
+  }
+  return value as Record<string, unknown>
+}
+
+function asDraftSection(value: unknown): DraftSection | null {
+  const record = asRecord(value)
+  if (!record) return null
+  if (typeof record.step !== 'number' || typeof record.name !== 'string') return null
+  const data = asRecord(record.data) ?? {}
+  const version = typeof record.version === 'number' ? record.version : undefined
+  return {
+    step: record.step,
+    name: record.name,
+    data,
+    version,
+  }
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -22,17 +51,25 @@ export async function POST(req: NextRequest) {
 
     const supabaseAdmin = createAdminClient()
 
-    const { data: brand } = await supabaseAdmin
+    const { data: brandRaw } = await supabaseAdmin
       .from('property_brand_assets')
       .select('*')
       .eq('id', brandAssetId)
       .single()
 
-    if (!brand || !brand.draft_section) {
+    const brandRecord = asRecord(brandRaw)
+    const draftSection = asDraftSection(brandRecord?.draft_section)
+    const propertyId = typeof brandRecord?.property_id === 'string' ? brandRecord.property_id : null
+
+    if (!brandRaw || !draftSection || !propertyId) {
       return NextResponse.json({ error: 'No draft section to regenerate' }, { status: 400 })
     }
 
-    const draftSection = brand.draft_section
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
     const currentData = draftSection.data
 
     // Build regeneration prompt
@@ -45,15 +82,15 @@ ${JSON.stringify(currentData, null, 2)}
 ${hint ? `User feedback: "${hint}"` : 'Generate a new, different version.'}
 
 Context:
-${JSON.stringify(brand.conversation_summary)}
+${JSON.stringify(brandRaw.conversation_summary)}
 
 Approved sections:
 ${JSON.stringify({
-  introduction: brand.section_1_introduction,
-  positioning: brand.section_2_positioning,
-  targetAudience: brand.section_3_target_audience,
-  personas: brand.section_4_personas,
-  nameStory: brand.section_5_name_story
+  introduction: brandRaw.section_1_introduction,
+  positioning: brandRaw.section_2_positioning,
+  targetAudience: brandRaw.section_3_target_audience,
+  personas: brandRaw.section_4_personas,
+  nameStory: brandRaw.section_5_name_story
 })}
 
 Generate a NEW version for the ${draftSection.name} section. Make it distinct from the previous version.
@@ -71,16 +108,18 @@ Output ONLY valid JSON matching the same structure.
     const regeneratedData = JSON.parse(jsonMatch[0])
 
     // Update draft section with new version
+    const updatePayload: Record<string, unknown> = {
+      draft_section: {
+        ...draftSection,
+        data: regeneratedData,
+        version: (draftSection.version || 1) + 1,
+        regenerated_at: new Date().toISOString()
+      }
+    }
+
     await supabaseAdmin
       .from('property_brand_assets')
-      .update({
-        draft_section: {
-          ...draftSection,
-          data: regeneratedData,
-          version: (draftSection.version || 1) + 1,
-          regenerated_at: new Date().toISOString()
-        }
-      })
+      .update(updatePayload as never)
       .eq('id', brandAssetId)
 
     return NextResponse.json({

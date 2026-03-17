@@ -192,7 +192,7 @@ oneClick/
 ### Prerequisites
 - Node.js 20+
 - Python 3.13+
-- Supabase project (with pgvector enabled)
+- Docker for local Supabase or a hosted Supabase project (with pgvector enabled)
 - OpenAI API key
 - Google Cloud project (for Vertex AI)
 - Anthropic API key (for Claude)
@@ -257,30 +257,79 @@ YELP_FUSION_API_KEY=your-key
 SERPAPI_API_KEY=your-key
 ```
 
-### 4. Run Database Migrations
+### 4. Initialize Local Supabase
 
 ```bash
-cd supabase
-# Apply all migrations via Supabase CLI or dashboard
+cd p11-platform
+npm run supabase:reset
 ```
+
+This will:
+
+- Start local Supabase
+- Apply all repo migrations
+- Seed deterministic local fixtures
+- Generate `p11-platform/.env.local` so local services use the local database
+
+Seeded local login:
+
+- Email: `local-admin@p11.test`
+- Password: `local-dev-password`
 
 ### 5. Start Services
 
-**Terminal 1 - Data Engine:**
 ```bash
-cd services/data-engine
-python main.py
-# Runs on http://localhost:8000
+cd p11-platform
+npm run local:start
 ```
 
-**Terminal 2 - Web App:**
-```bash
-cd apps/web
-npm run dev
-# Runs on http://localhost:3000
-```
+This starts:
+
+- The web app on `http://localhost:3000`
+- The data engine on `http://localhost:8000`
+- Local Supabase on `http://127.0.0.1:54321`
 
 Visit **http://localhost:3000** and sign up to get started!
+
+### 6. Run Local Smoke Coverage
+
+```bash
+cd p11-platform
+npm run smoke:local
+```
+
+This exercises seeded local flows on the shared local stack.
+
+### 7. Inspect Recent Cron Runs
+
+After local cron-backed routes execute, recent runs are visible through `GET /api/cron/runs?limit=20` for signed-in users.
+
+### 8. Public Widget Hardening
+
+The main anonymous LumaLeasing/widget routes now have explicit validation and rate-limit coverage for local `P0`.
+
+### 9. Failure-Injection Coverage
+
+Targeted local failure-injection coverage now verifies:
+
+- provider-down booking behavior when Google Calendar event creation fails
+- service-down cron behavior when the data-engine scraping service is unavailable
+
+---
+
+## P0 Roadmap Context
+
+The active roadmap is local-first. Local `P0` closure is now complete, so the next work should come from deferred hosted production-hardening tasks or `P1`.
+
+Next sequence:
+
+1. Resume deferred hosted-only `P0` work such as CI/app-gate enforcement, hosted deployment gates, staging verification, or monitoring.
+
+Sentry, hosted monitoring, PITR, staging, CI, and cutover planning remain valid, but they are deferred hosted-ops work rather than local `P0` blockers.
+
+The Python data-engine and ETL layer have not been abandoned; they are simply not the pacing item for `P0` unless they block those local tasks.
+
+See [`docs/P0_LOCAL_CONTINUATION_CONTEXT.md`](docs/P0_LOCAL_CONTINUATION_CONTEXT.md) and [`p11-platform/README.md`](p11-platform/README.md) for the current interpretation.
 
 ---
 

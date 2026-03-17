@@ -16,6 +16,15 @@ interface SearchResult {
   meta?: string
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  return value as Record<string, unknown>
+}
+
+function asString(value: unknown): string {
+  return typeof value === 'string' ? value : ''
+}
+
 export async function GET(request: NextRequest) {
   const supabaseAuth = await createClient()
   
@@ -100,8 +109,9 @@ export async function GET(request: NextRequest) {
       .limit(50) // Get more to filter by content
 
     const matchingDocs = documents?.filter(doc => {
-      const title = (doc.metadata as any)?.title || ''
-      const source = (doc.metadata as any)?.source || ''
+      const metadata = asRecord(doc.metadata)
+      const title = asString(metadata?.title)
+      const source = asString(metadata?.source)
       const content = doc.content || ''
       return (
         title.toLowerCase().includes(query) ||
@@ -112,11 +122,11 @@ export async function GET(request: NextRequest) {
 
     for (const doc of matchingDocs) {
       const property = properties?.find(p => p.id === doc.property_id)
-      const metadata = doc.metadata as any
+      const metadata = asRecord(doc.metadata)
       results.push({
         id: `doc-${doc.id}`,
         type: 'document',
-        title: metadata?.title || metadata?.source || 'Document',
+        title: asString(metadata?.title) || asString(metadata?.source) || 'Document',
         subtitle: doc.content.substring(0, 60) + '...',
         url: `/dashboard/luma`,
         meta: property?.name,
@@ -139,19 +149,19 @@ export async function GET(request: NextRequest) {
       .limit(20)
 
     const matchingConvos = conversations?.filter(conv => {
-      const lead = conv.leads as any
+      const lead = asRecord(conv.leads)
       if (!lead) return false
-      const name = `${lead.first_name} ${lead.last_name}`.toLowerCase()
+      const name = `${asString(lead.first_name)} ${asString(lead.last_name)}`.toLowerCase()
       return name.includes(query)
     }).slice(0, 3) || []
 
     for (const conv of matchingConvos) {
       const property = properties?.find(p => p.id === conv.property_id)
-      const lead = conv.leads as any
+      const lead = asRecord(conv.leads)
       results.push({
         id: `conv-${conv.id}`,
         type: 'conversation',
-        title: `Conversation with ${lead?.first_name} ${lead?.last_name}`,
+        title: `Conversation with ${asString(lead?.first_name)} ${asString(lead?.last_name)}`,
         subtitle: `${conv.channel} channel`,
         url: `/dashboard/luma?conversation=${conv.id}`,
         meta: property?.name,

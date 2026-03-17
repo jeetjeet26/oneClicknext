@@ -106,8 +106,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No organization found' }, { status: 400 })
     }
 
+    const userRole = profile.role ?? ''
+
     // Check if user has permission
-    if (!['admin', 'manager'].includes(profile.role)) {
+    if (!['admin', 'manager'].includes(userRole)) {
       return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 })
     }
 
@@ -216,8 +218,10 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: 'No organization found' }, { status: 400 })
     }
 
+    const userRole = profile.role ?? ''
+
     // Check if user has permission
-    if (!['admin', 'manager'].includes(profile.role)) {
+    if (!['admin', 'manager'].includes(userRole)) {
       return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 })
     }
 
@@ -298,8 +302,10 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: 'No organization found' }, { status: 400 })
     }
 
+    const userRole = profile.role ?? ''
+
     // Check if user has permission
-    if (!['admin', 'manager'].includes(profile.role)) {
+    if (!['admin', 'manager'].includes(userRole)) {
       return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 })
     }
 

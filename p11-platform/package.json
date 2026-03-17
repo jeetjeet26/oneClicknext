@@ -3,7 +3,14 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "supabase:status": "npx supabase status",
+    "supabase:start": "npx supabase start && node ./scripts/write-local-supabase-env.mjs",
+    "supabase:stop": "npx supabase stop",
+    "supabase:reset": "npx supabase db reset --local --yes && node ./scripts/write-local-supabase-env.mjs",
+    "supabase:env:local": "node ./scripts/write-local-supabase-env.mjs",
+    "local:start": "bash ./scripts/local-dev.sh",
+    "smoke:local": "cd ./apps/web && npm run test:smoke"
   },
   "keywords": [],
   "author": "",

@@ -5,7 +5,14 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
-import { aggregateAnswersByQuery } from '@/utils/propertyaudit/reporting'
+import { createServiceClient } from '@/utils/supabase/admin'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
+import type { Database } from '@/types/supabase'
+import {
+  aggregateAnswersByQuery,
+  type ReportAnswer,
+  type ReportQuery,
+} from '@/utils/propertyaudit/reporting'
 
 export interface GeoQuery {
   id: string
@@ -19,6 +26,24 @@ export interface GeoQuery {
   createdAt: string
   updatedAt: string
 }
+
+const QUERY_TYPES = new Set<GeoQuery['type']>([
+  'branded',
+  'category',
+  'comparison',
+  'local',
+  'faq',
+  'voice_search',
+])
+
+function isValidQueryType(value: string): value is GeoQuery['type'] {
+  return QUERY_TYPES.has(value as GeoQuery['type'])
+}
+
+type GeoQueryInsert = Database['public']['Tables']['geo_queries']['Insert']
+type PropertyAuditQueryClient =
+  | Awaited<ReturnType<typeof createClient>>
+  | ReturnType<typeof createServiceClient>
 
 // GET: List queries for a property
 export async function GET(req: NextRequest) {
@@ -40,7 +65,18 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'propertyId required' }, { status: 400 })
     }
 
-    let query = supabase
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
+    if (type && !isValidQueryType(type)) {
+      return NextResponse.json({ error: 'Invalid query type filter' }, { status: 400 })
+    }
+
+    const serviceClient = createServiceClient()
+
+    let query = serviceClient
       .from('geo_queries')
       .select('*')
       .eq('property_id', propertyId)
@@ -51,7 +87,7 @@ export async function GET(req: NextRequest) {
       query = query.eq('is_active', true)
     }
 
-    if (type) {
+    if (type && isValidQueryType(type)) {
       query = query.eq('type', type)
     }
 
@@ -63,10 +99,10 @@ export async function GET(req: NextRequest) {
     }
 
     // Fetch latest answers for performance data if requested
-    let answersMap = new Map<string, any>()
+    const answersMap = new Map<string, ReportAnswer>()
     if (includePerformance && queries && queries.length > 0) {
       // Get latest completed runs for this property
-      const { data: latestRuns } = await supabase
+      const { data: latestRuns } = await serviceClient
         .from('geo_runs')
         .select('id')
         .eq('property_id', propertyId)
@@ -78,26 +114,32 @@ export async function GET(req: NextRequest) {
         const runIds = latestRuns.map(r => r.id)
         
         // Fetch answers for these runs
-        const { data: answers } = await supabase
+        const { data: answers } = await serviceClient
           .from('geo_answers')
           .select('query_id, presence, llm_rank, link_rank, sov, flags, created_at, geo_queries (id, text, type)')
           .in('run_id', runIds)
 
-        const aggregated = aggregateAnswersByQuery(answers || [], queries, new Map())
+        const aggregated = aggregateAnswersByQuery(
+          (answers || []) as unknown as ReportAnswer[],
+          (queries || []) as unknown as ReportQuery[],
+          new Map()
+        )
         aggregated.forEach(answer => {
-          if (!answersMap.has(answer.query_id)) {
-            answersMap.set(answer.query_id, answer)
+          const queryId = answer.query_id
+          if (!queryId) return
+          if (!answersMap.has(queryId)) {
+            answersMap.set(queryId, answer)
           }
         })
       }
     }
 
     // Fetch AI Overview visibility data (for ALL property queries, independent of runs)
-    let aiOverviewMap = new Map<string, { visible: boolean; sourceUrl?: string | null }>()
+    const aiOverviewMap = new Map<string, { visible: boolean; sourceUrl?: string | null }>()
     if (includePerformance) {
       // Fetch all AI Overview data for this property, not limited to specific query IDs
       // This allows AI Overview visibility to work independently of historical audit runs
-      const { data: aiOverviews } = await supabase
+      const { data: aiOverviews } = await serviceClient
         .from('geo_ai_overviews')
         .select('query_id, visible, source_url, observed_at')
         .eq('property_id', propertyId)
@@ -169,12 +211,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'propertyId required' }, { status: 400 })
     }
 
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
+    const serviceClient = createServiceClient()
+
     // Generate query panel from property data
     if (generateFromProperty) {
-      const queries = await generateQueryPanel(supabase, propertyId)
+      const queries = await generateQueryPanel(serviceClient, propertyId)
       
       // Insert all generated queries
-      const { data: insertedQueries, error: insertError } = await supabase
+      const { data: insertedQueries, error: insertError } = await serviceClient
         .from('geo_queries')
         .insert(queries)
         .select()
@@ -193,7 +242,7 @@ export async function POST(req: NextRequest) {
 
     // Create single query
     if (query) {
-      const { data: newQuery, error: insertError } = await supabase
+      const { data: newQuery, error: insertError } = await serviceClient
         .from('geo_queries')
         .insert({
           property_id: propertyId,
@@ -241,7 +290,24 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: 'queryId required' }, { status: 400 })
     }
 
-    const { error } = await supabase
+    const serviceClient = createServiceClient()
+
+    const { data: existingQuery, error: queryError } = await serviceClient
+      .from('geo_queries')
+      .select('property_id')
+      .eq('id', queryId)
+      .single()
+
+    if (queryError || !existingQuery) {
+      return NextResponse.json({ error: 'Query not found' }, { status: 404 })
+    }
+
+    const access = await validatePropertyAccess(user.id, existingQuery.property_id)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
+    const { error } = await serviceClient
       .from('geo_queries')
       .delete()
       .eq('id', queryId)
@@ -259,7 +325,10 @@ export async function DELETE(req: NextRequest) {
 }
 
 // Generate query panel from property data
-async function generateQueryPanel(supabase: Awaited<ReturnType<typeof createClient>>, propertyId: string) {
+async function generateQueryPanel(
+  supabase: PropertyAuditQueryClient,
+  propertyId: string
+): Promise<GeoQueryInsert[]> {
   // Fetch property data
   const { data: property, error: propertyError } = await supabase
     .from('properties')
@@ -310,15 +379,7 @@ async function generateQueryPanel(supabase: Awaited<ReturnType<typeof createClie
     .limit(1)
     .single()
 
-  const queries: Array<{
-    property_id: string
-    text: string
-    type: string
-    geo: string | null
-    weight: number
-    run_count: number
-    is_active: boolean
-  }> = []
+  const queries: GeoQueryInsert[] = []
 
   const propertyName = property.name
   const amenities = property.amenities || []
@@ -482,15 +543,7 @@ function generateAmenityCombinations(
   city: string,
   propertyId: string,
   cityState: string
-): Array<{
-  property_id: string
-  text: string
-  type: string
-  geo: string
-  weight: number
-  run_count: number
-  is_active: boolean
-}> {
+): GeoQueryInsert[] {
   const combos: Array<{ text: string; weight: number }> = []
   
   // Normalize amenity names

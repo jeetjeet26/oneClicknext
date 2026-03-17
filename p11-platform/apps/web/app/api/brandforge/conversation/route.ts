@@ -2,9 +2,35 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import OpenAI from 'openai'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || '')
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || '' })
+
+type ConversationRole = 'user' | 'assistant'
+type ConversationMessage = {
+  role: ConversationRole
+  content: string
+}
+
+function normalizeConversationHistory(input: unknown): ConversationMessage[] {
+  if (!Array.isArray(input)) return []
+  return input
+    .filter((item): item is { role?: unknown; content?: unknown } => typeof item === 'object' && item !== null)
+    .map((item) => {
+      const role: ConversationRole = item.role === 'assistant' ? 'assistant' : 'user'
+      return {
+        role,
+        content: typeof item.content === 'string' ? item.content : '',
+      }
+    })
+    .filter((item) => item.content.length > 0)
+}
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message
+  return String(error)
+}
 
 const BRAND_STRATEGIST_SYSTEM_PROMPT = `
 You are a world-class brand strategist specializing in multifamily real estate.
@@ -56,10 +82,15 @@ export async function POST(req: NextRequest) {
       competitiveContext 
     } = await req.json()
     
-    let conversationHistory = initialHistory
+    let conversationHistory = normalizeConversationHistory(initialHistory)
 
     if (!propertyId) {
       return NextResponse.json({ error: 'propertyId required' }, { status: 400 })
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     // Get or create brand asset
@@ -83,7 +114,7 @@ export async function POST(req: NextRequest) {
         // Use existing brand and restore conversation
         brand = existingBrand
         if (existingBrand.gemini_conversation_history) {
-          conversationHistory = existingBrand.gemini_conversation_history
+          conversationHistory = normalizeConversationHistory(existingBrand.gemini_conversation_history)
         }
       } else {
         // Create new brand asset
@@ -110,22 +141,26 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Brand asset not found' }, { status: 404 })
     }
 
+    const brandAccess = await validatePropertyAccess(user.id, brand.property_id)
+    if (!brandAccess.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
     // Build system context
     const contextPrompt = competitiveContext ? `
 Current Market Context:
 - Competitors analyzed: ${competitiveContext.competitorCount}
 - Market gaps: ${competitiveContext.marketGaps?.join(', ')}
-- Dominant positioning: ${competitiveContext.competitors?.slice(0, 3).map((c: any) => c.brandVoice).join(', ')}
+- Dominant positioning: ${competitiveContext.competitors?.slice(0, 3).map((c: { brandVoice?: string }) => c.brandVoice).join(', ')}
     ` : ''
 
     const systemPrompt = BRAND_STRATEGIST_SYSTEM_PROMPT + contextPrompt
 
     let aiResponse = ''
-    let extractedData = null
-    let usedModel = 'openai' // Track which model was used
+    let extractedData: Record<string, unknown> | null = null
 
     // Helper function to call Gemini 3
-    async function callGemini3(prompt: string, history?: any[]) {
+    async function callGemini3(prompt: string, history?: ConversationMessage[]) {
       const model = genAI.getGenerativeModel({ 
         model: 'gemini-3-pro-preview', // Gemini 3 Pro
         systemInstruction: systemPrompt
@@ -133,7 +168,7 @@ Current Market Context:
       
       if (history && history.length > 0) {
         const chat = model.startChat({
-          history: history.map((msg: any) => ({
+          history: history.map((msg) => ({
             role: msg.role === 'assistant' ? 'model' : 'user',
             parts: [{ text: msg.content }]
           }))
@@ -162,14 +197,12 @@ Current Market Context:
       // Try Gemini 3 first, fall back to OpenAI
       try {
         aiResponse = await callGemini3(initialPrompt)
-        usedModel = 'gemini-3-pro'
-      } catch (geminiError: any) {
-        console.warn('Gemini 3 failed, falling back to OpenAI:', geminiError?.message || geminiError)
+      } catch (geminiError: unknown) {
+        console.warn('Gemini 3 failed, falling back to OpenAI:', getErrorMessage(geminiError))
         aiResponse = await callOpenAI([
           { role: 'system', content: systemPrompt },
           { role: 'user', content: initialPrompt }
         ])
-        usedModel = 'openai-gpt4o'
       }
       
       if (!aiResponse) {
@@ -191,18 +224,16 @@ Current Market Context:
       try {
         const historyForChat = conversationHistory.slice(0, -1) // Exclude the message we just added
         aiResponse = await callGemini3(message, historyForChat)
-        usedModel = 'gemini-3-pro'
-      } catch (geminiError: any) {
-        console.warn('Gemini 3 failed, falling back to OpenAI:', geminiError?.message || geminiError)
+      } catch (geminiError: unknown) {
+        console.warn('Gemini 3 failed, falling back to OpenAI:', getErrorMessage(geminiError))
         const messages = [
           { role: 'system' as const, content: systemPrompt },
-          ...conversationHistory.map((msg: any) => ({
+          ...conversationHistory.map((msg) => ({
             role: msg.role as 'user' | 'assistant',
             content: msg.content
           }))
         ]
         aiResponse = await callOpenAI(messages)
-        usedModel = 'openai-gpt4o'
       }
 
       if (!aiResponse) {
@@ -228,7 +259,7 @@ Current Market Context:
     }
 
     // Update brand asset
-    const updates: any = {
+    const updates: Record<string, unknown> = {
       gemini_conversation_history: conversationHistory
     }
 
@@ -241,7 +272,7 @@ Current Market Context:
 
     await supabase
       .from('property_brand_assets')
-      .update(updates)
+      .update(updates as never)
       .eq('id', brand.id)
 
     return NextResponse.json({

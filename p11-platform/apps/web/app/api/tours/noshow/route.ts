@@ -7,40 +7,36 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { processTourNoShows, getNoShowStats } from '@/utils/services/tour-noshow'
-
-// Verify CRON secret for automated calls
-function verifyCronSecret(request: NextRequest): boolean {
-  const cronSecret = process.env.CRON_SECRET
-  
-  // If no CRON_SECRET is set, allow all requests (development mode)
-  if (!cronSecret) {
-    console.warn('[TourNoShow] CRON_SECRET not configured - allowing request')
-    return true
-  }
-  
-  const authHeader = request.headers.get('authorization')
-  if (authHeader === `Bearer ${cronSecret}`) {
-    return true
-  }
-  
-  // Also check x-cron-secret header
-  const cronHeader = request.headers.get('x-cron-secret')
-  return cronHeader === cronSecret
-}
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
+import { finishCronJobRun, startCronJobRun } from '@/utils/services/cron-job-runs'
+import {
+  badRequest,
+  forbidden,
+  hasValidCronAuth,
+  serverError,
+  unauthorized,
+  validateCronAuth,
+} from '@/utils/services/api-helpers'
+import { createRequestContext } from '@/utils/services/request-context'
 
 /**
  * POST - Process tour no-shows and send follow-up messages
  * Called by CRON job hourly
  */
 export async function POST(request: NextRequest) {
-  // Verify this is a legitimate CRON request
-  if (!verifyCronSecret(request)) {
-    console.error('[TourNoShow] Unauthorized CRON attempt')
-    return NextResponse.json(
-      { error: 'Unauthorized' },
-      { status: 401 }
-    )
+  const ctx = createRequestContext(request, '/api/tours/noshow')
+  ctx.logStart()
+
+  const authError = validateCronAuth(request)
+  if (authError) {
+    ctx.logSuccess(401, { reason: 'invalid_cron_secret' })
+    return unauthorized(ctx.responseHeaders)
   }
+
+  const run = await startCronJobRun({
+    jobName: 'tours-noshow',
+    requestId: ctx.requestId,
+  })
 
   try {
     console.log('[TourNoShow] Starting no-show processing...')
@@ -51,22 +47,39 @@ export async function POST(request: NextRequest) {
     const duration = Date.now() - startTime
     console.log(`[TourNoShow] Completed in ${duration}ms`)
 
-    return NextResponse.json({
-      success: true,
-      ...result,
-      duration_ms: duration,
-      timestamp: new Date().toISOString(),
+    ctx.logSuccess(200, {
+      processed: result.processed,
+      failed: result.failed,
+      durationMs: duration,
     })
-  } catch (error) {
-    console.error('[TourNoShow] Error processing no-shows:', error)
+
+    await finishCronJobRun(run, {
+      status: 'success',
+      summary: {
+        processed: result.processed,
+        markedNoShow: result.markedNoShow,
+        followupsSent: result.followupsSent,
+        failed: result.failed,
+      },
+    })
+
     return NextResponse.json(
-      { 
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
+      {
+        success: true,
+        ...result,
+        duration_ms: duration,
         timestamp: new Date().toISOString(),
       },
-      { status: 500 }
+      { headers: ctx.responseHeaders }
     )
+  } catch (error) {
+    ctx.logError(500, error, { operation: 'process_tour_noshows' })
+    await finishCronJobRun(run, {
+      status: 'failed',
+      error: error instanceof Error ? error.message : 'Unknown error',
+      summary: { operation: 'process_tour_noshows' },
+    })
+    return serverError(error, ctx.responseHeaders)
   }
 }
 
@@ -74,18 +87,19 @@ export async function POST(request: NextRequest) {
  * GET - Get no-show statistics for dashboard
  */
 export async function GET(request: NextRequest) {
+  const ctx = createRequestContext(request, '/api/tours/noshow')
+  ctx.logStart()
+
   try {
     const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
     
-    // Allow unauthenticated for CRON health checks
-    const isCronRequest = verifyCronSecret(request)
+    // Allow unauthenticated only for valid cron-auth callers.
+    const isCronRequest = hasValidCronAuth(request)
     
-    if (!user && !isCronRequest) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
+    if ((authError || !user) && !isCronRequest) {
+      ctx.logSuccess(401, { reason: 'unauthorized' })
+      return unauthorized(ctx.responseHeaders)
     }
 
     // Get property ID from query params
@@ -93,28 +107,36 @@ export async function GET(request: NextRequest) {
     const propertyId = searchParams.get('propertyId')
 
     if (!propertyId) {
-      return NextResponse.json(
-        { error: 'Property ID is required' },
-        { status: 400 }
-      )
+      ctx.logSuccess(400, { reason: 'missing_property_id' })
+      return badRequest('Property ID is required', ctx.responseHeaders)
+    }
+
+    if (user) {
+      const access = await validatePropertyAccess(user.id, propertyId)
+      if (!access.authorized) {
+        ctx.logSuccess(403, { reason: 'forbidden', propertyId, userId: user.id })
+        return forbidden(ctx.responseHeaders)
+      }
     }
 
     const stats = await getNoShowStats(propertyId)
 
-    return NextResponse.json({
-      success: true,
-      stats,
-      timestamp: new Date().toISOString(),
+    ctx.logSuccess(200, {
+      propertyId,
+      totalNoShows: stats.totalNoShows,
     })
-  } catch (error) {
-    console.error('[TourNoShow] Error getting stats:', error)
+
     return NextResponse.json(
-      { 
-        success: false, 
-        error: error instanceof Error ? error.message : 'Unknown error' 
+      {
+        success: true,
+        stats,
+        timestamp: new Date().toISOString(),
       },
-      { status: 500 }
+      { headers: ctx.responseHeaders }
     )
+  } catch (error) {
+    ctx.logError(500, error, { operation: 'fetch_tour_noshow_stats' })
+    return serverError(error, ctx.responseHeaders)
   }
 }
 

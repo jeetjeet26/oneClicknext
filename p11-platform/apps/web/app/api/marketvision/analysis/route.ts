@@ -5,6 +5,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
 export interface MarketSummary {
   competitorCount: number
@@ -63,6 +64,11 @@ export async function GET(req: NextRequest) {
 
     if (!propertyId) {
       return NextResponse.json({ error: 'propertyId required' }, { status: 400 })
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     // Use bedrooms filter if provided, otherwise fall back to unitType for backward compatibility
@@ -309,6 +315,10 @@ async function getPriceTrends(
   const dailyData: Record<string, { rents: number[]; mins: number[]; maxes: number[] }> = {}
 
   history?.forEach(record => {
+    if (typeof record.recorded_at !== 'string') {
+      return
+    }
+
     const date = new Date(record.recorded_at).toISOString().split('T')[0]
     if (!dailyData[date]) {
       dailyData[date] = { rents: [], mins: [], maxes: [] }

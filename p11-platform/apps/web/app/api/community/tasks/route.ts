@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { createAdminClient } from '@/utils/supabase/admin'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
 export async function GET(request: NextRequest) {
   try {
@@ -15,6 +16,11 @@ export async function GET(request: NextRequest) {
     
     if (!propertyId) {
       return NextResponse.json({ error: 'propertyId is required' }, { status: 400 })
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     const adminClient = createAdminClient()
@@ -85,6 +91,25 @@ export async function PUT(request: NextRequest) {
 
     const adminClient = createAdminClient()
 
+    const { data: existingTask, error: existingTaskError } = await adminClient
+      .from('onboarding_tasks')
+      .select('id, property_id')
+      .eq('id', taskId)
+      .single()
+
+    if (existingTaskError || !existingTask) {
+      return NextResponse.json({ error: 'Task not found' }, { status: 404 })
+    }
+
+    if (typeof existingTask.property_id !== 'string') {
+      return NextResponse.json({ error: 'Task not found' }, { status: 404 })
+    }
+
+    const access = await validatePropertyAccess(user.id, existingTask.property_id)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
     const updates: Record<string, unknown> = {
       status,
     }
@@ -134,6 +159,11 @@ export async function POST(request: NextRequest) {
 
     if (!propertyId || !taskType || !taskName) {
       return NextResponse.json({ error: 'propertyId, taskType, and taskName are required' }, { status: 400 })
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     const adminClient = createAdminClient()

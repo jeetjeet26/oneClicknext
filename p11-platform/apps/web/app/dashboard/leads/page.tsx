@@ -38,7 +38,8 @@ import {
   Link2,
   Upload,
   Loader2,
-  SkipForward
+  SkipForward,
+  AlertTriangle
 } from 'lucide-react'
 import { formatDistanceToNow, format, parseISO, isAfter } from 'date-fns'
 import { TourScheduleModal } from '@/components/leads/TourScheduleModal'
@@ -51,7 +52,7 @@ type Lead = {
   last_name: string
   email: string
   phone: string | null
-  status: 'new' | 'contacted' | 'tour_booked' | 'leased' | 'lost'
+  status: 'new' | 'contacted' | 'tour_booked' | 'toured' | 'leased' | 'lost'
   source: string
   created_at: string
   score?: number | null
@@ -61,7 +62,7 @@ type Lead = {
   notes?: string | null
   last_contacted_at?: string | null
   external_crm_id?: string | null
-  crm_sync_status?: 'pending' | 'created' | 'linked' | 'failed' | 'skipped'
+  crm_sync_status?: 'pending' | 'retrying' | 'created' | 'linked' | 'failed' | 'skipped' | 'dead_lettered'
   crm_synced_at?: string | null
 }
 
@@ -125,6 +126,23 @@ type Workflow = {
       template_slug: string
     }>
   }
+  action_visibility?: {
+    counts: {
+      pending: number
+      skipped: number
+      retried: number
+      paused: number
+      failed: number
+    }
+    recent_issues: Array<{
+      id: string
+      step_number: number
+      action_type: string
+      status: 'failed' | 'skipped'
+      created_at: string | null
+      error_message: string | null
+    }>
+  }
 }
 
 type Tour = {
@@ -169,6 +187,12 @@ const STATUS_CONFIG = {
     color: 'bg-purple-100 text-purple-700 border-purple-200',
     icon: Calendar,
     bgLight: 'bg-purple-50'
+  },
+  toured: {
+    label: 'Toured',
+    color: 'bg-indigo-100 text-indigo-700 border-indigo-200',
+    icon: CheckCircle2,
+    bgLight: 'bg-indigo-50'
   },
   leased: { 
     label: 'Leased', 
@@ -238,13 +262,16 @@ function LeadRow({
   const config = STATUS_CONFIG[lead.status]
 
   const getCRMSyncBadge = () => {
-    if (!lead.crm_sync_status || lead.crm_sync_status === 'pending') return null
+    if (!lead.crm_sync_status) return null
     
     const syncConfig = {
+      pending: { icon: Loader2, color: 'text-amber-600', bg: 'bg-amber-50', label: 'Queued' },
+      retrying: { icon: Loader2, color: 'text-orange-600', bg: 'bg-orange-50', label: 'Retrying' },
       created: { icon: CheckCircle2, color: 'text-emerald-600', bg: 'bg-emerald-50', label: 'Synced' },
       linked: { icon: Link2, color: 'text-blue-600', bg: 'bg-blue-50', label: 'Linked' },
       failed: { icon: XCircle, color: 'text-red-600', bg: 'bg-red-50', label: 'Failed' },
       skipped: { icon: SkipForward, color: 'text-slate-400', bg: 'bg-slate-50', label: 'Skipped' },
+      dead_lettered: { icon: AlertTriangle, color: 'text-red-700', bg: 'bg-red-100', label: 'Dead Letter' },
     }
     
     const syncStatus = syncConfig[lead.crm_sync_status]
@@ -695,6 +722,43 @@ function WorkflowStatus({
           <p className="text-xs text-slate-400 pl-5">+{steps.length - 3} more steps</p>
         )}
       </div>
+
+      {workflow.action_visibility && (
+        <div className="mb-3 rounded-lg border border-slate-200 bg-white/70 p-3">
+          <div className="grid grid-cols-5 gap-2 text-center text-[11px]">
+            {([
+              ['Pending', workflow.action_visibility.counts.pending, 'text-slate-700 bg-slate-100'],
+              ['Skipped', workflow.action_visibility.counts.skipped, 'text-slate-600 bg-slate-100'],
+              ['Retried', workflow.action_visibility.counts.retried, 'text-indigo-700 bg-indigo-100'],
+              ['Paused', workflow.action_visibility.counts.paused, 'text-amber-700 bg-amber-100'],
+              ['Failed', workflow.action_visibility.counts.failed, 'text-red-700 bg-red-100'],
+            ] as const).map(([label, count, style]) => (
+              <div key={label}>
+                <p className="text-slate-500">{label}</p>
+                <p className={`mt-1 rounded px-1.5 py-0.5 font-semibold ${style}`}>{count}</p>
+              </div>
+            ))}
+          </div>
+
+          {workflow.action_visibility.recent_issues.length > 0 && (
+            <div className="mt-3 space-y-1.5">
+              {workflow.action_visibility.recent_issues.map((issue) => (
+                <div key={issue.id} className="flex items-start gap-2 rounded bg-amber-50 px-2 py-1.5">
+                  <AlertTriangle size={12} className="mt-0.5 text-amber-700" />
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-medium text-amber-900">
+                      Step {issue.step_number + 1} {issue.action_type} {issue.status}
+                    </p>
+                    {issue.error_message && (
+                      <p className="truncate text-[11px] text-amber-800">{issue.error_message}</p>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Actions */}
       {(workflow.status === 'active' || workflow.status === 'paused') && (
@@ -1951,7 +2015,8 @@ export default function LeadsPage() {
       const response = await fetch(`/api/leads?${params}`)
       
       if (!response.ok) {
-        throw new Error('Failed to fetch leads')
+        const errBody = await response.json().catch(() => ({}))
+        throw new Error(errBody?.error || `Failed to fetch leads (${response.status})`)
       }
       
       const result = await response.json()
@@ -2059,9 +2124,13 @@ export default function LeadsPage() {
     }
   }
 
-  // Get unsync leads (pending or failed)
+  // Get unsynced leads (pending, retrying, failed, or dead-lettered)
   const unsyncedLeads = data?.leads.filter(l => 
-    !l.external_crm_id || l.crm_sync_status === 'failed' || l.crm_sync_status === 'pending'
+    !l.external_crm_id ||
+    l.crm_sync_status === 'pending' ||
+    l.crm_sync_status === 'retrying' ||
+    l.crm_sync_status === 'failed' ||
+    l.crm_sync_status === 'dead_lettered'
   ) || []
 
   return (
@@ -2164,7 +2233,7 @@ export default function LeadsPage() {
                   {unsyncedLeads.length} lead{unsyncedLeads.length !== 1 ? 's' : ''} not synced to CRM
                 </p>
                 <p className="text-sm text-amber-700 mt-1">
-                  Select leads below and click "Sync to CRM" to push them to your connected CRM.
+                  Select leads below and click &quot;Sync to CRM&quot; to push them to your connected CRM.
                 </p>
               </div>
             </div>

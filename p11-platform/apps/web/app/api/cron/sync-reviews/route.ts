@@ -1,10 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import {
+  serverError,
+  unauthorized,
+} from '@/utils/services/api-helpers'
+import { finishCronJobRun, startCronJobRun } from '@/utils/services/cron-job-runs'
+import { createRequestContext } from '@/utils/services/request-context'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
+
+const SYNC_REVIEWS_CLAIM_WINDOW_MS = 60 * 60 * 1000
 
 async function fetchWithRetry(url: string, options: RequestInit, maxAttempts = 2): Promise<Response> {
   let lastError: Error | undefined
@@ -24,22 +32,64 @@ async function fetchWithRetry(url: string, options: RequestInit, maxAttempts = 2
   throw lastError
 }
 
+async function claimReviewConnection(connection: { id: string }, claimStartedAtIso: string): Promise<boolean> {
+  const { data, error } = await supabase
+    .from('review_platform_connections')
+    .update({
+      last_sync_at: claimStartedAtIso,
+      updated_at: claimStartedAtIso,
+    })
+    .eq('id', connection.id)
+    .eq('is_active', true)
+    .in('sync_frequency', ['hourly', 'realtime'])
+    .or(`last_sync_at.is.null,last_sync_at.lt.${claimStartedAtIso}`)
+    .select('id')
+    .maybeSingle()
+
+  if (error) {
+    throw error
+  }
+
+  return Boolean(data?.id)
+}
+
 // Vercel CRON - runs every hour
 // Configure in vercel.json: { "crons": [{ "path": "/api/cron/sync-reviews", "schedule": "0 * * * *" }] }
 
 export async function GET(request: NextRequest) {
-  // Verify CRON secret for security
-  const authHeader = request.headers.get('authorization')
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    // In development, allow without auth
-    if (process.env.NODE_ENV === 'production') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+  const ctx = createRequestContext(request, '/api/cron/sync-reviews')
+  ctx.logStart()
+
+  if (
+    process.env.CRON_SECRET &&
+    request.headers.get('authorization') !== `Bearer ${process.env.CRON_SECRET}`
+  ) {
+    ctx.logSuccess(401, { reason: 'invalid_cron_auth' })
+    return unauthorized(ctx.responseHeaders)
+  }
+
+  const run = await startCronJobRun({
+    jobName: 'sync-reviews',
+    requestId: request.headers.get('x-request-id'),
+  })
+
+  const cronSecret = process.env.CRON_SECRET
+  if (!cronSecret) {
+    ctx.logError(500, new Error('CRON_SECRET missing'), { operation: 'validate_env' })
+    await finishCronJobRun(run, {
+      status: 'failed',
+      error: 'CRON_SECRET is required for sync-reviews cron execution',
+      summary: { operation: 'validate_env' },
+    })
+    return NextResponse.json(
+      { error: 'CRON_SECRET is required for sync-reviews cron execution' },
+      { status: 500, headers: ctx.responseHeaders }
+    )
   }
 
   try {
     // Get all active review platform connections that need syncing
-    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+    const oneHourAgo = new Date(Date.now() - SYNC_REVIEWS_CLAIM_WINDOW_MS).toISOString()
     
     const { data: connections, error: fetchError } = await supabase
       .from('review_platform_connections')
@@ -55,32 +105,61 @@ export async function GET(request: NextRequest) {
       .limit(20)
 
     if (fetchError) {
-      console.error('Error fetching connections:', fetchError)
-      return NextResponse.json({ error: fetchError.message }, { status: 500 })
+      ctx.logError(500, fetchError, { operation: 'fetch_review_connections' })
+      await finishCronJobRun(run, {
+        status: 'failed',
+        error: fetchError.message,
+        summary: { operation: 'fetch_review_connections' },
+      })
+      return serverError(fetchError, ctx.responseHeaders)
     }
 
     if (!connections || connections.length === 0) {
-      return NextResponse.json({
-        success: true,
-        message: 'No connections to sync',
-        synced: 0
+      await finishCronJobRun(run, {
+        status: 'success',
+        summary: { synced: 0, failed: 0, totalImported: 0 },
       })
+      ctx.logSuccess(200, { synced: 0, failed: 0, totalImported: 0 })
+      return NextResponse.json(
+        {
+          success: true,
+          message: 'No connections to sync',
+          synced: 0,
+        },
+        { headers: ctx.responseHeaders }
+      )
     }
 
     const results: Array<{
       connectionId: string
       propertyId: string
       platform: string
-      status: 'success' | 'failed'
+      status: 'success' | 'failed' | 'skipped'
       imported?: number
       error?: string
     }> = []
 
     for (const connection of connections) {
       try {
+        const claimStartedAtIso = new Date().toISOString()
+        const claimed = await claimReviewConnection(connection, claimStartedAtIso)
+        if (!claimed) {
+          results.push({
+            connectionId: connection.id,
+            propertyId: connection.property_id,
+            platform: connection.platform,
+            status: 'skipped',
+            error: 'Connection already claimed by another sync worker',
+          })
+          continue
+        }
+
         const syncRes = await fetchWithRetry(`${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/api/reviewflow/sync`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            authorization: `Bearer ${cronSecret}`,
+          },
           body: JSON.stringify({
             propertyId: connection.property_id,
             platform: connection.platform,
@@ -108,7 +187,12 @@ export async function GET(request: NextRequest) {
           })
         }
       } catch (syncError) {
-        console.error(`Error syncing connection ${connection.id}:`, syncError)
+        ctx.logError(500, syncError, {
+          operation: 'sync_review_connection',
+          connectionId: connection.id,
+          platform: connection.platform,
+          propertyId: connection.property_id,
+        })
         results.push({
           connectionId: connection.id,
           propertyId: connection.property_id,
@@ -121,22 +205,40 @@ export async function GET(request: NextRequest) {
 
     const synced = results.filter(r => r.status === 'success').length
     const failed = results.filter(r => r.status === 'failed').length
+    const skipped = results.filter(r => r.status === 'skipped').length
     const totalImported = results.reduce((sum, r) => sum + (r.imported || 0), 0)
 
-    return NextResponse.json({
-      success: true,
-      synced,
-      failed,
-      totalImported,
-      results
+    await finishCronJobRun(run, {
+      status: 'success',
+      summary: {
+        synced,
+        failed,
+        skipped,
+        totalImported,
+      },
     })
 
-  } catch (error) {
-    console.error('CRON sync error:', error)
+    ctx.logSuccess(200, { synced, failed, skipped, totalImported })
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'CRON job failed' },
-      { status: 500 }
+      {
+        success: true,
+        synced,
+        failed,
+        skipped,
+        totalImported,
+        results,
+      },
+      { headers: ctx.responseHeaders }
     )
+
+  } catch (error) {
+    ctx.logError(500, error, { operation: 'run_sync_reviews' })
+    await finishCronJobRun(run, {
+      status: 'failed',
+      error: error instanceof Error ? error.message : 'CRON job failed',
+      summary: { operation: 'run_sync_reviews' },
+    })
+    return serverError(error, ctx.responseHeaders)
   }
 }
 

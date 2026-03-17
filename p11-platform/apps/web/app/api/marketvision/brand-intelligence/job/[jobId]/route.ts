@@ -5,13 +5,14 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
 // Data engine service URL (Python FastAPI)
 const DATA_ENGINE_URL = process.env.DATA_ENGINE_URL || 'http://localhost:8000'
 
 // GET: Get job status
 export async function GET(
-  req: NextRequest,
+  _req: NextRequest,
   { params }: { params: Promise<{ jobId: string }> }
 ) {
   try {
@@ -26,6 +27,25 @@ export async function GET(
 
     if (!jobId) {
       return NextResponse.json({ error: 'jobId required' }, { status: 400 })
+    }
+
+    const { data: job } = await supabase
+      .from('competitor_scrape_jobs')
+      .select('property_id')
+      .eq('id', jobId)
+      .single()
+
+    if (!job) {
+      return NextResponse.json({ error: 'Job not found' }, { status: 404 })
+    }
+
+    if (typeof job.property_id !== 'string') {
+      return NextResponse.json({ error: 'Job property mapping is invalid' }, { status: 400 })
+    }
+
+    const access = await validatePropertyAccess(user.id, job.property_id)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     // Call data-engine to get job status

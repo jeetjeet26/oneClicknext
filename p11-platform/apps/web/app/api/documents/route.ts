@@ -1,22 +1,51 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
+import {
+  badRequest,
+  forbidden,
+  serverError,
+  unauthorized,
+} from '@/utils/services/api-helpers'
+import { createRequestContext } from '@/utils/services/request-context'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
+
+function getDocumentMetadata(
+  metadata: unknown
+): { source?: string; title?: string } {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    return {}
+  }
+
+  return metadata as { source?: string; title?: string }
+}
 
 // GET - List documents for a property
 export async function GET(req: NextRequest) {
+  const ctx = createRequestContext(req, '/api/documents')
+  ctx.logStart()
+
   try {
     const supabaseAuth = await createClient()
     const { data: { user }, error: authError } = await supabaseAuth.auth.getUser()
     
     if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      ctx.logSuccess(401, { reason: 'unauthorized' })
+      return unauthorized(ctx.responseHeaders)
     }
 
     const { searchParams } = new URL(req.url)
     const propertyId = searchParams.get('propertyId')
 
     if (!propertyId) {
-      return NextResponse.json({ error: 'propertyId is required' }, { status: 400 })
+      ctx.logSuccess(400, { reason: 'missing_property_id' })
+      return badRequest('propertyId is required', ctx.responseHeaders)
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      ctx.logSuccess(403, { reason: 'forbidden_property_access', propertyId, userId: user.id })
+      return forbidden(ctx.responseHeaders)
     }
 
     const supabase = createServiceClient()
@@ -29,8 +58,8 @@ export async function GET(req: NextRequest) {
       .order('created_at', { ascending: false })
 
     if (error) {
-      console.error('Error fetching documents:', error)
-      return NextResponse.json({ error: error.message }, { status: 500 })
+      ctx.logError(500, error, { operation: 'list_documents' })
+      return serverError(error, ctx.responseHeaders)
     }
 
     // Group by source file
@@ -44,15 +73,16 @@ export async function GET(req: NextRequest) {
     }>()
 
     for (const doc of data || []) {
-      const source = doc.metadata?.source || doc.metadata?.title || 'Unknown'
+      const metadata = getDocumentMetadata(doc.metadata)
+      const source = metadata.source || metadata.title || 'Unknown'
       
       if (!groupedDocs.has(source)) {
         groupedDocs.set(source, {
           id: doc.id,
-          title: doc.metadata?.title || source,
+          title: metadata.title || source,
           source,
           chunks: 1,
-          created_at: doc.created_at,
+          created_at: doc.created_at || new Date(0).toISOString(),
           preview: doc.content.slice(0, 200) + '...',
         })
       } else {
@@ -61,24 +91,33 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    return NextResponse.json({
-      documents: Array.from(groupedDocs.values()),
-      total: groupedDocs.size,
-    })
+    ctx.logSuccess(200, { documentCount: groupedDocs.size })
+
+    return NextResponse.json(
+      {
+        documents: Array.from(groupedDocs.values()),
+        total: groupedDocs.size,
+      },
+      { headers: ctx.responseHeaders }
+    )
   } catch (error) {
-    console.error('Documents API error:', error)
-    return NextResponse.json({ error: 'Server error' }, { status: 500 })
+    ctx.logError(500, error, { operation: 'list_documents' })
+    return serverError(error, ctx.responseHeaders)
   }
 }
 
 // DELETE - Remove a document and all its chunks
 export async function DELETE(req: NextRequest) {
+  const ctx = createRequestContext(req, '/api/documents')
+  ctx.logStart()
+
   try {
     const supabaseAuth = await createClient()
     const { data: { user }, error: authError } = await supabaseAuth.auth.getUser()
     
     if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      ctx.logSuccess(401, { reason: 'unauthorized' })
+      return unauthorized(ctx.responseHeaders)
     }
 
     const { searchParams } = new URL(req.url)
@@ -86,7 +125,14 @@ export async function DELETE(req: NextRequest) {
     const propertyId = searchParams.get('propertyId')
 
     if (!source || !propertyId) {
-      return NextResponse.json({ error: 'source and propertyId are required' }, { status: 400 })
+      ctx.logSuccess(400, { reason: 'missing_source_or_property_id' })
+      return badRequest('source and propertyId are required', ctx.responseHeaders)
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      ctx.logSuccess(403, { reason: 'forbidden_property_access', propertyId, userId: user.id })
+      return forbidden(ctx.responseHeaders)
     }
 
     const supabase = createServiceClient()
@@ -99,17 +145,22 @@ export async function DELETE(req: NextRequest) {
       .eq('metadata->>source', source)
 
     if (error) {
-      console.error('Error deleting document:', error)
-      return NextResponse.json({ error: error.message }, { status: 500 })
+      ctx.logError(500, error, { operation: 'delete_document' })
+      return serverError(error, ctx.responseHeaders)
     }
 
-    return NextResponse.json({ 
-      success: true, 
-      deleted: count || 0,
-    })
+    ctx.logSuccess(200, { deleted: count || 0, source })
+
+    return NextResponse.json(
+      { 
+        success: true, 
+        deleted: count || 0,
+      },
+      { headers: ctx.responseHeaders }
+    )
   } catch (error) {
-    console.error('Document delete error:', error)
-    return NextResponse.json({ error: 'Server error' }, { status: 500 })
+    ctx.logError(500, error, { operation: 'delete_document' })
+    return serverError(error, ctx.responseHeaders)
   }
 }
 

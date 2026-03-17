@@ -5,11 +5,12 @@
 
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { NextRequest, NextResponse } from 'next/server'
 
 // POST - Take over conversation
 export async function POST(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
@@ -23,10 +24,29 @@ export async function POST(
     const { id: conversationId } = await params
     const supabase = createServiceClient()
 
+    const { data: existingConversation, error: existingConversationError } = await supabase
+      .from('conversations')
+      .select('id, property_id')
+      .eq('id', conversationId)
+      .single()
+
+    if (existingConversationError || !existingConversation) {
+      return NextResponse.json({ error: 'Conversation not found' }, { status: 404 })
+    }
+
+    if (typeof existingConversation.property_id !== 'string') {
+      return NextResponse.json({ error: 'Conversation not found' }, { status: 404 })
+    }
+
+    const propertyAccess = await validatePropertyAccess(user.id, existingConversation.property_id)
+    if (!propertyAccess.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
     // Get user's profile
     const { data: profile } = await supabase
       .from('profiles')
-      .select('id, role')
+      .select('role')
       .eq('id', user.id)
       .single()
 
@@ -42,16 +62,11 @@ export async function POST(
       .from('conversations')
       .update({
         is_human_mode: true,
-        human_agent_id: profile.id,
-        human_started_at: new Date().toISOString(),
-        human_ended_at: null,
       })
       .eq('id', conversationId)
       .select(`
         id,
         is_human_mode,
-        human_agent_id,
-        human_started_at,
         lead:leads(id, first_name, last_name, email, phone)
       `)
       .single()
@@ -81,7 +96,7 @@ export async function POST(
 
 // DELETE - Release conversation back to AI
 export async function DELETE(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
@@ -98,25 +113,35 @@ export async function DELETE(
     // Get current conversation state
     const { data: current } = await supabase
       .from('conversations')
-      .select('human_agent_id')
+      .select('property_id')
       .eq('id', conversationId)
       .single()
 
-    // Only the agent who took over (or admin) can release
-    if (current?.human_agent_id !== user.id) {
-      // Check if user is admin
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('role')
-        .eq('id', user.id)
-        .single()
-      
-      if (profile?.role !== 'admin') {
-        return NextResponse.json(
-          { error: 'Only the assigned agent or admin can release this conversation' },
-          { status: 403 }
-        )
-      }
+    if (!current) {
+      return NextResponse.json({ error: 'Conversation not found' }, { status: 404 })
+    }
+
+    if (typeof current.property_id !== 'string') {
+      return NextResponse.json({ error: 'Conversation not found' }, { status: 404 })
+    }
+
+    const propertyAccess = await validatePropertyAccess(user.id, current.property_id)
+    if (!propertyAccess.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
+    // Require elevated role to release human takeover mode.
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', user.id)
+      .single()
+
+    if (!profile || !['admin', 'manager'].includes(profile.role || '')) {
+      return NextResponse.json(
+        { error: 'Only admins and managers can release this conversation' },
+        { status: 403 }
+      )
     }
 
     // Update conversation back to AI mode
@@ -124,7 +149,6 @@ export async function DELETE(
       .from('conversations')
       .update({
         is_human_mode: false,
-        human_ended_at: new Date().toISOString(),
       })
       .eq('id', conversationId)
       .select('id, is_human_mode')

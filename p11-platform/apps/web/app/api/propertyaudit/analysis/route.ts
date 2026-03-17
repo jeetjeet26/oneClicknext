@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
 export interface CrossModelAnalysis {
   analyzed_at: string
@@ -37,6 +38,21 @@ export interface CrossModelAnalysis {
   }
 }
 
+async function resolveBatchPropertyId(batchId: string): Promise<string | null> {
+  const serviceClient = createServiceClient()
+  const { data: batchRuns, error } = await serviceClient
+    .from('geo_runs')
+    .select('property_id')
+    .eq('batch_id', batchId)
+    .limit(1)
+
+  if (error || !batchRuns || batchRuns.length === 0) {
+    return null
+  }
+
+  return batchRuns[0]?.property_id ?? null
+}
+
 // GET: Retrieve cross-model analysis for a batch
 export async function GET(req: NextRequest) {
   try {
@@ -55,6 +71,20 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ 
         error: 'Either batchId or propertyId required' 
       }, { status: 400 })
+    }
+
+    const scopedPropertyId = propertyId ?? (batchId ? await resolveBatchPropertyId(batchId) : null)
+    if (!scopedPropertyId) {
+      return NextResponse.json({
+        error: 'No runs found',
+        batchId,
+        propertyId,
+      }, { status: 404 })
+    }
+
+    const access = await validatePropertyAccess(user.id, scopedPropertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     const serviceClient = createServiceClient()
@@ -116,6 +146,14 @@ export async function GET(req: NextRequest) {
 
     // Get the target batch (specified or most recent)
     const targetBatchId = batchId || runs[0]?.batch_id
+    if (!targetBatchId) {
+      return NextResponse.json({
+        error: 'No batch runs found',
+        batchId,
+        propertyId,
+      }, { status: 404 })
+    }
+
     const batchRuns = batches.get(targetBatchId) || []
 
     // Extract cross-model analysis (same on all runs in batch)
@@ -193,6 +231,16 @@ export async function POST(req: NextRequest) {
 
     if (!batchId) {
       return NextResponse.json({ error: 'batchId required' }, { status: 400 })
+    }
+
+    const propertyId = await resolveBatchPropertyId(batchId)
+    if (!propertyId) {
+      return NextResponse.json({ error: 'No runs found' }, { status: 404 })
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     // Call data-engine to re-run analysis

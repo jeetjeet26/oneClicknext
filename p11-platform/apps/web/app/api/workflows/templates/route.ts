@@ -277,11 +277,16 @@ export async function PATCH(req: NextRequest) {
       .single()
 
     if (!existingWorkflow) return badRequest('Workflow not found')
+    if (typeof existingWorkflow.property_id !== 'string') {
+      return badRequest('Workflow property missing')
+    }
+
+    const workflowPropertyId = existingWorkflow.property_id
 
     // Org ownership check
-    const access = await validatePropertyAccess(user.id, existingWorkflow.property_id)
+    const access = await validatePropertyAccess(user.id, workflowPropertyId)
     if (!access.authorized) {
-      auditLog({ eventType: 'property_access_denied', userId: user.id, propertyId: existingWorkflow.property_id, ip: getRequestIp(req), resource: 'workflows/templates/update' })
+      auditLog({ eventType: 'property_access_denied', userId: user.id, propertyId: workflowPropertyId, ip: getRequestIp(req), resource: 'workflows/templates/update' })
       return forbidden()
     }
 

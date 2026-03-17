@@ -1,11 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { createClient } from '@/utils/supabase/server'
+import { createServiceClient } from '@/utils/supabase/admin'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import OpenAI from 'openai'
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
@@ -72,6 +69,16 @@ Respond ONLY with valid JSON in this format:
 // POST: Analyze all unanalyzed reviews for a property
 export async function POST(request: NextRequest) {
   try {
+    const supabaseAuth = await createClient()
+    const {
+      data: { user },
+      error: authError,
+    } = await supabaseAuth.auth.getUser()
+
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const body = await request.json()
     const { propertyId, limit = 50 } = body
 
@@ -81,6 +88,13 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       )
     }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
+    const supabase = createServiceClient()
 
     // Get all reviews without sentiment analysis
     const { data: reviews, error } = await supabase

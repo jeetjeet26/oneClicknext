@@ -1,0 +1,18 @@
+---
+description: Keep future product work aligned with completed P0 foundation gates
+alwaysApply: true
+---
+
+# P0 Foundation Product Guardrails
+
+- Use `.cursor/plans/AUTONOMY_FOUNDATION_ROADMAP.md` and `docs/P0_LOCAL_CONTINUATION_CONTEXT.md` as the source of truth for current local-first product hardening.
+- Do not treat a product change as complete if it weakens or skips the existing `P0` foundation expectations: health checks, request tracing, tenant-safe auth, validation, route tests, local smoke coverage, and schema truth.
+- For Supabase-backed work, verify the live schema first with MCP SQL against `information_schema`.
+- If code needs a missing table, column, index, enum, or constraint, add a migration in `p11-platform/supabase/migrations`, apply it with MCP, regenerate TypeScript types, sync `p11-platform/apps/web/types/supabase.ts`, and run `npm run schema:types:stamp` in `p11-platform/apps/web`.
+- Never ship code that references schema fields or tables that are not present in the live schema and generated Supabase types.
+- After schema or route changes in `p11-platform/apps/web`, run the required local gates from `p11-platform/apps/web`: `npm run check:schema-types-sync`, `npm run check:schema-truth`, and `npm run check:foundation`.
+- For new or changed API routes, preserve `P0` standards: tenant/property-safe auth, input validation, structured logging/request IDs, health-aware dependency handling, and deterministic failure behavior.
+- For cron jobs, outbound messaging, workflow actions, scoring, or any other side-effecting path, add or update automated tests and keep `p11-platform/apps/web/scripts/foundation-files.mjs` aligned with the trusted foundation surface.
+- If a change affects a critical user journey or local operator workflow, add or update local smoke coverage so the happy path remains reproducible.
+- Prefer fixing drift at the source with migrations, types, tests, or gate updates; do not bypass failures with `any`, unsafe casts, deleted assertions, or by weakening checks.
+- Hosted-only work such as staging, uptime alerting, PITR drills, and deployment promotion is still important, but it is deferred unless the active roadmap explicitly pulls it back into scope.

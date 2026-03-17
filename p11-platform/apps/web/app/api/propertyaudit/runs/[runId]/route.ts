@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
 export interface GeoAnswer {
   id: string
@@ -20,6 +21,7 @@ export interface GeoAnswer {
   answerSummary: string | null
   naturalResponse?: string | null
   analysisMethod?: string | null
+  rawResponse?: unknown
   orderedEntities: Array<{
     name: string
     domain: string
@@ -31,6 +33,37 @@ export interface GeoAnswer {
     domain: string
     isBrandDomain: boolean
   }>
+}
+
+function toStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is string => typeof item === 'string')
+}
+
+function toOrderedEntities(value: unknown): GeoAnswer['orderedEntities'] {
+  if (!Array.isArray(value)) return []
+
+  return value
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null
+      const record = item as Record<string, unknown>
+      if (
+        typeof record.name !== 'string' ||
+        typeof record.domain !== 'string' ||
+        typeof record.rationale !== 'string' ||
+        typeof record.position !== 'number'
+      ) {
+        return null
+      }
+
+      return {
+        name: record.name,
+        domain: record.domain,
+        rationale: record.rationale,
+        position: record.position,
+      }
+    })
+    .filter((item): item is GeoAnswer['orderedEntities'][number] => item !== null)
 }
 
 // GET: Get run details with answers
@@ -47,9 +80,10 @@ export async function GET(
     }
 
     const { runId } = await params
+    const service = createServiceClient()
 
     // Fetch run with score
-    const { data: run, error: runError } = await supabase
+    const { data: run, error: runError } = await service
       .from('geo_runs')
       .select(`
         *,
@@ -62,8 +96,13 @@ export async function GET(
       return NextResponse.json({ error: 'Run not found' }, { status: 404 })
     }
 
+    const access = await validatePropertyAccess(user.id, run.property_id)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
     // Fetch answers with queries and citations
-    const { data: answers, error: answersError } = await supabase
+    const { data: answers, error: answersError } = await service
       .from('geo_answers')
       .select(`
         *,
@@ -96,16 +135,16 @@ export async function GET(
       llmRank: answer.llm_rank,
       linkRank: answer.link_rank,
       sov: answer.sov,
-      flags: answer.flags || [],
+      flags: toStringArray(answer.flags),
       answerSummary: answer.answer_summary,
       naturalResponse: answer.natural_response ?? null,
       analysisMethod: answer.analysis_method ?? null,
-      orderedEntities: answer.ordered_entities || [],
+      orderedEntities: toOrderedEntities(answer.ordered_entities),
       rawResponse: answer.raw_json,
       citations: (answer.geo_citations || []).map((c: Record<string, unknown>) => ({
-        url: c.url,
-        domain: c.domain,
-        isBrandDomain: c.is_brand_domain,
+        url: String(c.url || ''),
+        domain: String(c.domain || ''),
+        isBrandDomain: Boolean(c.is_brand_domain),
       })),
     }))
 
@@ -174,9 +213,9 @@ export async function DELETE(
     }
 
     const { runId } = await params
+    const service = createServiceClient()
 
-    // Authorize via RLS (user client): can the user see this run?
-    const { data: run, error: runError } = await supabase
+    const { data: run, error: runError } = await service
       .from('geo_runs')
       .select('id, property_id, surface, started_at')
       .eq('id', runId)
@@ -186,8 +225,11 @@ export async function DELETE(
       return NextResponse.json({ error: 'Run not found' }, { status: 404 })
     }
 
-    // Service delete (bypasses RLS but we've already authorized)
-    const service = createServiceClient()
+    const access = await validatePropertyAccess(user.id, run.property_id)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
     const { error: deleteError } = await service
       .from('geo_runs')
       .delete()

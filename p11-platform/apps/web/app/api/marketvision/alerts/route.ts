@@ -5,6 +5,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
 export interface MarketAlert {
   id: string
@@ -40,6 +41,11 @@ export async function GET(req: NextRequest) {
 
     if (!propertyId) {
       return NextResponse.json({ error: 'propertyId required' }, { status: 400 })
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     // Build query
@@ -105,6 +111,15 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: 'Valid action required (read, dismiss, read_all, dismiss_all)' }, { status: 400 })
     }
 
+    if (!propertyId) {
+      return NextResponse.json({ error: 'propertyId required' }, { status: 400 })
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
     // Bulk actions for property
     if (action === 'read_all' || action === 'dismiss_all') {
       if (!propertyId) {
@@ -142,6 +157,7 @@ export async function PUT(req: NextRequest) {
       .from('market_alerts')
       .update(updates)
       .in('id', alertIds)
+      .eq('property_id', propertyId)
 
     if (error) {
       console.error('Error updating alerts:', error)
@@ -182,6 +198,11 @@ export async function POST(req: NextRequest) {
 
     if (!propertyId || !alertType || !title) {
       return NextResponse.json({ error: 'propertyId, alertType, and title required' }, { status: 400 })
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     const { data: alert, error } = await supabase

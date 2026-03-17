@@ -10,6 +10,11 @@ interface ReportBuilderProps {
   onClose: () => void
   propertyId: string
   propertyName: string
+  runId: string | null
+  runSummary?: {
+    surface: 'openai' | 'claude'
+    startedAt: string
+  } | null
 }
 
 interface ReportConfig {
@@ -19,7 +24,33 @@ interface ReportConfig {
   schedule: boolean
 }
 
-export function ReportBuilder({ isOpen, onClose, propertyId, propertyName }: ReportBuilderProps) {
+async function getApiErrorMessage(response: Response, fallback: string) {
+  try {
+    const body = await response.json()
+    if (typeof body?.details === 'string' && body.details.length > 0) {
+      return `${body.error || fallback}: ${body.details}`
+    }
+    if (typeof body?.currentStatus === 'string') {
+      return `${body.error || fallback} (${body.currentStatus})`
+    }
+    if (typeof body?.error === 'string' && body.error.length > 0) {
+      return body.error
+    }
+  } catch {
+    // Fall back to default message.
+  }
+
+  return fallback
+}
+
+export function ReportBuilder({
+  isOpen,
+  onClose,
+  propertyId,
+  propertyName,
+  runId,
+  runSummary,
+}: ReportBuilderProps) {
   const [config, setConfig] = useState<ReportConfig>({
     template: 'comprehensive',
     includeSections: ['summary', 'scores', 'models', 'competitors', 'recommendations', 'queries'],
@@ -28,6 +59,7 @@ export function ReportBuilder({ isOpen, onClose, propertyId, propertyName }: Rep
   })
   const [isGenerating, setIsGenerating] = useState(false)
   const [emailInput, setEmailInput] = useState('')
+  const [error, setError] = useState<string | null>(null)
 
   if (!isOpen) return null
 
@@ -73,13 +105,20 @@ export function ReportBuilder({ isOpen, onClose, propertyId, propertyName }: Rep
   ]
 
   const handleGenerate = async () => {
+    if (!runId) {
+      setError('Complete at least one PropertyAudit run before generating a report.')
+      return
+    }
+
     setIsGenerating(true)
+    setError(null)
     try {
       const res = await fetch('/api/propertyaudit/generate-report', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           propertyId,
+          runId,
           template: config.template,
           includeSections: config.includeSections,
           recipients: config.recipients,
@@ -99,11 +138,11 @@ export function ReportBuilder({ isOpen, onClose, propertyId, propertyName }: Rep
         
         onClose()
       } else {
-        alert('Failed to generate report. Please try again.')
+        setError(await getApiErrorMessage(res, 'Failed to generate report. Please try again.'))
       }
     } catch (error) {
       console.error('Report generation error:', error)
-      alert('Error generating report. Please try again.')
+      setError(error instanceof Error ? error.message : 'Error generating report. Please try again.')
     } finally {
       setIsGenerating(false)
     }
@@ -155,6 +194,15 @@ export function ReportBuilder({ isOpen, onClose, propertyId, propertyName }: Rep
 
         {/* Content */}
         <div className="p-6 space-y-6">
+          <div className="rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-900">
+            <p className="font-medium">Report snapshot</p>
+            <p className="mt-1">
+              {runId && runSummary
+                ? `This report will use the completed ${runSummary.surface.toUpperCase()} run from ${new Date(runSummary.startedAt).toLocaleString()}.`
+                : 'A completed PropertyAudit run is required before report generation.'}
+            </p>
+          </div>
+
           {/* Step 1: Select Template */}
           <div>
             <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">
@@ -289,6 +337,12 @@ export function ReportBuilder({ isOpen, onClose, propertyId, propertyName }: Rep
               </div>
             </label>
           </div>
+
+          {error && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {error}
+            </div>
+          )}
         </div>
 
         {/* Footer */}
@@ -302,7 +356,7 @@ export function ReportBuilder({ isOpen, onClose, propertyId, propertyName }: Rep
 
           <button
             onClick={handleGenerate}
-            disabled={isGenerating}
+            disabled={isGenerating || !runId}
             className="inline-flex items-center gap-2 px-6 py-2 text-sm font-medium bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
           >
             {isGenerating ? (

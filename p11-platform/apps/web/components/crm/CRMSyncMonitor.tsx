@@ -21,10 +21,20 @@ interface SyncHistoryItem {
   first_name: string
   last_name: string
   email: string
-  crm_sync_status: 'created' | 'linked' | 'failed' | 'skipped'
+  crm_sync_status: 'pending' | 'retrying' | 'created' | 'linked' | 'failed' | 'skipped' | 'dead_lettered'
   crm_synced_at: string
   external_crm_id: string | null
   crm_sync_error: string | null
+}
+
+interface DeadLetterItem {
+  id: string
+  first_name: string
+  last_name: string
+  email: string
+  crm_sync_error: string | null
+  crm_sync_retry_count: number | null
+  crm_dead_lettered_at: string | null
 }
 
 interface CRMSyncMonitorProps {
@@ -34,6 +44,18 @@ interface CRMSyncMonitorProps {
 }
 
 const STATUS_CONFIG = {
+  pending: {
+    icon: RefreshCw,
+    color: 'text-amber-400',
+    bg: 'bg-amber-400/10',
+    label: 'Queued',
+  },
+  retrying: {
+    icon: RefreshCw,
+    color: 'text-orange-400',
+    bg: 'bg-orange-400/10',
+    label: 'Retry Scheduled',
+  },
   created: {
     icon: CheckCircle2,
     color: 'text-emerald-400',
@@ -58,6 +80,12 @@ const STATUS_CONFIG = {
     bg: 'bg-slate-400/10',
     label: 'Skipped',
   },
+  dead_lettered: {
+    icon: AlertTriangle,
+    color: 'text-red-300',
+    bg: 'bg-red-400/10',
+    label: 'Dead Lettered',
+  },
 }
 
 export function CRMSyncMonitor({ 
@@ -69,6 +97,9 @@ export function CRMSyncMonitor({
   const [history, setHistory] = useState<SyncHistoryItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [deadLetters, setDeadLetters] = useState<DeadLetterItem[]>([])
+  const [requeueingLeadId, setRequeueingLeadId] = useState<string | null>(null)
+  const [replayingLeadId, setReplayingLeadId] = useState<string | null>(null)
 
   const fetchData = async () => {
     setLoading(true)
@@ -107,10 +138,64 @@ export function CRMSyncMonitor({
           setHistory(historyData.history || [])
         }
       }
+
+      const deadLetterResponse = await fetch('/api/integrations/crm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'dead-letter-list',
+          propertyId,
+          limit: 10,
+        }),
+      })
+      const deadLetterData = await deadLetterResponse.json()
+      if (deadLetterData.success) {
+        setDeadLetters(deadLetterData.leads || [])
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load CRM sync data')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const requeueDeadLetter = async (leadId: string) => {
+    setRequeueingLeadId(leadId)
+    try {
+      await fetch('/api/integrations/crm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'requeue-dead-letter',
+          propertyId,
+          leadIds: [leadId],
+        }),
+      })
+      await fetchData()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to requeue dead-letter lead')
+    } finally {
+      setRequeueingLeadId(null)
+    }
+  }
+
+  const replayDeadLetterNow = async (leadId: string) => {
+    setReplayingLeadId(leadId)
+    try {
+      await fetch('/api/integrations/crm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'replay-dead-letter-now',
+          propertyId,
+          leadId,
+        }),
+      })
+      await fetchData()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to replay dead-letter lead')
+    } finally {
+      setReplayingLeadId(null)
     }
   }
 
@@ -278,6 +363,52 @@ export function CRMSyncMonitor({
                 </div>
               )
             })}
+          </div>
+        </div>
+      )}
+
+      {deadLetters.length > 0 && (
+        <div className="bg-red-500/5 rounded-xl border border-red-500/30 p-6">
+          <h3 className="font-semibold text-white mb-4">Dead-Letter CRM Sync Queue</h3>
+          <div className="space-y-2">
+            {deadLetters.map((item) => (
+              <div
+                key={item.id}
+                className="flex items-center gap-3 p-3 rounded-lg bg-red-500/10 border border-red-500/20"
+              >
+                <AlertTriangle size={18} className="text-red-300" />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium text-white truncate">
+                      {item.first_name} {item.last_name}
+                    </span>
+                    <span className="text-xs text-slate-500">
+                      retries: {item.crm_sync_retry_count ?? 0}
+                    </span>
+                  </div>
+                  <div className="text-xs text-slate-400 truncate">{item.email}</div>
+                  {item.crm_sync_error && (
+                    <div className="text-xs text-red-200 truncate">{item.crm_sync_error}</div>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => requeueDeadLetter(item.id)}
+                    disabled={requeueingLeadId === item.id || replayingLeadId === item.id}
+                    className="px-2 py-1 text-xs rounded bg-slate-700 text-slate-100 hover:bg-slate-600 disabled:opacity-50"
+                  >
+                    {requeueingLeadId === item.id ? 'Requeueing...' : 'Requeue'}
+                  </button>
+                  <button
+                    onClick={() => replayDeadLetterNow(item.id)}
+                    disabled={requeueingLeadId === item.id || replayingLeadId === item.id}
+                    className="px-2 py-1 text-xs rounded bg-red-600 text-white hover:bg-red-500 disabled:opacity-50"
+                  >
+                    {replayingLeadId === item.id ? 'Replaying...' : 'Replay now'}
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}

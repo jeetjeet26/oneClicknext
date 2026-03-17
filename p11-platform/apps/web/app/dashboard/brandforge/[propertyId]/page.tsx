@@ -299,6 +299,44 @@ function SectionContent({ sectionKey, data }: { sectionKey: string; data: any })
   }
 }
 
+const BRAND_SECTION_KEYS = [
+  'section_1_introduction',
+  'section_2_positioning',
+  'section_3_target_audience',
+  'section_4_personas',
+  'section_5_name_story',
+  'section_6_logo',
+  'section_7_typography',
+  'section_8_colors',
+  'section_9_design_elements',
+  'section_10_photo_yep',
+  'section_11_photo_nope',
+  'section_12_implementation',
+] as const
+
+function countApprovedSections(brandAsset: any) {
+  return BRAND_SECTION_KEYS.filter((key) => Boolean(brandAsset?.[key])).length
+}
+
+function getBrandStatusWarnings(brandAsset: any) {
+  const warnings: string[] = []
+  const logoUrl = brandAsset?.section_6_logo?.primary_url || brandAsset?.section_6_logo?.logoUrl
+
+  if (logoUrl === '/placeholder-logo.png') {
+    warnings.push(
+      'Logo generation fell back to a placeholder. You can keep using the brand book and regenerate visual assets later.'
+    )
+  }
+
+  if (brandAsset?.generation_status === 'complete' && !brandAsset?.brand_book_pdf_url) {
+    warnings.push(
+      'All sections are approved, but the final downloadable export is not ready yet. Retry export from the completion flow if needed.'
+    )
+  }
+
+  return warnings
+}
+
 export default function BrandBookViewerPage({ 
   params 
 }: { 
@@ -520,9 +558,9 @@ export default function BrandBookViewerPage({
     { key: 'section_12_implementation', title: 'Implementation', icon: FileText },
   ] : []
 
-  // Use current_step from database directly
-  const completedCount = brandAsset?.current_step || 0
+  const completedCount = countApprovedSections(brandAsset)
   const isComplete = completedCount >= 12
+  const statusWarnings = getBrandStatusWarnings(brandAsset)
 
   return (
     <div className="max-w-5xl mx-auto p-8">
@@ -581,7 +619,7 @@ export default function BrandBookViewerPage({
                 className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 flex items-center gap-2"
               >
                 <Download className="w-4 h-4" />
-                Download PDF
+                Download Brand Export
               </a>
             )}
           </div>
@@ -661,6 +699,19 @@ export default function BrandBookViewerPage({
               ))}
             </div>
           </div>
+
+          {statusWarnings.length > 0 && (
+            <div className="space-y-2">
+              {statusWarnings.map((warning) => (
+                <div
+                  key={warning}
+                  className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+                >
+                  {warning}
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* Brand Strategy Summary - Key info at a glance */}
           {brandAsset.conversation_summary && (

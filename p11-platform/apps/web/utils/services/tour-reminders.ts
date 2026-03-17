@@ -4,8 +4,8 @@
  */
 
 import { createServiceClient } from '@/utils/supabase/admin'
-import { sendMessage, replaceTemplateVariables, type TemplateVariables } from './messaging'
-import { format, parseISO, addHours, isBefore, isAfter, subHours } from 'date-fns'
+import { sendMessage, type TemplateVariables } from './messaging'
+import { format, parseISO, addHours, isBefore } from 'date-fns'
 
 export interface TourWithLead {
   id: string
@@ -618,7 +618,7 @@ ${variables.property_name} Team`
 /**
  * Get pending reminders count (for dashboard display)
  */
-export async function getPendingRemindersCount(): Promise<{
+export async function getPendingRemindersCount(propertyId?: string): Promise<{
   reminders24h: number
   reminders1h: number
 }> {
@@ -628,11 +628,25 @@ export async function getPendingRemindersCount(): Promise<{
   const todayStr = format(now, 'yyyy-MM-dd')
   const tomorrowStr = format(tomorrow, 'yyyy-MM-dd')
 
-  const { data: tours } = await supabase
+  let toursQuery = supabase
     .from('tours')
     .select('id, tour_date, tour_time, reminder_24h_sent_at, reminder_sent_at')
     .eq('status', 'scheduled')
     .or(`tour_date.eq.${todayStr},tour_date.eq.${tomorrowStr}`)
+
+  let bookingsQuery = supabase
+    .from('tour_bookings')
+    .select('id, scheduled_date, scheduled_time, reminder_24h_sent_at, reminder_1h_sent_at')
+    .eq('status', 'confirmed')
+    .or(`scheduled_date.eq.${todayStr},scheduled_date.eq.${tomorrowStr}`)
+
+  if (propertyId) {
+    toursQuery = toursQuery.eq('property_id', propertyId)
+    bookingsQuery = bookingsQuery.eq('property_id', propertyId)
+  }
+
+  const { data: tours } = await toursQuery
+  const { data: bookings } = await bookingsQuery
 
   let reminders24h = 0
   let reminders1h = 0
@@ -645,6 +659,19 @@ export async function getPendingRemindersCount(): Promise<{
       if (hoursUntilTour >= 22 && hoursUntilTour <= 25 && !tour.reminder_24h_sent_at) {
         reminders24h++
       } else if (hoursUntilTour >= 0.5 && hoursUntilTour <= 1.5 && !tour.reminder_sent_at) {
+        reminders1h++
+      }
+    }
+  }
+
+  if (bookings) {
+    for (const booking of bookings) {
+      const bookingDateTime = parseISO(`${booking.scheduled_date}T${booking.scheduled_time}`)
+      const hoursUntilTour = (bookingDateTime.getTime() - now.getTime()) / (1000 * 60 * 60)
+
+      if (hoursUntilTour >= 22 && hoursUntilTour <= 25 && !booking.reminder_24h_sent_at) {
+        reminders24h++
+      } else if (hoursUntilTour >= 0.5 && hoursUntilTour <= 1.5 && !booking.reminder_1h_sent_at) {
         reminders1h++
       }
     }

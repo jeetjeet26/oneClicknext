@@ -34,7 +34,14 @@ export async function validatePropertyAccess(
     return { authorized: false, error: 'Missing userId or propertyId' }
   }
 
-  const supabase = createServiceClient()
+  let supabase: ReturnType<typeof createServiceClient> | Awaited<ReturnType<typeof createClient>>
+  try {
+    // Prefer service-role client for consistent cross-tenant checks.
+    supabase = createServiceClient()
+  } catch {
+    // Fallback for local/dev environments where service key may be absent.
+    supabase = await createClient()
+  }
 
   // 1. Get user's org
   const { data: profile, error: profileError } = await supabase

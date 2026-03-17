@@ -4,9 +4,49 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
 const META_GRAPH_URL = 'https://graph.facebook.com/v19.0'
+const FETCH_TIMEOUT_MS = 20000
+const MAX_PAGES = 20
+
+class AdSyncError extends Error {
+  retryable: boolean
+
+  constructor(message: string, retryable: boolean) {
+    super(message)
+    this.name = 'AdSyncError'
+    this.retryable = retryable
+  }
+}
+
+function isRetryableStatus(status: number): boolean {
+  return status === 429 || status >= 500
+}
+
+function toMetaSyncError(error: unknown, fallback: string): AdSyncError {
+  if (error instanceof AdSyncError) {
+    return error
+  }
+
+  if (error instanceof Error) {
+    const normalized = error.message.toLowerCase()
+    const retryable =
+      normalized.includes('timeout') ||
+      normalized.includes('temporar') ||
+      normalized.includes('rate limit') ||
+      normalized.includes('too many requests') ||
+      normalized.includes('fetch failed') ||
+      normalized.includes('network') ||
+      normalized.includes('meta ads api error 5')
+
+    return new AdSyncError(error.message, retryable)
+  }
+
+  return new AdSyncError(fallback, true)
+}
 
 interface MetaCampaignInsight {
   campaign_id: string
@@ -37,12 +77,16 @@ async function fetchCampaignInsights(
     access_token: accessToken,
   })
 
-  const response = await fetch(`${META_GRAPH_URL}/${actId}/insights?${params}`)
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+  const response = await fetch(`${META_GRAPH_URL}/${actId}/insights?${params}`, { signal: controller.signal })
+  clearTimeout(timeoutId)
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}))
-    throw new Error(
-      `Meta Ads API error ${response.status}: ${JSON.stringify(errorData.error || errorData)}`
+    throw new AdSyncError(
+      `Meta Ads API error ${response.status}: ${JSON.stringify(errorData.error || errorData)}`,
+      isRetryableStatus(response.status)
     )
   }
 
@@ -51,8 +95,13 @@ async function fetchCampaignInsights(
 
   // Handle pagination
   let nextUrl = data.paging?.next
-  while (nextUrl) {
-    const pageResponse = await fetch(nextUrl)
+  let pageCount = 0
+  while (nextUrl && pageCount < MAX_PAGES) {
+    pageCount += 1
+    const pageController = new AbortController()
+    const pageTimeoutId = setTimeout(() => pageController.abort(), FETCH_TIMEOUT_MS)
+    const pageResponse = await fetch(nextUrl, { signal: pageController.signal })
+    clearTimeout(pageTimeoutId)
     if (!pageResponse.ok) break
     const pageData = await pageResponse.json()
     allResults.push(...(pageData.data || []))
@@ -60,6 +109,49 @@ async function fetchCampaignInsights(
   }
 
   return allResults
+}
+
+async function markConnectionSyncFailure(
+  connectionId: string,
+  errorMessage: string
+) {
+  const supabase = createServiceClient()
+  const { data: connection } = await supabase
+    .from('ad_account_connections')
+    .select('error_count')
+    .eq('id', connectionId)
+    .single()
+
+  await supabase
+    .from('ad_account_connections')
+    .update({
+      error_count: (connection?.error_count || 0) + 1,
+      last_error: errorMessage,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', connectionId)
+}
+
+async function markConnectionSyncSuccess(
+  connectionId: string,
+  importedRows: number
+) {
+  const nowIso = new Date().toISOString()
+  const payload: Record<string, string | number | null> = {
+    last_synced_at: nowIso,
+    error_count: 0,
+    last_error: null,
+    updated_at: nowIso,
+  }
+
+  if (importedRows > 0) {
+    payload.last_imported_at = nowIso
+  }
+
+  await createServiceClient()
+    .from('ad_account_connections')
+    .update(payload)
+    .eq('id', connectionId)
 }
 
 /**
@@ -82,11 +174,11 @@ export async function syncMetaAdsConnection(
   accountId: string,
   propertyId: string,
   daysBack: number = 7
-): Promise<{ synced: number; error?: string }> {
+): Promise<{ synced: number; error?: string; retryable?: boolean }> {
   try {
     const accessToken = process.env.META_ACCESS_TOKEN
     if (!accessToken) {
-      return { synced: 0, error: 'META_ACCESS_TOKEN not configured' }
+      throw new AdSyncError('META_ACCESS_TOKEN not configured', false)
     }
 
     const endDate = new Date().toISOString().split('T')[0]
@@ -95,6 +187,7 @@ export async function syncMetaAdsConnection(
     const insights = await fetchCampaignInsights(accessToken, accountId, startDate, endDate)
 
     if (insights.length === 0) {
+      await markConnectionSyncSuccess(connectionId, 0)
       return { synced: 0 }
     }
 
@@ -116,6 +209,7 @@ export async function syncMetaAdsConnection(
 
     // Upsert in batches of 50
     let synced = 0
+    let upsertErrorMessage: string | null = null
     for (let i = 0; i < records.length; i += 50) {
       const batch = records.slice(i, i + 50)
       const { error } = await supabase
@@ -124,28 +218,39 @@ export async function syncMetaAdsConnection(
 
       if (error) {
         console.error('[Meta Ads Sync] Upsert error:', error)
+        upsertErrorMessage = error.message
+        break
       } else {
         synced += batch.length
       }
     }
 
-    // Update last_sync_at on the connection
-    await supabase
-      .from('ad_account_connections')
-      .update({ last_sync_at: new Date().toISOString() })
-      .eq('id', connectionId)
+    if (upsertErrorMessage) {
+      await markConnectionSyncFailure(connectionId, upsertErrorMessage)
+      return { synced, error: upsertErrorMessage, retryable: true }
+    }
+
+    await markConnectionSyncSuccess(connectionId, synced)
 
     return { synced }
   } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : 'Unknown error'
+    const syncError = toMetaSyncError(err, 'Unknown error')
+    const errorMsg = syncError.message
     console.error(`[Meta Ads Sync] Failed for account ${accountId}:`, errorMsg)
-    return { synced: 0, error: errorMsg }
+    await markConnectionSyncFailure(connectionId, errorMsg)
+    return { synced: 0, error: errorMsg, retryable: syncError.retryable }
   }
 }
 
 // POST: Manual sync trigger (authenticated)
 export async function POST(req: NextRequest) {
   try {
+    const supabaseAuth = await createClient()
+    const { data: { user }, error: authError } = await supabaseAuth.auth.getUser()
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const { connectionId, accountId, propertyId, daysBack } = await req.json()
 
     if (!connectionId || !accountId || !propertyId) {
@@ -155,12 +260,18 @@ export async function POST(req: NextRequest) {
       )
     }
 
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
     const result = await syncMetaAdsConnection(connectionId, accountId, propertyId, daysBack || 7)
 
     return NextResponse.json({
       success: !result.error,
       synced: result.synced,
       error: result.error,
+      retryable: result.retryable ?? false,
     })
   } catch (error) {
     console.error('[Meta Ads Sync] POST error:', error)

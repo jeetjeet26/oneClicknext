@@ -2,15 +2,26 @@ import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { NextRequest, NextResponse } from 'next/server'
 import { logAuditEvent } from '@/utils/audit'
+import {
+  badRequest,
+  forbidden,
+  serverError,
+  unauthorized,
+} from '@/utils/services/api-helpers'
+import { createRequestContext } from '@/utils/services/request-context'
 
 // GET - List all properties for the user's organization
 export async function GET(request: NextRequest) {
+  const ctx = createRequestContext(request, '/api/properties')
+  ctx.logStart()
+
   const supabaseAuth = await createClient()
   
   const { data: { user }, error: authError } = await supabaseAuth.auth.getUser()
   
   if (authError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    ctx.logSuccess(401, { reason: 'unauthorized' })
+    return unauthorized(ctx.responseHeaders)
   }
 
   const supabase = createServiceClient()
@@ -24,7 +35,11 @@ export async function GET(request: NextRequest) {
       .single()
 
     if (!profile?.org_id) {
-      return NextResponse.json({ properties: [], message: 'No organization found' })
+      ctx.logSuccess(200, { reason: 'no_org_found' })
+      return NextResponse.json(
+        { properties: [], message: 'No organization found' },
+        { headers: ctx.responseHeaders }
+      )
     }
 
     // Get all properties for the organization
@@ -42,8 +57,8 @@ export async function GET(request: NextRequest) {
       .order('name', { ascending: true })
 
     if (error) {
-      console.error('Error fetching properties:', error)
-      return NextResponse.json({ error: error.message }, { status: 500 })
+      ctx.logError(500, error, { operation: 'list_properties' })
+      return serverError(error, ctx.responseHeaders)
     }
 
     // Get stats for each property
@@ -71,21 +86,33 @@ export async function GET(request: NextRequest) {
       })
     )
 
-    return NextResponse.json({ properties: propertiesWithStats })
+    ctx.logSuccess(200, {
+      orgId: profile.org_id,
+      propertyCount: propertiesWithStats.length,
+    })
+
+    return NextResponse.json(
+      { properties: propertiesWithStats },
+      { headers: ctx.responseHeaders }
+    )
   } catch (error) {
-    console.error('Properties API error:', error)
-    return NextResponse.json({ error: 'Server error' }, { status: 500 })
+    ctx.logError(500, error, { operation: 'list_properties' })
+    return serverError(error, ctx.responseHeaders)
   }
 }
 
 // POST - Create a new property
 export async function POST(request: NextRequest) {
+  const ctx = createRequestContext(request, '/api/properties')
+  ctx.logStart()
+
   const supabaseAuth = await createClient()
   
   const { data: { user }, error: authError } = await supabaseAuth.auth.getUser()
   
   if (authError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    ctx.logSuccess(401, { reason: 'unauthorized' })
+    return unauthorized(ctx.responseHeaders)
   }
 
   const supabase = createServiceClient()
@@ -95,7 +122,8 @@ export async function POST(request: NextRequest) {
     const { name, address, settings } = body
 
     if (!name) {
-      return NextResponse.json({ error: 'Property name is required' }, { status: 400 })
+      ctx.logSuccess(400, { reason: 'missing_property_name' })
+      return badRequest('Property name is required', ctx.responseHeaders)
     }
 
     // Get user's profile to find their organization
@@ -106,12 +134,14 @@ export async function POST(request: NextRequest) {
       .single()
 
     if (!profile?.org_id) {
-      return NextResponse.json({ error: 'No organization found' }, { status: 400 })
+      ctx.logSuccess(400, { reason: 'no_org_found' })
+      return badRequest('No organization found', ctx.responseHeaders)
     }
 
     // Check if user has permission (admin or manager)
-    if (!['admin', 'manager'].includes(profile.role)) {
-      return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 })
+    if (!['admin', 'manager'].includes(profile.role || '')) {
+      ctx.logSuccess(403, { reason: 'insufficient_permissions' })
+      return forbidden(ctx.responseHeaders)
     }
 
     // Create the property
@@ -127,8 +157,8 @@ export async function POST(request: NextRequest) {
       .single()
 
     if (error) {
-      console.error('Error creating property:', error)
-      return NextResponse.json({ error: error.message }, { status: 500 })
+      ctx.logError(500, error, { operation: 'create_property' })
+      return serverError(error, ctx.responseHeaders)
     }
 
     // Log audit event
@@ -141,21 +171,30 @@ export async function POST(request: NextRequest) {
       request
     })
 
-    return NextResponse.json({ property }, { status: 201 })
+    ctx.logSuccess(201, { propertyId: property.id })
+
+    return NextResponse.json(
+      { property },
+      { status: 201, headers: ctx.responseHeaders }
+    )
   } catch (error) {
-    console.error('Property create error:', error)
-    return NextResponse.json({ error: 'Server error' }, { status: 500 })
+    ctx.logError(500, error, { operation: 'create_property' })
+    return serverError(error, ctx.responseHeaders)
   }
 }
 
 // PATCH - Update a property
 export async function PATCH(request: NextRequest) {
+  const ctx = createRequestContext(request, '/api/properties')
+  ctx.logStart()
+
   const supabaseAuth = await createClient()
   
   const { data: { user }, error: authError } = await supabaseAuth.auth.getUser()
   
   if (authError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    ctx.logSuccess(401, { reason: 'unauthorized' })
+    return unauthorized(ctx.responseHeaders)
   }
 
   const supabase = createServiceClient()
@@ -165,7 +204,8 @@ export async function PATCH(request: NextRequest) {
     const { id, name, address, settings } = body
 
     if (!id) {
-      return NextResponse.json({ error: 'Property ID is required' }, { status: 400 })
+      ctx.logSuccess(400, { reason: 'missing_property_id' })
+      return badRequest('Property ID is required', ctx.responseHeaders)
     }
 
     // Get user's profile
@@ -176,12 +216,14 @@ export async function PATCH(request: NextRequest) {
       .single()
 
     if (!profile?.org_id) {
-      return NextResponse.json({ error: 'No organization found' }, { status: 400 })
+      ctx.logSuccess(400, { reason: 'no_org_found' })
+      return badRequest('No organization found', ctx.responseHeaders)
     }
 
     // Check if user has permission
-    if (!['admin', 'manager'].includes(profile.role)) {
-      return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 })
+    if (!['admin', 'manager'].includes(profile.role || '')) {
+      ctx.logSuccess(403, { reason: 'insufficient_permissions' })
+      return forbidden(ctx.responseHeaders)
     }
 
     // Update the property
@@ -199,8 +241,8 @@ export async function PATCH(request: NextRequest) {
       .single()
 
     if (error) {
-      console.error('Error updating property:', error)
-      return NextResponse.json({ error: error.message }, { status: 500 })
+      ctx.logError(500, error, { operation: 'update_property', propertyId: id })
+      return serverError(error, ctx.responseHeaders)
     }
 
     // Log audit event
@@ -208,26 +250,35 @@ export async function PATCH(request: NextRequest) {
       action: 'update',
       entityType: 'property',
       entityId: id,
-      entityName: property.name,
+      entityName: property?.name || 'Unknown Property',
       details: { updated_fields: Object.keys(updateData) },
       request
     })
 
-    return NextResponse.json({ property })
+    ctx.logSuccess(200, { propertyId: id, updatedFields: Object.keys(updateData) })
+
+    return NextResponse.json(
+      { property },
+      { headers: ctx.responseHeaders }
+    )
   } catch (error) {
-    console.error('Property update error:', error)
-    return NextResponse.json({ error: 'Server error' }, { status: 500 })
+    ctx.logError(500, error, { operation: 'update_property' })
+    return serverError(error, ctx.responseHeaders)
   }
 }
 
 // DELETE - Delete a property
 export async function DELETE(request: NextRequest) {
+  const ctx = createRequestContext(request, '/api/properties')
+  ctx.logStart()
+
   const supabaseAuth = await createClient()
   
   const { data: { user }, error: authError } = await supabaseAuth.auth.getUser()
   
   if (authError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    ctx.logSuccess(401, { reason: 'unauthorized' })
+    return unauthorized(ctx.responseHeaders)
   }
 
   const supabase = createServiceClient()
@@ -237,7 +288,8 @@ export async function DELETE(request: NextRequest) {
     const id = searchParams.get('id')
 
     if (!id) {
-      return NextResponse.json({ error: 'Property ID is required' }, { status: 400 })
+      ctx.logSuccess(400, { reason: 'missing_property_id' })
+      return badRequest('Property ID is required', ctx.responseHeaders)
     }
 
     // Get user's profile
@@ -248,12 +300,14 @@ export async function DELETE(request: NextRequest) {
       .single()
 
     if (!profile?.org_id) {
-      return NextResponse.json({ error: 'No organization found' }, { status: 400 })
+      ctx.logSuccess(400, { reason: 'no_org_found' })
+      return badRequest('No organization found', ctx.responseHeaders)
     }
 
     // Check if user has permission (admin only for delete)
-    if (profile.role !== 'admin') {
-      return NextResponse.json({ error: 'Only admins can delete properties' }, { status: 403 })
+    if ((profile.role || '') !== 'admin') {
+      ctx.logSuccess(403, { reason: 'insufficient_permissions' })
+      return forbidden(ctx.responseHeaders)
     }
 
     // Get property name before deletion for audit log
@@ -271,8 +325,8 @@ export async function DELETE(request: NextRequest) {
       .eq('org_id', profile.org_id)
 
     if (error) {
-      console.error('Error deleting property:', error)
-      return NextResponse.json({ error: error.message }, { status: 500 })
+      ctx.logError(500, error, { operation: 'delete_property', propertyId: id })
+      return serverError(error, ctx.responseHeaders)
     }
 
     // Log audit event
@@ -284,9 +338,14 @@ export async function DELETE(request: NextRequest) {
       request
     })
 
-    return NextResponse.json({ success: true })
+    ctx.logSuccess(200, { propertyId: id })
+
+    return NextResponse.json(
+      { success: true },
+      { headers: ctx.responseHeaders }
+    )
   } catch (error) {
-    console.error('Property delete error:', error)
-    return NextResponse.json({ error: 'Server error' }, { status: 500 })
+    ctx.logError(500, error, { operation: 'delete_property' })
+    return serverError(error, ctx.responseHeaders)
   }
 }

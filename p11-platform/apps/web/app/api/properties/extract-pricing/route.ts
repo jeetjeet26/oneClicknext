@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import OpenAI from 'openai'
 import { syncPropertyUnitsToKnowledgeBase } from '@/utils/property-units-kb-sync'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
 interface ExtractedUnit {
   unitType: string
@@ -102,25 +103,9 @@ export async function POST(req: NextRequest) {
       }, { status: 400 })
     }
 
-    // Verify user has access to this property
-    const { data: property } = await supabase
-      .from('properties')
-      .select('id, name, org_id')
-      .eq('id', propertyId)
-      .single()
-
-    if (!property) {
-      return NextResponse.json({ error: 'Property not found' }, { status: 404 })
-    }
-
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('org_id')
-      .eq('id', user.id)
-      .single()
-
-    if (profile?.org_id !== property.org_id) {
-      return NextResponse.json({ error: 'Access denied' }, { status: 403 })
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     // Initialize OpenAI
@@ -183,14 +168,6 @@ export async function POST(req: NextRequest) {
     if (action === 'save') {
       const savedUnits = await saveExtractedUnits(supabase, propertyId, validatedUnits)
       
-      // Update property's updated timestamp
-      await supabase
-        .from('properties')
-        .update({ 
-          updated_at: new Date().toISOString() 
-        })
-        .eq('id', propertyId)
-
       // Create or update knowledge_sources entry for manual pricing
       const { data: existingSource } = await supabase
         .from('knowledge_sources')

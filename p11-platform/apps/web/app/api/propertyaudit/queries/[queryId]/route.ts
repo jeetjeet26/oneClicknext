@@ -5,6 +5,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
 // PATCH: Update a query
 export async function PATCH(
@@ -22,6 +23,21 @@ export async function PATCH(
     const { queryId } = await params
     const body = await req.json()
     const { text, type, weight, geo, isActive, runCount } = body
+
+    const { data: existingQuery, error: existingQueryError } = await supabase
+      .from('geo_queries')
+      .select('property_id')
+      .eq('id', queryId)
+      .single()
+
+    if (existingQueryError || !existingQuery) {
+      return NextResponse.json({ error: 'Query not found' }, { status: 404 })
+    }
+
+    const access = await validatePropertyAccess(user.id, existingQuery.property_id)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
 
     const updateData: Record<string, unknown> = { updated_at: new Date().toISOString() }
 
@@ -67,7 +83,7 @@ export async function PATCH(
 
 // DELETE: Delete a query
 export async function DELETE(
-  req: NextRequest,
+  _req: NextRequest,
   { params }: { params: Promise<{ queryId: string }> }
 ) {
   try {
@@ -79,6 +95,21 @@ export async function DELETE(
     }
 
     const { queryId } = await params
+
+    const { data: existingQuery, error: existingQueryError } = await supabase
+      .from('geo_queries')
+      .select('property_id')
+      .eq('id', queryId)
+      .single()
+
+    if (existingQueryError || !existingQuery) {
+      return NextResponse.json({ error: 'Query not found' }, { status: 404 })
+    }
+
+    const access = await validatePropertyAccess(user.id, existingQuery.property_id)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
 
     const { error } = await supabase
       .from('geo_queries')

@@ -5,7 +5,14 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
-import { buildCharts, buildPropertyReportData } from '@/utils/propertyaudit/reporting'
+import { createServiceClient } from '@/utils/supabase/admin'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
+import { buildCharts, buildPropertyReportData, buildRunReportData } from '@/utils/propertyaudit/reporting'
+
+type ReportingClient = {
+  from: (table: string) => unknown
+  rpc: (fn: string, args: Record<string, unknown>) => unknown
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -17,7 +24,7 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json()
-    const { propertyId, template, includeSections } = body
+    const { propertyId, runId, template, includeSections } = body
 
     if (!propertyId || !template) {
       return NextResponse.json(
@@ -26,7 +33,69 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const reportData = await buildPropertyReportData(supabase, propertyId)
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
+    const serviceClient = createServiceClient()
+    let reportData: Awaited<ReturnType<typeof buildPropertyReportData>> | Awaited<ReturnType<typeof buildRunReportData>>
+
+    if (runId) {
+      const { data: run, error: runError } = await serviceClient
+        .from('geo_runs')
+        .select('id, property_id, status')
+        .eq('id', runId)
+        .single()
+
+      if (runError || !run) {
+        return NextResponse.json({ error: 'Run not found' }, { status: 404 })
+      }
+
+      if (run.property_id !== propertyId) {
+        return NextResponse.json({ error: 'Run does not belong to property' }, { status: 400 })
+      }
+
+      if (run.status !== 'completed') {
+        return NextResponse.json(
+          {
+            error: 'Report generation requires a completed run',
+            currentStatus: run.status,
+          },
+          { status: 409 }
+        )
+      }
+
+      reportData = await buildRunReportData(
+        serviceClient as unknown as ReportingClient,
+        runId
+      )
+
+      if (!reportData) {
+        return NextResponse.json({ error: 'Run not found' }, { status: 404 })
+      }
+    } else {
+      const { data: latestCompletedRun } = await serviceClient
+        .from('geo_runs')
+        .select('id')
+        .eq('property_id', propertyId)
+        .eq('status', 'completed')
+        .order('started_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      if (!latestCompletedRun?.id) {
+        return NextResponse.json(
+          { error: 'Report generation requires at least one completed run' },
+          { status: 409 }
+        )
+      }
+
+      reportData = await buildPropertyReportData(
+        supabase as unknown as ReportingClient,
+        propertyId
+      )
+    }
 
     const html = generateReportHTML(reportData, template, includeSections || [])
 

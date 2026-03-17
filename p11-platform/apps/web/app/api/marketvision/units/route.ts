@@ -5,6 +5,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
 // GET: Get units for a competitor
 export async function GET(req: NextRequest) {
@@ -21,6 +22,21 @@ export async function GET(req: NextRequest) {
 
     if (!competitorId) {
       return NextResponse.json({ error: 'competitorId required' }, { status: 400 })
+    }
+
+    const { data: competitor } = await supabase
+      .from('competitors')
+      .select('property_id')
+      .eq('id', competitorId)
+      .single()
+
+    if (!competitor || typeof competitor.property_id !== 'string') {
+      return NextResponse.json({ error: 'Competitor not found' }, { status: 404 })
+    }
+
+    const access = await validatePropertyAccess(user.id, competitor.property_id)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     const { data: units, error } = await supabase
@@ -71,6 +87,21 @@ export async function POST(req: NextRequest) {
 
     if (!competitorId || !unitType) {
       return NextResponse.json({ error: 'competitorId and unitType required' }, { status: 400 })
+    }
+
+    const { data: competitor } = await supabase
+      .from('competitors')
+      .select('property_id')
+      .eq('id', competitorId)
+      .single()
+
+    if (!competitor || typeof competitor.property_id !== 'string') {
+      return NextResponse.json({ error: 'Competitor not found' }, { status: 404 })
+    }
+
+    const access = await validatePropertyAccess(user.id, competitor.property_id)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     const { data: unit, error } = await supabase
@@ -132,6 +163,31 @@ export async function PUT(req: NextRequest) {
 
     if (!id) {
       return NextResponse.json({ error: 'Unit id required' }, { status: 400 })
+    }
+
+    const { data: existingUnit } = await supabase
+      .from('competitor_units')
+      .select('competitor_id')
+      .eq('id', id)
+      .single()
+
+    if (!existingUnit || typeof existingUnit.competitor_id !== 'string') {
+      return NextResponse.json({ error: 'Unit not found' }, { status: 404 })
+    }
+
+    const { data: competitor } = await supabase
+      .from('competitors')
+      .select('property_id')
+      .eq('id', existingUnit.competitor_id)
+      .single()
+
+    if (!competitor || typeof competitor.property_id !== 'string') {
+      return NextResponse.json({ error: 'Competitor not found' }, { status: 404 })
+    }
+
+    const access = await validatePropertyAccess(user.id, competitor.property_id)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     // Get current unit to check for price changes
@@ -208,6 +264,31 @@ export async function DELETE(req: NextRequest) {
 
     if (!id) {
       return NextResponse.json({ error: 'Unit id required' }, { status: 400 })
+    }
+
+    const { data: existingUnit } = await supabase
+      .from('competitor_units')
+      .select('competitor_id')
+      .eq('id', id)
+      .single()
+
+    if (!existingUnit || typeof existingUnit.competitor_id !== 'string') {
+      return NextResponse.json({ error: 'Unit not found' }, { status: 404 })
+    }
+
+    const { data: competitor } = await supabase
+      .from('competitors')
+      .select('property_id')
+      .eq('id', existingUnit.competitor_id)
+      .single()
+
+    if (!competitor || typeof competitor.property_id !== 'string') {
+      return NextResponse.json({ error: 'Competitor not found' }, { status: 404 })
+    }
+
+    const access = await validatePropertyAccess(user.id, competitor.property_id)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     const { error } = await supabase

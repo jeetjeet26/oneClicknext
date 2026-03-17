@@ -31,7 +31,8 @@ async function scrapeAndSaveWebsiteKnowledge(
   propertyId: string,
   websiteUrl: string,
   additionalUrls: string[] = [],
-  propertyName: string
+  propertyName: string,
+  forwardedCookie?: string | null
 ): Promise<{ success: boolean; documentsCreated: number; error?: string }> {
   try {
     // Collect all URLs to scrape
@@ -42,9 +43,17 @@ async function scrapeAndSaveWebsiteKnowledge(
 
     // Import the scraping logic - call the internal API
     const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (process.env.INTERNAL_API_KEY) {
+      headers.Authorization = `Bearer ${process.env.INTERNAL_API_KEY}`
+    }
+    if (forwardedCookie) {
+      headers.cookie = forwardedCookie
+    }
+
     const response = await fetch(`${baseUrl}/api/onboarding/scrape-website`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ 
         urls: urlsToScrape, 
         propertyId  // Pass propertyId so it saves to DB
@@ -313,7 +322,8 @@ export async function POST(request: Request) {
           newProperty.id,
           property.websiteUrl,
           property.additionalUrls || [],
-          property.name
+          property.name,
+          request.headers.get('cookie')
         )
         if (scrapeResult.success) {
           console.log(`Website scrape complete: ${scrapeResult.documentsCreated} documents created`)

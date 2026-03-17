@@ -9,6 +9,7 @@ import { chatLimiter, getRateLimitKey, rateLimitHeaders } from '@/utils/services
 import { buildCorsHeaders, corsPreflightResponse, serverError, rateLimited, badRequest } from '@/utils/services/api-helpers';
 import { validateBody, chatRequestSchema } from '@/utils/services/validation';
 import { auditLog, getRequestIp } from '@/utils/services/audit-logger';
+import { createRequestContext } from '@/utils/services/request-context';
 import OpenAI from 'openai';
 
 // Type for extracted conversation data
@@ -27,6 +28,182 @@ interface ExtractedData {
   } | null;
 }
 
+type RecentMessageRow = {
+  role: string | null
+  content: string | null
+  created_at: string | null
+}
+
+type DuplicateReplyResult = {
+  assistantReply: string
+}
+
+function buildLeadUpdatePayload(params: {
+  firstName?: string | null
+  lastName?: string | null
+  email?: string | null
+  phone?: string | null
+  notes?: string | null
+}): Record<string, string> {
+  const updates: Record<string, string> = {}
+
+  if (params.firstName) updates.first_name = params.firstName
+  if (params.lastName) updates.last_name = params.lastName
+  if (params.email) updates.email = params.email
+  if (params.phone) updates.phone = params.phone
+  if (params.notes) updates.notes = params.notes
+
+  return updates
+}
+
+async function findExistingLeadIdByContact(
+  supabase: ReturnType<typeof createServiceClient>,
+  propertyId: string,
+  params: {
+    email?: string | null
+    phone?: string | null
+  }
+): Promise<string | null> {
+  if (params.email) {
+    const { data: existingByEmail } = await supabase
+      .from('leads')
+      .select('id')
+      .eq('property_id', propertyId)
+      .eq('email', params.email)
+      .limit(1)
+
+    if (existingByEmail?.[0]?.id) {
+      return existingByEmail[0].id
+    }
+  }
+
+  if (params.phone) {
+    const { data: existingByPhone } = await supabase
+      .from('leads')
+      .select('id')
+      .eq('property_id', propertyId)
+      .eq('phone', params.phone)
+      .limit(1)
+
+    if (existingByPhone?.[0]?.id) {
+      return existingByPhone[0].id
+    }
+  }
+
+  return null
+}
+
+function appendConversationSummaryIfMissing(
+  currentNotes: string | null | undefined,
+  conversationSummary: string | null
+): string | null {
+  if (!conversationSummary) {
+    return currentNotes || null
+  }
+
+  if (currentNotes?.includes(conversationSummary)) {
+    return currentNotes
+  }
+
+  const timestamp = new Date().toLocaleString('en-US', {
+    month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
+  })
+  const newNote = `[${timestamp}] ${conversationSummary}`
+  return currentNotes ? `${currentNotes}\n\n${newNote}` : newNote
+}
+
+async function incrementSessionMessageCount(
+  supabase: ReturnType<typeof createServiceClient>,
+  sessionId: string
+): Promise<number | null> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const { data: current } = await supabase
+      .from('widget_sessions')
+      .select('message_count')
+      .eq('id', sessionId)
+      .single();
+
+    const currentCount = current?.message_count || 0;
+    const { data: updated, error } = await supabase
+      .from('widget_sessions')
+      .update({
+        last_activity_at: new Date().toISOString(),
+        message_count: currentCount + 1
+      })
+      .eq('id', sessionId)
+      .eq('message_count', currentCount)
+      .select('message_count')
+      .single();
+
+    if (!error && updated) {
+      return updated.message_count as number;
+    }
+  }
+
+  await supabase
+    .from('widget_sessions')
+    .update({ last_activity_at: new Date().toISOString() })
+    .eq('id', sessionId);
+  return null;
+}
+
+async function findRecentDuplicateReply(
+  supabase: ReturnType<typeof createServiceClient>,
+  conversationId: string,
+  userMessage: string
+): Promise<DuplicateReplyResult | null> {
+  try {
+    const messagesTable = supabase.from('messages') as {
+      select?: (columns: string) => {
+        eq: (column: string, value: string) => {
+          order: (column: string, options: { ascending: boolean }) => {
+            limit: (count: number) => Promise<{ data: unknown[] | null; error: unknown }>
+          }
+        }
+      }
+    }
+    if (typeof messagesTable.select !== 'function') {
+      return null
+    }
+
+    const { data, error } = await messagesTable
+      .select('role, content, created_at')
+      .eq('conversation_id', conversationId)
+      .order('created_at', { ascending: false })
+      .limit(12)
+
+    if (error || !data || data.length === 0) {
+      return null
+    }
+
+    const nowMs = Date.now()
+    const recentMessages = (data as RecentMessageRow[]).slice().reverse()
+
+    for (let index = recentMessages.length - 1; index >= 0; index -= 1) {
+      const row = recentMessages[index]
+      if (row.role !== 'user' || row.content !== userMessage || !row.created_at) {
+        continue
+      }
+
+      const createdMs = Date.parse(row.created_at)
+      if (!Number.isFinite(createdMs) || nowMs - createdMs > 2 * 60 * 1000) {
+        continue
+      }
+
+      for (let replyIndex = index + 1; replyIndex < recentMessages.length; replyIndex += 1) {
+        const replyRow = recentMessages[replyIndex]
+        if (replyRow.role === 'assistant' && typeof replyRow.content === 'string' && replyRow.content) {
+          return { assistantReply: replyRow.content }
+        }
+      }
+    }
+  } catch (error) {
+    console.error('[LumaLeasing] Duplicate reply lookup failed:', error)
+  }
+
+  return null
+}
+
 // LLM-based extraction of lead info and tour requests from conversation
 async function extractAndProcessConversation(
   openai: OpenAI,
@@ -36,7 +213,10 @@ async function extractAndProcessConversation(
   sessionId: string | null,
   conversationId: string | null,
   existingLeadId: string | null,
-  config: { properties?: { name?: string; address?: { street?: string; full?: string } }; widget_name?: string }
+  config: {
+    properties?: { name?: string; address?: { street?: string; full?: string } } | null
+    widget_name?: string | null
+  }
 ): Promise<void> {
   console.log('[LumaLeasing] Starting extraction for property:', propertyId, 'session:', sessionId, 'conversation:', conversationId);
   
@@ -117,43 +297,32 @@ Write a professional CRM note (no bullet points, just flowing text):`;
     const leadData = data.lead;
 
     if (leadData && (leadData.email || leadData.phone)) {
-      // Check if lead already exists
-      if (leadData.email && !leadId) {
-        const { data: existing } = await supabase
-          .from('leads')
-          .select('id')
-          .eq('property_id', propertyId)
-          .eq('email', leadData.email)
-          .single();
-        
-        if (existing) {
-          leadId = existing.id;
-        }
+      if (!leadId) {
+        leadId = await findExistingLeadIdByContact(supabase, propertyId, {
+          email: leadData.email,
+          phone: leadData.phone,
+        })
       }
 
       if (leadId) {
-        // Update existing lead with any new info
-        const updates: Record<string, string> = {};
-        if (leadData.first_name) updates.first_name = leadData.first_name;
-        if (leadData.last_name) updates.last_name = leadData.last_name;
-        if (leadData.phone) updates.phone = leadData.phone;
-        if (leadData.email) updates.email = leadData.email;
-        
-        // Add/append conversation summary to notes
+        const updates = buildLeadUpdatePayload({
+          firstName: leadData.first_name,
+          lastName: leadData.last_name,
+          phone: leadData.phone,
+          email: leadData.email,
+        })
+
         if (conversationSummary) {
           const { data: currentLead } = await supabase
             .from('leads')
             .select('notes')
             .eq('id', leadId)
             .single();
-          
-          const timestamp = new Date().toLocaleString('en-US', { 
-            month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' 
-          });
-          const newNote = `[${timestamp}] ${conversationSummary}`;
-          updates.notes = currentLead?.notes 
-            ? `${currentLead.notes}\n\n${newNote}`
-            : newNote;
+
+          const nextNotes = appendConversationSummaryIfMissing(currentLead?.notes, conversationSummary)
+          if (nextNotes && nextNotes !== currentLead?.notes) {
+            updates.notes = nextNotes
+          }
         }
 
         if (Object.keys(updates).length > 0) {
@@ -250,7 +419,8 @@ Write a professional CRM note (no bullet points, just flowing text):`;
             const { error: sessionError } = await supabase
               .from('widget_sessions')
               .update({ lead_id: leadId, converted_at: new Date().toISOString() })
-              .eq('id', sessionId);
+            .eq('id', sessionId)
+            .eq('property_id', propertyId);
             if (sessionError) {
               console.error('[LumaLeasing] Failed to update session:', sessionError);
             } else {
@@ -263,7 +433,8 @@ Write a professional CRM note (no bullet points, just flowing text):`;
             const { error: convError } = await supabase
               .from('conversations')
               .update({ lead_id: leadId })
-              .eq('id', conversationId);
+              .eq('id', conversationId)
+              .eq('property_id', propertyId);
             if (convError) {
               console.error('[LumaLeasing] Failed to update conversation:', convError);
             }
@@ -275,17 +446,20 @@ Write a professional CRM note (no bullet points, just flowing text):`;
     // Process tour request if detected with date/time
     const tourData = data.tour;
     if (tourData?.requested && tourData.date && leadId) {
+      const requestedTourTime = tourData.time || '10:00';
       // Check if tour already exists for this lead on this date
       const { data: existingTour } = await supabase
         .from('tour_bookings')
         .select('id')
         .eq('lead_id', leadId)
         .eq('scheduled_date', tourData.date)
-        .single();
+        .eq('scheduled_time', `${requestedTourTime}:00`)
+        .in('status', ['scheduled', 'confirmed'])
+        .maybeSingle();
 
       if (!existingTour) {
         // Create tour booking
-        const tourTime = tourData.time || '10:00';
+        const tourTime = requestedTourTime;
         const { data: booking, error: bookingError } = await supabase
           .from('tour_bookings')
           .insert({
@@ -356,6 +530,7 @@ Write a professional CRM note (no bullet points, just flowing text):`;
                   tour_booking_id: booking.id,
                   google_event_id: calendarEvent.eventId,
                   sync_status: 'synced',
+                  last_synced_at: new Date().toISOString(),
                 });
 
               console.log(`[LumaLeasing] ✅ Created Google Calendar event: ${calendarEvent.eventId}`);
@@ -365,6 +540,15 @@ Write a professional CRM note (no bullet points, just flowing text):`;
           } catch (calendarError) {
             // Calendar event creation is non-blocking - don't fail the extraction
             console.error(`[LumaLeasing] ⚠️ Google Calendar event creation failed (non-blocking):`, calendarError);
+            await supabase.from('lead_activities').insert({
+              lead_id: leadId,
+              type: 'calendar_sync_failed',
+              description: `Google Calendar sync failed for booking ${booking.id}`,
+              metadata: {
+                booking_id: booking.id,
+                reason: calendarError instanceof Error ? calendarError.message : 'unknown_error',
+              },
+            });
           }
 
           // Re-score the lead (tour booking adds points)
@@ -440,8 +624,11 @@ export async function OPTIONS(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const ctx = createRequestContext(req, '/api/lumaleasing/chat')
+  ctx.logStart()
   const origin = req.headers.get('origin')
   const corsHeaders = buildCorsHeaders(origin, 'POST, OPTIONS')
+  const responseHeaders = { ...corsHeaders, ...ctx.responseHeaders }
 
   try {
     // Rate limit — 20 requests/minute per IP (protects OpenAI spend)
@@ -449,16 +636,18 @@ export async function POST(req: NextRequest) {
     const rl = chatLimiter.check(rlKey)
     if (!rl.allowed) {
       auditLog({ eventType: 'rate_limit_exceeded', ip: getRequestIp(req), resource: 'lumaleasing/chat' })
-      return rateLimited({ ...corsHeaders, ...rateLimitHeaders(rl) })
+      ctx.logSuccess(429, { reason: 'rate_limited' })
+      return rateLimited({ ...responseHeaders, ...rateLimitHeaders(rl) })
     }
 
     const apiKey = extractApiKey(req);
     const visitorId = req.headers.get('X-Visitor-ID');
 
     if (!apiKey) {
+      ctx.logSuccess(401, { reason: 'missing_api_key' })
       return NextResponse.json(
         { error: 'API key required' },
-        { status: 401, headers: corsHeaders }
+        { status: 401, headers: responseHeaders }
       );
     }
 
@@ -466,16 +655,18 @@ export async function POST(req: NextRequest) {
     const rawBody = await req.json();
     const validation = validateBody(rawBody, chatRequestSchema);
     if (!validation.success) {
-      return badRequest(validation.error, corsHeaders);
+      ctx.logSuccess(400, { reason: 'validation_failed' })
+      return badRequest(validation.error, responseHeaders);
     }
 
     const { messages, sessionId, leadInfo } = validation.data;
 
     const lastMessage = messages[messages.length - 1]?.content;
     if (!lastMessage) {
+      ctx.logSuccess(400, { reason: 'missing_message' })
       return NextResponse.json(
         { error: 'Message required' },
-        { status: 400, headers: corsHeaders }
+        { status: 400, headers: responseHeaders }
       );
     }
 
@@ -493,31 +684,45 @@ export async function POST(req: NextRequest) {
 
     if (configError || !config) {
       // This is the error users see in WordPress; log details for Vercel runtime logs.
-      console.error('[LumaLeasing] API key validation failed', {
+      ctx.logError(401, configError || 'Missing config', {
+        operation: 'validate_luma_api_key',
         hasConfig: Boolean(config),
-        error: configError,
+        hasConfigError: Boolean(configError),
       });
       return NextResponse.json(
         { error: 'Invalid or inactive API key' },
-        { status: 401, headers: corsHeaders }
+        { status: 401, headers: responseHeaders }
       );
     }
 
     const propertyId = config.property_id;
+    if (!propertyId) {
+      ctx.logSuccess(404, { reason: 'property_not_found' })
+      return NextResponse.json(
+        { error: 'Property not found' },
+        { status: 404, headers: responseHeaders }
+      );
+    }
     const propertyName = config.properties?.name || 'our community';
 
     // 2. Get or create widget session
-    let activeSessionId = sessionId;
-    let widgetSession = null;
+    let activeSessionId: string | null = sessionId || null;
+    let widgetSession: { id?: string; lead_id?: string | null; message_count?: number | null } | null = null;
 
     if (activeSessionId) {
       const { data: existingSession } = await supabase
         .from('widget_sessions')
         .select('*')
         .eq('id', activeSessionId)
-        .single();
+        .eq('property_id', propertyId)
+        .maybeSingle();
       
       widgetSession = existingSession;
+
+      if (!widgetSession) {
+        ctx.logSuccess(400, { reason: 'invalid_session_id', sessionId: activeSessionId, propertyId })
+        return badRequest('Invalid sessionId for this property', responseHeaders);
+      }
     }
 
     if (!widgetSession && visitorId) {
@@ -534,24 +739,31 @@ export async function POST(req: NextRequest) {
         .single();
       
       widgetSession = newSession;
-      activeSessionId = newSession?.id;
+      activeSessionId = newSession?.id || null;
     }
 
     // 3. Handle lead capture if info provided
-    let leadId = widgetSession?.lead_id;
+    let leadId: string | null = widgetSession?.lead_id ?? null;
 
     if (leadInfo && !leadId) {
-      // Check if lead already exists with this email
-      if (leadInfo.email) {
-        const { data: existingLead } = await supabase
-          .from('leads')
-          .select('id')
-          .eq('property_id', propertyId)
-          .eq('email', leadInfo.email)
-          .single();
+      leadId = await findExistingLeadIdByContact(supabase, propertyId, {
+        email: leadInfo.email,
+        phone: leadInfo.phone,
+      })
 
-        if (existingLead) {
-          leadId = existingLead.id;
+      if (leadId) {
+        const updates = buildLeadUpdatePayload({
+          firstName: leadInfo.first_name,
+          lastName: leadInfo.last_name,
+          email: leadInfo.email,
+          phone: leadInfo.phone,
+        })
+
+        if (Object.keys(updates).length > 0) {
+          await supabase
+            .from('leads')
+            .update(updates)
+            .eq('id', leadId)
         }
       }
 
@@ -571,7 +783,7 @@ export async function POST(req: NextRequest) {
           .select('id')
           .single();
 
-        leadId = newLead?.id;
+        leadId = newLead?.id || null;
 
         // Sync new lead to CRM (if configured)
         if (leadId) {
@@ -597,18 +809,19 @@ export async function POST(req: NextRequest) {
       }
 
       // Update session with lead
-      if (widgetSession && leadId) {
+      if (widgetSession && leadId && activeSessionId) {
         await supabase
           .from('widget_sessions')
           .update({ lead_id: leadId, converted_at: new Date().toISOString() })
-          .eq('id', activeSessionId);
+          .eq('id', activeSessionId)
+          .eq('property_id', propertyId);
       }
     }
 
     // 4. Get or create conversation
-    let conversationId = null;
+    let conversationId: string | null = null;
 
-    if (widgetSession) {
+    if (widgetSession && activeSessionId) {
       // Check for existing conversation
       const { data: existingConv } = await supabase
         .from('conversations')
@@ -630,21 +843,22 @@ export async function POST(req: NextRequest) {
           });
 
           // Update session activity
-          await supabase
-            .from('widget_sessions')
-            .update({ 
-              last_activity_at: new Date().toISOString(),
-              message_count: (widgetSession.message_count || 0) + 1
-            })
-            .eq('id', activeSessionId);
+          if (activeSessionId) {
+            await incrementSessionMessageCount(supabase, activeSessionId);
+          }
 
+          ctx.logSuccess(200, {
+            conversationId,
+            sessionId: activeSessionId,
+            humanMode: true,
+          })
           return NextResponse.json({
             content: null,
             sessionId: activeSessionId,
             conversationId,
             isHumanMode: true,
             waitingForHuman: true,
-          }, { headers: corsHeaders });
+          }, { headers: responseHeaders });
         }
       } else {
         // Create new conversation
@@ -659,7 +873,7 @@ export async function POST(req: NextRequest) {
           .select('id')
           .single();
 
-        conversationId = newConv?.id;
+        conversationId = newConv?.id || null;
 
         // Track chat_started engagement event for new conversations (non-blocking)
         if (leadId && conversationId) {
@@ -674,6 +888,34 @@ export async function POST(req: NextRequest) {
     }
 
     // 5. Save user message
+    if (conversationId) {
+      const duplicateReply = await findRecentDuplicateReply(supabase, conversationId, lastMessage)
+      if (duplicateReply) {
+        const messageCount = widgetSession?.message_count || 0
+        const shouldPromptLeadCapture = !leadId && config.collect_email && messageCount >= 3
+
+        ctx.logSuccess(200, {
+          conversationId,
+          sessionId: activeSessionId,
+          hasLeadId: !!leadId,
+          retryDuplicateSuppressed: true,
+        })
+
+        return NextResponse.json(
+          {
+            content: duplicateReply.assistantReply,
+            sessionId: activeSessionId,
+            conversationId,
+            shouldPromptLeadCapture,
+            leadCapturePrompt: shouldPromptLeadCapture ? config.lead_capture_prompt : null,
+            wantsTour: false,
+            duplicate: true,
+          },
+          { headers: responseHeaders }
+        )
+      }
+    }
+
     if (conversationId) {
       await supabase.from('messages').insert({
         conversation_id: conversationId,
@@ -691,8 +933,8 @@ export async function POST(req: NextRequest) {
 
     // 7. Search knowledge base
     const { data: documents } = await supabase.rpc('match_documents', {
-      query_embedding: embedding,
-      match_threshold: 0.5,
+      query_embedding: embedding as unknown as string,
+      match_threshold: 0.7,
       match_count: 5,
       filter_property: propertyId,
     });
@@ -757,13 +999,19 @@ Remember: You represent ${propertyName}. Provide exceptional customer service wi
     // 10. Generate AI response
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        ...messages.slice(-10).map((m: { role: string; content: string }) => ({
+      messages: (() => {
+        const recent = messages.slice(-10).map((m: { role: string; content: string }) => ({
           role: m.role as 'user' | 'assistant',
           content: m.content,
-        })),
-      ],
+        }));
+        while (recent.reduce((sum, m) => sum + m.content.length, 0) > 6000 && recent.length > 1) {
+          recent.shift();
+        }
+        return [
+        { role: 'system', content: systemPrompt },
+          ...recent,
+        ];
+      })(),
       temperature: 0.7,
       max_tokens: 400,
     });
@@ -783,40 +1031,70 @@ Remember: You represent ${propertyName}. Provide exceptional customer service wi
     // Must await in serverless environment or it may not complete
     let extractionRan = false;
     let extractionError = null;
+    const priorCount = widgetSession?.message_count || 0;
+    const extractionDue = Boolean(leadInfo?.email || leadInfo?.phone) || ((priorCount + 1) % 3 === 0);
     try {
-      await extractAndProcessConversation(
-        openai,
-        supabase,
-        messages,
-        propertyId,
-        activeSessionId || null,
-        conversationId,
-        leadId,
-        config
-      );
-      extractionRan = true;
-      console.log('[LumaLeasing] Extraction completed successfully');
+      if (extractionDue) {
+        await extractAndProcessConversation(
+          openai,
+          supabase,
+          messages,
+          propertyId,
+          activeSessionId ? activeSessionId : null,
+          conversationId,
+          leadId,
+          {
+            widget_name: config.widget_name,
+            properties:
+              config.properties &&
+              typeof config.properties === 'object' &&
+              !Array.isArray(config.properties)
+                ? {
+                    name: config.properties.name,
+                    address:
+                      config.properties.address &&
+                      typeof config.properties.address === 'object' &&
+                      !Array.isArray(config.properties.address)
+                        ? {
+                            street: (config.properties.address as { street?: string }).street,
+                            full: (config.properties.address as { full?: string }).full,
+                          }
+                        : undefined,
+                  }
+                : null,
+          }
+        );
+        extractionRan = true;
+        console.log('[LumaLeasing] Extraction completed successfully');
+      }
     } catch (err) {
       extractionError = err instanceof Error ? err.message : String(err);
       console.error('[LumaLeasing] Extraction error:', err);
     }
 
     // 13. Update session activity
+    let updatedMessageCount = widgetSession?.message_count || 0;
     if (activeSessionId) {
-      await supabase
-        .from('widget_sessions')
-        .update({ 
-          last_activity_at: new Date().toISOString(),
-          message_count: (widgetSession?.message_count || 0) + 1
-        })
-        .eq('id', activeSessionId);
+      const incremented = await incrementSessionMessageCount(supabase, activeSessionId);
+      if (typeof incremented === 'number') {
+        updatedMessageCount = incremented;
+      } else {
+        updatedMessageCount += 1;
+      }
     }
 
     // 14. Check if we should prompt for lead capture
     const shouldPromptLeadCapture = !leadId && 
       config.collect_email && 
-      (widgetSession?.message_count || 0) >= 2;
+      updatedMessageCount >= 3;
 
+    ctx.logSuccess(200, {
+      conversationId,
+      sessionId: activeSessionId,
+      hasLeadId: !!leadId,
+      wantsTour,
+      promptedLeadCapture: shouldPromptLeadCapture,
+    })
     return NextResponse.json({
       content: reply,
       sessionId: activeSessionId,
@@ -832,11 +1110,11 @@ Remember: You represent ${propertyName}. Provide exceptional customer service wi
           hasLeadId: !!leadId,
         }
       } : {})
-    }, { headers: corsHeaders });
+    }, { headers: responseHeaders });
 
   } catch (error) {
-    console.error('LumaLeasing Chat Error:', error);
-    return serverError(error, corsHeaders);
+    ctx.logError(500, error, { operation: 'lumaleasing_chat' })
+    return serverError(error, responseHeaders);
   }
 }
 

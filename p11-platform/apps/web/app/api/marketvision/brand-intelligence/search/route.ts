@@ -5,6 +5,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
 // Data engine service URL (Python FastAPI)
 const DATA_ENGINE_URL = process.env.DATA_ENGINE_URL || 'http://localhost:8000'
@@ -34,6 +35,15 @@ export async function POST(req: NextRequest) {
 
     if (!query) {
       return NextResponse.json({ error: 'query required' }, { status: 400 })
+    }
+
+    if (!propertyId) {
+      return NextResponse.json({ error: 'propertyId required' }, { status: 400 })
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     // Call data-engine for semantic search

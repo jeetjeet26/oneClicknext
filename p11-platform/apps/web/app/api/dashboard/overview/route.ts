@@ -1,22 +1,52 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { NextRequest, NextResponse } from 'next/server'
-import { subDays, format, startOfDay } from 'date-fns'
+import { subDays, format } from 'date-fns'
+import {
+  badRequest,
+  forbidden,
+  serverError,
+  unauthorized,
+} from '@/utils/services/api-helpers'
+import { createRequestContext } from '@/utils/services/request-context'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
+
+type MetricTotals = {
+  spend: number
+  clicks: number
+  conversions: number
+  impressions: number
+}
 
 export async function GET(request: NextRequest) {
+  const ctx = createRequestContext(request, '/api/dashboard/overview')
+  ctx.logStart()
+
   const supabaseAuth = await createClient()
   
   const { data: { user }, error: authError } = await supabaseAuth.auth.getUser()
   
   if (authError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    ctx.logSuccess(401, { reason: 'unauthorized' })
+    return unauthorized(ctx.responseHeaders)
   }
 
   const { searchParams } = new URL(request.url)
   const propertyId = searchParams.get('propertyId')
 
   if (!propertyId) {
-    return NextResponse.json({ error: 'propertyId is required' }, { status: 400 })
+    ctx.logSuccess(400, { reason: 'missing_property_id' })
+    return badRequest('propertyId is required', ctx.responseHeaders)
+  }
+
+  const access = await validatePropertyAccess(user.id, propertyId)
+  if (!access.authorized) {
+    ctx.logSuccess(403, {
+      reason: 'forbidden_property_access',
+      propertyId,
+      userId: user.id,
+    })
+    return forbidden(ctx.responseHeaders)
   }
 
   const supabase = createServiceClient()
@@ -100,7 +130,7 @@ export async function GET(request: NextRequest) {
 
     // Calculate totals for current period
     const currentTotals = (currentPeriodData || []).reduce(
-      (acc, row) => ({
+      (acc: MetricTotals, row) => ({
         spend: acc.spend + Number(row.spend || 0),
         clicks: acc.clicks + Number(row.clicks || 0),
         conversions: acc.conversions + Number(row.conversions || 0),
@@ -111,7 +141,7 @@ export async function GET(request: NextRequest) {
 
     // Calculate totals for previous period
     const previousTotals = (previousPeriodData || []).reduce(
-      (acc, row) => ({
+      (acc: MetricTotals, row) => ({
         spend: acc.spend + Number(row.spend || 0),
         clicks: acc.clicks + Number(row.clicks || 0),
         conversions: acc.conversions + Number(row.conversions || 0),
@@ -145,64 +175,75 @@ export async function GET(request: NextRequest) {
         type: 'lead' as const,
         title: `New lead: ${lead.first_name} ${lead.last_name || ''}`.trim(),
         subtitle: `Source: ${lead.source || 'Direct'} • Status: ${lead.status}`,
-        timestamp: lead.created_at,
+        timestamp: lead.created_at || new Date(0).toISOString(),
       })),
       ...(recentMessages || []).map(msg => ({
         id: msg.id,
         type: msg.role === 'user' ? 'message_in' as const : 'message_out' as const,
         title: msg.role === 'user' ? 'New message received' : 'AI responded',
-        subtitle: msg.content.slice(0, 60) + (msg.content.length > 60 ? '...' : ''),
-        timestamp: msg.created_at,
+        subtitle:
+          (msg.content || '').slice(0, 60) +
+          ((msg.content || '').length > 60 ? '...' : ''),
+        timestamp: msg.created_at || new Date(0).toISOString(),
       })),
     ]
       .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
       .slice(0, 10)
 
-    return NextResponse.json({
-      metrics: {
-        totalLeads: {
-          value: totalLeads,
-          change: leadsChange,
-          period: '30d',
-        },
-        costPerLead: {
-          value: costPerLead,
-          change: cplChange,
-          period: '30d',
-        },
-        aiResponseRate: {
-          value: aiResponseRate,
-          change: 0, // Would need historical data
-          period: '30d',
-        },
-        totalSpend: {
-          value: currentTotals.spend,
-          change: previousTotals.spend 
-            ? ((currentTotals.spend - previousTotals.spend) / previousTotals.spend) * 100 
-            : 0,
-          period: '30d',
-        },
-        conversions: {
-          value: currentTotals.conversions,
-          change: previousTotals.conversions
-            ? ((currentTotals.conversions - previousTotals.conversions) / previousTotals.conversions) * 100
-            : 0,
-          period: '30d',
-        },
-        documentsCount: documentsCount || 0,
-      },
-      recentActivity,
-      summary: {
-        impressions: currentTotals.impressions,
-        clicks: currentTotals.clicks,
-        ctr: currentTotals.impressions > 0 
-          ? (currentTotals.clicks / currentTotals.impressions) * 100 
-          : 0,
-      },
+    ctx.logSuccess(200, {
+      propertyId,
+      totalLeads,
+      documentsCount: documentsCount || 0,
     })
+
+    return NextResponse.json(
+      {
+        metrics: {
+          totalLeads: {
+            value: totalLeads,
+            change: leadsChange,
+            period: '30d',
+          },
+          costPerLead: {
+            value: costPerLead,
+            change: cplChange,
+            period: '30d',
+          },
+          aiResponseRate: {
+            value: aiResponseRate,
+            change: 0, // Would need historical data
+            period: '30d',
+          },
+          totalSpend: {
+            value: currentTotals.spend,
+            change: previousTotals.spend 
+              ? ((currentTotals.spend - previousTotals.spend) / previousTotals.spend) * 100 
+              : 0,
+            period: '30d',
+          },
+          conversions: {
+            value: currentTotals.conversions,
+            change: previousTotals.conversions
+              ? ((currentTotals.conversions - previousTotals.conversions) / previousTotals.conversions) * 100
+              : 0,
+            period: '30d',
+          },
+          documentsCount: documentsCount || 0,
+        },
+        recentActivity,
+        summary: {
+          impressions: currentTotals.impressions,
+          clicks: currentTotals.clicks,
+          ctr: currentTotals.impressions > 0 
+            ? (currentTotals.clicks / currentTotals.impressions) * 100 
+            : 0,
+        },
+      },
+      { headers: ctx.responseHeaders }
+    )
   } catch (error) {
-    console.error('Dashboard overview API error:', error)
-    return NextResponse.json({ error: 'Server error' }, { status: 500 })
+    ctx.logError(500, error, { operation: 'dashboard_overview' })
+    return serverError(error, ctx.responseHeaders)
   }
 }
 

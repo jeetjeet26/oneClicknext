@@ -1,4 +1,5 @@
 import { createClient } from '@/utils/supabase/server'
+import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { NextRequest, NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
@@ -25,6 +26,11 @@ export async function GET(request: NextRequest) {
         { error: 'Unauthorized' },
         { status: 401 }
       )
+    }
+
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     // Fetch goals for the property
@@ -85,6 +91,11 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    const access = await validatePropertyAccess(user.id, propertyId)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
     // Upsert the goal (create or update)
     const { data: goal, error } = await supabase
       .from('metric_goals')
@@ -143,6 +154,24 @@ export async function DELETE(request: NextRequest) {
         { error: 'Unauthorized' },
         { status: 401 }
       )
+    }
+
+    const { data: existingGoal, error: existingGoalError } = await supabase
+      .from('metric_goals')
+      .select('id, property_id')
+      .eq('id', goalId)
+      .single()
+
+    if (existingGoalError || !existingGoal) {
+      return NextResponse.json(
+        { error: 'Goal not found' },
+        { status: 404 }
+      )
+    }
+
+    const access = await validatePropertyAccess(user.id, existingGoal.property_id)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     // Soft delete by setting is_active to false
