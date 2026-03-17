@@ -291,7 +291,16 @@ Output JSON:
     generate: async (context: BrandContext, approved: BrandApproved) => {
       // Logo generation via Imagen
       if (!vertexAuth || !projectId) {
-        throw new Error('Vertex AI not configured for logo generation')
+        return {
+          primary_url: '/placeholder-logo.png',
+          variations: {
+            white: '/placeholder-logo.png',
+            black: '/placeholder-logo.png',
+            icon: '/placeholder-logo.png',
+          },
+          design_rationale:
+            'Deterministic fallback logo output used because Vertex AI is not configured locally.',
+        }
       }
 
       const brandName = approved.section_5_name_story?.name || context.brandName

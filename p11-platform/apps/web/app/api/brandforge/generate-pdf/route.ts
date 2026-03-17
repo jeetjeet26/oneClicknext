@@ -94,6 +94,19 @@ function buildBrandBookPdf(brandBook: Record<string, unknown>): Uint8Array {
   return new Uint8Array(arrayBuffer)
 }
 
+async function ensureBrandAssetsBucket(supabaseAdmin: ReturnType<typeof createAdminClient>) {
+  const { error } = await supabaseAdmin.storage.createBucket('brand-assets', {
+    public: true,
+    fileSizeLimit: '20MB',
+  })
+
+  // Bucket may already exist (ignore this case).
+  const message = error?.message?.toLowerCase() || ''
+  if (error && !message.includes('already exists')) {
+    throw error
+  }
+}
+
 /**
  * Generate final brand book PDF artifact.
  */
@@ -204,12 +217,22 @@ export async function POST(req: NextRequest) {
 
     const pdfBytes = buildBrandBookPdf(brandBook)
     const fileName = `${brand.property_id}/brand-book-${Date.now()}.pdf`
-    const { error: uploadError } = await supabaseAdmin.storage
+    let { error: uploadError } = await supabaseAdmin.storage
       .from('brand-assets')
       .upload(fileName, pdfBytes, {
         contentType: 'application/pdf',
         upsert: true
       })
+
+    if (uploadError && uploadError.message.toLowerCase().includes('bucket not found')) {
+      await ensureBrandAssetsBucket(supabaseAdmin)
+      ;({ error: uploadError } = await supabaseAdmin.storage
+        .from('brand-assets')
+        .upload(fileName, pdfBytes, {
+          contentType: 'application/pdf',
+          upsert: true
+        }))
+    }
 
     if (uploadError) throw uploadError
 

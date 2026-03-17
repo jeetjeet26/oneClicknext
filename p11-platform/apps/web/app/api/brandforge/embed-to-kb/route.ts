@@ -75,6 +75,22 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+function getErrorDetails(error: unknown): string {
+  if (error instanceof Error) return error.message
+  if (typeof error === 'object' && error !== null) {
+    const record = error as Record<string, unknown>
+    if (typeof record.message === 'string' && record.message.length > 0) {
+      return record.message
+    }
+    try {
+      return JSON.stringify(record)
+    } catch {
+      return '[unserializable error object]'
+    }
+  }
+  return String(error)
+}
+
 /**
  * Embed brand book content into knowledge base for RAG
  * This makes brand assets searchable by other products (SiteForge, LumaLeasing, etc.)
@@ -362,8 +378,9 @@ export async function POST(request: NextRequest) {
 
   } catch (error) {
     console.error('Brand book embedding error:', error)
+    const details = getErrorDetails(error)
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Embedding failed' },
+      { error: 'Embedding failed', details },
       { status: 500 }
     )
   }

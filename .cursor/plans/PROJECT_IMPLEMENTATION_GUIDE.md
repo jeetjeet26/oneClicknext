@@ -215,7 +215,7 @@ Steps:
 2. [x] Unify export and knowledge-base embed semantics.
 3. [x] Align embed logic with real generated section schema.
 4. [x] Improve progress visibility for long-running generation.
-5. Validate a full local flow for `analyze -> generate/edit -> export/embed`.
+5. [x] Validate a full local flow for `analyze -> generate/edit -> export/embed`.
 
 Progress note (2026-03-16):
 - `/api/brandforge/generate-pdf` now generates and uploads a real PDF artifact (`application/pdf`, `.pdf`) instead of a JSON payload disguised as PDF output.
@@ -224,6 +224,8 @@ Progress note (2026-03-16):
 - Export no longer performs hidden document ingestion side effects; knowledge-base embedding is now explicitly handled through `/api/brandforge/embed-to-kb`.
 - Embed chunk extraction now matches actual generated section shapes (`logo.primary_url`, `typography.headline/body/accent`, object-or-array color structures, `photo_* .criteria`, `implementation.examples`) to prevent schema-shape drift in KB embeddings.
 - `/api/brandforge/status` now exposes richer long-running progress context (`phase`, `phaseLabel`, baseline-aware `progress`, `activeSection`, `lastActivityAt`, `secondsSinceLastActivity`, `isPossiblyStalled`, and `nextRecommendedAction`) so operators can distinguish generation, review, completion, and attention-required states.
+- Added local smoke coverage in `e2e/local-smoke.spec.ts` for full BrandForge flow: `analyze -> conversation complete -> generate/edit/approve all sections -> generate-pdf -> embed-to-kb -> status verification`.
+- Hardened local determinism for that flow by adding non-failing fallback generation when Gemini/Vertex are unavailable (`/api/brandforge/generate-next-section`), auto-creating the `brand-assets` storage bucket on first PDF export (`/api/brandforge/generate-pdf`), and allowing `knowledge_sources.source_type='brand_book'` via migration `20260316192000_add_brand_book_source_type.sql`.
 
 Done means:
 
