@@ -33,7 +33,7 @@ interface QualityCheck {
 
 /**
  * Quality Agent - Validates everything before deployment
- * Ensures brand consistency, WordPress compatibility, Cadence Creek quality
+ * Ensures brand consistency, WordPress compatibility, and a polished quality bar
  */
 export class QualityAgent extends BaseAgent {
   
@@ -296,13 +296,13 @@ Return JSON only:
       }
     }
     
-    // Check lifestyle ratio (Cadence Creek uses 60%+ lifestyle shots)
+    // Check lifestyle ratio for a healthy balance of people-driven imagery.
     const totalPhotos = photoManifest.photos.length
     const lifestylePhotos = photoManifest.byCategory.lifestyle.length
     const lifestyleRatio = totalPhotos > 0 ? lifestylePhotos / totalPhotos : 0
     
     if (lifestyleRatio < 0.4) {
-      issues.push(`Low lifestyle ratio (${(lifestyleRatio * 100).toFixed(0)}% - target 60%+)`)
+      issues.push(`Low lifestyle ratio (${(lifestyleRatio * 100).toFixed(0)}% - target 40%+)`)
       suggestions.push('Generate more lifestyle photos showing people enjoying amenities')
     }
     

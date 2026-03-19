@@ -1,6 +1,6 @@
 # Vision: TourSpark
 
-Last Updated: March 16, 2026
+Last Updated: March 17, 2026
 Document Type: Vision grounded in current implementation
 
 ## Mission
@@ -57,6 +57,7 @@ Before autonomy can optimize or supervise TourSpark, the product must provide:
 - per-action audit records
 - policy limits around cadence, channel, and send frequency
 - confidence-aware recommendations before automatic cadence changes
+- human review that supports approve, deny, and modify decisions with preserved free-text rationale when cadence or workflow changes are proposed
 - replay and rollback behavior for failed or cancelled actions
 
 ## Success Metrics

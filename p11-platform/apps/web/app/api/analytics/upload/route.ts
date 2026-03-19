@@ -1,4 +1,5 @@
 import { createClient } from '@/utils/supabase/server'
+import { createServiceClient } from '@/utils/supabase/admin'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { NextRequest, NextResponse } from 'next/server'
 import { 
@@ -8,6 +9,7 @@ import {
   type ParsedMarketingRow,
   type ExtendedMetricsRow
 } from '@/utils/csv/marketing-csv-parser'
+import { normalizeMarketingChannelId } from '@/utils/analytics/channel-identity'
 
 export const maxDuration = 60 // Allow up to 60 seconds for large files
 
@@ -49,8 +51,11 @@ type UploadResponse = {
   warnings?: string[]
 }
 
+const ALLOWED_UPLOAD_ROLES = ['admin', 'manager']
+
 export async function POST(request: NextRequest): Promise<NextResponse<UploadResponse>> {
   const supabase = await createClient()
+  const supabaseAdmin = createServiceClient()
   
   // Check authentication
   const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -65,6 +70,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<UploadRes
   try {
     const body: UploadRequest = await request.json()
     const { csvContent, filename, campaignName, propertyId, platform, preview = false } = body
+    const normalizedPlatform = normalizeMarketingChannelId(platform) as MarketingPlatform
 
     // Validate required fields
     if (!csvContent) {
@@ -96,14 +102,26 @@ export async function POST(request: NextRequest): Promise<NextResponse<UploadRes
       )
     }
 
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', user.id)
+      .single()
+    if (profileError || !ALLOWED_UPLOAD_ROLES.includes(profile?.role || '')) {
+      return NextResponse.json(
+        { success: false, message: 'Forbidden', errors: ['Permission denied'] },
+        { status: 403 }
+      )
+    }
+
     // First, try to parse as time series or campaign summary
-    const timeSeriesResult = parseMarketingCSV(csvContent, filename, campaignName, platform)
+    const timeSeriesResult = parseMarketingCSV(csvContent, filename, campaignName, normalizedPlatform)
     
     // If it's a time series or campaign summary, handle it with the time series handler
     // (campaign_summary is structurally the same - rows of parsed marketing data)
     if (timeSeriesResult.success && (timeSeriesResult.reportType === 'time_series' || timeSeriesResult.reportType === 'campaign_summary')) {
       return handleTimeSeriesUpload(
-        supabase,
+        supabaseAdmin,
         timeSeriesResult,
         propertyId,
         filename,
@@ -114,7 +132,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<UploadRes
     }
 
     // Not a time series - try parsing as extended report
-    const extendedResult = parseExtendedReport(csvContent, filename, platform)
+    const extendedResult = parseExtendedReport(csvContent, filename, normalizedPlatform)
     
     if (!extendedResult.success) {
       return NextResponse.json(
@@ -130,12 +148,12 @@ export async function POST(request: NextRequest): Promise<NextResponse<UploadRes
 
     // Handle extended report
     return handleExtendedUpload(
-      supabase,
+      supabaseAdmin,
       extendedResult,
       propertyId,
       filename,
       campaignName,
-      platform,
+      normalizedPlatform,
       user.id,
       preview
     )
@@ -155,7 +173,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<UploadRes
 
 // Handle time series (daily data) upload
 async function handleTimeSeriesUpload(
-  supabase: Awaited<ReturnType<typeof createClient>>,
+  supabase: ReturnType<typeof createServiceClient>,
   parseResult: { 
     success: boolean
     platform: MarketingPlatform
@@ -205,7 +223,7 @@ async function handleTimeSeriesUpload(
   const records = parseResult.rows.map(row => ({
     date: row.date,
     property_id: propertyId,
-    channel_id: row.channel_id,
+    channel_id: normalizeMarketingChannelId(row.channel_id),
     campaign_name: row.campaign_name,
     campaign_id: row.campaign_id,
     impressions: row.impressions,
@@ -253,7 +271,7 @@ async function handleTimeSeriesUpload(
 
 // Handle extended reports (keywords, demographics, devices, etc.)
 async function handleExtendedUpload(
-  supabase: Awaited<ReturnType<typeof createClient>>,
+  supabase: ReturnType<typeof createServiceClient>,
   parseResult: {
     success: boolean
     platform: MarketingPlatform
@@ -306,7 +324,7 @@ async function handleExtendedUpload(
   // Prepare records for extended table
   const records = parseResult.rows.map(row => ({
     property_id: propertyId,
-    channel_id: platform,
+    channel_id: normalizeMarketingChannelId(platform),
     campaign_name: campaignName,
     report_type: row.report_type,
     dimension_key: row.dimension_key,
@@ -355,7 +373,7 @@ async function handleExtendedUpload(
 
 // Log upload to audit table
 async function logUpload(
-  supabase: Awaited<ReturnType<typeof createClient>>,
+  supabase: ReturnType<typeof createServiceClient>,
   propertyId: string,
   platform: string,
   reportType: string,

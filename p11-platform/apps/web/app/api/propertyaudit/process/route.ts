@@ -139,6 +139,11 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Unknown error'
 }
 
+function shouldUseLocalFixture(req: NextRequest): boolean {
+  if (process.env.NODE_ENV === 'production') return false
+  return req.headers.get('x-propertyaudit-local-fixture') === '1'
+}
+
 async function markRunFailed(
   supabase: ReturnType<typeof createServiceClient>,
   runId: string,
@@ -181,6 +186,43 @@ async function claimQueuedRun(
   return data
 }
 
+function buildLocalFixtureAnswer(context: ConnectorContext, attempt: number): AnswerBlock {
+  const brandDomain = context.brandDomains[0] || 'local-smoke.p11.test'
+  const competitorDomain = context.competitors[0] || 'competitor.example'
+  const competitorName = competitorDomain.split('.')[0] || 'competitor'
+
+  return {
+    citations: [
+      {
+        url: `https://${brandDomain}/local-fixture`,
+        domain: brandDomain,
+        entity_ref: context.brandName,
+      },
+      {
+        url: `https://${competitorDomain}/comparison`,
+        domain: competitorDomain,
+        entity_ref: competitorName,
+      },
+    ],
+    ordered_entities: [
+      {
+        name: context.brandName,
+        domain: brandDomain,
+        rationale: 'Deterministic local fixture keeps the brand visible for repeatable validation.',
+        position: 1,
+      },
+      {
+        name: competitorName,
+        domain: competitorDomain,
+        rationale: 'Comparison baseline entity for deterministic rank behavior.',
+        position: 2,
+      },
+    ],
+    answer_summary: `Fixture answer ${attempt + 1}: ${context.brandName} is visible for "${context.queryText}".`,
+    notes: { flags: [] },
+  }
+}
+
 // POST: Process a queued run
 export async function POST(req: NextRequest) {
   const ctx = createRequestContext(req, '/api/propertyaudit/process')
@@ -198,6 +240,7 @@ export async function POST(req: NextRequest) {
 
     const body = await req.json()
     const { runId } = body
+    const useLocalFixture = shouldUseLocalFixture(req)
 
     if (!runId) {
       ctx.logSuccess(400, { reason: 'missing_run_id' })
@@ -378,7 +421,19 @@ export async function POST(req: NextRequest) {
             let analysisMethod: string = 'structured'
             let searchSources: WebSearchSource[] = []
 
-            if (auditMode === 'natural') {
+            if (useLocalFixture) {
+              analysisMethod = 'local_fixture'
+              answer = buildLocalFixtureAnswer(context, attempt)
+              naturalResponseText = `Local fixture narrative for "${context.queryText}" generated deterministically.`
+              raw = {
+                fixture: true,
+                mode: 'local_fixture',
+                run_id: runId,
+                query_id: query.id,
+                attempt: attempt + 1,
+                generated_at: new Date().toISOString(),
+              }
+            } else if (auditMode === 'natural') {
               analysisMethod = 'natural_two_phase'
 
               // Phase 1: Natural response (no property context is provided to the model)

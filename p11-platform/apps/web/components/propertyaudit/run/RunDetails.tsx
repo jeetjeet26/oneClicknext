@@ -44,8 +44,14 @@ interface RunData {
     modelName: string
     status: string
     queryCount: number
+    progressPct: number
+    currentQueryIndex: number
+    statusDetail: string
+    isPossiblyStalled: boolean
     startedAt: string
     finishedAt: string | null
+    usesWebSearch: boolean
+    errorMessage: string | null
   }
   score: {
     overallScore: number
@@ -156,6 +162,22 @@ export function RunDetails({ runId, isOpen, onClose }: RunDetailsProps) {
                   <span>•</span>
                   <span>{data?.run.queryCount} queries</span>
                 </div>
+                {data?.run &&
+                  (data.run.status === 'queued' ||
+                    data.run.status === 'running' ||
+                    data.run.status === 'failed') && (
+                    <div className="mt-3 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-3 py-2">
+                      <p className="text-xs text-gray-600 dark:text-gray-300">{data.run.statusDetail}</p>
+                      {(data.run.status === 'queued' || data.run.status === 'running') && (
+                        <div className="mt-2 h-1.5 w-full rounded-full bg-gray-200 dark:bg-gray-700 overflow-hidden">
+                          <div
+                            className={`h-full rounded-full ${data.run.isPossiblyStalled ? 'bg-amber-500' : 'bg-indigo-500'}`}
+                            style={{ width: `${Math.max(0, Math.min(100, data.run.progressPct || 0))}%` }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
               </div>
               <div className="ml-4 flex items-center gap-2">
                 <button

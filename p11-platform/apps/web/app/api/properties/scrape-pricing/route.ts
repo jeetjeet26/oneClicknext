@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { syncPropertyUnitsToKnowledgeBase } from '@/utils/property-units-kb-sync'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
+import { getDataEngineUrl } from '@/utils/services/runtime-config'
 
-const DATA_ENGINE_URL = process.env.DATA_ENGINE_URL || 'http://localhost:8001'
+const DATA_ENGINE_URL = getDataEngineUrl()
 
 export async function POST(req: NextRequest) {
   try {

@@ -39,7 +39,7 @@ interface Website {
 
 export default function SiteForgePage() {
   const router = useRouter()
-  const { currentProperty } = usePropertyContext()
+  const { currentProperty, loading: propertyLoading } = usePropertyContext()
   const [websites, setWebsites] = useState<Website[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -47,6 +47,10 @@ export default function SiteForgePage() {
   const [refreshKey, setRefreshKey] = useState(0)
 
   const fetchWebsites = useCallback(async () => {
+    if (propertyLoading) {
+      return
+    }
+
     if (!currentProperty?.id) {
       setLoading(false)
       return
@@ -59,7 +63,18 @@ export default function SiteForgePage() {
       const response = await fetch(`/api/siteforge/list?propertyId=${currentProperty.id}`)
       
       if (!response.ok) {
-        throw new Error('Failed to fetch websites')
+        let message = 'Failed to fetch websites'
+
+        try {
+          const payload = await response.json()
+          if (typeof payload?.error === 'string' && payload.error.trim().length > 0) {
+            message = payload.error
+          }
+        } catch {
+          // Ignore parse issues and keep fallback message.
+        }
+
+        throw new Error(message)
       }
 
       const data = await response.json()
@@ -70,7 +85,7 @@ export default function SiteForgePage() {
     } finally {
       setLoading(false)
     }
-  }, [currentProperty?.id])
+  }, [currentProperty?.id, propertyLoading])
 
   useEffect(() => {
     fetchWebsites()
@@ -186,7 +201,7 @@ export default function SiteForgePage() {
           </button>
           <button
             onClick={() => setShowGenerationWizard(true)}
-            disabled={!currentProperty}
+            disabled={!currentProperty || propertyLoading}
             className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Plus className="w-4 h-4" />

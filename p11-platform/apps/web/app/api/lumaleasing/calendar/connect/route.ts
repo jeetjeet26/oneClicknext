@@ -9,11 +9,10 @@ import { badRequest, forbidden, serverError, unauthorized } from '@/utils/servic
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { createSignedGoogleOAuthState } from '@/utils/services/google-oauth-state'
 import { createRequestContext } from '@/utils/services/request-context'
+import { getAppBaseUrl } from '@/utils/services/runtime-config'
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID
-const GOOGLE_REDIRECT_URI = process.env.NEXT_PUBLIC_APP_URL 
-  ? `${process.env.NEXT_PUBLIC_APP_URL}/api/lumaleasing/calendar/callback`
-  : 'http://localhost:3000/api/lumaleasing/calendar/callback'
+const GOOGLE_REDIRECT_URI = `${getAppBaseUrl()}/api/lumaleasing/calendar/callback`
 
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 const SCOPES = [

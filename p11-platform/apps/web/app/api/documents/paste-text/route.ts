@@ -84,6 +84,8 @@ export async function POST(req: NextRequest) {
       .trim()
 
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+    const ingestionRunId = crypto.randomUUID()
+    const uploadedAt = new Date().toISOString()
 
     // Chunk the text
     const chunks = chunkText(textContent)
@@ -113,10 +115,12 @@ export async function POST(req: NextRequest) {
       metadata: { 
         title: documentTitle,
         source: 'pasted_text',
+        source_type: 'manual',
+        ingestion_run_id: ingestionRunId,
         chunk_index: idx,
         total_chunks: chunks.length,
         uploaded_by: user.id,
-        uploaded_at: new Date().toISOString(),
+        uploaded_at: uploadedAt,
       },
       property_id: propertyId,
       embedding: allEmbeddings[idx],
@@ -134,7 +138,7 @@ export async function POST(req: NextRequest) {
       await upsertManagedKnowledgeSource(supabase, {
         propertyId,
         sourceType: 'manual',
-        sourceName: 'Pasted Text Content',
+        sourceName: documentTitle,
         status: 'completed',
         documentsCreated: chunks.length,
         extractedData: {
@@ -142,10 +146,16 @@ export async function POST(req: NextRequest) {
           method: 'paste_text',
           title: documentTitle,
           content_length: textContent.length,
+          ingestion_run_id: ingestionRunId,
         },
       })
     } catch (knowledgeSourceError) {
       console.error('Knowledge source upsert error:', knowledgeSourceError)
+      await supabase
+        .from('documents')
+        .delete()
+        .eq('property_id', propertyId)
+        .eq('metadata->>ingestion_run_id', ingestionRunId)
       return NextResponse.json(
         { error: 'Failed to create knowledge source record for pasted text' },
         { status: 500 }

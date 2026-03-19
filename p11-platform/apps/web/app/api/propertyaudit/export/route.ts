@@ -1,6 +1,6 @@
 /**
  * PropertyAudit Export API
- * Generate PDF/Markdown reports
+ * Exports markdown and print-view artifacts.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -26,18 +26,19 @@ export async function GET(req: NextRequest) {
 
     const searchParams = req.nextUrl.searchParams
     const runId = searchParams.get('runId')
-    const format = searchParams.get('format') || 'markdown'
+    const requestedFormat = searchParams.get('format') || 'markdown'
 
     if (!runId) {
       return NextResponse.json({ error: 'runId required' }, { status: 400 })
     }
 
-    if (format !== 'markdown' && format !== 'html') {
+    if (requestedFormat !== 'markdown' && requestedFormat !== 'html' && requestedFormat !== 'pdf') {
       return NextResponse.json(
-        { error: 'Invalid format. Allowed values: markdown, html' },
+        { error: 'Invalid format. Allowed values: markdown, html, pdf' },
         { status: 400 }
       )
     }
+    const resolvedFormat = requestedFormat === 'pdf' ? 'html' : requestedFormat
 
     const serviceClient = createServiceClient()
     const { data: run, error: runError } = await serviceClient
@@ -73,12 +74,13 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Run not found' }, { status: 404 })
     }
 
-    if (format === 'markdown') {
+    if (resolvedFormat === 'markdown') {
       const markdown = generateMarkdown(reportData)
       return new NextResponse(markdown, {
         headers: {
           'Content-Type': 'text/markdown',
-          'Content-Disposition': `attachment; filename="geo_report_${runId}.md"`
+          'Content-Disposition': `attachment; filename="geo_visibility_report_${runId}.md"`,
+          'X-PropertyAudit-Artifact-Format': 'markdown',
         }
       })
     }
@@ -87,7 +89,8 @@ export async function GET(req: NextRequest) {
     return new NextResponse(html, {
       headers: {
         'Content-Type': 'text/html',
-        'Content-Disposition': `inline; filename="geo_report_${runId}.html"`
+        'Content-Disposition': `inline; filename="geo_visibility_report_${runId}.html"`,
+        'X-PropertyAudit-Artifact-Format': requestedFormat === 'pdf' ? 'pdf_print_view' : 'html',
       }
     })
   } catch (error) {
@@ -117,7 +120,7 @@ function generateMarkdown(data: Awaited<ReturnType<typeof buildRunReportData>>):
   const score = scores[0]
   const lines: string[] = []
   
-  lines.push(`# GEO Audit Report`)
+  lines.push(`# GEO Visibility Report`)
   lines.push(``)
   lines.push(`**Property:** ${property?.name || 'Unknown'}`)
   lines.push(`**Surface:** ${run?.surface?.toUpperCase() || 'N/A'}`)
@@ -280,7 +283,7 @@ function generateHTML(data: Awaited<ReturnType<typeof buildRunReportData>>): str
 <html>
 <head>
   <meta charset="utf-8">
-  <title>GEO Audit Report</title>
+  <title>GEO Visibility Report</title>
   <style>
     body { font-family: system-ui, sans-serif; max-width: 900px; margin: 40px auto; padding: 20px; line-height: 1.6; color: #1f2937; }
     h1 { color: #1f2937; border-bottom: 3px solid #6366f1; padding-bottom: 10px; }
@@ -300,7 +303,7 @@ function generateHTML(data: Awaited<ReturnType<typeof buildRunReportData>>): str
   </style>
 </head>
 <body>
-  <h1>GEO Audit Report</h1>
+  <h1>GEO Visibility Report</h1>
   <p><strong>Property:</strong> ${escapeHtml(property?.name || 'Unknown')}</p>
   <p><strong>Surface:</strong> ${escapeHtml(run?.surface?.toUpperCase() || 'N/A')}</p>
   <p><strong>Model:</strong> ${escapeHtml(run?.model_name || 'N/A')}</p>

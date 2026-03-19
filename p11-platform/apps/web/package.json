@@ -15,12 +15,13 @@
     "schema:types:stamp": "node ./scripts/stamp-supabase-types-version.mjs",
     "check:schema-types-sync": "node ./scripts/check-schema-types-sync.mjs",
     "check:schema-truth": "npm run check:schema-types-sync && node ./scripts/check-schema-truth.mjs && node ./scripts/check-rls-policy-guards.mjs",
+    "check:runtime-config-hardening": "node ./scripts/check-runtime-config-hardening.mjs",
     "test": "vitest run",
     "test:smoke": "playwright test",
     "test:smoke:headed": "playwright test --headed",
     "test:watch": "vitest",
     "typecheck:foundation": "node ./scripts/foundation-typecheck.mjs",
-    "check:foundation": "npm run check:schema-truth && node ./scripts/check-foundation-trust-boundaries.mjs && npm test && npm run lint:foundation && npm run typecheck:foundation",
+    "check:foundation": "npm run check:schema-truth && node ./scripts/check-foundation-trust-boundaries.mjs && npm run check:runtime-config-hardening && npm test && npm run lint:foundation && npm run typecheck:foundation",
     "heroku-postbuild": "npm run build"
   },
   "dependencies": {

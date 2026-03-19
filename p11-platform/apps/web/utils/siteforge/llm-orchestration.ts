@@ -708,8 +708,10 @@ export async function refineSite(
     cta?: string
   }
 ): Promise<SiteArchitecture> {
-  // TODO: Implement refinement logic
-  // This will regenerate specific aspects based on user feedback
-  console.log('TODO: Implement site refinement')
-  return architecture
+  void architecture
+  void context
+  void refinements
+  throw new Error(
+    'Site refinement is not implemented yet. Use the SiteForge blueprint edit flow instead of the unfinished refinement path.'
+  )
 }

@@ -1,6 +1,6 @@
 # Vision: SiteForge
 
-Last Updated: March 16, 2026
+Last Updated: March 17, 2026
 Document Type: Vision grounded in current implementation
 
 ## Mission
@@ -53,6 +53,7 @@ Before autonomy can recommend or supervise website changes, SiteForge must provi
 - auditable deploy, rollback, and verification records
 - policy boundaries around publish and irreversible changes
 - human approval and rollback metadata for high-risk changes
+- reviewer support for approve, deny, and modify decisions with preserved textual reasoning about why a proposed site change should be promoted, blocked, or altered
 - consistent preview-to-deploy truth with no hidden transformation gap
 
 ## Success Metrics

@@ -50,13 +50,13 @@ type OverviewData = {
 }
 
 export default function DashboardPage() {
-  const { currentProperty } = usePropertyContext()
+  const { currentProperty, loading: propertyLoading } = usePropertyContext()
   const [data, setData] = useState<OverviewData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   const fetchData = useCallback(async () => {
-    if (!currentProperty?.id) return
+    if (propertyLoading || !currentProperty?.id) return
     
     setLoading(true)
     setError(null)
@@ -65,7 +65,18 @@ export default function DashboardPage() {
       const response = await fetch(`/api/dashboard/overview?propertyId=${currentProperty.id}`)
       
       if (!response.ok) {
-        throw new Error('Failed to fetch dashboard data')
+        let message = 'Failed to fetch dashboard data'
+
+        try {
+          const result = await response.json()
+          if (typeof result?.error === 'string' && result.error.trim().length > 0) {
+            message = result.error
+          }
+        } catch {
+          // Ignore JSON parsing errors and keep the fallback message.
+        }
+
+        throw new Error(message)
       }
       
       const result = await response.json()
@@ -76,7 +87,7 @@ export default function DashboardPage() {
     } finally {
       setLoading(false)
     }
-  }, [currentProperty?.id])
+  }, [currentProperty?.id, propertyLoading])
 
   useEffect(() => {
     fetchData()

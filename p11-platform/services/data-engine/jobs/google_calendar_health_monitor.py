@@ -132,17 +132,9 @@ Questions? Reply to this email or contact support.
 P11 Platform Team
 """
     
-    print(f"[Alert] Sending re-auth alert to {pm_email} for {property_name}")
-    
-    # TODO: Send email via Resend API
-    # For now, just log the alert
-    # await send_email(pm_email, subject, body)
-    
-    # Update alert timestamp
-    supabase.table('agent_calendars')\
-        .update({'alert_sent_at': datetime.now(timezone.utc).isoformat()})\
-        .eq('id', calendar_config['id'])\
-        .execute()
+    print(f"[Alert] Alert delivery not implemented; no email sent to {pm_email} for {property_name}")
+    print(f"[Alert] Subject would have been: {subject}")
+    print(body)
 
 
 async def monitor_all_calendars() -> Dict[str, int]:

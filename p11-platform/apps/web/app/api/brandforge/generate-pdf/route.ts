@@ -183,7 +183,6 @@ export async function POST(req: NextRequest) {
 
     const section5 = asRecord(brand.section_5_name_story)
     const section6 = asRecord(brand.section_6_logo)
-    const section7 = asRecord(brand.section_7_typography)
 
     const brandBook = {
       metadata: {

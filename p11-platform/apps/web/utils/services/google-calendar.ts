@@ -205,7 +205,10 @@ function resolveCalendarWebhookUrl(): string | null {
   }
 
   const baseUrl =
-    process.env.NEXT_PUBLIC_APP_URL?.trim() || process.env.NEXT_PUBLIC_BASE_URL?.trim() || null
+    process.env.NEXT_PUBLIC_SITE_URL?.trim() ||
+    process.env.NEXT_PUBLIC_APP_URL?.trim() ||
+    process.env.NEXT_PUBLIC_BASE_URL?.trim() ||
+    null
   if (!baseUrl) {
     return null
   }

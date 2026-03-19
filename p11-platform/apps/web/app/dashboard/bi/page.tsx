@@ -39,6 +39,7 @@ import {
   XCircle
 } from 'lucide-react'
 import { format } from 'date-fns'
+import { getMarketingChannelLabel, normalizeMarketingChannelId } from '@/utils/analytics/channel-identity'
 
 type ComparisonData = {
   previousPeriod: {
@@ -130,13 +131,16 @@ type CampaignsData = {
 
 interface ImportJob {
   id: string
-  status: 'pending' | 'running' | 'complete' | 'failed'
+  status: 'pending' | 'running' | 'complete' | 'partial' | 'failed'
+  import_state?: 'pending' | 'running' | 'complete' | 'partial' | 'failed'
   progress_pct: number
   current_step: string
   records_imported: number
   campaigns_found: number
   error_message?: string
 }
+
+const getImportState = (job: ImportJob) => job.import_state || job.status
 
 export default function MultiChannelBIPage() {
   const { currentProperty } = usePropertyContext()
@@ -284,12 +288,13 @@ export default function MultiChannelBIPage() {
           if (statusData.job) {
             setImportJob(statusData.job)
             
-            if (statusData.job.status === 'complete' || statusData.job.status === 'failed') {
+            const importState = getImportState(statusData.job)
+            if (importState === 'complete' || importState === 'partial' || importState === 'failed') {
               clearInterval(pollInterval)
               setImporting(false)
               
               // Refresh data
-              if (statusData.job.status === 'complete') {
+              if (importState === 'complete' || importState === 'partial') {
                 await fetchData()
                 if (showCampaigns) await fetchCampaigns()
               }
@@ -508,30 +513,35 @@ export default function MultiChannelBIPage() {
       {/* MCP Import Progress Banner */}
       {importJob && (
         <div className={`rounded-lg border-2 p-4 ${
-          importJob.status === 'complete' ? 'border-green-500 bg-green-50' :
-          importJob.status === 'failed' ? 'border-red-500 bg-red-50' :
+          getImportState(importJob) === 'complete' ? 'border-green-500 bg-green-50' :
+          getImportState(importJob) === 'partial' ? 'border-amber-500 bg-amber-50' :
+          getImportState(importJob) === 'failed' ? 'border-red-500 bg-red-50' :
           'border-indigo-500 bg-indigo-50'
         }`}>
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2">
-              {importJob.status === 'running' && (
+              {getImportState(importJob) === 'running' && (
                 <Loader2 className="h-4 w-4 animate-spin text-indigo-600" />
               )}
-              {importJob.status === 'complete' && (
+              {getImportState(importJob) === 'complete' && (
                 <CheckCircle className="h-4 w-4 text-green-600" />
               )}
-              {importJob.status === 'failed' && (
+              {getImportState(importJob) === 'partial' && (
+                <AlertCircle className="h-4 w-4 text-amber-600" />
+              )}
+              {getImportState(importJob) === 'failed' && (
                 <XCircle className="h-4 w-4 text-red-600" />
               )}
               <span className="font-medium text-sm">
-                {importJob.status === 'running' && `${importJob.current_step || 'Processing'}...`}
-                {importJob.status === 'complete' && `✅ Import complete! ${importJob.records_imported} records imported`}
-                {importJob.status === 'failed' && `❌ Import failed: ${importJob.error_message}`}
+                {getImportState(importJob) === 'running' && `${importJob.current_step || 'Processing'}...`}
+                {getImportState(importJob) === 'complete' && `✅ Import complete! ${importJob.records_imported} records imported`}
+                {getImportState(importJob) === 'partial' && `⚠️ Import completed with warnings: ${importJob.error_message || 'Some channels were skipped or failed'}`}
+                {getImportState(importJob) === 'failed' && `❌ Import failed: ${importJob.error_message}`}
               </span>
             </div>
             <span className="text-sm font-medium">{importJob.progress_pct}%</span>
           </div>
-          {importJob.status === 'running' && (
+          {getImportState(importJob) === 'running' && (
             <div className="w-full bg-white rounded-full h-2 overflow-hidden">
               <div 
                 className="bg-indigo-600 h-full transition-all duration-500"
@@ -539,9 +549,14 @@ export default function MultiChannelBIPage() {
               />
             </div>
           )}
-          {importJob.status === 'complete' && (
+          {getImportState(importJob) === 'complete' && (
             <p className="text-sm text-green-700 mt-1">
               {importJob.campaigns_found} campaigns synced · Data refreshed automatically
+            </p>
+          )}
+          {getImportState(importJob) === 'partial' && (
+            <p className="text-sm text-amber-700 mt-1">
+              {importJob.campaigns_found} campaigns synced · Some channels need attention
             </p>
           )}
         </div>
@@ -670,7 +685,12 @@ export default function MultiChannelBIPage() {
               <ChannelBreakdown
                 data={data.channels.map(c => ({
                   ...c,
-                  color: c.channel === 'meta' ? '#1877F2' : c.channel === 'google_ads' ? '#EA4335' : '#6366f1'
+                  color:
+                    normalizeMarketingChannelId(c.channel) === 'meta_ads'
+                      ? '#1877F2'
+                      : normalizeMarketingChannelId(c.channel) === 'google_ads'
+                        ? '#EA4335'
+                        : '#6366f1'
                 }))}
                 title="Spend by Channel"
                 metric="spend"
@@ -735,9 +755,7 @@ export default function MultiChannelBIPage() {
                         className="flex-1 text-center"
                       >
                         <p className="text-xs text-slate-400 mb-1">
-                          {channel.channel === 'meta' ? 'Meta' : 
-                           channel.channel === 'google_ads' ? 'Google' : 
-                           channel.channel}
+                          {getMarketingChannelLabel(channel.channel)}
                         </p>
                         <p className="text-sm font-medium text-slate-700">
                           ${channel.cpa.toFixed(0)}

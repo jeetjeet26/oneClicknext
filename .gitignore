@@ -27,6 +27,7 @@ build/
 .env.development.local
 .env.test.local
 .env.production.local
+!p11-platform/.env.example
 
 # Local Supabase runtime artifacts
 p11-platform/supabase/.temp/

@@ -23,7 +23,7 @@ export function ExportMenu({ runId, onExportCSV }: ExportMenuProps) {
       const url = window.URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `geo_report_${runId}.md`
+      a.download = `geo_visibility_report_${runId}.md`
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)

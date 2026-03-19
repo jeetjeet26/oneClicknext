@@ -1,6 +1,6 @@
 # Vision: MultiChannel BI
 
-Last Updated: March 16, 2026
+Last Updated: March 17, 2026
 Document Type: Vision grounded in current implementation
 
 ## Mission
@@ -25,6 +25,7 @@ Current reality:
 - the reporting and import surface is real
 - recurring sync and connection health logic exist in parts of the stack
 - normalization and scheduler wiring still need cleanup before this becomes a dependable optimization substrate
+- the product should not be treated as closed-loop optimization truth until delayed business outcomes and action attribution are captured cleanly
 
 ## End-State Vision
 
@@ -42,6 +43,10 @@ The finished product should answer:
 - what is missing
 - what is trustworthy enough to drive action
 
+It should also make a crucial distinction explicit:
+
+- reporting truth is not yet optimization truth unless the system can connect recommendations and actions back to later business outcomes
+
 ## P1 Closure Priorities
 
 - normalize channel identity across all import paths, especially Meta
@@ -58,6 +63,10 @@ Before autonomy can recommend pacing, budget, or creative actions, MultiChannel 
 - action-safe attribution confidence for optimization use cases
 - shared job/audit semantics for imports and refreshes
 - no hidden drift between ingestion paths and reporting expectations
+- recommendation-first use of BI insights until the shared substrate can capture proposal -> review -> execution -> delayed outcome
+- human reviewers who can approve, deny, or modify pacing, budget, or creative proposals with preserved free-text rationale
+- delayed-outcome capture so the system can distinguish import/reporting correctness from real business impact such as tours, CPL improvement, conversions, or occupancy movement
+- explicit separation between "data available for reporting" and "data trustworthy enough to drive optimization"
 
 ## Success Metrics
 
@@ -66,4 +75,5 @@ Before autonomy can recommend pacing, budget, or creative actions, MultiChannel 
 - report freshness
 - operator trust in reported performance as a basis for action
 - percentage of imports needing manual cleanup
+- percentage of BI-informed recommendations that can later be evaluated against attributable business outcomes
 

@@ -171,76 +171,27 @@ async function semanticSearchBrand(propertyId: string): Promise<string | null> {
  * Analyze brand documents (PDFs, images) with Gemini Vision
  */
 async function analyzeBrandDocuments(docs: any[]): Promise<any> {
-  // TODO: Implement Gemini Vision analysis
-  // This will use Gemini 3 Pro to analyze PDFs and extract:
-  // - Color palettes from brand guidelines
-  // - Logo variations
-  // - Typography specs
-  // - Brand voice examples
-  
-  console.log('TODO: Implement Gemini Vision PDF analysis for', docs.length, 'documents')
-  return {}
+  throw new Error(
+    `Knowledge-base brand document analysis is not implemented yet. Cannot analyze ${docs.length} brand documents.`
+  )
 }
 
 /**
  * Synthesize brand data from multiple sources using Gemini 3
  */
 async function synthesizeBrandData(sources: any): Promise<any> {
-  // TODO: Implement Gemini 3 synthesis
-  // This will take all extracted data and create a cohesive brand intelligence object
-  
-  console.log('TODO: Implement Gemini 3 brand synthesis')
-  return {
-    brandName: 'Property Name', // Placeholder
-    brandVoice: 'professional and welcoming',
-    brandPersonality: ['modern', 'approachable', 'trustworthy']
-  }
+  void sources
+  throw new Error('Knowledge-base brand synthesis is not implemented yet.')
 }
 
 /**
  * Priority 3: Generate minimal brand from property data (low confidence)
  */
 async function generateMinimalBrand(propertyId: string): Promise<BrandIntelligence> {
-  try {
-    const supabase = getSupabase()
-    
-    // Get property details
-    const { data: property, error } = await supabase
-      .from('properties')
-      .select('*')
-      .eq('id', propertyId)
-      .single()
-    
-    if (error || !property) {
-      throw new Error('Property not found')
-    }
-    
-    // Get competitor data
-    const { data: competitors } = await supabase
-      .from('competitor_snapshots')
-      .select('property_name, website_url')
-      .eq('property_id', propertyId)
-      .limit(5)
-    
-    // Use Gemini 3 to generate basic brand positioning
-    // TODO: Implement Gemini 3 generation
-    
-    return {
-      source: 'generated' as BrandSource,
-      structured: false,
-      confidence: 0.6,
-      data: {
-        brandName: property.name,
-        targetAudience: property.target_audience || 'young professionals',
-        brandVoice: property.brand_voice || 'professional and welcoming',
-        brandPersonality: ['modern', 'approachable', 'trustworthy'],
-        contentPillars: ['lifestyle', 'amenities', 'location', 'community']
-      }
-    }
-  } catch (error) {
-    console.error('Error generating minimal brand:', error)
-    throw error
-  }
+  void propertyId
+  throw new Error(
+    'Fallback SiteForge brand generation is not implemented. Complete BrandForge or provide knowledge-base brand context before generating a site.'
+  )
 }
 
 /**
@@ -259,8 +210,8 @@ function calculateConfidence(docCount: number, contextLength: number): number {
  * TODO: Implement with actual embedding service
  */
 async function generateEmbedding(text: string): Promise<number[]> {
-  // Placeholder - will use OpenAI or similar
-  return new Array(1536).fill(0)
+  void text
+  throw new Error('Brand-intelligence semantic search embeddings are not implemented yet.')
 }
 
 /**

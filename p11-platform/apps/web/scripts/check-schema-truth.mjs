@@ -29,20 +29,29 @@ function walkFiles(dir) {
   return files
 }
 
+function collectSchemaObjectNames(block) {
+  const names = new Set()
+  const regex = /^\s{6}([a-zA-Z0-9_]+):\s*\{\s*$/gm
+  let match = regex.exec(block)
+  while (match) {
+    names.add(match[1])
+    match = regex.exec(block)
+  }
+  return names
+}
+
 function getKnownTables(typesContent) {
   const tablesBlock = typesContent.match(/Tables:\s*\{([\s\S]*?)\n\s*Views:\s*\{/)
   if (!tablesBlock) {
     throw new Error('Could not parse `Tables` block in types/supabase.ts')
   }
 
-  const tableNames = new Set()
-  const regex = /^\s{6}([a-zA-Z0-9_]+):\s*\{\s*$/gm
-  let match = regex.exec(tablesBlock[1])
-  while (match) {
-    tableNames.add(match[1])
-    match = regex.exec(tablesBlock[1])
+  const viewsBlock = typesContent.match(/Views:\s*\{([\s\S]*?)\n\s*Functions:\s*\{/)
+  if (!viewsBlock) {
+    throw new Error('Could not parse `Views` block in types/supabase.ts')
   }
-  return tableNames
+
+  return new Set([...collectSchemaObjectNames(tablesBlock[1]), ...collectSchemaObjectNames(viewsBlock[1])])
 }
 
 function collectFromReferences(content) {

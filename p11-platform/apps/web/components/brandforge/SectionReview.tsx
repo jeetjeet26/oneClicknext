@@ -68,7 +68,7 @@ function buildActionableMessage(message: string, step: number) {
   const normalized = message.toLowerCase()
 
   if (normalized.includes('vertex ai not configured') || normalized.includes('google_application_credentials')) {
-    return 'Visual generation is not fully configured yet. Continue approving the text sections, then retry the visual asset step once Vertex AI credentials are available.'
+    return 'Visual generation is not configured yet. Restore Vertex AI credentials, then retry this section.'
   }
 
   if (normalized.includes('quota') || normalized.includes('rate limit')) {
@@ -80,7 +80,7 @@ function buildActionableMessage(message: string, step: number) {
   }
 
   if (step === 6) {
-    return 'Logo/image steps rely on external providers and may degrade gracefully. You can retry this section or continue with the rest of the brand book once the provider is healthy.'
+    return 'Logo/image steps rely on external providers. If generation fails, fix provider health or credentials and retry this section.'
   }
 
   return message
@@ -88,7 +88,7 @@ function buildActionableMessage(message: string, step: number) {
 
 function getLoadingHint(step: number, sectionName?: string) {
   if (step === 6 || sectionName === 'logo') {
-    return 'Logo generation may take longer and can fall back to a placeholder if image credentials or quota are unavailable.'
+    return 'Logo generation may take longer and requires healthy image credentials and quota.'
   }
 
   if (step >= 10 || sectionName === 'photo_yep' || sectionName === 'photo_nope') {
@@ -149,12 +149,6 @@ export function SectionReview({ brandAssetId, onSectionChange, onComplete }: Sec
       const data = await res.json()
       setDraftSection(data)
       setCurrentStep(data.step)
-
-      if (data.sectionName === 'logo' && data.data?.primary_url === '/placeholder-logo.png') {
-        setActionInfo(
-          'BrandForge kept moving with a placeholder logo. You can continue the book now and regenerate visual assets later from the brand-book page.'
-        )
-      }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Generation failed'
       console.error('Failed to generate section:', err)

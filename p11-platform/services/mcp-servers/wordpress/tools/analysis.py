@@ -1,6 +1,6 @@
 """
 WordPress Site Analysis
-Analyzes existing WordPress sites to learn patterns (like Cadence Creek)
+Analyzes existing WordPress sites to learn structure and design patterns
 """
 
 import requests
@@ -12,9 +12,7 @@ import re
 async def analyze_existing_site(url: str) -> Dict[str, Any]:
     """
     Analyze existing WordPress site structure and design.
-    Agents use this to learn from reference sites.
-    
-    Example: analyze_existing_site("https://cadencecreekmissionranch.com/")
+    Agents use this to learn from optional reference sites.
     """
     
     # Fetch site HTML

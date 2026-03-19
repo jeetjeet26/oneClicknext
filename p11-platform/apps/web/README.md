@@ -40,7 +40,14 @@ Visit http://localhost:3000 — authenticated users land in `/dashboard`.
 Environment variables are loaded from the **root** `p11-platform/.env` file (shared across all apps).
 When using local Supabase, `npm run supabase:reset` also generates `p11-platform/.env.local` with safe local overrides so the app points at the local stack instead of your hosted project.
 
-Create `p11-platform/.env` manually with the shared credentials your local stack needs.
+Create `p11-platform/.env` from the canonical template:
+
+```bash
+cd p11-platform
+cp .env.example .env
+```
+
+Use `p11-platform/.env.example` as the source-of-truth variable list, then fill in real values in `p11-platform/.env`.
 
 Key variables:
 

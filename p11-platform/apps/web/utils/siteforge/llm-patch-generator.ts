@@ -38,8 +38,7 @@ Your patches must:
 2. Preserve section structure and IDs
 3. Follow brand context guidelines
 4. Be valid according to BlueprintPatchOperation schema
-
-You're helping users create Cadence Creek quality websites through conversational editing.`
+5. Preserve a polished, property-specific quality bar without copying any reference property.`
   
   const prompt = `
 The user wants to edit a website section.

@@ -104,6 +104,8 @@ export async function POST(req: NextRequest) {
 
     const supabase = createServiceClient()
     const documentTitle = title || file.name.replace(/\.[^/.]+$/, '')
+    const ingestionRunId = crypto.randomUUID()
+    const uploadedAt = new Date().toISOString()
     
     // =============================================
     // STEP 1: Store the original file in Supabase Storage
@@ -191,10 +193,12 @@ export async function POST(req: NextRequest) {
       metadata: { 
         title: documentTitle,
         source: file.name,
+        source_type: 'document',
+        ingestion_run_id: ingestionRunId,
         chunk_index: idx,
         total_chunks: chunks.length,
         uploaded_by: user.id,
-        uploaded_at: new Date().toISOString(),
+        uploaded_at: uploadedAt,
       },
       property_id: propertyId,
       embedding: allEmbeddings[idx],
@@ -231,12 +235,18 @@ export async function POST(req: NextRequest) {
           title: documentTitle,
           original_file_path: originalFilePath || null,
           uploaded_by: user.id,
-          uploaded_at: new Date().toISOString(),
+          uploaded_at: uploadedAt,
+          ingestion_run_id: ingestionRunId,
         },
       })
       knowledgeSourceId = knowledgeSource.id
     } catch (knowledgeSourceError) {
       console.error('Knowledge source upsert error:', knowledgeSourceError)
+      await supabase
+        .from('documents')
+        .delete()
+        .eq('property_id', propertyId)
+        .eq('metadata->>ingestion_run_id', ingestionRunId)
       return NextResponse.json(
         { error: 'Failed to create knowledge source record for uploaded document' },
         { status: 500 }

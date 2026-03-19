@@ -1,6 +1,6 @@
 # Vision: CRM Sync
 
-Last Updated: March 16, 2026
+Last Updated: March 17, 2026
 Document Type: Vision grounded in current implementation
 
 ## Mission
@@ -57,6 +57,7 @@ Before autonomy can write through CRM Sync, the system must provide:
 - a shared action ledger for every outbound CRM mutation
 - policy checks before high-risk data mutations
 - confidence and approval support for ambiguous mappings
+- human reviewers who can approve, deny, or modify ambiguous sync proposals with preserved textual reasoning
 - deterministic retry semantics with no duplicate writes across overlapping workers
 - operator-visible replay and rollback guidance where rollback is possible
 

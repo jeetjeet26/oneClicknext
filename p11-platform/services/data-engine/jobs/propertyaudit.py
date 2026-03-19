@@ -3,12 +3,15 @@ PropertyAudit Job Execution
 Executes GEO audit runs by calling LLM connectors and writing results to Supabase.
 Migrated from /api/propertyaudit/process/route.ts to avoid Vercel timeout issues.
 
-Full feature parity with TypeScript:
+Current capabilities:
 - Structured mode (direct GEO extraction)
-- Natural mode (two-phase: natural response → analysis)
-- Web search integration
+- Natural mode (two-phase: natural response -> analysis)
 - Quality flag detection
 - Proper scoring formula
+
+Notes:
+- OpenAI natural mode supports source-aware web search provenance.
+- Claude natural mode currently disables web search until source extraction is implemented.
 """
 import os
 import logging
@@ -45,7 +48,25 @@ class PropertyAuditExecutor:
         
         logger.info(f"[PropertyAudit] Mode: {self.audit_mode}, Web search: {self.enable_web_search}")
     
-    async def execute_run(self, run_id: str) -> Dict[str, Any]:
+    def claim_queued_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Atomically claim a queued run.
+        Returns the claimed run row or None if another worker already claimed it.
+        """
+        response = self.supabase.table('geo_runs').update({
+            'status': 'running',
+            'uses_web_search': self.enable_web_search,
+            'error_message': None,
+            'finished_at': None,
+            'progress_pct': 0,
+            'current_query_index': 0
+        }).eq('id', run_id).eq('status', 'queued').execute()
+
+        if response.data and len(response.data) > 0:
+            return response.data[0]
+        return None
+
+    async def execute_run(self, run_id: str, claimed_run: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Execute a PropertyAudit run.
         
@@ -58,18 +79,27 @@ class PropertyAuditExecutor:
         logger.info(f"[PropertyAudit] Starting execution for run_id={run_id}")
         
         try:
-            # 1. Get the run
-            run = self._get_run(run_id)
+            # 1. Claim run if not already claimed by caller.
+            run = claimed_run
             if not run:
-                raise ValueError(f"Run {run_id} not found")
+                run = self.claim_queued_run(run_id)
+
+            if not run:
+                latest_run = self._get_run(run_id)
+                if not latest_run:
+                    raise ValueError(f"Run {run_id} not found")
+                raise ValueError(f"Run {run_id} is not in queued state (status={latest_run.get('status')})")
+
+            if self.audit_mode == 'natural' and run.get('surface') == 'claude' and self.enable_web_search:
+                logger.warning(
+                    "[PropertyAudit] Disabling uses_web_search for Claude natural mode until source extraction is implemented"
+                )
+                self.supabase.table('geo_runs').update({
+                    'uses_web_search': False
+                }).eq('id', run_id).execute()
+                run['uses_web_search'] = False
             
-            if run['status'] != 'queued':
-                raise ValueError(f"Run {run_id} is not in queued state (status={run['status']})")
-            
-            # 2. Update status to running
-            self._update_run_status(run_id, 'running', progress_pct=0)
-            
-            # 3. Get queries for the property
+            # 2. Get queries for the property
             queries = self._get_queries(run['property_id'])
             if not queries:
                 self._update_run_status(
@@ -80,13 +110,13 @@ class PropertyAuditExecutor:
                 )
                 return {'success': False, 'error': 'No active queries found'}
             
-            # 4. Get property context
+            # 3. Get property context
             property_data = self._get_property_context(run['property_id'])
             
-            # 5. Get property config for domains
+            # 4. Get property config for domains
             config = self._get_property_config(run['property_id'], property_data['name'])
             
-            # 6. Process each query (use global execution_count from run)
+            # 5. Process each query (use global execution_count from run)
             results = []
             errors = []
             execution_count = max(1, int(run.get('execution_count') or 1))
@@ -127,13 +157,13 @@ class PropertyAuditExecutor:
                         logger.error(f"[PropertyAudit] Error processing query {query['id']}: {e}")
                         errors.append(f"Query {query['id']}: {str(e)}")
             
-            # 7. Calculate aggregate scores
+            # 6. Calculate aggregate scores
             aggregate = self._calculate_aggregate_scores(results)
             
-            # 8. Insert score record
+            # 7. Insert score record
             self._insert_scores(run_id, aggregate, results)
             
-            # 9. Update run status
+            # 8. Update run status
             final_status = 'failed' if (errors and not results) else 'completed'
             self._update_run_status(
                 run_id,

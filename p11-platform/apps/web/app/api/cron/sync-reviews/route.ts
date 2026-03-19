@@ -6,6 +6,7 @@ import {
 } from '@/utils/services/api-helpers'
 import { finishCronJobRun, startCronJobRun } from '@/utils/services/cron-job-runs'
 import { createRequestContext } from '@/utils/services/request-context'
+import { getAppBaseUrl } from '@/utils/services/runtime-config'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -154,7 +155,7 @@ export async function GET(request: NextRequest) {
           continue
         }
 
-        const syncRes = await fetchWithRetry(`${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/api/reviewflow/sync`, {
+        const syncRes = await fetchWithRetry(`${getAppBaseUrl()}/api/reviewflow/sync`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

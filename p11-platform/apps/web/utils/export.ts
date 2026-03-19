@@ -5,6 +5,7 @@
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { format } from 'date-fns'
+import { getMarketingChannelLabel } from '@/utils/analytics/channel-identity'
 
 // Types for export data
 export type ExportMetric = {
@@ -76,14 +77,7 @@ const formatPercent = (value: number): string => {
 }
 
 // Helper to format channel names nicely
-const formatChannelName = (channel: string): string => {
-  const names: Record<string, string> = {
-    'meta': 'Meta Ads',
-    'google_ads': 'Google Ads',
-    'ga4': 'Google Analytics',
-  }
-  return names[channel] || channel.charAt(0).toUpperCase() + channel.slice(1)
-}
+const formatChannelName = (channel: string): string => getMarketingChannelLabel(channel)
 
 /**
  * Generate CSV content from export data

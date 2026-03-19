@@ -1,6 +1,6 @@
 # Vision: ForgeStudio
 
-Last Updated: March 16, 2026
+Last Updated: March 17, 2026
 Document Type: Vision grounded in current implementation
 
 ## Mission
@@ -52,6 +52,7 @@ Before autonomy can recommend or execute content actions through ForgeStudio, th
 - explicit draft readiness state
 - retry-safe publish semantics with no duplicate posting
 - approval and confidence support before autonomous scheduling or posting
+- human reviewers who can approve, deny, or modify scheduling or publishing proposals with preserved free-text rationale
 
 ## Success Metrics
 

@@ -1,4 +1,4 @@
-// schema_migration_version: 20260316192000
+// schema_migration_version: 20260318120500
 export type Json =
   | string
   | number
@@ -121,8 +121,8 @@ export type Database = {
           tour_duration_minutes: number | null
           updated_at: string | null
           watch_channel_id: string | null
-          watch_last_message_number: number | null
           watch_expiration: string | null
+          watch_last_message_number: number | null
           watch_resource_id: string | null
           working_hours: Json | null
         }
@@ -146,8 +146,8 @@ export type Database = {
           tour_duration_minutes?: number | null
           updated_at?: string | null
           watch_channel_id?: string | null
-          watch_last_message_number?: number | null
           watch_expiration?: string | null
+          watch_last_message_number?: number | null
           watch_resource_id?: string | null
           working_hours?: Json | null
         }
@@ -171,8 +171,8 @@ export type Database = {
           tour_duration_minutes?: number | null
           updated_at?: string | null
           watch_channel_id?: string | null
-          watch_last_message_number?: number | null
           watch_expiration?: string | null
+          watch_last_message_number?: number | null
           watch_resource_id?: string | null
           working_hours?: Json | null
         }
@@ -249,72 +249,6 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
-      }
-      cron_job_runs: {
-        Row: {
-          completed_at: string | null
-          created_at: string
-          duration_ms: number | null
-          error: string | null
-          id: string
-          job_name: string
-          request_id: string | null
-          started_at: string
-          status: string
-          summary: Json | null
-          trigger_source: string
-        }
-        Insert: {
-          completed_at?: string | null
-          created_at?: string
-          duration_ms?: number | null
-          error?: string | null
-          id?: string
-          job_name: string
-          request_id?: string | null
-          started_at?: string
-          status: string
-          summary?: Json | null
-          trigger_source?: string
-        }
-        Update: {
-          completed_at?: string | null
-          created_at?: string
-          duration_ms?: number | null
-          error?: string | null
-          id?: string
-          job_name?: string
-          request_id?: string | null
-          started_at?: string
-          status?: string
-          summary?: Json | null
-          trigger_source?: string
-        }
-        Relationships: []
-      }
-      brand_books: {
-        Row: {
-          created_at: string | null
-          id: string
-          property_id: string
-          target_audience: string | null
-          unique_selling_points: string[] | null
-        }
-        Insert: {
-          created_at?: string | null
-          id?: string
-          property_id: string
-          target_audience?: string | null
-          unique_selling_points?: string[] | null
-        }
-        Update: {
-          created_at?: string | null
-          id?: string
-          property_id?: string
-          target_audience?: string | null
-          unique_selling_points?: string[] | null
-        }
-        Relationships: []
       }
       calendar_events: {
         Row: {
@@ -1179,6 +1113,48 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      cron_job_runs: {
+        Row: {
+          completed_at: string | null
+          created_at: string
+          duration_ms: number | null
+          error: string | null
+          id: string
+          job_name: string
+          request_id: string | null
+          started_at: string
+          status: string
+          summary: Json | null
+          trigger_source: string
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string
+          duration_ms?: number | null
+          error?: string | null
+          id?: string
+          job_name: string
+          request_id?: string | null
+          started_at?: string
+          status: string
+          summary?: Json | null
+          trigger_source?: string
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string
+          duration_ms?: number | null
+          error?: string | null
+          id?: string
+          job_name?: string
+          request_id?: string | null
+          started_at?: string
+          status?: string
+          summary?: Json | null
+          trigger_source?: string
+        }
+        Relationships: []
       }
       documents: {
         Row: {
@@ -2180,11 +2156,9 @@ export type Database = {
           account_name: string | null
           created_at: string | null
           credentials: Json | null
-          field_mapping: Json | null
           id: string
           last_error: string | null
           last_sync_at: string | null
-          mapping_validated: boolean | null
           notes: string | null
           platform: string
           property_id: string | null
@@ -2199,11 +2173,9 @@ export type Database = {
           account_name?: string | null
           created_at?: string | null
           credentials?: Json | null
-          field_mapping?: Json | null
           id?: string
           last_error?: string | null
           last_sync_at?: string | null
-          mapping_validated?: boolean | null
           notes?: string | null
           platform: string
           property_id?: string | null
@@ -2218,11 +2190,9 @@ export type Database = {
           account_name?: string | null
           created_at?: string | null
           credentials?: Json | null
-          field_mapping?: Json | null
           id?: string
           last_error?: string | null
           last_sync_at?: string | null
-          mapping_validated?: boolean | null
           notes?: string | null
           platform?: string
           property_id?: string | null
@@ -2512,13 +2482,13 @@ export type Database = {
       leads: {
         Row: {
           bedrooms: number | null
+          created_at: string | null
           crm_dead_lettered_at: string | null
           crm_sync_error: string | null
           crm_sync_next_retry_at: string | null
           crm_sync_retry_count: number
           crm_sync_status: string | null
           crm_synced_at: string | null
-          created_at: string | null
           email: string | null
           external_crm_id: string | null
           first_name: string | null
@@ -2537,13 +2507,13 @@ export type Database = {
         }
         Insert: {
           bedrooms?: number | null
+          created_at?: string | null
           crm_dead_lettered_at?: string | null
           crm_sync_error?: string | null
           crm_sync_next_retry_at?: string | null
           crm_sync_retry_count?: number
           crm_sync_status?: string | null
           crm_synced_at?: string | null
-          created_at?: string | null
           email?: string | null
           external_crm_id?: string | null
           first_name?: string | null
@@ -2562,13 +2532,13 @@ export type Database = {
         }
         Update: {
           bedrooms?: number | null
+          created_at?: string | null
           crm_dead_lettered_at?: string | null
           crm_sync_error?: string | null
           crm_sync_next_retry_at?: string | null
           crm_sync_retry_count?: number
           crm_sync_status?: string | null
           crm_synced_at?: string | null
-          created_at?: string | null
           email?: string | null
           external_crm_id?: string | null
           first_name?: string | null
@@ -2910,6 +2880,38 @@ export type Database = {
           },
         ]
       }
+      messages: {
+        Row: {
+          content: string | null
+          conversation_id: string | null
+          created_at: string | null
+          id: string
+          role: string | null
+        }
+        Insert: {
+          content?: string | null
+          conversation_id?: string | null
+          created_at?: string | null
+          id?: string
+          role?: string | null
+        }
+        Update: {
+          content?: string | null
+          conversation_id?: string | null
+          created_at?: string | null
+          id?: string
+          role?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "messages_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       metric_goals: {
         Row: {
           alert_threshold_percent: number
@@ -2963,38 +2965,6 @@ export type Database = {
             columns: ["property_id"]
             isOneToOne: false
             referencedRelation: "properties"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      messages: {
-        Row: {
-          content: string | null
-          conversation_id: string | null
-          created_at: string | null
-          id: string
-          role: string | null
-        }
-        Insert: {
-          content?: string | null
-          conversation_id?: string | null
-          created_at?: string | null
-          id?: string
-          role?: string | null
-        }
-        Update: {
-          content?: string | null
-          conversation_id?: string | null
-          created_at?: string | null
-          id?: string
-          role?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "messages_conversation_id_fkey"
-            columns: ["conversation_id"]
-            isOneToOne: false
-            referencedRelation: "conversations"
             referencedColumns: ["id"]
           },
         ]
@@ -3662,6 +3632,56 @@ export type Database = {
           },
         ]
       }
+      report_send_history: {
+        Row: {
+          completed_at: string | null
+          created_at: string
+          error_message: string | null
+          id: string
+          metrics_snapshot: Json | null
+          recipients_count: number
+          report_date_end: string | null
+          report_date_start: string | null
+          scheduled_report_id: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          metrics_snapshot?: Json | null
+          recipients_count?: number
+          report_date_end?: string | null
+          report_date_start?: string | null
+          scheduled_report_id: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          metrics_snapshot?: Json | null
+          recipients_count?: number
+          report_date_end?: string | null
+          report_date_start?: string | null
+          scheduled_report_id?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "report_send_history_scheduled_report_id_fkey"
+            columns: ["scheduled_report_id"]
+            isOneToOne: false
+            referencedRelation: "scheduled_reports"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       review_platform_connections: {
         Row: {
           access_token: string | null
@@ -3754,6 +3774,7 @@ export type Database = {
           approved_at: string | null
           approved_by: string | null
           created_at: string | null
+          generation_prompt: string | null
           id: string
           posted_at: string | null
           rejection_reason: string | null
@@ -3769,6 +3790,7 @@ export type Database = {
           approved_at?: string | null
           approved_by?: string | null
           created_at?: string | null
+          generation_prompt?: string | null
           id?: string
           posted_at?: string | null
           rejection_reason?: string | null
@@ -3784,6 +3806,7 @@ export type Database = {
           approved_at?: string | null
           approved_by?: string | null
           created_at?: string | null
+          generation_prompt?: string | null
           id?: string
           posted_at?: string | null
           rejection_reason?: string | null
@@ -3886,8 +3909,8 @@ export type Database = {
           auto_respond_positive: boolean | null
           auto_respond_threshold: number | null
           created_at: string | null
-          default_tone: string | null
           default_signature: string | null
+          default_tone: string | null
           escalation_threshold: number | null
           id: string
           is_active: boolean | null
@@ -3913,8 +3936,8 @@ export type Database = {
           auto_respond_positive?: boolean | null
           auto_respond_threshold?: number | null
           created_at?: string | null
-          default_tone?: string | null
           default_signature?: string | null
+          default_tone?: string | null
           escalation_threshold?: number | null
           id?: string
           is_active?: boolean | null
@@ -3940,8 +3963,8 @@ export type Database = {
           auto_respond_positive?: boolean | null
           auto_respond_threshold?: number | null
           created_at?: string | null
-          default_tone?: string | null
           default_signature?: string | null
+          default_tone?: string | null
           escalation_threshold?: number | null
           id?: string
           is_active?: boolean | null
@@ -3966,56 +3989,6 @@ export type Database = {
             columns: ["property_id"]
             isOneToOne: true
             referencedRelation: "properties"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      report_send_history: {
-        Row: {
-          completed_at: string | null
-          created_at: string
-          error_message: string | null
-          id: string
-          metrics_snapshot: Json | null
-          recipients_count: number
-          report_date_end: string | null
-          report_date_start: string | null
-          scheduled_report_id: string
-          status: string
-          updated_at: string
-        }
-        Insert: {
-          completed_at?: string | null
-          created_at?: string
-          error_message?: string | null
-          id?: string
-          metrics_snapshot?: Json | null
-          recipients_count?: number
-          report_date_end?: string | null
-          report_date_start?: string | null
-          scheduled_report_id: string
-          status?: string
-          updated_at?: string
-        }
-        Update: {
-          completed_at?: string | null
-          created_at?: string
-          error_message?: string | null
-          id?: string
-          metrics_snapshot?: Json | null
-          recipients_count?: number
-          report_date_end?: string | null
-          report_date_start?: string | null
-          scheduled_report_id?: string
-          status?: string
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "report_send_history_scheduled_report_id_fkey"
-            columns: ["scheduled_report_id"]
-            isOneToOne: false
-            referencedRelation: "scheduled_reports"
             referencedColumns: ["id"]
           },
         ]
@@ -4224,6 +4197,484 @@ export type Database = {
             foreignKeyName: "scrape_config_property_id_fkey"
             columns: ["property_id"]
             isOneToOne: true
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      shared_action_attempts: {
+        Row: {
+          action_type: string
+          confidence_score: number | null
+          created_at: string
+          decided_at: string | null
+          error_message: string | null
+          executed_at: string | null
+          execution_payload: Json
+          execution_result: Json | null
+          execution_status: string
+          id: string
+          job_id: string
+          lifecycle_status: string
+          org_id: string
+          policy_reason: string | null
+          policy_snapshot: Json | null
+          property_id: string | null
+          proposal_decision_status: string
+          proposed_at: string
+          request_payload: Json
+          requested_by: string | null
+          reversed_at: string | null
+          reviewed_by: string | null
+          rollback_metadata: Json | null
+          updated_at: string
+        }
+        Insert: {
+          action_type: string
+          confidence_score?: number | null
+          created_at?: string
+          decided_at?: string | null
+          error_message?: string | null
+          executed_at?: string | null
+          execution_payload?: Json
+          execution_result?: Json | null
+          execution_status?: string
+          id?: string
+          job_id: string
+          lifecycle_status?: string
+          org_id: string
+          policy_reason?: string | null
+          policy_snapshot?: Json | null
+          property_id?: string | null
+          proposal_decision_status?: string
+          proposed_at?: string
+          request_payload?: Json
+          requested_by?: string | null
+          reversed_at?: string | null
+          reviewed_by?: string | null
+          rollback_metadata?: Json | null
+          updated_at?: string
+        }
+        Update: {
+          action_type?: string
+          confidence_score?: number | null
+          created_at?: string
+          decided_at?: string | null
+          error_message?: string | null
+          executed_at?: string | null
+          execution_payload?: Json
+          execution_result?: Json | null
+          execution_status?: string
+          id?: string
+          job_id?: string
+          lifecycle_status?: string
+          org_id?: string
+          policy_reason?: string | null
+          policy_snapshot?: Json | null
+          property_id?: string | null
+          proposal_decision_status?: string
+          proposed_at?: string
+          request_payload?: Json
+          requested_by?: string | null
+          reversed_at?: string | null
+          reviewed_by?: string | null
+          rollback_metadata?: Json | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "shared_action_attempts_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "shared_jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shared_action_attempts_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shared_action_attempts_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shared_action_attempts_requested_by_fkey"
+            columns: ["requested_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shared_action_attempts_reviewed_by_fkey"
+            columns: ["reviewed_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      shared_approvals: {
+        Row: {
+          action_attempt_id: string
+          created_at: string
+          decision_payload: Json
+          decision_reason: string
+          decision_status: string
+          id: string
+          org_id: string
+          property_id: string | null
+          reviewer_profile_id: string | null
+        }
+        Insert: {
+          action_attempt_id: string
+          created_at?: string
+          decision_payload?: Json
+          decision_reason: string
+          decision_status: string
+          id?: string
+          org_id: string
+          property_id?: string | null
+          reviewer_profile_id?: string | null
+        }
+        Update: {
+          action_attempt_id?: string
+          created_at?: string
+          decision_payload?: Json
+          decision_reason?: string
+          decision_status?: string
+          id?: string
+          org_id?: string
+          property_id?: string | null
+          reviewer_profile_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "shared_approvals_action_attempt_id_fkey"
+            columns: ["action_attempt_id"]
+            isOneToOne: false
+            referencedRelation: "shared_action_attempts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shared_approvals_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shared_approvals_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shared_approvals_reviewer_profile_id_fkey"
+            columns: ["reviewer_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      shared_context_snapshots: {
+        Row: {
+          captured_by: string
+          context_hash: string | null
+          context_payload: Json
+          created_at: string
+          id: string
+          org_id: string
+          property_id: string | null
+          source_domain: string
+          source_ref: string | null
+        }
+        Insert: {
+          captured_by?: string
+          context_hash?: string | null
+          context_payload?: Json
+          created_at?: string
+          id?: string
+          org_id: string
+          property_id?: string | null
+          source_domain: string
+          source_ref?: string | null
+        }
+        Update: {
+          captured_by?: string
+          context_hash?: string | null
+          context_payload?: Json
+          created_at?: string
+          id?: string
+          org_id?: string
+          property_id?: string | null
+          source_domain?: string
+          source_ref?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "shared_context_snapshots_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shared_context_snapshots_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      shared_experiment_outcomes: {
+        Row: {
+          action_attempt_id: string | null
+          attribution_payload: Json
+          baseline_value: number | null
+          created_at: string
+          delta_value: number | null
+          id: string
+          job_id: string | null
+          kpi_name: string
+          measured_at: string
+          measurement_window_end: string | null
+          measurement_window_start: string | null
+          observed_value: number | null
+          org_id: string
+          outcome_status: string
+          property_id: string | null
+        }
+        Insert: {
+          action_attempt_id?: string | null
+          attribution_payload?: Json
+          baseline_value?: number | null
+          created_at?: string
+          delta_value?: number | null
+          id?: string
+          job_id?: string | null
+          kpi_name: string
+          measured_at?: string
+          measurement_window_end?: string | null
+          measurement_window_start?: string | null
+          observed_value?: number | null
+          org_id: string
+          outcome_status?: string
+          property_id?: string | null
+        }
+        Update: {
+          action_attempt_id?: string | null
+          attribution_payload?: Json
+          baseline_value?: number | null
+          created_at?: string
+          delta_value?: number | null
+          id?: string
+          job_id?: string | null
+          kpi_name?: string
+          measured_at?: string
+          measurement_window_end?: string | null
+          measurement_window_start?: string | null
+          observed_value?: number | null
+          org_id?: string
+          outcome_status?: string
+          property_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "shared_experiment_outcomes_action_attempt_id_fkey"
+            columns: ["action_attempt_id"]
+            isOneToOne: false
+            referencedRelation: "shared_action_attempts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shared_experiment_outcomes_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "shared_jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shared_experiment_outcomes_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shared_experiment_outcomes_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      shared_jobs: {
+        Row: {
+          attempt_count: number
+          context_snapshot_id: string | null
+          created_at: string
+          dedupe_key: string | null
+          domain: string
+          error_message: string | null
+          finished_at: string | null
+          id: string
+          lifecycle_status: string
+          max_attempts: number
+          org_id: string
+          payload: Json
+          property_id: string | null
+          queued_at: string
+          started_at: string | null
+          status_reason: string | null
+          subject_id: string | null
+          subject_type: string
+          updated_at: string
+        }
+        Insert: {
+          attempt_count?: number
+          context_snapshot_id?: string | null
+          created_at?: string
+          dedupe_key?: string | null
+          domain: string
+          error_message?: string | null
+          finished_at?: string | null
+          id?: string
+          lifecycle_status?: string
+          max_attempts?: number
+          org_id: string
+          payload?: Json
+          property_id?: string | null
+          queued_at?: string
+          started_at?: string | null
+          status_reason?: string | null
+          subject_id?: string | null
+          subject_type: string
+          updated_at?: string
+        }
+        Update: {
+          attempt_count?: number
+          context_snapshot_id?: string | null
+          created_at?: string
+          dedupe_key?: string | null
+          domain?: string
+          error_message?: string | null
+          finished_at?: string | null
+          id?: string
+          lifecycle_status?: string
+          max_attempts?: number
+          org_id?: string
+          payload?: Json
+          property_id?: string | null
+          queued_at?: string
+          started_at?: string | null
+          status_reason?: string | null
+          subject_id?: string | null
+          subject_type?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "shared_jobs_context_snapshot_id_fkey"
+            columns: ["context_snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "shared_context_snapshots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shared_jobs_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shared_jobs_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      shared_policy_decisions: {
+        Row: {
+          action_attempt_id: string | null
+          confidence_score: number | null
+          created_at: string
+          decision_payload: Json
+          decision_reason: string
+          decision_status: string
+          id: string
+          job_id: string | null
+          org_id: string
+          policy_name: string
+          policy_version: string | null
+          property_id: string | null
+        }
+        Insert: {
+          action_attempt_id?: string | null
+          confidence_score?: number | null
+          created_at?: string
+          decision_payload?: Json
+          decision_reason: string
+          decision_status: string
+          id?: string
+          job_id?: string | null
+          org_id: string
+          policy_name: string
+          policy_version?: string | null
+          property_id?: string | null
+        }
+        Update: {
+          action_attempt_id?: string | null
+          confidence_score?: number | null
+          created_at?: string
+          decision_payload?: Json
+          decision_reason?: string
+          decision_status?: string
+          id?: string
+          job_id?: string | null
+          org_id?: string
+          policy_name?: string
+          policy_version?: string | null
+          property_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "shared_policy_decisions_action_attempt_id_fkey"
+            columns: ["action_attempt_id"]
+            isOneToOne: false
+            referencedRelation: "shared_action_attempts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shared_policy_decisions_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "shared_jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shared_policy_decisions_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shared_policy_decisions_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
             referencedRelation: "properties"
             referencedColumns: ["id"]
           },
@@ -4615,10 +5066,7 @@ export type Database = {
           id: string
           lead_id: string | null
           notes: string | null
-          noshow_followup_sent_at: string | null
           property_id: string | null
-          reminder_24h_sent_at: string | null
-          reminder_sent_at: string | null
           status: string | null
           tour_date: string
           tour_time: string
@@ -4633,10 +5081,7 @@ export type Database = {
           id?: string
           lead_id?: string | null
           notes?: string | null
-          noshow_followup_sent_at?: string | null
           property_id?: string | null
-          reminder_24h_sent_at?: string | null
-          reminder_sent_at?: string | null
           status?: string | null
           tour_date: string
           tour_time: string
@@ -4651,10 +5096,7 @@ export type Database = {
           id?: string
           lead_id?: string | null
           notes?: string | null
-          noshow_followup_sent_at?: string | null
           property_id?: string | null
-          reminder_24h_sent_at?: string | null
-          reminder_sent_at?: string | null
           status?: string | null
           tour_date?: string
           tour_time?: string

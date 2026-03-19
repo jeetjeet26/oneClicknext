@@ -1,6 +1,7 @@
 import { createClient } from '@/utils/supabase/server'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { NextRequest, NextResponse } from 'next/server'
+import { getMarketingChannelFilterValues, normalizeMarketingChannelId } from '@/utils/analytics/channel-identity'
 
 type CampaignMetrics = {
   campaign_id: string
@@ -89,7 +90,7 @@ export async function GET(request: NextRequest) {
 
     if (startDate) query = query.gte('date', startDate)
     if (endDate) query = query.lte('date', endDate)
-    if (channel) query = query.eq('channel_id', channel)
+    if (channel) query = query.in('channel_id', getMarketingChannelFilterValues([channel]))
 
     const { data, error } = await query
 
@@ -116,7 +117,7 @@ export async function GET(request: NextRequest) {
       const existing = campaignMap.get(key) || {
         campaign_id: row.campaign_id,
         campaign_name: row.campaign_name || row.campaign_id,
-        channel: row.channel_id || 'unknown',
+        channel: normalizeMarketingChannelId(row.channel_id),
         impressions: 0,
         clicks: 0,
         spend: 0,

@@ -9,9 +9,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { validateCronAuth } from '@/utils/services/api-helpers'
 import { finishCronJobRun, startCronJobRun } from '@/utils/services/cron-job-runs'
+import { getDataEngineUrl } from '@/utils/services/runtime-config'
 
 // Data engine service URL (Python FastAPI)
-const DATA_ENGINE_URL = process.env.DATA_ENGINE_URL || 'http://localhost:8000'
+const DATA_ENGINE_URL = getDataEngineUrl()
 
 export async function GET(req: NextRequest) {
   const authError = validateCronAuth(req)

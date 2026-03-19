@@ -1,7 +1,7 @@
 'use client'
 
 import { Users, ArrowRight, ArrowLeft, Plus, Trash2, User, Mail, Phone, Briefcase, CreditCard } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useOnboarding } from '../components/OnboardingProvider'
 import { ContactData, ContactType, BillingMethod } from '../types'
 
@@ -266,8 +266,11 @@ export function ContactsStep() {
   const { formData, addContact, updateContact, removeContact, error, setError, goToNextStep, goToPreviousStep } = useOnboarding()
   const { contacts } = formData
 
-  // Initialize with primary contact if empty
-  if (contacts.length === 0) {
+  useEffect(() => {
+    if (contacts.length > 0) {
+      return
+    }
+
     addContact({
       id: generateId(),
       type: 'primary',
@@ -276,7 +279,7 @@ export function ContactsStep() {
       phone: '',
       role: ''
     })
-  }
+  }, [contacts.length, addContact])
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()

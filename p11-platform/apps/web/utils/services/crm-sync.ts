@@ -4,8 +4,9 @@
  */
 
 import { createServiceClient } from '@/utils/supabase/admin'
+import { getDataEngineUrl } from '@/utils/services/runtime-config'
 
-const DATA_ENGINE_URL = process.env.DATA_ENGINE_URL || 'http://localhost:8000'
+const DATA_ENGINE_URL = getDataEngineUrl()
 const DATA_ENGINE_API_KEY = process.env.DATA_ENGINE_API_KEY || ''
 const CRM_SYNC_MAX_RETRY_ATTEMPTS = 5
 const CRM_SYNC_BASE_RETRY_DELAY_MS = 5 * 60 * 1000

@@ -197,7 +197,7 @@ export async function syncMetaAdsConnection(
     const records = insights.map(row => ({
       date: row.date_start,
       property_id: propertyId,
-      channel_id: 'meta',
+      channel_id: 'meta_ads',
       campaign_id: row.campaign_id,
       campaign_name: row.campaign_name,
       impressions: parseInt(row.impressions || '0'),

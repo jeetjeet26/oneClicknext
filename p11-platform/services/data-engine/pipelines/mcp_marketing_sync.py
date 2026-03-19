@@ -8,7 +8,7 @@ import asyncio
 import os
 from pathlib import Path
 from datetime import datetime, timedelta
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from utils.supabase_client import get_supabase_client
 
 # Add MCP servers to path
@@ -51,7 +51,7 @@ class MCPMarketingSync:
         update_data = {'status': status}
         if status == 'running' and 'started_at' not in kwargs:
             update_data['started_at'] = datetime.utcnow().isoformat()
-        if status == 'complete' and 'completed_at' not in kwargs:
+        if status in ('complete', 'partial', 'failed') and 'completed_at' not in kwargs:
             update_data['completed_at'] = datetime.utcnow().isoformat()
         
         update_data.update(kwargs)
@@ -80,6 +80,15 @@ class MCPMarketingSync:
         else:
             return "LAST_30_DAYS"  # Cap at 30 days
     
+    def _build_channel_result(self, platform: str, state: str, records: List[dict], detail: Optional[str] = None) -> Dict[str, Any]:
+        return {
+            'platform': platform,
+            'state': state,
+            'records': records,
+            'record_count': len(records),
+            'detail': detail
+        }
+
     async def sync_property(
         self, 
         property_id: str,
@@ -118,7 +127,8 @@ class MCPMarketingSync:
             )
             return []
         
-        results = []
+        results: List[dict] = []
+        channel_results: List[Dict[str, Any]] = []
         total_platforms = len([c for c in connections.data if c['platform'] in channels])
         current_platform = 0
         
@@ -140,15 +150,16 @@ class MCPMarketingSync:
                 self._update_job_status('running', progress_pct=progress, current_step=f'Syncing Google Ads')
                 
                 print(f"Syncing Google Ads for account {account_id}")
-                google_results = await self._sync_google_ads(
+                google_result = await self._sync_google_ads(
                     property_id,
                     account_id,
                     sync_date_range or "MAXIMUM"  # Use MAXIMUM as fallback for first import
                 )
-                results.extend(google_results)
+                results.extend(google_result['records'])
+                channel_results.append(google_result)
                 
                 # Only update last import timestamp if we got records
-                if google_results:
+                if google_result['records']:
                     self.supabase.table('ad_account_connections')\
                         .update({'last_imported_at': datetime.utcnow().isoformat()})\
                         .eq('property_id', property_id)\
@@ -161,20 +172,40 @@ class MCPMarketingSync:
                 self._update_job_status('running', progress_pct=progress, current_step=f'Syncing Meta Ads')
                 
                 print(f"Syncing Meta Ads for account {account_id}")
-                meta_results = await self._sync_meta_ads(
+                meta_result = await self._sync_meta_ads(
                     property_id,
                     account_id,
                     sync_date_range or "MAXIMUM"  # Use MAXIMUM as fallback for first import
                 )
-                results.extend(meta_results)
+                results.extend(meta_result['records'])
+                channel_results.append(meta_result)
                 
                 # Only update last import timestamp if we got records
-                if meta_results:
+                if meta_result['records']:
                     self.supabase.table('ad_account_connections')\
                         .update({'last_imported_at': datetime.utcnow().isoformat()})\
                         .eq('property_id', property_id)\
                         .eq('platform', 'meta_ads')\
                         .execute()
+        
+        if not channel_results and channels:
+            self._update_job_status(
+                'failed',
+                progress_pct=100,
+                current_step='No matching ad account connections',
+                records_imported=0,
+                campaigns_found=0,
+                error_message=f"No active ad account connections matched requested channels: {', '.join(channels)}",
+            )
+            return []
+        
+        failed_channels = [r for r in channel_results if r['state'] == 'failed']
+        warning_channels = [r for r in channel_results if r['state'] in ('failed', 'skipped')]
+        succeeded_channels = [r for r in channel_results if r['state'] == 'succeeded']
+        warning_summary = '; '.join(
+            f"{r['platform']}: {r['state']}" + (f" ({r['detail']})" if r.get('detail') else '')
+            for r in warning_channels
+        )
         
         # Upsert to database
         if results:
@@ -186,16 +217,45 @@ class MCPMarketingSync:
                 .execute()
             
             campaigns_found = len(set(r['campaign_id'] for r in results))
+            final_status = 'partial' if warning_channels else 'complete'
+            final_step = 'Complete with warnings' if warning_channels else 'Complete'
             self._update_job_status(
-                'complete', 
+                final_status, 
                 progress_pct=100, 
-                current_step='Complete',
+                current_step=final_step,
                 records_imported=len(results),
-                campaigns_found=campaigns_found
+                campaigns_found=campaigns_found,
+                error_message=warning_summary if warning_channels else None
             )
-            print(f"[SUCCESS] Sync complete: {len(results)} records, {campaigns_found} campaigns")
+            print(f"[SUCCESS] Sync {final_status}: {len(results)} records, {campaigns_found} campaigns")
         else:
-            self._update_job_status('complete', progress_pct=100, records_imported=0)
+            if failed_channels and not succeeded_channels:
+                self._update_job_status(
+                    'failed',
+                    progress_pct=100,
+                    current_step='All channel syncs failed',
+                    records_imported=0,
+                    campaigns_found=0,
+                    error_message=warning_summary or 'All requested channel syncs failed',
+                )
+            elif warning_channels:
+                self._update_job_status(
+                    'partial',
+                    progress_pct=100,
+                    current_step='Completed with warnings (no records imported)',
+                    records_imported=0,
+                    campaigns_found=0,
+                    error_message=warning_summary or 'Some channels were skipped or failed',
+                )
+            else:
+                self._update_job_status(
+                    'complete',
+                    progress_pct=100,
+                    current_step='Complete (no records imported)',
+                    records_imported=0,
+                    campaigns_found=0,
+                    error_message=None,
+                )
         
         return results
     
@@ -204,14 +264,14 @@ class MCPMarketingSync:
         property_id: str,
         customer_id: str,
         date_range: str
-    ) -> List[dict]:
+    ) -> Dict[str, Any]:
         """Sync Google Ads data using MCP tools."""
         try:
             # Lazy import Google Ads tools
             get_campaign_performance, clean_customer_id = _get_google_ads_tools()
             if not get_campaign_performance or not clean_customer_id:
                 print("Google Ads sync skipped - tools not available")
-                return []
+                return self._build_channel_result('google_ads', 'skipped', [], 'Google Ads tools not available')
             
             # Call MCP tool
             campaigns = await get_campaign_performance(
@@ -239,25 +299,26 @@ class MCPMarketingSync:
                     'raw_source': 'mcp',
                 })
             
-            return records
+            return self._build_channel_result('google_ads', 'succeeded', records)
             
         except Exception as e:
-            print(f"Error syncing Google Ads: {e}")
-            return []
+            detail = str(e)
+            print(f"Error syncing Google Ads: {detail}")
+            return self._build_channel_result('google_ads', 'failed', [], detail)
     
     async def _sync_meta_ads(
         self,
         property_id: str,
         account_id: str,
         date_range: str
-    ) -> List[dict]:
+    ) -> Dict[str, Any]:
         """Sync Meta Ads data using MCP tools."""
         try:
             # Lazy import Meta Ads client
             MetaAdsClient = _get_meta_ads_client()
             if not MetaAdsClient:
                 print("Meta Ads sync skipped - client not available")
-                return []
+                return self._build_channel_result('meta_ads', 'skipped', [], 'Meta Ads client not available')
             
             print(f"[DEBUG] Creating MetaAdsClient with account_id={account_id}")
             client = MetaAdsClient()
@@ -325,13 +386,14 @@ class MCPMarketingSync:
                 })
             
             print(f"[DEBUG] Transformed {len(records)} records for database")
-            return records
+            return self._build_channel_result('meta_ads', 'succeeded', records)
             
         except Exception as e:
             import traceback
-            print(f"Error syncing Meta Ads: {e}")
+            detail = str(e)
+            print(f"Error syncing Meta Ads: {detail}")
             print(f"[DEBUG] Full traceback: {traceback.format_exc()}")
-            return []
+            return self._build_channel_result('meta_ads', 'failed', [], detail)
     
     async def sync_all_properties(self):
         """Sync all properties that have ad accounts connected."""

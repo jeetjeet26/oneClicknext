@@ -50,4 +50,27 @@ describe('marketvision import route auth', () => {
     expect(response.status).toBe(403)
     await expect(response.json()).resolves.toEqual({ error: 'Forbidden' })
   })
+
+  it('POST returns 500 when the data-engine API key is missing', async () => {
+    authGetUserMock.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
+    validatePropertyAccessMock.mockResolvedValue({ authorized: true })
+
+    const originalApiKey = process.env.DATA_ENGINE_API_KEY
+    delete process.env.DATA_ENGINE_API_KEY
+
+    const { POST } = await import('./route')
+    const response = await POST(
+      makeNextRequest('http://localhost/api/marketvision/import', {
+        method: 'POST',
+        body: JSON.stringify({ property_id: 'property-1' }),
+      }),
+    )
+
+    process.env.DATA_ENGINE_API_KEY = originalApiKey
+
+    expect(response.status).toBe(500)
+    await expect(response.json()).resolves.toEqual({
+      error: 'DATA_ENGINE_API_KEY is required to trigger MarketVision imports.',
+    })
+  })
 })

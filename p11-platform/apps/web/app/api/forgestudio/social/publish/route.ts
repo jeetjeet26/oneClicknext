@@ -4,6 +4,10 @@ import { createClient as createServerClient } from '@/utils/supabase/server'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { hasValidCronAuth } from '@/utils/services/api-helpers'
 import { evaluateForgeStudioDraftReadiness } from '@/utils/services/forgestudio-draft-readiness'
+import {
+  runSharedExecutorJob,
+  SharedExecutorApprovalRequiredError,
+} from '@/utils/services/shared-executor'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -54,6 +58,14 @@ function buildProviderError(status: number, message: string): PublishProviderErr
   return new PublishProviderError(message, isRetryableProviderStatus(status))
 }
 
+type PublishRequestBody = {
+  draftId?: string
+  connectionIds?: string[]
+  requireApproval?: boolean
+  sharedJobId?: string | null
+  sharedActionAttemptId?: string | null
+}
+
 // POST - Publish content to connected social accounts
 export async function POST(request: NextRequest) {
   try {
@@ -74,7 +86,7 @@ export async function POST(request: NextRequest) {
       userId = user.id
     }
 
-    const body = await request.json()
+    const body = (await request.json()) as PublishRequestBody
     const { draftId, connectionIds } = body
     const uniqueConnectionIds = Array.isArray(connectionIds)
       ? [...new Set(connectionIds.filter((value): value is string => typeof value === 'string' && value.length > 0))]
@@ -115,223 +127,127 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    if (draft.status !== 'approved' && draft.status !== 'scheduled') {
-      return NextResponse.json(
-        { error: 'Only approved or scheduled drafts can be published' },
-        { status: 409 }
-      )
-    }
-
-    const readiness = evaluateForgeStudioDraftReadiness({
-      caption: draft.caption,
-      platform: draft.platform,
-      contentType: draft.content_type,
-      mediaType: draft.media_type,
-      mediaUrls: draft.media_urls,
-    })
-    if (!readiness.isReady) {
-      return NextResponse.json(
-        {
-          error: 'Draft is not ready to publish',
-          blockers: readiness.blockers,
-        },
-        { status: 409 }
-      )
-    }
-
-    if (!isCronRequest && draft.status === 'scheduled' && draft.scheduled_for) {
-      const scheduledForMs = Date.parse(draft.scheduled_for)
-      if (!Number.isNaN(scheduledForMs) && scheduledForMs > Date.now()) {
+    if (!body.sharedJobId) {
+      if (draft.status !== 'approved' && draft.status !== 'scheduled') {
         return NextResponse.json(
-          { error: 'Scheduled drafts cannot be published before their scheduled time' },
+          { error: 'Only approved or scheduled drafts can be published' },
           { status: 409 }
+        )
+      }
+
+      const readiness = evaluateForgeStudioDraftReadiness({
+        caption: draft.caption,
+        platform: draft.platform,
+        contentType: draft.content_type,
+        mediaType: draft.media_type,
+        mediaUrls: draft.media_urls,
+      })
+      if (!readiness.isReady) {
+        return NextResponse.json(
+          {
+            error: 'Draft is not ready to publish',
+            blockers: readiness.blockers,
+          },
+          { status: 409 }
+        )
+      }
+
+      if (!isCronRequest && draft.status === 'scheduled' && draft.scheduled_for) {
+        const scheduledForMs = Date.parse(draft.scheduled_for)
+        if (!Number.isNaN(scheduledForMs) && scheduledForMs > Date.now()) {
+          return NextResponse.json(
+            { error: 'Scheduled drafts cannot be published before their scheduled time' },
+            { status: 409 }
+          )
+        }
+      }
+
+      const { data: connections, error: connError } = await supabase
+        .from('social_connections')
+        .select('id')
+        .in('id', uniqueConnectionIds)
+        .eq('is_active', true)
+        .eq('property_id', draft.property_id)
+
+      if (connError || !connections?.length || connections.length !== uniqueConnectionIds.length) {
+        return NextResponse.json(
+          { error: 'Some requested connections are invalid, inactive, or belong to another property' },
+          { status: 400 }
         )
       }
     }
 
-    // Get the connections
-    const { data: connections, error: connError } = await supabase
-      .from('social_connections')
-      .select('*')
-      .in('id', uniqueConnectionIds)
-      .eq('is_active', true)
-      .eq('property_id', draft.property_id)
+    const { data: property, error: propertyError } = await supabase
+      .from('properties')
+      .select('org_id')
+      .eq('id', draft.property_id)
+      .single()
 
-    if (connError || !connections?.length || connections.length !== uniqueConnectionIds.length) {
-      return NextResponse.json(
-        { error: 'Some requested connections are invalid, inactive, or belong to another property' },
-        { status: 400 }
-      )
+    if (propertyError || !property?.org_id) {
+      return NextResponse.json({ error: 'Draft property is missing organization context' }, { status: 409 })
     }
 
-    const results: Array<{
-      connectionId: string
-      platform: string
-      success: boolean
-      retryable?: boolean
-      skipped?: boolean
-      postId?: string
-      postUrl?: string
-      error?: string
-    }> = []
-    const initiatedVia = isCronRequest ? 'cron' : 'operator'
+    const executePublish = () =>
+      runForgeStudioPublish({
+        draftId,
+        connectionIds: uniqueConnectionIds,
+        isCronRequest,
+        userId,
+        requestId,
+      })
 
-    // Publish to each connection
-    for (const connection of connections) {
-      const actionTimestamp = new Date().toISOString()
-      try {
-        const { data: existingPublished } = await supabase
-          .from('published_posts')
-          .select('platform_post_id, platform_post_url')
-          .eq('content_draft_id', draftId)
-          .eq('social_connection_id', connection.id)
-          .eq('status', 'published')
-          .limit(1)
-          .maybeSingle()
+    if (body.sharedJobId) {
+      return NextResponse.json(await executePublish())
+    }
 
-        if (existingPublished) {
-          // Keep an explicit audit trail for no-op idempotent publish calls.
-          await supabase
-            .from('published_posts')
-            .insert({
-              content_draft_id: draftId,
-              social_connection_id: connection.id,
-              platform_post_id: existingPublished.platform_post_id,
-              platform_post_url: existingPublished.platform_post_url,
-              status: 'skipped',
-              engagement_metrics: {
-                action: 'publish',
-                result: 'skipped_existing_post',
-                initiated_via: initiatedVia,
-                initiated_by: userId,
-                request_id: requestId,
-                attempted_at: actionTimestamp,
-              },
-            })
+    try {
+      const result = await runSharedExecutorJob({
+        orgId: property.org_id,
+        propertyId: draft.property_id,
+        domain: 'forgestudio.publish',
+        subjectType: 'content_draft',
+        subjectId: draftId,
+        dedupeKey: `${draftId}:${uniqueConnectionIds.sort().join(',')}`,
+        requestedBy: userId,
+        capturedBy: userId,
+        payload: {
+          draftId,
+          connectionIds: uniqueConnectionIds,
+          initiatedVia: isCronRequest ? 'cron' : 'operator',
+        },
+        action: {
+          actionType: 'publish_social_content',
+          proposalDecisionStatus: body.requireApproval ? 'proposed' : 'approved',
+          requestPayload: {
+            draftId,
+            connectionIds: uniqueConnectionIds,
+          },
+          executionPayload: {
+            draftId,
+            connectionIds: uniqueConnectionIds,
+            initiatedVia: isCronRequest ? 'cron' : 'operator',
+          },
+          policyReason: body.requireApproval ? 'operator_requested_publish_review' : 'operator_requested_publish',
+        },
+        execute: executePublish,
+      })
 
-          results.push({
-            connectionId: connection.id,
-            platform: connection.platform,
-            success: true,
-            skipped: true,
-            postId: existingPublished.platform_post_id || undefined,
-            postUrl: existingPublished.platform_post_url || undefined,
-          })
-          continue
-        }
-
-        let result: { postId: string; postUrl: string }
-
-        switch (connection.platform) {
-          case 'instagram':
-            result = await publishToInstagram(connection, draft)
-            break
-          case 'facebook':
-            result = await publishToFacebook(connection, draft)
-            break
-          case 'linkedin':
-            result = await publishToLinkedIn(connection, draft)
-            break
-          default:
-            throw new PublishProviderError(`Unsupported platform: ${connection.platform}`, false)
-        }
-
-        // Save published post record
-        await supabase
-          .from('published_posts')
-          .insert({
-            content_draft_id: draftId,
-            social_connection_id: connection.id,
-            platform_post_id: result.postId,
-            platform_post_url: result.postUrl,
-            status: 'published',
-            published_at: actionTimestamp,
-            engagement_metrics: {
-              action: 'publish',
-              result: 'published',
-              initiated_via: initiatedVia,
-              initiated_by: userId,
-              request_id: requestId,
-              attempted_at: actionTimestamp,
-            },
-          })
-
-        // Update last used
-        await supabase
-          .from('social_connections')
-          .update({ last_used_at: new Date().toISOString(), error_count: 0, last_error: null })
-          .eq('id', connection.id)
-
-        results.push({
-          connectionId: connection.id,
-          platform: connection.platform,
-          success: true,
-          postId: result.postId,
-          postUrl: result.postUrl
-        })
-
-      } catch (error) {
-        const publishError = toPublishProviderError(error, 'Publishing failed')
-        const errorMessage = publishError.message
-        
-        // Update error count
-        await supabase
-          .from('social_connections')
-          .update({ 
-            error_count: (connection.error_count || 0) + 1,
-            last_error: errorMessage
-          })
-          .eq('id', connection.id)
-
-        // Save failed attempt
-        await supabase
-          .from('published_posts')
-          .insert({
-            content_draft_id: draftId,
-            social_connection_id: connection.id,
-            status: 'failed',
-            error_message: errorMessage,
-            engagement_metrics: {
-              action: 'publish',
-              result: 'failed',
-              retryable: publishError.retryable,
-              initiated_via: initiatedVia,
-              initiated_by: userId,
-              request_id: requestId,
-              attempted_at: actionTimestamp,
-            },
-          })
-
-        results.push({
-          connectionId: connection.id,
-          platform: connection.platform,
-          success: false,
-          retryable: publishError.retryable,
-          error: errorMessage
-        })
+      return NextResponse.json(result)
+    } catch (error) {
+      if (error instanceof SharedExecutorApprovalRequiredError) {
+        return NextResponse.json(
+          {
+            success: false,
+            approvalRequired: true,
+            sharedJobId: error.sharedJobId,
+            sharedActionAttemptId: error.sharedActionAttemptId,
+            message: error.message,
+          },
+          { status: 202 }
+        )
       }
+      throw error
     }
-
-    // Update draft status if all published successfully
-    const allSuccess = results.every(r => r.success)
-    const retryableFailures = results.filter(r => !r.success && r.retryable)
-    const permanentFailures = results.filter(r => !r.success && !r.retryable)
-    if (allSuccess) {
-      await supabase
-        .from('content_drafts')
-        .update({ 
-          status: 'published',
-          published_at: new Date().toISOString()
-        })
-        .eq('id', draftId)
-    }
-
-    return NextResponse.json({
-      success: allSuccess,
-      retryableFailureCount: retryableFailures.length,
-      permanentFailureCount: permanentFailures.length,
-      results
-    })
 
   } catch (error) {
     console.error('Publishing error:', error)
@@ -339,6 +255,229 @@ export async function POST(request: NextRequest) {
       { error: error instanceof Error ? error.message : 'Publishing failed' },
       { status: 500 }
     )
+  }
+}
+
+async function runForgeStudioPublish(input: {
+  draftId: string
+  connectionIds: string[]
+  isCronRequest: boolean
+  userId: string | null
+  requestId: string | null
+}) {
+  const { draftId, connectionIds, isCronRequest, userId, requestId } = input
+  const { data: draft, error: draftError } = await supabase
+    .from('content_drafts')
+    .select('*')
+    .eq('id', draftId)
+    .single()
+
+  if (draftError || !draft) {
+    throw new Error('Draft not found')
+  }
+
+  if (!draft.property_id) {
+    throw new Error('Draft is missing property association')
+  }
+
+  if (draft.status !== 'approved' && draft.status !== 'scheduled') {
+    throw new PublishProviderError('Only approved or scheduled drafts can be published', false)
+  }
+
+  const readiness = evaluateForgeStudioDraftReadiness({
+    caption: draft.caption,
+    platform: draft.platform,
+    contentType: draft.content_type,
+    mediaType: draft.media_type,
+    mediaUrls: draft.media_urls,
+  })
+  if (!readiness.isReady) {
+    throw new PublishProviderError(
+      `Draft is not ready to publish: ${readiness.blockers.join(', ')}`,
+      false
+    )
+  }
+
+  if (!isCronRequest && draft.status === 'scheduled' && draft.scheduled_for) {
+    const scheduledForMs = Date.parse(draft.scheduled_for)
+    if (!Number.isNaN(scheduledForMs) && scheduledForMs > Date.now()) {
+      throw new PublishProviderError('Scheduled drafts cannot be published before their scheduled time', false)
+    }
+  }
+
+  const { data: connections, error: connError } = await supabase
+    .from('social_connections')
+    .select('*')
+    .in('id', connectionIds)
+    .eq('is_active', true)
+    .eq('property_id', draft.property_id)
+
+  if (connError || !connections?.length || connections.length !== connectionIds.length) {
+    throw new PublishProviderError(
+      'Some requested connections are invalid, inactive, or belong to another property',
+      false
+    )
+  }
+
+  const results: Array<{
+    connectionId: string
+    platform: string
+    success: boolean
+    retryable?: boolean
+    skipped?: boolean
+    postId?: string
+    postUrl?: string
+    error?: string
+  }> = []
+  const initiatedVia = isCronRequest ? 'cron' : 'operator'
+
+  for (const connection of connections) {
+    const actionTimestamp = new Date().toISOString()
+    try {
+      const { data: existingPublished } = await supabase
+        .from('published_posts')
+        .select('platform_post_id, platform_post_url')
+        .eq('content_draft_id', draftId)
+        .eq('social_connection_id', connection.id)
+        .eq('status', 'published')
+        .limit(1)
+        .maybeSingle()
+
+      if (existingPublished) {
+        await supabase
+          .from('published_posts')
+          .insert({
+            content_draft_id: draftId,
+            social_connection_id: connection.id,
+            platform_post_id: existingPublished.platform_post_id,
+            platform_post_url: existingPublished.platform_post_url,
+            status: 'skipped',
+            engagement_metrics: {
+              action: 'publish',
+              result: 'skipped_existing_post',
+              initiated_via: initiatedVia,
+              initiated_by: userId,
+              request_id: requestId,
+              attempted_at: actionTimestamp,
+            },
+          })
+
+        results.push({
+          connectionId: connection.id,
+          platform: connection.platform,
+          success: true,
+          skipped: true,
+          postId: existingPublished.platform_post_id || undefined,
+          postUrl: existingPublished.platform_post_url || undefined,
+        })
+        continue
+      }
+
+      let result: { postId: string; postUrl: string }
+
+      switch (connection.platform) {
+        case 'instagram':
+          result = await publishToInstagram(connection, draft)
+          break
+        case 'facebook':
+          result = await publishToFacebook(connection, draft)
+          break
+        case 'linkedin':
+          result = await publishToLinkedIn(connection, draft)
+          break
+        default:
+          throw new PublishProviderError(`Unsupported platform: ${connection.platform}`, false)
+      }
+
+      await supabase
+        .from('published_posts')
+        .insert({
+          content_draft_id: draftId,
+          social_connection_id: connection.id,
+          platform_post_id: result.postId,
+          platform_post_url: result.postUrl,
+          status: 'published',
+          published_at: actionTimestamp,
+          engagement_metrics: {
+            action: 'publish',
+            result: 'published',
+            initiated_via: initiatedVia,
+            initiated_by: userId,
+            request_id: requestId,
+            attempted_at: actionTimestamp,
+          },
+        })
+
+      await supabase
+        .from('social_connections')
+        .update({ last_used_at: new Date().toISOString(), error_count: 0, last_error: null })
+        .eq('id', connection.id)
+
+      results.push({
+        connectionId: connection.id,
+        platform: connection.platform,
+        success: true,
+        postId: result.postId,
+        postUrl: result.postUrl,
+      })
+    } catch (error) {
+      const publishError = toPublishProviderError(error, 'Publishing failed')
+      const errorMessage = publishError.message
+
+      await supabase
+        .from('social_connections')
+        .update({
+          error_count: (connection.error_count || 0) + 1,
+          last_error: errorMessage,
+        })
+        .eq('id', connection.id)
+
+      await supabase
+        .from('published_posts')
+        .insert({
+          content_draft_id: draftId,
+          social_connection_id: connection.id,
+          status: 'failed',
+          error_message: errorMessage,
+          engagement_metrics: {
+            action: 'publish',
+            result: 'failed',
+            retryable: publishError.retryable,
+            initiated_via: initiatedVia,
+            initiated_by: userId,
+            request_id: requestId,
+            attempted_at: actionTimestamp,
+          },
+        })
+
+      results.push({
+        connectionId: connection.id,
+        platform: connection.platform,
+        success: false,
+        retryable: publishError.retryable,
+        error: errorMessage,
+      })
+    }
+  }
+
+  const allSuccess = results.every(result => result.success)
+  const retryableFailures = results.filter(result => !result.success && result.retryable)
+  const permanentFailures = results.filter(result => !result.success && !result.retryable)
+  if (allSuccess) {
+    await supabase
+      .from('content_drafts')
+      .update({
+        status: 'published',
+        published_at: new Date().toISOString(),
+      })
+      .eq('id', draftId)
+  }
+
+  return {
+    success: allSuccess,
+    retryableFailureCount: retryableFailures.length,
+    permanentFailureCount: permanentFailures.length,
+    results,
   }
 }
 

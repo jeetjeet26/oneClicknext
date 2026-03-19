@@ -41,53 +41,13 @@ class ClaudeNaturalConnector:
         system_prompt = 'You are a helpful assistant. Answer naturally in conversational prose. Do not output JSON. If unsure, say so plainly.'
         search_sources = []
         
-        # Try with web search tool if enabled
+        # Claude natural-mode web search stays disabled until source extraction is implemented.
+        web_search_disabled_reason = None
         if self.enable_web_search:
-            try:
-                logger.info("[Claude-Natural] Using web_search_20250305 tool")
-                
-                response = self.client.messages.create(
-                    model=self.model,
-                    max_tokens=2000,
-                    temperature=0,
-                    system=system_prompt,
-                    messages=[{"role": "user", "content": query_text}],
-                    tools=[
-                        {
-                            'type': 'web_search_20250305',
-                            'name': 'web_search',
-                            'max_uses': 5
-                        }
-                    ]
-                )
-                
-                # Extract text from response
-                text_blocks = [block for block in response.content if hasattr(block, 'type') and block.type == 'text']
-                content = '\n'.join([block.text for block in text_blocks])
-                
-                # TODO: Extract sources from Claude's web search results
-                # Claude's annotation format may differ from OpenAI
-                
-                logger.info(f"[Claude-Natural] Phase 1 complete: {len(content)} chars (with web search)")
-                
-                return (
-                    content,
-                    search_sources,  # Claude sources extraction TBD
-                    {
-                        'response_id': response.id,
-                        'model': self.model,
-                        'usage': {
-                            'input_tokens': response.usage.input_tokens,
-                            'output_tokens': response.usage.output_tokens
-                        },
-                        'stop_reason': response.stop_reason,
-                        'used_web_search': True
-                    }
-                )
-                
-            except Exception as e:
-                logger.error(f"[Claude-Natural] Web search error: {e}, falling back to standard")
-                # Fall through to standard call
+            web_search_disabled_reason = (
+                "Claude natural-mode web search is disabled until source extraction is implemented."
+            )
+            logger.warning(f"[Claude-Natural] {web_search_disabled_reason}")
         
         # Standard call without web search
         try:
@@ -115,7 +75,8 @@ class ClaudeNaturalConnector:
                         'output_tokens': response.usage.output_tokens
                     },
                     'stop_reason': response.stop_reason,
-                    'used_web_search': False
+                    'used_web_search': False,
+                    'web_search_disabled_reason': web_search_disabled_reason,
                 }
             )
             

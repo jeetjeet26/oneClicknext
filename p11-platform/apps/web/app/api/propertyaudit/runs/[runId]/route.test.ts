@@ -132,4 +132,89 @@ describe('propertyaudit runs/[runId] route', () => {
     await expect(response.json()).resolves.toEqual({ error: 'Forbidden' })
     expect(geoRunsDeleteEq).not.toHaveBeenCalled()
   })
+
+  it('GET includes persisted progress metadata for running runs', async () => {
+    authGetUserMock.mockResolvedValue({
+      data: { user: { id: 'user-1' } },
+      error: null,
+    })
+    validatePropertyAccessMock.mockResolvedValue({
+      authorized: true,
+      orgId: 'org-1',
+    })
+
+    const geoRunsSingle = vi.fn().mockResolvedValue({
+      data: {
+        id: 'run-1',
+        property_id: 'property-1',
+        surface: 'openai',
+        model_name: 'gpt-5.2',
+        status: 'running',
+        query_count: 10,
+        current_query_index: 3,
+        progress_pct: 30,
+        last_updated_at: '2026-03-16T00:00:00.000Z',
+        error_message: null,
+        started_at: '2026-03-16T00:00:00.000Z',
+        finished_at: null,
+        uses_web_search: true,
+        geo_scores: [],
+      },
+      error: null,
+    })
+    const geoAnswersOrder = vi.fn().mockResolvedValue({
+      data: [],
+      error: null,
+    })
+
+    createServiceClientMock.mockReturnValue({
+      from: vi.fn((table: string) => {
+        if (table === 'geo_runs') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                single: geoRunsSingle,
+              })),
+            })),
+          }
+        }
+        if (table === 'geo_answers') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                order: geoAnswersOrder,
+              })),
+            })),
+          }
+        }
+        throw new Error(`Unexpected table ${table}`)
+      }),
+    })
+
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-03-16T00:05:00.000Z'))
+
+    const { GET } = await import('./route')
+    const request = new Request('http://localhost/api/propertyaudit/runs/run-1', {
+      method: 'GET',
+    }) as NextRequest
+
+    const response = await GET(request, {
+      params: Promise.resolve({ runId: 'run-1' }),
+    })
+    const body = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(body.run).toMatchObject({
+      id: 'run-1',
+      status: 'running',
+      progressPct: 30,
+      currentQueryIndex: 3,
+      isPossiblyStalled: true,
+      usesWebSearch: true,
+    })
+    expect(String(body.run.statusDetail)).toContain('Possibly stalled')
+    expect(body.run.secondsSinceUpdate).toBe(300)
+
+    nowSpy.mockRestore()
+  })
 })

@@ -373,4 +373,195 @@ describe('propertyaudit run route', () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe('http://data-engine.local/jobs/propertyaudit/run')
     expect(fetchMock.mock.calls[1]?.[0]).toBe('http://localhost/api/propertyaudit/process')
   })
+
+  it('POST treats data-engine claim conflicts as idempotent dispatch success', async () => {
+    authGetUserMock.mockResolvedValue({
+      data: { user: { id: 'user-1' } },
+      error: null,
+    })
+    validatePropertyAccessMock.mockResolvedValue({
+      authorized: true,
+      orgId: 'org-1',
+    })
+    process.env.PROPERTYAUDIT_USE_DATA_ENGINE = 'true'
+    process.env.CRON_SECRET = 'cron-secret'
+    process.env.DATA_ENGINE_URL = 'http://data-engine.local'
+    process.env.DATA_ENGINE_API_KEY = 'data-engine-key'
+    delete process.env.PROPERTYAUDIT_ALLOW_TYPESCRIPT_FALLBACK
+
+    const geoRunsInsertSingle = vi.fn().mockResolvedValue({
+      data: {
+        id: 'run-1',
+        property_id: 'property-1',
+        surface: 'openai',
+        model_name: 'gpt-5.2',
+        status: 'queued',
+        query_count: 2,
+        started_at: '2026-03-16T18:00:00.000Z',
+        finished_at: null,
+        error_message: null,
+      },
+      error: null,
+    })
+    const geoRunsUpdateEqEq = vi.fn(() => Promise.resolve({ error: null }))
+
+    createServiceClientMock.mockReturnValue({
+      from: vi.fn((table: string) => {
+        if (table === 'geo_queries') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                eq: vi.fn().mockResolvedValue({ count: 2 }),
+              })),
+            })),
+          }
+        }
+
+        if (table === 'geo_runs') {
+          return {
+            insert: vi.fn(() => ({
+              select: vi.fn(() => ({
+                single: geoRunsInsertSingle,
+              })),
+            })),
+            update: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                eq: geoRunsUpdateEqEq,
+              })),
+            })),
+          }
+        }
+
+        throw new Error(`Unexpected table ${table}`)
+      }),
+    })
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.startsWith('http://data-engine.local/jobs/propertyaudit/run')) {
+        return new Response(
+          JSON.stringify({ detail: 'Run run-1 is not queued (status=running)' }),
+          { status: 409, headers: { 'Content-Type': 'application/json' } }
+        )
+      }
+
+      throw new Error(`Unexpected fetch URL ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { POST } = await import('./route')
+    const request = new Request('http://localhost/api/propertyaudit/run', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ propertyId: 'property-1', surfaces: ['openai'] }),
+    }) as NextRequest
+
+    const response = await POST(request)
+    const body = await response.json()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(response.status).toBe(200)
+    expect(body).toMatchObject({
+      success: true,
+      processorMode: 'data_engine',
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(geoRunsUpdateEqEq).not.toHaveBeenCalled()
+  })
+
+  it('POST can force deterministic local fixture processing', async () => {
+    authGetUserMock.mockResolvedValue({
+      data: { user: { id: 'user-1' } },
+      error: null,
+    })
+    validatePropertyAccessMock.mockResolvedValue({
+      authorized: true,
+      orgId: 'org-1',
+    })
+    process.env.PROPERTYAUDIT_USE_DATA_ENGINE = 'true'
+    process.env.CRON_SECRET = 'cron-secret'
+    process.env.DATA_ENGINE_URL = 'http://data-engine.local'
+    process.env.DATA_ENGINE_API_KEY = 'data-engine-key'
+
+    const geoRunsInsertSingle = vi.fn().mockResolvedValue({
+      data: {
+        id: 'run-1',
+        property_id: 'property-1',
+        surface: 'openai',
+        model_name: 'gpt-5.2',
+        status: 'queued',
+        query_count: 2,
+        started_at: '2026-03-16T18:00:00.000Z',
+        finished_at: null,
+        error_message: null,
+      },
+      error: null,
+    })
+
+    createServiceClientMock.mockReturnValue({
+      from: vi.fn((table: string) => {
+        if (table === 'geo_queries') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                eq: vi.fn().mockResolvedValue({ count: 2 }),
+              })),
+            })),
+          }
+        }
+
+        if (table === 'geo_runs') {
+          return {
+            insert: vi.fn(() => ({
+              select: vi.fn(() => ({
+                single: geoRunsInsertSingle,
+              })),
+            })),
+            update: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                eq: vi.fn(() => Promise.resolve({ error: null })),
+              })),
+            })),
+          }
+        }
+
+        throw new Error(`Unexpected table ${table}`)
+      }),
+    })
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.startsWith('http://localhost/api/propertyaudit/process')) {
+        return new Response(JSON.stringify({ success: true }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      throw new Error(`Unexpected fetch URL ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { POST } = await import('./route')
+    const request = new Request('http://localhost/api/propertyaudit/run', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ propertyId: 'property-1', surfaces: ['openai'], useLocalFixture: true }),
+    }) as NextRequest
+
+    const response = await POST(request)
+    const body = await response.json()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(response.status).toBe(200)
+    expect(body).toMatchObject({
+      success: true,
+      processorMode: 'typescript_fixture',
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('http://localhost/api/propertyaudit/process')
+    const init = fetchMock.mock.calls[0]?.[1] as { headers?: Record<string, string> } | undefined
+    expect(init?.headers?.['X-PropertyAudit-Local-Fixture']).toBe('1')
+  })
 })

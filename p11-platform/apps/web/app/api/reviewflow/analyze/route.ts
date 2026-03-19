@@ -55,13 +55,11 @@ Respond ONLY with valid JSON in this format:
     }
   } catch (error) {
     console.error('Error analyzing review:', error)
-    
-    // Fallback based on rating
-    if (rating) {
-      if (rating >= 4) return { sentiment: 'positive', sentimentScore: 0.7, topics: [], isUrgent: false, summary: 'Positive review' }
-      if (rating <= 2) return { sentiment: 'negative', sentimentScore: -0.7, topics: [], isUrgent: false, summary: 'Negative review' }
-    }
-    return { sentiment: 'neutral', sentimentScore: 0, topics: [], isUrgent: false, summary: 'Review requires manual analysis' }
+    throw new Error(
+      `Review sentiment analysis provider is unavailable: ${
+        error instanceof Error ? error.message : 'Unknown error'
+      }`
+    )
   }
 }
 
@@ -128,8 +126,19 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Review text is required' }, { status: 400 })
   }
 
-  // Analyze the review
-  const analysis = await analyzeReview(textToAnalyze, reviewRating)
+  let analysis: SentimentAnalysis
+  try {
+    analysis = await analyzeReview(textToAnalyze, reviewRating)
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error: 'Review analysis unavailable',
+        details: error instanceof Error ? error.message : 'Unknown error',
+        manualReviewRequired: true,
+      },
+      { status: 503 }
+    )
+  }
 
   // If reviewId provided, update the review with analysis results
   if (reviewId) {

@@ -50,7 +50,7 @@ function extractPropertyIdFromPath(pathname: string): string | null {
 export function PropertyProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [properties, setProperties] = useState<Property[]>(DEFAULT_PROPERTIES);
-  const [loading, setLoading] = useState<boolean>(false);
+  const [loading, setLoading] = useState<boolean>(true);
   const [selectedId, setSelectedIdState] = useState<string>(DEFAULT_PROPERTY_ID);
   
   // Use ref to track initialization without causing re-renders

@@ -69,4 +69,44 @@ describe('brandforge generate-next-section route', () => {
     expect(response.status).toBe(403)
     await expect(response.json()).resolves.toEqual({ error: 'Forbidden' })
   })
+
+  it('fails closed when the generation provider is not configured', async () => {
+    authGetUserMock.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
+    validatePropertyAccessMock.mockResolvedValue({ authorized: true })
+
+    const originalGeminiKey = process.env.GOOGLE_GEMINI_API_KEY
+    delete process.env.GOOGLE_GEMINI_API_KEY
+
+    const singleMock = vi.fn().mockResolvedValue({
+      data: {
+        property_id: 'property-1',
+        current_step: 1,
+        conversation_summary: { brandName: 'Sunset' },
+        competitive_analysis: {},
+      },
+      error: null,
+    })
+    const eqMock = vi.fn().mockReturnValue({ single: singleMock })
+    const selectMock = vi.fn().mockReturnValue({ eq: eqMock })
+    const updateEqMock = vi.fn().mockResolvedValue({ data: null, error: null })
+    const updateMock = vi.fn().mockReturnValue({ eq: updateEqMock })
+    fromMock.mockReturnValue({ select: selectMock, update: updateMock })
+
+    const { POST } = await import('./route')
+    const response = await POST(
+      new Request('http://localhost/api/brandforge/generate-next-section', {
+        method: 'POST',
+        body: JSON.stringify({ brandAssetId: 'brand-1' }),
+      }) as NextRequest
+    )
+
+    process.env.GOOGLE_GEMINI_API_KEY = originalGeminiKey
+
+    expect(response.status).toBe(500)
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'Generation failed',
+      details: 'Gemini is not configured for BrandForge section generation.',
+    })
+    expect(updateMock).not.toHaveBeenCalled()
+  })
 })

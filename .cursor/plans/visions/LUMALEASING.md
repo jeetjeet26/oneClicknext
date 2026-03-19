@@ -1,6 +1,6 @@
 # Vision: LumaLeasing
 
-Last Updated: March 16, 2026
+Last Updated: March 17, 2026
 Document Type: Vision grounded in current implementation
 
 ## Mission
@@ -64,6 +64,7 @@ Before autonomy can act through LumaLeasing, the product must provide:
 - auditable records for every outbound message, booking, status change, and resolution action
 - policy controls for messaging tone, compliance, and escalation
 - confidence and approval handling for non-routine conversations
+- human review that supports approve, deny, and modify outcomes with preserved textual reasoning for non-routine or high-risk conversation actions
 - deterministic retry behavior with no duplicate sends or bookings
 - operator-visible degraded states for email and calendar dependencies
 

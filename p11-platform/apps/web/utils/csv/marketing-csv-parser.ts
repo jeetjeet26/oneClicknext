@@ -5,7 +5,9 @@
  * compatible with the fact_marketing_performance table.
  */
 
-export type MarketingPlatform = 'google_ads' | 'meta'
+import { normalizeMarketingChannelId } from '@/utils/analytics/channel-identity'
+
+export type MarketingPlatform = 'google_ads' | 'meta_ads' | 'meta'
 
 export type ParsedMarketingRow = {
   date: string // YYYY-MM-DD format
@@ -196,7 +198,7 @@ function detectPlatform(headers: string[], rows: string[][]): MarketingPlatform 
   
   // Meta-specific columns
   if (headerStr.includes('ad set') || headerStr.includes('actions') || headerStr.includes('date_start')) {
-    return 'meta'
+    return 'meta_ads'
   }
   
   // Google Ads specific patterns
@@ -215,7 +217,7 @@ function detectPlatform(headers: string[], rows: string[][]): MarketingPlatform 
       }
       // Meta uses ISO dates
       if (/^\d{4}-\d{2}-\d{2}$/.test(cell)) {
-        return 'meta'
+        return 'meta_ads'
       }
     }
   }
@@ -327,7 +329,7 @@ function parseMetaAdsTimeSeries(
 ): CSVParseResult {
   const result: CSVParseResult = {
     success: true,
-    platform: 'meta',
+    platform: 'meta_ads',
     reportType: 'time_series',
     rows: [],
     dateRange,
@@ -380,7 +382,7 @@ function parseMetaAdsTimeSeries(
     
     const parsed: ParsedMarketingRow = {
       date: parsedDate,
-      channel_id: 'meta',
+      channel_id: 'meta_ads',
       campaign_name: rowCampaignName || campaignName,
       campaign_id: rowCampaignId,
       impressions: impressionsIdx !== undefined ? parseNumber(row[impressionsIdx]) : 0,
@@ -694,7 +696,10 @@ export function parseMarketingCSV(
   let dateRange = extractDateRangeFromFilename(filename) || extractDateRangeFromMetadata(allRows.slice(0, headerRowIndex))
   
   const reportType = detectReportType(headers)
-  const platform = platformHint || detectPlatform(headers, dataRows)
+  const normalizedHint = platformHint
+    ? (normalizeMarketingChannelId(platformHint) as MarketingPlatform)
+    : undefined
+  const platform = normalizedHint || detectPlatform(headers, dataRows)
   
   // Check if this is a campaign summary (no date column but has campaign column)
   const normalizedHeaders = normalizeHeaders(headers)
@@ -719,7 +724,7 @@ export function parseMarketingCSV(
     }
   }
   
-  if (platform === 'meta') {
+  if (platform === 'meta_ads') {
     return parseMetaAdsTimeSeries(headers, dataRows, campaignName, dateRange)
   } else {
     return parseGoogleAdsTimeSeries(headers, dataRows, campaignName, dateRange)

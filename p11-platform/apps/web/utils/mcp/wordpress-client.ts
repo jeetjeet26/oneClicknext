@@ -109,7 +109,7 @@ export class WordPressMcpClient {
   }
   
   /**
-   * Analyze existing WordPress site (like Cadence Creek)
+   * Analyze an existing WordPress site for structure and design patterns
    */
   async analyzeExistingSite(url: string): Promise<SiteAnalysis> {
     return this.callMcp('analyze_existing_site', { url })
@@ -149,14 +149,10 @@ export class WordPressMcpClient {
    * Call MCP server (abstraction for future MCP protocol integration)
    */
   private async callMcp(tool: string, args: Record<string, unknown>): Promise<any> {
-    // Server-side: Use mock data directly (no fetch needed)
-    // This avoids the "Failed to parse URL" error when running in API routes
     if (typeof window === 'undefined') {
-      console.log(`[WordPress MCP] Server-side call: ${tool}`)
-      return this.getMockResponse(tool, args)
+      return this.callMcpServer(tool, args)
     }
     
-    // Client-side: Call REST endpoint that wraps MCP server
     try {
       const response = await fetch('/api/mcp/wordpress', {
         method: 'POST',
@@ -165,172 +161,61 @@ export class WordPressMcpClient {
       })
       
       if (!response.ok) {
-        console.warn(`WordPress MCP call failed: ${response.statusText}, using mock`)
-        return this.getMockResponse(tool, args)
+        const errorBody = await response.text()
+        throw new Error(`WordPress MCP call failed: ${response.status} ${response.statusText} ${errorBody}`.trim())
       }
       
       const data = await response.json()
       return data.result
     } catch (error) {
-      console.warn('WordPress MCP fetch failed, using mock:', error)
-      return this.getMockResponse(tool, args)
+      throw new Error(
+        `WordPress MCP fetch failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+      )
     }
   }
-  
-  /**
-   * Mock responses for development/server-side (until MCP server is fully set up)
-   */
-  private getMockResponse(tool: string, args: Record<string, unknown>): unknown {
-    if (tool === 'get_wordpress_abilities') {
-      return {
-        available_blocks: [
-          'acf/menu',
-          'acf/top-slides',
-          'acf/text-section',
-          'acf/feature-section',
-          'acf/image',
-          'acf/links',
-          'acf/content-grid',
-          'acf/form',
-          'acf/map',
-          'acf/html-section',
-          'acf/gallery',
-          'acf/accordion-section',
-          'acf/plans-availability',
-          'acf/poi'
-        ],
-        theme: {
-          name: 'collection',
-          version: '2.1.0',
-          supports: {
-            custom_css: true,
-            custom_fonts: true,
-            block_patterns: true
-          }
-        },
-        plugins: ['advanced-custom-fields-pro', 'yoast-seo', 'wp-rocket'],
-        capabilities: {
-          canCreatePages: true,
-          canUploadMedia: true,
-          canModifyTheme: false,
-          canInstallPlugins: false,
-          maxUploadSizeMb: 100
-        }
-      }
+
+  private async callMcpServer(tool: string, args: Record<string, unknown>): Promise<any> {
+    const [{ exec }, { promisify }, pathModule] = await Promise.all([
+      import('child_process'),
+      import('util'),
+      import('path'),
+    ])
+    const execAsync = promisify(exec)
+    const mcpServerPath = pathModule.join(process.cwd(), '..', 'services', 'mcp-servers', 'wordpress')
+    const input = {
+      jsonrpc: '2.0',
+      method: 'tools/call',
+      params: {
+        name: tool,
+        arguments: args,
+      },
+      id: 1,
     }
-    
-    if (tool === 'get_acf_block_schemas') {
-      return {
-        'acf/top-slides': {
-          label: 'Hero Carousel',
-          fields: {
-            slides: { type: 'repeater' },
-            autoplay: { type: 'boolean', default: true },
-            overlay_style: { 
-              type: 'select', 
-              choices: ['none', 'light', 'dark', 'gradient'] 
-            }
-          },
-          variants: {
-            fullwidth: {
-              cssClass: 'hero-fullwidth',
-              description: 'Full viewport hero',
-              bestFor: ['luxury', 'impact', 'resort']
-            },
-            split: {
-              cssClass: 'hero-split',
-              description: 'Two-column layout',
-              bestFor: ['lifestyle', 'family']
-            }
-          }
+    const command = `cd "${mcpServerPath}" && python -m wordpress.server --call "${JSON.stringify(input).replace(/"/g, '\\"')}"`
+
+    try {
+      const { stdout, stderr } = await execAsync(command, {
+        env: {
+          ...process.env,
+          PYTHONPATH: pathModule.join(process.cwd(), '..', 'services', 'mcp-servers'),
         },
-        'acf/content-grid': {
-          label: 'Content Grid',
-          fields: {
-            columns: { type: 'select', choices: ['2', '3', '4'], default: '3' },
-            items: { type: 'repeater' }
-          },
-          variants: {
-            'elevated-cards': {
-              cssClass: 'grid-elevated',
-              bestFor: ['luxury', 'modern']
-            }
-          }
-        },
-        'acf/text-section': {
-          label: 'Text Section',
-          fields: {
-            heading: { type: 'text' },
-            subheading: { type: 'text' },
-            content: { type: 'wysiwyg' },
-            alignment: { type: 'select', choices: ['left', 'center', 'right'] }
-          }
-        },
-        'acf/feature-section': {
-          label: 'Feature Section',
-          fields: {
-            title: { type: 'text' },
-            features: { type: 'repeater' },
-            layout: { type: 'select', choices: ['grid', 'list', 'cards'] }
-          }
-        },
-        'acf/form': {
-          label: 'Contact Form',
-          fields: {
-            form_type: { type: 'select', choices: ['contact', 'tour', 'interest'] },
-            style: { type: 'select', choices: ['inline', 'modal', 'sidebar'] }
-          }
-        },
-        'acf/gallery': {
-          label: 'Photo Gallery',
-          fields: {
-            images: { type: 'gallery' },
-            layout: { type: 'select', choices: ['grid', 'masonry', 'carousel'] }
-          }
-        }
+      })
+
+      if (stderr) {
+        console.error('WordPress MCP stderr:', stderr)
       }
-    }
-    
-    if (tool === 'get_theme_design_tokens') {
-      return {
-        colors: {
-          primary: '#4F46E5',
-          secondary: '#10B981',
-          availableVariants: ['primary', 'secondary', 'accent', 'neutral']
-        },
-        typography: {
-          availableFonts: ['Inter', 'Playfair Display', 'Montserrat', 'Open Sans'],
-          headingScales: ['compact', 'balanced', 'luxury']
-        },
-        spacing: {
-          availableScales: ['tight', 'balanced', 'luxury'],
-          presets: {
-            tight: { section: '4rem', container: '1200px' },
-            balanced: { section: '6rem', container: '1400px' },
-            luxury: { section: '8rem', container: '1600px' }
-          }
-        }
+
+      const response = JSON.parse(stdout)
+      if (response.error) {
+        throw new Error(response.error.message)
       }
+
+      return response.result
+    } catch (error) {
+      throw new Error(
+        `WordPress MCP server call failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+      )
     }
-    
-    if (tool === 'analyze_existing_site') {
-      return {
-        url: args.url,
-        detectedTheme: 'collection',
-        designAnalysis: {
-          heroStyle: { style: 'fullwidth', hasOverlay: true },
-          colorPalette: { primary: '#2B5C7F', secondary: '#8B6F47' },
-          typography: { fonts: ['Playfair Display', 'Open Sans'], headingScale: 'luxury' }
-        },
-        insightsForAgents: {
-          architectureAgent: 'Use fullwidth hero, prominent interest form',
-          designAgent: 'Luxury spacing, serif headings, warm colors',
-          photoAgent: '60% lifestyle ratio, warm lighting'
-        }
-      }
-    }
-    
-    return {}
   }
   
   /**

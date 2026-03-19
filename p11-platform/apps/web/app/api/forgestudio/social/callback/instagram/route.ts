@@ -124,13 +124,7 @@ export async function GET(request: NextRequest) {
     const accessToken = longLivedData.access_token || shortLivedToken
     const expiresIn = longLivedData.expires_in || 3600
 
-    // Step 3: Get user info
-    const meRes = await fetch(
-      `https://graph.facebook.com/v18.0/me?fields=id,name&access_token=${accessToken}`
-    )
-    const meData = await meRes.json()
-
-    // Step 4: Get pages the user manages (needed for Instagram Business)
+    // Step 3: Get pages the user manages (needed for Instagram Business)
     const pagesRes = await fetch(
       `https://graph.facebook.com/v18.0/me/accounts?fields=id,name,access_token,instagram_business_account&access_token=${accessToken}`
     )
@@ -152,7 +146,7 @@ export async function GET(request: NextRequest) {
     const instagramAccountId = page.instagram_business_account.id
     const pageAccessToken = page.access_token
 
-    // Step 5: Get Instagram account details
+    // Step 4: Get Instagram account details
     const igRes = await fetch(
       `https://graph.facebook.com/v18.0/${instagramAccountId}?fields=id,username,name,profile_picture_url&access_token=${pageAccessToken}`
     )

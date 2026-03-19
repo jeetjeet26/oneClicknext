@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { GoogleGenerativeAI } from '@google/generative-ai'
-import OpenAI from 'openai'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || '')
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 
 /**
  * Analyze existing knowledge base documents to extract brand insights

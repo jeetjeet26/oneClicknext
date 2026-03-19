@@ -1,6 +1,11 @@
 import { createClient } from '@/utils/supabase/server';
 import { NextRequest, NextResponse } from 'next/server';
 import { validatePropertyAccess } from '@/utils/services/auth-guard';
+import {
+  getMarketingChannelFilterValues,
+  normalizeMarketingChannelId,
+  normalizeMarketingChannels,
+} from '@/utils/analytics/channel-identity';
 
 type AdAccountConnection = {
   platform: string | null;
@@ -45,13 +50,27 @@ export async function GET(
   
   const searchParams = request.nextUrl.searchParams;
   const dateRange = searchParams.get('dateRange') || '30d';
-  const channels = searchParams.get('channels')?.split(',') || ['google_ads', 'meta_ads'];
+  const channels = normalizeMarketingChannels(
+    searchParams.get('channels')?.split(',') || ['google_ads', 'meta_ads']
+  );
+  const channelFilters = getMarketingChannelFilterValues(channels);
   const realtime = searchParams.get('realtime') === 'true';
   
   try {
     const access = await validatePropertyAccess(user.id, propertyId);
     if (!access.authorized) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
+    if (realtime) {
+      return NextResponse.json(
+        {
+          error: 'Real-time MarketVision sync is not available from this endpoint yet.',
+          nextAction:
+            'Use POST /api/marketvision/import to start an import job, then poll GET /api/marketvision/import for job status.',
+        },
+        { status: 409 }
+      );
     }
 
     // Calculate date filter
@@ -81,23 +100,6 @@ export async function GET(
       );
     }
     
-    // If realtime requested, trigger sync job
-    if (realtime) {
-      // Trigger background sync (implement this next)
-      await fetch(`${process.env.DATA_ENGINE_URL}/sync-marketing-data`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${process.env.DATA_ENGINE_API_KEY}`,
-        },
-        body: JSON.stringify({
-          property_id: propertyId,
-          channels,
-          date_range: dateRange,
-        }),
-      });
-    }
-    
     // Get account IDs by platform
     const adAccountConnections = Array.isArray(property.ad_account_connections)
       ? (property.ad_account_connections as AdAccountConnection[])
@@ -114,7 +116,7 @@ export async function GET(
       .from('fact_marketing_performance')
       .select('*')
       .eq('property_id', propertyId)
-      .in('channel_id', channels)
+      .in('channel_id', channelFilters)
       .gte('date', startDate.toISOString().split('T')[0])
       .order('date', { ascending: false });
     
@@ -127,15 +129,6 @@ export async function GET(
     
     // Aggregate data by channel and campaign
     const aggregated = aggregatePerformance(performance || []);
-    
-    // Log for debugging
-    console.log('MarketVision API:', {
-      property: property.name,
-      performanceRows: performance?.length || 0,
-      channels: aggregated.by_channel.length,
-      campaigns: aggregated.by_campaign.length,
-      totalSpend: aggregated.totals.spend,
-    });
     
     return NextResponse.json({
       property: {
@@ -153,11 +146,6 @@ export async function GET(
       campaigns: aggregated.by_campaign,
       totals: aggregated.totals,
       raw_data: performance,
-      debug: {
-        has_data: performance && performance.length > 0,
-        row_count: performance?.length || 0,
-        channel_count: aggregated.by_channel.length,
-      }
     });
     
   } catch (error) {
@@ -200,7 +188,7 @@ function aggregatePerformance(data: PerformanceRow[]) {
   
   data.forEach(row => {
     // By channel (using channel_id from existing schema)
-    const channel = row.channel_id || row.channel || 'unknown';
+    const channel = normalizeMarketingChannelId(row.channel_id || row.channel || 'unknown');
     const campaignId = row.campaign_id || 'unknown';
     const campaignName = row.campaign_name || 'Unknown campaign';
     const channelBucket = by_channel[channel] ?? {

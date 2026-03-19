@@ -1,6 +1,7 @@
 import { createClient } from '@/utils/supabase/server'
 import { createAdminClient } from '@/utils/supabase/admin'
 import { NextResponse } from 'next/server'
+import { getAppBaseUrl } from '@/utils/services/runtime-config'
 
 interface OrganizationInput {
   name: string
@@ -42,7 +43,7 @@ async function scrapeAndSaveWebsiteKnowledge(
     }
 
     // Import the scraping logic - call the internal API
-    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'
+    const baseUrl = getAppBaseUrl()
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }
     if (process.env.INTERNAL_API_KEY) {
       headers.Authorization = `Bearer ${process.env.INTERNAL_API_KEY}`
@@ -112,6 +113,24 @@ interface OnboardingRequestBody {
   propertyAddress?: AddressInput | null
   // Legacy support for community naming
   community?: PropertyInput
+}
+
+function partialSetupResponse(
+  message: string,
+  organization: { id?: string } | null,
+  property: { id?: string } | null,
+  setupFailures: string[]
+) {
+  return NextResponse.json(
+    {
+      error: message,
+      success: false,
+      organization,
+      property,
+      setupFailures,
+    },
+    { status: 500 }
+  )
 }
 
 export async function POST(request: Request) {
@@ -219,118 +238,136 @@ export async function POST(request: Request) {
       .select()
       .single()
 
-    if (propertyError) {
+    if (propertyError || !newProperty) {
       console.error('Error creating property:', propertyError)
-      // Continue - org was created, user can add property later
+      return partialSetupResponse(
+        'Failed to complete property setup during onboarding',
+        org,
+        null,
+        ['property_creation_failed']
+      )
     }
 
-    // Create contacts and other related records if property was created
-    if (newProperty) {
-      // Create contacts
-      if (contacts && contacts.length > 0) {
-        const contactsToInsert = contacts.map((c, index) => ({
-          property_id: newProperty.id,
-          contact_type: c.type,
-          name: c.name,
-          email: c.email,
-          phone: c.phone || null,
-          role: c.role || null,
-          billing_address: c.billingAddress ? {
-            street: c.billingAddress.street || null,
-            city: c.billingAddress.city || null,
-            state: c.billingAddress.state || null,
-            zip: c.billingAddress.zip || null,
-          } : null,
-          billing_method: c.billingMethod || null,
-          special_instructions: c.specialInstructions || null,
-          needs_w9: c.needsW9 || false,
-          is_primary: index === 0,
-        }))
+    const setupFailures: string[] = []
 
-        const { error: contactsError } = await adminClient
-          .from('property_contacts')
-          .insert(contactsToInsert)
+    // Create contacts
+    if (contacts && contacts.length > 0) {
+      const contactsToInsert = contacts.map((c, index) => ({
+        property_id: newProperty.id,
+        contact_type: c.type,
+        name: c.name,
+        email: c.email,
+        phone: c.phone || null,
+        role: c.role || null,
+        billing_address: c.billingAddress ? {
+          street: c.billingAddress.street || null,
+          city: c.billingAddress.city || null,
+          state: c.billingAddress.state || null,
+          zip: c.billingAddress.zip || null,
+        } : null,
+        billing_method: c.billingMethod || null,
+        special_instructions: c.specialInstructions || null,
+        needs_w9: c.needsW9 || false,
+        is_primary: index === 0,
+      }))
 
-        if (contactsError) {
-          console.error('Error creating contacts:', contactsError)
-        }
+      const { error: contactsError } = await adminClient
+        .from('property_contacts')
+        .insert(contactsToInsert)
+
+      if (contactsError) {
+        console.error('Error creating contacts:', contactsError)
+        setupFailures.push('property_contacts_failed')
       }
+    }
 
-      // Create integration records
-      if (integrations && integrations.length > 0) {
-        const integrationsToInsert = integrations.map(i => ({
-          property_id: newProperty.id,
-          platform: i.platform,
-          status: i.status,
-          account_id: i.accountId || null,
-          account_name: i.accountName || null,
-          notes: i.notes || null,
-        }))
+    // Create integration records
+    if (integrations && integrations.length > 0) {
+      const integrationsToInsert = integrations.map(i => ({
+        property_id: newProperty.id,
+        platform: i.platform,
+        status: i.status,
+        account_id: i.accountId || null,
+        account_name: i.accountName || null,
+        notes: i.notes || null,
+      }))
 
-        const { error: integrationsError } = await adminClient
-          .from('integration_credentials')
-          .insert(integrationsToInsert)
+      const { error: integrationsError } = await adminClient
+        .from('integration_credentials')
+        .insert(integrationsToInsert)
 
-        if (integrationsError) {
-          console.error('Error creating integrations:', integrationsError)
-        }
+      if (integrationsError) {
+        console.error('Error creating integrations:', integrationsError)
+        setupFailures.push('integration_records_failed')
       }
+    }
 
-      // Create default onboarding tasks
-      try {
-        await adminClient.rpc('create_default_onboarding_tasks', {
-          p_property_id: newProperty.id
-        })
-      } catch (taskError) {
-        console.error('Error creating onboarding tasks:', taskError)
-      }
+    // Create default onboarding tasks
+    try {
+      await adminClient.rpc('create_default_onboarding_tasks', {
+        p_property_id: newProperty.id
+      })
+    } catch (taskError) {
+      console.error('Error creating onboarding tasks:', taskError)
+      setupFailures.push('onboarding_tasks_failed')
+    }
 
-      // Create knowledge source record for intake form
-      const { error: knowledgeError } = await adminClient
-        .from('knowledge_sources')
-        .insert({
-          property_id: newProperty.id,
-          source_type: 'intake_form',
-          source_name: 'Onboarding Intake Form',
-          status: 'completed',
-          extracted_data: {
-            organization: {
-              name: organization.name,
-              type: organization.type,
-              legalName: organization.legalName,
-            },
-            property: {
-              name: property.name,
-              type: property.type,
-              unitCount: property.unitCount,
-              yearBuilt: property.yearBuilt,
-              amenities: property.amenities,
-              websiteUrl: property.websiteUrl,
-            },
+    // Create knowledge source record for intake form
+    const { error: knowledgeError } = await adminClient
+      .from('knowledge_sources')
+      .insert({
+        property_id: newProperty.id,
+        source_type: 'intake_form',
+        source_name: 'Onboarding Intake Form',
+        status: 'completed',
+        extracted_data: {
+          organization: {
+            name: organization.name,
+            type: organization.type,
+            legalName: organization.legalName,
           },
-          last_synced_at: new Date().toISOString(),
-        })
+          property: {
+            name: property.name,
+            type: property.type,
+            unitCount: property.unitCount,
+            yearBuilt: property.yearBuilt,
+            amenities: property.amenities,
+            websiteUrl: property.websiteUrl,
+          },
+        },
+        last_synced_at: new Date().toISOString(),
+      })
 
-      if (knowledgeError) {
-        console.error('Error creating knowledge source:', knowledgeError)
-      }
+    if (knowledgeError) {
+      console.error('Error creating knowledge source:', knowledgeError)
+      setupFailures.push('intake_knowledge_source_failed')
+    }
 
-      // If website URL was provided, scrape and save to knowledge base
-      if (property.websiteUrl) {
-        console.log('Scraping website for knowledge base:', property.websiteUrl)
-        const scrapeResult = await scrapeAndSaveWebsiteKnowledge(
-          newProperty.id,
-          property.websiteUrl,
-          property.additionalUrls || [],
-          property.name,
-          request.headers.get('cookie')
-        )
-        if (scrapeResult.success) {
-          console.log(`Website scrape complete: ${scrapeResult.documentsCreated} documents created`)
-        } else {
-          console.error('Website scrape failed:', scrapeResult.error)
-        }
+    // If website URL was provided, scrape and save to knowledge base
+    if (property.websiteUrl) {
+      console.log('Scraping website for knowledge base:', property.websiteUrl)
+      const scrapeResult = await scrapeAndSaveWebsiteKnowledge(
+        newProperty.id,
+        property.websiteUrl,
+        property.additionalUrls || [],
+        property.name,
+        request.headers.get('cookie')
+      )
+      if (scrapeResult.success) {
+        console.log(`Website scrape complete: ${scrapeResult.documentsCreated} documents created`)
+      } else {
+        console.error('Website scrape failed:', scrapeResult.error)
+        setupFailures.push('website_scrape_failed')
       }
+    }
+
+    if (setupFailures.length > 0) {
+      return partialSetupResponse(
+        'Onboarding created the organization and property, but one or more downstream setup steps failed',
+        org,
+        newProperty,
+        setupFailures
+      )
     }
 
     return NextResponse.json({
@@ -421,9 +458,14 @@ async function handleLegacyOnboarding(
 
     if (propertyError) {
       console.error('Error creating property:', propertyError)
-    } else {
-      property = newProperty
+      return partialSetupResponse(
+        'Failed to complete property setup during onboarding',
+        org,
+        null,
+        ['property_creation_failed']
+      )
     }
+    property = newProperty
   }
 
   return NextResponse.json({

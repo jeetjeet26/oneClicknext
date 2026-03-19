@@ -1,6 +1,7 @@
 import { createClient } from '@/utils/supabase/server'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { NextRequest, NextResponse } from 'next/server'
+import { normalizeMarketingChannelId } from '@/utils/analytics/channel-identity'
 
 type PerformanceRow = {
   date: string
@@ -47,7 +48,7 @@ function aggregateData(data: PerformanceRow[]) {
     dateMap.set(row.date, existing)
 
     // Channel aggregation
-    const channel = row.channel_id || 'unknown'
+    const channel = normalizeMarketingChannelId(row.channel_id)
     const channelData = channelTotals.get(channel) || {
       channel,
       impressions: 0,

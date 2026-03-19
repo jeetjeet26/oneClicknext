@@ -1,6 +1,7 @@
 import { createClient } from '@/utils/supabase/server'
 import { createAdminClient } from '@/utils/supabase/admin'
 import { NextResponse } from 'next/server'
+import { getAppBaseUrl } from '@/utils/services/runtime-config'
 
 interface AddressInput {
   street?: string
@@ -36,7 +37,7 @@ async function scrapeAndSaveWebsiteKnowledge(
     }
 
     // Call the internal scrape API with propertyId
-    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'
+    const baseUrl = getAppBaseUrl()
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }
     if (process.env.INTERNAL_API_KEY) {
       headers.Authorization = `Bearer ${process.env.INTERNAL_API_KEY}`

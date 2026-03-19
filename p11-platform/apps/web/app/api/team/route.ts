@@ -10,6 +10,7 @@ import {
   unauthorized,
 } from '@/utils/services/api-helpers'
 import { createRequestContext } from '@/utils/services/request-context'
+import { getAppBaseUrl } from '@/utils/services/runtime-config'
 
 // GET - Fetch team members for the current user's organization
 export async function GET(request: NextRequest) {
@@ -146,7 +147,7 @@ export async function POST(request: NextRequest) {
           org_id: currentProfile.org_id,
           invited_by: user.id,
         },
-        redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/auth/callback`,
+        redirectTo: `${getAppBaseUrl()}/auth/callback`,
       }
     )
 

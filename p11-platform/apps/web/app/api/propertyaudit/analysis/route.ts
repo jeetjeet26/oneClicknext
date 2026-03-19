@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
+import { getDataEngineUrl } from '@/utils/services/runtime-config'
 
 export interface CrossModelAnalysis {
   analyzed_at: string
@@ -244,7 +245,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Call data-engine to re-run analysis
-    const dataEngineUrl = process.env.DATA_ENGINE_URL || 'http://localhost:8000'
+    const dataEngineUrl = getDataEngineUrl()
     const apiKey = process.env.DATA_ENGINE_API_KEY
 
     if (!apiKey) {

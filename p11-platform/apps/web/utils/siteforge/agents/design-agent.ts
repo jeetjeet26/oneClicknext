@@ -191,7 +191,7 @@ export class DesignAgent extends BaseAgent {
     const systemPrompt = `You are a design system architect specializing in real estate web design. You create design systems that:
 1. Express brand personality visually
 2. Work within WordPress theme constraints
-3. Achieve Cadence Creek quality level
+3. Meet a polished multifamily marketing quality bar
 
 Prefer theme defaults when they work. Use custom CSS only when brand requires unique expression.`
     
@@ -298,7 +298,7 @@ Create a design system that expresses brand personality using theme capabilities
 1. If theme colors match brand mood, use theme defaults (easier maintenance)
 2. If brand requires luxury spacing, select 'luxury' from spacingScales
 3. Component variants must match brand personality (luxury→fullwidth, family→split)
-4. Reference Cadence Creek: fullwidth hero, luxury spacing, prominent CTAs
+4. Favor strong hierarchy, thoughtful spacing, and clear CTA prominence when the brand context supports it
 5. Custom CSS only when theme limitations prevent brand expression
 6. Every choice must be justified by brand context or design insights
 

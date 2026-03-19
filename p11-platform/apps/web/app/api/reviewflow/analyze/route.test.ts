@@ -4,6 +4,7 @@ import type { NextRequest } from 'next/server'
 const authGetUserMock = vi.fn()
 const createClientMock = vi.fn()
 const validatePropertyAccessMock = vi.fn()
+const openAiCreateMock = vi.fn()
 
 vi.mock('@/utils/supabase/server', () => ({
   createClient: createClientMock,
@@ -18,7 +19,7 @@ vi.mock('openai', () => {
     default: class OpenAI {
       chat = {
         completions: {
-          create: vi.fn(),
+          create: openAiCreateMock,
         },
       }
     },
@@ -28,6 +29,7 @@ vi.mock('openai', () => {
 describe('reviewflow analyze route', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    openAiCreateMock.mockReset()
     createClientMock.mockResolvedValue({
       auth: { getUser: authGetUserMock },
       from: vi.fn(),
@@ -71,5 +73,29 @@ describe('reviewflow analyze route', () => {
 
     expect(response.status).toBe(403)
     await expect(response.json()).resolves.toEqual({ error: 'Forbidden' })
+  })
+
+  it('returns 503 with manual review guidance when provider analysis fails', async () => {
+    authGetUserMock.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
+    validatePropertyAccessMock.mockResolvedValue({ authorized: true })
+    openAiCreateMock.mockRejectedValue(new Error('provider down'))
+
+    const { POST } = await import('./route')
+    const response = await POST(
+      new Request('http://localhost/api/reviewflow/analyze', {
+        method: 'POST',
+        body: JSON.stringify({
+          reviewText: 'Great place',
+          propertyId: 'property-1',
+          rating: 5,
+        }),
+      }) as NextRequest
+    )
+
+    expect(response.status).toBe(503)
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'Review analysis unavailable',
+      manualReviewRequired: true,
+    })
   })
 })

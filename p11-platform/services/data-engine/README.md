@@ -10,7 +10,7 @@ The data-engine is still an active part of the platform, but it is not currently
 - Keep the data-engine in that path when it is required to complete those local flows.
 - Otherwise, broader ETL and Python contract alignment should be revisited during hosted-ops hardening or `P1`, rather than displacing the remaining local `P0` work.
 
-See [`docs/P0_LOCAL_CONTINUATION_CONTEXT.md`](../../../docs/P0_LOCAL_CONTINUATION_CONTEXT.md) and [`../../../.cursor/plans/AUTONOMY_FOUNDATION_ROADMAP.md`](../../../.cursor/plans/AUTONOMY_FOUNDATION_ROADMAP.md).
+See [`../../../outdateddocs/P0_LOCAL_CONTINUATION_CONTEXT.md`](../../../outdateddocs/P0_LOCAL_CONTINUATION_CONTEXT.md) and [`../../../.cursor/plans/AUTONOMY_FOUNDATION_ROADMAP.md`](../../../.cursor/plans/AUTONOMY_FOUNDATION_ROADMAP.md).
 
 ## 🆕 New: PropertyAudit Job Execution (Dec 2025)
 
@@ -85,7 +85,7 @@ services/data-engine/
 └── scrapers/               # Web scrapers (existing)
 ```
 
-See [DATA_ENGINE_MIGRATION.md](../../../docs/DATA_ENGINE_MIGRATION.md) for complete migration guide.
+See the roadmap and implementation guide in `.cursor/plans` for current data-engine integration priorities.
 
 ---
 
@@ -137,13 +137,17 @@ pip install -r requirements.txt
 ### 2. Configure Environment Variables
 
 ```bash
-# Copy the example file
+# Create the shared root env from the canonical template
+cd ../..
 cp .env.example .env
 
 # Edit with your credentials
 notepad .env  # Windows
 # or
 nano .env     # Mac/Linux
+
+# Return to data-engine
+cd services/data-engine
 ```
 
 ### 3. Run Pipelines

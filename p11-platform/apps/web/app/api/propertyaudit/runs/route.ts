@@ -14,6 +14,15 @@ export interface GeoRunWithScore {
   modelName: string
   status: 'queued' | 'running' | 'completed' | 'failed'
   queryCount: number
+  progressPct: number
+  currentQueryIndex: number
+  lastUpdatedAt: string | null
+  secondsSinceUpdate: number | null
+  isPossiblyStalled: boolean
+  statusLabel: string
+  statusDetail: string
+  errorMessage: string | null
+  usesWebSearch: boolean
   startedAt: string
   finishedAt: string | null
   score: {
@@ -28,6 +37,45 @@ export interface GeoRunWithScore {
     visibilityChange: number
     direction: 'up' | 'down' | 'stable'
   } | null
+}
+
+function asNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function asString(value: unknown): string | null {
+  return typeof value === 'string' && value.length > 0 ? value : null
+}
+
+function computeProgressPct(status: GeoRunWithScore['status'], progress: number | null): number {
+  if (status === 'completed') return 100
+  if (status === 'failed') return Math.max(0, Math.min(100, progress ?? 0))
+  if (status === 'queued') return 0
+  return Math.max(0, Math.min(99, progress ?? 0))
+}
+
+function computeStatusLabel(status: GeoRunWithScore['status']): string {
+  if (status === 'queued') return 'Queued'
+  if (status === 'running') return 'Running'
+  if (status === 'completed') return 'Completed'
+  return 'Failed'
+}
+
+function computeStatusDetail(
+  status: GeoRunWithScore['status'],
+  progressPct: number,
+  currentQueryIndex: number,
+  queryCount: number,
+  isPossiblyStalled: boolean,
+  errorMessage: string | null
+): string {
+  if (status === 'queued') return `Waiting to start (${queryCount} queries)`
+  if (status === 'running') {
+    const progressText = `${progressPct}% • ${Math.max(0, currentQueryIndex)}/${Math.max(0, queryCount)} queries`
+    return isPossiblyStalled ? `Possibly stalled • ${progressText}` : progressText
+  }
+  if (status === 'completed') return `Finished ${queryCount} queries`
+  return errorMessage || 'Run failed before completion'
 }
 
 function isValidSurface(value: unknown): value is GeoRunWithScore['surface'] {
@@ -140,13 +188,40 @@ export async function GET(req: NextRequest) {
         return null
       }
 
+      const progressPct = computeProgressPct(run.status, asNumber(run.progress_pct))
+      const currentQueryIndex = asNumber(run.current_query_index) ?? 0
+      const lastUpdatedAt = asString(run.last_updated_at)
+      const secondsSinceUpdate = lastUpdatedAt
+        ? Math.max(0, Math.floor((Date.now() - Date.parse(lastUpdatedAt)) / 1000))
+        : null
+      const isPossiblyStalled =
+        run.status === 'running' && secondsSinceUpdate !== null && secondsSinceUpdate > 180
+      const errorMessage = asString(run.error_message)
+      const queryCount = run.query_count || 0
+
       return {
         id: run.id,
         propertyId: run.property_id,
         surface: run.surface,
         modelName: run.model_name || 'unknown',
         status: run.status,
-        queryCount: run.query_count || 0,
+        queryCount,
+        progressPct,
+        currentQueryIndex,
+        lastUpdatedAt,
+        secondsSinceUpdate,
+        isPossiblyStalled,
+        statusLabel: computeStatusLabel(run.status),
+        statusDetail: computeStatusDetail(
+          run.status,
+          progressPct,
+          currentQueryIndex,
+          queryCount,
+          isPossiblyStalled,
+          errorMessage
+        ),
+        errorMessage,
+        usesWebSearch: Boolean(run.uses_web_search),
         startedAt: run.started_at,
         finishedAt: run.finished_at,
         score: scoreData ? {

@@ -15,6 +15,10 @@ interface ActiveRun {
   surface: 'openai' | 'claude'
   status: 'queued' | 'running' | 'completed' | 'failed'
   queryCount: number
+  progressPct: number
+  currentQueryIndex: number
+  statusDetail: string
+  isPossiblyStalled: boolean
   startedAt: string
 }
 
@@ -92,7 +96,7 @@ export function RunStatusIndicator({
                   Run queued for {run.surface}
                 </p>
                 <p className="text-xs text-indigo-600 dark:text-indigo-400">
-                  {run.queryCount} queries pending
+                  {run.statusDetail}
                 </p>
               </div>
             </>
@@ -105,8 +109,14 @@ export function RunStatusIndicator({
                   Processing {run.surface} audit...
                 </p>
                 <p className="text-xs text-indigo-600 dark:text-indigo-400">
-                  {run.queryCount} queries in progress
+                  {run.statusDetail}
                 </p>
+                <div className="mt-2 h-1.5 w-full rounded-full bg-indigo-100 dark:bg-indigo-950/50 overflow-hidden">
+                  <div
+                    className={`h-full rounded-full ${run.isPossiblyStalled ? 'bg-amber-500' : 'bg-indigo-500'}`}
+                    style={{ width: `${Math.max(0, Math.min(100, run.progressPct || 0))}%` }}
+                  />
+                </div>
               </div>
             </>
           )}

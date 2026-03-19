@@ -5,6 +5,7 @@ const authGetUserMock = vi.fn()
 const createClientMock = vi.fn()
 const createServiceClientMock = vi.fn()
 const validatePropertyAccessMock = vi.fn()
+const openAiCreateMock = vi.fn()
 
 vi.mock('@/utils/supabase/server', () => ({
   createClient: createClientMock,
@@ -22,7 +23,7 @@ vi.mock('openai', () => ({
   default: class {
     chat = {
       completions: {
-        create: vi.fn(),
+        create: openAiCreateMock,
       },
     }
   },
@@ -31,6 +32,7 @@ vi.mock('openai', () => ({
 describe('POST /api/reviewflow/analyze-batch', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    openAiCreateMock.mockReset()
     createClientMock.mockResolvedValue({
       auth: { getUser: authGetUserMock },
     })
@@ -123,6 +125,60 @@ describe('POST /api/reviewflow/analyze-batch', () => {
       success: true,
       analyzed: 0,
       message: 'No unanalyzed reviews found',
+    })
+  })
+
+  it('returns 503 when all review analysis attempts require manual review', async () => {
+    authGetUserMock.mockResolvedValue({
+      data: { user: { id: 'user-1' } },
+      error: null,
+    })
+    validatePropertyAccessMock.mockResolvedValue({
+      authorized: true,
+      orgId: 'org-1',
+    })
+    openAiCreateMock.mockRejectedValue(new Error('provider down'))
+
+    const reviewLimitMock = vi.fn().mockResolvedValue({
+      data: [
+        {
+          id: 'review-1',
+          review_text: 'Great place',
+          rating: 5,
+          property_id: 'property-1',
+          reviewer_name: 'Alex',
+        },
+      ],
+      error: null,
+    })
+
+    createServiceClientMock.mockReturnValue({
+      from: vi.fn((table: string) => {
+        if (table === 'reviews') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                is: vi.fn(() => ({
+                  limit: reviewLimitMock,
+                })),
+              })),
+            })),
+          }
+        }
+
+        throw new Error(`Unexpected table ${table}`)
+      }),
+    })
+
+    const { POST } = await import('./route')
+    const response = await POST(buildRequest())
+
+    expect(response.status).toBe(503)
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'Review analysis unavailable',
+      manualReviewRequired: true,
+      providerFailures: 1,
+      analyzed: 0,
     })
   })
 })

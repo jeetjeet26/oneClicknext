@@ -14,6 +14,7 @@ import { finishCronJobRun, startCronJobRun } from '@/utils/services/cron-job-run
 import { syncGoogleAdsConnection } from '@/app/api/integrations/google-ads/sync/route'
 import { syncMetaAdsConnection } from '@/app/api/integrations/meta-ads/sync/route'
 import { createRequestContext } from '@/utils/services/request-context'
+import { runSharedExecutorJob } from '@/utils/services/shared-executor'
 
 type SyncAdsResult = { synced: number; error?: string; retryable?: boolean }
 
@@ -55,7 +56,7 @@ export async function GET(req: NextRequest) {
     // Fetch all active ad connections
     const { data: connections, error } = await supabase
       .from('ad_account_connections')
-      .select('id, property_id, platform, account_id')
+      .select('id, property_id, org_id, platform, account_id')
       .eq('is_active', true)
 
     if (error) {
@@ -83,24 +84,53 @@ export async function GET(req: NextRequest) {
     const results: Array<{ platform: string; accountId: string; synced: number; error?: string; retryable?: boolean }> = []
 
     for (const conn of connections) {
-      let result: SyncAdsResult
-
-      switch (conn.platform) {
-        case 'google_ads':
-          result = await runConnectionSync(
-            () => syncGoogleAdsConnection(conn.id, conn.account_id, conn.property_id),
-            2
-          )
-          break
-        case 'meta_ads':
-          result = await runConnectionSync(
-            () => syncMetaAdsConnection(conn.id, conn.account_id, conn.property_id),
-            2
-          )
-          break
-        default:
-          result = { synced: 0, error: `Unsupported platform: ${conn.platform}`, retryable: false }
+      const executeConnectionSync = async (): Promise<SyncAdsResult> => {
+        switch (conn.platform) {
+          case 'google_ads':
+            return runConnectionSync(
+              () => syncGoogleAdsConnection(conn.id, conn.account_id, conn.property_id),
+              2
+            )
+          case 'meta_ads':
+            return runConnectionSync(
+              () => syncMetaAdsConnection(conn.id, conn.account_id, conn.property_id),
+              2
+            )
+          default:
+            return { synced: 0, error: `Unsupported platform: ${conn.platform}`, retryable: false }
+        }
       }
+
+      const result =
+        typeof conn.org_id === 'string' && conn.org_id.length > 0
+          ? await runSharedExecutorJob({
+              orgId: conn.org_id,
+              propertyId: conn.property_id,
+              domain: 'cron.sync-ads',
+              subjectType: 'ad_account_connection',
+              subjectId: conn.id,
+              dedupeKey: run?.id ? `${run.id}:${conn.id}` : null,
+              payload: {
+                platform: conn.platform,
+                accountId: conn.account_id,
+                triggerSource: 'cron',
+              },
+              action: {
+                actionType: 'sync_ad_account',
+                proposalDecisionStatus: 'approved',
+                requestPayload: {
+                  platform: conn.platform,
+                  accountId: conn.account_id,
+                },
+                executionPayload: {
+                  mode: 'provider_sync_pull',
+                  triggerSource: 'cron',
+                },
+                policyReason: 'scheduled_recurring_sync',
+              },
+              execute: executeConnectionSync,
+            })
+          : await executeConnectionSync()
 
       results.push({
         platform: conn.platform,

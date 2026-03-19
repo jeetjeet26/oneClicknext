@@ -2,6 +2,9 @@
 
 Date: 2026-03-16
 
+This report is a dated baseline audit as of 2026-03-16. Some Tier 1 issues identified here may have been remediated in later implementation work. Use `.cursor/plans/PROJECT_IMPLEMENTATION_GUIDE.md` as the current execution/status source of truth, and use this report primarily as a record of why those tasks were prioritized.
+Where this report references historical `docs/*` paths, use the current `outdateddocs/*` equivalents in this repository.
+
 ## Scope
 
 This report audits the repository against:
@@ -100,6 +103,40 @@ Current contradictions:
 Verdict:
 
 - Foundation expectations are real, but not yet consistently enforced in the shipped surface.
+
+### Shared Auth Enforcement Shape
+
+Shared auth utilities exist, but route adoption is not standardized through a single wrapper/HOF.
+
+What is aligned:
+
+- `p11-platform/apps/web/utils/services/auth-guard.ts` centralizes core tenant/property authorization logic.
+
+What is not fully aligned:
+
+- Many route files still repeat the same `getUser()` plus `validatePropertyAccess()` enforcement shape inline.
+- This increases drift risk and makes future auth changes harder to apply uniformly.
+
+Verdict:
+
+- The security intent is sound, but enforcement shape is still too duplicated.
+
+### Rate Limiting Scope
+
+Current rate limiting is real, but narrower than a production-scale reading would imply.
+
+What is aligned:
+
+- Public-route validation and rate limiting exist for the main anonymous LumaLeasing surfaces.
+
+What is not fully aligned:
+
+- The current limiter is an in-memory map suitable for local/single-instance use, not a hosted/serverless-safe limiter.
+- This is acceptable for current local-first work, but it should not be read as a production-scale mitigation.
+
+Verdict:
+
+- Good local hardening, not yet a hosted-scale answer.
 
 ### `.cursor/rules/docker-local-dev-scope.mdc`
 
@@ -259,6 +296,8 @@ Remaining gaps:
 - Real provider validation is still optional and not proven closed in-repo.
 - Preview trust is weakened by placeholder rendering in `p11-platform/apps/web/components/siteforge/ACFBlockRenderer.tsx`.
 - `p11-platform/apps/web/app/api/siteforge/analyze/route.ts` can continue on fallback brand context after Brand Agent failure.
+- `p11-platform/apps/web/utils/siteforge/llm-orchestration.ts` still contains a no-op `refineSite(...)` TODO path.
+- `p11-platform/apps/web/utils/siteforge/brand-intelligence.ts` still contains TODO-backed document vision and synthesis paths that read more complete than the current implementation.
 
 What still needs development before `P2`:
 
@@ -266,6 +305,7 @@ What still needs development before `P2`:
 - complete one real WordPress deploy/rollback validation path
 - reduce placeholder preview behaviors on critical blocks
 - make degraded branding fallback more explicit and operator-visible
+- close, feature-flag, or explicitly degrade the remaining AI TODO paths so operator-visible generation behavior matches implementation truth
 
 Spec drift:
 
@@ -539,6 +579,7 @@ Remaining gaps:
 - `community/profile` reads consolidated property fields, while scrape flows still write to `community_profiles`
 - integration setup is partly manual status bookkeeping rather than verified connectivity
 - `p11-platform/apps/web/app/api/properties/scrape-pricing/route.ts` points at `http://localhost:8001/scrape/property/refresh`, but the data-engine runs on `8000` and exposes `/scraper/*` routes
+- multiple routes/services silently fall back to `http://localhost:8000` when `DATA_ENGINE_URL` is absent, which weakens config hygiene and turns missing env into opaque runtime failures instead of clear startup/runtime validation
 
 What still needs development before `P2`:
 
@@ -614,6 +655,9 @@ Even these newer docs should still be adjusted to reflect the concrete gaps call
 - tenant-scope or role-scope `cron_job_runs`
 - strengthen `check:foundation` to include at least one smoke path or introduce a separate required local smoke gate
 - make request context mandatory on critical side-effect routes
+- standardize shared auth enforcement shape with a route wrapper/HOF to reduce repeated inline auth/property checks
+- centralize data-engine config resolution and remove silent localhost fallback behavior
+- add a checked-in env template aligned with the current local-first runtime requirements
 
 ### Tier 2: Shared Substrate
 
@@ -658,3 +702,8 @@ The most important remaining work is not adding new autonomous logic. It is maki
 - deterministic side-effect execution under retries
 - consistent job and action audit infrastructure
 - realistic docs that match what operators and future agents can actually trust
+
+## Additional Planning Notes From Later Review
+
+- Repository automation exists for scheduled pipeline execution, but there is still no visible PR/push enforcement for app-quality gates such as route tests, foundation checks, or smoke validation.
+- A checked-in env template is still missing even though core variables are documented in `README.md`; that increases setup drift risk.

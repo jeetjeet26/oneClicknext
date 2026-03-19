@@ -6,9 +6,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { syncLeadToCRM } from '@/utils/services/crm-sync'
+import { getDataEngineUrl } from '@/utils/services/runtime-config'
 
 // Data engine configuration
-const DATA_ENGINE_URL = process.env.DATA_ENGINE_URL || 'http://localhost:8000'
+const DATA_ENGINE_URL = getDataEngineUrl()
 const DATA_ENGINE_API_KEY = process.env.DATA_ENGINE_API_KEY || ''
 
 type ReplayableLead = {

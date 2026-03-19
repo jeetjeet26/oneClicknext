@@ -3,6 +3,7 @@ import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { hasValidCronAuth } from '@/utils/services/api-helpers'
+import { getDataEngineUrl } from '@/utils/services/runtime-config'
 import OpenAI from 'openai'
 
 const openai = new OpenAI({
@@ -10,7 +11,7 @@ const openai = new OpenAI({
 })
 
 // Data Engine URL for scraping operations
-const DATA_ENGINE_URL = process.env.DATA_ENGINE_URL || 'http://localhost:8000'
+const DATA_ENGINE_URL = getDataEngineUrl()
 
 // ============================================================================
 // SENTIMENT ANALYSIS WITH OPENAI
@@ -63,13 +64,11 @@ Respond ONLY with valid JSON in this format:
     }
   } catch (error) {
     console.error('Error analyzing review with OpenAI:', error)
-    
-    // Fallback based on rating
-    if (rating) {
-      if (rating >= 4) return { sentiment: 'positive', sentimentScore: 0.7, topics: [], isUrgent: false, summary: 'Positive review' }
-      if (rating <= 2) return { sentiment: 'negative', sentimentScore: -0.7, topics: [], isUrgent: false, summary: 'Negative review' }
-    }
-    return { sentiment: 'neutral', sentimentScore: 0, topics: [], isUrgent: false, summary: 'Review requires manual analysis' }
+    throw new Error(
+      `Review sentiment analysis provider is unavailable: ${
+        error instanceof Error ? error.message : 'Unknown error'
+      }`
+    )
   }
 }
 

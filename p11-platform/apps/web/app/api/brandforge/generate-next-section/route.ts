@@ -42,101 +42,6 @@ type BrandApproved = {
   [key: string]: unknown
 }
 
-function fallbackSectionData(step: number, context: BrandContext, approved: BrandApproved) {
-  const brandName = approved.section_5_name_story?.name || context.brandName || 'Brand'
-  if (step === 1) {
-    return {
-      content: `${brandName} serves modern renters with a clear local identity and reliable resident experience.`,
-      marketInsights: ['local_fallback_generation', 'brandforge_smoke_ready', 'deterministic_section_output'],
-    }
-  }
-  if (step === 2) {
-    return {
-      statement: `${brandName} | Confident local living`,
-      rationale: 'Local fallback positioning generated without external model dependency.',
-    }
-  }
-  if (step === 3) {
-    return {
-      primary: 'Professionals and families seeking predictable quality and convenience.',
-      demographics: {
-        age: '25-45',
-        income: '$65k-$140k',
-        household: 'Singles, couples, and small families',
-        education: 'College educated',
-        occupation: 'Professional services and healthcare',
-      },
-      psychographics: ['community-minded', 'value-conscious', 'quality-focused'],
-    }
-  }
-  if (step === 4) {
-    return {
-      personas: [
-        {
-          name: 'Alex',
-          age: 32,
-          occupation: 'Project Manager',
-          quote: 'I want a place that feels easy and dependable.',
-          story: `${brandName} fits Alex through convenience, comfort, and clear value.`,
-        },
-      ],
-    }
-  }
-  if (step === 5) {
-    return {
-      name: brandName,
-      tagline: 'Designed for everyday momentum',
-      story: `${brandName} reflects dependable, modern apartment living for local renters.`,
-      rationale: 'Name and story use deterministic fallback guidance.',
-    }
-  }
-  if (step === 7) {
-    return {
-      headline: { font: 'Montserrat', weight: '700', usage: 'Headlines and hero copy' },
-      body: { font: 'Inter', weight: '400', usage: 'Body and supporting copy' },
-      accent: { font: 'Merriweather', usage: 'Selective emphasis' },
-    }
-  }
-  if (step === 8) {
-    return {
-      primary: { name: 'Indigo Core', hex: '#4338CA', description: 'Primary brand tone' },
-      secondary: { name: 'Slate Support', hex: '#334155', description: 'Supporting neutral' },
-      accents: [{ name: 'Mint Accent', hex: '#14B8A6' }],
-      usageGuidelines: 'Use primary for CTAs, secondary for structure, accent for highlights.',
-    }
-  }
-  if (step === 9) {
-    return {
-      elements: [
-        { type: 'pattern', name: 'Grid Echo', description: 'Subtle geometric rhythm for backgrounds.' },
-      ],
-      usageNotes: 'Use brand elements sparingly to reinforce clarity and trust.',
-    }
-  }
-  if (step === 10) {
-    return {
-      description: 'Use bright, authentic photos with natural light and real resident moments.',
-      criteria: ['natural lighting', 'real spaces', 'human warmth', 'clean framing', 'brand color harmony'],
-    }
-  }
-  if (step === 11) {
-    return {
-      description: 'Avoid heavily filtered imagery, staged stock clichés, and inconsistent lighting.',
-      criteria: ['no heavy filters', 'no staged stock look', 'no cluttered framing', 'no harsh shadows'],
-    }
-  }
-  if (step === 12) {
-    return {
-      examples: [
-        { type: 'website', description: 'Apply typography and palette to listing pages and CTA modules.' },
-      ],
-    }
-  }
-  return {
-    note: 'Fallback content',
-  }
-}
-
 // Initialize Google Auth for Vertex AI (for image generation)
 let vertexAuth: GoogleAuth | null = null
 const projectId = process.env.GOOGLE_CLOUD_PROJECT_ID
@@ -291,16 +196,9 @@ Output JSON:
     generate: async (context: BrandContext, approved: BrandApproved) => {
       // Logo generation via Imagen
       if (!vertexAuth || !projectId) {
-        return {
-          primary_url: '/placeholder-logo.png',
-          variations: {
-            white: '/placeholder-logo.png',
-            black: '/placeholder-logo.png',
-            icon: '/placeholder-logo.png',
-          },
-          design_rationale:
-            'Deterministic fallback logo output used because Vertex AI is not configured locally.',
-        }
+        throw new Error(
+          'Vertex AI is not configured for BrandForge logo generation. Set GOOGLE_APPLICATION_CREDENTIALS and GOOGLE_CLOUD_PROJECT_ID.'
+        )
       }
 
       const brandName = approved.section_5_name_story?.name || context.brandName
@@ -381,11 +279,8 @@ Design should feel: ${personality}
 
           return {
             primary_url: urlData.publicUrl,
-            variations: {
-              white: urlData.publicUrl, // TODO: Generate variations
-              black: urlData.publicUrl,
-              icon: urlData.publicUrl
-            },
+            variations: ['primary'],
+            logoVariations: [urlData.publicUrl],
             design_rationale: `Logo designed to reflect ${brandVoice} brand voice with ${personality} personality. Clean, professional design that works across all applications.`
           }
         }
@@ -393,12 +288,9 @@ Design should feel: ${personality}
         throw new Error('No logo generated')
       } catch (error) {
         console.error('Logo generation error:', error)
-        // Fallback: Return placeholder
-        return {
-          primary_url: '/placeholder-logo.png',
-          variations: { white: '/placeholder-logo.png', black: '/placeholder-logo.png', icon: '/placeholder-logo.png' },
-          design_rationale: 'Logo will be generated with brand specifications.'
-        }
+        throw new Error(
+          `Logo generation failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+        )
       }
     }
   },
@@ -642,7 +534,7 @@ export async function POST(req: NextRequest) {
       const geminiConfigured = Boolean(process.env.GOOGLE_GEMINI_API_KEY)
 
       if (!geminiConfigured) {
-        generatedData = fallbackSectionData(currentStep, context, brand as BrandApproved)
+        throw new Error('Gemini is not configured for BrandForge section generation.')
       } else {
         try {
           const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' })
@@ -652,11 +544,15 @@ export async function POST(req: NextRequest) {
           if (jsonMatch) {
             generatedData = JSON.parse(jsonMatch[0])
           } else {
-            generatedData = fallbackSectionData(currentStep, context, brand as BrandApproved)
+            throw new Error('Gemini returned invalid JSON for BrandForge section generation.')
           }
         } catch (generationError) {
-          console.warn('Gemini generation failed, using fallback section output:', generationError)
-          generatedData = fallbackSectionData(currentStep, context, brand as BrandApproved)
+          console.warn('Gemini generation failed:', generationError)
+          throw new Error(
+            `BrandForge section generation failed: ${
+              generationError instanceof Error ? generationError.message : 'Unknown error'
+            }`
+          )
         }
       }
     }

@@ -12,6 +12,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts'
+import { getMarketingChannelLabel, normalizeMarketingChannelId } from '@/utils/analytics/channel-identity'
 
 type Campaign = {
   campaign_id: string
@@ -45,19 +46,11 @@ type CampaignDetailDrawerProps = {
 }
 
 const channelColors: Record<string, string> = {
-  meta: '#1877F2',
+  meta_ads: '#1877F2',
   google_ads: '#EA4335',
-  google: '#EA4335',
-  tiktok: '#000000',
+  tiktok_ads: '#000000',
+  linkedin_ads: '#0A66C2',
   unknown: '#6366f1',
-}
-
-const channelLabels: Record<string, string> = {
-  meta: 'Meta Ads',
-  google_ads: 'Google Ads',
-  google: 'Google',
-  tiktok: 'TikTok',
-  unknown: 'Unknown',
 }
 
 function formatNumber(value: number, decimals: number = 0): string {
@@ -120,7 +113,8 @@ export function CampaignDetailDrawer({
 
   if (!campaign) return null
 
-  const channelColor = channelColors[campaign.channel] || channelColors.unknown
+  const normalizedChannel = normalizeMarketingChannelId(campaign.channel)
+  const channelColor = channelColors[normalizedChannel] || channelColors.unknown
 
   const metricConfig: Record<MetricKey, { label: string; color: string; format: (v: number) => string }> = {
     spend: { label: 'Spend', color: '#6366f1', format: (v) => formatCurrency(v) },
@@ -161,7 +155,7 @@ export function CampaignDetailDrawer({
                   color: channelColor,
                 }}
               >
-                {channelLabels[campaign.channel] || campaign.channel}
+                {getMarketingChannelLabel(normalizedChannel)}
               </span>
               <span className="text-xs text-slate-400 flex items-center gap-1">
                 <Calendar size={12} />
@@ -381,11 +375,11 @@ export function CampaignDetailDrawer({
               className="flex-1 px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors flex items-center justify-center gap-2"
               onClick={() => {
                 // In a real app, this would open the campaign in the ad platform
-                alert(`Open ${campaign.campaign_id} in ${channelLabels[campaign.channel] || campaign.channel}`)
+                alert(`Open ${campaign.campaign_id} in ${getMarketingChannelLabel(normalizedChannel)}`)
               }}
             >
               <ExternalLink size={16} />
-              View in {channelLabels[campaign.channel]?.split(' ')[0] || 'Platform'}
+              View in {getMarketingChannelLabel(normalizedChannel).split(' ')[0] || 'Platform'}
             </button>
           </div>
         </div>

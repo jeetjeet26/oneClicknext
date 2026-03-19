@@ -8,13 +8,12 @@ import { createServiceClient } from '@/utils/supabase/admin'
 import { ensureCalendarWatch, getCalendarConfig } from '@/utils/services/google-calendar'
 import { verifySignedGoogleOAuthState } from '@/utils/services/google-oauth-state'
 import { createRequestContext } from '@/utils/services/request-context'
+import { getAppBaseUrl } from '@/utils/services/runtime-config'
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
-const GOOGLE_REDIRECT_URI = process.env.NEXT_PUBLIC_APP_URL 
-  ? `${process.env.NEXT_PUBLIC_APP_URL}/api/lumaleasing/calendar/callback`
-  : 'http://localhost:3000/api/lumaleasing/calendar/callback'
+const APP_URL = getAppBaseUrl()
+const GOOGLE_REDIRECT_URI = `${APP_URL}/api/lumaleasing/calendar/callback`
 
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 

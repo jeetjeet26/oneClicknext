@@ -24,6 +24,18 @@ import {
 
 type Tab = 'overview' | 'knowledge' | 'checklist'
 
+async function extractFetchError(response: Response, fallback: string): Promise<string> {
+  try {
+    const data = await response.json()
+    if (typeof data?.error === 'string' && data.error.trim().length > 0) {
+      return data.error
+    }
+  } catch {
+    // Ignore JSON parsing errors and return fallback details.
+  }
+  return `${fallback} (${response.status})`
+}
+
 export default function PropertyDashboardPage() {
   const { currentProperty, properties } = usePropertyContext()
   const [activeTab, setActiveTab] = useState<Tab>('overview')
@@ -75,26 +87,46 @@ export default function PropertyDashboardPage() {
         fetch(`/api/properties/${currentProperty.id}/units`),
       ])
 
-      if (!profileRes.ok || !contactsRes.ok || !integrationsRes.ok || !knowledgeRes.ok || !tasksRes.ok) {
-        throw new Error('Failed to fetch community data')
+      const failures: string[] = []
+      if (!profileRes.ok) {
+        failures.push(`profile: ${await extractFetchError(profileRes, 'Failed to fetch profile')}`)
+      }
+      if (!contactsRes.ok) {
+        failures.push(`contacts: ${await extractFetchError(contactsRes, 'Failed to fetch contacts')}`)
+      }
+      if (!integrationsRes.ok) {
+        failures.push(`integrations: ${await extractFetchError(integrationsRes, 'Failed to fetch integrations')}`)
+      }
+      if (!knowledgeRes.ok) {
+        failures.push(`knowledge: ${await extractFetchError(knowledgeRes, 'Failed to fetch knowledge sources')}`)
+      }
+      if (!tasksRes.ok) {
+        failures.push(`tasks: ${await extractFetchError(tasksRes, 'Failed to fetch onboarding tasks')}`)
+      }
+      if (!unitsRes.ok) {
+        failures.push(`units: ${await extractFetchError(unitsRes, 'Failed to fetch property units')}`)
+      }
+
+      if (failures.length > 0) {
+        setError(`Some data could not be loaded: ${failures.join('; ')}`)
       }
 
       const [profileData, contactsData, integrationsData, knowledgeDataRes, tasksDataRes, unitsData] = await Promise.all([
-        profileRes.json(),
-        contactsRes.json(),
-        integrationsRes.json(),
-        knowledgeRes.json(),
-        tasksRes.json(),
-        unitsRes.json(),
+        profileRes.ok ? profileRes.json() : Promise.resolve(null),
+        contactsRes.ok ? contactsRes.json() : Promise.resolve(null),
+        integrationsRes.ok ? integrationsRes.json() : Promise.resolve(null),
+        knowledgeRes.ok ? knowledgeRes.json() : Promise.resolve(null),
+        tasksRes.ok ? tasksRes.json() : Promise.resolve(null),
+        unitsRes.ok ? unitsRes.json() : Promise.resolve(null),
       ])
 
-      setProfile(profileData.profile)
-      setProperty(profileData.property || currentProperty)
-      setContacts(contactsData.contacts || [])
-      setIntegrations(integrationsData.integrations || [])
-      setKnowledgeData(knowledgeDataRes)
-      setTasksData(tasksDataRes)
-      setPropertyUnits(unitsData.units || [])
+      setProfile(profileData?.profile ?? null)
+      setProperty(profileData?.property || currentProperty)
+      setContacts(contactsData?.contacts || [])
+      setIntegrations(integrationsData?.integrations || [])
+      setKnowledgeData(knowledgeDataRes ?? { sources: [], documentsCount: 0, uniqueDocuments: 0, categories: {}, insights: [] })
+      setTasksData(tasksDataRes ?? { tasks: [], stats: { total: 0, completed: 0, inProgress: 0, pending: 0, blocked: 0, progress: 0 } })
+      setPropertyUnits(unitsData?.units || [])
     } catch (err) {
       console.error('Error fetching community data:', err)
       setError(err instanceof Error ? err.message : 'Failed to load data')
@@ -184,7 +216,7 @@ export default function PropertyDashboardPage() {
       )}
 
       {/* Tab Content */}
-      {!loading && !error && (
+      {!loading && (
         <>
           {/* Overview Tab */}
           {activeTab === 'overview' && (

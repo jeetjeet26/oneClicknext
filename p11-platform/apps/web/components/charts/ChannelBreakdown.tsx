@@ -10,6 +10,7 @@ import {
   ResponsiveContainer,
   Cell,
 } from 'recharts'
+import { getMarketingChannelLabel, normalizeMarketingChannelId } from '@/utils/analytics/channel-identity'
 
 type ChannelData = {
   channel: string
@@ -27,11 +28,11 @@ type ChannelBreakdownProps = {
 }
 
 const CHANNEL_COLORS: Record<string, string> = {
-  meta: '#1877F2',
+  meta_ads: '#1877F2',
   google_ads: '#EA4335',
   ga4: '#F9AB00',
-  tiktok: '#000000',
-  linkedin: '#0A66C2',
+  tiktok_ads: '#000000',
+  linkedin_ads: '#0A66C2',
   default: '#6366f1',
 }
 
@@ -57,14 +58,15 @@ export function ChannelBreakdown({
     )
   }
 
-  const formattedData = data.map(d => ({
-    ...d,
-    displayName: d.channel === 'meta' ? 'Meta Ads' 
-      : d.channel === 'google_ads' ? 'Google Ads'
-      : d.channel === 'ga4' ? 'Google Analytics'
-      : d.channel.charAt(0).toUpperCase() + d.channel.slice(1),
-    color: CHANNEL_COLORS[d.channel] || CHANNEL_COLORS.default,
-  }))
+  const formattedData = data.map((d) => {
+    const channel = normalizeMarketingChannelId(d.channel)
+    return {
+      ...d,
+      channel,
+      displayName: getMarketingChannelLabel(channel),
+      color: CHANNEL_COLORS[channel] || CHANNEL_COLORS.default,
+    }
+  })
 
   const metricConfig = {
     spend: { label: 'Spend', prefix: '$', suffix: '' },

@@ -93,8 +93,8 @@ export class ArchitectureAgent extends BaseAgent {
     // 2. Get property context via vector search
     const propertyContext = await this.getPropertyContext()
     
-    // 3. Optionally analyze reference site (Cadence Creek)
-    const referenceAnalysis = await this.analyzeReference()
+    // 3. Optionally analyze a user-provided reference site
+    const referenceAnalysis = await this.analyzeReference(userPreferences)
     
     // 4. Claude plans using all context
     const proposal = await this.planWithConstraints({
@@ -150,12 +150,20 @@ export class ArchitectureAgent extends BaseAgent {
   }
   
   /**
-   * Analyze reference site (Cadence Creek) for patterns
+   * Analyze a user-provided reference site for patterns
    */
-  private async analyzeReference(): Promise<any> {
+  private async analyzeReference(userPreferences?: Record<string, unknown>): Promise<any> {
+    const referenceSiteUrl =
+      typeof userPreferences?.referenceSiteUrl === 'string'
+        ? userPreferences.referenceSiteUrl.trim()
+        : ''
+
+    if (!/^https?:\/\//.test(referenceSiteUrl)) {
+      return null
+    }
+
     try {
-      // Analyze Cadence Creek to learn patterns
-      return await this.wpMcp.analyzeExistingSite('https://cadencecreekmissionranch.com/')
+      return await this.wpMcp.analyzeExistingSite(referenceSiteUrl)
     } catch (e) {
       console.warn('Could not analyze reference site:', e)
       return null
@@ -181,7 +189,7 @@ Your plans must:
 3. Follow natural user journeys from property insights
 4. Optimize for conversion based on strategy insights
 
-You are creating sites that match Cadence Creek quality: sophisticated, lifestyle-focused, resort-style.`
+You are creating high-trust multifamily websites that feel polished, distinctive, and conversion-focused without copying any single property.`
     
     const prompt = `
 Plan a complete website architecture using discovered WordPress capabilities.
@@ -220,8 +228,8 @@ Theme Design Tokens:
 ${JSON.stringify(data.wpCapabilities.designTokens, null, 2)}
 
 ${data.referenceAnalysis ? `
-# REFERENCE SITE ANALYSIS (Cadence Creek):
-${JSON.stringify(data.referenceAnalysis.insights_for_agents, null, 2)}
+# REFERENCE SITE ANALYSIS:
+${JSON.stringify(data.referenceAnalysis.insights_for_agents || data.referenceAnalysis.insightsForAgents, null, 2)}
 ` : ''}
 
 # USER PREFERENCES:
@@ -234,7 +242,7 @@ Plan the optimal site architecture that:
 2. Serves the user journey from property insights
 3. Uses ONLY blocks from available_blocks
 4. Configures blocks using discovered field schemas
-5. Achieves Cadence Creek quality level
+5. Achieves polished multifamily marketing quality without copying reference content
 
 # OUTPUT STRUCTURE (JSON):
 
@@ -307,14 +315,14 @@ Plan the optimal site architecture that:
 6. Section order should follow natural user journey from insights
 7. Reasoning must cite specific insights (e.g., "luxury whitespace from brand.designPrinciples")
 
-# REFERENCE QUALITY: Cadence Creek
-- Full-screen hero with gradient overlay
-- Prominent interest list form (sticky positioning)
-- Resort-style amenity showcase (3-column grid with elevated cards)
-- Lifestyle photography throughout
-- Multiple CTA touchpoints
+# QUALITY BAR
+- Clear above-the-fold value proposition
+- Strong conversion CTA placement
+- Cohesive visual hierarchy
+- Lifestyle-forward content and imagery where brand-appropriate
+- No copied competitor or reference-site phrasing
 
-Match this sophistication level using available WordPress blocks.
+Use the available WordPress blocks to meet this quality bar.`
 `
     
     const response = await this.callClaude(prompt, {

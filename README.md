@@ -56,25 +56,25 @@ P11 Platform is an **all-in-one AI marketing operating system** for apartment co
 ### Intelligent Conversion
 | Product | Description | Status |
 |---------|-------------|--------|
-| **TourSpark™** | Complete CRM with lead management, activity timeline, automated workflows, and tour scheduling | ✅ Production |
-| **LumaLeasing™** | 24/7 AI chatbot with RAG-powered responses, embeddable widget, and human takeover | ✅ Production |
-| **LeadPulse™** | Predictive lead scoring with 5-dimensional algorithm (engagement, timing, source, completeness, behavior) | ✅ Production |
-| **CRM Sync** | One-way lead push to Yardi, RealPage, Salesforce, and HubSpot with AI field mapping | ✅ Production |
+| **TourSpark™** | CRM with lead management, activity timeline, automated workflows, and tour scheduling | Local-ready |
+| **LumaLeasing™** | 24/7 AI chatbot with RAG-powered responses, embeddable widget, and human takeover | Local-ready |
+| **LeadPulse™** | Predictive lead scoring with 5-dimensional algorithm (engagement, timing, source, completeness, behavior) | Local-ready |
+| **CRM Sync** | One-way lead push to Yardi, RealPage, Salesforce, and HubSpot with AI field mapping | Local-ready |
 
 ### Content Factory
 | Product | Description | Status |
 |---------|-------------|--------|
-| **BrandForge™** | AI-powered brand book generator with Gemini 2.0 - complete brand strategy in 30 minutes | ✅ Production |
-| **SiteForge™** | AI WordPress website generation with Gemini 3 Pro - complete sites in 3 minutes | ✅ Production |
-| **ForgeStudio AI™** | Content generation with Google Veo 3 video + Imagen 3 images | ✅ Production |
-| **ReviewFlow AI™** | Multi-source review sync (Google, Yelp, SerpAPI) with AI-generated responses | ✅ Production |
+| **BrandForge™** | AI-powered brand-book generation with operator review and provider-gated visual steps | Provider validation pending |
+| **SiteForge™** | AI WordPress site generation with local smoke coverage and explicit provider gating | Provider validation pending |
+| **ForgeStudio AI™** | Content generation with Google Veo 3 video + Imagen 3 images | Local-ready |
+| **ReviewFlow AI™** | Multi-source review sync with AI-generated drafts and manual-review fallback on provider failure | Local-ready |
 
 ### Strategic Intelligence
 | Product | Description | Status |
 |---------|-------------|--------|
-| **MultiChannel BI** | Unified analytics dashboard with CSV import and MCP auto-sync | ✅ Production |
-| **MarketVision 360™** | Competitor scraping + Brand Intelligence AI analysis with semantic search | ✅ Production |
-| **PropertyAudit™** | Parallel AI audits (OpenAI + Claude) with web search and quality flags | ✅ Production |
+| **MultiChannel BI** | Unified analytics dashboard with CSV import and recurring channel sync | Verification pending |
+| **MarketVision 360™** | Competitor scraping and brand-intelligence analysis with explicit import/runtime gating | Verification pending |
+| **PropertyAudit™** | Parallel AI audits (OpenAI + Claude) with quality flags and source-aware OpenAI natural mode | Local-ready |
 
 ---
 
@@ -220,42 +220,23 @@ pip install -r requirements.txt
 
 ### 3. Configure Environment
 
-Create `.env` in `p11-platform/` root:
+Use the canonical shared template in `p11-platform/.env.example`:
 
-```env
-# Supabase
-NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
-SUPABASE_SERVICE_ROLE_KEY=your-service-key
-
-# OpenAI
-OPENAI_API_KEY=sk-...
-
-# Anthropic (for Claude)
-ANTHROPIC_API_KEY=sk-ant-...
-
-# Google Cloud (Vertex AI)
-GOOGLE_CLOUD_PROJECT_ID=your-project-id
-GOOGLE_APPLICATION_CREDENTIALS=path/to/service-account.json
-
-# Google Gemini
-GOOGLE_GEMINI_API_KEY=your-gemini-api-key
-
-# Data Engine
-DATA_ENGINE_URL=http://localhost:8000
-DATA_ENGINE_API_KEY=your-secure-key
-
-# Messaging (Optional)
-TWILIO_ACCOUNT_SID=your-sid
-TWILIO_AUTH_TOKEN=your-token
-TWILIO_PHONE_NUMBER=+1234567890
-RESEND_API_KEY=re_...
-
-# Review Platforms (Optional)
-GOOGLE_PLACES_API_KEY=your-key
-YELP_FUSION_API_KEY=your-key
-SERPAPI_API_KEY=your-key
+```bash
+cd p11-platform
+cp .env.example .env
 ```
+
+Then fill in real values in `p11-platform/.env`.
+`npm run supabase:reset` will generate `p11-platform/.env.local` overrides for local Supabase, so keep long-lived shared secrets in `.env` and let `.env.local` remain generated.
+
+Important shared env groups in `p11-platform/.env.example`:
+
+- App/runtime: `NEXT_PUBLIC_SITE_URL` (preferred), `NEXT_PUBLIC_APP_URL`, `NEXT_PUBLIC_BASE_URL`, `INTERNAL_API_KEY`, `CRON_SECRET`
+- Data engine: `DATA_ENGINE_URL`, `DATA_ENGINE_API_KEY`
+- Google/LumaLeasing: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_CALENDAR_WEBHOOK_URL`, `GMAIL_WATCH_TOPIC`
+- SiteForge deploy: either `CLOUDWAYS_API_KEY` + `CLOUDWAYS_EMAIL` or `SITEFORGE_WP_URL` + `SITEFORGE_WP_USERNAME` + `SITEFORGE_WP_APP_PASSWORD`
+- Optional real-provider smoke toggles: `SITEFORGE_REAL_DEPLOY_SMOKE`, `LUMALEASING_REAL_SMOKE`, `LUMALEASING_REAL_SMOKE_API_KEY`
 
 ### 4. Initialize Local Supabase
 

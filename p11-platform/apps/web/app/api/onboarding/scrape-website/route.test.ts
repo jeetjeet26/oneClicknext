@@ -152,7 +152,10 @@ describe('onboarding scrape-website route', () => {
     })
 
     const documentInsertMock = vi.fn().mockResolvedValue({ error: null })
-    const documentsDeleteSourceEqMock = vi.fn().mockResolvedValue({ error: null })
+    const documentsDeleteIngestionNeqMock = vi.fn().mockResolvedValue({ error: null })
+    const documentsDeleteSourceEqMock = vi
+      .fn()
+      .mockReturnValue({ neq: documentsDeleteIngestionNeqMock })
     const documentsDeleteTypeEqMock = vi.fn().mockReturnValue({ eq: documentsDeleteSourceEqMock })
     const documentsDeletePropertyEqMock = vi.fn().mockReturnValue({ eq: documentsDeleteTypeEqMock })
     const documentsDeleteMock = vi.fn().mockReturnValue({ eq: documentsDeletePropertyEqMock })
@@ -222,6 +225,10 @@ describe('onboarding scrape-website route', () => {
     expect(documentsDeletePropertyEqMock).toHaveBeenCalledWith('property_id', 'property-1')
     expect(documentsDeleteTypeEqMock).toHaveBeenCalledWith('metadata->>source_type', 'website_scrape')
     expect(documentsDeleteSourceEqMock).toHaveBeenCalledWith('metadata->>source_origin', 'https://example.com')
+    expect(documentsDeleteIngestionNeqMock).toHaveBeenCalledWith(
+      'metadata->>ingestion_run_id',
+      expect.any(String)
+    )
     expect(sourceInsertMock).toHaveBeenCalledWith(
       expect.objectContaining({
         source_type: 'website',

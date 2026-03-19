@@ -1,6 +1,6 @@
 # Vision: MarketVision
 
-Last Updated: March 16, 2026
+Last Updated: March 17, 2026
 Document Type: Vision grounded in current implementation
 
 ## Mission
@@ -24,6 +24,7 @@ Current reality:
 - the product has substantial breadth
 - competitor discovery and intelligence are materially real
 - reliability and consistency across import, job state, and downstream reporting still need closure
+- the product should remain an intelligence and recommendation surface until its data lineage, confidence, and delayed business impact can be carried through the shared substrate
 
 ## End-State Vision
 
@@ -35,6 +36,13 @@ MarketVision should become a decision-grade competitor intelligence system that:
 - surfaces structured insights that downstream products can consume safely
 
 The best version of the product tells operators not just what competitors are doing, but what that should change in our brand, site, content, and campaign strategy.
+
+It should not skip straight from scraped competitor signals to autonomous product changes. The safe path is:
+
+- gather competitor truth
+- preserve lineage, freshness, and confidence
+- generate recommendations
+- route consequential changes through shared review, policy, and outcome capture
 
 ## P1 Closure Priorities
 
@@ -52,6 +60,9 @@ Before autonomy can rely on MarketVision, the product must provide:
 - explicit confidence levels on extracted intelligence
 - stable, queryable job and result states
 - clear distinction between fresh insight, stale insight, and failed insight
+- recommendation-first consumption so competitor intelligence informs actions through the shared substrate rather than directly mutating downstream products
+- human reviewers who can approve, deny, or modify high-impact insight-driven proposals with preserved textual reasoning
+- delayed-outcome linkage so strategy changes inspired by MarketVision can later be evaluated against leasing, brand, content, or campaign results
 
 ## Success Metrics
 
@@ -59,4 +70,5 @@ Before autonomy can rely on MarketVision, the product must provide:
 - freshness of tracked pricing and positioning data
 - operator usage of MarketVision insights in decision workflows
 - percentage of competitor imports that complete without manual repair
+- percentage of MarketVision-informed decisions that can later be tied to measurable downstream outcomes
 

@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
+import { getDataEngineUrl } from '@/utils/services/runtime-config'
 
 // Data engine service URL (Python FastAPI)
-const DATA_ENGINE_URL = process.env.DATA_ENGINE_URL || 'http://localhost:8000'
+const DATA_ENGINE_URL = getDataEngineUrl()
 
 /**
  * BrandForge: Competitive Analysis
@@ -18,7 +19,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { propertyId, address, propertyType, radiusMiles = 3, maxCompetitors = 10 } = await req.json()
+    const { propertyId, address, radiusMiles = 3, maxCompetitors = 10 } = await req.json()
 
     if (!propertyId || !address) {
       return NextResponse.json({ error: 'propertyId and address required' }, { status: 400 })
@@ -123,11 +124,6 @@ export async function POST(req: NextRequest) {
       const intel = Array.isArray(c.brand_intel) ? c.brand_intel[0] : c.brand_intel
       return intel?.brand_voice
     }).filter(Boolean) || []
-    const positionings = competitors?.map(c => {
-      const intel = Array.isArray(c.brand_intel) ? c.brand_intel[0] : c.brand_intel
-      return intel?.positioning_statement
-    }).filter(Boolean) || []
-    
     // Simple gap analysis
     const voiceFrequency: Record<string, number> = {}
     brandVoices.forEach(voice => {

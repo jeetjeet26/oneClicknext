@@ -366,6 +366,235 @@ test.describe('local smoke flows', () => {
     expect(typeof retrievalData.categories).toBe('object')
   })
 
+  test('marketvision competitor ingest to analysis insight generation stays deterministic locally', async ({
+    page,
+  }) => {
+    test.setTimeout(90_000)
+    await login(page)
+    const propertyId = await resolvePropertyIdForSmoke(page)
+    const suffix = Date.now().toString(36)
+    const competitorName = `Local Smoke Competitor ${suffix}`
+
+    const createCompetitorResponse = await callAuthedApi(page, '/api/marketvision/competitors', {
+      method: 'POST',
+      body: {
+        propertyId,
+        name: competitorName,
+        address: '100 Local Smoke Way, Austin, TX',
+        websiteUrl: `https://competitor-${suffix}.p11.test`,
+        propertyType: 'apartment',
+        amenities: ['Rooftop pool', 'Coworking lounge'],
+        units: [
+          {
+            unitType: 'A1',
+            bedrooms: 1,
+            bathrooms: 1,
+            sqftMin: 650,
+            sqftMax: 700,
+            rentMin: 1700,
+            rentMax: 1850,
+            availableCount: 3,
+          },
+          {
+            unitType: 'B2',
+            bedrooms: 2,
+            bathrooms: 2,
+            sqftMin: 980,
+            sqftMax: 1100,
+            rentMin: 2300,
+            rentMax: 2500,
+            availableCount: 2,
+          },
+        ],
+      },
+    })
+    expect(
+      createCompetitorResponse.ok,
+      `Competitor ingest failed: ${JSON.stringify(createCompetitorResponse)}`
+    ).toBeTruthy()
+    const createData = createCompetitorResponse.data as {
+      competitor?: { id?: string; name?: string; propertyId?: string }
+    }
+    const competitorId = createData.competitor?.id
+    expect(typeof competitorId).toBe('string')
+    expect(createData.competitor?.name).toBe(competitorName)
+    expect(createData.competitor?.propertyId).toBe(propertyId)
+
+    const comparisonResponse = await callAuthedApi(
+      page,
+      `/api/marketvision/analysis?propertyId=${propertyId}&type=comparison&bedrooms=1`
+    )
+    expect(
+      comparisonResponse.ok,
+      `Comparison insight generation failed: ${JSON.stringify(comparisonResponse)}`
+    ).toBeTruthy()
+    const comparisonData = comparisonResponse.data as {
+      comparisons?: Array<{
+        competitor?: { id?: string; name?: string }
+        avgRent?: number
+        units?: Array<{ bedrooms?: number; rentMin?: number | null; availableCount?: number }>
+      }>
+    }
+    const competitorComparison = (comparisonData.comparisons || []).find(
+      entry => entry.competitor?.id === competitorId
+    )
+    expect(competitorComparison).toBeTruthy()
+    expect(competitorComparison?.competitor?.name).toBe(competitorName)
+    expect((competitorComparison?.avgRent || 0) > 0).toBe(true)
+    expect((competitorComparison?.units || []).some(unit => unit.bedrooms === 1)).toBe(true)
+
+    const summaryResponse = await callAuthedApi(
+      page,
+      `/api/marketvision/analysis?propertyId=${propertyId}&type=summary`
+    )
+    expect(summaryResponse.ok, `Summary insight generation failed: ${JSON.stringify(summaryResponse)}`).toBeTruthy()
+    const summaryData = summaryResponse.data as {
+      summary?: {
+        competitorCount?: number
+        totalUnitsTracked?: number
+        avgRentByBedroom?: Record<string, { avg?: number }>
+      }
+    }
+    expect((summaryData.summary?.competitorCount || 0) > 0).toBe(true)
+    expect((summaryData.summary?.totalUnitsTracked || 0) > 0).toBe(true)
+    expect((summaryData.summary?.avgRentByBedroom?.['1BR']?.avg || 0) > 0).toBe(true)
+
+    const cleanupResponse = await callAuthedApi(
+      page,
+      `/api/marketvision/competitors?id=${competitorId as string}`,
+      { method: 'DELETE' }
+    )
+    expect(cleanupResponse.ok, `Competitor cleanup failed: ${JSON.stringify(cleanupResponse)}`).toBeTruthy()
+  })
+
+  test('multichannel bi connection import reporting and recurring sync stays deterministic locally', async ({
+    page,
+  }) => {
+    test.setTimeout(120_000)
+    await login(page)
+    const propertyId = await resolvePropertyIdForSmoke(page)
+    const suffix = Date.now().toString(36)
+    const accountId = `local-smoke-${suffix}`
+    const campaignName = `Local Smoke Campaign ${suffix}`
+    const today = new Date().toISOString().slice(0, 10)
+    let connectionId: string | null = null
+
+    try {
+      const createConnectionResponse = await callAuthedApi(page, '/api/integrations/ad-connections', {
+        method: 'POST',
+        body: {
+          property_id: propertyId,
+          platform: 'google_ads',
+          account_id: accountId,
+          account_name: `Local Smoke Account ${suffix}`,
+        },
+      })
+      expect(
+        createConnectionResponse.ok,
+        `Ad connection create failed: ${JSON.stringify(createConnectionResponse)}`
+      ).toBeTruthy()
+      const createConnectionData = createConnectionResponse.data as {
+        connection?: { id?: string; property_id?: string; platform?: string; account_id?: string }
+      }
+      connectionId = typeof createConnectionData.connection?.id === 'string' ? createConnectionData.connection.id : null
+      expect(connectionId).toBeTruthy()
+      expect(createConnectionData.connection?.property_id).toBe(propertyId)
+      expect(createConnectionData.connection?.platform).toBe('google_ads')
+      expect(createConnectionData.connection?.account_id).toBe(accountId)
+
+      const csvContent = [
+        'Date,Impressions,Clicks,Cost,Conversions',
+        `${today},1200,64,$145.50,7`,
+      ].join('\n')
+
+      const importResponse = await callAuthedApi(page, '/api/analytics/upload', {
+        method: 'POST',
+        body: {
+          csvContent,
+          filename: `local_smoke_${today}.csv`,
+          campaignName,
+          propertyId,
+          platform: 'google_ads',
+          preview: false,
+        },
+      })
+      expect(importResponse.ok, `CSV import failed: ${JSON.stringify(importResponse)}`).toBeTruthy()
+      const importData = importResponse.data as {
+        success?: boolean
+        imported?: { rowCount?: number; reportType?: string }
+      }
+      expect(importData.success).toBe(true)
+      expect((importData.imported?.rowCount || 0) > 0).toBe(true)
+      expect(importData.imported?.reportType).toBe('time_series')
+
+      const performanceResponse = await callAuthedApi(
+        page,
+        `/api/analytics/performance?propertyId=${propertyId}&startDate=${today}&endDate=${today}`
+      )
+      expect(
+        performanceResponse.ok,
+        `Performance reporting failed: ${JSON.stringify(performanceResponse)}`
+      ).toBeTruthy()
+      const performanceData = performanceResponse.data as {
+        totals?: { spend?: number; clicks?: number; impressions?: number; conversions?: number }
+        channels?: Array<{ channel?: string; spend?: number }>
+      }
+      expect((performanceData.totals?.spend || 0) > 0).toBe(true)
+      expect((performanceData.totals?.clicks || 0) > 0).toBe(true)
+      expect((performanceData.totals?.impressions || 0) > 0).toBe(true)
+      expect((performanceData.totals?.conversions || 0) > 0).toBe(true)
+      expect(
+        (performanceData.channels || []).some(channel => channel.channel === 'google_ads')
+      ).toBe(true)
+
+      const cronHeaders = process.env.CRON_SECRET
+        ? { authorization: `Bearer ${process.env.CRON_SECRET}` }
+        : undefined
+      const recurringSyncResponse = await callAuthedApi(page, '/api/cron/sync-ads', {
+        headers: cronHeaders,
+      })
+      expect(
+        recurringSyncResponse.ok,
+        `Recurring sync trigger failed: ${JSON.stringify(recurringSyncResponse)}`
+      ).toBeTruthy()
+      const recurringSyncData = recurringSyncResponse.data as {
+        success?: boolean
+        totalConnections?: number
+        failures?: number
+        results?: Array<{ accountId?: string; error?: string }>
+        message?: string
+        synced?: number
+      }
+      if (typeof recurringSyncData.success === 'boolean') {
+        expect(recurringSyncData.success).toBe(true)
+        expect((recurringSyncData.totalConnections || 0) > 0).toBe(true)
+        const accountResult = (recurringSyncData.results || []).find(result => result.accountId === accountId)
+        expect(accountResult).toBeTruthy()
+        if (process.env.GOOGLE_ADS_CLIENT_ID) {
+          expect(accountResult?.error || null).toBeNull()
+        } else {
+          expect(typeof accountResult?.error).toBe('string')
+          expect((accountResult?.error || '').toLowerCase()).toContain('not configured')
+        }
+      } else {
+        expect(recurringSyncData.message).toBe('No connections to sync')
+        expect(typeof recurringSyncData.synced).toBe('number')
+      }
+    } finally {
+      if (connectionId) {
+        const deleteConnectionResponse = await callAuthedApi(
+          page,
+          `/api/integrations/ad-connections?id=${connectionId}`,
+          { method: 'DELETE' }
+        )
+        expect(
+          deleteConnectionResponse.ok,
+          `Ad connection cleanup failed: ${JSON.stringify(deleteConnectionResponse)}`
+        ).toBeTruthy()
+      }
+    }
+  })
+
   test('siteforge deploy and rollback flow restores to previous generated version', async ({ page }) => {
     test.setTimeout(180_000)
     await login(page)
@@ -693,6 +922,82 @@ test.describe('local smoke flows', () => {
     expect(typeof bookingData.calendar?.icsDownload).toBe('string')
   })
 
+  test('propertyaudit deterministic local happy path run to report to export is repeatable', async ({
+    page,
+  }) => {
+    test.setTimeout(180_000)
+    await login(page)
+    const propertyId = await resolvePropertyIdForSmoke(page)
+    await ensurePropertyAuditQueries(page, propertyId)
+
+    const purgeResponse = await callAuthedApi(page, '/api/propertyaudit/runs/purge', {
+      method: 'POST',
+      body: { propertyId, surfaces: ['openai'] },
+    })
+    expect(purgeResponse.ok, `PropertyAudit purge failed: ${JSON.stringify(purgeResponse)}`).toBeTruthy()
+
+    const runResponse = await callAuthedApi(page, '/api/propertyaudit/run', {
+      method: 'POST',
+      body: {
+        propertyId,
+        surfaces: ['openai'],
+        executionCount: 1,
+        useLocalFixture: true,
+      },
+    })
+    expect(runResponse.ok, `PropertyAudit run request failed: ${JSON.stringify(runResponse)}`).toBeTruthy()
+
+    const runData = runResponse.data as {
+      runs?: Array<{ id?: string; surface?: string }>
+      processorMode?: string
+    }
+    expect(runData.processorMode).toBe('typescript_fixture')
+    expect(Array.isArray(runData.runs)).toBe(true)
+    expect(runData.runs?.length).toBe(1)
+    expect(runData.runs?.[0]?.surface).toBe('openai')
+
+    const runId = runData.runs?.[0]?.id
+    expect(typeof runId).toBe('string')
+
+    const completedRun = await waitForPropertyAuditRun(page, runId as string, 120_000)
+    expect(
+      completedRun.run?.status,
+      `PropertyAudit fixture run did not complete successfully: ${JSON.stringify(completedRun)}`
+    ).toBe('completed')
+    expect(completedRun.run?.errorMessage || null).toBeNull()
+    expect(completedRun.score).toBeTruthy()
+    expect((completedRun.answers || []).length).toBeGreaterThan(0)
+
+    const reportResponse = await callAuthedTextApi(page, '/api/propertyaudit/generate-report', {
+      method: 'POST',
+      body: {
+        propertyId,
+        runId: runId as string,
+        template: 'executive',
+        includeSections: ['recommendations'],
+      },
+    })
+    expect(
+      reportResponse.ok,
+      `PropertyAudit report generation failed: ${JSON.stringify(reportResponse)}`
+    ).toBeTruthy()
+    expect(reportResponse.contentType).toContain('text/html')
+    expect(reportResponse.text).toContain('<html')
+    expect(reportResponse.text).toContain('GEO Visibility Report')
+
+    const exportResponse = await callAuthedTextApi(
+      page,
+      `/api/propertyaudit/export?runId=${runId as string}&format=markdown`
+    )
+    expect(
+      exportResponse.ok,
+      `PropertyAudit export failed: ${JSON.stringify(exportResponse)}`
+    ).toBeTruthy()
+    expect(exportResponse.contentType).toContain('text/markdown')
+    expect(exportResponse.text).toContain('# GEO Visibility Report')
+    expect(exportResponse.text).toContain('**Surface:** OPENAI')
+  })
+
   test('propertyaudit data-engine run reaches completion and supports deterministic report export (opt-in)', async ({
     page,
   }) => {
@@ -765,7 +1070,7 @@ test.describe('local smoke flows', () => {
       `PropertyAudit export failed: ${JSON.stringify(exportResponse)}`
     ).toBeTruthy()
     expect(exportResponse.contentType).toContain('text/markdown')
-    expect(exportResponse.text).toContain('# GEO Audit Report')
+    expect(exportResponse.text).toContain('# GEO Visibility Report')
     expect(exportResponse.text).toContain(`**Surface:** ${requestedSurface.toUpperCase()}`)
   })
 

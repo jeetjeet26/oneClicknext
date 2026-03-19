@@ -91,7 +91,7 @@ async def list_tools() -> list[Tool]:
             description="""
             Analyze an existing WordPress site's structure and design.
             Returns: blocks used, design patterns, architectural insights.
-            Agents use this to learn from reference sites (like Cadence Creek).
+            Agents use this to learn from optional reference sites.
             Example: analyze_existing_site("https://cadencecreekmissionranch.com/")
             """,
             inputSchema={

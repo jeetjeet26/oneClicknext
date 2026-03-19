@@ -579,15 +579,7 @@ export async function POST(req: NextRequest) {
         allEmbeddings.push(...embeddingResponse.data.map(e => e.embedding))
       }
 
-      // Idempotent refresh semantics: replace prior website_scrape chunks for this source.
-      await adminClient
-        .from('documents')
-        .delete()
-        .eq('property_id', propertyId)
-        .eq('metadata->>source_type', 'website_scrape')
-        .eq('metadata->>source_origin', baseUrl.origin)
-
-      // Insert documents
+      // Insert a fresh ingestion run first so refresh failures do not destroy prior truth.
       const payload = result.rawChunks.map((chunk, idx) => ({
         content: chunk,
         metadata: {
@@ -609,9 +601,9 @@ export async function POST(req: NextRequest) {
       
       if (insertError) {
         console.error('Failed to insert documents:', insertError)
-      } else {
-        result.documentsCreated = result.rawChunks.length
+        throw new Error('Failed to store refreshed website documents')
       }
+      result.documentsCreated = result.rawChunks.length
 
       const extractedData = {
         brand_origin: 'client_provided_material',
@@ -640,6 +632,25 @@ export async function POST(req: NextRequest) {
         })
       } catch (sourceError) {
         console.error('Failed to upsert knowledge source:', sourceError)
+        await adminClient
+          .from('documents')
+          .delete()
+          .eq('property_id', propertyId)
+          .eq('metadata->>ingestion_run_id', ingestionRunId)
+        throw new Error('Failed to update website knowledge source')
+      }
+
+      const { error: deleteError } = await adminClient
+        .from('documents')
+        .delete()
+        .eq('property_id', propertyId)
+        .eq('metadata->>source_type', 'website_scrape')
+        .eq('metadata->>source_origin', baseUrl.origin)
+        .neq('metadata->>ingestion_run_id', ingestionRunId)
+
+      if (deleteError) {
+        console.error('Failed to delete stale website documents:', deleteError)
+        throw new Error('Failed to finalize website refresh cleanup')
       }
 
       // Keep setup truth on properties; avoid community_profiles drift.

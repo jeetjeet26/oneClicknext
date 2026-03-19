@@ -471,7 +471,20 @@ async function generateQueryPanel(
   }
 
   // ============================================================================
-  // 7. COMPARISON QUERIES (Keep current - 3 queries)
+  // 7B. SPECIAL FEATURE QUERIES (NEW - 1-3 queries when property truth exists)
+  // ============================================================================
+  if (specialFeatures.length > 0) {
+    const featureQueries = generateSpecialFeatureQueries(
+      specialFeatures,
+      neighborhood,
+      propertyId,
+      cityState
+    )
+    queries.push(...featureQueries)
+  }
+
+  // ============================================================================
+  // 8. COMPARISON QUERIES (Keep current - 3 queries)
   // ============================================================================
   if (competitors && competitors.length > 0) {
     for (const competitor of competitors.slice(0, 3)) {
@@ -488,7 +501,7 @@ async function generateQueryPanel(
   }
 
   // ============================================================================
-  // 8. SPECIFIC LOCATION QUERIES (NEW - if street address available)
+  // 9. SPECIFIC LOCATION QUERIES (NEW - if street address available)
   // ============================================================================
   if (street) {
     queries.push(
@@ -497,7 +510,7 @@ async function generateQueryPanel(
   }
 
   // ============================================================================
-  // 9. VOICE SEARCH QUERIES (Improved - 4-6 queries)
+  // 10. VOICE SEARCH QUERIES (Improved - 4-6 queries)
   // Make voice search queries more specific
   // ============================================================================
   queries.push(
@@ -630,6 +643,27 @@ function generateAmenityCombinations(
   }))
 }
 
+function generateSpecialFeatureQueries(
+  specialFeatures: string[],
+  neighborhood: string,
+  propertyId: string,
+  cityState: string
+): GeoQueryInsert[] {
+  const normalizedFeatures = specialFeatures
+    .filter((feature): feature is string => typeof feature === 'string' && feature.trim().length > 0)
+    .slice(0, 3)
+
+  return normalizedFeatures.map((feature) => ({
+    property_id: propertyId,
+    text: `Apartments in ${neighborhood} with ${feature}`,
+    type: 'category' as const,
+    geo: cityState,
+    weight: 1.4,
+    run_count: 1,
+    is_active: true,
+  }))
+}
+
 /**
  * Generate query from USP
  * Converts brand USP into searchable query
@@ -706,19 +740,6 @@ function extractPersonas(targetAudience: string | string[]): string[] {
   }
 
   return personas.slice(0, 3)
-}
-
-/**
- * OLD FUNCTION - keeping for reference but not called
- * This is what was causing generic aggregator-dominated queries
- */
-function generateOldGenericQueries(city: string, cityState: string) {
-  // These queries naturally favor aggregator sites:
-  return [
-    `Top rated apartments ${cityState}`,      // Aggregators dominate
-    `Luxury apartments ${city}`,              // Aggregators dominate
-    `Best places to rent in ${city}`,         // Aggregators dominate
-  ]
 }
 
 // Format query for API response

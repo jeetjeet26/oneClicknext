@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { Resend } from 'resend'
 import { format, subDays, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subWeeks, subMonths } from 'date-fns'
 import { validateCronAuth } from '@/utils/services/api-helpers'
+import { getMarketingChannelLabel, normalizeMarketingChannelId } from '@/utils/analytics/channel-identity'
 
 type SupabaseClient = Awaited<ReturnType<typeof createClient>>
 
@@ -125,7 +126,7 @@ async function fetchAnalyticsData(
     totals.spend += Number(row.spend) || 0
     totals.conversions += Number(row.conversions) || 0
 
-    const channel = row.channel_id || 'unknown'
+    const channel = normalizeMarketingChannelId(row.channel_id)
     const existing = channelMap.get(channel) || {
       impressions: 0,
       clicks: 0,
@@ -163,14 +164,7 @@ function generateEmailHtml(
 ): string {
   const formatCurrency = (val: number) => `$${val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
   const formatNumber = (val: number) => val.toLocaleString('en-US')
-  const formatChannelName = (channel: string) => {
-    const names: Record<string, string> = {
-      'meta': 'Meta Ads',
-      'google_ads': 'Google Ads',
-      'ga4': 'Analytics',
-    }
-    return names[channel] || channel.charAt(0).toUpperCase() + channel.slice(1)
-  }
+  const formatChannelName = (channel: string) => getMarketingChannelLabel(channel)
 
   const channelRows = data.channels.map(c => `
     <tr>

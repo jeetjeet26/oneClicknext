@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
+import { getAppBaseUrl } from '@/utils/services/runtime-config'
 
 export type AuthState = {
   error?: string
@@ -62,7 +63,7 @@ export async function signUp(
       data: {
         full_name: fullName,
       },
-      emailRedirectTo: `${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/auth/callback`,
+      emailRedirectTo: `${getAppBaseUrl()}/auth/callback`,
     },
   })
 
@@ -90,7 +91,7 @@ export async function signInWithGoogle(formData: FormData): Promise<void> {
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
     options: {
-      redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/auth/callback?next=${encodeURIComponent(nextPath)}`,
+      redirectTo: `${getAppBaseUrl()}/auth/callback?next=${encodeURIComponent(nextPath)}`,
     },
   })
 
@@ -116,7 +117,7 @@ export async function forgotPassword(
   }
 
   const { error } = await supabase.auth.resetPasswordForEmail(email, {
-    redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/auth/reset-password`,
+    redirectTo: `${getAppBaseUrl()}/auth/reset-password`,
   })
 
   if (error) {

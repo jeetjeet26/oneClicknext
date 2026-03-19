@@ -51,4 +51,24 @@ describe('marketvision property route auth', () => {
     expect(response.status).toBe(403)
     await expect(response.json()).resolves.toEqual({ error: 'Forbidden' })
   })
+
+  it('GET fails closed when realtime sync is requested', async () => {
+    authGetUserMock.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
+    validatePropertyAccessMock.mockResolvedValue({ authorized: true })
+    createClientMock.mockResolvedValue({
+      auth: { getUser: authGetUserMock },
+      from: vi.fn(),
+    })
+
+    const { GET } = await import('./route')
+    const response = await GET(
+      makeNextRequest('http://localhost/api/marketvision/property-1?realtime=true'),
+      { params: Promise.resolve({ propertyId: 'property-1' }) },
+    )
+
+    expect(response.status).toBe(409)
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'Real-time MarketVision sync is not available from this endpoint yet.',
+    })
+  })
 })

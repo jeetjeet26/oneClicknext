@@ -1,6 +1,6 @@
 # Vision: LeadPulse
 
-Last Updated: March 16, 2026
+Last Updated: March 17, 2026
 Document Type: Vision grounded in current implementation
 
 ## Mission
@@ -58,6 +58,7 @@ Before autonomy can act on LeadPulse, the product must provide:
 - KPI linkage to real outcomes such as tours, show rate, and lease conversion
 - protection against overfitting to noisy engagement signals
 - auditability when scores influence outbound actions
+- human reviewers who can approve, deny, or modify score-driven action proposals with preserved textual reasoning about why the recommendation should or should not drive workflow behavior
 
 ## Success Metrics
 

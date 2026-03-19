@@ -1,6 +1,6 @@
 # Vision: PropertyAudit
 
-Last Updated: March 16, 2026
+Last Updated: March 17, 2026
 Document Type: Vision grounded in current implementation
 
 ## Mission
@@ -25,6 +25,7 @@ Current reality:
 - PropertyAudit is one of the strongest operational intelligence products in the repo
 - data-engine execution and persisted progress are real
 - artifact semantics and run-state handling still need cleanup before the product is autonomy-grade
+- the product should still be treated as a recommendation and measurement surface, not as a direct action-control system
 
 ## End-State Vision
 
@@ -37,6 +38,12 @@ PropertyAudit should be a trusted intelligence product that:
 - feeds future recommendation loops with high-integrity inputs
 
 The product should eventually behave like a recurring measurement system, not a one-off audit.
+
+Its role in future autonomy should be narrow and honest:
+
+- produce trustworthy visibility and recommendations
+- preserve provenance and confidence
+- influence actions only through the shared substrate, human review, and delayed-outcome measurement
 
 ## P1 Closure Priorities
 
@@ -54,6 +61,9 @@ Before autonomy can rely on PropertyAudit, the product must provide:
 - auditable recommendation provenance
 - clear separation between completed truth and in-flight truth
 - confidence boundaries before any system acts on recommendations
+- recommendation-first consumption through the shared substrate rather than direct write-side automation from raw audit output
+- shared context and outcome linkage so downstream actions influenced by PropertyAudit can later be evaluated against business results
+- human reviewers who can approve, deny, or modify audit-driven action proposals with preserved textual reasoning when recommendations cross into real product changes
 
 ## Success Metrics
 
@@ -62,4 +72,5 @@ Before autonomy can rely on PropertyAudit, the product must provide:
 - operator trust in recommendation usefulness
 - time from run start to usable report
 - downstream usage of PropertyAudit outputs by other products
+- percentage of audit-driven decisions that can later be linked to measurable downstream outcomes
 

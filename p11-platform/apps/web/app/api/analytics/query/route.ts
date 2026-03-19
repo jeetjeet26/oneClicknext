@@ -10,7 +10,7 @@ Table: fact_marketing_performance
 Columns:
   - date (DATE): The date of the marketing data
   - property_id (UUID): The property this data belongs to
-  - channel_id (TEXT): The marketing channel ('meta', 'google_ads', 'ga4')
+  - channel_id (TEXT): The marketing channel ('meta_ads', 'google_ads', 'ga4')
   - campaign_name (TEXT): Name of the campaign
   - campaign_id (TEXT): Unique identifier for the campaign
   - impressions (INTEGER): Number of ad impressions

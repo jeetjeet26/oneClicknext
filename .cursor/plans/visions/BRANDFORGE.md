@@ -1,6 +1,6 @@
 # Vision: BrandForge
 
-Last Updated: March 16, 2026
+Last Updated: March 17, 2026
 Document Type: Vision grounded in current implementation
 
 ## Mission
@@ -70,6 +70,7 @@ Before autonomy can act from BrandForge outputs, the product must provide:
 - clear distinction between draft, approved, exported, and embedded state
 - citation/provenance linking brand decisions back to source context where possible
 - confidence and approval boundaries for regenerated or auto-applied brand changes
+- human reviewers who can approve, deny, or modify proposed brand changes with preserved textual reasoning before anything is promoted into downstream product truth
 
 ## Success Metrics
 

@@ -6,6 +6,7 @@ const startCronJobRunMock = vi.fn()
 const finishCronJobRunMock = vi.fn()
 const syncGoogleAdsConnectionMock = vi.fn()
 const syncMetaAdsConnectionMock = vi.fn()
+const runSharedExecutorJobMock = vi.fn()
 vi.mock('@/utils/supabase/admin', () => ({
   createServiceClient: createServiceClientMock,
 }))
@@ -20,6 +21,9 @@ vi.mock('@/app/api/integrations/google-ads/sync/route', () => ({
 vi.mock('@/app/api/integrations/meta-ads/sync/route', () => ({
   syncMetaAdsConnection: syncMetaAdsConnectionMock,
 }))
+vi.mock('@/utils/services/shared-executor', () => ({
+  runSharedExecutorJob: runSharedExecutorJobMock,
+}))
 
 describe('GET /api/cron/sync-ads', () => {
   const originalEnv = { ...process.env }
@@ -33,6 +37,9 @@ describe('GET /api/cron/sync-ads', () => {
       startedAtMs: 0,
     })
     finishCronJobRunMock.mockResolvedValue(undefined)
+    runSharedExecutorJobMock.mockImplementation(async ({ execute }: { execute: () => Promise<unknown> }) =>
+      execute()
+    )
   })
 
   afterEach(() => {
@@ -90,8 +97,8 @@ describe('GET /api/cron/sync-ads', () => {
         select: vi.fn(() => ({
           eq: vi.fn().mockResolvedValue({
             data: [
-              { id: 'google-1', property_id: 'property-1', platform: 'google_ads', account_id: '123' },
-              { id: 'meta-1', property_id: 'property-1', platform: 'meta_ads', account_id: '456' },
+              { id: 'google-1', property_id: 'property-1', org_id: 'org-1', platform: 'google_ads', account_id: '123' },
+              { id: 'meta-1', property_id: 'property-1', org_id: 'org-1', platform: 'meta_ads', account_id: '456' },
             ],
             error: null,
           }),
@@ -128,5 +135,16 @@ describe('GET /api/cron/sync-ads', () => {
     })
     expect(syncGoogleAdsConnectionMock).toHaveBeenCalledTimes(2)
     expect(syncMetaAdsConnectionMock).toHaveBeenCalledTimes(1)
+    expect(runSharedExecutorJobMock).toHaveBeenCalledTimes(2)
+    expect(runSharedExecutorJobMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        domain: 'cron.sync-ads',
+        subjectType: 'ad_account_connection',
+        action: expect.objectContaining({
+          actionType: 'sync_ad_account',
+          proposalDecisionStatus: 'approved',
+        }),
+      })
+    )
   })
 })

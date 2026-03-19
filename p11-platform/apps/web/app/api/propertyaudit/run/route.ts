@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
+import { getDataEngineUrl } from '@/utils/services/runtime-config'
 
 const DATA_ENGINE_DISPATCH_TIMEOUT_MS = 15000
 const TYPESCRIPT_PROCESS_TIMEOUT_MS = 600000
@@ -37,6 +38,9 @@ async function readResponseError(response: Response): Promise<string> {
     if (typeof body?.details === 'string' && body.details.length > 0) {
       return `${body.error || response.statusText}: ${body.details}`
     }
+    if (typeof body?.detail === 'string' && body.detail.length > 0) {
+      return body.detail
+    }
     if (typeof body?.error === 'string' && body.error.length > 0) {
       return body.error
     }
@@ -65,8 +69,10 @@ async function markDispatchFailed(
 
 async function triggerTypeScriptProcessor(options: {
   baseUrl: string
-  cronSecret: string
+  cronSecret?: string
+  sessionCookie?: string
   runId: string
+  useLocalFixture?: boolean
 }) {
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), TYPESCRIPT_PROCESS_TIMEOUT_MS)
@@ -76,7 +82,9 @@ async function triggerTypeScriptProcessor(options: {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${options.cronSecret}`,
+        ...(options.cronSecret ? { Authorization: `Bearer ${options.cronSecret}` } : {}),
+        ...(options.sessionCookie ? { Cookie: options.sessionCookie } : {}),
+        ...(options.useLocalFixture ? { 'X-PropertyAudit-Local-Fixture': '1' } : {}),
       },
       body: JSON.stringify({ runId: options.runId }),
       signal: controller.signal,
@@ -101,7 +109,7 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json()
-    const { propertyId, surfaces = ['openai', 'claude'], executionCount = 1 } = body
+    const { propertyId, surfaces = ['openai', 'claude'], executionCount = 1, useLocalFixture = false } = body
 
     if (!propertyId) {
       return NextResponse.json({ error: 'propertyId required' }, { status: 400 })
@@ -133,10 +141,13 @@ export async function POST(req: NextRequest) {
 
     // Apply global execution count to all queries
     const totalQueryExecutions = queryCount * validExecutionCount
-    const useDataEngine = process.env.PROPERTYAUDIT_USE_DATA_ENGINE === 'true'
+    const allowLocalFixture = process.env.NODE_ENV !== 'production' && useLocalFixture === true
+    const useDataEngine = process.env.PROPERTYAUDIT_USE_DATA_ENGINE === 'true' && !allowLocalFixture
     const cronSecret = process.env.CRON_SECRET
 
-    if (!useDataEngine && !cronSecret) {
+    const sessionCookie = allowLocalFixture ? req.headers.get('cookie') || '' : ''
+
+    if (!useDataEngine && !cronSecret && !sessionCookie) {
       return NextResponse.json(
         { error: 'CRON_SECRET is required for TypeScript PropertyAudit processing' },
         { status: 500 }
@@ -195,7 +206,7 @@ export async function POST(req: NextRequest) {
       // HTTP-level parallelism is more reliable than in-process asyncio
       // Each run executes independently on the data-engine
       // ============================================================
-      const dataEngineUrl = process.env.DATA_ENGINE_URL || 'http://localhost:8000'
+      const dataEngineUrl = getDataEngineUrl()
       const apiKey = process.env.DATA_ENGINE_API_KEY
       const canFallbackToTypeScript = isTypeScriptFallbackEnabled() && Boolean(cronSecret)
       
@@ -230,7 +241,24 @@ export async function POST(req: NextRequest) {
             })
 
             if (!response.ok) {
-              throw new Error(await readResponseError(response))
+              const dispatchError = await readResponseError(response)
+              if (
+                response.status === 409 &&
+                /(not queued|already started|already finished|status=running|status=completed|status=failed)/i.test(
+                  dispatchError
+                )
+              ) {
+                console.warn(
+                  `⚠️ [PropertyAudit] ${run.surface.toUpperCase()} run ${run.id} already claimed by another processor: ${dispatchError}`
+                )
+                return {
+                  success: true,
+                  run,
+                  mode: 'data_engine_already_claimed' as const,
+                  note: dispatchError,
+                }
+              }
+              throw new Error(dispatchError)
             }
 
             const data = await response.json()
@@ -249,7 +277,9 @@ export async function POST(req: NextRequest) {
                 await triggerTypeScriptProcessor({
                   baseUrl,
                   cronSecret,
+                  sessionCookie,
                   runId: run.id,
+                  useLocalFixture: allowLocalFixture,
                 })
 
                 return {
@@ -289,7 +319,7 @@ export async function POST(req: NextRequest) {
       for (const run of runs) {
         console.log(`⚠️  [PropertyAudit] Using TypeScript processor (legacy) for run ${run.id}`)
 
-        if (!cronSecret) {
+        if (!cronSecret && !sessionCookie) {
           await markDispatchFailed(serviceClient, run.id, 'CRON_SECRET missing for TypeScript processing')
           continue
         }
@@ -297,7 +327,9 @@ export async function POST(req: NextRequest) {
         void triggerTypeScriptProcessor({
           baseUrl,
           cronSecret,
+          sessionCookie,
           runId: run.id,
+          useLocalFixture: allowLocalFixture,
         }).catch(async (error) => {
           const message = getErrorMessage(error)
           console.error(`Failed to trigger processing for run ${run.id}:`, error)
@@ -309,7 +341,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       success: true,
       runs,
-      processorMode: useDataEngine ? 'data_engine' : 'typescript',
+      processorMode: allowLocalFixture ? 'typescript_fixture' : useDataEngine ? 'data_engine' : 'typescript',
       message: `Created ${runs.length} run(s) for ${queryCount} queries × ${validExecutionCount} executions = ${totalQueryExecutions} total LLM calls. Processing started.`,
     })
   } catch (error) {

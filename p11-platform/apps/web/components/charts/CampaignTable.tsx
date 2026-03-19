@@ -12,6 +12,7 @@ import {
   Search,
   X
 } from 'lucide-react'
+import { getMarketingChannelLabel, normalizeMarketingChannelId } from '@/utils/analytics/channel-identity'
 
 type Campaign = {
   campaign_id: string
@@ -41,19 +42,11 @@ type CampaignTableProps = {
 }
 
 const channelColors: Record<string, { bg: string; text: string; border: string }> = {
-  meta: { bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200' },
+  meta_ads: { bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200' },
   google_ads: { bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-200' },
-  google: { bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-200' },
-  tiktok: { bg: 'bg-slate-50', text: 'text-slate-700', border: 'border-slate-200' },
+  tiktok_ads: { bg: 'bg-slate-50', text: 'text-slate-700', border: 'border-slate-200' },
+  linkedin_ads: { bg: 'bg-sky-50', text: 'text-sky-700', border: 'border-sky-200' },
   unknown: { bg: 'bg-gray-50', text: 'text-gray-700', border: 'border-gray-200' },
-}
-
-const channelLabels: Record<string, string> = {
-  meta: 'Meta',
-  google_ads: 'Google Ads',
-  google: 'Google',
-  tiktok: 'TikTok',
-  unknown: 'Unknown',
 }
 
 function formatNumber(value: number, decimals: number = 0): string {
@@ -259,7 +252,7 @@ export function CampaignTable({
                       : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                   }`}
                 >
-                  {channelLabels[ch] || ch}
+                  {getMarketingChannelLabel(ch)}
                 </button>
               ))}
             </div>
@@ -366,7 +359,8 @@ export function CampaignTable({
             ) : (
               filteredCampaigns.map((campaign) => {
                 const performance = getPerformanceIndicator(campaign.cpa, avgCpa)
-                const channelStyle = channelColors[campaign.channel] || channelColors.unknown
+                const normalizedChannel = normalizeMarketingChannelId(campaign.channel)
+                const channelStyle = channelColors[normalizedChannel] || channelColors.unknown
                 
                 return (
                   <tr 
@@ -386,7 +380,7 @@ export function CampaignTable({
                     </td>
                     <td className="px-4 py-4">
                       <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-full border ${channelStyle.bg} ${channelStyle.text} ${channelStyle.border}`}>
-                        {channelLabels[campaign.channel] || campaign.channel}
+                        {getMarketingChannelLabel(normalizedChannel)}
                       </span>
                     </td>
                     <td className="px-4 py-4 text-right">

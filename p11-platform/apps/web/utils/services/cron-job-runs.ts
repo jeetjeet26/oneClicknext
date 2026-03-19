@@ -1,7 +1,14 @@
 import { createServiceClient } from '@/utils/supabase/admin'
 import type { Json, Tables, TablesInsert, TablesUpdate } from '@/types/supabase'
+import { deriveSharedLifecycleStatus, type SharedLifecycleStatus } from '@/utils/substrate/shared-vocabulary'
 
 export type CronJobRunRow = Tables<'cron_job_runs'>
+
+export function toSharedLifecycleFromCronStatus(
+  status: string | null | undefined
+): SharedLifecycleStatus {
+  return deriveSharedLifecycleStatus(status).status
+}
 
 type CronRunSummary = Record<string, unknown>
 

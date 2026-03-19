@@ -6,8 +6,6 @@ Creates instances and deploys SiteForge blueprints
 import re
 import requests
 from typing import Dict, Any
-import secrets
-import string
 import logging
 
 from ..config import CLOUDWAYS_API_KEY, CLOUDWAYS_EMAIL, CLOUDWAYS_API_URL, is_configured
@@ -41,10 +39,12 @@ async def create_wordpress_instance(
         action_details={'property_name': property_name}
     )
     
-    # Check if Cloudways is configured
+    # Fail closed instead of persisting placeholder WordPress instances.
     if not is_configured():
-        logger.warning("Cloudways not configured, returning placeholder instance")
-        return _create_placeholder_instance(property_name, property_id)
+        raise ValueError(
+            "Cloudways is not configured. Set CLOUDWAYS_API_KEY and CLOUDWAYS_EMAIL "
+            "before provisioning a WordPress instance."
+        )
     
     try:
         # 1. Get or create server
@@ -114,36 +114,6 @@ async def create_wordpress_instance(
     except Exception as e:
         logger.error(f"Failed to provision WordPress: {e}")
         raise
-
-
-def _create_placeholder_instance(property_name: str, property_id: str) -> Dict[str, Any]:
-    """Create placeholder instance when Cloudways is not configured"""
-    slug = slugify(property_name)
-    password = generate_secure_password()
-    
-    instance = {
-        'instance_id': f'placeholder_{secrets.token_hex(8)}',
-        'url': f'https://{slug}.p11sites.com',
-        'admin_url': f'https://{slug}.p11sites.com/wp-admin',
-        'credentials': {
-            'username': 'admin',
-            'password': password
-        },
-        'status': 'placeholder',
-        'message': 'Cloudways not configured. Set CLOUDWAYS_API_KEY and CLOUDWAYS_EMAIL.'
-    }
-    
-    # Save to database
-    supabase = get_supabase_client()
-    supabase.table('property_websites').update({
-        'wp_instance_id': instance['instance_id'],
-        'wp_url': instance['url'],
-        'wp_admin_url': instance['admin_url'],
-        'wp_credentials': instance['credentials']
-    }).eq('property_id', property_id).execute()
-    
-    return instance
-
 async def deploy_siteforge_blueprint(
     instance_id: str,
     blueprint: Dict[str, Any]
@@ -177,8 +147,8 @@ async def deploy_siteforge_blueprint(
     wp_url = instance['wp_url']
     creds = instance.get('wp_credentials', {})
     
-    # Check if this is a real Cloudways instance
-    is_real_instance = instance_id.startswith('cw_') and not instance_id.startswith('placeholder_')
+    # This MCP deployment path only supports real Cloudways-backed instances.
+    is_real_instance = instance_id.startswith('cw_')
     
     pages = blueprint.get('pages', [])
     photos = blueprint.get('photoManifest', {}).get('photos', [])
@@ -228,7 +198,15 @@ async def deploy_siteforge_blueprint(
             }).eq('wp_instance_id', instance_id).execute()
             raise
     else:
-        logger.info(f"Simulating deployment for placeholder instance: {instance_id}")
+        error_message = (
+            "WordPress MCP deployment requires a real Cloudways-backed instance. "
+            "Placeholder or unsupported instance IDs are not deployable."
+        )
+        supabase.table('property_websites').update({
+            'generation_status': 'deploy_failed',
+            'error_message': error_message
+        }).eq('wp_instance_id', instance_id).execute()
+        raise ValueError(error_message)
     
     pages_created = len(pages)
     media_uploaded = len(photos)
@@ -434,10 +412,6 @@ def slugify(text: str) -> str:
     text = re.sub(r'[-\s]+', '-', text)
     return text.strip('-')
 
-def generate_secure_password(length: int = 24) -> str:
-    """Generate secure random password"""
-    chars = string.ascii_letters + string.digits + '!@#$%^&*'
-    return ''.join(secrets.choice(chars) for _ in range(length))
 
 
 

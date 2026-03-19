@@ -102,7 +102,8 @@ export async function POST(req: NextRequest) {
     return new NextResponse(html, {
       headers: {
         'Content-Type': 'text/html',
-        'Content-Disposition': `inline; filename="GEO-Report-${propertyId}.html"`,
+        'Content-Disposition': `inline; filename="geo_visibility_report_${propertyId}.html"`,
+        'X-PropertyAudit-Artifact-Format': 'html',
       },
     })
   } catch (error) {

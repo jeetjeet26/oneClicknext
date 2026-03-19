@@ -2,7 +2,7 @@
 
 > **"The One-Click Agency"** - AI-powered marketing automation for multifamily real estate
 
-**Status:** Production Ready | **Version:** 1.0 | **Last Updated:** Dec 10, 2025
+**Status:** Local-first hardened; provider-backed validation still in progress | **Version:** 1.0 | **Last Updated:** Mar 18, 2026
 
 ---
 
@@ -21,10 +21,10 @@ P11 Platform is an **all-in-one AI marketing operating system** for apartment co
 
 ---
 
-## 🚀 Core Products (All Live)
+## 🚀 Core Product Surfaces
 
 ### ✅ TourSpark™ - CRM & Tour Automation
-**Status:** 100% Complete
+**Status:** Local-ready
 
 - Lead management dashboard with activity timeline
 - Automated tour scheduling with calendar invites
@@ -36,7 +36,7 @@ P11 Platform is an **all-in-one AI marketing operating system** for apartment co
 **Tech:** Next.js, Supabase, Twilio, Resend
 
 ### ✅ LeadPulse™ - Predictive Lead Scoring
-**Status:** 100% Complete
+**Status:** Local-ready
 
 - 5-dimensional scoring algorithm (engagement, timing, source, completeness, behavior)
 - Score buckets: Hot (70+), Warm (45-69), Cold (25-44), Unqualified (<25)
@@ -47,7 +47,7 @@ P11 Platform is an **all-in-one AI marketing operating system** for apartment co
 **Tech:** PostgreSQL pl/pgsql, JSONB
 
 ### ✅ LumaLeasing™ - AI Leasing Chatbot
-**Status:** 100% Complete
+**Status:** Local-ready
 
 - RAG-powered chatbot with pgvector semantic search
 - Embeddable web widget
@@ -59,7 +59,7 @@ P11 Platform is an **all-in-one AI marketing operating system** for apartment co
 **Tech:** OpenAI GPT-4o-mini, pgvector, Twilio
 
 ### ✅ ReviewFlow AI™ - Review Management
-**Status:** 95% Complete
+**Status:** Local-ready with provider dependencies
 
 - Multi-source review aggregation (Google, Yelp, manual)
 - AI-powered response generation
@@ -71,7 +71,7 @@ P11 Platform is an **all-in-one AI marketing operating system** for apartment co
 **Tech:** OpenAI GPT-4o-mini, Google Business Profile API
 
 ### ✅ ForgeStudio™ - AI Content Generation
-**Status:** 95% Complete
+**Status:** Local-ready with provider dependencies
 
 - Text-to-video generation (Google Veo 3)
 - Image-to-video animation
@@ -83,7 +83,7 @@ P11 Platform is an **all-in-one AI marketing operating system** for apartment co
 **Tech:** Google Imagen 3, Veo 3, Gemini 2.0 Flash
 
 ### ✅ MarketVision 360™ - Competitive Intelligence
-**Status:** 95% Complete
+**Status:** Verification pending
 
 - Automated competitor scraping (Apartments.com, Zillow)
 - Brand intelligence extraction via AI
@@ -192,34 +192,26 @@ pip install -r requirements.txt
 
 ### 3. Environment Variables
 
-Create the shared `p11-platform/.env` file used by both the web app and data engine:
+Create the shared `p11-platform/.env` file used by both the web app and data engine from the canonical template:
 
-```env
-# Supabase
-NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-
-# OpenAI
-OPENAI_API_KEY=sk-...
-
-# Messaging
-TWILIO_ACCOUNT_SID=ACxxxxx
-TWILIO_AUTH_TOKEN=xxxxx
-TWILIO_PHONE_NUMBER=+1234567890
-RESEND_API_KEY=re_xxxxx
-RESEND_FROM_EMAIL=noreply@yourdomain.com
-
-# Workflow CRON
-CRON_SECRET=your-random-secret
-
-# Google (ForgeStudio)
-GOOGLE_CLOUD_PROJECT_ID=your-project-id
-GOOGLE_APPLICATION_CREDENTIALS=path/to/service-account.json
-
-# Site URL
-NEXT_PUBLIC_SITE_URL=http://localhost:3000
+```bash
+cd p11-platform
+cp .env.example .env
 ```
+
+Then fill in real values in `p11-platform/.env`.
+
+Notes:
+- `.env.example` is the source-of-truth template for required/shared variables.
+- `npm run supabase:reset` generates `p11-platform/.env.local` with safe local Supabase overrides.
+- Keep persistent secrets in `.env`; treat `.env.local` as generated local overlay.
+
+Provider-backed work now depends on a few env groups that were easy to miss before:
+- App/runtime: `NEXT_PUBLIC_SITE_URL` (preferred), `NEXT_PUBLIC_APP_URL`, `NEXT_PUBLIC_BASE_URL`, `INTERNAL_API_KEY`, `CRON_SECRET`
+- Data engine: `DATA_ENGINE_URL`, `DATA_ENGINE_API_KEY`
+- Google/LumaLeasing: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_CALENDAR_WEBHOOK_URL`, `GMAIL_WATCH_TOPIC`
+- SiteForge deploy: either `CLOUDWAYS_API_KEY` + `CLOUDWAYS_EMAIL` or `SITEFORGE_WP_URL` + `SITEFORGE_WP_USERNAME` + `SITEFORGE_WP_APP_PASSWORD`
+- Optional real-provider smoke toggles: `SITEFORGE_REAL_DEPLOY_SMOKE`, `LUMALEASING_REAL_SMOKE`, `LUMALEASING_REAL_SMOKE_API_KEY`
 
 ### 4. Initialize Local Supabase
 
@@ -294,6 +286,17 @@ Targeted local failure-injection coverage now verifies:
 - provider-down booking behavior when Google Calendar event creation fails
 - service-down cron behavior when the data-engine scraping service is unavailable
 
+### 10. Runtime Config Hardening
+
+To prevent config drift, routes/services should use shared runtime config helpers instead of inline localhost fallbacks.
+
+```bash
+cd p11-platform/apps/web
+npm run check:runtime-config-hardening
+```
+
+This check is also enforced inside `npm run check:foundation`, so regressions are blocked during normal foundation validation.
+
 ---
 
 ## P0 Roadmap Context
@@ -309,7 +312,7 @@ For now, treat Sentry, hosted monitoring, PITR, staging, CI, and other hosted ro
 
 The Python data-engine and ETL flows are still important, but they are not the pacing item for `P0` unless they block those remaining local tasks.
 
-See [`docs/P0_LOCAL_CONTINUATION_CONTEXT.md`](../docs/P0_LOCAL_CONTINUATION_CONTEXT.md) and [`../.cursor/plans/AUTONOMY_FOUNDATION_ROADMAP.md`](../.cursor/plans/AUTONOMY_FOUNDATION_ROADMAP.md).
+See [`../outdateddocs/P0_LOCAL_CONTINUATION_CONTEXT.md`](../outdateddocs/P0_LOCAL_CONTINUATION_CONTEXT.md) and [`../.cursor/plans/AUTONOMY_FOUNDATION_ROADMAP.md`](../.cursor/plans/AUTONOMY_FOUNDATION_ROADMAP.md).
 
 ---
 
@@ -514,15 +517,15 @@ GET    /api/marketvision/brand-intelligence/[competitorId]
 
 ## 📊 Product Status
 
-| Product              | Status      | Completion | Next Steps                      |
-| -------------------- | ----------- | ---------- | ------------------------------- |
-| TourSpark™ CRM       | ✅ Live     | 100%       | Workflow analytics              |
-| LeadPulse™ Scoring   | ✅ Live     | 100%       | ML-based scoring                |
-| LumaLeasing™ Chat    | ✅ Live     | 100%       | DOCX support                    |
-| ReviewFlow AI™       | ✅ Live     | 95%        | Yelp API, Apartments.com        |
-| ForgeStudio™ Content | ✅ Live     | 95%        | LinkedIn, TikTok support        |
-| MarketVision 360™    | ✅ Live     | 95%        | Proxy support, more scrapers    |
-| MultiChannel BI      | 🔨 Progress | 80%        | Meta Ads MCP integration        |
+| Product              | Status                          | Completion Signal | Next Steps                                       |
+| -------------------- | ------------------------------- | ----------------- | ------------------------------------------------ |
+| TourSpark™ CRM       | Local-ready                     | High              | Workflow analytics                               |
+| LeadPulse™ Scoring   | Local-ready                     | High              | ML-based scoring                                 |
+| LumaLeasing™ Chat    | Local-ready                     | High              | DOCX support, provider watch-flow validation     |
+| ReviewFlow AI™       | Local-ready with provider deps  | Medium-high       | Provider/runtime validation under real load      |
+| ForgeStudio™ Content | Local-ready with provider deps  | Medium-high       | LinkedIn, TikTok support                         |
+| MarketVision 360™    | Verification pending            | Medium            | Proxy support, more scrapers, import validation  |
+| MultiChannel BI      | Verification pending            | Medium            | Recurring sync validation and provider hardening |
 
 ---
 

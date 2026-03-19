@@ -187,8 +187,10 @@ describe('propertyaudit generate-report route', () => {
 
     expect(response.status).toBe(200)
     expect(response.headers.get('Content-Type')).toContain('text/html')
+    expect(response.headers.get('X-PropertyAudit-Artifact-Format')).toBe('html')
     expect(buildRunReportDataMock).toHaveBeenCalledWith(expect.anything(), 'run-1')
     expect(buildPropertyReportDataMock).not.toHaveBeenCalled()
     expect(text).toContain('Aster House')
+    expect(text).toContain('GEO Visibility Report')
   })
 })

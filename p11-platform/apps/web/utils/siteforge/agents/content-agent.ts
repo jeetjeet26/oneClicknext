@@ -109,8 +109,7 @@ export class ContentAgent extends BaseAgent {
 2. Uses ONLY facts from vector search (no hallucination)
 3. Achieves section purpose
 4. Drives conversion
-
-Reference quality: Cadence Creek ("Synced to the Rhythm of Your Life" - poetic, aspirational)`
+5. Feels polished and distinctive without copying other properties`
     
     const prompt = `
 Write content for this website section.
@@ -155,7 +154,7 @@ Write content that:
   "reasoning": "Why this copy achieves section purpose and matches brand voice"
 }
 
-# EXAMPLES OF GOOD COPY (Cadence Creek quality):
+# EXAMPLES OF GOOD COPY QUALITY:
 
 Luxury Resort Brand:
 - Headline: "Synced to the Rhythm of Your Life" (poetic, aspirational)
@@ -169,7 +168,7 @@ Urban Living:
 - Headline: "Downtown Energy. Uptown Ease." (parallel structure)
 - Body: "Walk to work. Walk to restaurants. Walk to everything." (repetition)
 
-Match this sophistication level.
+Match this level of clarity and polish without copying the example phrasing.
 
 # CRITICAL RULES:
 

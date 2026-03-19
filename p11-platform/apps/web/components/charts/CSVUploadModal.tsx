@@ -63,7 +63,7 @@ const PLATFORM_OPTIONS: { value: MarketingPlatform; label: string; icon: string;
     description: 'CSV exports from Google Ads dashboard' 
   },
   { 
-    value: 'meta', 
+    value: 'meta_ads', 
     label: 'Meta Ads', 
     icon: '🔷',
     description: 'CSV exports from Meta Business Suite' 
@@ -123,7 +123,7 @@ export function CSVUploadModal({
   // Generate default campaign name when files are added
   useEffect(() => {
     if (files.length > 0 && !campaignName) {
-      const defaultName = `${propertyName || 'Campaign'} - ${platform === 'google_ads' ? 'Google Ads' : 'Meta'} Import`
+      const defaultName = `${propertyName || 'Campaign'} - ${platform === 'google_ads' ? 'Google Ads' : 'Meta Ads'} Import`
       setCampaignName(defaultName.substring(0, 100))
     }
   }, [files, propertyName, platform, campaignName])

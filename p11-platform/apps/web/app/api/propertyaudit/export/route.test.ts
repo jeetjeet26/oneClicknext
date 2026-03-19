@@ -71,12 +71,12 @@ describe('propertyaudit export route', () => {
 
     const { GET } = await import('./route')
     const response = await GET(
-      makeNextRequest('http://localhost/api/propertyaudit/export?runId=run-1&format=pdf')
+      makeNextRequest('http://localhost/api/propertyaudit/export?runId=run-1&format=csv')
     )
 
     expect(response.status).toBe(400)
     await expect(response.json()).resolves.toEqual({
-      error: 'Invalid format. Allowed values: markdown, html',
+      error: 'Invalid format. Allowed values: markdown, html, pdf',
     })
     expect(createServiceClientMock).not.toHaveBeenCalled()
   })
@@ -204,6 +204,63 @@ describe('propertyaudit export route', () => {
     )
 
     expect(response.status).toBe(200)
+    expect(response.headers.get('Content-Type')).toContain('text/markdown')
+    expect(response.headers.get('X-PropertyAudit-Artifact-Format')).toBe('markdown')
     expect(buildRunReportDataMock).toHaveBeenCalledWith(serviceClient, 'run-1')
+  })
+
+  it('treats pdf export as print-view html', async () => {
+    authGetUserMock.mockResolvedValue({
+      data: { user: { id: 'user-1' } },
+      error: null,
+    })
+    validatePropertyAccessMock.mockResolvedValue({
+      authorized: true,
+    })
+
+    const serviceClient = {
+      from: vi.fn((table: string) => {
+        if (table !== 'geo_runs') throw new Error(`Unexpected table ${table}`)
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({
+                data: { property_id: 'property-1', status: 'completed' },
+                error: null,
+              }),
+            })),
+          })),
+        }
+      }),
+    }
+    createServiceClientMock.mockReturnValue(serviceClient)
+
+    buildRunReportDataMock.mockResolvedValue({
+      property: { name: 'P11 Local Demo Property' },
+      runs: [{ surface: 'openai', model_name: 'gpt-5.2', started_at: '2026-03-16T00:00:00.000Z' }],
+      scores: [{ overall_score: 75, visibility_pct: 50, avg_llm_rank: 2, avg_link_rank: 3, avg_sov: 0.2, breakdown: { position: 75, link: 60, sov: 40, accuracy: 90 } }],
+      answers: [],
+      recommendations: [],
+      recommendationSummary: { total: 0, high: 0, medium: 0, low: 0 },
+      queryTypeStats: [],
+      citationSummary: { total: 0, brandPct: 0 },
+      glossary: [],
+      insights: { highlights: [] },
+      narrative: null,
+      competitors: [],
+      trends: [],
+      aiOverviewSummary: { totalTracked: 0, visibleCount: 0, visibilityPct: 0, byType: [] },
+    })
+
+    const { GET } = await import('./route')
+    const response = await GET(
+      makeNextRequest('http://localhost/api/propertyaudit/export?runId=run-1&format=pdf')
+    )
+    const html = await response.text()
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('Content-Type')).toContain('text/html')
+    expect(response.headers.get('X-PropertyAudit-Artifact-Format')).toBe('pdf_print_view')
+    expect(html).toContain('GEO Visibility Report')
   })
 })

@@ -66,8 +66,12 @@ async def run_propertyaudit(
     request: RunRequest,
     _: str = Depends(verify_api_key),
 ):
-    run = _get_run_or_404(request.run_id)
-    if run.get("status") != "queued":
+    supabase = get_supabase_client()
+    executor = PropertyAuditExecutor(supabase)
+    claimed_run = executor.claim_queued_run(request.run_id)
+
+    if not claimed_run:
+        run = _get_run_or_404(request.run_id)
         raise HTTPException(
             status_code=409,
             detail=f"Run {request.run_id} is not queued (status={run.get('status')})",
@@ -75,10 +79,8 @@ async def run_propertyaudit(
 
     async def run_job():
         try:
-            supabase = get_supabase_client()
-            executor = PropertyAuditExecutor(supabase)
-            await executor.execute_run(request.run_id)
-            await _maybe_analyze_batch(request.batch_id or run.get("batch_id"))
+            await executor.execute_run(request.run_id, claimed_run=claimed_run)
+            await _maybe_analyze_batch(request.batch_id or claimed_run.get("batch_id"))
         except Exception as error:
             logger.exception("[PropertyAudit] Background run failed for %s: %s", request.run_id, error)
 
@@ -89,8 +91,8 @@ async def run_propertyaudit(
         "accepted": True,
         "run_id": request.run_id,
         "surface": request.surface,
-        "batch_id": request.batch_id or run.get("batch_id"),
-        "status": "queued",
+        "batch_id": request.batch_id or claimed_run.get("batch_id"),
+        "status": "running",
     }
 
 

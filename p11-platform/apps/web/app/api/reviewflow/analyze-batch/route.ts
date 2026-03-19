@@ -56,13 +56,11 @@ Respond ONLY with valid JSON in this format:
     }
   } catch (error) {
     console.error('Error analyzing review with OpenAI:', error)
-    
-    // Fallback based on rating
-    if (rating) {
-      if (rating >= 4) return { sentiment: 'positive', sentimentScore: 0.7, topics: [], isUrgent: false, summary: 'Positive review' }
-      if (rating <= 2) return { sentiment: 'negative', sentimentScore: -0.7, topics: [], isUrgent: false, summary: 'Negative review' }
-    }
-    return { sentiment: 'neutral', sentimentScore: 0, topics: [], isUrgent: false, summary: 'Review requires manual analysis' }
+    throw new Error(
+      `Review sentiment analysis provider is unavailable: ${
+        error instanceof Error ? error.message : 'Unknown error'
+      }`
+    )
   }
 }
 
@@ -121,7 +119,14 @@ export async function POST(request: NextRequest) {
 
     let analyzed = 0
     let errors = 0
-    const results: { id: string; sentiment: string; score: number }[] = []
+    let providerFailures = 0
+    const results: Array<{
+      id: string
+      status: 'analyzed' | 'manual_review_required'
+      sentiment?: string
+      score?: number
+      error?: string
+    }> = []
 
     // Process reviews sequentially to avoid rate limits
     for (const review of reviews) {
@@ -168,6 +173,7 @@ export async function POST(request: NextRequest) {
         analyzed++
         results.push({
           id: review.id,
+          status: 'analyzed',
           sentiment: analysis.sentiment,
           score: analysis.sentimentScore
         })
@@ -178,17 +184,36 @@ export async function POST(request: NextRequest) {
         await new Promise(resolve => setTimeout(resolve, 100))
       } catch (err) {
         console.error(`Error analyzing review ${review.id}:`, err)
-        errors++
+        providerFailures++
+        results.push({
+          id: review.id,
+          status: 'manual_review_required',
+          error: err instanceof Error ? err.message : 'Unknown error',
+        })
       }
     }
 
-    return NextResponse.json({
-      success: true,
+    const responseBody = {
+      success: analyzed > 0 && providerFailures === 0 && errors === 0,
       analyzed,
       errors,
+      providerFailures,
+      manualReviewRequired: providerFailures > 0,
       total: reviews.length,
-      results
-    })
+      results,
+    }
+
+    if (analyzed === 0 && providerFailures > 0) {
+      return NextResponse.json(
+        {
+          ...responseBody,
+          error: 'Review analysis unavailable',
+        },
+        { status: 503 }
+      )
+    }
+
+    return NextResponse.json(responseBody)
 
   } catch (error) {
     console.error('Batch analysis error:', error)

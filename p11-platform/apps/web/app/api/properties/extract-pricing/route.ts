@@ -135,7 +135,7 @@ export async function POST(req: NextRequest) {
     try {
       extractionResult = JSON.parse(responseText)
     } catch (parseError) {
-      console.error('Failed to parse LLM response:', responseText)
+      console.error('Failed to parse LLM response:', parseError, responseText)
       return NextResponse.json({ 
         error: 'Failed to parse extraction results' 
       }, { status: 500 })

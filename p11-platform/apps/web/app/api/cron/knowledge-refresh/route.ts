@@ -10,6 +10,7 @@ import {
 } from '@/utils/services/api-helpers'
 import { finishCronJobRun, startCronJobRun } from '@/utils/services/cron-job-runs'
 import { createRequestContext } from '@/utils/services/request-context'
+import { getAppBaseUrl } from '@/utils/services/runtime-config'
 
 /**
  * Knowledge Refresh CRON Job
@@ -153,7 +154,7 @@ export async function GET(request: NextRequest) {
         }
 
         // Call the website scrape endpoint
-        const scrapeResponse = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/onboarding/scrape-website`, {
+        const scrapeResponse = await fetch(`${getAppBaseUrl()}/api/onboarding/scrape-website`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -321,7 +322,7 @@ export async function POST(request: NextRequest) {
     const refreshUrls = getIngestUrls(source)
 
     // Trigger scrape
-    const scrapeResponse = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/onboarding/scrape-website`, {
+    const scrapeResponse = await fetch(`${getAppBaseUrl()}/api/onboarding/scrape-website`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

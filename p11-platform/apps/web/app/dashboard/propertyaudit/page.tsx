@@ -83,6 +83,12 @@ interface GeoRun {
   surface: 'openai' | 'claude'
   status: 'queued' | 'running' | 'completed' | 'failed'
   queryCount: number
+  progressPct: number
+  currentQueryIndex: number
+  statusLabel: string
+  statusDetail: string
+  isPossiblyStalled: boolean
+  errorMessage: string | null
   startedAt: string
   usesWebSearch?: boolean
   score: {
@@ -876,6 +882,17 @@ export default function PropertyAuditPage() {
                           <p className="text-xs text-gray-500">
                             {new Date(run.startedAt).toLocaleString()} • {run.queryCount} queries
                           </p>
+                          {(run.status === 'queued' || run.status === 'running' || run.status === 'failed') && (
+                            <p className="text-xs text-gray-500 mt-1">{run.statusDetail}</p>
+                          )}
+                          {(run.status === 'running' || run.status === 'queued') && (
+                            <div className="mt-2 h-1.5 w-56 rounded-full bg-gray-200 dark:bg-gray-700 overflow-hidden">
+                              <div
+                                className={`h-full rounded-full ${run.isPossiblyStalled ? 'bg-amber-500' : 'bg-indigo-500'}`}
+                                style={{ width: `${Math.max(0, Math.min(100, run.progressPct || 0))}%` }}
+                              />
+                            </div>
+                          )}
                         </div>
                       </div>
                       <div className="flex items-center gap-4">

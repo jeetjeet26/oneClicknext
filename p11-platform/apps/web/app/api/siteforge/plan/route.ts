@@ -51,7 +51,7 @@ Your role:
 4. Suggest improvements
 5. Explain your reasoning
 
-You're planning WordPress sites that match Cadence Creek quality: sophisticated, lifestyle-focused, resort-style when appropriate.
+You're planning polished, conversion-focused WordPress sites for multifamily properties without copying any single reference property.
 
 Be conversational, insightful, and collaborative.`
 

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { createAdminClient } from '@/utils/supabase/admin'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
+import { getAppBaseUrl } from '@/utils/services/runtime-config'
 
 /**
  * POST /api/community/scrape-website
@@ -48,7 +49,7 @@ export async function POST(request: NextRequest) {
     const urlsToScrape = [websiteUrl, ...additionalUrls].filter(u => u?.trim())
 
     // Call the internal scrape API with propertyId
-    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'
+    const baseUrl = getAppBaseUrl()
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }
     if (process.env.INTERNAL_API_KEY) {
       headers.Authorization = `Bearer ${process.env.INTERNAL_API_KEY}`

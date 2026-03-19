@@ -25,9 +25,33 @@ todos:
 
 Make the platform locally reliable and product-complete before expanding autonomous behavior, then graduate from assistive automation to constrained autonomy with measurable KPI and policy gates.
 
+## Strategic Thesis
+
+The project is not a generic AI application. It is a vertically integrated operating system for multifamily marketing and leasing.
+
+That means the implementation order matters:
+
+1. trustworthy property and business context
+2. trustworthy product execution surfaces
+3. a shared substrate for jobs, actions, approvals, policy, and outcomes
+4. only then recommendation-first autonomy and later cross-product orchestration
+
+The long-term opportunity is strong precisely because the platform can unify:
+
+- property truth
+- brand truth
+- knowledge truth
+- external execution
+- human decision history
+- outcome evidence
+
+The near-term risk is also clear: if breadth outruns trust or the autonomy narrative outruns the substrate, the project will accumulate impressive-looking surfaces without a dependable control plane underneath them.
+
 ## Guiding Rule
 
 No new autonomous write-path should advance until the underlying product surface is stable, observable, test-gated, reversible, and locally reproducible.
+
+When human supervision is required, it must be real supervision: reviewers need to be able to approve, deny, or modify proposed actions and leave preserved textual reasoning that becomes part of the durable decision history.
 
 ## Local-First Rule
 
@@ -45,8 +69,9 @@ Use this roadmap as the source of truth for current priority.
 - Older production-readiness planning is still useful, but it should be read as deferred hosted-ops guidance unless it directly helps finish the remaining local `P0` items.
 - Sentry, hosted monitoring, staging, PITR, CI enforcement, and environment cutover work are not current `P0` blockers.
 - ETL/data-engine alignment is not abandoned, but it is only part of current `P0` if it blocks local smoke/e2e, cron visibility, or failure-injection work.
+- Repository automation exists for scheduled pipeline execution, but app-quality PR/push enforcement for web gates is still deferred.
 
-See [`docs/P0_LOCAL_CONTINUATION_CONTEXT.md`](docs/P0_LOCAL_CONTINUATION_CONTEXT.md) for the canonical explanation of that boundary.
+See [`outdateddocs/P0_LOCAL_CONTINUATION_CONTEXT.md`](outdateddocs/P0_LOCAL_CONTINUATION_CONTEXT.md) for the canonical explanation of that boundary.
 
 ## Current Status Snapshot
 
@@ -57,12 +82,13 @@ Completed now:
 - `/api/health` exists in [`p11-platform/apps/web/app/api/health/route.ts`](p11-platform/apps/web/app/api/health/route.ts) backed by [`p11-platform/apps/web/utils/health.ts`](p11-platform/apps/web/utils/health.ts).
 - Request IDs and structured request logging exist in [`p11-platform/apps/web/utils/services/request-context.ts`](p11-platform/apps/web/utils/services/request-context.ts).
 - Centralized tenant-safe property auth checks exist in [`p11-platform/apps/web/utils/services/auth-guard.ts`](p11-platform/apps/web/utils/services/auth-guard.ts).
+- Shared tenant-safe auth utilities exist, but route adoption is not yet standardized through a single wrapper/HOF; new authenticated property-scoped work should prefer shared enforcement over repeating inline auth/property checks.
 - Critical API clusters have been hardened and covered with route tests, including cron, leads, lumaleasing, propertyaudit, reviewflow, reports, onboarding, workflows, integrations, conversations, brandforge, documents, properties, audit, chat, search, mcp, siteforge, and marketvision.
 - A documented one-command local startup flow now exists via [`p11-platform/package.json`](p11-platform/package.json) and [`p11-platform/scripts/local-dev.sh`](p11-platform/scripts/local-dev.sh).
 - Local Supabase bootstrap, reset, and deterministic fixtures now exist via [`p11-platform/supabase/config.toml`](p11-platform/supabase/config.toml), [`p11-platform/supabase/seed.sql`](p11-platform/supabase/seed.sql), and [`p11-platform/scripts/write-local-supabase-env.mjs`](p11-platform/scripts/write-local-supabase-env.mjs).
 - Local smoke/e2e coverage now exists via [`p11-platform/apps/web/playwright.config.ts`](p11-platform/apps/web/playwright.config.ts), [`p11-platform/apps/web/e2e/local-smoke.spec.ts`](p11-platform/apps/web/e2e/local-smoke.spec.ts), and [`p11-platform/package.json`](p11-platform/package.json).
 - Cron/job visibility now exists via [`p11-platform/supabase/migrations/20260313011500_add_cron_job_runs.sql`](p11-platform/supabase/migrations/20260313011500_add_cron_job_runs.sql), [`p11-platform/apps/web/utils/services/cron-job-runs.ts`](p11-platform/apps/web/utils/services/cron-job-runs.ts), and [`p11-platform/apps/web/app/api/cron/runs/route.ts`](p11-platform/apps/web/app/api/cron/runs/route.ts).
-- Critical public-route validation and rate limiting now cover the main anonymous LumaLeasing surfaces via [`p11-platform/apps/web/utils/services/validation.ts`](p11-platform/apps/web/utils/services/validation.ts), [`p11-platform/apps/web/utils/services/rate-limiter.ts`](p11-platform/apps/web/utils/services/rate-limiter.ts), and the hardened widget routes in `app/api/lumaleasing/*`.
+- Critical public-route validation and rate limiting now cover the main anonymous LumaLeasing surfaces for local and single-instance operation via [`p11-platform/apps/web/utils/services/validation.ts`](p11-platform/apps/web/utils/services/validation.ts), [`p11-platform/apps/web/utils/services/rate-limiter.ts`](p11-platform/apps/web/utils/services/rate-limiter.ts), and the hardened widget routes in `app/api/lumaleasing/*`; a hosted/serverless-safe replacement is still deferred.
 - `SiteForge` deployment path is materially implemented in [`p11-platform/apps/web/utils/siteforge/wordpress-client.ts`](p11-platform/apps/web/utils/siteforge/wordpress-client.ts): Cloudways provisioning, credential fallback/rotation, WordPress media upload + media ID injection, readiness checks, and post-deploy verification.
 - `SiteForge` deployment diagnostics are now persisted into `property_websites.generation_input.deploymentDiagnostics` by [`p11-platform/apps/web/app/api/siteforge/deploy/[websiteId]/route.ts`](p11-platform/apps/web/app/api/siteforge/deploy/[websiteId]/route.ts), and surfaced via [`p11-platform/apps/web/app/api/siteforge/status/[websiteId]/route.ts`](p11-platform/apps/web/app/api/siteforge/status/[websiteId]/route.ts) and [`p11-platform/apps/web/app/api/siteforge/preview/[websiteId]/route.ts`](p11-platform/apps/web/app/api/siteforge/preview/[websiteId]/route.ts).
 - `SiteForge` dashboard preview now shows deployment diagnostics and retry guidance in [`p11-platform/apps/web/components/siteforge/WebsitePreview.tsx`](p11-platform/apps/web/components/siteforge/WebsitePreview.tsx).
@@ -98,7 +124,23 @@ Still deferred or not yet complete:
 - Backup, PITR, and restore-drill execution.
 - Full local integration/e2e/reliability gate beyond the current foundation scope.
 - Completion of core product surfaces that still contain real TODO/placeholder behavior.
+- Standardized route-level adoption of a shared auth wrapper/HOF for authenticated property-scoped APIs.
+- Centralized data-engine config loading with fail-fast behavior instead of silent localhost fallbacks.
+- A checked-in env template aligned with the local-first workflow and README-documented variables.
 - `SiteForge` operator quick-actions in diagnostics UI (copy payload button, one-click external runbook/deep links) are intentionally deferred until after higher-priority product closure.
+
+## Current Status Without Bias
+
+Read the codebase state as:
+
+- beyond prototype
+- materially real across multiple product domains
+- unusually advanced for the elapsed build time
+- still late `P1`, not shared-autonomy-ready
+
+Most important conclusion:
+
+- the project is viable, but the next win comes from consolidation into shared substrate and durable decision history, not from accelerating toward portfolio-level agents
 
 ## Execution Model
 
@@ -136,7 +178,7 @@ Still needed for full local P0 closure:
 
 Recommended implementation order for the remaining local `P0` items:
 
-Local `P0` closure is complete. When work resumes, pick from deferred hosted-only `P0` items or move into `P1`.
+Local `P0` is materially closed for current local-first work, not absolutely closed in every shared enforcement pattern. When work resumes, either pick from deferred hosted-only `P0` items or continue closing the remaining `P1` trust gaps and shared-pattern caveats documented below.
 
 Deferred hosted-only P0 items:
 
@@ -149,8 +191,9 @@ Deferred hosted-only P0 items:
 ### P1: Product Completion
 
 - [x] `SiteForge`: implement Cloudways provisioning + WordPress readiness/verification + deploy diagnostics persistence/visibility for local operator workflows.
-- [x] `SiteForge`: remove remaining non-critical/dead placeholder surface in [`p11-platform/apps/web/utils/siteforge/wordpress-client.ts`](p11-platform/apps/web/utils/siteforge/wordpress-client.ts) (for example, `CloudwaysClient.uploadAssets` TODO path) or delete/replace it.
+- [x] `SiteForge`: fail closed on fake-success WordPress/MCP placeholder behavior so local/dev flows no longer persist fake-ready or fake-complete deployment state.
 - [x] `SiteForge`: verify a deterministic local end-to-end generation -> deploy -> rollback-capable path via smoke coverage (`generate -> deploy ?simulate=1 -> rollback`) for repeatable operator validation.
+- [x] `SiteForge`: close, feature-flag, or make explicitly degraded the remaining AI TODO paths in generation/intelligence flows (`refinement`, document vision analysis, brand synthesis) so operator-visible behavior matches actual implementation.
 - [ ] `SiteForge`: validate the same end-to-end deploy/rollback flow against a real WordPress target (Cloudways or existing WP) in local operator runs. (Latest run reached `deploying` without terminalization in-window; deploy path now has timeout/progress hardening, but a full provider-complete pass is still pending.)
 - [x] `LumaLeasing`: finish Gmail thread ingestion and reply lifecycle. Inbound message persistence, lead activity logging, webhook stale-history dedupe, deterministic reply-state transitions, pending-thread operator visibility, manual thread completion controls, send-path completion intent, cron-driven stale `awaiting_lead_reply` auto-resolution, deterministic reopen-on-inbound behavior for resolved threads, operator-visible overdue `awaiting_internal_reply` signals, and retry-safe overdue escalation activity logging are in place.
 - [~] `LumaLeasing`: finish two-way calendar connection, booking lifecycle, and failure handling. Operator config now syncs into connected calendars, `tour_bookings` lifecycle updates/cancels are supported with calendar resync/cancel attempts, calendar sync health is visible to operators, manual repair exists for active booking event drift, an automatic cron reconciliation path covers healthy calendar configs, external Google Calendar mutations are ingested into local sync state and can deterministically reschedule/cancel local `tour_bookings` truth, Google Calendar watch/webhook handling now triggers targeted mutation ingestion when a public callback URL is configured, webhook deliveries are deduped with persisted `x-goog-message-number` tracking for retry-safe processing, and an automatic watch-renew cron path keeps push subscriptions from silently expiring; remaining work is validating the provider-delivered watch flow in a real operator environment.
@@ -166,19 +209,23 @@ Deferred hosted-only P0 items:
 - [ ] `Community/Property setup`: verify the local operator setup path for property profile, knowledge sources, and integrations that downstream products depend on.
 - [x] Tenant boundaries and property/org auth are consistently enforced across critical API surfaces.
 - [ ] Verify one local happy path for each core product surface with all dependencies running.
-- [ ] Remove or replace product-critical TODO/placeholder behavior.
+- [~] Remove or replace product-critical TODO/placeholder behavior. The remaining critical paths now fail closed instead of returning fake success, but provider-backed validation and legacy placeholder cleanup still need follow-through in a few product surfaces.
 
 ### P2: Autonomy Substrate
 
 - [ ] Add durable job and action tables for autonomous and scheduled execution.
 - [ ] Standardize state model: `queued`, `running`, `succeeded`, `failed`, `retrying`, `cancelled`.
+- [ ] Add a shared proposal model that can represent recommendation, approval-required action, execution attempt, reversal, and terminal outcome.
 - [ ] Build a shared executor reused by cron jobs and future autonomy loops.
 - [ ] Add an action ledger for every outbound mutation.
-- [ ] Add approval and policy-decision recording.
+- [ ] Add approval and policy-decision recording with reviewer identity, decision status (`approved`, `denied`, `modified`), and preserved free-text rationale.
 - [ ] Add confidence metadata and rollback metadata to decisions/actions.
+- [ ] Add shared context snapshots so each decision can cite the property, business, and integration context that informed it.
+- [ ] Add delayed-outcome capture so executed actions can later be evaluated against tours, conversions, CPL, occupancy, or other business results.
 - [ ] Define KPI and reward framework for qualified leads, tours, show rate, lease conversion, CAC, and occupancy impact.
 - [ ] Add local dashboards or admin views for job and action visibility.
 - [ ] Add local replay/resume testing for failed jobs.
+- [ ] Prove the substrate is reused by at least two distinct product domains before treating it as complete.
 
 ### P3: Constrained Autonomy
 
@@ -226,8 +273,8 @@ Key files and systems:
 - [`p11-platform/apps/web/utils/health.ts`](p11-platform/apps/web/utils/health.ts)
 - [`p11-platform/apps/web/utils/services/request-context.ts`](p11-platform/apps/web/utils/services/request-context.ts)
 - [`p11-platform/apps/web/utils/services/auth-guard.ts`](p11-platform/apps/web/utils/services/auth-guard.ts)
-- [`docs/PRODUCTION_READINESS_QUICK_CHECKLIST.md`](docs/PRODUCTION_READINESS_QUICK_CHECKLIST.md)
-- [`docs/PRODUCTION_READINESS_AUDIT_2025-12-15.md`](docs/PRODUCTION_READINESS_AUDIT_2025-12-15.md)
+- [`outdateddocs/PRODUCTION_READINESS_QUICK_CHECKLIST.md`](outdateddocs/PRODUCTION_READINESS_QUICK_CHECKLIST.md)
+- [`outdateddocs/PRODUCTION_READINESS_AUDIT_2025-12-15.md`](outdateddocs/PRODUCTION_READINESS_AUDIT_2025-12-15.md)
 
 Local acceptance criteria:
 
@@ -306,21 +353,36 @@ Scope:
 - Create an action ledger for every outbound mutation: send, publish, sync, budget change, website deploy, review response.
 - Define core business reward metrics and decision thresholds.
 - Add evaluation, confidence, and rollback controls for model-driven actions.
+- Make human review first-class with durable approve/deny/modify outcomes and textual reasoning feedback.
+- Add read-first business-context assembly so the system can use P11 business data as cited decision context without creating hidden write coupling.
 
 Recommended implementation targets:
 
 - New durable tables for jobs, action attempts, approvals, policy decisions, and experiment outcomes.
 - Shared executor utilities reused by cron jobs and future agents.
-- Explicit state model aligned with [`docs/CANONICAL_AUTONOMY_OPERATING_SPEC.md`](docs/CANONICAL_AUTONOMY_OPERATING_SPEC.md): `queued`, `running`, `succeeded`, `failed`, `retrying`, `cancelled`.
+- Explicit state model aligned with [`outdateddocs/CANONICAL_AUTONOMY_OPERATING_SPEC.md`](outdateddocs/CANONICAL_AUTONOMY_OPERATING_SPEC.md): `queued`, `running`, `succeeded`, `failed`, `retrying`, `cancelled`.
 - Standard policy checks for fair-housing-sensitive messaging, campaign targeting changes, and irreversible website/publish actions.
+- Approval records that preserve reviewer identity, timestamps, free-text rationale, and modified payloads when humans do not simply accept or reject the proposal.
+- Context snapshot records that preserve the exact property, business, product, and integration state available at decision time.
+- Outcome records that distinguish execution success from delayed business effect.
+
+Near-term P2 anti-goals:
+
+- do not start with a CEO-agent or portfolio orchestrator
+- do not build a product-specific queue and call it the substrate
+- do not create a parallel ML-only action logging stack that bypasses shared job/action/approval records
+- do not claim closed-loop optimization before delayed-outcome capture exists
 
 Local acceptance criteria:
 
 - Every autonomous or scheduled action writes an auditable record before and after execution.
-- High-risk actions support approval mode and rollback path.
+- High-risk actions support approval mode, rollback path, and preserved reviewer rationale.
+- The substrate supports approve, deny, and modify review outcomes end to end.
+- Shared context can be assembled read-only and cited in decisions.
 - Jobs are resumable, retry-safe, and visible in local ops views.
 - KPI framework is finalized for qualified leads, tours, show rate, lease conversion, CAC, and occupancy impact.
 - No autonomous decision is executed without policy evaluation and confidence metadata.
+- At least two distinct product domains use the same shared substrate primitives.
 
 ## P3: Constrained Autonomy
 
@@ -347,9 +409,11 @@ Dependencies:
 Local acceptance criteria:
 
 - Each autonomous loop starts in recommendation mode, then supervised mode, then bounded auto-action.
+- Supervised mode includes human approve/deny/modify controls with textual reasoning feedback captured as durable decision history.
 - Every loop has a holdout/control comparison and promotion criteria.
 - No loop can exceed configured budget, messaging, or publishing limits.
 - Business KPI lift is measured against a local baseline for at least two release cycles of testing.
+- No loop is promoted because the model is sophisticated; promotion requires evidence that the product surface, substrate, and labels are trustworthy enough.
 
 ## P4: Scaled Autonomy
 
@@ -373,15 +437,15 @@ Acceptance criteria:
 
 ## Near-Term 90 Day Plan
 
-- Days 0-30: finish remaining local P0 items. Local smoke/e2e coverage, cron/job visibility, failure injection.
-- Days 31-60: P1 closure. Validate SiteForge deploy/rollback against a real WordPress target once Cloudways/WP infra is intentionally ready, finish LumaLeasing Gmail/calendar completeness plus remaining thread/reply lifecycle hardening, workflow retry/idempotency, and provider failure handling.
-- Days 61-90: P2 substrate. Add job/action ledger, approval modes, policy checks, KPI/reward definitions, experiment scaffolding.
+- Days 0-30: close the remaining highest-risk `P1` proofs. Priority targets: real SiteForge provider-backed validation, real LumaLeasing provider-backed validation, Knowledge Base ingest/refresh/retrieval proof, and Community Setup end-to-end setup proof.
+- Days 31-60: implement the `P2` foundation layer. Priority targets: shared states, jobs, proposals, approvals, policy decisions, context snapshots, outcome records, and shared executor semantics.
+- Days 61-90: prove substrate reuse across at least two product domains and start only recommendation-first or supervised pilot flows on top of that substrate.
 
 ## Success Gates
 
 - Gate 1: Local foundation gate is stable and repeatable.
 - Gate 2: Core products are complete enough that humans trust them locally.
-- Gate 3: Autonomous actions are bounded, auditable, and reversible.
+- Gate 3: Shared substrate is generic, auditable, reviewable, and reused across domains.
 - Gate 4: Local constrained autonomy proves KPI lift before broader rollout.
 
 ## Risks To Manage Explicitly
@@ -391,3 +455,5 @@ Acceptance criteria:
 - Scheduled jobs acting without observability or rollback.
 - Mistaking analytics and generation for real closed-loop optimization.
 - Adding retraining before data quality and attribution are strong enough.
+- Building autonomy theater before the shared substrate is real.
+- Letting product breadth outrun operator-trust and provider-backed validation.

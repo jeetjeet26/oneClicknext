@@ -129,4 +129,78 @@ describe('propertyaudit runs route', () => {
       },
     })
   })
+
+  it('surfaces persisted running progress and stalled hints', async () => {
+    authGetUserMock.mockResolvedValue({
+      data: { user: { id: 'user-1' } },
+      error: null,
+    })
+    validatePropertyAccessMock.mockResolvedValue({
+      authorized: true,
+      orgId: 'org-1',
+    })
+
+    const queryResult = {
+      data: [
+        {
+          id: 'run-1',
+          property_id: 'property-1',
+          surface: 'openai',
+          model_name: 'gpt-5.2',
+          status: 'running',
+          query_count: 10,
+          progress_pct: 42,
+          current_query_index: 4,
+          last_updated_at: '2026-03-16T00:00:00.000Z',
+          started_at: '2026-03-16T00:00:00.000Z',
+          finished_at: null,
+          error_message: null,
+          uses_web_search: true,
+          geo_scores: [],
+        },
+      ],
+      error: null,
+      count: 1,
+    }
+    const builder: Record<string, unknown> = {}
+    builder.eq = vi.fn(() => builder)
+    builder.order = vi.fn(() => builder)
+    builder.range = vi.fn(() => builder)
+    builder.then = (resolve: (value: typeof queryResult) => unknown) =>
+      Promise.resolve(resolve(queryResult))
+
+    createClientMock.mockResolvedValue({
+      auth: { getUser: authGetUserMock },
+      from: vi.fn((table: string) => {
+        if (table !== 'geo_runs') throw new Error(`Unexpected table ${table}`)
+        return {
+          select: vi.fn(() => builder),
+        }
+      }),
+    })
+
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-03-16T00:05:00.000Z'))
+
+    const { GET } = await import('./route')
+    const response = await GET(
+      makeNextRequest('http://localhost/api/propertyaudit/runs?propertyId=property-1')
+    )
+    const body = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(body.runs).toHaveLength(1)
+    expect(body.runs[0]).toMatchObject({
+      id: 'run-1',
+      status: 'running',
+      progressPct: 42,
+      currentQueryIndex: 4,
+      statusLabel: 'Running',
+      usesWebSearch: true,
+      isPossiblyStalled: true,
+    })
+    expect(String(body.runs[0].statusDetail)).toContain('Possibly stalled')
+    expect(body.runs[0].secondsSinceUpdate).toBe(300)
+
+    nowSpy.mockRestore()
+  })
 })

@@ -6,6 +6,7 @@ import {
 } from '@/utils/services/api-helpers'
 import { finishCronJobRun, startCronJobRun } from '@/utils/services/cron-job-runs'
 import { createRequestContext } from '@/utils/services/request-context'
+import { getAppBaseUrl } from '@/utils/services/runtime-config'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -192,7 +193,7 @@ export async function GET(request: NextRequest) {
         }
 
         // Publish to each connection
-        const publishRes = await fetchWithRetry(`${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/api/forgestudio/social/publish`, {
+        const publishRes = await fetchWithRetry(`${getAppBaseUrl()}/api/forgestudio/social/publish`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

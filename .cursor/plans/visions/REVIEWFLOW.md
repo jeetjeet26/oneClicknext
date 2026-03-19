@@ -1,6 +1,6 @@
 # Vision: ReviewFlow
 
-Last Updated: March 16, 2026
+Last Updated: March 17, 2026
 Document Type: Vision grounded in current implementation
 
 ## Mission
@@ -51,6 +51,7 @@ Before autonomy can act through ReviewFlow, the product must provide:
 - a real post execution path with audit records
 - policy gates by review class, risk, and platform
 - approval support for anything non-routine
+- human reviewers who can approve, deny, or modify response proposals with preserved textual reasoning for sensitive or ambiguous review cases
 - confidence metadata and strict holdout boundaries for low-risk automation
 - a shared action ledger for every external review response mutation
 

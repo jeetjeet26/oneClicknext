@@ -181,7 +181,7 @@ export function ReportBuilder({
               Generate Client Report
             </h2>
             <p className="text-sm text-gray-500 mt-1">
-              Create professional PDF report for {propertyName}
+              Create a print-ready GEO visibility report for {propertyName}
             </p>
           </div>
           <button

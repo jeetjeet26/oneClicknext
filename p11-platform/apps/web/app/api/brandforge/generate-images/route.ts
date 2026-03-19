@@ -408,7 +408,7 @@ function buildMoodboardPrompts(brandData: BrandData): string[] {
   const colorMood = asString(colorsSection?.palette) || 'warm earth tones'
   const photoMood = asString(photoSection?.mood) || 'aspirational and authentic'
 
-  const baseStyle = `${personality} luxury apartment lifestyle, ${colorMood}, ${photoMood}, professional real estate photography`
+  const baseStyle = `${personality} luxury apartment lifestyle for ${targetAudience}, ${colorMood}, ${photoMood}, professional real estate photography`
 
   return [
     `Modern luxury apartment lobby interior, ${baseStyle}, natural lighting, welcoming atmosphere, high-end finishes`,

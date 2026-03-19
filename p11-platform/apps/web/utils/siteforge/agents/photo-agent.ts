@@ -134,7 +134,13 @@ export class PhotoAgent extends BaseAgent {
       hasBrandForgeLogo: !!brandContext?.logoAssets?.primaryUrl
     })
     
-    // Generate missing photos (use Imagen if available, otherwise placeholder)
+    if (strategy.photosToGenerate.length > 0 && !isImagenAvailable()) {
+      throw new Error(
+        'SiteForge requires Google Imagen to generate missing photos. Configure Imagen or upload enough property photos to cover the requested scenes.'
+      )
+    }
+
+    // Generate missing photos. Fail closed if required generation is unavailable.
     const generatedPhotos: Photo[] = []
     
     for (const spec of strategy.photosToGenerate) {
@@ -380,7 +386,7 @@ Output JSON only.`
 1. Use uploaded photos when they match brand quality
 2. Generate missing photos following brand guidelines
 3. Ensure lifestyle focus (people enjoying amenities)
-4. Match Cadence Creek quality: professional, warm, lifestyle-focused`
+4. Maintain a polished, authentic, lifestyle-forward real-estate photography standard`
     
     const prompt = `
 Plan the photo strategy for this website.
@@ -445,7 +451,7 @@ ${JSON.stringify(data.photoNeeds, null, 2)}
 3. For lifestyle shots: specify demographics from targetAudience
 4. For amenity shots: specify which amenity from amenityFocus insights
 5. Priority: high for hero/above-fold, medium for amenities, low for gallery
-6. Cadence Creek style: 60%+ lifestyle ratio, warm lighting, people in photos
+6. Prefer authentic lifestyle coverage, warm lighting, and people where the brand/audience fit
 `
     
     const response = await this.callClaude(prompt, {
@@ -460,7 +466,7 @@ ${JSON.stringify(data.photoNeeds, null, 2)}
   }
   
   /**
-   * Generate photo using Google Imagen 3 (or placeholder if unavailable)
+   * Generate photo using Google Imagen 3
    */
   private async generatePhoto(spec: any, brandContext?: BrandContext): Promise<Photo> {
     
@@ -470,56 +476,49 @@ ${JSON.stringify(data.photoNeeds, null, 2)}
       imagenAvailable: isImagenAvailable()
     })
     
-    // Try to use Imagen if available
-    if (isImagenAvailable()) {
-      try {
-        console.log(`🎨 Generating photo with Imagen: ${spec.scene}`)
-        
-        // Build prompt using brand context for better results
-        const prompt = spec.prompt || buildLifestylePhotoPrompt(spec.scene, {
-          photoStyle: brandContext?.visualIdentity?.photoStyle,
-          targetAudience: brandContext?.targetAudience
-        })
-        
-        // Determine aspect ratio based on category
-        const aspectRatio = spec.category === 'hero' ? '16:9' : 
-                           spec.category === 'gallery' ? '4:3' : '16:9'
-        
-        const url = await generateAndUploadImage(prompt, {
-          aspectRatio,
-          negativePrompt: 'text, words, letters, watermark, signature, low quality, blurry, artificial, stock photo look, cartoon, anime, illustration',
-          filename: `siteforge-${spec.category}-${Date.now()}`,
-          folder: `${this.propertyId}/siteforge`
-        })
-        
-        if (url) {
-          console.log(`✅ Generated photo: ${url}`)
-          return {
-            id: crypto.randomUUID(),
-            url,
-            type: 'generated',
-            category: spec.category,
-            quality: 9,
-            scene: spec.scene,
-            prompt
-          }
-        }
-      } catch (error) {
-        console.error('❌ Imagen generation failed:', error)
-        // Fall through to placeholder
-      }
+    if (!isImagenAvailable()) {
+      throw new Error(`Imagen is not available for required photo generation: ${spec.scene || spec.category}`)
     }
-    
-    // Fallback: Return placeholder if Imagen unavailable or failed
-    console.log(`⚠️ Using placeholder for ${spec.category} (Imagen not available or failed)`)
-    return {
-      id: crypto.randomUUID(),
-      url: `https://placehold.co/1920x1080/2C3E50/FFFFFF?text=${encodeURIComponent(spec.scene || spec.category)}`,
-      type: 'generated',
-      category: spec.category,
-      quality: 5, // Lower quality for placeholders
-      scene: spec.scene,
-      prompt: spec.prompt
+
+    try {
+      console.log(`🎨 Generating photo with Imagen: ${spec.scene}`)
+
+      const prompt = spec.prompt || buildLifestylePhotoPrompt(spec.scene, {
+        photoStyle: brandContext?.visualIdentity?.photoStyle,
+        targetAudience: brandContext?.targetAudience
+      })
+
+      const aspectRatio = spec.category === 'hero' ? '16:9' :
+        spec.category === 'gallery' ? '4:3' : '16:9'
+
+      const url = await generateAndUploadImage(prompt, {
+        aspectRatio,
+        negativePrompt: 'text, words, letters, watermark, signature, low quality, blurry, artificial, stock photo look, cartoon, anime, illustration',
+        filename: `siteforge-${spec.category}-${Date.now()}`,
+        folder: `${this.propertyId}/siteforge`
+      })
+
+      if (!url) {
+        throw new Error(`Imagen returned no uploaded asset for ${spec.scene || spec.category}`)
+      }
+
+      console.log(`✅ Generated photo: ${url}`)
+      return {
+        id: crypto.randomUUID(),
+        url,
+        type: 'generated',
+        category: spec.category,
+        quality: 9,
+        scene: spec.scene,
+        prompt
+      }
+    } catch (error) {
+      console.error('❌ Imagen generation failed:', error)
+      throw new Error(
+        `Failed to generate required SiteForge photo "${spec.scene || spec.category}": ${
+          error instanceof Error ? error.message : 'Unknown error'
+        }`
+      )
     }
   }
   

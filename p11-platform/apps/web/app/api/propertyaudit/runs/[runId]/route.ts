@@ -66,6 +66,46 @@ function toOrderedEntities(value: unknown): GeoAnswer['orderedEntities'] {
     .filter((item): item is GeoAnswer['orderedEntities'][number] => item !== null)
 }
 
+function asNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function asString(value: unknown): string | null {
+  return typeof value === 'string' && value.length > 0 ? value : null
+}
+
+function buildRunProgress(run: Record<string, unknown>) {
+  const status = asString(run.status) || 'queued'
+  const rawProgress = asNumber(run.progress_pct) ?? 0
+  const progressPct =
+    status === 'completed' ? 100 : status === 'running' ? Math.max(0, Math.min(99, rawProgress)) : rawProgress
+  const currentQueryIndex = asNumber(run.current_query_index) ?? 0
+  const queryCount = asNumber(run.query_count) ?? 0
+  const lastUpdatedAt = asString(run.last_updated_at)
+  const secondsSinceUpdate = lastUpdatedAt
+    ? Math.max(0, Math.floor((Date.now() - Date.parse(lastUpdatedAt)) / 1000))
+    : null
+  const isPossiblyStalled = status === 'running' && secondsSinceUpdate !== null && secondsSinceUpdate > 180
+  const errorMessage = asString(run.error_message)
+  const statusDetail =
+    status === 'queued'
+      ? `Waiting to start (${queryCount} queries)`
+      : status === 'running'
+      ? `${isPossiblyStalled ? 'Possibly stalled • ' : ''}${progressPct}% • ${currentQueryIndex}/${queryCount} queries`
+      : status === 'completed'
+      ? `Finished ${queryCount} queries`
+      : errorMessage || 'Run failed before completion'
+
+  return {
+    progressPct,
+    currentQueryIndex,
+    lastUpdatedAt,
+    secondsSinceUpdate,
+    isPossiblyStalled,
+    statusDetail,
+  }
+}
+
 // GET: Get run details with answers
 export async function GET(
   req: NextRequest,
@@ -177,9 +217,11 @@ export async function GET(
         modelName: run.model_name,
         status: run.status,
         queryCount: run.query_count,
+        usesWebSearch: Boolean(run.uses_web_search),
         startedAt: run.started_at,
         finishedAt: run.finished_at,
         errorMessage: run.error_message,
+        ...buildRunProgress(run as Record<string, unknown>),
       },
       score: scoreData ? {
         overallScore: scoreData.overall_score,

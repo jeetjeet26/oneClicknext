@@ -44,10 +44,9 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: 'User email is required' }, { status: 400 });
       }
 
-      // Check if there's a lead for this user (or create one for demo purposes)
+      // Reuse an existing property lead if one already exists for this user.
       let leadId: string | null = null;
-      
-      // For demo, create a temporary lead if user is authenticated
+
       const { data: existingLead } = await supabase
         .from('leads')
         .select('id')
@@ -57,22 +56,6 @@ export async function POST(req: NextRequest) {
       
       if (existingLead) {
         leadId = existingLead.id;
-      } else {
-        // Create a demo lead for the authenticated user
-        const { data: newLead } = await supabase
-          .from('leads')
-          .insert({
-            property_id: propertyId,
-            email: userEmail,
-            first_name: user.user_metadata?.full_name?.split(' ')[0] || 'User',
-            last_name: user.user_metadata?.full_name?.split(' ').slice(1).join(' ') || '',
-            source: 'AI Chat',
-            status: 'contacted',
-          })
-          .select('id')
-          .single();
-        
-        leadId = newLead?.id || null;
       }
 
       // Create new conversation
