@@ -3,6 +3,7 @@ import { createServiceClient } from '@/utils/supabase/admin'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { NextRequest, NextResponse } from 'next/server'
 import { logAuditEvent } from '@/utils/audit'
+import { normalizePublicWebsiteUrl } from '@/utils/services/public-url'
 
 // PUT - Update a property with all details (contacts, integrations)
 export async function PUT(
@@ -69,7 +70,7 @@ export async function PUT(
         address: propertyData.address || {},
         // Profile data now directly on properties table
         property_type: propertyData.type || propertyData.propertyType || null,
-        website_url: propertyData.websiteUrl || null,
+        website_url: normalizePublicWebsiteUrl(propertyData.websiteUrl),
         unit_count: propertyData.unitCount || null,
         year_built: propertyData.yearBuilt || null,
         amenities: propertyData.amenities || [],

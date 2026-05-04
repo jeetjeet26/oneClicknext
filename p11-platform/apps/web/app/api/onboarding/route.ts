@@ -2,6 +2,7 @@ import { createClient } from '@/utils/supabase/server'
 import { createAdminClient } from '@/utils/supabase/admin'
 import { NextResponse } from 'next/server'
 import { getAppBaseUrl } from '@/utils/services/runtime-config'
+import { normalizePublicWebsiteUrl } from '@/utils/services/public-url'
 
 interface OrganizationInput {
   name: string
@@ -229,7 +230,7 @@ export async function POST(request: Request) {
         },
         // Profile data now directly on properties table
         property_type: property.type || null,
-        website_url: property.websiteUrl || null,
+          website_url: normalizePublicWebsiteUrl(property.websiteUrl),
         unit_count: property.unitCount || null,
         year_built: property.yearBuilt || null,
         amenities: property.amenities || [],

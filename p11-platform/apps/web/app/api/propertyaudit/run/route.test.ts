@@ -78,7 +78,7 @@ describe('propertyaudit run route', () => {
     expect(createServiceClientMock).not.toHaveBeenCalled()
   })
 
-  it('POST returns 500 when CRON_SECRET is missing for TypeScript processor', async () => {
+  it('POST returns 500 when data-engine dispatch is explicitly disabled', async () => {
     authGetUserMock.mockResolvedValue({
       data: { user: { id: 'user-1' } },
       error: null,
@@ -87,7 +87,6 @@ describe('propertyaudit run route', () => {
       authorized: true,
       orgId: 'org-1',
     })
-    delete process.env.CRON_SECRET
     process.env.PROPERTYAUDIT_USE_DATA_ENGINE = 'false'
 
     createServiceClientMock.mockReturnValue({
@@ -102,7 +101,7 @@ describe('propertyaudit run route', () => {
           }
         }
         if (table === 'geo_runs') {
-          throw new Error('geo_runs should not be inserted without CRON_SECRET')
+          throw new Error('geo_runs should not be inserted when data-engine is explicitly disabled')
         }
         throw new Error(`Unexpected table ${table}`)
       }),
@@ -123,7 +122,7 @@ describe('propertyaudit run route', () => {
 
     expect(response.status).toBe(500)
     await expect(response.json()).resolves.toEqual({
-      error: 'CRON_SECRET is required for TypeScript PropertyAudit processing',
+      error: 'PropertyAudit requires data-engine dispatch. Set PROPERTYAUDIT_USE_DATA_ENGINE=true or remove the explicit false override.',
     })
   })
 
@@ -193,7 +192,6 @@ describe('propertyaudit run route', () => {
     process.env.CRON_SECRET = 'cron-secret'
     process.env.DATA_ENGINE_URL = 'http://data-engine.local'
     process.env.DATA_ENGINE_API_KEY = 'data-engine-key'
-    delete process.env.PROPERTYAUDIT_ALLOW_TYPESCRIPT_FALLBACK
 
     const geoRunsInsertSingle = vi.fn().mockResolvedValue({
       data: {
@@ -273,7 +271,7 @@ describe('propertyaudit run route', () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe('http://data-engine.local/jobs/propertyaudit/run')
   })
 
-  it('POST uses TypeScript fallback only when explicitly enabled', async () => {
+  it('POST dispatches the default four-surface PropertyAudit batch to data-engine', async () => {
     authGetUserMock.mockResolvedValue({
       data: { user: { id: 'user-1' } },
       error: null,
@@ -283,7 +281,112 @@ describe('propertyaudit run route', () => {
       orgId: 'org-1',
     })
     process.env.PROPERTYAUDIT_USE_DATA_ENGINE = 'true'
-    process.env.PROPERTYAUDIT_ALLOW_TYPESCRIPT_FALLBACK = 'true'
+    process.env.DATA_ENGINE_URL = 'http://data-engine.local'
+    process.env.DATA_ENGINE_API_KEY = 'data-engine-key'
+    delete process.env.CRON_SECRET
+
+    let inserted = 0
+    const geoRunsInsert = vi.fn((payload: {
+      surface: string
+      model_name: string
+      query_count: number
+    }) => {
+      inserted += 1
+      return {
+        select: vi.fn(() => ({
+          single: vi.fn().mockResolvedValue({
+            data: {
+              id: `run-${inserted}`,
+              property_id: 'property-1',
+              surface: payload.surface,
+              model_name: payload.model_name,
+              status: 'queued',
+              query_count: payload.query_count,
+              started_at: '2026-03-16T18:00:00.000Z',
+              finished_at: null,
+              error_message: null,
+            },
+            error: null,
+          }),
+        })),
+      }
+    })
+
+    createServiceClientMock.mockReturnValue({
+      from: vi.fn((table: string) => {
+        if (table === 'geo_queries') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                eq: vi.fn().mockResolvedValue({ count: 24 }),
+              })),
+            })),
+          }
+        }
+
+        if (table === 'geo_runs') {
+          return {
+            insert: geoRunsInsert,
+            update: vi.fn(() => ({
+              eq: vi.fn(() => Promise.resolve({ error: null })),
+            })),
+          }
+        }
+
+        throw new Error(`Unexpected table ${table}`)
+      }),
+    })
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.startsWith('http://data-engine.local/jobs/propertyaudit/run')) {
+        return new Response(JSON.stringify({ success: true }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      throw new Error(`Unexpected fetch URL ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { POST } = await import('./route')
+    const request = new Request('http://localhost/api/propertyaudit/run', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ propertyId: 'property-1' }),
+    }) as NextRequest
+
+    const response = await POST(request)
+    const body = await response.json()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(response.status).toBe(200)
+    expect(body.processorMode).toBe('data_engine')
+    expect((body.runs as Array<{ surface: string }>).map((run) => run.surface)).toEqual([
+      'chatgpt',
+      'gemini',
+      'perplexity',
+      'google_ai',
+    ])
+    expect(fetchMock).toHaveBeenCalledTimes(4)
+    expect(geoRunsInsert).toHaveBeenCalledWith(expect.objectContaining({
+      measurement_mode: 'natural',
+      prompt_source: 'generated',
+      access_mode: 'URLOnly',
+    }))
+  })
+
+  it('POST keeps normal audits on data-engine dispatch even when the worker request fails', async () => {
+    authGetUserMock.mockResolvedValue({
+      data: { user: { id: 'user-1' } },
+      error: null,
+    })
+    validatePropertyAccessMock.mockResolvedValue({
+      authorized: true,
+      orgId: 'org-1',
+    })
+    process.env.PROPERTYAUDIT_USE_DATA_ENGINE = 'true'
     process.env.CRON_SECRET = 'cron-secret'
     process.env.DATA_ENGINE_URL = 'http://data-engine.local'
     process.env.DATA_ENGINE_API_KEY = 'data-engine-key'
@@ -341,13 +444,6 @@ describe('propertyaudit run route', () => {
         throw new Error('connect ECONNREFUSED')
       }
 
-      if (url.startsWith('http://localhost/api/propertyaudit/process')) {
-        return new Response(JSON.stringify({ success: true }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        })
-      }
-
       throw new Error(`Unexpected fetch URL ${url}`)
     })
     vi.stubGlobal('fetch', fetchMock)
@@ -369,9 +465,8 @@ describe('propertyaudit run route', () => {
       success: true,
       processorMode: 'data_engine',
     })
-    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(fetchMock.mock.calls[0]?.[0]).toBe('http://data-engine.local/jobs/propertyaudit/run')
-    expect(fetchMock.mock.calls[1]?.[0]).toBe('http://localhost/api/propertyaudit/process')
   })
 
   it('POST treats data-engine claim conflicts as idempotent dispatch success', async () => {
@@ -387,7 +482,6 @@ describe('propertyaudit run route', () => {
     process.env.CRON_SECRET = 'cron-secret'
     process.env.DATA_ENGINE_URL = 'http://data-engine.local'
     process.env.DATA_ENGINE_API_KEY = 'data-engine-key'
-    delete process.env.PROPERTYAUDIT_ALLOW_TYPESCRIPT_FALLBACK
 
     const geoRunsInsertSingle = vi.fn().mockResolvedValue({
       data: {
@@ -530,7 +624,7 @@ describe('propertyaudit run route', () => {
       }),
     })
 
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
       const url = String(input)
       if (url.startsWith('http://localhost/api/propertyaudit/process')) {
         return new Response(JSON.stringify({ success: true }), {

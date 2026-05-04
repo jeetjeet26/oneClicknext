@@ -1,6 +1,6 @@
 /**
  * PropertyAudit Report Generation API
- * Generates professional PDF reports with visualizations
+ * Generates print-ready PropertyAudit reports with visualizations
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -8,6 +8,10 @@ import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { buildCharts, buildPropertyReportData, buildRunReportData } from '@/utils/propertyaudit/reporting'
+
+type ReportData = Awaited<ReturnType<typeof buildPropertyReportData>>
+type ReportRecommendation = ReportData['recommendations'][number]
+type RecommendationWorkstream = 'Owned Content' | 'Citation Targets' | 'Entity / Technical Fixes' | 'Competitive Plays'
 
 type ReportingClient = {
   from: (table: string) => unknown
@@ -123,6 +127,24 @@ function generateReportHTML(
   const {
     property,
     runs,
+    surfaceSummaries = [],
+    siteAudit = {
+      accessMode: 'URLOnly',
+      websiteUrl: null,
+      normalizedOrigin: null,
+      homepageReachable: false,
+      robotsTxtReachable: false,
+      sitemapReachable: false,
+      llmsTxtReachable: false,
+      title: null,
+      metaDescription: null,
+      structuredDataTypes: [],
+      faqStructuredData: false,
+      organizationStructuredData: false,
+      answerBlockSignals: 0,
+      internalLinkCount: 0,
+      notes: [],
+    },
     queries,
     competitors,
     scores,
@@ -152,8 +174,19 @@ function generateReportHTML(
     : template === 'progress'
     ? 'Monthly Progress'
     : 'Comprehensive Audit'
-  const sectionSet = new Set([...sections, 'recommendations', 'appendix'])
+  const defaultSections = ['summary', 'scores', 'models', 'competitors', 'recommendations', 'queries', 'appendix']
+  const sectionSet = new Set([...(sections.length > 0 ? sections : defaultSections), 'recommendations', 'appendix'])
   const hasSection = (id: string) => sectionSet.has(id)
+  const bestSurface = [...surfaceSummaries]
+    .filter(surface => typeof surface.overallScore === 'number')
+    .sort((a, b) => (b.overallScore || 0) - (a.overallScore || 0))[0]
+  const weakestSurface = [...surfaceSummaries]
+    .filter(surface => typeof surface.overallScore === 'number')
+    .sort((a, b) => (a.overallScore || 0) - (b.overallScore || 0))[0]
+  const weakestType = [...queryTypeStats]
+    .sort((a, b) => a.presencePct - b.presencePct)[0]
+  const topActions = recommendations.slice(0, 3)
+  const groupedRecommendations = groupRecommendationsByWorkstream(recommendations)
 
   return `
 <!DOCTYPE html>
@@ -356,7 +389,7 @@ function generateReportHTML(
   </div>
 
   ${hasSection('summary') ? `
-  <h2>Executive Summary</h2>
+  <h2>Executive Snapshot</h2>
   <div class="metric-grid">
     <div class="metric-card">
       <div class="metric-value">${latestScore ? Math.round(latestScore.overall_score) : 'N/A'}</div>
@@ -376,13 +409,23 @@ function generateReportHTML(
     </div>
   </div>
 
-  <h3>Key Findings</h3>
+  <h3>Client Readout</h3>
   <ul style="line-height: 1.8;">
-    <li>Overall GEO score of <strong>${latestScore ? Math.round(latestScore.overall_score) : 'N/A'}/100</strong> ${getScoreBucket(latestScore?.overall_score)}</li>
-    <li>Visibility at <strong>${latestScore ? Math.round(latestScore.visibility_pct) : 0}%</strong> across all tracked queries</li>
-    <li>Average ranking position: <strong>#${latestScore?.avg_llm_rank?.toFixed(1) || 'N/A'}</strong></li>
-    <li>${competitors.length > 0 ? `Primary competitor: <strong>${escapeHtml(competitors[0].name)}</strong> (${competitors[0].mentionCount} mentions)` : 'Competitive analysis in progress'}</li>
+    <li><strong>Where you are:</strong> Overall AI visibility score is <strong>${latestScore ? Math.round(latestScore.overall_score) : 'N/A'}/100</strong> ${getScoreBucket(latestScore?.overall_score)} with <strong>${latestScore ? Math.round(latestScore.visibility_pct) : 0}%</strong> query visibility.</li>
+    <li><strong>Best surface:</strong> ${bestSurface ? `${escapeHtml(bestSurface.label)} at ${Math.round(bestSurface.overallScore || 0)}/100` : 'More run data needed'}.</li>
+    <li><strong>Largest surface gap:</strong> ${weakestSurface ? `${escapeHtml(weakestSurface.label)} at ${Math.round(weakestSurface.overallScore || 0)}/100` : 'More run data needed'}.</li>
+    <li><strong>Weakest prompt cluster:</strong> ${weakestType ? `${escapeHtml(weakestType.type)} at ${weakestType.presencePct}% presence` : 'More query data needed'}.</li>
+    <li><strong>Competitive pressure:</strong> ${competitors.length > 0 ? `${escapeHtml(competitors[0].name)} is the top mentioned competitor (${competitors[0].mentionCount} mentions).` : 'Competitive analysis in progress.'}</li>
   </ul>
+
+  ${topActions.length > 0 ? `
+  <h3>Top 3 Next Actions</h3>
+  <ol style="line-height: 1.8;">
+    ${topActions.map(action => `
+      <li><strong>${escapeHtml(action.title)}</strong> — ${escapeHtml(action.accessLevel || 'URLOnly')} / ${escapeHtml(action.owner || 'seo')} / ${escapeHtml(action.targetPageType || 'target page TBD')}</li>
+    `).join('')}
+  </ol>
+  ` : ''}
 
   ${narrative ? `
   <h3>Executive Narrative</h3>
@@ -409,6 +452,19 @@ function generateReportHTML(
     ${insights.opportunities.map(item => `<li>${escapeHtml(item)}</li>`).join('')}
   </ul>
   ` : ''}
+  <h3>Measurement Notes</h3>
+  <ul style="line-height: 1.8;">
+    ${surfaceSummaries.map(summary => `<li><strong>${escapeHtml(summary.label)}:</strong> ${escapeHtml(summary.measurementNote)}</li>`).join('')}
+  </ul>
+  <h3>Methodology & Confidence</h3>
+  <p style="color: #374151;">
+    PropertyAudit uses API-first grounded proxies, natural answer capture, structured extraction, and repeated-run aggregation.
+    Results should be interpreted as directional AI visibility evidence, not exact browser-surface capture.
+  </p>
+  <p style="color: #374151;">
+    Sample size: ${data.answers.length} aggregated prompt results across ${runs.length} completed run${runs.length === 1 ? '' : 's'}.
+    Citation consistency and answer drift are used to identify stable patterns versus noisy responses.
+  </p>
   ` : ''}
 
   ${hasSection('scores') ? `
@@ -430,6 +486,27 @@ function generateReportHTML(
     <div class="chart-card">${charts.scoreTrend}</div>
     <div class="chart-card">${charts.visibilityTrend}</div>
   </div>
+  <h3>Surface Coverage</h3>
+  <table class="query-table">
+    <thead>
+      <tr>
+        <th>Surface</th>
+        <th>Last Run</th>
+        <th>Score</th>
+        <th>Visibility</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${surfaceSummaries.map(summary => `
+        <tr>
+          <td>${escapeHtml(summary.label)}</td>
+          <td>${summary.lastRunAt ? escapeHtml(new Date(summary.lastRunAt).toLocaleString()) : '—'}</td>
+          <td>${summary.overallScore !== null ? summary.overallScore.toFixed(1) : '—'}</td>
+          <td>${summary.visibilityPct !== null ? `${Math.round(summary.visibilityPct)}%` : '—'}</td>
+        </tr>
+      `).join('')}
+    </tbody>
+  </table>
   <table class="query-table">
     <thead>
       <tr>
@@ -458,7 +535,10 @@ function generateReportHTML(
   ` : ''}
 
   ${hasSection('models') ? `
-  <h2>Model Comparison</h2>
+  <h2>AI Visibility Position</h2>
+  <p style="color: #6b7280; margin-bottom: 1rem;">
+    This section shows how often AI surfaces recommend or cite the property, where the brand appears, and how stable the answer/citation pattern is.
+  </p>
   <table class="query-table">
     <thead>
       <tr>
@@ -587,22 +667,64 @@ function generateReportHTML(
   ` : ''}
 
   ${hasSection('recommendations') ? `
-  <h2>Actionable Recommendations</h2>
+  <h2>Action Plan</h2>
   <p style="color: #6b7280; margin-bottom: 1.5rem;">
     ${recommendationSummary.total} recommendations identified. Priorities: ${recommendationSummary.high} high, ${recommendationSummary.medium} medium, ${recommendationSummary.low} low.
   </p>
+  <h3>30/60-Day Action Plan</h3>
+  <ul style="line-height: 1.8;">
+    <li><strong>Next 30 days:</strong> Complete high-priority URL-only, CMS/editor, and citation-target actions tied to missing visibility.</li>
+    <li><strong>Next 60 days:</strong> Re-run monitored money prompts, compare surface drift, and refresh recommendations that remain open.</li>
+  </ul>
   <div class="chart-grid">
     <div class="chart-card">${charts.recommendationBar}</div>
   </div>
-  ${recommendations.map((rec, index) => `
+  ${Object.entries(groupedRecommendations).map(([workstream, recs]) => `
+    <h3>${escapeHtml(workstream)}</h3>
+    <p style="color: #6b7280; font-size: 0.875rem;">${escapeHtml(getWorkstreamDescription(workstream as RecommendationWorkstream))}</p>
+    ${recs.length === 0 ? '<p style="color: #6b7280;">No recommendations in this workstream for this report.</p>' : recs.map((rec, index) => `
     <div class="recommendation-card">
       <h3 style="margin-top: 0;">${index + 1}. ${escapeHtml(rec.title)}</h3>
       <p><strong>Priority:</strong> ${escapeHtml(rec.priority)} | <strong>Impact:</strong> ${rec.impact.score}/100</p>
+      <p><strong>Access Level:</strong> ${escapeHtml(rec.accessLevel || 'URLOnly')} | <strong>Owner:</strong> ${escapeHtml(rec.owner || 'seo')} | <strong>Status:</strong> ${escapeHtml(rec.status || 'todo')}</p>
+      <p><strong>Evidence Mode:</strong> ${escapeHtml(rec.evidenceMode || 'URLOnly')}</p>
+      ${rec.targetPageType ? `<p><strong>Target Page Type:</strong> ${escapeHtml(rec.targetPageType)}</p>` : ''}
+      ${rec.targetUrl ? `<p><strong>Target URL:</strong> ${escapeHtml(rec.targetUrl)}</p>` : ''}
       <p>${escapeHtml(rec.description)}</p>
+      ${rec.evidence?.length ? `
+        <p><strong>Evidence:</strong></p>
+        <ul>
+          ${rec.evidence.map(item => `<li>${escapeHtml(item)}</li>`).join('')}
+        </ul>
+      ` : ''}
+      ${rec.sourceQueryEvidence?.length ? `
+        <p><strong>GEO Query Evidence:</strong></p>
+        <ul>
+          ${rec.sourceQueryEvidence.map(item => `<li>${escapeHtml(item)}</li>`).join('')}
+        </ul>
+      ` : ''}
+      ${rec.missingSignals?.length ? `
+        <p><strong>Missing Signals:</strong> ${escapeHtml(rec.missingSignals.join(', '))}</p>
+      ` : ''}
+      ${rec.implementationSteps?.length ? `
+        <p><strong>Implementation Steps:</strong></p>
+        <ul>
+          ${rec.implementationSteps.map(item => `<li>${escapeHtml(item)}</li>`).join('')}
+        </ul>
+      ` : ''}
+      ${rec.acceptanceCriteria?.length ? `
+        <p><strong>Acceptance Criteria:</strong></p>
+        <ul>
+          ${rec.acceptanceCriteria.map(item => `<li>${escapeHtml(item)}</li>`).join('')}
+        </ul>
+      ` : ''}
       ${rec.modelBreakdown ? `
         <p><strong>Model Impact:</strong>
           ${rec.modelBreakdown.affectedModels?.length ? rec.modelBreakdown.affectedModels.map(m => m.toUpperCase()).join(', ') : '—'}
         </p>
+      ` : ''}
+      ${rec.surfaceBreakdown ? `
+        <p><strong>Surface Breakdown:</strong> ${Object.values(rec.surfaceBreakdown).map(surface => `${escapeHtml(surface.label)} ${surface.presence ? 'present' : 'absent'}${surface.rank ? ` (#${surface.rank})` : ''}`).join(', ')}</p>
       ` : ''}
       ${rec.competitorContext ? `
         <p><strong>Competitor Context:</strong> ${escapeHtml(rec.competitorContext.competitorName)} (${escapeHtml(rec.competitorContext.competitorDomain)})</p>
@@ -616,6 +738,7 @@ function generateReportHTML(
         <p><strong>Related Queries:</strong> ${rec.relatedQueries.map(q => escapeHtml(q.text)).join(', ')}</p>
       ` : ''}
     </div>
+    `).join('')}
   `).join('')}
   ` : ''}
 
@@ -669,8 +792,64 @@ function generateReportHTML(
   ` : ''}
   ` : ''}
 
+  <h2>Public Site Discoverability</h2>
+  <p style="color: #6b7280; margin-bottom: 1rem;">
+    This URL-only audit section uses public website signals. It does not require code access, but CMS or engineering access may be needed to execute some fixes.
+  </p>
+  <table class="query-table">
+    <thead>
+      <tr>
+        <th>Signal</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>Homepage Reachable</td><td>${siteAudit.homepageReachable ? 'Yes' : 'No'}</td></tr>
+      <tr><td>robots.txt</td><td>${siteAudit.robotsTxtReachable ? 'Reachable' : 'Missing / blocked'}</td></tr>
+      <tr><td>sitemap.xml</td><td>${siteAudit.sitemapReachable ? 'Reachable' : 'Missing / blocked'}</td></tr>
+      <tr><td>llms.txt</td><td>${siteAudit.llmsTxtReachable ? 'Reachable' : 'Missing / blocked'}</td></tr>
+      <tr><td>Structured Data Types</td><td>${siteAudit.structuredDataTypes.length > 0 ? escapeHtml(siteAudit.structuredDataTypes.join(', ')) : 'None detected'}</td></tr>
+      <tr><td>FAQ Structured Data</td><td>${siteAudit.faqStructuredData ? 'Present' : 'Not detected'}</td></tr>
+      <tr><td>Answer Block Signals</td><td>${siteAudit.answerBlockSignals}</td></tr>
+      ${siteAudit.crawlSummary ? `
+        <tr><td>Pages Audited</td><td>${siteAudit.crawlSummary.pagesAudited}/${siteAudit.crawlSummary.pagesAttempted}</td></tr>
+        <tr><td>Discovery Sources</td><td>${siteAudit.crawlSummary.discoverySources.map(escapeHtml).join(', ')}</td></tr>
+      ` : ''}
+    </tbody>
+  </table>
+  ${siteAudit.pages?.length ? `
+    <h3>URL Page Inventory</h3>
+    <table class="query-table">
+      <thead>
+        <tr>
+          <th>Page Type</th>
+          <th>URL</th>
+          <th>Words</th>
+          <th>Schema</th>
+          <th>Answer Signals</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${siteAudit.pages.filter(page => page.reachable).slice(0, 12).map(page => `
+          <tr>
+            <td>${escapeHtml(page.pageType)}</td>
+            <td>${escapeHtml(page.url)}</td>
+            <td>${page.wordCount}</td>
+            <td>${page.structuredDataTypes.length > 0 ? escapeHtml(page.structuredDataTypes.join(', ')) : 'None detected'}</td>
+            <td>${page.answerBlockSignals}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  ` : ''}
+  ${siteAudit.notes.length > 0 ? `
+    <ul style="line-height: 1.8;">
+      ${siteAudit.notes.map(note => `<li>${escapeHtml(note)}</li>`).join('')}
+    </ul>
+  ` : ''}
+
   ${hasSection('appendix') ? `
-  <h2>Metrics Glossary & Methodology</h2>
+  <h2>Evidence Appendix, Glossary & Methodology</h2>
   ${glossary.map(entry => `
     <div class="recommendation-card">
       <h3 style="margin-top: 0;">${escapeHtml(entry.term)}</h3>
@@ -744,6 +923,47 @@ function getScoreBucket(score: number | undefined): string {
   if (score >= 50) return '(Good)'
   if (score >= 25) return '(Fair)'
   return '(Needs Improvement)'
+}
+
+function getRecommendationWorkstream(rec: ReportRecommendation): RecommendationWorkstream {
+  if (rec.type === 'citation_opportunity' || rec.accessLevel === 'ThirdParty') {
+    return 'Citation Targets'
+  }
+  if (rec.accessLevel === 'CodeRequired' || /schema|robots|sitemap|llms\.txt/i.test(rec.keywords.join(' '))) {
+    return 'Entity / Technical Fixes'
+  }
+  if (rec.type === 'content_gap' || rec.type === 'rank_improvement') {
+    return 'Competitive Plays'
+  }
+  return 'Owned Content'
+}
+
+function groupRecommendationsByWorkstream(recommendations: ReportRecommendation[]): Record<RecommendationWorkstream, ReportRecommendation[]> {
+  const groups: Record<RecommendationWorkstream, ReportRecommendation[]> = {
+    'Owned Content': [],
+    'Citation Targets': [],
+    'Entity / Technical Fixes': [],
+    'Competitive Plays': [],
+  }
+
+  recommendations.forEach(rec => {
+    groups[getRecommendationWorkstream(rec)].push(rec)
+  })
+
+  return groups
+}
+
+function getWorkstreamDescription(workstream: RecommendationWorkstream): string {
+  switch (workstream) {
+    case 'Owned Content':
+      return 'Pages, FAQs, answer blocks, and content updates the client can usually control directly.'
+    case 'Citation Targets':
+      return 'Third-party directories, list pages, PR, or partner placements that influence AI citations.'
+    case 'Entity / Technical Fixes':
+      return 'Structured data, crawlability, metadata, and entity-consistency changes that may require CMS or code access.'
+    case 'Competitive Plays':
+      return 'Prompt clusters where competitors are appearing more strongly and the client needs counter-positioning.'
+  }
 }
 
 function escapeHtml(input: string): string {

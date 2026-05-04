@@ -43,6 +43,10 @@ const PLATFORMS = [
   { id: 'facebook', name: 'Facebook', color: 'text-blue-600' },
 ]
 
+function isPropertyAddress(value: unknown): value is PropertyData['address'] {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 export function ImportReviewsModal({ propertyId, onClose, onImported }: ImportReviewsModalProps) {
   const supabase = createClient()
   const [step, setStep] = useState<ImportStep>('select')
@@ -84,14 +88,18 @@ export function ImportReviewsModal({ propertyId, onClose, onImported }: ImportRe
         .single()
       
       if (data && !error) {
-        setPropertyData(data)
+        const address = isPropertyAddress(data.address) ? data.address : null
+        setPropertyData({
+          name: data.name,
+          address,
+        })
         
         // Pre-populate Google search fields
         setGooglePropertyName(data.name || '')
         
         // Format address from JSON
-        if (data.address) {
-          const addr = data.address as PropertyData['address']
+        if (address) {
+          const addr = address
           if (addr?.full) {
             setGoogleAddress(addr.full)
           } else if (addr?.street) {

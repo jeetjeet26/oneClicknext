@@ -20,7 +20,24 @@ import { OpenAIConnector } from '@/utils/propertyaudit/openai-connector'
 import { ClaudeConnector } from '@/utils/propertyaudit/claude-connector'
 import { OpenAINaturalConnector } from '@/utils/propertyaudit/openai-natural-connector'
 import { ClaudeNaturalConnector } from '@/utils/propertyaudit/claude-natural-connector'
-import { scoreAnswer, aggregateScores, type AnswerBlock, type ConnectorContext, type ScoredAnswer, type WebSearchSource, type AnswerEntity } from '@/utils/propertyaudit'
+import { GeminiNaturalConnector } from '@/utils/propertyaudit/gemini-natural-connector'
+import { PerplexityNaturalConnector } from '@/utils/propertyaudit/perplexity-natural-connector'
+import { GoogleProxyNaturalConnector } from '@/utils/propertyaudit/google-proxy-natural-connector'
+import {
+  classifyProviderFailure,
+  getDefaultAuditMode,
+  scoreAnswer,
+  aggregateScores,
+  supportsStructuredAudit,
+  type AnswerBlock,
+  type Connector,
+  type ConnectorContext,
+  type NaturalConnector,
+  type ScoredAnswer,
+  type Surface,
+  type WebSearchSource,
+  type AnswerEntity,
+} from '@/utils/propertyaudit'
 
 /**
  * Extract citations from web search sources by matching domains to entities
@@ -139,6 +156,27 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Unknown error'
 }
 
+function getStructuredConnector(surface: Surface): Connector {
+  if (surface === 'openai') return new OpenAIConnector()
+  return new ClaudeConnector()
+}
+
+function getNaturalConnector(surface: Surface): NaturalConnector {
+  switch (surface) {
+    case 'openai':
+    case 'chatgpt':
+      return new OpenAINaturalConnector()
+    case 'claude':
+      return new ClaudeNaturalConnector()
+    case 'gemini':
+      return new GeminiNaturalConnector()
+    case 'perplexity':
+      return new PerplexityNaturalConnector()
+    case 'google_ai':
+      return new GoogleProxyNaturalConnector()
+  }
+}
+
 function shouldUseLocalFixture(req: NextRequest): boolean {
   if (process.env.NODE_ENV === 'production') return false
   return req.headers.get('x-propertyaudit-local-fixture') === '1'
@@ -154,6 +192,7 @@ async function markRunFailed(
     .update({
       status: 'failed',
       error_message: message,
+      provider_failure_reason: classifyProviderFailure(message),
       finished_at: new Date().toISOString(),
     })
     .eq('id', runId)
@@ -378,27 +417,28 @@ export async function POST(req: NextRequest) {
       console.log(`[geo] Brand context: name="${brandName}", domains=[${brandDomains.join(', ')}]`)
       console.log(`[geo] Web search: ${enableWebSearch ? 'enabled' : 'disabled'}`)
 
-      const auditModeRaw = (process.env.GEO_AUDIT_MODE || 'structured').toLowerCase()
-      const auditMode = auditModeRaw === 'natural' ? 'natural' : 'structured'
+      const auditMode = getDefaultAuditMode()
       console.log(`[geo] Audit mode: ${auditMode}`)
 
       // Get connectors
-      const structuredConnector =
-        claimedRun.surface === 'openai' ? new OpenAIConnector() : new ClaudeConnector()
-      const naturalConnector =
-        claimedRun.surface === 'openai' ? new OpenAINaturalConnector() : new ClaudeNaturalConnector()
+      const typedSurface = claimedRun.surface as Surface
+      const structuredConnector = supportsStructuredAudit(typedSurface)
+        ? getStructuredConnector(typedSurface)
+        : null
+      const naturalConnector = getNaturalConnector(typedSurface)
 
       const results: ScoredAnswer[] = []
       const errors: string[] = []
+      const effectiveExecutionCount = Math.max(1, Number(claimedRun.execution_count || 1))
       const totalAttempts = queries.reduce(
-        (sum, query) => sum + Math.max(1, Number(query.run_count || 1)),
+        (sum) => sum + effectiveExecutionCount,
         0
       )
       let processedAttempts = 0
 
-      // Process each query (respect per-query run_count)
+      // Process each query with a consistent run-level execution count.
       for (const query of queries) {
-        const runCount = Math.max(1, Number(query.run_count || 1))
+        const runCount = effectiveExecutionCount
         for (let attempt = 0; attempt < runCount; attempt += 1) {
           try {
             const context: ConnectorContext = {
@@ -433,7 +473,7 @@ export async function POST(req: NextRequest) {
                 attempt: attempt + 1,
                 generated_at: new Date().toISOString(),
               }
-            } else if (auditMode === 'natural') {
+            } else if (auditMode === 'natural' || !structuredConnector) {
               analysisMethod = 'natural_two_phase'
 
               // Phase 1: Natural response (no property context is provided to the model)
@@ -599,12 +639,18 @@ export async function POST(req: NextRequest) {
 
       // Update run status
       const finalStatus = errors.length > 0 && results.length === 0 ? 'failed' : 'completed'
+      const errorMessage = errors.length > 0 ? errors.join('; ') : null
       await supabase
         .from('geo_runs')
         .update({
           status: finalStatus,
           finished_at: new Date().toISOString(),
-          error_message: errors.length > 0 ? errors.join('; ') : null,
+          error_message: errorMessage,
+          provider_failure_reason: finalStatus === 'failed'
+            ? classifyProviderFailure(errorMessage)
+            : errors.length > 0
+              ? 'partial_success'
+              : null,
           progress_pct: 100,
           current_query_index: totalAttempts,
         })

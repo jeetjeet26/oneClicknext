@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { X, Sparkles, Globe, CheckCircle2, AlertCircle, Clock, ChevronRight, Trash2 } from 'lucide-react'
 import { ScoreRing, ScoreBreakdown } from '../score'
 import { AnswerPreview } from '../answer'
+import { getSurfaceLabel, type Surface } from '@/utils/propertyaudit/types'
 
 interface RunDetailsProps {
   runId: string | null
@@ -40,7 +41,7 @@ interface Answer {
 interface RunData {
   run: {
     id: string
-    surface: 'openai' | 'claude'
+    surface: Surface
     modelName: string
     status: string
     queryCount: number
@@ -143,13 +144,13 @@ export function RunDetails({ runId, isOpen, onClose }: RunDetailsProps) {
             <div className="flex items-start justify-between">
               <div className="flex-1">
                 <div className="flex items-center gap-3 mb-2">
-                  {data?.run.surface === 'openai' ? (
+                  {data?.run.surface === 'chatgpt' || data?.run.surface === 'openai' ? (
                     <Sparkles className="w-6 h-6 text-green-500" />
                   ) : (
                     <Globe className="w-6 h-6 text-purple-500" />
                   )}
                   <h2 className="text-xl font-semibold text-gray-900 dark:text-white capitalize">
-                    {data?.run.surface} Run Details
+                    {data?.run.surface ? getSurfaceLabel(data.run.surface) : 'Surface'} Run Details
                   </h2>
                 </div>
                 <div className="flex items-center gap-4 text-sm text-gray-500">

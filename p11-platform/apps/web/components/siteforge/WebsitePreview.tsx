@@ -699,11 +699,11 @@ export function WebsitePreview({ websiteId }: WebsitePreviewProps) {
                 {website.siteArchitecture.designDecisions.contentDensity}
               </p>
             </div>
-            {website.siteArchitecture.designDecisions.conversionOptimization?.length > 0 && (
+            {(website.siteArchitecture.designDecisions.conversionOptimization?.length ?? 0) > 0 && (
               <div>
                 <h4 className="text-sm font-medium mb-1 text-gray-900 dark:text-white">Conversion Optimizations</h4>
                 <ul className="list-disc list-inside text-sm text-gray-600 dark:text-gray-400 space-y-1">
-                  {website.siteArchitecture.designDecisions.conversionOptimization.map((item: string, idx: number) => (
+                  {(website.siteArchitecture.designDecisions.conversionOptimization ?? []).map((item: string, idx: number) => (
                     <li key={idx}>{item}</li>
                   ))}
                 </ul>

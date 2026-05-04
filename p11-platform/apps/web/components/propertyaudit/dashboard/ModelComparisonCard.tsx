@@ -9,29 +9,37 @@ interface SurfaceScore {
 }
 
 interface ModelComparisonCardProps {
-  openai: SurfaceScore | null
-  claude: SurfaceScore | null
+  primary: SurfaceScore | null
+  primaryLabel: string
+  secondary: SurfaceScore | null
+  secondaryLabel: string
   onViewDetails?: () => void
 }
 
-export function ModelComparisonCard({ openai, claude, onViewDetails }: ModelComparisonCardProps) {
-  if (!openai && !claude) {
+export function ModelComparisonCard({
+  primary,
+  primaryLabel,
+  secondary,
+  secondaryLabel,
+  onViewDetails,
+}: ModelComparisonCardProps) {
+  if (!primary && !secondary) {
     return (
       <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6 text-center">
         <p className="text-sm text-gray-500">
-          Run audits on both OpenAI and Claude to see model comparison
+          Run audits on at least two surfaces to see comparison insights
         </p>
       </div>
     )
   }
 
-  const scoreDiff = openai && claude ? claude.overallScore - openai.overallScore : 0
-  const betterModel = scoreDiff > 0 ? 'claude' : scoreDiff < 0 ? 'openai' : null
+  const scoreDiff = primary && secondary ? secondary.overallScore - primary.overallScore : 0
+  const betterModel = scoreDiff > 0 ? 'secondary' : scoreDiff < 0 ? 'primary' : null
   const showImbalanceWarning = Math.abs(scoreDiff) > 10
 
   // Analyze strengths/weaknesses
-  const openaiStrengths = analyzeStrengths(openai, 'openai')
-  const claudeStrengths = analyzeStrengths(claude, 'claude')
+  const primaryStrengths = analyzeStrengths(primary)
+  const secondaryStrengths = analyzeStrengths(secondary)
 
   return (
     <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
@@ -40,24 +48,23 @@ export function ModelComparisonCard({ openai, claude, onViewDetails }: ModelComp
       </h3>
 
       <div className="grid grid-cols-2 gap-6">
-        {/* OpenAI */}
-        <div className={`space-y-3 ${betterModel === 'openai' ? 'bg-green-50 dark:bg-green-900/10 -m-3 p-3 rounded-lg' : ''}`}>
+        <div className={`space-y-3 ${betterModel === 'primary' ? 'bg-green-50 dark:bg-green-900/10 -m-3 p-3 rounded-lg' : ''}`}>
           <div className="flex items-center gap-2">
             <Sparkles className="w-5 h-5 text-green-500" />
-            <span className="font-medium text-gray-900 dark:text-white">OpenAI</span>
-            {betterModel === 'openai' && (
+            <span className="font-medium text-gray-900 dark:text-white">{primaryLabel}</span>
+            {betterModel === 'primary' && (
               <CheckCircle2 className="w-4 h-4 text-green-500 ml-auto" />
             )}
-            {betterModel === 'claude' && showImbalanceWarning && (
+            {betterModel === 'secondary' && showImbalanceWarning && (
               <AlertCircle className="w-4 h-4 text-amber-500 ml-auto" />
             )}
           </div>
 
-          {openai ? (
+          {primary ? (
             <>
               <div>
                 <div className="text-3xl font-bold text-gray-900 dark:text-white">
-                  {Math.round(openai.overallScore)}
+                  {Math.round(primary.overallScore)}
                 </div>
                 <div className="text-xs text-gray-500">Score</div>
               </div>
@@ -65,23 +72,23 @@ export function ModelComparisonCard({ openai, claude, onViewDetails }: ModelComp
               <div className="space-y-1 text-xs">
                 <div className="flex justify-between">
                   <span className="text-gray-600">Visibility</span>
-                  <span className="font-medium">{Math.round(openai.visibilityPct)}%</span>
+                  <span className="font-medium">{Math.round(primary.visibilityPct)}%</span>
                 </div>
-                {openai.avgLlmRank && (
+                {primary.avgLlmRank && (
                   <div className="flex justify-between">
                     <span className="text-gray-600">Avg Rank</span>
-                    <span className="font-medium">{openai.avgLlmRank.toFixed(1)}</span>
+                    <span className="font-medium">{primary.avgLlmRank.toFixed(1)}</span>
                   </div>
                 )}
               </div>
 
-              {openaiStrengths && (
+              {primaryStrengths && (
                 <div className="text-xs">
                   <div className="font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    {openaiStrengths.type}:
+                    {primaryStrengths.type}:
                   </div>
                   <div className="text-gray-600 dark:text-gray-400">
-                    {openaiStrengths.message}
+                    {primaryStrengths.message}
                   </div>
                 </div>
               )}
@@ -91,24 +98,23 @@ export function ModelComparisonCard({ openai, claude, onViewDetails }: ModelComp
           )}
         </div>
 
-        {/* Claude */}
-        <div className={`space-y-3 ${betterModel === 'claude' ? 'bg-purple-50 dark:bg-purple-900/10 -m-3 p-3 rounded-lg' : ''}`}>
+        <div className={`space-y-3 ${betterModel === 'secondary' ? 'bg-purple-50 dark:bg-purple-900/10 -m-3 p-3 rounded-lg' : ''}`}>
           <div className="flex items-center gap-2">
             <Globe className="w-5 h-5 text-purple-500" />
-            <span className="font-medium text-gray-900 dark:text-white">Claude</span>
-            {betterModel === 'claude' && (
+            <span className="font-medium text-gray-900 dark:text-white">{secondaryLabel}</span>
+            {betterModel === 'secondary' && (
               <CheckCircle2 className="w-4 h-4 text-purple-500 ml-auto" />
             )}
-            {betterModel === 'openai' && showImbalanceWarning && (
+            {betterModel === 'primary' && showImbalanceWarning && (
               <AlertCircle className="w-4 h-4 text-amber-500 ml-auto" />
             )}
           </div>
 
-          {claude ? (
+          {secondary ? (
             <>
               <div>
                 <div className="text-3xl font-bold text-gray-900 dark:text-white">
-                  {Math.round(claude.overallScore)}
+                  {Math.round(secondary.overallScore)}
                 </div>
                 <div className="text-xs text-gray-500">Score</div>
               </div>
@@ -116,23 +122,23 @@ export function ModelComparisonCard({ openai, claude, onViewDetails }: ModelComp
               <div className="space-y-1 text-xs">
                 <div className="flex justify-between">
                   <span className="text-gray-600">Visibility</span>
-                  <span className="font-medium">{Math.round(claude.visibilityPct)}%</span>
+                  <span className="font-medium">{Math.round(secondary.visibilityPct)}%</span>
                 </div>
-                {claude.avgLlmRank && (
+                {secondary.avgLlmRank && (
                   <div className="flex justify-between">
                     <span className="text-gray-600">Avg Rank</span>
-                    <span className="font-medium">{claude.avgLlmRank.toFixed(1)}</span>
+                    <span className="font-medium">{secondary.avgLlmRank.toFixed(1)}</span>
                   </div>
                 )}
               </div>
 
-              {claudeStrengths && (
+              {secondaryStrengths && (
                 <div className="text-xs">
                   <div className="font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    {claudeStrengths.type}:
+                    {secondaryStrengths.type}:
                   </div>
                   <div className="text-gray-600 dark:text-gray-400">
-                    {claudeStrengths.message}
+                    {secondaryStrengths.message}
                   </div>
                 </div>
               )}
@@ -144,15 +150,15 @@ export function ModelComparisonCard({ openai, claude, onViewDetails }: ModelComp
       </div>
 
       {/* Recommendation */}
-      {openai && claude && showImbalanceWarning && (
+      {primary && secondary && showImbalanceWarning && (
         <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
           <div className="flex items-start gap-2 text-sm">
             <AlertCircle className="w-4 h-4 text-amber-500 mt-0.5 flex-shrink-0" />
             <div className="flex-1">
               <span className="text-gray-700 dark:text-gray-300">
-                {betterModel === 'claude' 
-                  ? `Claude outperforming OpenAI by ${Math.abs(scoreDiff).toFixed(0)} points. Consider optimizing content for OpenAI's algorithm.`
-                  : `OpenAI outperforming Claude by ${Math.abs(scoreDiff).toFixed(0)} points. Consider optimizing content for Claude's algorithm.`
+                {betterModel === 'secondary'
+                  ? `${secondaryLabel} is outperforming ${primaryLabel} by ${Math.abs(scoreDiff).toFixed(0)} points.`
+                  : `${primaryLabel} is outperforming ${secondaryLabel} by ${Math.abs(scoreDiff).toFixed(0)} points.`
                 }
               </span>
               {onViewDetails && (
@@ -173,8 +179,7 @@ export function ModelComparisonCard({ openai, claude, onViewDetails }: ModelComp
 }
 
 function analyzeStrengths(
-  score: SurfaceScore | null,
-  model: 'openai' | 'claude'
+  score: SurfaceScore | null
 ): { type: 'Strengths' | 'Needs Work'; message: string } | null {
   if (!score) return null
 

@@ -10,6 +10,10 @@ import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { buildCharts, buildRunReportData } from '@/utils/propertyaudit/reporting'
 import type { ReportAnswer } from '@/utils/propertyaudit/reporting'
 
+type RunReportData = Awaited<ReturnType<typeof buildRunReportData>>
+type ReportRecommendation = NonNullable<RunReportData>['recommendations'][number]
+type RecommendationWorkstream = 'Owned Content' | 'Citation Targets' | 'Entity / Technical Fixes' | 'Competitive Plays'
+
 type ReportingClient = {
   from: (table: string) => unknown
   rpc: (fn: string, args: Record<string, unknown>) => unknown
@@ -104,6 +108,24 @@ function generateMarkdown(data: Awaited<ReturnType<typeof buildRunReportData>>):
   const {
     property,
     runs,
+    surfaceSummaries = [],
+    siteAudit = {
+      accessMode: 'URLOnly',
+      websiteUrl: null,
+      normalizedOrigin: null,
+      homepageReachable: false,
+      robotsTxtReachable: false,
+      sitemapReachable: false,
+      llmsTxtReachable: false,
+      title: null,
+      metaDescription: null,
+      structuredDataTypes: [],
+      faqStructuredData: false,
+      organizationStructuredData: false,
+      answerBlockSignals: 0,
+      internalLinkCount: 0,
+      notes: [],
+    },
     scores,
     answers,
     recommendations,
@@ -118,6 +140,14 @@ function generateMarkdown(data: Awaited<ReturnType<typeof buildRunReportData>>):
 
   const run = runs[0]
   const score = scores[0]
+  const bestSurface = [...surfaceSummaries]
+    .filter(surface => typeof surface.overallScore === 'number')
+    .sort((a, b) => (b.overallScore || 0) - (a.overallScore || 0))[0]
+  const weakestSurface = [...surfaceSummaries]
+    .filter(surface => typeof surface.overallScore === 'number')
+    .sort((a, b) => (a.overallScore || 0) - (b.overallScore || 0))[0]
+  const weakestType = [...queryTypeStats].sort((a, b) => a.presencePct - b.presencePct)[0]
+  const groupedRecommendations = groupRecommendationsByWorkstream(recommendations)
   const lines: string[] = []
   
   lines.push(`# GEO Visibility Report`)
@@ -127,14 +157,25 @@ function generateMarkdown(data: Awaited<ReturnType<typeof buildRunReportData>>):
   lines.push(`**Model:** ${run?.model_name || 'N/A'}`)
   lines.push(`**Date:** ${run?.started_at ? new Date(run.started_at).toLocaleString() : 'N/A'}`)
   lines.push(``)
+  if (surfaceSummaries.length > 0) {
+    lines.push(`## Measurement Notes`)
+    surfaceSummaries.forEach(summary => {
+      lines.push(`- **${summary.label}:** ${summary.measurementNote}`)
+    })
+    lines.push(``)
+  }
   
   if (score) {
-    lines.push(`## Overall Score: ${score.overall_score.toFixed(1)}`)
+    lines.push(`## Executive Snapshot`)
     lines.push(``)
+    lines.push(`- **Overall AI visibility score:** ${score.overall_score.toFixed(1)}/100`)
     lines.push(`- **Visibility:** ${score.visibility_pct.toFixed(1)}%`)
     lines.push(`- **Avg LLM Rank:** ${score.avg_llm_rank?.toFixed(1) ?? 'N/A'}`)
     lines.push(`- **Avg Link Rank:** ${score.avg_link_rank?.toFixed(1) ?? 'N/A'}`)
     lines.push(`- **Avg SOV:** ${score.avg_sov ? (score.avg_sov * 100).toFixed(1) + '%' : 'N/A'}`)
+    lines.push(`- **Best surface:** ${bestSurface ? `${bestSurface.label} (${bestSurface.overallScore?.toFixed(1)}/100)` : 'More run data needed'}`)
+    lines.push(`- **Weakest surface:** ${weakestSurface ? `${weakestSurface.label} (${weakestSurface.overallScore?.toFixed(1)}/100)` : 'More run data needed'}`)
+    lines.push(`- **Weakest prompt cluster:** ${weakestType ? `${weakestType.type} (${weakestType.presencePct}% presence)` : 'More query data needed'}`)
     lines.push(``)
     lines.push(`### Score Breakdown`)
     lines.push(``)
@@ -161,6 +202,17 @@ function generateMarkdown(data: Awaited<ReturnType<typeof buildRunReportData>>):
   lines.push(`- Low priority: ${recommendationSummary.low}`)
   lines.push(``)
 
+  lines.push(`## Methodology & Confidence`)
+  lines.push(`PropertyAudit uses API-first grounded proxies, natural answer capture, structured extraction, and repeated-run aggregation. Results are directional AI visibility evidence, not exact browser-surface capture.`)
+  lines.push(``)
+  lines.push(`Sample size: ${answers.length} aggregated prompt results across ${runs.length} completed run${runs.length === 1 ? '' : 's'}.`)
+  lines.push(``)
+
+  lines.push(`## 30/60-Day Action Plan`)
+  lines.push(`- **Next 30 days:** Complete high-priority URL-only, CMS/editor, and citation-target actions tied to missing visibility.`)
+  lines.push(`- **Next 60 days:** Re-run monitored money prompts, compare surface drift, and refresh recommendations that remain open.`)
+  lines.push(``)
+
   lines.push(`## AI Overviews Visibility`)
   lines.push(`- Visible in AI Overviews: ${aiOverviewSummary.visibleCount}/${aiOverviewSummary.totalTracked} (${aiOverviewSummary.visibilityPct}%)`)
   aiOverviewSummary.byType.forEach(entry => {
@@ -168,17 +220,52 @@ function generateMarkdown(data: Awaited<ReturnType<typeof buildRunReportData>>):
   })
   lines.push(``)
 
-  lines.push(`## Recommendations (${recommendationSummary.total})`)
-  recommendations.forEach((rec, idx) => {
-    lines.push(`### ${idx + 1}. ${rec.title}`)
-    lines.push(`- **Priority:** ${rec.priority}`)
-    lines.push(`- **Impact:** ${rec.impact.score}/100`)
-    lines.push(`- **Description:** ${rec.description}`)
-    if (rec.actionItems?.length) {
-      lines.push(`- **Action Items:**`)
-      rec.actionItems.forEach(item => lines.push(`  - ${item}`))
-    }
+  lines.push(`## Action Plan (${recommendationSummary.total})`)
+  ;(Object.entries(groupedRecommendations) as Array<[RecommendationWorkstream, ReportRecommendation[]]>).forEach(([workstream, recs]) => {
+    lines.push(`### ${workstream}`)
+    lines.push(getWorkstreamDescription(workstream))
     lines.push(``)
+    if (recs.length === 0) {
+      lines.push(`No recommendations in this workstream for this report.`)
+      lines.push(``)
+      return
+    }
+    recs.forEach((rec, idx) => {
+      lines.push(`#### ${idx + 1}. ${rec.title}`)
+      lines.push(`- **Priority:** ${rec.priority}`)
+      lines.push(`- **Impact:** ${rec.impact.score}/100`)
+      lines.push(`- **Access Level:** ${rec.accessLevel || 'URLOnly'}`)
+      lines.push(`- **Owner:** ${rec.owner || 'seo'}`)
+      lines.push(`- **Status:** ${rec.status || 'todo'}`)
+      lines.push(`- **Evidence Mode:** ${rec.evidenceMode || 'URLOnly'}`)
+      if (rec.targetPageType) lines.push(`- **Target Page Type:** ${rec.targetPageType}`)
+      if (rec.targetUrl) lines.push(`- **Target URL:** ${rec.targetUrl}`)
+      lines.push(`- **Description:** ${rec.description}`)
+      if (rec.evidence?.length) {
+        lines.push(`- **Evidence:**`)
+        rec.evidence.forEach(item => lines.push(`  - ${item}`))
+      }
+      if (rec.sourceQueryEvidence?.length) {
+        lines.push(`- **GEO Query Evidence:**`)
+        rec.sourceQueryEvidence.forEach(item => lines.push(`  - ${item}`))
+      }
+      if (rec.missingSignals?.length) {
+        lines.push(`- **Missing Signals:** ${rec.missingSignals.join(', ')}`)
+      }
+      if (rec.implementationSteps?.length) {
+        lines.push(`- **Implementation Steps:**`)
+        rec.implementationSteps.forEach(item => lines.push(`  - ${item}`))
+      }
+      if (rec.acceptanceCriteria?.length) {
+        lines.push(`- **Acceptance Criteria:**`)
+        rec.acceptanceCriteria.forEach(item => lines.push(`  - ${item}`))
+      }
+      if (rec.actionItems?.length) {
+        lines.push(`- **Action Items:**`)
+        rec.actionItems.forEach(item => lines.push(`  - ${item}`))
+      }
+      lines.push(``)
+    })
   })
 
   lines.push(`## Query Type Coverage`)
@@ -245,6 +332,30 @@ function generateMarkdown(data: Awaited<ReturnType<typeof buildRunReportData>>):
   lines.push(`## Data Appendix`)
   lines.push(`- Total Citations: ${citationSummary.total}`)
   lines.push(`- Brand Citation Share: ${citationSummary.brandPct}%`)
+  lines.push(`- Homepage Reachable: ${siteAudit.homepageReachable ? 'Yes' : 'No'}`)
+  lines.push(`- robots.txt Reachable: ${siteAudit.robotsTxtReachable ? 'Yes' : 'No'}`)
+  lines.push(`- sitemap.xml Reachable: ${siteAudit.sitemapReachable ? 'Yes' : 'No'}`)
+  lines.push(`- llms.txt Reachable: ${siteAudit.llmsTxtReachable ? 'Yes' : 'No'}`)
+  if (siteAudit.crawlSummary) {
+    lines.push(`- Pages Audited: ${siteAudit.crawlSummary.pagesAudited}/${siteAudit.crawlSummary.pagesAttempted}`)
+    lines.push(`- Discovery Sources: ${siteAudit.crawlSummary.discoverySources.join(', ')}`)
+  }
+  if (siteAudit.pages?.length) {
+    lines.push(`- Page Inventory:`)
+    siteAudit.pages
+      .filter(page => page.reachable)
+      .slice(0, 10)
+      .forEach(page => {
+        lines.push(`  - ${page.pageType}: ${page.url} (${page.wordCount} words, ${page.structuredDataTypes.length || 0} schema type(s), ${page.answerBlockSignals} answer signals)`)
+      })
+  }
+  if (siteAudit.notes.length > 0) {
+    lines.push(`- Technical Notes:`)
+    siteAudit.notes.forEach(note => lines.push(`  - ${note}`))
+  }
+  lines.push(``)
+  lines.push(`## URL-Only Readiness Note`)
+  lines.push(`This section is based on public website signals. Code access is not required for diagnosis, but CMS/editor or engineering access may be needed to implement some fixes.`)
 
   return lines.join('\n')
 }
@@ -254,6 +365,24 @@ function generateHTML(data: Awaited<ReturnType<typeof buildRunReportData>>): str
   const {
     property,
     runs,
+    surfaceSummaries = [],
+    siteAudit = {
+      accessMode: 'URLOnly',
+      websiteUrl: null,
+      normalizedOrigin: null,
+      homepageReachable: false,
+      robotsTxtReachable: false,
+      sitemapReachable: false,
+      llmsTxtReachable: false,
+      title: null,
+      metaDescription: null,
+      structuredDataTypes: [],
+      faqStructuredData: false,
+      organizationStructuredData: false,
+      answerBlockSignals: 0,
+      internalLinkCount: 0,
+      notes: [],
+    },
     scores,
     answers,
     recommendations,
@@ -277,6 +406,7 @@ function generateHTML(data: Awaited<ReturnType<typeof buildRunReportData>>): str
 
   const run = runs[0]
   const score = scores[0]
+  const groupedRecommendations = groupRecommendationsByWorkstream(recommendations)
 
   return `
 <!DOCTYPE html>
@@ -308,6 +438,12 @@ function generateHTML(data: Awaited<ReturnType<typeof buildRunReportData>>): str
   <p><strong>Surface:</strong> ${escapeHtml(run?.surface?.toUpperCase() || 'N/A')}</p>
   <p><strong>Model:</strong> ${escapeHtml(run?.model_name || 'N/A')}</p>
   <p><strong>Date:</strong> ${run?.started_at ? new Date(run.started_at).toLocaleString() : 'N/A'}</p>
+  ${surfaceSummaries.length > 0 ? `
+    <h2>Measurement Notes</h2>
+    <ul>
+      ${surfaceSummaries.map(summary => `<li><strong>${escapeHtml(summary.label)}:</strong> ${escapeHtml(summary.measurementNote)}</li>`).join('')}
+    </ul>
+  ` : ''}
   
   ${score ? `
   <h2>Overall Score: ${score.overall_score.toFixed(1)}</h2>
@@ -346,20 +482,50 @@ function generateHTML(data: Awaited<ReturnType<typeof buildRunReportData>>): str
 
   <h2>Recommendations</h2>
   <p>${recommendationSummary.total} recommendations identified. High ${recommendationSummary.high}, Medium ${recommendationSummary.medium}, Low ${recommendationSummary.low}.</p>
+  <h3>30/60-Day Action Plan</h3>
+  <ul>
+    <li><strong>Next 30 days:</strong> Complete high-priority URL-only, CMS/editor, and citation-target actions tied to missing visibility.</li>
+    <li><strong>Next 60 days:</strong> Re-run monitored money prompts, compare surface drift, and refresh recommendations that remain open.</li>
+  </ul>
   <div class="chart-grid">
     <div class="chart-card">${charts.recommendationBar}</div>
   </div>
-  ${recommendations.map((rec, idx) => `
+  ${(Object.entries(groupedRecommendations) as Array<[RecommendationWorkstream, ReportRecommendation[]]>).map(([workstream, recs]) => `
+    <h3>${escapeHtml(workstream)}</h3>
+    <p>${escapeHtml(getWorkstreamDescription(workstream))}</p>
+    ${recs.length === 0 ? '<p>No recommendations in this workstream for this report.</p>' : recs.map((rec, idx) => `
     <div class="recommendation-card">
       <h3>${idx + 1}. ${escapeHtml(rec.title)}</h3>
       <p><strong>Priority:</strong> ${escapeHtml(rec.priority)} | <strong>Impact:</strong> ${rec.impact.score}/100</p>
+      <p><strong>Access Level:</strong> ${escapeHtml(rec.accessLevel || 'URLOnly')} | <strong>Owner:</strong> ${escapeHtml(rec.owner || 'seo')} | <strong>Status:</strong> ${escapeHtml(rec.status || 'todo')}</p>
+      <p><strong>Evidence Mode:</strong> ${escapeHtml(rec.evidenceMode || 'URLOnly')}</p>
+      ${rec.targetPageType ? `<p><strong>Target Page Type:</strong> ${escapeHtml(rec.targetPageType)}</p>` : ''}
+      ${rec.targetUrl ? `<p><strong>Target URL:</strong> ${escapeHtml(rec.targetUrl)}</p>` : ''}
       <p>${escapeHtml(rec.description)}</p>
+      ${rec.evidence?.length ? `
+        <p><strong>Evidence:</strong></p>
+        <ul>${rec.evidence.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>
+      ` : ''}
+      ${rec.sourceQueryEvidence?.length ? `
+        <p><strong>GEO Query Evidence:</strong></p>
+        <ul>${rec.sourceQueryEvidence.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>
+      ` : ''}
+      ${rec.missingSignals?.length ? `<p><strong>Missing Signals:</strong> ${escapeHtml(rec.missingSignals.join(', '))}</p>` : ''}
+      ${rec.implementationSteps?.length ? `
+        <p><strong>Implementation Steps:</strong></p>
+        <ul>${rec.implementationSteps.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>
+      ` : ''}
+      ${rec.acceptanceCriteria?.length ? `
+        <p><strong>Acceptance Criteria:</strong></p>
+        <ul>${rec.acceptanceCriteria.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>
+      ` : ''}
       ${rec.actionItems?.length ? `
         <ul>
           ${rec.actionItems.map(item => `<li>${escapeHtml(item)}</li>`).join('')}
         </ul>
       ` : ''}
     </div>
+    `).join('')}
   `).join('')}
 
   <h2>Query Type Coverage</h2>
@@ -416,11 +582,78 @@ function generateHTML(data: Awaited<ReturnType<typeof buildRunReportData>>): str
 
   <h2>Data Appendix</h2>
   <p>Total citations: ${citationSummary.total} | Brand share: ${citationSummary.brandPct}%</p>
+  <p>Homepage reachable: ${siteAudit.homepageReachable ? 'Yes' : 'No'} | robots.txt: ${siteAudit.robotsTxtReachable ? 'Yes' : 'No'} | sitemap.xml: ${siteAudit.sitemapReachable ? 'Yes' : 'No'} | llms.txt: ${siteAudit.llmsTxtReachable ? 'Yes' : 'No'}</p>
+  ${siteAudit.crawlSummary ? `<p>Pages audited: ${siteAudit.crawlSummary.pagesAudited}/${siteAudit.crawlSummary.pagesAttempted} | Discovery sources: ${siteAudit.crawlSummary.discoverySources.map(escapeHtml).join(', ')}</p>` : ''}
+  ${siteAudit.pages?.length ? `
+    <table class="query-table">
+      <thead>
+        <tr><th>Page Type</th><th>URL</th><th>Words</th><th>Schema</th><th>Answer Signals</th></tr>
+      </thead>
+      <tbody>
+        ${siteAudit.pages.filter(page => page.reachable).slice(0, 10).map(page => `
+          <tr>
+            <td>${escapeHtml(page.pageType)}</td>
+            <td>${escapeHtml(page.url)}</td>
+            <td>${page.wordCount}</td>
+            <td>${page.structuredDataTypes.length ? escapeHtml(page.structuredDataTypes.join(', ')) : 'None'}</td>
+            <td>${page.answerBlockSignals}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  ` : ''}
+  <p><strong>URL-only readiness note:</strong> This section is based on public website signals. Code access is not required for diagnosis, but CMS/editor or engineering access may be needed to implement some fixes.</p>
+  ${siteAudit.notes.length > 0 ? `
+    <ul>
+      ${siteAudit.notes.map(note => `<li>${escapeHtml(note)}</li>`).join('')}
+    </ul>
+  ` : ''}
   <hr style="margin-top: 40px; border: none; border-top: 2px solid #e5e7eb;">
   <p style="text-align: center; color: #9ca3af; font-size: 12px;">Generated by P11 PropertyAudit</p>
 </body>
 </html>
   `.trim()
+}
+
+function getRecommendationWorkstream(rec: ReportRecommendation): RecommendationWorkstream {
+  if (rec.type === 'citation_opportunity' || rec.accessLevel === 'ThirdParty') {
+    return 'Citation Targets'
+  }
+  if (rec.accessLevel === 'CodeRequired' || /schema|robots|sitemap|llms\.txt/i.test(rec.keywords.join(' '))) {
+    return 'Entity / Technical Fixes'
+  }
+  if (rec.type === 'content_gap' || rec.type === 'rank_improvement') {
+    return 'Competitive Plays'
+  }
+  return 'Owned Content'
+}
+
+function groupRecommendationsByWorkstream(recommendations: ReportRecommendation[]): Record<RecommendationWorkstream, ReportRecommendation[]> {
+  const groups: Record<RecommendationWorkstream, ReportRecommendation[]> = {
+    'Owned Content': [],
+    'Citation Targets': [],
+    'Entity / Technical Fixes': [],
+    'Competitive Plays': [],
+  }
+
+  recommendations.forEach(rec => {
+    groups[getRecommendationWorkstream(rec)].push(rec)
+  })
+
+  return groups
+}
+
+function getWorkstreamDescription(workstream: RecommendationWorkstream): string {
+  switch (workstream) {
+    case 'Owned Content':
+      return 'Pages, FAQs, answer blocks, and content updates the client can usually control directly.'
+    case 'Citation Targets':
+      return 'Third-party directories, list pages, PR, or partner placements that influence AI citations.'
+    case 'Entity / Technical Fixes':
+      return 'Structured data, crawlability, metadata, and entity-consistency changes that may require CMS or code access.'
+    case 'Competitive Plays':
+      return 'Prompt clusters where competitors are appearing more strongly and the client needs counter-positioning.'
+  }
 }
 
 function escapeHtml(input: string): string {

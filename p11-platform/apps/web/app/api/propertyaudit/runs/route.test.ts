@@ -81,7 +81,7 @@ describe('propertyaudit runs route', () => {
 
     expect(response.status).toBe(400)
     await expect(response.json()).resolves.toEqual({
-      error: 'Invalid surface. Allowed values: openai, claude',
+      error: 'Invalid surface.',
     })
   })
 
@@ -125,6 +125,7 @@ describe('propertyaudit runs route', () => {
       summary: {
         openai: null,
         claude: null,
+        surfaces: {},
         combined: null,
       },
     })

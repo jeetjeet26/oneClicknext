@@ -24,14 +24,14 @@ router = APIRouter(prefix="/crm", tags=["CRM Integration"])
 
 class TestConnectionRequest(BaseModel):
     """Request to test CRM connection"""
-    crm_type: str = Field(..., description="CRM type: yardi, realpage, salesforce, hubspot")
+    crm_type: str = Field(..., description="CRM type: yardi, realpage, salesforce, hubspot, lasso")
     credentials: Dict[str, Any] = Field(..., description="CRM API credentials")
 
 
 class DiscoverSchemaRequest(BaseModel):
     """Request to discover CRM schema and generate mappings"""
     property_id: str = Field(..., description="Property UUID")
-    crm_type: str = Field(..., description="CRM type: yardi, realpage, salesforce, hubspot")
+    crm_type: str = Field(..., description="CRM type: yardi, realpage, salesforce, hubspot, lasso")
     credentials: Dict[str, Any] = Field(..., description="CRM API credentials")
 
 
@@ -103,10 +103,13 @@ def get_crm_adapter(crm_type: str, credentials: Dict[str, Any]):
     elif crm_type_lower == 'hubspot':
         from connectors.crm_adapters.hubspot_adapter import HubSpotAdapter
         return HubSpotAdapter(credentials)
+    elif crm_type_lower == 'lasso':
+        from connectors.crm_adapters.lasso_adapter import LassoAdapter
+        return LassoAdapter(credentials)
     else:
         raise HTTPException(
             status_code=400, 
-            detail=f"Unsupported CRM type: {crm_type}. Supported: yardi, realpage, salesforce, hubspot"
+            detail=f"Unsupported CRM type: {crm_type}. Supported: yardi, realpage, salesforce, hubspot, lasso"
         )
 
 
@@ -665,7 +668,7 @@ async def bulk_sync_leads(
         integration_result = supabase.table('integration_credentials').select(
             'platform, credentials, field_mapping, mapping_validated'
         ).eq('property_id', request.property_id).in_(
-            'platform', ['yardi', 'realpage', 'salesforce', 'hubspot']
+            'platform', ['yardi', 'realpage', 'salesforce', 'hubspot', 'lasso']
         ).eq('status', 'connected').single().execute()
         
         if not integration_result.data:

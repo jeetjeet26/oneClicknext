@@ -17,7 +17,7 @@ See [`../../../outdateddocs/P0_LOCAL_CONTINUATION_CONTEXT.md`](../../../outdated
 The data-engine now handles PropertyAudit runs that previously timed out on Vercel. Features:
 
 - **No Timeout Limits** - Run unlimited queries without Vercel's 5-10 min limit
-- **Parallel Execution** - OpenAI and Claude run simultaneously (50% faster)
+- **Parallel Execution** - ChatGPT, Gemini, Perplexity, Google AI proxy, OpenAI, and Claude runs execute independently
 - **Real-time Progress** - Track completion percentage in real-time
 - **Feature Flag Control** - Instant switch between TypeScript/Python execution
 - **Full TypeScript Parity** - Same quality results as the Next.js implementation
@@ -57,10 +57,11 @@ python main.py
 In `apps/web/.env.local`:
 
 ```bash
-# false = TypeScript (legacy), true = Python data-engine
+# true = durable PropertyAudit execution through Python data-engine
 PROPERTYAUDIT_USE_DATA_ENGINE=true
 DATA_ENGINE_URL=http://localhost:8000
 DATA_ENGINE_API_KEY=your-api-key-here
+GEO_AUDIT_MODE=natural
 ```
 
 ### Architecture
@@ -68,11 +69,12 @@ DATA_ENGINE_API_KEY=your-api-key-here
 ```
 services/data-engine/
 ├── main.py                 # FastAPI server + job endpoints
-├── connectors/             # LLM connectors (OpenAI, Claude)
+├── connectors/             # LLM connectors (ChatGPT/OpenAI, Gemini, Perplexity, Google proxy, Claude)
 │   ├── openai_connector.py           # Structured mode
 │   ├── claude_connector.py           # Structured mode
 │   ├── openai_natural_connector.py   # Natural two-phase mode
 │   ├── claude_natural_connector.py   # Natural two-phase mode
+│   ├── v1_natural_connectors.py      # Gemini, Perplexity, Google AI proxy
 │   ├── cross_model_analyzer.py       # Cross-model analysis
 │   ├── evaluator.py                  # GEO scoring formula
 │   └── schemas.py                    # JSON schemas

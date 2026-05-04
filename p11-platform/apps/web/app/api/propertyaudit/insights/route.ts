@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
+import { isSupportedSurface } from '@/utils/propertyaudit/types'
 
 interface InsightCitation {
   domain: string
@@ -85,7 +86,7 @@ export async function GET(req: NextRequest) {
       .order('started_at', { ascending: false })
       .limit(10)  // Get more to check batch status
 
-    if (surface === 'openai' || surface === 'claude') {
+    if (surface && isSupportedSurface(surface)) {
       runsQuery = runsQuery.eq('surface', surface)
     }
 

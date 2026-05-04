@@ -5,6 +5,8 @@ import { buildCorsHeaders, corsPreflightResponse, serverError, rateLimited, badR
 import { validateBody, leadCaptureSchema } from '@/utils/services/validation';
 import { auditLog, getRequestIp } from '@/utils/services/audit-logger';
 import { createRequestContext } from '@/utils/services/request-context';
+import { syncLeadToCRM } from '@/utils/services/crm-sync';
+import { startWorkflow } from '@/utils/services/workflow-processor';
 
 const LEAD_CAPTURE_ACTIVITY_DEDUPE_WINDOW_MS = 5 * 60 * 1000
 
@@ -188,7 +190,10 @@ export async function POST(req: NextRequest) {
         .eq('id', leadId);
     }
 
-    // Create new lead if not found
+    // Create new lead if not found, then run the same downstream side
+    // effects the chat route triggers so widget-only lead capture and
+    // chat-discovered leads land in CRM/workflows the same way.
+    let isNewLead = false;
     if (!leadId) {
       const { data: newLead, error } = await supabase
         .from('leads')
@@ -210,6 +215,7 @@ export async function POST(req: NextRequest) {
       }
 
       leadId = newLead?.id;
+      isNewLead = Boolean(leadId);
 
       auditLog({
         eventType: 'lead_created',
@@ -217,6 +223,43 @@ export async function POST(req: NextRequest) {
         ip: getRequestIp(req),
         details: { source: 'lumaleasing_widget', hasEmail: !!email, hasPhone: !!phone },
       })
+    }
+
+    if (isNewLead && leadId) {
+      // CRM sync — mirrors `/api/lumaleasing/chat` so leads captured via the
+      // widget lead form arrive in the connected CRM the same way as leads
+      // discovered during a chat exchange. Failure must not block the API
+      // response; we already have the lead in our system of record.
+      try {
+        const crmResult = await syncLeadToCRM(propertyId, leadId, {
+          first_name: firstName || undefined,
+          last_name: lastName || undefined,
+          email: email || undefined,
+          phone: phone || undefined,
+          source: 'LumaLeasing Widget',
+          status: 'new',
+        });
+        if (!crmResult.success) {
+          console.warn(
+            '[LumaLeasing Lead] CRM sync returned non-success:',
+            crmResult.action
+          );
+        }
+      } catch (crmError) {
+        console.error(
+          '[LumaLeasing Lead] CRM sync failed (non-blocking):',
+          crmError
+        );
+      }
+
+      // Kick off the lead_created workflow so widget-only leads receive the
+      // same nurture cadence as chat-captured leads.
+      startWorkflow(leadId, propertyId, 'lead_created').catch((workflowError) =>
+        console.error(
+          '[LumaLeasing Lead] Workflow start failed (non-blocking):',
+          workflowError
+        )
+      );
     }
 
     // Add notes as activity if provided, but suppress duplicate retry writes

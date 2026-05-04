@@ -920,6 +920,85 @@ test.describe('local smoke flows', () => {
     expect(bookingData.booking?.status).toBe('confirmed')
     expect(typeof bookingData.calendar?.google).toBe('string')
     expect(typeof bookingData.calendar?.icsDownload).toBe('string')
+
+    // Public widget config — exactly what `lumaleasing.js` fetches first.
+    const configResponse = await request.get('/api/lumaleasing/config', {
+      headers: { 'X-API-Key': apiKey },
+    })
+    expect(
+      configResponse.ok(),
+      `Widget config failed: ${await configResponse.text()}`
+    ).toBeTruthy()
+    const configData = (await configResponse.json()) as {
+      config?: {
+        widgetName?: string
+        primaryColor?: string
+        propertyName?: string
+        toursEnabled?: boolean
+      }
+      isOnline?: boolean
+    }
+    expect(typeof configData.config?.widgetName).toBe('string')
+    expect(typeof configData.config?.primaryColor).toBe('string')
+
+    // Public widget chat — proves OpenAI + RAG + session + conversation
+    // pipeline are wired end to end with the property's API key.
+    const chatVisitorId = `provider-smoke-visitor-${uniqueLeadSuffix}`
+    const chatResponse = await request.post('/api/lumaleasing/chat', {
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': apiKey,
+        'X-Visitor-ID': chatVisitorId,
+      },
+      data: {
+        messages: [
+          { role: 'user', content: 'Hi! What floor plans do you offer?' },
+        ],
+      },
+    })
+    expect(
+      chatResponse.ok(),
+      `Widget chat failed: ${await chatResponse.text()}`
+    ).toBeTruthy()
+    const chatData = (await chatResponse.json()) as {
+      content?: string
+      sessionId?: string
+      conversationId?: string | null
+    }
+    expect(typeof chatData.sessionId).toBe('string')
+    expect(typeof chatData.content).toBe('string')
+    expect((chatData.content || '').length).toBeGreaterThan(0)
+
+    // Public widget lead capture — must succeed without an authenticated user
+    // and must round-trip the lead through the same downstream side effects
+    // chat extraction triggers (CRM sync, workflow start).
+    const leadResponse = await request.post('/api/lumaleasing/lead', {
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': apiKey,
+        'X-Visitor-ID': chatVisitorId,
+      },
+      data: {
+        leadInfo: {
+          firstName: 'Provider',
+          lastName: 'Smoke',
+          email: `provider-smoke-lead-${uniqueLeadSuffix}@p11.test`,
+          phone: '5551113333',
+        },
+        sessionId: chatData.sessionId,
+        conversationId: chatData.conversationId ?? undefined,
+      },
+    })
+    expect(
+      leadResponse.ok(),
+      `Widget lead capture failed: ${await leadResponse.text()}`
+    ).toBeTruthy()
+    const leadData = (await leadResponse.json()) as {
+      success?: boolean
+      leadId?: string
+    }
+    expect(leadData.success).toBe(true)
+    expect(typeof leadData.leadId).toBe('string')
   })
 
   test('propertyaudit deterministic local happy path run to report to export is repeatable', async ({

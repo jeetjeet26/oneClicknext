@@ -2,6 +2,7 @@
 
 import { AlertTriangle, TrendingDown, Trophy, X } from 'lucide-react'
 import { useState } from 'react'
+import { getSurfaceLabel } from '@/utils/propertyaudit/types'
 
 export type AlertType = 'critical' | 'warning' | 'success' | 'competitive'
 
@@ -160,19 +161,26 @@ export function useGeoAlerts(score: any, runs: any[], competitors: any[]): Alert
     })
   }
 
-  // Warning: Model imbalance
-  if (score.surfaces.openai && score.surfaces.claude) {
-    const diff = Math.abs(score.surfaces.openai.overallScore - score.surfaces.claude.overallScore)
+  // Warning: Surface imbalance
+  const comparableSurfaces = Array.isArray(score.surfaceSummaries)
+    ? score.surfaceSummaries
+        .filter((summary: any) => typeof summary?.score === 'number')
+        .slice(0, 2)
+    : []
+
+  if (comparableSurfaces.length >= 2) {
+    const [firstSurface, secondSurface] = comparableSurfaces
+    const diff = Math.abs(firstSurface.score - secondSurface.score)
     if (diff > 15) {
-      const better = score.surfaces.openai.overallScore > score.surfaces.claude.overallScore ? 'OpenAI' : 'Claude'
-      const worse = better === 'OpenAI' ? 'Claude' : 'OpenAI'
+      const better = firstSurface.score > secondSurface.score ? firstSurface : secondSurface
+      const worse = better === firstSurface ? secondSurface : firstSurface
       
       alerts.push({
         id: 'model-imbalance',
         type: 'warning',
-        title: 'Model Performance Imbalance',
-        message: `${better} is outperforming ${worse} by ${diff.toFixed(0)} points. Balance your optimization efforts.`,
-        actionLabel: 'View Model Comparison',
+        title: 'Surface Performance Imbalance',
+        message: `${getSurfaceLabel(better.surface)} is outperforming ${getSurfaceLabel(worse.surface)} by ${diff.toFixed(0)} points. Balance your optimization efforts.`,
+        actionLabel: 'View Surface Comparison',
       })
     }
   }

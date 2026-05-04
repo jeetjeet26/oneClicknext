@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { X, FileText, Download, Loader2, Mail, Calendar } from 'lucide-react'
+import { type Surface } from '@/utils/propertyaudit/types'
 
 export type ReportTemplate = 'executive' | 'comprehensive' | 'competitive' | 'progress'
 
@@ -12,7 +13,7 @@ interface ReportBuilderProps {
   propertyName: string
   runId: string | null
   runSummary?: {
-    surface: 'openai' | 'claude'
+    surface: Surface
     startedAt: string
   } | null
 }
@@ -67,14 +68,14 @@ export function ReportBuilder({
     {
       id: 'executive' as const,
       name: 'Executive Brief',
-      description: '5-page summary for C-suite stakeholders',
+      description: 'Client-ready snapshot with headline visibility, risks, and next actions',
       pages: 5,
       icon: '📊',
     },
     {
       id: 'comprehensive' as const,
       name: 'Comprehensive Audit',
-      description: 'Full analysis with all details',
+      description: 'Full PropertyAudit report with evidence, workstreams, and methodology',
       pages: 15,
       icon: '📈',
     },
@@ -88,7 +89,7 @@ export function ReportBuilder({
     {
       id: 'progress' as const,
       name: 'Monthly Progress Report',
-      description: 'Period-over-period comparison',
+      description: 'Period-over-period visibility and action-plan review',
       pages: 8,
       icon: '📅',
     },
@@ -97,7 +98,7 @@ export function ReportBuilder({
   const availableSections = [
     { id: 'summary', label: 'Executive Summary', required: true },
     { id: 'scores', label: 'Score Overview & Trends' },
-    { id: 'models', label: 'Model Comparison (OpenAI vs Claude)' },
+    { id: 'models', label: 'Surface Coverage & Measurement Notes' },
     { id: 'competitors', label: 'Competitive Intelligence' },
     { id: 'recommendations', label: 'Actionable Recommendations' },
     { id: 'queries', label: 'Query-Level Details' },
@@ -181,7 +182,7 @@ export function ReportBuilder({
               Generate Client Report
             </h2>
             <p className="text-sm text-gray-500 mt-1">
-              Create a print-ready GEO visibility report for {propertyName}
+              Create a print-ready PropertyAudit report for {propertyName}
             </p>
           </div>
           <button
@@ -200,6 +201,9 @@ export function ReportBuilder({
               {runId && runSummary
                 ? `This report will use the completed ${runSummary.surface.toUpperCase()} run from ${new Date(runSummary.startedAt).toLocaleString()}.`
                 : 'A completed PropertyAudit run is required before report generation.'}
+            </p>
+            <p className="mt-2">
+              Output is print-ready HTML. Use your browser&apos;s print dialog to save as PDF.
             </p>
           </div>
 

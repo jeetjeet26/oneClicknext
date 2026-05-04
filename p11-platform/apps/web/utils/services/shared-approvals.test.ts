@@ -154,10 +154,10 @@ describe('shared approvals service', () => {
         },
         buildMockSupabase()
       )
-    ).rejects.toMatchObject<Partial<SharedApprovalError>>({
+    ).rejects.toMatchObject({
       message: 'modifiedPayload is required when decisionStatus is modified',
       statusCode: 400,
-    })
+    } satisfies Partial<SharedApprovalError>)
   })
 
   it('rejects duplicate decisions when action attempt is already decided', async () => {
@@ -190,10 +190,10 @@ describe('shared approvals service', () => {
         },
         buildMockSupabase()
       )
-    ).rejects.toMatchObject<Partial<SharedApprovalError>>({
+    ).rejects.toMatchObject({
       message: 'Approval candidate has already been decided',
       statusCode: 409,
-    })
+    } satisfies Partial<SharedApprovalError>)
   })
 })
 

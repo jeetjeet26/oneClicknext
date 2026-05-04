@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { CheckCircle2, AlertCircle, Clock, Loader2 } from 'lucide-react'
+import { getSurfaceLabel, type Surface } from '@/utils/propertyaudit/types'
 
 interface RunStatusIndicatorProps {
   propertyId: string
@@ -12,7 +13,7 @@ interface RunStatusIndicatorProps {
 
 interface ActiveRun {
   id: string
-  surface: 'openai' | 'claude'
+  surface: Surface
   status: 'queued' | 'running' | 'completed' | 'failed'
   queryCount: number
   progressPct: number
@@ -93,7 +94,7 @@ export function RunStatusIndicator({
               <Clock className="w-5 h-5 text-indigo-500 animate-pulse" />
               <div className="flex-1">
                 <p className="text-sm font-medium text-indigo-900 dark:text-indigo-100">
-                  Run queued for {run.surface}
+                  Run queued for {getSurfaceLabel(run.surface)}
                 </p>
                 <p className="text-xs text-indigo-600 dark:text-indigo-400">
                   {run.statusDetail}
@@ -106,7 +107,7 @@ export function RunStatusIndicator({
               <Loader2 className="w-5 h-5 text-indigo-500 animate-spin" />
               <div className="flex-1">
                 <p className="text-sm font-medium text-indigo-900 dark:text-indigo-100">
-                  Processing {run.surface} audit...
+                  Processing {getSurfaceLabel(run.surface)} audit...
                 </p>
                 <p className="text-xs text-indigo-600 dark:text-indigo-400">
                   {run.statusDetail}

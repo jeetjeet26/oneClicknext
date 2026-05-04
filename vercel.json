@@ -1,6 +1,10 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "version": 2,
+  "framework": "nextjs",
+  "installCommand": "npm --prefix p11-platform/apps/web install",
+  "buildCommand": "npm --prefix p11-platform/apps/web run build",
+  "outputDirectory": "p11-platform/apps/web/.next",
   "git": {
     "deploymentEnabled": true
   },

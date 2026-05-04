@@ -11,6 +11,7 @@ import { ContentAgent, type GeneratedPage } from './content-agent'
 import { QualityAgent, type QualityReport } from './quality-agent'
 import { WordPressMcpClient } from '@/utils/mcp/wordpress-client'
 import { createServiceClient } from '@/utils/supabase/admin'
+import type { Json } from '@/types/supabase'
 
 export interface SiteBlueprint {
   version: number
@@ -239,10 +240,10 @@ export class SiteForgeOrchestrator {
     await this.supabase
       .from('property_websites')
       .update({
-        blueprint: blueprint,
-        site_architecture: blueprint.architecture,
-        pages_generated: blueprint.pages,
-        assets_manifest: blueprint.photoManifest,
+        blueprint: blueprint as unknown as Json,
+        site_architecture: blueprint.architecture as unknown as Json,
+        pages_generated: blueprint.pages as unknown as Json,
+        assets_manifest: blueprint.photoManifest as unknown as Json,
         brand_source: blueprint.brandContext.source,
         brand_confidence: blueprint.brandContext.confidence,
         generation_completed_at: new Date().toISOString(),

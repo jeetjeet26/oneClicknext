@@ -5,6 +5,7 @@
 
 import Anthropic from '@anthropic-ai/sdk'
 import { createServiceClient } from '@/utils/supabase/admin'
+import type { Json } from '@/types/supabase'
 
 export interface VectorSearchResult {
   id: string
@@ -17,6 +18,14 @@ export interface PropertyKnowledge {
   propertyId: string
   embeddings: VectorSearchResult[]
   insights: Map<string, VectorSearchResult[]>
+}
+
+function formatEmbeddingForPgVector(embedding: number[]): string {
+  return `[${embedding.join(',')}]`
+}
+
+function isMetadataRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 /**
@@ -83,10 +92,11 @@ export abstract class BaseAgent {
         async () => {
           // Generate embedding for query
           const embedding = await this.embed(query)
+          const queryEmbedding = formatEmbeddingForPgVector(embedding)
           
           // Search property KB using existing match_documents function
           const { data, error } = await this.supabase.rpc('match_documents', {
-            query_embedding: embedding,
+            query_embedding: queryEmbedding,
             match_threshold: matchThreshold,
             match_count: matchCount,
             filter_property: this.propertyId
@@ -96,15 +106,10 @@ export abstract class BaseAgent {
             throw new Error(`Supabase RPC error: ${error.message}`)
           }
           
-          return (data || []).map((result: {
-            id: string
-            content: string
-            metadata?: Record<string, unknown> | null
-            similarity: number
-          }) => ({
+          return (data || []).map((result) => ({
             id: result.id,
             content: result.content,
-            metadata: result.metadata || {},
+            metadata: isMetadataRecord(result.metadata) ? result.metadata : {},
             similarity: result.similarity
           }))
         },
@@ -434,11 +439,13 @@ export abstract class BaseAgent {
     details: Record<string, unknown>
   ): Promise<void> {
     await this.supabase.from('mcp_audit_log').insert({
-      server: 'siteforge-agent',
-      tool: action,
+      platform: 'siteforge-agent',
+      tool_name: action,
+      operation_type: 'agent_action',
       property_id: this.propertyId,
-      action_details: details,
-      timestamp: new Date().toISOString()
+      parameters: details as Json,
+      success: true,
+      created_at: new Date().toISOString()
     })
   }
 }

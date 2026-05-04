@@ -1,6 +1,10 @@
 import OpenAI from 'openai'
 import { createServiceClient } from '@/utils/supabase/admin'
 
+function formatEmbeddingForPgVector(embedding: number[]): string {
+  return `[${embedding.join(',')}]`
+}
+
 export async function retrieveKbContext(args: {
   propertyId: string
   query: string
@@ -26,7 +30,7 @@ export async function retrieveKbContext(args: {
   const embedding = embeddingResponse.data[0].embedding
 
   const { data: documents, error } = await supabase.rpc('match_documents', {
-    query_embedding: embedding,
+    query_embedding: formatEmbeddingForPgVector(embedding),
     match_threshold: matchThreshold,
     match_count: matchCount,
     filter_property: propertyId

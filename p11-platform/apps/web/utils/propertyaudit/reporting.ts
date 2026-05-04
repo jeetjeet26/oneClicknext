@@ -1,7 +1,8 @@
 import OpenAI from 'openai'
 import Anthropic from '@anthropic-ai/sdk'
 import { generateRecommendations } from './recommendation-engine'
-import { getGeoConfig } from './types'
+import { auditPublicSite, type PublicSiteAudit } from './public-site-audit'
+import { getGeoConfig, getSurfaceLabel, getSurfaceMeasurementNote } from './types'
 
 type SupabaseClient = {
   from: (table: string) => any
@@ -30,11 +31,15 @@ export type ReportRun = {
   }>
 }
 
+type ReportScore = NonNullable<ReportRun['geo_scores']>[number]
+
 export type ReportAnswer = {
   id: string
   query_id?: string | null
   presence: boolean
   presence_rate?: number | null
+  citation_consistency?: number | null
+  answer_drift?: number | null
   llm_rank: number | null
   link_rank: number | null
   sov: number | null
@@ -105,10 +110,19 @@ export type ReportRecommendationSummary = {
 export type ReportData = {
   property: { name?: string | null; address?: any } | null
   runs: ReportRun[]
+  surfaceSummaries: Array<{
+    surface: string
+    label: string
+    measurementNote: string
+    lastRunAt: string | null
+    overallScore: number | null
+    visibilityPct: number | null
+  }>
+  siteAudit: PublicSiteAudit
   queries: ReportQuery[]
   answers: ReportAnswer[]
   competitors: Array<{ name: string; domain: string; mentionCount: number; avgRank: number }>
-  scores: Array<ReportRun['geo_scores'][number]>
+  scores: ReportScore[]
   recommendationSummary: ReportRecommendationSummary
   recommendations: Awaited<ReturnType<typeof generateRecommendations>>['recommendations']
   queryTypeStats: Array<{ type: string; total: number; presencePct: number; avgRank: number | null; avgSov: number | null }>
@@ -130,7 +144,7 @@ export async function buildPropertyReportData(
 
   const { data: property } = await supabase
     .from('properties')
-    .select('name, address')
+    .select('name, address, website_url')
     .eq('id', propertyId)
     .single()
 
@@ -148,32 +162,34 @@ export async function buildPropertyReportData(
     .eq('property_id', propertyId)
     .eq('is_active', true)
 
-  const runIds = (runs || []).map((r: ReportRun) => r.id)
+  const reportRuns = (runs || []) as ReportRun[]
+  const reportQueries = (queries || []) as ReportQuery[]
+  const runIds = reportRuns.map((r) => r.id)
   let rawAnswers: ReportAnswer[] = []
   if (runIds.length > 0) {
     const { data } = await supabase
       .from('geo_answers')
       .select('*, geo_queries (id, text, type), geo_citations (url, domain, is_brand_domain)')
       .in('run_id', runIds)
-    rawAnswers = data || []
+    rawAnswers = (data || []) as ReportAnswer[]
   }
 
-  const aiOverviewMap = await fetchAiOverviews(supabase, propertyId, (queries || []).map(q => q.id))
-  const aggregatedAnswers = aggregateAnswersByQuery(rawAnswers, queries || [], aiOverviewMap)
+  const aiOverviewMap = await fetchAiOverviews(supabase, propertyId, reportQueries.map((q) => q.id))
+  const aggregatedAnswers = aggregateAnswersByQuery(rawAnswers, reportQueries, aiOverviewMap)
 
   const competitors = buildCompetitorsFromAnswers(rawAnswers)
 
-  const scores = (runs || [])
-    .map((r: ReportRun) => r.geo_scores?.[0])
-    .filter(Boolean) as ReportRun['geo_scores'][number][]
+  const scores = reportRuns
+    .map((r) => r.geo_scores?.[0])
+    .filter(Boolean) as ReportScore[]
 
   const recommendationsResult = await generateRecommendations(propertyId)
   const recommendationSummary = buildRecommendationSummary(recommendationsResult.recommendations)
 
   const queryTypeStats = buildQueryTypeStats(aggregatedAnswers)
   const citationSummary = buildCitationSummary(rawAnswers)
-  const aiOverviewSummary = buildAiOverviewSummary(queries || [], aiOverviewMap)
-  const trends = buildTrends(runs || [])
+  const aiOverviewSummary = buildAiOverviewSummary(reportQueries, aiOverviewMap)
+  const trends = buildTrends(reportRuns)
   const glossary = buildGlossary()
   const insightsBlock = buildInsights({
     propertyName: property?.name || 'Property',
@@ -200,6 +216,8 @@ export async function buildPropertyReportData(
   return {
     property: property || null,
     runs: runs || [],
+    surfaceSummaries: buildSurfaceSummaries(runs || []),
+    siteAudit: await auditPublicSite(property?.website_url || null),
     queries: queries || [],
     answers: aggregatedAnswers,
     competitors,
@@ -224,7 +242,7 @@ export async function buildRunReportData(
     .from('geo_runs')
     .select(`
       *,
-      properties (name, address),
+      properties (name, address, website_url),
       geo_scores (*),
       geo_answers (
         *,
@@ -295,6 +313,8 @@ export async function buildRunReportData(
   return {
     property: run.properties || null,
     runs,
+    surfaceSummaries: buildSurfaceSummaries(runs),
+    siteAudit: await auditPublicSite((run.properties as any)?.website_url || null),
     queries: Array.from(uniqueQueries.values()),
     answers: aggregatedAnswers,
     competitors,
@@ -405,6 +425,8 @@ export function aggregateAnswersByQuery(
       query_id: queryId,
       presence,
       presence_rate: presenceRate,
+      citation_consistency: calculateCitationConsistency(group),
+      answer_drift: calculateAnswerDrift(group),
       llm_rank: llmRanks.length > 0 ? median(llmRanks) : null,
       link_rank: linkRanks.length > 0 ? median(linkRanks) : null,
       sov: applicableSov && sovs.length > 0 ? median(sovs) : null,
@@ -425,6 +447,17 @@ export function aggregateAnswersByQuery(
       ai_overview_source: aiOverview?.source_url || null
     }
   })
+}
+
+function buildSurfaceSummaries(runs: ReportRun[]) {
+  return runs.map(run => ({
+    surface: run.surface,
+    label: getSurfaceLabel(run.surface),
+    measurementNote: getSurfaceMeasurementNote(run.surface),
+    lastRunAt: run.started_at || null,
+    overallScore: run.geo_scores?.[0]?.overall_score ?? null,
+    visibilityPct: run.geo_scores?.[0]?.visibility_pct ?? null,
+  }))
 }
 
 async function fetchAiOverviews(
@@ -545,6 +578,30 @@ function buildCitationSummary(answers: ReportAnswer[]) {
   }
 }
 
+function calculateCitationConsistency(answers: ReportAnswer[]): number {
+  const domainCount = new Map<string, number>()
+  let total = 0
+  answers.forEach(answer => {
+    ;(answer.geo_citations || []).forEach(citation => {
+      total += 1
+      domainCount.set(citation.domain, (domainCount.get(citation.domain) || 0) + 1)
+    })
+  })
+  if (total === 0) return 0
+  const topCount = Math.max(...domainCount.values())
+  return Math.round((topCount / total) * 100)
+}
+
+function calculateAnswerDrift(answers: ReportAnswer[]): number {
+  if (answers.length <= 1) return 0
+  const summaries = answers
+    .map(answer => answer.answer_summary?.trim().toLowerCase())
+    .filter((summary): summary is string => Boolean(summary))
+  if (summaries.length <= 1) return 0
+  const uniqueCount = new Set(summaries).size
+  return Math.round(((uniqueCount - 1) / Math.max(1, summaries.length - 1)) * 100)
+}
+
 function buildCompetitorsFromAnswers(answers: ReportAnswer[]) {
   const map = new Map<string, { name: string; domain: string; mentions: number[] }>()
   answers.forEach(answer => {
@@ -652,7 +709,7 @@ function buildGlossary(): ReportGlossaryEntry[] {
 
 function buildInsights(input: {
   propertyName: string
-  scores: Array<ReportRun['geo_scores'][number]>
+  scores: ReportScore[]
   trends: Array<{ label: string; score: number | null; visibility: number | null }>
   queryTypeStats: ReportData['queryTypeStats']
   citationSummary: ReportData['citationSummary']

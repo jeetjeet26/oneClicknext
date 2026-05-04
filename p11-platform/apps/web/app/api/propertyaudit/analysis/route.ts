@@ -160,14 +160,20 @@ export async function GET(req: NextRequest) {
     // Extract cross-model analysis (same on all runs in batch)
     const analysis = batchRuns.find(r => r.cross_model_analysis)?.cross_model_analysis as CrossModelAnalysis | null
 
-    // Build per-model scores
-    const openaiRun = batchRuns.find(r => r.surface === 'openai')
-    const claudeRun = batchRuns.find(r => r.surface === 'claude')
-
-    const scores = {
-      openai: openaiRun?.geo_scores?.[0] || null,
-      claude: claudeRun?.geo_scores?.[0] || null
-    }
+    // Build per-surface scores for two-surface legacy and four-surface v1 batches.
+    const scores = Object.fromEntries(
+      batchRuns.map(r => [r.surface, r.geo_scores?.[0] || null])
+    )
+    const scoredRuns = batchRuns
+      .map(run => ({
+        surface: run.surface,
+        score: run.geo_scores?.[0]?.overall_score ?? null,
+        visibility: run.geo_scores?.[0]?.visibility_pct ?? null,
+      }))
+      .filter(run => typeof run.score === 'number')
+    const highest = [...scoredRuns].sort((a, b) => (b.score || 0) - (a.score || 0))[0] || null
+    const lowest = [...scoredRuns].sort((a, b) => (a.score || 0) - (b.score || 0))[0] || null
+    const scoreDifference = highest && lowest ? Math.abs((highest.score || 0) - (lowest.score || 0)) : 0
 
     // Determine batch status
     const allCompleted = batchRuns.every(r => r.status === 'completed')
@@ -204,11 +210,18 @@ export async function GET(req: NextRequest) {
       // Quick summary for UI
       summary: analysis ? {
         agreementRate: analysis.agreement_rate,
-        scoreDifference: analysis.score_comparison?.difference,
-        higherModel: analysis.score_comparison?.higher_model,
+        scoreDifference: analysis.score_comparison?.difference ?? scoreDifference,
+        higherModel: analysis.score_comparison?.higher_model ?? highest?.surface,
         keyInsightsCount: analysis.recommendations?.key_insights?.length || 0,
         actionItemsCount: analysis.recommendations?.action_items?.length || 0
-      } : null
+      } : {
+        agreementRate: null,
+        scoreDifference,
+        higherModel: highest?.surface || null,
+        lowestModel: lowest?.surface || null,
+        keyInsightsCount: 0,
+        actionItemsCount: 0,
+      }
     })
 
   } catch (error) {

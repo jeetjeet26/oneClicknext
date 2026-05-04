@@ -1,31 +1,67 @@
 'use client'
 
 import { useState } from 'react'
+import { useEffect } from 'react'
 import { X, Play, Sparkles, Globe, Repeat } from 'lucide-react'
+import { DEFAULT_AUDIT_SURFACES, getSurfaceLabel, type Surface } from '@/utils/propertyaudit/types'
+
+const SURFACE_OPTIONS: Array<{ id: Surface; description: string }> = [
+  { id: 'chatgpt', description: 'Grounded proxy for ChatGPT-style answers' },
+  { id: 'gemini', description: 'Grounded Gemini answer measurement' },
+  { id: 'perplexity', description: 'Citation-rich Perplexity answer capture' },
+  { id: 'google_ai', description: 'Google-grounded AI Overview proxy' },
+]
 
 interface RunAuditModalProps {
   isOpen: boolean
   onClose: () => void
   onSubmit: (config: {
-    surfaces: ('openai' | 'claude')[]
+    surfaces: Surface[]
     executionCount: number
   }) => Promise<void>
   queryCount: number
+  propertyId: string
 }
 
 export function RunAuditModal({
   isOpen,
   onClose,
   onSubmit,
-  queryCount
+  queryCount,
+  propertyId
 }: RunAuditModalProps) {
-  const [surfaces, setSurfaces] = useState<('openai' | 'claude')[]>(['openai', 'claude'])
+  const [surfaces, setSurfaces] = useState<Surface[]>(DEFAULT_AUDIT_SURFACES)
   const [executionCount, setExecutionCount] = useState(1)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [preflight, setPreflight] = useState<any>(null)
+
+  useEffect(() => {
+    if (!isOpen || !propertyId) return
+
+    const controller = new AbortController()
+    const loadPreflight = async () => {
+      try {
+        const res = await fetch(
+          `/api/propertyaudit/preflight?propertyId=${propertyId}&surfaces=${surfaces.join(',')}`,
+          { signal: controller.signal }
+        )
+        if (res.ok) {
+          setPreflight(await res.json())
+        }
+      } catch (error) {
+        if ((error as Error).name !== 'AbortError') {
+          console.error('Failed to load PropertyAudit preflight:', error)
+        }
+      }
+    }
+
+    loadPreflight()
+    return () => controller.abort()
+  }, [isOpen, propertyId, surfaces])
 
   if (!isOpen) return null
 
-  const toggleSurface = (surface: 'openai' | 'claude') => {
+  const toggleSurface = (surface: Surface) => {
     if (surfaces.includes(surface)) {
       if (surfaces.length > 1) { // Keep at least one selected
         setSurfaces(surfaces.filter(s => s !== surface))
@@ -52,6 +88,10 @@ export function RunAuditModal({
   }
 
   const totalExecutions = queryCount * executionCount * surfaces.length
+  const selectedReadiness = preflight?.surfaces?.filter((surface: any) => surfaces.includes(surface.surface)) || []
+  const hasMissingSurfaceConfig = selectedReadiness.some((surface: any) => !surface.ready)
+  const runtimeNotReady = preflight?.runtime && !preflight.runtime.ready
+  const canSubmit = surfaces.length > 0 && !isSubmitting && !hasMissingSurfaceConfig && !runtimeNotReady
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
@@ -75,46 +115,51 @@ export function RunAuditModal({
           {/* Surface Selection */}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Select AI Models
+              Select GEO Surfaces
             </label>
             <div className="space-y-2">
-              <button
-                type="button"
-                onClick={() => toggleSurface('openai')}
-                className={`w-full flex items-center gap-3 p-3 rounded-lg border-2 transition-all ${
-                  surfaces.includes('openai')
-                    ? 'border-green-500 bg-green-50 dark:bg-green-900/20'
-                    : 'border-gray-200 dark:border-gray-700 hover:border-gray-300'
-                }`}
-              >
-                <Sparkles className="w-5 h-5 text-green-500" />
-                <div className="flex-1 text-left">
-                  <div className="font-medium text-gray-900 dark:text-white">OpenAI</div>
-                  <div className="text-xs text-gray-500">GPT-4 Search / ChatGPT</div>
-                </div>
-                {surfaces.includes('openai') && (
-                  <div className="w-5 h-5 rounded-full bg-green-500 text-white flex items-center justify-center text-xs">✓</div>
-                )}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => toggleSurface('claude')}
-                className={`w-full flex items-center gap-3 p-3 rounded-lg border-2 transition-all ${
-                  surfaces.includes('claude')
-                    ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20'
-                    : 'border-gray-200 dark:border-gray-700 hover:border-gray-300'
-                }`}
-              >
-                <Globe className="w-5 h-5 text-purple-500" />
-                <div className="flex-1 text-left">
-                  <div className="font-medium text-gray-900 dark:text-white">Claude</div>
-                  <div className="text-xs text-gray-500">Claude 3.5 Sonnet</div>
-                </div>
-                {surfaces.includes('claude') && (
-                  <div className="w-5 h-5 rounded-full bg-purple-500 text-white flex items-center justify-center text-xs">✓</div>
-                )}
-              </button>
+              {SURFACE_OPTIONS.map((option, index) => {
+                const selected = surfaces.includes(option.id)
+                const Icon = index % 2 === 0 ? Sparkles : Globe
+                const readiness = preflight?.surfaces?.find((surface: any) => surface.surface === option.id)
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={() => toggleSurface(option.id)}
+                    className={`w-full flex items-center gap-3 p-3 rounded-lg border-2 transition-all ${
+                      selected
+                        ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20'
+                        : 'border-gray-200 dark:border-gray-700 hover:border-gray-300'
+                    }`}
+                  >
+                    <Icon className="w-5 h-5 text-indigo-500" />
+                    <div className="flex-1 text-left">
+                      <div className="flex items-center gap-2 font-medium text-gray-900 dark:text-white">
+                        {getSurfaceLabel(option.id)}
+                        {readiness && (
+                          <span className={`rounded-full px-2 py-0.5 text-[10px] ${
+                            readiness.ready
+                              ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
+                              : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'
+                          }`}>
+                            {readiness.ready ? 'Ready' : 'Missing config'}
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xs text-gray-500">{option.description}</div>
+                      {readiness?.missingKeys?.length > 0 && (
+                        <div className="mt-1 text-xs text-red-600 dark:text-red-400">
+                          Missing: {readiness.missingKeys.join(', ')}
+                        </div>
+                      )}
+                    </div>
+                    {selected && (
+                      <div className="w-5 h-5 rounded-full bg-indigo-500 text-white flex items-center justify-center text-xs">✓</div>
+                    )}
+                  </button>
+                )
+              })}
             </div>
           </div>
 
@@ -166,6 +211,16 @@ export function RunAuditModal({
                 <span className="font-semibold text-gray-900 dark:text-white">Total LLM calls:</span>
                 <span className="font-bold text-indigo-600">{totalExecutions}</span>
               </div>
+              {preflight?.runtime && (
+                <div className="border-t border-gray-300 dark:border-gray-600 pt-1 mt-1 text-xs text-gray-500">
+                  Runtime: Data engine · {preflight.runtime.ready ? 'ready' : 'not ready'}
+                  {!preflight.runtime.ready && preflight.runtime.dataEngine?.message ? (
+                    <div className="mt-1 text-red-600 dark:text-red-400">
+                      {preflight.runtime.dataEngine.message}
+                    </div>
+                  ) : null}
+                </div>
+              )}
             </div>
           </div>
 
@@ -173,7 +228,7 @@ export function RunAuditModal({
           <div className="flex items-center gap-3 pt-2">
             <button
               type="submit"
-              disabled={surfaces.length === 0 || isSubmitting}
+              disabled={!canSubmit}
               className="flex-1 flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isSubmitting ? (

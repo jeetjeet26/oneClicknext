@@ -184,9 +184,54 @@ describe('propertyaudit export route', () => {
     buildRunReportDataMock.mockResolvedValue({
       property: { name: 'P11 Local Demo Property' },
       runs: [{ surface: 'openai', model_name: 'gpt-5.2', started_at: '2026-03-16T00:00:00.000Z' }],
+      surfaceSummaries: [
+        {
+          surface: 'chatgpt',
+          label: 'ChatGPT',
+          measurementNote: 'Grounded API proxy for ChatGPT-style answer measurement.',
+          lastRunAt: '2026-03-16T00:00:00.000Z',
+          overallScore: 75,
+          visibilityPct: 50,
+        },
+      ],
+      siteAudit: {
+        accessMode: 'URLOnly',
+        websiteUrl: 'https://demo.example',
+        normalizedOrigin: 'https://demo.example',
+        homepageReachable: true,
+        robotsTxtReachable: true,
+        sitemapReachable: false,
+        llmsTxtReachable: false,
+        title: 'Demo',
+        metaDescription: 'Demo',
+        structuredDataTypes: [],
+        faqStructuredData: false,
+        organizationStructuredData: false,
+        answerBlockSignals: 0,
+        internalLinkCount: 1,
+        notes: ['No JSON-LD structured data was detected on the homepage.'],
+      },
       scores: [{ overall_score: 75, visibility_pct: 50, avg_llm_rank: 2, avg_link_rank: 3, avg_sov: 0.2, breakdown: { position: 75, link: 60, sov: 40, accuracy: 90 } }],
       answers: [],
-      recommendations: [],
+      recommendations: [
+        {
+          id: 'rec-1',
+          type: 'citation_opportunity',
+          priority: 'high',
+          title: 'Target a cited directory',
+          description: 'This directory appears often in answers.',
+          accessLevel: 'ThirdParty',
+          owner: 'partnerships',
+          status: 'todo',
+          targetUrl: null,
+          targetPageType: 'third_party_listing',
+          evidenceMode: 'URLOnly',
+          keywords: ['directory'],
+          impact: { score: 90, reason: 'Influential citation source' },
+          actionItems: ['Request listing inclusion'],
+          relatedQueries: [],
+        },
+      ],
       recommendationSummary: { total: 0, high: 0, medium: 0, low: 0 },
       queryTypeStats: [],
       citationSummary: { total: 0, brandPct: 0 },
@@ -207,6 +252,12 @@ describe('propertyaudit export route', () => {
     expect(response.headers.get('Content-Type')).toContain('text/markdown')
     expect(response.headers.get('X-PropertyAudit-Artifact-Format')).toBe('markdown')
     expect(buildRunReportDataMock).toHaveBeenCalledWith(serviceClient, 'run-1')
+    const markdown = await response.text()
+    expect(markdown).toContain('Executive Snapshot')
+    expect(markdown).toContain('Action Plan')
+    expect(markdown).toContain('Citation Targets')
+    expect(markdown).toContain('Access Level')
+    expect(markdown).toContain('URL-Only Readiness Note')
   })
 
   it('treats pdf export as print-view html', async () => {
@@ -238,6 +289,24 @@ describe('propertyaudit export route', () => {
     buildRunReportDataMock.mockResolvedValue({
       property: { name: 'P11 Local Demo Property' },
       runs: [{ surface: 'openai', model_name: 'gpt-5.2', started_at: '2026-03-16T00:00:00.000Z' }],
+      surfaceSummaries: [],
+      siteAudit: {
+        accessMode: 'URLOnly',
+        websiteUrl: null,
+        normalizedOrigin: null,
+        homepageReachable: false,
+        robotsTxtReachable: false,
+        sitemapReachable: false,
+        llmsTxtReachable: false,
+        title: null,
+        metaDescription: null,
+        structuredDataTypes: [],
+        faqStructuredData: false,
+        organizationStructuredData: false,
+        answerBlockSignals: 0,
+        internalLinkCount: 0,
+        notes: [],
+      },
       scores: [{ overall_score: 75, visibility_pct: 50, avg_llm_rank: 2, avg_link_rank: 3, avg_sov: 0.2, breakdown: { position: 75, link: 60, sov: 40, accuracy: 90 } }],
       answers: [],
       recommendations: [],

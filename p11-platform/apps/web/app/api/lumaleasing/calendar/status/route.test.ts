@@ -22,9 +22,12 @@ describe('Calendar status route', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.resetModules()
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-03-10T12:00:00.000Z'))
   })
 
   afterEach(() => {
+    vi.useRealTimers()
     vi.restoreAllMocks()
   })
 

@@ -190,10 +190,28 @@ export function ChatInterface({ conversationId: initialConversationId, onConvers
           isHumanMessage: isAgentMessage,
         })
       });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) {
+        const fallbackError =
+          typeof data?.content === 'string' && data.content.trim()
+            ? data.content
+            : typeof data?.error === 'string' && data.error.trim()
+              ? data.error
+              : `Request failed (${response.status})`;
 
-      if (!response.ok) throw new Error('API request failed');
+        const errorMsg: Message = {
+          id: (Date.now() + 1).toString(),
+          role: 'assistant',
+          content: fallbackError,
+          timestamp: new Date()
+        };
+        setMessages(prev => [...prev, errorMsg]);
+        return;
+      }
 
-      const data = await response.json();
+      if (!data || typeof data !== 'object') {
+        throw new Error('Invalid API response');
+      }
 
       // Update conversation ID if new one was created
       if (data.conversationId && !conversationId) {

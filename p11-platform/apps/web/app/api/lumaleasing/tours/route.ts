@@ -1,3 +1,11 @@
+// New tour booking write paths must go through `bookLumaLeasingTour`
+// in `utils/services/lumaleasing-tour-booking.ts`. This file's POST handler
+// retains its inline logic only because it is the public widget entry
+// point with rich availability/slot semantics; the shared service is now
+// the canonical write surface used by chat extraction and any future
+// LumaLeasing booking surface so they stay in lockstep on validation,
+// calendar sync, and confirmation email behavior.
+
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/utils/supabase/admin';
 import { generateTourCalendarResponse } from '@/utils/services/calendar-invite';

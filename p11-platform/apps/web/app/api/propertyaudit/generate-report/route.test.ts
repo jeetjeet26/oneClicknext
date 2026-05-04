@@ -160,13 +160,58 @@ describe('propertyaudit generate-report route', () => {
     buildRunReportDataMock.mockResolvedValue({
       property: { name: 'Aster House', address: { city: 'Austin', state: 'TX' } },
       runs: [{ id: 'run-1', surface: 'openai', model_name: 'gpt-5.2', started_at: '2026-03-16T00:00:00.000Z', finished_at: '2026-03-16T00:10:00.000Z', geo_scores: [{ overall_score: 72, visibility_pct: 66, avg_llm_rank: 2.3, avg_link_rank: 1.5, avg_sov: 0.5 }] }],
+      surfaceSummaries: [
+        {
+          surface: 'chatgpt',
+          label: 'ChatGPT',
+          measurementNote: 'Grounded API proxy for ChatGPT-style answer measurement.',
+          lastRunAt: '2026-03-16T00:00:00.000Z',
+          overallScore: 72,
+          visibilityPct: 66,
+        },
+      ],
+      siteAudit: {
+        accessMode: 'URLOnly',
+        websiteUrl: 'https://aster.example',
+        normalizedOrigin: 'https://aster.example',
+        homepageReachable: true,
+        robotsTxtReachable: true,
+        sitemapReachable: false,
+        llmsTxtReachable: false,
+        title: 'Aster House',
+        metaDescription: 'Apartments',
+        structuredDataTypes: ['FAQPage'],
+        faqStructuredData: true,
+        organizationStructuredData: false,
+        answerBlockSignals: 2,
+        internalLinkCount: 5,
+        notes: ['llms.txt was not reachable.'],
+      },
       queries: [],
       answers: [],
       competitors: [],
       scores: [{ overall_score: 72, visibility_pct: 66, avg_llm_rank: 2.3, avg_link_rank: 1.5, avg_sov: 0.5 }],
       recommendationSummary: { total: 0, high: 0, medium: 0, low: 0, byType: {} },
-      recommendations: [],
-      queryTypeStats: [],
+      recommendations: [
+        {
+          id: 'rec-1',
+          type: 'missing_keyword',
+          priority: 'high',
+          title: 'Create a neighborhood landing page',
+          description: 'Improve visibility for local prompts.',
+          accessLevel: 'CMSOrEditor',
+          owner: 'content',
+          status: 'todo',
+          targetUrl: 'https://aster.example/neighborhood',
+          targetPageType: 'local_landing_page',
+          evidenceMode: 'URLOnly',
+          keywords: ['best apartments near downtown'],
+          impact: { score: 80, reason: 'High-intent local prompt gap' },
+          actionItems: ['Create a page answering neighborhood questions'],
+          relatedQueries: [{ id: 'query-1', text: 'best apartments near downtown', type: 'local' }],
+        },
+      ],
+      queryTypeStats: [{ type: 'local', total: 1, presencePct: 25, avgRank: null, avgSov: null }],
       citationSummary: { total: 0, brandPct: 0, topDomains: [] },
       aiOverviewSummary: { totalTracked: 0, visibleCount: 0, visibilityPct: 0, byType: [] },
       trends: [],
@@ -192,5 +237,12 @@ describe('propertyaudit generate-report route', () => {
     expect(buildPropertyReportDataMock).not.toHaveBeenCalled()
     expect(text).toContain('Aster House')
     expect(text).toContain('GEO Visibility Report')
+    expect(text).toContain('Executive Snapshot')
+    expect(text).toContain('AI Visibility Position')
+    expect(text).toContain('Owned Content')
+    expect(text).toContain('Access Level')
+    expect(text).toContain('Public Site Discoverability')
+    expect(text).toContain('URL-only audit section uses public website signals')
+    expect(text).toContain('directional AI visibility evidence')
   })
 })

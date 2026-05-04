@@ -40,8 +40,8 @@ type WorkflowVisibility = {
 }
 
 function deriveWorkflowVisibility(workflow: {
-  status: string
-  workflow?: { steps?: unknown }
+  status: string | null
+  workflow?: { steps?: unknown } | null
   actions?: WorkflowAction[]
 }): WorkflowVisibility {
   const steps = Array.isArray(workflow.workflow?.steps) ? workflow.workflow.steps : []

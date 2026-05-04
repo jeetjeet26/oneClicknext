@@ -84,16 +84,29 @@ export async function GET(req: NextRequest) {
     const results: Array<{ platform: string; accountId: string; synced: number; error?: string; retryable?: boolean }> = []
 
     for (const conn of connections) {
+      if (!conn.property_id) {
+        results.push({
+          platform: conn.platform,
+          accountId: conn.account_id,
+          synced: 0,
+          error: 'Ad connection is missing property_id',
+          retryable: false,
+        })
+        continue
+      }
+
+      const propertyId = conn.property_id
+
       const executeConnectionSync = async (): Promise<SyncAdsResult> => {
         switch (conn.platform) {
           case 'google_ads':
             return runConnectionSync(
-              () => syncGoogleAdsConnection(conn.id, conn.account_id, conn.property_id),
+              () => syncGoogleAdsConnection(conn.id, conn.account_id, propertyId),
               2
             )
           case 'meta_ads':
             return runConnectionSync(
-              () => syncMetaAdsConnection(conn.id, conn.account_id, conn.property_id),
+              () => syncMetaAdsConnection(conn.id, conn.account_id, propertyId),
               2
             )
           default:
@@ -105,7 +118,7 @@ export async function GET(req: NextRequest) {
         typeof conn.org_id === 'string' && conn.org_id.length > 0
           ? await runSharedExecutorJob({
               orgId: conn.org_id,
-              propertyId: conn.property_id,
+              propertyId,
               domain: 'cron.sync-ads',
               subjectType: 'ad_account_connection',
               subjectId: conn.id,

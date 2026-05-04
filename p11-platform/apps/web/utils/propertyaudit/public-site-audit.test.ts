@@ -1,0 +1,112 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { auditPublicSite } from './public-site-audit'
+
+describe('auditPublicSite', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('returns URL-only blockers when no URL is configured', async () => {
+    const audit = await auditPublicSite(null)
+
+    expect(audit.homepageReachable).toBe(false)
+    expect(audit.notes).toContain('No public website URL is configured for this property.')
+    expect(audit.pages).toEqual([])
+  })
+
+  it('extracts public crawl and structured-data signals', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/robots.txt') || url.endsWith('/sitemap.xml') || url.endsWith('/llms.txt')) {
+        return new Response('ok', { status: 200 })
+      }
+
+      return new Response(`
+        <html>
+          <head>
+            <title>Test Property</title>
+            <meta name="description" content="Great apartments">
+            <script type="application/ld+json">
+              {"@context":"https://schema.org","@type":"FAQPage"}
+            </script>
+          </head>
+          <body>
+            <h2>What amenities are available?</h2>
+            <a href="/floorplans">Floorplans</a>
+          </body>
+        </html>
+      `, { status: 200 })
+    }))
+
+    const audit = await auditPublicSite('https://example.com')
+
+    expect(audit.homepageReachable).toBe(true)
+    expect(audit.robotsTxtReachable).toBe(true)
+    expect(audit.sitemapReachable).toBe(true)
+    expect(audit.llmsTxtReachable).toBe(true)
+    expect(audit.title).toBe('Test Property')
+    expect(audit.structuredDataTypes).toContain('FAQPage')
+    expect(audit.answerBlockSignals).toBeGreaterThan(0)
+    expect(audit.pages?.some(page => page.pageType === 'floorplans')).toBe(true)
+    expect(audit.crawlSummary?.pagesAudited).toBeGreaterThan(0)
+  })
+
+  it('discovers same-origin sitemap and internal-link pages', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/robots.txt') || url.endsWith('/llms.txt')) {
+        return new Response('ok', { status: 200 })
+      }
+      if (url.endsWith('/sitemap.xml')) {
+        return new Response(`
+          <urlset>
+            <url><loc>https://example.com/amenities</loc></url>
+            <url><loc>https://example.com/neighborhood</loc></url>
+            <url><loc>https://other.example/ignored</loc></url>
+          </urlset>
+        `, { status: 200, headers: { 'content-type': 'application/xml' } })
+      }
+      if (url.endsWith('/amenities')) {
+        return new Response('<html><head><title>Amenities</title></head><body><h1>Amenities</h1><p>Pool, fitness center, parking, clubhouse, package lockers, and pet spa amenities.</p></body></html>', { status: 200 })
+      }
+      if (url.endsWith('/neighborhood')) {
+        return new Response('<html><head><title>Neighborhood</title></head><body><h1>Neighborhood</h1><p>Near downtown, restaurants, transit, schools, and major employers.</p></body></html>', { status: 200 })
+      }
+
+      return new Response(`
+        <html>
+          <head><title>Home</title><meta name="description" content="Apartments"></head>
+          <body>
+            <a href="/faq">FAQ</a>
+            <a href="https://external.example/floorplans">External</a>
+            <h1>Home</h1>
+            <p>Welcome to our apartment community.</p>
+          </body>
+        </html>
+      `, { status: 200 })
+    }))
+
+    const audit = await auditPublicSite('example.com')
+    const pages = audit.pages || []
+
+    expect(audit.discoveredUrls).toContain('https://example.com/amenities')
+    expect(audit.discoveredUrls).toContain('https://example.com/neighborhood')
+    expect(audit.discoveredUrls).toContain('https://example.com/faq')
+    expect(audit.discoveredUrls).not.toContain('https://external.example/floorplans')
+    expect(pages.some(page => page.pageType === 'amenities')).toBe(true)
+    expect(pages.some(page => page.pageType === 'neighborhood')).toBe(true)
+    expect(audit.crawlSummary?.discoverySources).toContain('sitemap.xml')
+    expect(audit.crawlSummary?.discoverySources).toContain('homepage_links')
+  })
+
+  it('rejects local or private hosts before fetching', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const audit = await auditPublicSite('http://localhost:3000')
+
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(audit.homepageReachable).toBe(false)
+    expect(audit.notes).toContain('The configured website URL is not safe for URL-only auditing.')
+  })
+})

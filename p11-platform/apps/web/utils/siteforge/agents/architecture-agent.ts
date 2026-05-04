@@ -323,7 +323,6 @@ Plan the optimal site architecture that:
 - No copied competitor or reference-site phrasing
 
 Use the available WordPress blocks to meet this quality bar.`
-`
     
     const response = await this.callClaude(prompt, {
       systemPrompt,

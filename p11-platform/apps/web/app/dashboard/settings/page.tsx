@@ -114,11 +114,18 @@ export default function SettingsPage() {
           .from('integration_credentials')
           .select('platform, status')
           .eq('property_id', currentProperty.id)
-          .in('platform', ['yardi', 'realpage', 'salesforce', 'hubspot'])
+          .in('platform', ['yardi', 'realpage', 'salesforce', 'hubspot', 'lasso'])
           .eq('status', 'connected')
           .single()
         
-        setCrmIntegration(crmData)
+        setCrmIntegration(
+          crmData
+            ? {
+                platform: crmData.platform,
+                status: crmData.status || 'unknown',
+              }
+            : null
+        )
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load settings')

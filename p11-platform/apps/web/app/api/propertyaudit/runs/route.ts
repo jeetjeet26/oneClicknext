@@ -6,11 +6,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
+import { isSupportedSurface, type Surface } from '@/utils/propertyaudit/types'
 
 export interface GeoRunWithScore {
   id: string
   propertyId: string
-  surface: 'openai' | 'claude'
+  surface: Surface
   modelName: string
   status: 'queued' | 'running' | 'completed' | 'failed'
   queryCount: number
@@ -79,7 +80,7 @@ function computeStatusDetail(
 }
 
 function isValidSurface(value: unknown): value is GeoRunWithScore['surface'] {
-  return value === 'openai' || value === 'claude'
+  return typeof value === 'string' && isSupportedSurface(value)
 }
 
 function isValidStatus(value: unknown): value is GeoRunWithScore['status'] {
@@ -116,9 +117,9 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
-    if (surface && surface !== 'openai' && surface !== 'claude') {
+    if (surface && !isSupportedSurface(surface)) {
       return NextResponse.json(
-        { error: 'Invalid surface. Allowed values: openai, claude' },
+        { error: 'Invalid surface.' },
         { status: 400 }
       )
     }
@@ -140,7 +141,7 @@ export async function GET(req: NextRequest) {
       .order('started_at', { ascending: false })
       .range(offset, offset + limit - 1)
 
-    if (surface === 'openai' || surface === 'claude') {
+    if (surface && isSupportedSurface(surface)) {
       query = query.eq('surface', surface)
     }
 
@@ -237,16 +238,24 @@ export async function GET(req: NextRequest) {
       .filter((run): run is GeoRunWithScore => run !== null)
 
     // Get latest scores per surface for summary
-    const latestOpenai = runsWithDiffs.find(r => r.surface === 'openai' && r.score)
-    const latestClaude = runsWithDiffs.find(r => r.surface === 'claude' && r.score)
+    const summaryBySurface = Object.fromEntries(
+      Array.from(
+        new Map(
+          runsWithDiffs
+            .filter(run => run.score)
+            .map(run => [run.surface, run.score])
+        ).entries()
+      )
+    )
 
     return NextResponse.json({
       runs: runsWithDiffs,
       total: count || runs?.length || 0,
       summary: {
-        openai: latestOpenai?.score || null,
-        claude: latestClaude?.score || null,
-        combined: calculateCombinedScore(latestOpenai?.score, latestClaude?.score),
+        openai: summaryBySurface.openai || summaryBySurface.chatgpt || null,
+        claude: summaryBySurface.claude || null,
+        surfaces: summaryBySurface,
+        combined: calculateCombinedScore(Object.values(summaryBySurface)),
       },
     })
   } catch (error) {
@@ -257,12 +266,9 @@ export async function GET(req: NextRequest) {
 
 // Calculate combined score across surfaces
 function calculateCombinedScore(
-  openai: GeoRunWithScore['score'] | null | undefined,
-  claude: GeoRunWithScore['score'] | null | undefined
+  scoresInput: Array<GeoRunWithScore['score'] | null | undefined>
 ): { overallScore: number; visibilityPct: number } | null {
-  if (!openai && !claude) return null
-  
-  const scores = [openai, claude].filter(Boolean) as NonNullable<GeoRunWithScore['score']>[]
+  const scores = scoresInput.filter(Boolean) as NonNullable<GeoRunWithScore['score']>[]
   
   if (scores.length === 0) return null
   

@@ -8,6 +8,38 @@ import type { BrandIntelligence, PropertyContext, BrandSource } from '@/types/si
 // Use service client since this runs in background context (no HTTP request)
 const getSupabase = () => createServiceClient()
 
+type JsonRecord = Record<string, any>
+
+function asRecord(value: unknown): JsonRecord {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as JsonRecord)
+    : {}
+}
+
+function formatEmbeddingForPgVector(embedding: number[]): string {
+  return `[${embedding.join(',')}]`
+}
+
+function getPropertyAddress(address: unknown, settings: unknown): PropertyContext['address'] {
+  const addressRecord = asRecord(address)
+  if (typeof addressRecord.city === 'string') {
+    return {
+      street: typeof addressRecord.street === 'string' ? addressRecord.street : undefined,
+      city: addressRecord.city,
+      state: typeof addressRecord.state === 'string' ? addressRecord.state : '',
+      zip: typeof addressRecord.zip === 'string' ? addressRecord.zip : undefined,
+      country: typeof addressRecord.country === 'string' ? addressRecord.country : 'USA',
+    }
+  }
+
+  const settingsRecord = asRecord(settings)
+  return {
+    city: typeof settingsRecord.city === 'string' ? settingsRecord.city : '',
+    state: '',
+    country: 'USA',
+  }
+}
+
 /**
  * Get brand intelligence with fallback priority:
  * 1. BrandForge (structured data)
@@ -47,6 +79,16 @@ async function extractFromBrandForge(propertyId: string): Promise<BrandIntellige
     if (error || !brandforge || brandforge.generation_status !== 'complete') {
       return null
     }
+
+    const nameStory = asRecord(brandforge.section_5_name_story)
+    const introduction = asRecord(brandforge.section_1_introduction)
+    const positioning = asRecord(brandforge.section_2_positioning)
+    const targetAudience = asRecord(brandforge.section_3_target_audience)
+    const personas = asRecord(brandforge.section_4_personas)
+    const colors = asRecord(brandforge.section_8_colors)
+    const typography = asRecord(brandforge.section_7_typography)
+    const logo = asRecord(brandforge.section_6_logo)
+    const conversationSummary = asRecord(brandforge.conversation_summary)
     
     // Extract structured brand data
     return {
@@ -54,32 +96,32 @@ async function extractFromBrandForge(propertyId: string): Promise<BrandIntellige
       structured: true,
       confidence: 0.95,
       data: {
-        brandName: brandforge.section_5_name_story?.name,
-        tagline: brandforge.section_1_introduction?.tagline,
-        positioning: brandforge.section_2_positioning?.statement,
-        targetAudience: brandforge.section_3_target_audience?.primary,
-        personas: brandforge.section_4_personas?.personas,
+        brandName: nameStory.name,
+        tagline: introduction.tagline,
+        positioning: positioning.statement,
+        targetAudience: targetAudience.primary,
+        personas: personas.personas,
         colors: {
-          primary: brandforge.section_8_colors?.primary || [],
-          secondary: brandforge.section_8_colors?.secondary || [],
-          palette: brandforge.section_8_colors?.palette
+          primary: colors.primary || [],
+          secondary: colors.secondary || [],
+          palette: colors.palette
         },
         typography: {
-          primaryFont: brandforge.section_7_typography?.primaryFont,
-          secondaryFont: brandforge.section_7_typography?.secondaryFont
+          primaryFont: typography.primaryFont,
+          secondaryFont: typography.secondaryFont
         },
-        logo: brandforge.section_6_logo?.logoUrl ? {
-          url: brandforge.section_6_logo.logoUrl,
-          concept: brandforge.section_6_logo.concept,
-          style: brandforge.section_6_logo.style
+        logo: logo.logoUrl ? {
+          url: logo.logoUrl,
+          concept: logo.concept,
+          style: logo.style
         } : undefined,
         photoStyle: brandforge.section_10_photo_yep,
-        brandVoice: brandforge.conversation_summary?.brandPersonality,
-        brandPersonality: brandforge.conversation_summary?.brandPersonality ? 
-          [brandforge.conversation_summary.brandPersonality] : undefined,
-        keyMessages: brandforge.section_1_introduction?.keyMessages,
-        contentPillars: brandforge.section_1_introduction?.contentPillars
-      }
+        brandVoice: conversationSummary.brandPersonality,
+        brandPersonality: conversationSummary.brandPersonality ? 
+          [conversationSummary.brandPersonality] : undefined,
+        keyMessages: introduction.keyMessages,
+        contentPillars: introduction.contentPillars
+      } as BrandIntelligence['data']
     }
   } catch (error) {
     console.error('Error extracting from BrandForge:', error)
@@ -97,7 +139,7 @@ async function extractFromKnowledgeBase(propertyId: string): Promise<BrandIntell
     // Find all brand-related documents
     const { data: docs, error } = await supabase
       .from('documents')
-      .select('id, file_name, file_url, metadata, content')
+      .select('id, original_file_name, original_file_url, metadata, content')
       .eq('property_id', propertyId)
       .in('metadata->type', ['brand_guide', 'brochure', 'logo', 'marketing'])
     
@@ -109,7 +151,7 @@ async function extractFromKnowledgeBase(propertyId: string): Promise<BrandIntell
     const brandContext = await semanticSearchBrand(propertyId)
     
     // Analyze PDFs with Gemini Vision (for documents with file URLs)
-    const visualBrandData = await analyzeBrandDocuments(docs.filter(d => d.file_url))
+    const visualBrandData = await analyzeBrandDocuments(docs.filter(d => d.original_file_url))
     
     // Use Gemini 3 to synthesize all sources into structured brand data
     const synthesized = await synthesizeBrandData({
@@ -150,9 +192,10 @@ async function semanticSearchBrand(propertyId: string): Promise<string | null> {
     
     for (const query of brandQueries) {
       const { data, error } = await supabase.rpc('match_documents', {
-        query_embedding: await generateEmbedding(query),
+        query_embedding: formatEmbeddingForPgVector(await generateEmbedding(query)),
         filter_property: propertyId,
-        match_count: 3
+        match_count: 3,
+        match_threshold: 0.7
       })
       
       if (!error && data) {
@@ -241,11 +284,7 @@ export async function getPropertyContext(propertyId: string): Promise<PropertyCo
   return {
     id: property.id,
     name: property.name,
-    address: property.address || { 
-      city: property.settings?.city || '', 
-      state: '', 
-      country: 'USA' 
-    },
+    address: getPropertyAddress(property.address, property.settings),
     amenities: property.amenities || [],
     floorplans: [], // TODO: Get from floorplans table if needed
     photos: (photos || []).map((p: any) => ({
@@ -258,8 +297,8 @@ export async function getPropertyContext(propertyId: string): Promise<PropertyCo
       parking: property.parking_info
     },
     specialFeatures: property.special_features || [],
-    unitCount: property.unit_count,
-    yearBuilt: property.year_built
+    unitCount: property.unit_count ?? undefined,
+    yearBuilt: property.year_built ?? undefined
   }
 }
 

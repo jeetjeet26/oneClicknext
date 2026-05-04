@@ -1,15 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/utils/supabase/admin';
-import { sendEmail } from '@/utils/services/messaging';
 import { syncLeadToCRM } from '@/utils/services/crm-sync';
-import { getCalendarConfig, createCalendarEvent } from '@/utils/services/google-calendar';
 import { startWorkflow } from '@/utils/services/workflow-processor';
-import { trackEngagementEvent } from '@/utils/services/engagement-tracker';
 import { chatLimiter, getRateLimitKey, rateLimitHeaders } from '@/utils/services/rate-limiter';
 import { buildCorsHeaders, corsPreflightResponse, serverError, rateLimited, badRequest } from '@/utils/services/api-helpers';
 import { validateBody, chatRequestSchema } from '@/utils/services/validation';
 import { auditLog, getRequestIp } from '@/utils/services/audit-logger';
 import { createRequestContext } from '@/utils/services/request-context';
+import { bookLumaLeasingTour } from '@/utils/services/lumaleasing-tour-booking';
+import { trackEngagementEvent } from '@/utils/services/engagement-tracker';
 import OpenAI from 'openai';
 
 // Type for extracted conversation data
@@ -153,7 +152,7 @@ async function findRecentDuplicateReply(
   userMessage: string
 ): Promise<DuplicateReplyResult | null> {
   try {
-    const messagesTable = supabase.from('messages') as {
+    const messagesTable = supabase.from('messages') as unknown as {
       select?: (columns: string) => {
         eq: (column: string, value: string) => {
           order: (column: string, options: { ascending: boolean }) => {
@@ -218,7 +217,13 @@ async function extractAndProcessConversation(
     widget_name?: string | null
   }
 ): Promise<void> {
-  console.log('[LumaLeasing] Starting extraction for property:', propertyId, 'session:', sessionId, 'conversation:', conversationId);
+  // Low-PII trace; conversation content is intentionally excluded.
+  console.log('[LumaLeasing] extraction_started', {
+    propertyId,
+    sessionId,
+    conversationId,
+    messageCount: messages.length,
+  });
   
   // Build conversation text for analysis
   const conversationText = messages
@@ -269,7 +274,19 @@ Respond with ONLY valid JSON in this exact format:
     if (!rawJson) return;
 
     const data: ExtractedData = JSON.parse(rawJson);
-    console.log('[LumaLeasing] Extracted data:', JSON.stringify(data));
+    // Avoid logging extracted PII (name/email/phone/notes). Capture only
+    // structured presence flags so we keep observability without leaking
+    // contact data into shared log sinks.
+    console.log('[LumaLeasing] extraction_result', {
+      propertyId,
+      hasLead: Boolean(data.lead),
+      hasEmail: Boolean(data.lead?.email),
+      hasPhone: Boolean(data.lead?.phone),
+      hasFirstName: Boolean(data.lead?.first_name),
+      tourRequested: Boolean(data.tour?.requested),
+      hasTourDate: Boolean(data.tour?.date),
+      hasTourTime: Boolean(data.tour?.time),
+    });
 
     // Generate conversation summary for lead notes
     const summaryPrompt = `Summarize this conversation in 2-3 concise sentences for a CRM note. Focus on:
@@ -327,11 +344,20 @@ Write a professional CRM note (no bullet points, just flowing text):`;
 
         if (Object.keys(updates).length > 0) {
           await supabase.from('leads').update(updates).eq('id', leadId);
-          console.log('[LumaLeasing] Updated lead:', leadId, updates);
+          console.log('[LumaLeasing] lead_updated', {
+            leadId,
+            updatedFields: Object.keys(updates),
+          });
         }
       } else {
         // Create new lead
-        console.log('[LumaLeasing] Creating new lead for property:', propertyId, 'with data:', leadData);
+        console.log('[LumaLeasing] creating_new_lead', {
+          propertyId,
+          hasEmail: Boolean(leadData.email),
+          hasPhone: Boolean(leadData.phone),
+          hasFirstName: Boolean(leadData.first_name),
+          hasLastName: Boolean(leadData.last_name),
+        });
         
         // Prepare lead notes with conversation summary
         const timestamp = new Date().toLocaleString('en-US', { 
@@ -360,7 +386,7 @@ Write a professional CRM note (no bullet points, just flowing text):`;
           console.error('[LumaLeasing] Failed to create lead:', error);
         } else if (newLead) {
           leadId = newLead.id;
-          console.log('[LumaLeasing] Created new lead:', leadId);
+          console.log('[LumaLeasing] lead_created', { leadId, propertyId });
 
           // Score the new lead
           try {
@@ -381,7 +407,10 @@ Write a professional CRM note (no bullet points, just flowing text):`;
                     score_bucket: scoreData.score_bucket 
                   })
                   .eq('id', leadId);
-                console.log('[LumaLeasing] Scored new lead:', leadId, scoreData);
+                console.log('[LumaLeasing] lead_scored', {
+                  leadId,
+                  scoreBucket: scoreData.score_bucket,
+                });
               }
             }
           } catch (scoreError) {
@@ -424,7 +453,7 @@ Write a professional CRM note (no bullet points, just flowing text):`;
             if (sessionError) {
               console.error('[LumaLeasing] Failed to update session:', sessionError);
             } else {
-              console.log('[LumaLeasing] Updated session', sessionId, 'with lead', leadId);
+              console.log('[LumaLeasing] session_lead_linked', { sessionId, leadId });
             }
           } else {
             console.warn('[LumaLeasing] No sessionId to update with lead');
@@ -443,160 +472,42 @@ Write a professional CRM note (no bullet points, just flowing text):`;
       }
     }
 
-    // Process tour request if detected with date/time
+    // Process tour request if detected with date/time. The shared booking
+    // service is the single canonical write path, so chat extraction goes
+    // through the same availability validation + side effects as the public
+    // tours POST endpoint.
     const tourData = data.tour;
-    if (tourData?.requested && tourData.date && leadId) {
+    if (tourData?.requested && tourData.date && leadId && leadData?.email) {
       const requestedTourTime = tourData.time || '10:00';
-      // Check if tour already exists for this lead on this date
-      const { data: existingTour } = await supabase
-        .from('tour_bookings')
-        .select('id')
-        .eq('lead_id', leadId)
-        .eq('scheduled_date', tourData.date)
-        .eq('scheduled_time', `${requestedTourTime}:00`)
-        .in('status', ['scheduled', 'confirmed'])
-        .maybeSingle();
+      const propertyName = config.properties?.name || 'our community';
+      const propertyAddress =
+        config.properties?.address?.street || config.properties?.address?.full;
 
-      if (!existingTour) {
-        // Create tour booking
-        const tourTime = requestedTourTime;
-        const { data: booking, error: bookingError } = await supabase
-          .from('tour_bookings')
-          .insert({
-            property_id: propertyId,
-            lead_id: leadId,
-            scheduled_date: tourData.date,
-            scheduled_time: tourTime,
-            duration_minutes: 30,
-            special_requests: tourData.notes,
-            source: 'lumaleasing',
-            booked_via_conversation_id: conversationId,
-            status: 'confirmed',
-          })
-          .select()
-          .single();
+      const bookingResult = await bookLumaLeasingTour({
+        supabase,
+        propertyId,
+        propertyName,
+        propertyAddress,
+        leadId,
+        leadInfo: {
+          first_name: leadData.first_name || undefined,
+          last_name: leadData.last_name || undefined,
+          email: leadData.email,
+          phone: leadData.phone || undefined,
+        },
+        bookingDate: tourData.date,
+        bookingTime: requestedTourTime,
+        specialRequests: tourData.notes || null,
+        source: 'lumaleasing_extraction',
+        conversationId: conversationId ?? null,
+      });
 
-        if (!bookingError && booking) {
-          console.log('[LumaLeasing] Created tour booking:', booking.id);
-
-          // Create activity on lead
-          await supabase.from('lead_activities').insert({
-            lead_id: leadId,
-            type: 'tour_booked',
-            description: `Tour booked for ${tourData.date} at ${tourTime} via AI chat`,
-            metadata: { booking_id: booking.id, source: 'lumaleasing_extraction' },
-          });
-
-          // Track tour_scheduled engagement event (non-blocking)
-          trackEngagementEvent({
-            leadId,
-            propertyId,
-            eventType: 'tour_scheduled',
-            metadata: { booking_id: booking.id, source: 'lumaleasing_chat_extraction' },
-          }).catch(e => console.error('[LumaLeasing Chat] Tour engagement tracking failed (non-blocking):', e))
-
-          // Update lead status
-          await supabase
-            .from('leads')
-            .update({ status: 'tour_booked' })
-            .eq('id', leadId);
-
-          // Create Google Calendar event (if calendar connected)
-          const propertyName = config.properties?.name || 'our community';
-          const propertyAddress = config.properties?.address?.street || config.properties?.address?.full;
-          
-          try {
-            const calendarConfig = await getCalendarConfig(propertyId);
-            
-            if (calendarConfig && calendarConfig.token_status === 'healthy') {
-              console.log(`[LumaLeasing] Creating Google Calendar event for booking ${booking.id}`);
-              
-              const calendarEvent = await createCalendarEvent(calendarConfig, {
-                propertyName,
-                prospectName: `${leadData?.first_name || ''} ${leadData?.last_name || ''}`.trim() || 'Guest',
-                prospectEmail: leadData?.email || '',
-                prospectPhone: leadData?.phone || undefined,
-                tourDate: tourData.date,
-                tourTime: tourTime,
-                specialRequests: tourData.notes || undefined,
-                propertyAddress,
-              });
-
-              // Store event ID for two-way sync
-              await supabase
-                .from('calendar_events')
-                .insert({
-                  agent_calendar_id: calendarConfig.id,
-                  tour_booking_id: booking.id,
-                  google_event_id: calendarEvent.eventId,
-                  sync_status: 'synced',
-                  last_synced_at: new Date().toISOString(),
-                });
-
-              console.log(`[LumaLeasing] ✅ Created Google Calendar event: ${calendarEvent.eventId}`);
-            } else {
-              console.log(`[LumaLeasing] ⚠️ Google Calendar not connected or unhealthy, skipping event creation`);
-            }
-          } catch (calendarError) {
-            // Calendar event creation is non-blocking - don't fail the extraction
-            console.error(`[LumaLeasing] ⚠️ Google Calendar event creation failed (non-blocking):`, calendarError);
-            await supabase.from('lead_activities').insert({
-              lead_id: leadId,
-              type: 'calendar_sync_failed',
-              description: `Google Calendar sync failed for booking ${booking.id}`,
-              metadata: {
-                booking_id: booking.id,
-                reason: calendarError instanceof Error ? calendarError.message : 'unknown_error',
-              },
-            });
-          }
-
-          // Re-score the lead (tour booking adds points)
-          try {
-            const { data: scoreId } = await supabase.rpc('score_lead', { p_lead_id: leadId });
-            if (scoreId) {
-              const { data: scoreData } = await supabase
-                .from('lead_scores')
-                .select('total_score, score_bucket')
-                .eq('id', scoreId)
-                .single();
-              
-              if (scoreData) {
-                await supabase
-                  .from('leads')
-                  .update({ 
-                    score: scoreData.total_score, 
-                    score_bucket: scoreData.score_bucket 
-                  })
-                  .eq('id', leadId);
-                console.log('[LumaLeasing] Re-scored lead after tour:', leadId, scoreData);
-              }
-            }
-          } catch (scoreError) {
-            console.error('[LumaLeasing] Failed to re-score lead:', scoreError);
-          }
-
-          // Send confirmation email if we have an email
-          if (leadData?.email) {
-            const formattedDate = new Date(tourData.date + 'T00:00:00').toLocaleDateString('en-US', { 
-              weekday: 'long', month: 'long', day: 'numeric' 
-            });
-            const hour = parseInt(tourTime.split(':')[0]);
-            const formattedTime = `${hour % 12 || 12}:${tourTime.split(':')[1]} ${hour >= 12 ? 'PM' : 'AM'}`;
-
-            sendEmail(
-              leadData.email,
-              `Your Tour at ${propertyName} is Confirmed! 📅`,
-              `Hi ${leadData.first_name || 'there'}!\n\nYour tour at ${propertyName} is confirmed!\n\n📅 Date: ${formattedDate}\n🕐 Time: ${formattedTime}\n\nWe look forward to seeing you!\n\nThe ${propertyName} Team`,
-            ).then(result => {
-              if (result.success) {
-                console.log('[LumaLeasing] Tour confirmation email sent to', leadData.email);
-              } else {
-                console.error('[LumaLeasing] Failed to send tour email:', result.error);
-              }
-            }).catch(err => console.error('[LumaLeasing] Email error:', err));
-          }
-        }
+      if (!bookingResult.ok) {
+        console.error(
+          '[LumaLeasing] Chat extraction tour booking rejected:',
+          bookingResult.reason,
+          bookingResult.message
+        );
       }
     }
   } catch (error) {

@@ -266,7 +266,7 @@ export async function POST(request: NextRequest) {
 
       case 'requeue-dead-letter': {
         const leadIds = Array.isArray(params.leadIds)
-          ? params.leadIds.filter((id): id is string => typeof id === 'string' && id.length > 0)
+          ? params.leadIds.filter((id: unknown): id is string => typeof id === 'string' && id.length > 0)
           : []
 
         if (leadIds.length === 0) {
@@ -451,7 +451,7 @@ export async function GET(request: NextRequest) {
           .from('integration_credentials')
           .select('*')
           .eq('property_id', propertyId)
-          .in('platform', ['crm', 'pms', 'yardi', 'realpage', 'salesforce', 'hubspot'])
+          .in('platform', ['crm', 'pms', 'yardi', 'realpage', 'salesforce', 'hubspot', 'lasso'])
           .single()
 
         if (integrationError && integrationError.code !== 'PGRST116') {

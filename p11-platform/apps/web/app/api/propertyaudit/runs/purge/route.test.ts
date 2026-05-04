@@ -91,7 +91,7 @@ describe('propertyaudit runs purge route', () => {
 
     expect(response.status).toBe(400)
     await expect(response.json()).resolves.toEqual({
-      error: 'Invalid surfaces. Allowed values: openai, claude',
+      error: 'Invalid surfaces.',
     })
     expect(createServiceClientMock).not.toHaveBeenCalled()
   })

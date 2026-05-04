@@ -1,5 +1,15 @@
 'use client';
 
+/**
+ * Internal-only React reference widget. Not the canonical client embed.
+ *
+ * Clients embed LumaLeasing via `public/lumaleasing.js`. This component is
+ * retained for in-app preview and prototyping inside the dashboard; the
+ * `/lumaleasing/demo` route now loads the embed script directly so the
+ * preview matches what clients actually deploy. Do NOT recommend or document
+ * this component as the public widget for property sites.
+ */
+
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { MessageCircle, X, Send, User, Bot, Calendar, ChevronLeft, Loader2, CheckCircle2, Sparkles } from 'lucide-react';
 

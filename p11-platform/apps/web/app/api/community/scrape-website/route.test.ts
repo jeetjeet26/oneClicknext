@@ -104,7 +104,7 @@ describe('community scrape-website route', () => {
 
     expect(response.status).toBe(200)
     expect(adminFromMock).toHaveBeenCalledWith('properties')
-    expect(updateMock).toHaveBeenCalledWith({ website_url: 'https://example.com' })
+    expect(updateMock).toHaveBeenCalledWith({ website_url: 'https://example.com/' })
     await expect(response.json()).resolves.toMatchObject({
       success: true,
       documentsCreated: 2,

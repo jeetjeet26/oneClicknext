@@ -22,7 +22,7 @@ router = APIRouter(prefix="/jobs/propertyaudit", tags=["PropertyAudit"])
 
 class RunRequest(BaseModel):
     run_id: str
-    surface: Literal["openai", "claude"]
+    surface: Literal["openai", "claude", "chatgpt", "gemini", "perplexity", "google_ai"]
     batch_id: Optional[str] = None
 
 
@@ -54,7 +54,7 @@ async def _maybe_analyze_batch(batch_id: Optional[str]):
 
     statuses = {run.get("status") for run in runs}
     surfaces = {run.get("surface") for run in runs}
-    if statuses == {"completed"} and {"openai", "claude"}.issubset(surfaces):
+    if statuses == {"completed"} and len(surfaces) >= 2:
         analyzer = CrossModelAnalyzer(supabase)
         analysis = await analyzer.analyze_batch(batch_id)
         if not analysis.get("success"):

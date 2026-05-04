@@ -59,15 +59,34 @@ export function ContentRecommendations({ propertyId, runId }: ContentRecommendat
 
   const handleExport = () => {
     const csvContent = [
-      ['Priority', 'Type', 'Title', 'Keywords', 'Impact Score', 'Action Items'].join(','),
+      [
+        'Priority',
+        'Type',
+        'Title',
+        'Target URL',
+        'Target Page Type',
+        'Owner',
+        'Access Level',
+        'Keywords',
+        'Impact Score',
+        'Evidence',
+        'Implementation Steps',
+        'Acceptance Criteria',
+      ].join(','),
       ...filteredRecommendations.map(r =>
         [
           r.priority,
           r.type,
           `"${r.title}"`,
+          `"${r.targetUrl || ''}"`,
+          `"${r.targetPageType || ''}"`,
+          r.owner || '',
+          r.accessLevel || '',
           `"${r.keywords.join('; ')}"`,
           r.impact.score,
-          `"${r.actionItems.join('; ')}"`,
+          `"${(r.evidence || []).join('; ')}"`,
+          `"${(r.implementationSteps || r.actionItems).join('; ')}"`,
+          `"${(r.acceptanceCriteria || []).join('; ')}"`,
         ].join(',')
       ),
     ].join('\n')
@@ -268,6 +287,17 @@ export function ContentRecommendations({ propertyId, runId }: ContentRecommendat
                     {rec.title}
                   </h3>
                   <p className="text-sm text-gray-600 dark:text-gray-400">{rec.description}</p>
+                  <div className="mt-2 flex flex-wrap gap-2 text-xs text-gray-500">
+                    <span className="px-2 py-0.5 bg-gray-100 dark:bg-gray-700 rounded">
+                      Access: {rec.accessLevel || 'URLOnly'}
+                    </span>
+                    <span className="px-2 py-0.5 bg-gray-100 dark:bg-gray-700 rounded">
+                      Owner: {rec.owner || 'seo'}
+                    </span>
+                    <span className="px-2 py-0.5 bg-gray-100 dark:bg-gray-700 rounded">
+                      Status: {rec.status || 'todo'}
+                    </span>
+                  </div>
                 </div>
               </div>
               <div className="text-right ml-4">
@@ -293,8 +323,46 @@ export function ContentRecommendations({ propertyId, runId }: ContentRecommendat
               </div>
             )}
 
-            {/* Model Breakdown */}
-            {rec.modelBreakdown && (
+            {rec.targetPageType || rec.targetUrl ? (
+              <div className="mb-4 p-3 bg-gray-50 dark:bg-gray-900/20 border border-gray-200 dark:border-gray-700 rounded-lg text-sm">
+                {rec.targetPageType && (
+                  <div className="mb-1">
+                    <span className="font-medium text-gray-700 dark:text-gray-200">Target page type:</span>{' '}
+                    <span className="text-gray-600 dark:text-gray-400">{rec.targetPageType}</span>
+                  </div>
+                )}
+                {rec.targetUrl && (
+                  <div>
+                    <span className="font-medium text-gray-700 dark:text-gray-200">Target URL:</span>{' '}
+                    <span className="text-gray-600 dark:text-gray-400 break-all">{rec.targetUrl}</span>
+                  </div>
+                )}
+              </div>
+            ) : null}
+
+            {/* Surface Breakdown */}
+            {rec.surfaceBreakdown && Object.keys(rec.surfaceBreakdown).length > 0 ? (
+              <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/10 border border-blue-200 dark:border-blue-900 rounded-lg">
+                <div className="text-xs font-medium text-blue-900 dark:text-blue-100 mb-2">
+                  Surface Performance:
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                  {Object.entries(rec.surfaceBreakdown).map(([key, surface]) => (
+                    <div key={key}>
+                      <div className="font-medium text-blue-800 dark:text-blue-200 mb-1">
+                        {surface.label}
+                      </div>
+                      <div className="text-xs space-y-1">
+                        <div className={surface.presence ? 'text-green-600' : 'text-red-600'}>
+                          {surface.presence ? '✓' : '✗'} {surface.presence ? 'Present' : 'Absent'}
+                        </div>
+                        {surface.rank && <div>Rank: #{surface.rank}</div>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : rec.modelBreakdown && (
               <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/10 border border-blue-200 dark:border-blue-900 rounded-lg">
                 <div className="text-xs font-medium text-blue-900 dark:text-blue-100 mb-2">
                   Model Performance:
@@ -361,13 +429,59 @@ export function ContentRecommendations({ propertyId, runId }: ContentRecommendat
               </div>
             </div>
 
+            {rec.evidence?.length ? (
+              <div className="mb-4 p-3 bg-slate-50 dark:bg-slate-900/20 border border-slate-200 dark:border-slate-700 rounded-lg">
+                <div className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Evidence:
+                </div>
+                <ul className="space-y-1">
+                  {rec.evidence.map((item, idx) => (
+                    <li key={idx} className="text-sm text-gray-600 dark:text-gray-400">
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            {rec.sourceQueryEvidence?.length ? (
+              <div className="mb-4 p-3 bg-purple-50 dark:bg-purple-900/10 border border-purple-200 dark:border-purple-900 rounded-lg">
+                <div className="text-xs font-medium text-purple-900 dark:text-purple-100 mb-2">
+                  GEO Query Evidence:
+                </div>
+                <ul className="space-y-1">
+                  {rec.sourceQueryEvidence.map((item, idx) => (
+                    <li key={idx} className="text-sm text-purple-800 dark:text-purple-200">
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            {rec.missingSignals?.length ? (
+              <div className="mb-4">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs font-medium text-gray-500">Missing signals:</span>
+                  {rec.missingSignals.map((signal, idx) => (
+                    <span
+                      key={idx}
+                      className="px-2 py-1 text-xs bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 rounded"
+                    >
+                      {signal}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
             {/* Action Items */}
-            <div>
+            <div className="mb-4">
               <div className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-2">
-                Recommended Actions:
+                Implementation Steps:
               </div>
               <ul className="space-y-2">
-                {rec.actionItems.map((action, idx) => (
+                {(rec.implementationSteps || rec.actionItems).map((action, idx) => (
                   <li key={idx} className="flex items-start gap-2 text-sm text-gray-600 dark:text-gray-400">
                     <span className="text-indigo-500 mt-0.5">•</span>
                     <span className="flex-1">{action}</span>
@@ -386,6 +500,22 @@ export function ContentRecommendations({ propertyId, runId }: ContentRecommendat
                 ))}
               </ul>
             </div>
+
+            {rec.acceptanceCriteria?.length ? (
+              <div>
+                <div className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Acceptance Criteria:
+                </div>
+                <ul className="space-y-2">
+                  {rec.acceptanceCriteria.map((criterion, idx) => (
+                    <li key={idx} className="flex items-start gap-2 text-sm text-gray-600 dark:text-gray-400">
+                      <CheckCircle2 className="w-4 h-4 text-green-500 mt-0.5 flex-shrink-0" />
+                      <span>{criterion}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
           </div>
         ))}
       </div>

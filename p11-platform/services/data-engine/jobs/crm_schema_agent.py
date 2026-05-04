@@ -59,7 +59,7 @@ class CRMSchemaAgent:
         Use Claude to analyze CRM schema and generate intelligent field mappings.
         
         Args:
-            crm_type: Type of CRM ('yardi', 'realpage', 'salesforce', 'hubspot')
+            crm_type: Type of CRM ('yardi', 'realpage', 'salesforce', 'hubspot', 'lasso')
             crm_schema: Schema returned by CRM adapter's get_schema()
             learned_patterns: Optional previous mapping patterns from database
             

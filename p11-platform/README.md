@@ -630,16 +630,20 @@ vercel --prod
 }
 ```
 
-### Heroku (Data Engine)
+### Render (Data Engine)
 
 ```bash
-# Deploy Python services
+# Deploy Python data-engine from the Render blueprint
 cd services/data-engine
-git push heroku main
-
-# Add scheduler
-heroku addons:create scheduler:standard
+# render.yaml defines the p11-data-engine web service and scheduled jobs
 ```
+
+The data-engine is configured in `services/data-engine/render.yaml` as the
+`p11-data-engine` Python web service in Render's Oregon region. Set the required
+environment variables in Render, including `SUPABASE_URL`,
+`SUPABASE_SERVICE_ROLE_KEY`, `DATA_ENGINE_API_KEY`, and provider credentials
+used by enabled connectors. Point the web app at the hosted service with
+`DATA_ENGINE_URL`.
 
 ---
 

@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { X, ExternalLink, AlertCircle, CheckCircle2, Sparkles, Globe } from 'lucide-react'
+import { getSurfaceLabel, type Surface } from '@/utils/propertyaudit/types'
 
 interface AnswerEntity {
   name: string
@@ -21,7 +22,7 @@ interface Answer {
   id: string
   queryText: string
   queryType: string
-  surface: 'openai' | 'claude'
+  surface: Surface
   presence: boolean
   llmRank: number | null
   linkRank: number | null
@@ -48,20 +49,17 @@ export function AnswerPreview({
   answers,
   showComparison = false 
 }: AnswerPreviewProps) {
-  const [selectedSurface, setSelectedSurface] = useState<'openai' | 'claude' | 'both'>(
-    showComparison && answers.length > 1 ? 'both' : answers[0]?.surface || 'openai'
+  const [selectedSurface, setSelectedSurface] = useState<Surface | 'both'>(
+    showComparison && answers.length > 1 ? 'both' : answers[0]?.surface || 'chatgpt'
   )
 
   if (!isOpen || answers.length === 0) return null
 
-  const openaiAnswer = answers.find(a => a.surface === 'openai')
-  const claudeAnswer = answers.find(a => a.surface === 'claude')
+  const uniqueSurfaces = Array.from(new Set(answers.map(answer => answer.surface)))
 
   const displayAnswers = selectedSurface === 'both' 
-    ? [openaiAnswer, claudeAnswer].filter(Boolean) as Answer[]
-    : selectedSurface === 'openai' 
-      ? openaiAnswer ? [openaiAnswer] : []
-      : claudeAnswer ? [claudeAnswer] : []
+    ? answers
+    : answers.filter(answer => answer.surface === selectedSurface)
 
   const FLAG_INFO: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
     no_sources: { 
@@ -116,7 +114,7 @@ export function AnswerPreview({
           {/* Surface Toggle */}
           {answers.length > 1 && (
             <div className="mt-4 flex items-center gap-2">
-              {(['openai', 'claude', 'both'] as const).map((surface) => (
+              {[...uniqueSurfaces, 'both' as const].map((surface) => (
                 <button
                   key={surface}
                   onClick={() => setSelectedSurface(surface)}
@@ -126,9 +124,8 @@ export function AnswerPreview({
                       : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-400'
                   }`}
                 >
-                  {surface === 'openai' && <Sparkles className="w-4 h-4" />}
-                  {surface === 'claude' && <Globe className="w-4 h-4" />}
-                  {surface === 'openai' ? 'OpenAI' : surface === 'claude' ? 'Claude' : 'Compare'}
+                  {surface === 'both' ? null : surface === 'openai' || surface === 'chatgpt' ? <Sparkles className="w-4 h-4" /> : <Globe className="w-4 h-4" />}
+                  {surface === 'both' ? 'Compare' : getSurfaceLabel(surface)}
                 </button>
               ))}
             </div>
@@ -142,12 +139,12 @@ export function AnswerPreview({
               {/* Surface Label for Comparison */}
               {selectedSurface === 'both' && (
                 <div className="flex items-center gap-2 pb-2 border-b border-gray-200 dark:border-gray-700">
-                  {answer.surface === 'openai' 
+                  {answer.surface === 'openai' || answer.surface === 'chatgpt'
                     ? <Sparkles className="w-4 h-4 text-green-500" />
                     : <Globe className="w-4 h-4 text-purple-500" />
                   }
                   <span className="text-sm font-semibold text-gray-900 dark:text-white capitalize">
-                    {answer.surface}
+                    {getSurfaceLabel(answer.surface)}
                   </span>
                 </div>
               )}

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { TrendingUp, ExternalLink, Award, AlertTriangle } from 'lucide-react'
+import { type Surface } from '@/utils/propertyaudit/types'
 
 interface CompetitorMention {
   name: string
@@ -19,7 +20,7 @@ interface DomainStats {
 
 interface CompetitorInsightsProps {
   propertyId: string
-  surface?: 'openai' | 'claude' | 'both'
+  surface?: Surface | 'both'
 }
 
 export function CompetitorInsights({ propertyId, surface = 'both' }: CompetitorInsightsProps) {

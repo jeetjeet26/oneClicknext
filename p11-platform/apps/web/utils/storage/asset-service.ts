@@ -11,6 +11,7 @@
 
 import { createServiceClient } from '@/utils/supabase/admin'
 import { v4 as uuidv4 } from 'uuid'
+import type { Json } from '@/types/supabase'
 
 // Storage bucket names
 export const STORAGE_BUCKETS = {
@@ -477,19 +478,21 @@ export async function saveAssetMetadata(
         description: metadata.description,
         asset_type: metadata.assetType,
         file_url: metadata.fileUrl,
-        storage_path: metadata.storagePath,
         thumbnail_url: metadata.thumbnailUrl,
-        file_size_bytes: metadata.fileSizeBytes,
-        width: metadata.width,
-        height: metadata.height,
-        duration_seconds: metadata.durationSeconds,
-        format: metadata.format,
+        file_size: metadata.fileSizeBytes,
+        dimensions: {
+          width: metadata.width,
+          height: metadata.height,
+          duration_seconds: metadata.durationSeconds,
+          format: metadata.format,
+          storage_path: metadata.storagePath,
+          folder: metadata.folder,
+        } as Json,
         is_ai_generated: metadata.isAiGenerated ?? false,
         generation_provider: metadata.generationProvider,
         generation_prompt: metadata.generationPrompt,
-        generation_params: metadata.generationParams,
+        generation_params: metadata.generationParams as Json | undefined,
         tags: metadata.tags || [],
-        folder: metadata.folder,
       })
       .select()
       .single()

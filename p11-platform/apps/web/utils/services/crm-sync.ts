@@ -228,7 +228,7 @@ export async function getCRMIntegration(propertyId: string) {
     .from('integration_credentials')
     .select('*')
     .eq('property_id', propertyId)
-    .in('platform', ['crm', 'pms', 'yardi', 'realpage', 'salesforce', 'hubspot'])
+    .in('platform', ['crm', 'pms', 'yardi', 'realpage', 'salesforce', 'hubspot', 'lasso'])
     .eq('status', 'connected')
     .maybeSingle()
 

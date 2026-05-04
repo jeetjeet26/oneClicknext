@@ -42,12 +42,33 @@ class CrossModelAnalyzer:
             # 1. Fetch all runs and their results for this batch
             runs_data = self._fetch_batch_runs(batch_id)
             
-            if not runs_data.get('openai') or not runs_data.get('claude'):
-                logger.warning(f"[CrossModel] Batch {batch_id} missing one or both model runs")
+            completed_runs = [run for run in runs_data.values() if run]
+            if len(completed_runs) < 2:
+                logger.warning(f"[CrossModel] Batch {batch_id} has fewer than two completed surfaces")
                 return {
                     'success': False,
-                    'error': 'Both OpenAI and Claude runs required for cross-model analysis',
+                    'error': 'At least two completed surface runs are required for analysis',
                     'batch_id': batch_id
+                }
+
+            if not runs_data.get('openai') or not runs_data.get('claude'):
+                analysis = self._compare_surface_scores(completed_runs)
+                recommendations = {
+                    'summary': 'Surface-level comparison completed for PropertyAudit v1 surfaces.',
+                    'key_insights': [],
+                    'action_items': [],
+                }
+                result = self._store_analysis(
+                    batch_id=batch_id,
+                    analysis=analysis,
+                    recommendations=recommendations
+                )
+                return {
+                    'success': True,
+                    'batch_id': batch_id,
+                    'analysis': analysis,
+                    'recommendations': recommendations,
+                    'stored': result
                 }
             
             # 2. Fetch answers from both runs
@@ -107,14 +128,56 @@ class CrossModelAnalyzer:
             .eq('batch_id', batch_id)\
             .execute()
         
-        runs = {'openai': None, 'claude': None}
+        runs = {}
         
         for run in response.data or []:
             surface = run.get('surface', '').lower()
-            if surface in runs:
+            if surface:
                 runs[surface] = run
         
         return runs
+
+    def _compare_surface_scores(self, runs: List[Dict]) -> Dict[str, Any]:
+        surface_scores = {}
+        highest = None
+        lowest = None
+
+        for run in runs:
+            scores = self._fetch_run_scores(run['id']) or {}
+            surface = run.get('surface')
+            score = scores.get('overall_score', 0) or 0
+            visibility = scores.get('visibility_pct', 0) or 0
+            surface_scores[surface] = {
+                'overall_score': score,
+                'visibility_pct': visibility,
+                'avg_llm_rank': scores.get('avg_llm_rank'),
+                'avg_sov': scores.get('avg_sov')
+            }
+            if highest is None or score > highest['score']:
+                highest = {'surface': surface, 'score': score}
+            if lowest is None or score < lowest['score']:
+                lowest = {'surface': surface, 'score': score}
+
+        difference = abs((highest or {}).get('score', 0) - (lowest or {}).get('score', 0))
+        return {
+            'analyzed_at': datetime.utcnow().isoformat(),
+            'agreement_rate': None,
+            'surface_scores': surface_scores,
+            'score_comparison': {
+                'difference': difference,
+                'higher_model': (highest or {}).get('surface'),
+                'lower_model': (lowest or {}).get('surface')
+            },
+            'visibility_comparison': {
+                'surfaces': {
+                    surface: data.get('visibility_pct', 0)
+                    for surface, data in surface_scores.items()
+                }
+            },
+            'query_comparisons': [],
+            'consensus_entities': [],
+            'divergent_entities': {}
+        }
     
     def _fetch_run_answers(self, run_id: str) -> List[Dict]:
         """Fetch all answers for a run."""

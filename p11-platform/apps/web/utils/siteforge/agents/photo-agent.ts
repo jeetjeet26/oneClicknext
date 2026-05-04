@@ -238,15 +238,17 @@ export class PhotoAgent extends BaseAgent {
   private async getUploadedPhotos(): Promise<Array<{ id: string; url: string; filename: string }>> {
     const { data } = await this.supabase
       .from('documents')
-      .select('id, file_url, file_name')
+      .select('id, original_file_url, original_file_name')
       .eq('property_id', this.propertyId)
       .in('metadata->type', ['photo', 'image'])
     
-    return (data || []).map(d => ({
-      id: d.id,
-      url: d.file_url,
-      filename: d.file_name
-    }))
+    return (data || [])
+      .filter((d) => Boolean(d.original_file_url))
+      .map(d => ({
+        id: d.id,
+        url: d.original_file_url || '',
+        filename: d.original_file_name || 'uploaded-photo'
+      }))
   }
   
   /**

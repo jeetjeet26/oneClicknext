@@ -37,7 +37,19 @@ const CRM_TYPES = [
   { id: 'realpage', name: 'RealPage', description: 'OneSite & Active Building' },
   { id: 'salesforce', name: 'Salesforce', description: 'Sales Cloud' },
   { id: 'hubspot', name: 'HubSpot', description: 'CRM' },
+  { id: 'lasso', name: 'Lasso', description: 'New home sales CRM' },
 ]
+
+const CRM_PLATFORMS = CRM_TYPES.map((crm) => crm.id)
+
+function isStringRecord(value: unknown): value is Record<string, string> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.values(value).every((entry) => typeof entry === 'string')
+  )
+}
 
 export default function CRMSettingsPage() {
   const router = useRouter()
@@ -50,6 +62,7 @@ export default function CRMSettingsPage() {
     api_endpoint: '',
     api_key: '',
     property_code: '',
+    project_id: '',
   })
 
   const [step, setStep] = useState<'select' | 'credentials' | 'discovery' | 'mapping' | 'validation'>('select')
@@ -78,23 +91,38 @@ export default function CRMSettingsPage() {
       .from('integration_credentials')
       .select('*')
       .eq('property_id', selectedProperty)
-      .in('platform', ['yardi', 'realpage', 'salesforce', 'hubspot'])
+      .in('platform', CRM_PLATFORMS)
       .single()
 
     if (data) {
+      const savedCredentials = isStringRecord(data.credentials) ? data.credentials : {}
+      const savedFieldMapping = isStringRecord(data.field_mapping) ? data.field_mapping : {}
+
       setSelectedCRM(data.platform)
-      setCredentials(data.credentials || {})
-      setEditedMappings(data.field_mapping || {})
+      setCredentials({
+        api_endpoint: '',
+        api_key: '',
+        property_code: '',
+        project_id: '',
+        ...savedCredentials,
+      })
+      setEditedMappings(savedFieldMapping)
       
       if (data.mapping_validated) {
         setStep('validation')
-      } else if (data.field_mapping && Object.keys(data.field_mapping).length > 0) {
+      } else if (Object.keys(savedFieldMapping).length > 0) {
         setStep('mapping')
       } else {
         setStep('credentials')
       }
     }
   }, [selectedProperty, supabase])
+
+  const selectedCRMConfig = CRM_TYPES.find((crm) => crm.id === selectedCRM)
+  const isLasso = selectedCRM === 'lasso'
+  const credentialsReady = Boolean(
+    credentials.api_key && (isLasso || credentials.api_endpoint)
+  )
 
   useEffect(() => {
     if (selectedProperty) {
@@ -347,12 +375,14 @@ export default function CRMSettingsPage() {
 
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">API Endpoint</label>
+                <label className="block text-sm font-medium text-slate-300 mb-2">
+                  API Endpoint{isLasso ? ' (Optional)' : ''}
+                </label>
                 <input
                   type="url"
                   value={credentials.api_endpoint}
                   onChange={(e) => setCredentials({ ...credentials, api_endpoint: e.target.value })}
-                  placeholder="https://api.rentcafe.com/v1"
+                  placeholder={isLasso ? 'https://api.lassocrm.com/v1' : 'https://api.rentcafe.com/v1'}
                   className="w-full px-3 py-2.5 bg-slate-900 border border-slate-600 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-teal-500/50"
                 />
               </div>
@@ -369,19 +399,24 @@ export default function CRMSettingsPage() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">Property Code (Yardi/RealPage)</label>
+                <label className="block text-sm font-medium text-slate-300 mb-2">
+                  {isLasso ? 'Project / Community ID (Optional)' : 'Property Code (Yardi/RealPage)'}
+                </label>
                 <input
                   type="text"
-                  value={credentials.property_code}
-                  onChange={(e) => setCredentials({ ...credentials, property_code: e.target.value })}
-                  placeholder="e.g., PROP001"
+                  value={isLasso ? credentials.project_id : credentials.property_code}
+                  onChange={(e) => setCredentials({
+                    ...credentials,
+                    [isLasso ? 'project_id' : 'property_code']: e.target.value,
+                  })}
+                  placeholder={isLasso ? 'e.g., lasso project id' : 'e.g., PROP001'}
                   className="w-full px-3 py-2.5 bg-slate-900 border border-slate-600 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-teal-500/50"
                 />
               </div>
 
               <button
                 onClick={testConnection}
-                disabled={loading || !credentials.api_endpoint || !credentials.api_key}
+                disabled={loading || !credentialsReady}
                 className="px-4 py-2.5 bg-teal-600 text-white rounded-lg hover:bg-teal-500 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {loading ? <Loader2 className="animate-spin" size={18} /> : <Zap size={18} />}
@@ -566,7 +601,7 @@ export default function CRMSettingsPage() {
             <h3 className="text-xl font-semibold text-white mb-2">CRM Integration Active!</h3>
             <p className="text-slate-400 mb-4">
               New leads from the LumaLeasing chatbot will automatically sync to your{' '}
-              {CRM_TYPES.find(c => c.id === selectedCRM)?.name} account.
+              {selectedCRMConfig?.name} account.
             </p>
             <button
               onClick={() => router.push('/dashboard/settings')}

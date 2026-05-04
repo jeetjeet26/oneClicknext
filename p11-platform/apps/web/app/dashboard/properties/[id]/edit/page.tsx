@@ -66,6 +66,11 @@ interface PropertyData {
     website_url?: string
     amenities?: string[]
   }
+  website_url?: string | null
+  property_type?: string | null
+  unit_count?: number | null
+  year_built?: number | null
+  amenities?: string[] | null
   contacts: PropertyContact[]
   integrations: PropertyIntegration[]
   documents: PropertyDocument[]
@@ -171,18 +176,18 @@ function transformPropertyToFormData(property: PropertyData): AddPropertyFormDat
   return {
     community: {
       name: property.name || '',
-      type: (property.settings?.community_type || '') as AddPropertyFormData['community']['type'],
+      type: (property.property_type || property.settings?.community_type || '') as AddPropertyFormData['community']['type'],
       address: {
         street: property.address?.street || '',
         city: property.address?.city || '',
         state: property.address?.state || '',
         zip: property.address?.zip || ''
       },
-      websiteUrl: property.settings?.website_url || '',
+      websiteUrl: property.website_url || property.settings?.website_url || '',
       additionalUrls: [],
-      unitCount: property.settings?.unit_count?.toString() || '',
-      yearBuilt: property.settings?.year_built?.toString() || '',
-      amenities: property.settings?.amenities || []
+      unitCount: property.unit_count?.toString() || property.settings?.unit_count?.toString() || '',
+      yearBuilt: property.year_built?.toString() || property.settings?.year_built?.toString() || '',
+      amenities: property.amenities || property.settings?.amenities || []
     },
     contacts,
     integrations,

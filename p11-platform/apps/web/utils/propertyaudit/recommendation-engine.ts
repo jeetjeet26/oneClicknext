@@ -4,6 +4,14 @@
  */
 
 import { createClient } from '@/utils/supabase/server'
+import { auditPublicSite, type PublicSiteAudit, type PublicSitePageAudit, type PublicSitePageType } from './public-site-audit'
+import {
+  getSurfaceLabel,
+  type RecommendationAccessLevel,
+  type RecommendationOwner,
+  type RecommendationStatus,
+  type Surface,
+} from './types'
 
 export interface ContentRecommendation {
   id: string
@@ -11,6 +19,18 @@ export interface ContentRecommendation {
   priority: 'high' | 'medium' | 'low'
   title: string
   description: string
+  accessLevel?: RecommendationAccessLevel
+  owner?: RecommendationOwner
+  status?: RecommendationStatus
+  targetUrl?: string | null
+  targetPageType?: string | null
+  evidenceMode?: 'URLOnly' | 'CodeAware'
+  evidence?: string[]
+  implementationSteps?: string[]
+  acceptanceCriteria?: string[]
+  detectedOnUrls?: string[]
+  missingSignals?: string[]
+  sourceQueryEvidence?: string[]
   keywords: string[]
   competitorContext?: {
     competitorName: string
@@ -30,6 +50,12 @@ export interface ContentRecommendation {
     } | null
     affectedModels: ('openai' | 'claude')[]
   }
+  surfaceBreakdown?: Record<string, {
+    label: string
+    presence: boolean
+    rank: number | null
+    sov: number | null
+  }>
   impact: {
     score: number // 0-100 estimated impact
     reason: string
@@ -59,6 +85,8 @@ export interface RecommendationSummary {
 interface AnalysisContext {
   propertyId: string
   brandName: string
+  websiteUrl: string | null
+  siteAudit: PublicSiteAudit
   runIds: string[]
   queries: Array<{
     id: string
@@ -81,7 +109,7 @@ interface AnalysisContext {
       rationale: string
     }>
   }>
-  runsBySurface: Map<string, 'openai' | 'claude'>
+  runsBySurface: Map<string, Surface>
   competitors: Array<{
     name: string
     domain: string
@@ -109,6 +137,7 @@ export async function generateRecommendations(
     ...identifyCitationOpportunities(context),
     ...identifyRankImprovements(context),
     ...identifyVoiceSearchOpportunities(context),
+    ...identifyTechnicalDiscoverabilityGaps(context),
   ]
 
   // If no recommendations (perfect performance), add maintenance suggestions
@@ -125,10 +154,12 @@ export async function generateRecommendations(
     return b.impact.score - a.impact.score
   })
 
-  // Generate summary
-  const summary = generateSummary(recommendations)
+  const enrichedRecommendations = recommendations.map(rec => enrichRecommendation(rec, context))
 
-  return { recommendations, summary }
+  // Generate summary
+  const summary = generateSummary(enrichedRecommendations)
+
+  return { recommendations: enrichedRecommendations, summary }
 }
 
 async function fetchAnalysisContext(
@@ -139,7 +170,7 @@ async function fetchAnalysisContext(
   // Fetch property details
   const { data: property } = await supabase
     .from('properties')
-    .select('name')
+    .select('name, website_url')
     .eq('id', propertyId)
     .single()
 
@@ -168,9 +199,9 @@ async function fetchAnalysisContext(
   const { data: runs } = await runsQuery
 
   const runIds = runs?.map((r: any) => r.id) || []
-  const runsBySurface = new Map<string, 'openai' | 'claude'>()
+  const runsBySurface = new Map<string, Surface>()
   runs?.forEach((r: any) => {
-    runsBySurface.set(r.id, r.surface)
+    runsBySurface.set(r.id, r.surface as Surface)
   })
 
   // Fetch answers for these runs
@@ -227,6 +258,8 @@ async function fetchAnalysisContext(
   return {
     propertyId,
     brandName: property?.name || 'Your Property',
+    websiteUrl: property?.website_url || null,
+    siteAudit: await auditPublicSite(property?.website_url || null),
     runIds,
     queries: queries || [],
     answers,
@@ -321,9 +354,12 @@ function identifyMissingKeywords(context: AnalysisContext): ContentRecommendatio
  */
 function buildModelBreakdown(
   answers: AnalysisContext['answers'],
-  runsBySurface: Map<string, 'openai' | 'claude'>
+  runsBySurface: Map<string, Surface>
 ) {
-  const openaiAnswer = answers.find(a => runsBySurface.get(a.runId) === 'openai')
+  const openaiAnswer = answers.find(a => {
+    const surface = runsBySurface.get(a.runId)
+    return surface === 'openai' || surface === 'chatgpt'
+  })
   const claudeAnswer = answers.find(a => runsBySurface.get(a.runId) === 'claude')
 
   return {
@@ -338,6 +374,24 @@ function buildModelBreakdown(
       sov: claudeAnswer.sov,
     } : null,
   }
+}
+
+function buildSurfaceBreakdown(
+  answers: AnalysisContext['answers'],
+  runsBySurface: Map<string, Surface>
+): ContentRecommendation['surfaceBreakdown'] {
+  const breakdown: NonNullable<ContentRecommendation['surfaceBreakdown']> = {}
+  answers.forEach(answer => {
+    const surface = runsBySurface.get(answer.runId)
+    if (!surface || breakdown[surface]) return
+    breakdown[surface] = {
+      label: getSurfaceLabel(surface),
+      presence: answer.presence,
+      rank: answer.llmRank,
+      sov: answer.sov,
+    }
+  })
+  return breakdown
 }
 
 /**
@@ -600,6 +654,184 @@ function identifyVoiceSearchOpportunities(context: AnalysisContext): ContentReco
   return recommendations
 }
 
+function identifyTechnicalDiscoverabilityGaps(context: AnalysisContext): ContentRecommendation[] {
+  const recommendations: ContentRecommendation[] = []
+  const { siteAudit } = context
+
+  if (!siteAudit.websiteUrl) {
+    recommendations.push({
+      id: 'site-audit-missing-url',
+      type: 'content_gap',
+      priority: 'high',
+      title: 'Set the property website URL before running URL-only GEO audits',
+      description:
+        'A public website URL is required to map prompt gaps to owned pages, technical crawl signals, and content opportunities.',
+      keywords: ['website url'],
+      impact: {
+        score: 80,
+        reason: 'Without a public site URL, the audit cannot produce page-level or technical recommendations.',
+      },
+      actionItems: [
+        'Save the public property website URL in the property record',
+        'Re-run the GEO audit to unlock URL-only technical recommendations',
+      ],
+      evidence: siteAudit.notes,
+      implementationSteps: [
+        'Add the canonical public marketing website URL to the property record.',
+        'Confirm the URL is publicly reachable without authentication.',
+        'Re-run PropertyAudit so recommendations can map GEO gaps to owned pages.',
+      ],
+      acceptanceCriteria: [
+        'The property record has a normalized HTTPS website URL.',
+        'The URL-only audit can fetch the homepage successfully.',
+        'Recommendations include exact owned-page targets instead of only missing URL guidance.',
+      ],
+      missingSignals: ['website_url'],
+      relatedQueries: [],
+    })
+    return recommendations
+  }
+
+  if (!siteAudit.robotsTxtReachable || !siteAudit.sitemapReachable || !siteAudit.llmsTxtReachable) {
+    recommendations.push({
+      id: 'site-audit-discoverability',
+      type: 'content_gap',
+      priority: 'medium',
+      title: 'Strengthen public-site discoverability signals',
+      description: siteAudit.notes.join(' '),
+      keywords: ['robots.txt', 'sitemap.xml', 'llms.txt'],
+      impact: {
+        score: 68,
+        reason: 'Public crawlability and discovery files directly affect how quickly LLMs and search systems can interpret the site.',
+      },
+      actionItems: [
+        siteAudit.robotsTxtReachable ? 'Review robots.txt rules for accidental crawl blocks' : 'Publish a reachable robots.txt file',
+        siteAudit.sitemapReachable ? 'Ensure sitemap.xml includes current owned landing pages' : 'Publish a reachable sitemap.xml file',
+        siteAudit.llmsTxtReachable ? 'Review llms.txt content for answer-engine clarity' : 'Publish an llms.txt file describing important public pages',
+      ],
+      evidence: [
+        `Homepage reachable: ${siteAudit.homepageReachable ? 'yes' : 'no'}`,
+        `robots.txt reachable: ${siteAudit.robotsTxtReachable ? 'yes' : 'no'}`,
+        `sitemap.xml reachable: ${siteAudit.sitemapReachable ? 'yes' : 'no'}`,
+        `llms.txt reachable: ${siteAudit.llmsTxtReachable ? 'yes' : 'no'}`,
+        ...(siteAudit.notes || []).filter(note => /robots|sitemap|llms|homepage/i.test(note)),
+      ],
+      implementationSteps: [
+        siteAudit.robotsTxtReachable
+          ? 'Audit robots.txt and remove accidental blocks for public marketing pages.'
+          : 'Publish /robots.txt with crawl access for public marketing pages.',
+        siteAudit.sitemapReachable
+          ? 'Update sitemap.xml so it includes homepage, floorplans, amenities, neighborhood, FAQ, and contact pages.'
+          : 'Publish /sitemap.xml with canonical public marketing URLs.',
+        siteAudit.llmsTxtReachable
+          ? 'Update llms.txt with concise page descriptions for answer engines.'
+          : 'Publish /llms.txt with the most important public page URLs and descriptions.',
+      ],
+      acceptanceCriteria: [
+        '/robots.txt returns HTTP 200 and does not block public marketing pages.',
+        '/sitemap.xml returns HTTP 200 and lists current canonical owned pages.',
+        '/llms.txt returns HTTP 200 with answer-engine friendly page descriptions.',
+      ],
+      detectedOnUrls: [siteAudit.normalizedOrigin].filter(Boolean) as string[],
+      missingSignals: [
+        !siteAudit.robotsTxtReachable ? 'robots.txt' : null,
+        !siteAudit.sitemapReachable ? 'sitemap.xml' : null,
+        !siteAudit.llmsTxtReachable ? 'llms.txt' : null,
+      ].filter(Boolean) as string[],
+      relatedQueries: [],
+    })
+  }
+
+  if (siteAudit.missingPageTypes?.length) {
+    recommendations.push({
+      id: 'site-audit-page-coverage',
+      type: 'content_gap',
+      priority: 'medium',
+      title: 'Create or expose missing high-intent property pages',
+      description:
+        `The URL-only crawl did not find these important page types: ${siteAudit.missingPageTypes.map(type => type.replace('_', ' ')).join(', ')}.`,
+      keywords: siteAudit.missingPageTypes.map(type => type.replace('_', ' ')),
+      impact: {
+        score: 70,
+        reason: 'LLM answers need crawlable owned pages with specific leasing, neighborhood, and FAQ evidence.',
+      },
+      actionItems: siteAudit.missingPageTypes.slice(0, 4).map(type => `Create or expose a crawlable ${type.replace('_', ' ')} page`),
+      evidence: [
+        `${siteAudit.crawlSummary?.pagesAudited || 0} reachable page(s) audited from ${siteAudit.normalizedOrigin}.`,
+        `Missing page types: ${siteAudit.missingPageTypes.map(type => type.replace('_', ' ')).join(', ')}.`,
+      ],
+      implementationSteps: siteAudit.missingPageTypes.slice(0, 4).map(type =>
+        `Add a public ${type.replace('_', ' ')} page and include it in sitemap.xml and internal navigation.`
+      ),
+      acceptanceCriteria: siteAudit.missingPageTypes.slice(0, 4).map(type =>
+        `The URL-only crawl detects a reachable ${type.replace('_', ' ')} page with answer-ready content.`
+      ),
+      detectedOnUrls: siteAudit.pages?.filter(page => page.reachable).map(page => page.url).slice(0, 5) || [],
+      missingSignals: siteAudit.missingPageTypes,
+      relatedQueries: [],
+    })
+  }
+
+  if (!siteAudit.structuredDataTypes.length || !siteAudit.faqStructuredData || !siteAudit.organizationStructuredData) {
+    recommendations.push({
+      id: 'site-audit-structured-data',
+      type: 'content_gap',
+      priority: 'medium',
+      title: 'Improve structured data for answer extraction',
+      description:
+        'Audited public pages are missing some structured data and answer-block signals that make GEO recommendations easier to ground and cite.',
+      keywords: ['structured data', 'FAQ', 'Organization schema'],
+      impact: {
+        score: 64,
+        reason: 'Structured data and answer-ready page sections improve extraction confidence and citation potential.',
+      },
+      actionItems: [
+        siteAudit.organizationStructuredData
+          ? 'Validate existing Organization / ApartmentComplex schema for accuracy'
+          : 'Add Organization or ApartmentComplex structured data to the homepage',
+        siteAudit.faqStructuredData
+          ? 'Expand FAQ schema coverage to decision-stage questions'
+          : 'Add FAQ structured data for pricing, application, and amenity questions',
+        siteAudit.answerBlockSignals > 0
+          ? 'Strengthen concise answer blocks near the top of key pages'
+          : 'Add explicit answer-first blocks to FAQ, pricing, and amenity pages',
+      ],
+      evidence: [
+        `Detected schema types: ${siteAudit.structuredDataTypes.length ? siteAudit.structuredDataTypes.join(', ') : 'none'}.`,
+        `FAQPage schema: ${siteAudit.faqStructuredData ? 'present' : 'not detected'}.`,
+        `Organization/ApartmentComplex schema: ${siteAudit.organizationStructuredData ? 'present' : 'not detected'}.`,
+        `Answer-block signals found: ${siteAudit.answerBlockSignals}.`,
+      ],
+      implementationSteps: [
+        siteAudit.organizationStructuredData
+          ? 'Validate existing Organization or ApartmentComplex JSON-LD values for name, URL, address, phone, and sameAs links.'
+          : 'Add Organization or ApartmentComplex JSON-LD to the homepage with name, URL, address, phone, and sameAs links.',
+        siteAudit.faqStructuredData
+          ? 'Expand FAQPage JSON-LD to cover pricing, application, amenity, pet, parking, and tour questions.'
+          : 'Add FAQPage JSON-LD on the FAQ page or the page sections that answer leasing questions.',
+        'Add concise answer-first blocks near the top of FAQ, pricing/floorplans, amenities, and neighborhood pages.',
+      ],
+      acceptanceCriteria: [
+        'JSON-LD validates without parse errors in a structured data validator.',
+        'The URL-only crawl detects Organization or ApartmentComplex schema.',
+        'The URL-only crawl detects FAQPage schema or answer-block signals on relevant pages.',
+      ],
+      detectedOnUrls: (siteAudit.pages || [])
+        .filter(page => page.reachable && (page.structuredDataTypes.length > 0 || page.answerBlockSignals > 0))
+        .map(page => page.url)
+        .slice(0, 5),
+      missingSignals: [
+        !siteAudit.organizationStructuredData ? 'Organization or ApartmentComplex schema' : null,
+        !siteAudit.faqStructuredData ? 'FAQPage schema' : null,
+        siteAudit.answerBlockSignals === 0 ? 'answer-first content blocks' : null,
+      ].filter(Boolean) as string[],
+      relatedQueries: [],
+    })
+  }
+
+  return recommendations
+}
+
 /**
  * Generate maintenance recommendations when performance is excellent
  * Provides proactive suggestions to maintain dominance
@@ -720,5 +952,301 @@ function generateSummary(recommendations: ContentRecommendation[]): Recommendati
       rankImprovement: recommendations.filter(r => r.type === 'rank_improvement').length,
       voiceSearch: recommendations.filter(r => r.type === 'voice_search').length,
     },
+  }
+}
+
+function pageTypeToTargetPageType(pageType: PublicSitePageType): string {
+  switch (pageType) {
+    case 'floorplans':
+      return 'floorplans_or_pricing_page'
+    case 'amenities':
+      return 'amenities_page'
+    case 'neighborhood':
+      return 'local_landing_page'
+    case 'faq':
+      return 'faq_or_support_page'
+    case 'contact':
+      return 'contact_or_tour_page'
+    case 'gallery':
+      return 'gallery_page'
+    case 'pet_policy':
+      return 'pet_policy_page'
+    case 'specials':
+      return 'specials_page'
+    case 'tour':
+      return 'tour_booking_page'
+    case 'home':
+      return 'homepage'
+    default:
+      return 'category_or_feature_page'
+  }
+}
+
+function inferTargetPageTypes(recommendation: ContentRecommendation): PublicSitePageType[] {
+  if (recommendation.type === 'citation_opportunity') return []
+  const primaryType = recommendation.relatedQueries[0]?.type
+  const combinedText = `${recommendation.title} ${recommendation.description} ${recommendation.keywords.join(' ')}`.toLowerCase()
+
+  if (primaryType === 'comparison') return ['neighborhood', 'home']
+  if (primaryType === 'local') return ['neighborhood', 'home']
+  if (primaryType === 'faq' || recommendation.type === 'voice_search') return ['faq', 'home']
+  if (primaryType === 'branded') return ['home', 'contact']
+  if (primaryType === 'category') return ['amenities', 'floorplans', 'home']
+
+  if (recommendation.id === 'site-audit-discoverability') return ['home']
+  if (/structured data|schema|answer block/.test(combinedText)) return ['faq', 'home']
+  if (/floor|pricing|rent|availability|apartment/.test(combinedText)) return ['floorplans', 'faq']
+  if (/amenit|feature/.test(combinedText)) return ['amenities']
+  if (/pet|dog|cat/.test(combinedText)) return ['pet_policy', 'faq']
+  if (/special|concession|offer/.test(combinedText)) return ['specials', 'floorplans']
+  if (/tour|schedule|contact/.test(combinedText)) return ['tour', 'contact']
+
+  if (recommendation.type === 'rank_improvement') return ['home', 'amenities', 'floorplans']
+  return ['home']
+}
+
+function suggestedPathForPageType(pageType: PublicSitePageType): string {
+  switch (pageType) {
+    case 'floorplans':
+      return '/floorplans'
+    case 'amenities':
+      return '/amenities'
+    case 'neighborhood':
+      return '/neighborhood'
+    case 'faq':
+      return '/faq'
+    case 'contact':
+      return '/contact'
+    case 'gallery':
+      return '/gallery'
+    case 'pet_policy':
+      return '/pet-policy'
+    case 'specials':
+      return '/specials'
+    case 'tour':
+      return '/schedule-a-tour'
+    default:
+      return '/'
+  }
+}
+
+function findTargetPage(
+  recommendation: ContentRecommendation,
+  context: AnalysisContext
+): { page: PublicSitePageAudit | null; suggestedUrl: string | null; expectedPageType: PublicSitePageType | null } {
+  const pages = context.siteAudit.pages || []
+  const reachablePages = pages.filter(page => page.reachable)
+  const preferredTypes = inferTargetPageTypes(recommendation)
+  const exactPage = preferredTypes
+    .map(pageType => reachablePages.find(page => page.pageType === pageType))
+    .find(Boolean) || null
+  const fallbackPage = reachablePages.find(page => page.pageType === 'home') || reachablePages[0] || null
+  const expectedPageType = preferredTypes[0] || null
+
+  if (exactPage) return { page: exactPage, suggestedUrl: null, expectedPageType }
+  if (!context.siteAudit.normalizedOrigin || !expectedPageType) {
+    return { page: fallbackPage, suggestedUrl: null, expectedPageType }
+  }
+
+  const suggestedUrl = new URL(suggestedPathForPageType(expectedPageType), context.siteAudit.normalizedOrigin).toString()
+  return { page: fallbackPage, suggestedUrl, expectedPageType }
+}
+
+function inferTargetPageType(recommendation: ContentRecommendation): string {
+  const primaryType = recommendation.relatedQueries[0]?.type
+  const expectedPageType = inferTargetPageTypes(recommendation)[0]
+  if (expectedPageType) return pageTypeToTargetPageType(expectedPageType)
+  if (recommendation.type === 'citation_opportunity') return 'third_party_listing'
+  if (primaryType === 'comparison') return 'comparison_page'
+  if (primaryType === 'local') return 'local_landing_page'
+  if (primaryType === 'faq' || recommendation.type === 'voice_search') return 'faq_or_support_page'
+  if (recommendation.type === 'rank_improvement') return 'existing_owned_page'
+  return 'category_or_feature_page'
+}
+
+function inferAccessLevel(recommendation: ContentRecommendation): RecommendationAccessLevel {
+  if (recommendation.type === 'citation_opportunity') return 'ThirdParty'
+  const combinedText = [
+    recommendation.title,
+    recommendation.description,
+    ...recommendation.keywords,
+    ...(recommendation.missingSignals || []),
+    ...(recommendation.implementationSteps || []),
+  ].join(' ')
+  if (/schema|json-ld|robots|sitemap|llms\.txt|canonical|structured data/i.test(combinedText)) return 'CodeRequired'
+  if (recommendation.type === 'voice_search') return 'CMSOrEditor'
+  return recommendation.keywords.some(keyword => /schema|robots|sitemap|llms\.txt/i.test(keyword))
+    ? 'CodeRequired'
+    : 'CMSOrEditor'
+}
+
+function inferOwner(recommendation: ContentRecommendation): RecommendationOwner {
+  if (recommendation.accessLevel === 'ThirdParty') return 'partnerships'
+  if (recommendation.accessLevel === 'CodeRequired') return 'engineering'
+  if (recommendation.type === 'missing_keyword' || recommendation.type === 'content_gap') return 'content'
+  return 'seo'
+}
+
+function inferTargetUrl(recommendation: ContentRecommendation, context: AnalysisContext): string | null {
+  if (!context.siteAudit.normalizedOrigin) return null
+  if (recommendation.accessLevel === 'ThirdParty') return null
+  const target = findTargetPage(recommendation, context)
+  return target.suggestedUrl || target.page?.url || context.siteAudit.normalizedOrigin
+}
+
+function buildSourceQueryEvidence(
+  recommendation: ContentRecommendation,
+  relatedAnswers: AnalysisContext['answers'],
+  context: AnalysisContext
+): string[] {
+  return recommendation.relatedQueries.flatMap(query => {
+    const answers = relatedAnswers.filter(answer => answer.queryId === query.id)
+    if (answers.length === 0) return [`Tracked prompt: "${query.text}" (${query.type}).`]
+    return answers.map(answer => {
+      const surface = context.runsBySurface.get(answer.runId)
+      const label = surface ? getSurfaceLabel(surface) : 'Unknown surface'
+      if (!answer.presence) return `"${query.text}" is absent on ${label}.`
+      return `"${query.text}" is present on ${label}${answer.llmRank ? ` at rank #${answer.llmRank}` : ''}.`
+    })
+  }).slice(0, 6)
+}
+
+function buildCrawlEvidence(
+  recommendation: ContentRecommendation,
+  context: AnalysisContext,
+  targetPage: PublicSitePageAudit | null,
+  suggestedUrl: string | null,
+  expectedPageType: PublicSitePageType | null
+): string[] {
+  const evidence = [...(recommendation.evidence || [])]
+  const siteAudit = context.siteAudit
+
+  if (siteAudit.crawlSummary) {
+    evidence.push(
+      `URL-only crawl audited ${siteAudit.crawlSummary.pagesAudited}/${siteAudit.crawlSummary.pagesAttempted} discovered page(s).`
+    )
+  }
+  if (targetPage) {
+    evidence.push(
+      `Target page ${targetPage.url} is classified as ${targetPage.pageType} with ${targetPage.wordCount} words, ${targetPage.structuredDataTypes.length || 'no'} schema type(s), and ${targetPage.answerBlockSignals} answer-block signal(s).`
+    )
+    targetPage.evidenceSnippets.slice(0, 2).forEach(snippet => evidence.push(`Page snippet: ${snippet}`))
+  } else if (suggestedUrl && expectedPageType) {
+    evidence.push(`No reachable ${expectedPageType.replace('_', ' ')} page was found; suggested target is ${suggestedUrl}.`)
+  }
+
+  return Array.from(new Set(evidence)).slice(0, 8)
+}
+
+function buildMissingSignals(
+  recommendation: ContentRecommendation,
+  targetPage: PublicSitePageAudit | null,
+  expectedPageType: PublicSitePageType | null
+): string[] {
+  const missing = new Set(recommendation.missingSignals || [])
+  if (expectedPageType && (!targetPage || targetPage.pageType !== expectedPageType)) {
+    missing.add(`reachable ${expectedPageType.replace('_', ' ')} page`)
+  }
+  if (targetPage) {
+    if (!targetPage.metaDescription) missing.add('meta description')
+    if (targetPage.wordCount < 250) missing.add('substantive page copy')
+    if (targetPage.answerBlockSignals === 0 && (expectedPageType === 'faq' || recommendation.type === 'voice_search')) {
+      missing.add('answer-first FAQ blocks')
+    }
+    if (targetPage.structuredDataTypes.length === 0 && /schema|structured data|FAQ|Organization/i.test(`${recommendation.title} ${recommendation.description}`)) {
+      missing.add('JSON-LD structured data')
+    }
+  }
+  return Array.from(missing)
+}
+
+function buildImplementationSteps(
+  recommendation: ContentRecommendation,
+  targetPage: PublicSitePageAudit | null,
+  suggestedUrl: string | null,
+  expectedPageType: PublicSitePageType | null
+): string[] {
+  if (recommendation.implementationSteps?.length) return recommendation.implementationSteps
+
+  const targetLabel = suggestedUrl || targetPage?.url || 'the target page'
+  const steps = new Set<string>()
+  if (suggestedUrl && expectedPageType) {
+    steps.add(`Create a public ${expectedPageType.replace('_', ' ')} page at ${suggestedUrl}.`)
+    steps.add('Add the page to sitemap.xml and internal navigation.')
+  } else {
+    steps.add(`Update ${targetLabel} with copy that directly answers the related GEO prompt(s).`)
+  }
+  recommendation.actionItems.forEach(item => steps.add(item))
+  if (recommendation.accessLevel === 'CodeRequired' || /schema|structured data|FAQ|Organization/i.test(`${recommendation.title} ${recommendation.description}`)) {
+    steps.add('Add or update JSON-LD schema that matches the visible page content.')
+  }
+  steps.add('Use concise answer-first sections before longer marketing copy.')
+  return Array.from(steps).slice(0, 6)
+}
+
+function buildAcceptanceCriteria(
+  recommendation: ContentRecommendation,
+  targetPage: PublicSitePageAudit | null,
+  suggestedUrl: string | null,
+  expectedPageType: PublicSitePageType | null
+): string[] {
+  if (recommendation.acceptanceCriteria?.length) return recommendation.acceptanceCriteria
+
+  const targetLabel = suggestedUrl || targetPage?.url || 'the target page'
+  const criteria = new Set<string>()
+  criteria.add(`${targetLabel} returns HTTP 200 and is linked from sitemap.xml or site navigation.`)
+  if (expectedPageType) {
+    criteria.add(`The URL-only crawl classifies the page as ${expectedPageType.replace('_', ' ')}.`)
+  }
+  criteria.add('The page includes direct answer blocks for the related GEO prompt(s).')
+  if (recommendation.accessLevel === 'CodeRequired' || /schema|structured data|FAQ|Organization/i.test(`${recommendation.title} ${recommendation.description}`)) {
+    criteria.add('Relevant JSON-LD validates without parse errors.')
+  }
+  criteria.add('After rerunning PropertyAudit, the recommendation evidence updates against the new page signals.')
+  return Array.from(criteria).slice(0, 6)
+}
+
+function enrichRecommendation(
+  recommendation: ContentRecommendation,
+  context: AnalysisContext
+): ContentRecommendation {
+  const relatedAnswers = recommendation.relatedQueries.flatMap(query =>
+    context.answers.filter(answer => answer.queryId === query.id)
+  )
+  const accessLevel = inferAccessLevel(recommendation)
+  const target = findTargetPage({ ...recommendation, accessLevel }, context)
+  const targetPageType = recommendation.targetPageType ||
+    (target.expectedPageType ? pageTypeToTargetPageType(target.expectedPageType) : inferTargetPageType(recommendation))
+  const enrichedTargetUrl = recommendation.targetUrl ?? inferTargetUrl({ ...recommendation, accessLevel }, context)
+  const sourceQueryEvidence = recommendation.sourceQueryEvidence ||
+    buildSourceQueryEvidence(recommendation, relatedAnswers, context)
+  const crawlEvidence = buildCrawlEvidence(
+    recommendation,
+    context,
+    target.page,
+    target.suggestedUrl,
+    target.expectedPageType
+  )
+  const missingSignals = buildMissingSignals(recommendation, target.page, target.expectedPageType)
+
+  return {
+    ...recommendation,
+    accessLevel,
+    owner: inferOwner({ ...recommendation, accessLevel }),
+    status: recommendation.status || 'todo',
+    targetPageType,
+    targetUrl: enrichedTargetUrl,
+    evidenceMode: context.siteAudit.websiteUrl ? 'URLOnly' : undefined,
+    evidence: crawlEvidence,
+    implementationSteps: buildImplementationSteps({ ...recommendation, accessLevel }, target.page, target.suggestedUrl, target.expectedPageType),
+    acceptanceCriteria: buildAcceptanceCriteria({ ...recommendation, accessLevel }, target.page, target.suggestedUrl, target.expectedPageType),
+    detectedOnUrls: recommendation.detectedOnUrls ||
+      [target.page?.url, ...(context.siteAudit.pages || []).filter(page => page.reachable).map(page => page.url).slice(0, 3)]
+        .filter(Boolean) as string[],
+    missingSignals,
+    sourceQueryEvidence,
+    surfaceBreakdown:
+      recommendation.surfaceBreakdown ||
+      (relatedAnswers.length > 0 ? buildSurfaceBreakdown(relatedAnswers, context.runsBySurface) : undefined),
   }
 }

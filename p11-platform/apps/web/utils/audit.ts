@@ -1,4 +1,5 @@
 import { createClient } from '@/utils/supabase/server'
+import type { Json } from '@/types/supabase'
 
 export type AuditAction = 
   | 'create' 
@@ -97,7 +98,7 @@ export async function logAuditEvent(params: AuditLogParams): Promise<void> {
         entity_type: params.entityType,
         entity_id: params.entityId || null,
         entity_name: params.entityName || null,
-        details: params.details || {},
+        details: (params.details || {}) as Json,
         ip_address,
         user_agent
       })

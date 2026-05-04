@@ -7,8 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
-
-const ALLOWED_SURFACES = new Set(['openai', 'claude'])
+import { isSupportedSurface, type Surface } from '@/utils/propertyaudit/types'
 
 export async function POST(req: NextRequest) {
   try {
@@ -22,7 +21,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json()
     const { propertyId, surfaces } = body as {
       propertyId?: string
-      surfaces?: Array<'openai' | 'claude'>
+      surfaces?: Surface[]
     }
 
     if (!propertyId) {
@@ -36,14 +35,14 @@ export async function POST(req: NextRequest) {
 
     const requestedSurfaces = Array.isArray(surfaces)
       ? surfaces.filter(
-          (surface): surface is 'openai' | 'claude' =>
-            typeof surface === 'string' && ALLOWED_SURFACES.has(surface)
+          (surface): surface is Surface =>
+            typeof surface === 'string' && isSupportedSurface(surface)
         )
       : []
 
     if (Array.isArray(surfaces) && surfaces.length > 0 && requestedSurfaces.length === 0) {
       return NextResponse.json(
-        { error: 'Invalid surfaces. Allowed values: openai, claude' },
+        { error: 'Invalid surfaces.' },
         { status: 400 }
       )
     }

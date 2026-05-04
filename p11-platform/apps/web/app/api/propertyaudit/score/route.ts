@@ -6,16 +6,20 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
+import { getSurfaceLabel, isSupportedSurface, type Surface } from '@/utils/propertyaudit/types'
 
 export interface GeoScoreSummary {
   propertyId: string
   overallScore: number
   visibilityPct: number
   scoreBucket: 'excellent' | 'good' | 'fair' | 'poor'
-  surfaces: {
-    openai: SurfaceScore | null
-    claude: SurfaceScore | null
-  }
+  surfaces: Partial<Record<Surface, SurfaceScore | null>>
+  surfaceSummaries: Array<{
+    surface: Surface
+    label: string
+    score: number | null
+    visibilityPct: number | null
+  }>
   breakdown: {
     position: number
     link: number
@@ -37,6 +41,22 @@ interface SurfaceScore {
   avgSov: number | null
   runId: string
   runAt: string
+}
+
+type GeoScoreRow = {
+  overall_score: number | null
+  visibility_pct: number | null
+  avg_llm_rank: number | null
+  avg_link_rank: number | null
+  avg_sov: number | null
+  breakdown: unknown
+}
+
+type GeoRunWithScores = {
+  id: string
+  surface: string | null
+  started_at: string | null
+  geo_scores: GeoScoreRow[] | null
 }
 
 // GET: Get current GEO score for a property
@@ -90,27 +110,35 @@ export async function GET(req: NextRequest) {
     }
 
     // Find latest run per surface
-    const latestOpenaiRun = latestRuns?.find(r => r.surface === 'openai' && r.geo_scores?.length > 0)
-    const latestClaudeRun = latestRuns?.find(r => r.surface === 'claude' && r.geo_scores?.length > 0)
-
-    // Get previous runs for trend calculation
-    const prevOpenaiRun = latestRuns?.find(r => 
-      r.surface === 'openai' && 
-      r.geo_scores?.length > 0 && 
-      r.id !== latestOpenaiRun?.id
-    )
-    const prevClaudeRun = latestRuns?.find(r => 
-      r.surface === 'claude' && 
-      r.geo_scores?.length > 0 && 
-      r.id !== latestClaudeRun?.id
-    )
+    const latestRunsBySurface = new Map<Surface, GeoRunWithScores>()
+    const previousRunsBySurface = new Map<Surface, GeoRunWithScores>()
+    for (const run of (latestRuns || []) as GeoRunWithScores[]) {
+      const surface = run.surface
+      if (typeof surface !== 'string' || !isSupportedSurface(surface) || !run.geo_scores?.length) continue
+      if (!latestRunsBySurface.has(surface)) {
+        latestRunsBySurface.set(surface, run)
+      } else if (!previousRunsBySurface.has(surface)) {
+        previousRunsBySurface.set(surface, run)
+      }
+    }
 
     // Build surface scores
-    const openaiScore = latestOpenaiRun ? buildSurfaceScore(latestOpenaiRun) : null
-    const claudeScore = latestClaudeRun ? buildSurfaceScore(latestClaudeRun) : null
+    const surfaceEntries = Array.from(latestRunsBySurface.entries())
+    const surfaces = Object.fromEntries(
+      surfaceEntries.map(([surface, run]) => [surface, buildSurfaceScore(run)])
+    ) as Partial<Record<Surface, SurfaceScore | null>>
+    const surfaceSummaries = surfaceEntries.map(([surface, run]) => {
+      const score = buildSurfaceScore(run)
+      return {
+        surface,
+        label: getSurfaceLabel(surface),
+        score: score.overallScore,
+        visibilityPct: score.visibilityPct,
+      }
+    })
 
     // Calculate combined score
-    const scores = [openaiScore, claudeScore].filter(Boolean) as SurfaceScore[]
+    const scores = Object.values(surfaces).filter(Boolean) as SurfaceScore[]
     
     if (scores.length === 0) {
       console.log('[Score API] No completed runs found for property:', propertyId)
@@ -130,10 +158,9 @@ export async function GET(req: NextRequest) {
     const avgVisibilityPct = scores.reduce((sum, s) => sum + s.visibilityPct, 0) / scores.length
 
     // Calculate trend
-    const prevScores = [
-      prevOpenaiRun ? buildSurfaceScore(prevOpenaiRun) : null,
-      prevClaudeRun ? buildSurfaceScore(prevClaudeRun) : null,
-    ].filter(Boolean) as SurfaceScore[]
+    const prevScores = Array.from(previousRunsBySurface.values())
+      .map(run => buildSurfaceScore(run))
+      .filter(Boolean) as SurfaceScore[]
 
     let trend = null
     if (prevScores.length > 0) {
@@ -147,20 +174,19 @@ export async function GET(req: NextRequest) {
     }
 
     // Get breakdown from latest score
-    const latestScore = openaiScore || claudeScore
-    const latestBreakdown = latestOpenaiRun?.geo_scores?.[0]?.breakdown || 
-                           latestClaudeRun?.geo_scores?.[0]?.breakdown || 
-                           { position: 0, link: 0, sov: 0, accuracy: 0 }
+    const latestScore = scores[0]
+    const latestRun = Array.from(latestRunsBySurface.values())[0]
+    const latestBreakdown =
+      (latestRun?.geo_scores?.[0]?.breakdown as GeoScoreSummary['breakdown'] | undefined) ||
+      { position: 0, link: 0, sov: 0, accuracy: 0 }
 
     const summary: GeoScoreSummary = {
       propertyId,
       overallScore: Math.round(avgOverallScore * 10) / 10,
       visibilityPct: Math.round(avgVisibilityPct * 10) / 10,
       scoreBucket: getScoreBucket(avgOverallScore),
-      surfaces: {
-        openai: openaiScore,
-        claude: claudeScore,
-      },
+      surfaces,
+      surfaceSummaries,
       breakdown: latestBreakdown as GeoScoreSummary['breakdown'],
       lastRunAt: latestScore?.runAt || null,
       trend,
@@ -180,16 +206,16 @@ export async function GET(req: NextRequest) {
   }
 }
 
-function buildSurfaceScore(run: Record<string, unknown>): SurfaceScore {
-  const scoreData = (run.geo_scores as Array<Record<string, unknown>>)?.[0]
+function buildSurfaceScore(run: GeoRunWithScores): SurfaceScore {
+  const scoreData = run.geo_scores?.[0]
   return {
-    overallScore: (scoreData?.overall_score as number) || 0,
-    visibilityPct: (scoreData?.visibility_pct as number) || 0,
-    avgLlmRank: scoreData?.avg_llm_rank as number | null,
-    avgLinkRank: scoreData?.avg_link_rank as number | null,
-    avgSov: scoreData?.avg_sov as number | null,
-    runId: run.id as string,
-    runAt: run.started_at as string,
+    overallScore: scoreData?.overall_score || 0,
+    visibilityPct: scoreData?.visibility_pct || 0,
+    avgLlmRank: scoreData?.avg_llm_rank ?? null,
+    avgLinkRank: scoreData?.avg_link_rank ?? null,
+    avgSov: scoreData?.avg_sov ?? null,
+    runId: run.id,
+    runAt: run.started_at || '',
   }
 }
 

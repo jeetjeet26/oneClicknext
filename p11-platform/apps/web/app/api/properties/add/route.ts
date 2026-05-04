@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { createAdminClient } from '@/utils/supabase/admin'
+import { normalizePublicWebsiteUrl } from '@/utils/services/public-url'
 
 /**
  * Add another property to an existing organization
@@ -75,7 +76,7 @@ export async function POST(request: NextRequest) {
         },
         // Profile data now directly on properties table
         property_type: body.propertyType || body.communityType || null,
-        website_url: body.websiteUrl || null,
+        website_url: normalizePublicWebsiteUrl(body.websiteUrl),
         unit_count: body.unitCount || null,
         year_built: body.yearBuilt || null,
       })

@@ -45,16 +45,20 @@ import {
   FileText,
   Database,
 } from 'lucide-react'
+import { getSurfaceLabel, type Surface } from '@/utils/propertyaudit/types'
 
 interface GeoScoreSummary {
   propertyId: string
   overallScore: number
   visibilityPct: number
   scoreBucket: 'excellent' | 'good' | 'fair' | 'poor'
-  surfaces: {
-    openai: SurfaceScore | null
-    claude: SurfaceScore | null
-  }
+  surfaces: Partial<Record<Surface, SurfaceScore | null>>
+  surfaceSummaries: Array<{
+    surface: Surface
+    label: string
+    score: number | null
+    visibilityPct: number | null
+  }>
   breakdown: {
     position: number
     link: number
@@ -80,7 +84,7 @@ interface SurfaceScore {
 
 interface GeoRun {
   id: string
-  surface: 'openai' | 'claude'
+  surface: Surface
   status: 'queued' | 'running' | 'completed' | 'failed'
   queryCount: number
   progressPct: number
@@ -116,6 +120,7 @@ export default function PropertyAuditPage() {
   const [loading, setLoading] = useState(true)
   const [isRunning, setIsRunning] = useState(false)
   const [isGeneratingQueries, setIsGeneratingQueries] = useState(false)
+  const [runAuditError, setRunAuditError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<'overview' | 'queries' | 'recommendations' | 'insights' | 'history'>('overview')
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
@@ -282,10 +287,11 @@ export default function PropertyAuditPage() {
     }
   }
 
-  const runAudit = async (config: { surfaces: ('openai' | 'claude')[]; executionCount: number }) => {
+  const runAudit = async (config: { surfaces: Surface[]; executionCount: number }) => {
     if (!currentProperty?.id) return
 
     setIsRunning(true)
+    setRunAuditError(null)
     try {
       const res = await fetch('/api/propertyaudit/run', {
         method: 'POST',
@@ -297,11 +303,18 @@ export default function PropertyAuditPage() {
         })
       })
 
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error || 'Failed to start PropertyAudit run')
+      }
+
       if (res.ok) {
         await fetchRuns()
       }
     } catch (err) {
       console.error('Error running audit:', err)
+      setRunAuditError(err instanceof Error ? err.message : 'Failed to start PropertyAudit run')
+      throw err
     } finally {
       setIsRunning(false)
     }
@@ -456,6 +469,12 @@ export default function PropertyAuditPage() {
           propertyId={currentProperty.id}
           onRunCompleted={fetchData}
         />
+      )}
+
+      {runAuditError && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-900/20 dark:text-red-300">
+          {runAuditError}
+        </div>
       )}
 
       {/* Alert Banners */}
@@ -614,11 +633,19 @@ export default function PropertyAuditPage() {
                 {/* Model Comparison + Query Type Rings + AI Overview */}
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                   {/* Model Comparison */}
+                  {(() => {
+                    const primarySurface = score?.surfaceSummaries?.[0]
+                    const secondarySurface = score?.surfaceSummaries?.[1]
+                    return (
                   <ModelComparisonCard
-                    openai={score?.surfaces.openai || null}
-                    claude={score?.surfaces.claude || null}
+                    primary={primarySurface ? score?.surfaces[primarySurface.surface] || null : null}
+                    primaryLabel={primarySurface?.label || 'Primary Surface'}
+                    secondary={secondarySurface ? score?.surfaces[secondarySurface.surface] || null : null}
+                    secondaryLabel={secondarySurface?.label || 'Secondary Surface'}
                     onViewDetails={() => setActiveTab('insights')}
                   />
+                    )
+                  })()}
 
                   {/* Query Type Performance */}
                   <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
@@ -862,7 +889,7 @@ export default function PropertyAuditPage() {
                   >
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
-                        {run.surface === 'openai' ? (
+                        {run.surface === 'openai' || run.surface === 'chatgpt' ? (
                           <Sparkles className="w-5 h-5 text-green-500" />
                         ) : (
                           <Globe className="w-5 h-5 text-purple-500" />
@@ -870,7 +897,7 @@ export default function PropertyAuditPage() {
                         <div>
                           <div className="flex items-center gap-2">
                             <p className="font-medium text-gray-900 dark:text-white capitalize">
-                              {run.surface} Run
+                              {getSurfaceLabel(run.surface)} Run
                             </p>
                             {run.usesWebSearch && (
                               <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded">
@@ -960,6 +987,7 @@ export default function PropertyAuditPage() {
         onClose={() => setShowRunAuditModal(false)}
         onSubmit={runAudit}
         queryCount={queries.length}
+        propertyId={currentProperty?.id || ''}
       />
     </div>
   )

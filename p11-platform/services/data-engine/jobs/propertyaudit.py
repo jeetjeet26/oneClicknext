@@ -40,11 +40,11 @@ class PropertyAuditExecutor:
         self.openai_api_key = os.environ.get('OPENAI_API_KEY')
         self.anthropic_api_key = os.environ.get('ANTHROPIC_API_KEY')
         self.enable_web_search = os.environ.get('GEO_ENABLE_WEB_SEARCH', 'false').lower() == 'true'
-        self.audit_mode = os.environ.get('GEO_AUDIT_MODE', 'structured').lower()
+        self.audit_mode = os.environ.get('GEO_AUDIT_MODE', 'natural').lower()
         
         if self.audit_mode not in ['structured', 'natural']:
-            logger.warning(f"Unknown GEO_AUDIT_MODE '{self.audit_mode}', defaulting to 'structured'")
-            self.audit_mode = 'structured'
+            logger.warning(f"Unknown GEO_AUDIT_MODE '{self.audit_mode}', defaulting to 'natural'")
+            self.audit_mode = 'natural'
         
         logger.info(f"[PropertyAudit] Mode: {self.audit_mode}, Web search: {self.enable_web_search}")
     
@@ -165,11 +165,13 @@ class PropertyAuditExecutor:
             
             # 8. Update run status
             final_status = 'failed' if (errors and not results) else 'completed'
+            failure_reason = self._classify_failure('; '.join(errors)) if errors else None
             self._update_run_status(
                 run_id,
                 final_status,
                 progress_pct=100,
-                error_message='; '.join(errors) if errors else None
+                error_message='; '.join(errors) if errors else None,
+                provider_failure_reason=failure_reason
             )
             
             logger.info(f"[PropertyAudit] Completed run_id={run_id}: {len(results)} queries processed, {len(errors)} errors")
@@ -189,9 +191,27 @@ class PropertyAuditExecutor:
                 run_id,
                 'failed',
                 error_message=str(e),
-                progress_pct=0
+                progress_pct=0,
+                provider_failure_reason=self._classify_failure(str(e))
             )
             return {'success': False, 'error': str(e)}
+
+    def _classify_failure(self, message: Optional[str]) -> Optional[str]:
+        """Normalize provider/runtime failures for operator reporting."""
+        if not message:
+            return None
+        lower = message.lower()
+        if 'api_key' in lower or 'api key' in lower or 'not set' in lower or 'missing' in lower:
+            return 'missing_provider_key'
+        if 'timeout' in lower or 'timed out' in lower:
+            return 'timeout'
+        if 'serpapi' in lower or 'search' in lower:
+            return 'search_unavailable'
+        if 'parse' in lower or 'analysis' in lower or 'json' in lower:
+            return 'analysis_failed'
+        if 'rate limit' in lower or '429' in lower or '503' in lower or 'provider' in lower:
+            return 'provider_unavailable'
+        return 'provider_unavailable'
     
     def _get_run(self, run_id: str) -> Optional[Dict]:
         """Get run record from database."""
@@ -203,7 +223,8 @@ class PropertyAuditExecutor:
         run_id: str, 
         status: str, 
         progress_pct: Optional[int] = None,
-        error_message: Optional[str] = None
+        error_message: Optional[str] = None,
+        provider_failure_reason: Optional[str] = None
     ):
         """Update run status in database."""
         update_data = {'status': status}
@@ -216,6 +237,8 @@ class PropertyAuditExecutor:
         
         if error_message:
             update_data['error_message'] = error_message
+        if provider_failure_reason:
+            update_data['provider_failure_reason'] = provider_failure_reason
         
         self.supabase.table('geo_runs').update(update_data).eq('id', run_id).execute()
         logger.debug(f"[PropertyAudit] Updated run {run_id}: status={status}, progress={progress_pct}%")
@@ -312,6 +335,11 @@ class PropertyAuditExecutor:
         from connectors.claude_connector import ClaudeConnector
         from connectors.openai_natural_connector import OpenAINaturalConnector
         from connectors.claude_natural_connector import ClaudeNaturalConnector
+        from connectors.v1_natural_connectors import (
+            GeminiNaturalConnector,
+            PerplexityNaturalConnector,
+            GoogleProxyNaturalConnector,
+        )
         from connectors.evaluator import score_answer
         
         # Build context
@@ -344,10 +372,19 @@ class PropertyAuditExecutor:
             # Natural mode: Two-phase analysis
             analysis_method = 'natural_two_phase'
             
-            if run['surface'] == 'openai':
+            surface = run.get('surface')
+            if surface in ['openai', 'chatgpt']:
                 connector = OpenAINaturalConnector()
-            else:
+            elif surface == 'claude':
                 connector = ClaudeNaturalConnector()
+            elif surface == 'gemini':
+                connector = GeminiNaturalConnector()
+            elif surface == 'perplexity':
+                connector = PerplexityNaturalConnector()
+            elif surface == 'google_ai':
+                connector = GoogleProxyNaturalConnector()
+            else:
+                raise ValueError(f"Unsupported PropertyAudit surface: {surface}")
             
             result = await connector.invoke_natural_mode(context)
             natural_response_text = result['raw'].get('natural_response', '')
@@ -356,8 +393,10 @@ class PropertyAuditExecutor:
             # Structured mode: Direct GEO extraction
             if run['surface'] == 'openai':
                 connector = OpenAIConnector()
-            else:
+            elif run['surface'] == 'claude':
                 connector = ClaudeConnector()
+            else:
+                raise ValueError(f"Structured mode is not supported for surface {run['surface']}")
             
             result = await connector.invoke(context)
         

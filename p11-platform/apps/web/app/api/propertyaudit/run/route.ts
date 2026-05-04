@@ -8,6 +8,14 @@ import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { getDataEngineUrl } from '@/utils/services/runtime-config'
+import {
+  classifyProviderFailure,
+  DEFAULT_AUDIT_SURFACES,
+  getDefaultAuditMode,
+  getSurfaceModelName,
+  isSupportedSurface,
+  type Surface,
+} from '@/utils/propertyaudit/types'
 
 const DATA_ENGINE_DISPATCH_TIMEOUT_MS = 15000
 const TYPESCRIPT_PROCESS_TIMEOUT_MS = 600000
@@ -15,7 +23,7 @@ const TYPESCRIPT_PROCESS_TIMEOUT_MS = 600000
 export interface GeoRun {
   id: string
   propertyId: string
-  surface: 'openai' | 'claude'
+  surface: Surface
   modelName: string
   status: 'queued' | 'running' | 'completed' | 'failed'
   queryCount: number
@@ -24,12 +32,12 @@ export interface GeoRun {
   errorMessage: string | null
 }
 
-function isTypeScriptFallbackEnabled() {
-  return process.env.PROPERTYAUDIT_ALLOW_TYPESCRIPT_FALLBACK === 'true'
-}
-
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+function isDataEngineSupportedSurface(surface: Surface): boolean {
+  return isSupportedSurface(surface)
 }
 
 async function readResponseError(response: Response): Promise<string> {
@@ -62,6 +70,7 @@ async function markDispatchFailed(
     .update({
       status: 'failed',
       error_message: message,
+      provider_failure_reason: classifyProviderFailure(message),
       finished_at: new Date().toISOString(),
     })
     .eq('id', runId)
@@ -109,7 +118,14 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json()
-    const { propertyId, surfaces = ['openai', 'claude'], executionCount = 1, useLocalFixture = false } = body
+    const {
+      propertyId,
+      surfaces = DEFAULT_AUDIT_SURFACES,
+      executionCount = 1,
+      promptSource = 'generated',
+      accessMode = 'URLOnly',
+      useLocalFixture = false,
+    } = body
 
     if (!propertyId) {
       return NextResponse.json({ error: 'propertyId required' }, { status: 400 })
@@ -122,6 +138,21 @@ export async function POST(req: NextRequest) {
 
     // Validate executionCount
     const validExecutionCount = Math.max(1, Math.min(5, Number(executionCount) || 1))
+    const requestedSurfaces = Array.isArray(surfaces) ? surfaces : []
+    const normalizedSurfaces = Array.from(
+      new Set(
+        requestedSurfaces.filter(
+          (surface): surface is Surface => typeof surface === 'string' && isSupportedSurface(surface)
+        )
+      )
+    )
+
+    if (normalizedSurfaces.length === 0) {
+      return NextResponse.json(
+        { error: 'At least one supported surface is required.' },
+        { status: 400 }
+      )
+    }
 
     const serviceClient = createServiceClient()
 
@@ -142,14 +173,22 @@ export async function POST(req: NextRequest) {
     // Apply global execution count to all queries
     const totalQueryExecutions = queryCount * validExecutionCount
     const allowLocalFixture = process.env.NODE_ENV !== 'production' && useLocalFixture === true
-    const useDataEngine = process.env.PROPERTYAUDIT_USE_DATA_ENGINE === 'true' && !allowLocalFixture
+    const useDataEngine = process.env.PROPERTYAUDIT_USE_DATA_ENGINE !== 'false' && !allowLocalFixture
     const cronSecret = process.env.CRON_SECRET
+    const auditMode = getDefaultAuditMode()
 
     const sessionCookie = allowLocalFixture ? req.headers.get('cookie') || '' : ''
 
-    if (!useDataEngine && !cronSecret && !sessionCookie) {
+    if (!useDataEngine && !allowLocalFixture) {
       return NextResponse.json(
-        { error: 'CRON_SECRET is required for TypeScript PropertyAudit processing' },
+        { error: 'PropertyAudit requires data-engine dispatch. Set PROPERTYAUDIT_USE_DATA_ENGINE=true or remove the explicit false override.' },
+        { status: 500 }
+      )
+    }
+
+    if (allowLocalFixture && !cronSecret && !sessionCookie) {
+      return NextResponse.json(
+        { error: 'CRON_SECRET or a user session is required for deterministic local fixture processing' },
         { status: 500 }
       )
     }
@@ -157,25 +196,27 @@ export async function POST(req: NextRequest) {
     // Create runs for each surface with shared batch_id
     const runs: GeoRun[] = []
     const batchId = crypto.randomUUID() // Group related runs together
-    const modelNames: Record<'openai' | 'claude', string> = {
-      openai: process.env.GEO_OPENAI_MODEL || 'gpt-5.2',
-      claude: process.env.GEO_CLAUDE_MODEL || 'claude-sonnet-4-20250514',
-    }
 
-    for (const surface of surfaces) {
-      if (surface !== 'openai' && surface !== 'claude') continue
-
-      const typedSurface = surface as 'openai' | 'claude';
-
+    for (const surface of normalizedSurfaces) {
       const { data: run, error: runError } = await serviceClient
         .from('geo_runs')
         .insert({
           property_id: propertyId,
-          surface: typedSurface,
-          model_name: modelNames[typedSurface],
+          surface,
+          model_name: getSurfaceModelName(surface),
           status: 'queued',
           query_count: totalQueryExecutions,
           execution_count: validExecutionCount,
+          prompt_source: promptSource,
+          access_mode: accessMode,
+          measurement_mode: allowLocalFixture ? 'local_fixture' : auditMode,
+          run_metadata: {
+            selected_surfaces: normalizedSurfaces,
+            dispatch_preference: useDataEngine ? 'data_engine' : 'typescript',
+            prompt_source: promptSource,
+            access_mode: accessMode,
+            measurement_mode: allowLocalFixture ? 'local_fixture' : auditMode,
+          },
           started_at: new Date().toISOString(),
           batch_id: batchId,
         })
@@ -199,25 +240,25 @@ export async function POST(req: NextRequest) {
     // Trigger processing - prefer batch execution for parallel processing
     // Feature flag: Use data-engine or TypeScript processor
     const baseUrl = req.nextUrl?.origin || new URL(req.url).origin
-    
-    if (useDataEngine) {
-      // ============================================================
-      // PARALLEL EXECUTION: Fire separate HTTP requests for each run
-      // HTTP-level parallelism is more reliable than in-process asyncio
-      // Each run executes independently on the data-engine
-      // ============================================================
+    const runsForDataEngine = useDataEngine
+      ? runs.filter(run => isDataEngineSupportedSurface(run.surface))
+      : []
+    const runsForTypeScript = runs.filter(run => !runsForDataEngine.some(candidate => candidate.id === run.id))
+
+    if (runsForDataEngine.length > 0) {
+      // Dispatch every normal PropertyAudit run to the data-engine. The web
+      // processor is reserved for deterministic local fixtures only.
       const dataEngineUrl = getDataEngineUrl()
       const apiKey = process.env.DATA_ENGINE_API_KEY
-      const canFallbackToTypeScript = isTypeScriptFallbackEnabled() && Boolean(cronSecret)
       
       if (!apiKey) {
         console.warn('⚠️  DATA_ENGINE_API_KEY not set - data-engine may reject request')
       }
       
-      console.log(`🚀 [PropertyAudit] Firing ${runs.length} PARALLEL HTTP requests to data-engine`)
+      console.log(`🚀 [PropertyAudit] Firing ${runsForDataEngine.length} PARALLEL HTTP requests to data-engine`)
       
       // Fire all requests in parallel (fire-and-forget)
-      const promises = runs.map(run => {
+      const promises = runsForDataEngine.map(run => {
         console.log(`🚀 [PropertyAudit] Starting ${run.surface.toUpperCase()} run ${run.id}`)
         
         return (async () => {
@@ -268,33 +309,6 @@ export async function POST(req: NextRequest) {
             const dispatchError = getErrorMessage(error)
             console.error(`❌ [PropertyAudit] ${run.surface.toUpperCase()} run ${run.id} failed:`, error)
 
-            if (canFallbackToTypeScript && cronSecret) {
-              console.warn(
-                `⚠️ [PropertyAudit] Opt-in TypeScript fallback enabled for ${run.id}: ${dispatchError}`
-              )
-
-              try {
-                await triggerTypeScriptProcessor({
-                  baseUrl,
-                  cronSecret,
-                  sessionCookie,
-                  runId: run.id,
-                  useLocalFixture: allowLocalFixture,
-                })
-
-                return {
-                  success: true,
-                  run,
-                  mode: 'typescript_fallback' as const,
-                  fallbackReason: dispatchError,
-                }
-              } catch (fallbackError) {
-                const combinedError = `Data-engine dispatch failed (${dispatchError}); TypeScript fallback failed (${getErrorMessage(fallbackError)})`
-                await markDispatchFailed(serviceClient, run.id, combinedError)
-                return { success: false, run, mode: 'failed' as const, error: combinedError }
-              }
-            }
-
             await markDispatchFailed(serviceClient, run.id, `Data-engine dispatch failed: ${dispatchError}`)
             return { success: false, run, mode: 'failed' as const, error: dispatchError }
           } finally {
@@ -306,18 +320,18 @@ export async function POST(req: NextRequest) {
       // Don't await - let them run in background
       Promise.all(promises).then(results => {
         const succeeded = results.filter(r => r.success).length
-        const fallbackCount = results.filter(r => r.mode === 'typescript_fallback').length
         console.log(
-          `✅ [PropertyAudit] Batch ${batchId}: ${succeeded}/${runs.length} runs dispatched (${fallbackCount} via TypeScript fallback)`
+          `✅ [PropertyAudit] Batch ${batchId}: ${succeeded}/${runsForDataEngine.length} runs dispatched to data-engine`
         )
       })
-      
-    } else {
+    }
+
+    if (runsForTypeScript.length > 0) {
       // ============================================================
-      // OPTION 3: TypeScript Execution (Legacy, has timeout issues)
+      // TypeScript execution is only for deterministic local fixture runs.
       // ============================================================
-      for (const run of runs) {
-        console.log(`⚠️  [PropertyAudit] Using TypeScript processor (legacy) for run ${run.id}`)
+      for (const run of runsForTypeScript) {
+        console.log(`⚠️  [PropertyAudit] Using TypeScript processor for run ${run.id} (${run.surface})`)
 
         if (!cronSecret && !sessionCookie) {
           await markDispatchFailed(serviceClient, run.id, 'CRON_SECRET missing for TypeScript processing')
@@ -341,7 +355,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       success: true,
       runs,
-      processorMode: allowLocalFixture ? 'typescript_fixture' : useDataEngine ? 'data_engine' : 'typescript',
+      processorMode: allowLocalFixture
+        ? 'typescript_fixture'
+        : runsForDataEngine.length > 0 && runsForTypeScript.length > 0
+          ? 'mixed'
+          : runsForDataEngine.length > 0
+            ? 'data_engine'
+            : 'typescript',
       message: `Created ${runs.length} run(s) for ${queryCount} queries × ${validExecutionCount} executions = ${totalQueryExecutions} total LLM calls. Processing started.`,
     })
   } catch (error) {
@@ -423,7 +443,7 @@ function formatRun(run: Record<string, unknown>): GeoRun {
   return {
     id: run.id as string,
     propertyId: run.property_id as string,
-    surface: run.surface as 'openai' | 'claude',
+    surface: run.surface as Surface,
     modelName: run.model_name as string,
     status: run.status as GeoRun['status'],
     queryCount: run.query_count as number,

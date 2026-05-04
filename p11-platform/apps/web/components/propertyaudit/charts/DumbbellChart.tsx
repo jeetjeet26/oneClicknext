@@ -5,33 +5,37 @@ import { useMemo, useState } from 'react'
 interface DumbbellPoint {
   id: string
   label: string
-  openai: number
-  claude: number
+  primary: number
+  secondary: number
 }
 
 interface DumbbellChartProps {
   data: DumbbellPoint[]
   height?: number
   showValues?: boolean
+  primaryLabel?: string
+  secondaryLabel?: string
 }
 
 export function DumbbellChart({
   data,
   height = 300,
-  showValues = true
+  showValues = true,
+  primaryLabel = 'Primary',
+  secondaryLabel = 'Secondary',
 }: DumbbellChartProps) {
   const [hoveredId, setHoveredId] = useState<string | null>(null)
-  const [sortBy, setSortBy] = useState<'delta' | 'openai' | 'claude' | 'label'>('delta')
+  const [sortBy, setSortBy] = useState<'delta' | 'primary' | 'secondary' | 'label'>('delta')
 
   const sortedData = useMemo(() => {
     return [...data].sort((a, b) => {
       switch (sortBy) {
-        case 'openai':
-          return b.openai - a.openai
-        case 'claude':
-          return b.claude - a.claude
+        case 'primary':
+          return b.primary - a.primary
+        case 'secondary':
+          return b.secondary - a.secondary
         case 'delta':
-          return Math.abs(b.claude - b.openai) - Math.abs(a.claude - a.openai)
+          return Math.abs(b.secondary - b.primary) - Math.abs(a.secondary - a.primary)
         case 'label':
           return a.label.localeCompare(b.label)
         default:
@@ -55,18 +59,18 @@ export function DumbbellChart({
       return { min: 0, max: 100, points: [] }
     }
 
-    const allValues = [...sortedData.map((d) => d.openai), ...sortedData.map((d) => d.claude)]
+    const allValues = [...sortedData.map((d) => d.primary), ...sortedData.map((d) => d.secondary)]
     const min = Math.min(...allValues, 0)
     const max = Math.max(...allValues, 100)
     const range = max - min || 1
 
     const points = sortedData.map((point, index) => {
-      const openaiX = chartAreaStart + ((point.openai - min) / range) * chartAreaWidth
-      const claudeX = chartAreaStart + ((point.claude - min) / range) * chartAreaWidth
+      const primaryX = chartAreaStart + ((point.primary - min) / range) * chartAreaWidth
+      const secondaryX = chartAreaStart + ((point.secondary - min) / range) * chartAreaWidth
       const y = paddingTop + index * rowHeight + rowHeight / 2
-      const delta = point.claude - point.openai
+      const delta = point.secondary - point.primary
 
-      return { ...point, openaiX, claudeX, y, delta }
+      return { ...point, primaryX, secondaryX, y, delta }
     })
 
     return { min, max, points }
@@ -96,11 +100,11 @@ export function DumbbellChart({
         <div className="flex items-center gap-4 text-xs">
           <span className="flex items-center gap-1.5">
             <span className="h-2.5 w-2.5 rounded-full bg-green-500" />
-            OpenAI
+            {primaryLabel}
           </span>
           <span className="flex items-center gap-1.5">
             <span className="h-2.5 w-2.5 rounded-full bg-purple-500" />
-            Claude
+            {secondaryLabel}
           </span>
         </div>
         <select
@@ -109,8 +113,8 @@ export function DumbbellChart({
           className="rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-2 py-1 text-xs"
         >
           <option value="delta">Sort by difference</option>
-          <option value="openai">Sort by OpenAI</option>
-          <option value="claude">Sort by Claude</option>
+          <option value="primary">Sort by {primaryLabel}</option>
+          <option value="secondary">Sort by {secondaryLabel}</option>
           <option value="label">Sort by name</option>
         </select>
       </div>
@@ -153,18 +157,18 @@ export function DumbbellChart({
               >
                 {/* Connecting line */}
                 <line
-                  x1={point.openaiX}
+                  x1={point.primaryX}
                   y1={point.y}
-                  x2={point.claudeX}
+                  x2={point.secondaryX}
                   y2={point.y}
                   stroke={lineColor}
                   strokeWidth={isHovered ? 3 : 2}
                   opacity={isHovered ? 0.6 : 0.4}
                 />
 
-                {/* OpenAI dot */}
+                {/* Primary dot */}
                 <circle
-                  cx={point.openaiX}
+                  cx={point.primaryX}
                   cy={point.y}
                   r={isHovered ? 8 : 6}
                   fill="#22c55e"
@@ -172,9 +176,9 @@ export function DumbbellChart({
                   strokeWidth="2"
                 />
 
-                {/* Claude dot */}
+                {/* Secondary dot */}
                 <circle
-                  cx={point.claudeX}
+                  cx={point.secondaryX}
                   cy={point.y}
                   r={isHovered ? 8 : 6}
                   fill="#a855f7"
@@ -195,20 +199,20 @@ export function DumbbellChart({
                 {showValues && (
                   <>
                     <text
-                      x={point.openaiX}
+                      x={point.primaryX}
                       y={point.y - 12}
                       textAnchor="middle"
                       className="text-[10px] fill-gray-600 dark:fill-gray-400"
                     >
-                      {point.openai.toFixed(1)}
+                      {point.primary.toFixed(1)}
                     </text>
                     <text
-                      x={point.claudeX}
+                      x={point.secondaryX}
                       y={point.y - 12}
                       textAnchor="middle"
                       className="text-[10px] fill-gray-600 dark:fill-gray-400 font-medium"
                     >
-                      {point.claude.toFixed(1)}
+                      {point.secondary.toFixed(1)}
                     </text>
                   </>
                 )}
@@ -216,7 +220,7 @@ export function DumbbellChart({
                 {/* Delta indicator on hover */}
                 {isHovered && (
                   <text
-                    x={(point.openaiX + point.claudeX) / 2}
+                    x={(point.primaryX + point.secondaryX) / 2}
                     y={point.y + 18}
                     textAnchor="middle"
                     className="text-[9px] fill-gray-500 font-medium"

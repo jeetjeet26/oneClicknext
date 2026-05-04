@@ -4,7 +4,7 @@ import { deriveSharedLifecycleStatus } from '@/utils/substrate/shared-vocabulary
 import { deriveImportJobState } from '@/utils/marketvision/import-job-state'
 
 type ServiceClient = {
-  from: ReturnType<import('@/utils/supabase/admin').createServiceClient>['from']
+  from: ReturnType<typeof import('@/utils/supabase/admin').createServiceClient>['from']
 }
 
 type IntegrationCredential = Database['public']['Tables']['integration_credentials']['Row']
@@ -72,7 +72,11 @@ export type BusinessContextBridgePayload = {
 function getMissingCoreFields(property: PropertyRow): string[] {
   const missing: string[] = []
   if (!property.name || property.name.trim().length === 0) missing.push('name')
-  if (!property.address || property.address.trim().length === 0) missing.push('address')
+  const hasAddress =
+    typeof property.address === 'string'
+      ? property.address.trim().length > 0
+      : Boolean(property.address && typeof property.address === 'object')
+  if (!hasAddress) missing.push('address')
   if (!property.property_type) missing.push('property_type')
   if (!property.website_url) missing.push('website_url')
   if (!property.unit_count || property.unit_count <= 0) missing.push('unit_count')
@@ -222,7 +226,7 @@ export async function buildBusinessContextBridge(
     .filter((value): value is string => typeof value === 'string' && value.length > 0)
     .sort()
     .at(-1) || null
-  const marketing30d = (marketingResult.data || []).reduce(
+  const marketing30d = (marketingResult.data || []).reduce<BusinessContextBridgePayload['bi']['marketing30d']>(
     (acc, row) => ({
       spend: acc.spend + Number(row.spend || 0),
       clicks: acc.clicks + Number(row.clicks || 0),

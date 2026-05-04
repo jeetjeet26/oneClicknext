@@ -1,6 +1,7 @@
 'use client'
 
 import { Lightbulb, ArrowRight, Download, Calendar } from 'lucide-react'
+import { getSurfaceLabel } from '@/utils/propertyaudit/types'
 
 export interface GeoInsight {
   id: string
@@ -140,17 +141,24 @@ export function useGeoInsights(score: any, queries: any[], runs: any[]): GeoInsi
     }
   }
 
-  // Insight 3: Model comparison
-  if (score.surfaces.openai && score.surfaces.claude) {
-    const diff = Math.abs(score.surfaces.openai.overallScore - score.surfaces.claude.overallScore)
+  // Insight 3: Surface comparison
+  const comparableSurfaces = Array.isArray(score.surfaceSummaries)
+    ? score.surfaceSummaries
+        .filter((summary: any) => typeof summary?.score === 'number')
+        .slice(0, 2)
+    : []
+
+  if (comparableSurfaces.length >= 2) {
+    const [firstSurface, secondSurface] = comparableSurfaces
+    const diff = Math.abs(firstSurface.score - secondSurface.score)
     if (diff > 10) {
-      const better = score.surfaces.openai.overallScore > score.surfaces.claude.overallScore ? 'OpenAI' : 'Claude'
-      const worse = better === 'OpenAI' ? 'Claude' : 'OpenAI'
+      const better = firstSurface.score > secondSurface.score ? firstSurface : secondSurface
+      const worse = better === firstSurface ? secondSurface : firstSurface
       
       insights.push({
         id: 'model-imbalance',
         icon: '🎯',
-        text: `${better} outperforming ${worse} by ${diff.toFixed(0)} points`,
+        text: `${getSurfaceLabel(better.surface)} outperforming ${getSurfaceLabel(worse.surface)} by ${diff.toFixed(0)} points`,
         priority: 'medium',
       })
     }
@@ -158,8 +166,16 @@ export function useGeoInsights(score: any, queries: any[], runs: any[]): GeoInsi
 
   // Insight 4: Rank performance
   if (score.breakdown) {
-    const avgRank = (score.surfaces.openai?.avgLlmRank || 0 + score.surfaces.claude?.avgLlmRank || 0) / 2
-    if (avgRank === 1) {
+    const availableRanks = Object.values(score.surfaces || {})
+      .map((surface: any) => surface?.avgLlmRank)
+      .filter((rank: unknown): rank is number => typeof rank === 'number')
+    const avgRank = availableRanks.length > 0
+      ? availableRanks.reduce((sum, rank) => sum + rank, 0) / availableRanks.length
+      : null
+
+    if (avgRank === null) {
+      // No rank data yet; skip rank-specific insight until completed answers exist.
+    } else if (avgRank === 1) {
       insights.push({
         id: 'perfect-rank',
         icon: '⭐',

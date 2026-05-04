@@ -233,6 +233,61 @@ describe('crm sync service', () => {
     )
   })
 
+  it('passes Lasso integration details through the CRM sync pipeline', async () => {
+    const mock = buildSupabaseMock({
+      integration: {
+        platform: 'lasso',
+        credentials: {
+          api_key: 'lasso-secret',
+          project_id: 'project-1',
+        },
+        field_mapping: {
+          first_name: 'first_name',
+          last_name: 'last_name',
+          email: 'email',
+        },
+        mapping_validated: true,
+      },
+    })
+    createServiceClientMock.mockReturnValue(mock.supabase)
+    vi.stubEnv('DATA_ENGINE_API_KEY', 'engine-key')
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          found: false,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          success: true,
+          action: 'created',
+          external_id: 'lasso-456',
+        }),
+      })
+
+    const { syncLeadToCRM } = await import('./crm-sync')
+    const result = await syncLeadToCRM('property-1', 'lead-1', {
+      first_name: 'Jane',
+      last_name: 'Doe',
+      email: 'jane@example.com',
+    })
+
+    expect(result).toEqual({
+      success: true,
+      action: 'created',
+      externalId: 'lasso-456',
+    })
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      expect.stringContaining('/crm/push-lead'),
+      expect.objectContaining({
+        method: 'POST',
+        body: expect.stringContaining('"crm_type":"lasso"'),
+      })
+    )
+  })
+
   it('dead-letters the lead when CRM push fails with a non-retryable provider error', async () => {
     const mock = buildSupabaseMock({
       integration: {

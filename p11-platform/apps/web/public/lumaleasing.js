@@ -71,9 +71,12 @@
     }
   }
 
+  // Capture queued commands from the bootstrap stub before replacing it below.
+  const queuedCommands = (window.lumaleasing && window.lumaleasing.q) || [];
+
   // Process queued commands
   function processQueue() {
-    const queue = window.lumaleasing.q || [];
+    const queue = queuedCommands || [];
     queue.forEach(function(args) {
       handleCommand.apply(null, args);
     });
@@ -135,6 +138,9 @@
       // Render widget
       renderWidget();
 
+      // Global Esc-to-close keyboard handler.
+      attachGlobalKeyHandler();
+
       // Auto-popup
       if (config.autoPopupDelay > 0) {
         setTimeout(function() {
@@ -144,7 +150,45 @@
 
     } catch (error) {
       console.error('LumaLeasing init error:', error);
+      injectStyles();
+      renderError('Chat is temporarily unavailable. Please refresh or contact us directly.');
     }
+  }
+
+  // Render a minimal launcher in error mode so the visitor never sees an empty corner.
+  function renderError(message) {
+    const existing = document.getElementById('lumaleasing-widget');
+    if (existing) existing.remove();
+
+    const container = document.createElement('div');
+    container.id = 'lumaleasing-widget';
+    container.className = 'll-widget bottom-right';
+    container.innerHTML = `
+      <div role="status" aria-live="polite" style="
+        background: #fff;
+        color: #1f2937;
+        padding: 12px 16px;
+        border-radius: 12px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        max-width: 280px;
+        font-size: 13px;
+        line-height: 1.4;
+      ">
+        ${escapeHtml(message)}
+      </div>
+    `;
+    document.body.appendChild(container);
+  }
+
+  let globalKeyHandlerAttached = false;
+  function attachGlobalKeyHandler() {
+    if (globalKeyHandlerAttached) return;
+    globalKeyHandlerAttached = true;
+    document.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape' && isOpen) {
+        closeWidget();
+      }
+    });
   }
 
   // Inject CSS styles
@@ -668,10 +712,17 @@
 
   // Render button
   function renderButton() {
+    const label = `Open ${config.widgetName || 'leasing'} chat`;
     return `
-      <button class="ll-button" style="background: ${config.primaryColor}" onclick="lumaleasing('open')">
-        <svg viewBox="0 0 24 24"><path d="M12 3c5.5 0 10 3.58 10 8s-4.5 8-10 8c-1.24 0-2.43-.18-3.53-.5C5.55 21 2 21 2 21c2.33-2.33 2.7-3.9 2.75-4.5C3.05 15.07 2 13.13 2 11c0-4.42 4.5-8 10-8z"/></svg>
-        <span class="ll-status ${config.isOnline ? 'online' : 'offline'}"></span>
+      <button
+        class="ll-button"
+        style="background: ${config.primaryColor}"
+        onclick="lumaleasing('open')"
+        aria-label="${escapeHtml(label)}"
+        aria-haspopup="dialog"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3c5.5 0 10 3.58 10 8s-4.5 8-10 8c-1.24 0-2.43-.18-3.53-.5C5.55 21 2 21 2 21c2.33-2.33 2.7-3.9 2.75-4.5C3.05 15.07 2 13.13 2 11c0-4.42 4.5-8 10-8z"/></svg>
+        <span class="ll-status ${config.isOnline ? 'online' : 'offline'}" aria-hidden="true"></span>
       </button>
     `;
   }
@@ -723,27 +774,39 @@
     }
 
     return `
-      <div class="ll-window">
+      <div
+        class="ll-window"
+        role="dialog"
+        aria-modal="false"
+        aria-labelledby="ll-dialog-title"
+        aria-describedby="ll-dialog-status"
+      >
         <div class="ll-header" style="background: ${gradient}">
           <div class="ll-header-info">
             <div class="ll-avatar">
-              ${config.logoUrl 
-                ? `<img src="${config.logoUrl}" style="width:100%;height:100%;border-radius:50%;object-fit:cover">` 
-                : '<svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>'}
+              ${config.logoUrl
+                ? `<img src="${config.logoUrl}" alt="" style="width:100%;height:100%;border-radius:50%;object-fit:cover">`
+                : '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>'}
             </div>
             <div>
-              <div class="ll-name">${escapeHtml(config.widgetName)}</div>
-              <div class="ll-status-text">
-                <span class="ll-status-dot ${config.isOnline ? 'online' : 'offline'}"></span>
+              <div class="ll-name" id="ll-dialog-title">${escapeHtml(config.widgetName)}</div>
+              <div class="ll-status-text" id="ll-dialog-status">
+                <span class="ll-status-dot ${config.isOnline ? 'online' : 'offline'}" aria-hidden="true"></span>
                 ${config.isOnline ? 'Online' : 'Away'}
               </div>
             </div>
           </div>
-          <button class="ll-close" onclick="lumaleasing('close')">
-            <svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+          <button class="ll-close" onclick="lumaleasing('close')" aria-label="Close chat">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
           </button>
         </div>
-        <div class="ll-messages" id="ll-messages">${messagesHtml}</div>
+        <div
+          class="ll-messages"
+          id="ll-messages"
+          role="log"
+          aria-live="polite"
+          aria-relevant="additions"
+        >${messagesHtml}</div>
         <div class="ll-input-area">
           <div class="ll-input-row">
             <input type="text" class="ll-input" id="ll-input" placeholder="Type a message..." ${isTyping ? 'disabled' : ''}>
@@ -1298,6 +1361,9 @@
       });
 
       const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Chat request failed');
+      }
 
       if (data.sessionId) setStoredSessionId(data.sessionId);
       if (data.conversationId) conversationId = data.conversationId;

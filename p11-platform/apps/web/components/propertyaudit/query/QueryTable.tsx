@@ -18,6 +18,7 @@ import {
   ExternalLink
 } from 'lucide-react'
 import { DeltaBadge, Sparkline } from '../charts'
+import { getSurfaceLabel } from '@/utils/propertyaudit/types'
 import { ScoreBreakdown } from '../score'
 
 // Execution data types for expanded rows
@@ -708,11 +709,11 @@ function ExecutionDetails({
                 <td className="px-3 py-2 text-gray-500">#{idx + 1}</td>
                 <td className="px-3 py-2">
                   <span className={`inline-flex px-1.5 py-0.5 rounded text-xs font-medium ${
-                    exec.surface === 'openai' 
+                    exec.surface === 'openai' || exec.surface === 'chatgpt'
                       ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
                       : 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300'
                   }`}>
-                    {exec.surface === 'openai' ? 'OpenAI' : 'Claude'}
+                    {getSurfaceLabel(exec.surface)}
                   </span>
                 </td>
                 <td className="px-3 py-2 text-center">

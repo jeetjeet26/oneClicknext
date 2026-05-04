@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { createAdminClient } from '@/utils/supabase/admin'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
+import { normalizePublicWebsiteUrl } from '@/utils/services/public-url'
 
 export async function GET(request: NextRequest) {
   try {
@@ -97,7 +98,7 @@ export async function PUT(request: NextRequest) {
       .from('properties')
       .update({
         property_type: updates.communityType || null,
-        website_url: updates.websiteUrl || null,
+        website_url: normalizePublicWebsiteUrl(updates.websiteUrl),
         unit_count: updates.unitCount || null,
         year_built: updates.yearBuilt || null,
         amenities: updates.amenities || [],

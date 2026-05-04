@@ -44,6 +44,11 @@ export async function GET(
         name,
         address,
         settings,
+        website_url,
+        property_type,
+        unit_count,
+        year_built,
+        amenities,
         created_at,
         org_id
       `)

@@ -5,6 +5,10 @@
 import { createAdminClient } from '@/utils/supabase/admin'
 import OpenAI from 'openai'
 
+function formatEmbeddingForPgVector(embedding: number[]): string {
+  return `[${embedding.join(',')}]`
+}
+
 export async function syncPropertyUnitsToKnowledgeBase(propertyId: string): Promise<{ success: boolean; document_id?: string; error?: string }> {
   try {
     const adminClient = createAdminClient()
@@ -95,6 +99,7 @@ export async function syncPropertyUnitsToKnowledgeBase(propertyId: string): Prom
       input: formattedContent
     })
     const embedding = embeddingResponse.data[0].embedding
+    const embeddingVector = formatEmbeddingForPgVector(embedding)
 
     // Insert formatted document
     const { data: newDoc, error: insertError } = await adminClient
@@ -102,7 +107,7 @@ export async function syncPropertyUnitsToKnowledgeBase(propertyId: string): Prom
       .insert({
         property_id: propertyId,
         content: formattedContent,
-        embedding,
+        embedding: embeddingVector,
         metadata: {
           title: 'Floor Plans & Pricing',
           category: 'pricing',

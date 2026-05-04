@@ -3,6 +3,7 @@ import { createClient } from '@/utils/supabase/server'
 import { createAdminClient } from '@/utils/supabase/admin'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { getAppBaseUrl } from '@/utils/services/runtime-config'
+import { normalizePublicWebsiteUrl } from '@/utils/services/public-url'
 
 /**
  * POST /api/community/scrape-website
@@ -46,7 +47,12 @@ export async function POST(request: NextRequest) {
     }
 
     // Collect all URLs to scrape
-    const urlsToScrape = [websiteUrl, ...additionalUrls].filter(u => u?.trim())
+    const canonicalWebsiteUrl = normalizePublicWebsiteUrl(websiteUrl)
+    if (!canonicalWebsiteUrl) {
+      return NextResponse.json({ error: 'websiteUrl must be a valid public HTTP(S) URL' }, { status: 400 })
+    }
+
+    const urlsToScrape = [canonicalWebsiteUrl, ...additionalUrls].filter(u => u?.trim())
 
     // Call the internal scrape API with propertyId
     const baseUrl = getAppBaseUrl()
@@ -80,7 +86,7 @@ export async function POST(request: NextRequest) {
     // Keep canonical setup truth on properties (avoid splitting identity with community_profiles).
     await adminClient
       .from('properties')
-      .update({ website_url: websiteUrl })
+      .update({ website_url: canonicalWebsiteUrl })
       .eq('id', propertyId)
       .is('website_url', null)
 

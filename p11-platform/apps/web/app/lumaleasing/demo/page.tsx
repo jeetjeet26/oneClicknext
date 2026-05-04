@@ -1,12 +1,68 @@
 'use client';
 
 import { useSearchParams } from 'next/navigation';
-import { Suspense } from 'react';
-import { LumaLeasingWidget } from '@/components/lumaleasing/LumaLeasingWidget';
+import { Suspense, useEffect, useState } from 'react';
+
+declare global {
+  interface Window {
+    lumaleasing?: ((command: string, ...args: unknown[]) => void) & { q?: unknown[] };
+    LUMALEASING_API_BASE?: string;
+  }
+}
+
+const SCRIPT_ID = 'lumaleasing-embed-script';
 
 function DemoContent() {
   const searchParams = useSearchParams();
   const apiKey = searchParams.get('apiKey');
+  const [scriptStatus, setScriptStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+
+  useEffect(() => {
+    if (!apiKey) {
+      return;
+    }
+
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    setScriptStatus('loading');
+
+    window.LUMALEASING_API_BASE = window.location.origin;
+
+    if (!window.lumaleasing) {
+      const queue: unknown[] = [];
+      const stub = function (...args: unknown[]) {
+        queue.push(args);
+      } as ((command: string, ...args: unknown[]) => void) & { q?: unknown[] };
+      stub.q = queue;
+      window.lumaleasing = stub;
+    }
+
+    window.lumaleasing('init', apiKey);
+
+    let scriptEl = document.getElementById(SCRIPT_ID) as HTMLScriptElement | null;
+    if (!scriptEl) {
+      scriptEl = document.createElement('script');
+      scriptEl.id = SCRIPT_ID;
+      scriptEl.async = true;
+      scriptEl.src = `${window.location.origin}/lumaleasing.js`;
+      scriptEl.onload = () => setScriptStatus('ready');
+      scriptEl.onerror = () => setScriptStatus('error');
+      document.body.appendChild(scriptEl);
+    } else {
+      setScriptStatus('ready');
+    }
+
+    return () => {
+      // Closing the widget on unmount; leave the script cached for fast remounts.
+      try {
+        window.lumaleasing?.('close');
+      } catch {
+        // No-op; demo cleanup should never block navigation.
+      }
+    };
+  }, [apiKey]);
 
   if (!apiKey) {
     return (
@@ -14,11 +70,15 @@ function DemoContent() {
         <div className="bg-white p-8 rounded-xl shadow-lg max-w-md">
           <h1 className="text-xl font-bold text-gray-900 mb-4">LumaLeasing Demo</h1>
           <p className="text-gray-600 mb-4">
-            To test your widget, add your API key to the URL:
+            To preview your widget, add your API key to the URL:
           </p>
           <code className="block p-3 bg-gray-100 rounded text-sm text-gray-800 break-all">
             /lumaleasing/demo?apiKey=YOUR_API_KEY
           </code>
+          <p className="text-xs text-gray-500 mt-4">
+            This page loads the same <code>lumaleasing.js</code> script clients embed,
+            so what you see here matches the production embed behavior.
+          </p>
         </div>
       </div>
     );
@@ -26,104 +86,69 @@ function DemoContent() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-100 to-slate-200">
-      {/* Fake Property Website */}
+      {/* Sample property website used purely to host the LumaLeasing widget for preview. */}
       <header className="bg-white shadow-sm">
         <div className="max-w-7xl mx-auto px-4 py-6 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-lg" />
-            <span className="text-xl font-bold text-gray-900">Sunset Ridge Apartments</span>
+            <span className="text-xl font-bold text-gray-900">LumaLeasing Embed Preview</span>
           </div>
-          <nav className="flex items-center gap-6">
-            <a href="#" className="text-gray-600 hover:text-gray-900">Floor Plans</a>
-            <a href="#" className="text-gray-600 hover:text-gray-900">Amenities</a>
-            <a href="#" className="text-gray-600 hover:text-gray-900">Gallery</a>
-            <a href="#" className="text-gray-600 hover:text-gray-900">Contact</a>
-            <button className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">
-              Schedule Tour
-            </button>
-          </nav>
+          <span className="text-xs uppercase tracking-wide text-slate-500">
+            Same script clients embed
+          </span>
         </div>
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-12">
-        {/* Hero */}
         <div className="bg-white rounded-2xl shadow-lg overflow-hidden mb-12">
-          <div className="h-96 bg-gradient-to-br from-indigo-400 to-purple-500 flex items-center justify-center">
+          <div className="h-72 bg-gradient-to-br from-indigo-400 to-purple-500 flex items-center justify-center">
             <div className="text-center text-white">
-              <h1 className="text-4xl font-bold mb-4">Welcome Home</h1>
-              <p className="text-xl opacity-90">Luxury living in the heart of the city</p>
+              <h1 className="text-4xl font-bold mb-2">Live Embed Preview</h1>
+              <p className="text-base opacity-90">
+                The chat widget in the bottom corner is powered by the same loader your clients deploy.
+              </p>
             </div>
           </div>
-          <div className="p-8">
-            <div className="grid grid-cols-3 gap-8">
-              <div className="text-center">
-                <p className="text-3xl font-bold text-indigo-600">$1,450+</p>
-                <p className="text-gray-500">Starting at</p>
-              </div>
-              <div className="text-center">
-                <p className="text-3xl font-bold text-indigo-600">1-3</p>
-                <p className="text-gray-500">Bedrooms</p>
-              </div>
-              <div className="text-center">
-                <p className="text-3xl font-bold text-indigo-600">650-1,400</p>
-                <p className="text-gray-500">Sq Ft</p>
-              </div>
-            </div>
+          <div className="p-8 text-sm text-slate-600 space-y-2">
+            <p>
+              Loader status: <span className="font-medium text-slate-900">{scriptStatus}</span>
+            </p>
+            {scriptStatus === 'error' && (
+              <p className="text-red-600">
+                Failed to load <code>/lumaleasing.js</code>. Verify the host is serving the embed script
+                and the API key is active.
+              </p>
+            )}
+            <p>
+              Use this surface to validate branding, business hours, RAG answers, lead capture, and tour booking
+              before sharing the embed snippet with the property.
+            </p>
           </div>
-        </div>
-
-        {/* Features */}
-        <div className="grid grid-cols-3 gap-8 mb-12">
-          {[
-            { title: 'Modern Finishes', desc: 'Quartz countertops, stainless appliances' },
-            { title: 'Pet Friendly', desc: 'Dogs and cats welcome with deposit' },
-            { title: 'In-Unit Laundry', desc: 'Washer & dryer in every home' },
-            { title: 'Fitness Center', desc: '24/7 access to state-of-the-art gym' },
-            { title: 'Pool & Spa', desc: 'Resort-style amenities' },
-            { title: 'Covered Parking', desc: 'Included with every unit' },
-          ].map((feature, i) => (
-            <div key={i} className="bg-white p-6 rounded-xl shadow-sm">
-              <h3 className="font-semibold text-gray-900 mb-2">{feature.title}</h3>
-              <p className="text-gray-500 text-sm">{feature.desc}</p>
-            </div>
-          ))}
-        </div>
-
-        {/* CTA */}
-        <div className="bg-indigo-600 text-white rounded-2xl p-12 text-center">
-          <h2 className="text-3xl font-bold mb-4">Ready to Make This Your Home?</h2>
-          <p className="text-indigo-100 mb-8 max-w-2xl mx-auto">
-            Schedule a tour today and discover why residents love living at Sunset Ridge. 
-            Our friendly team is ready to help you find your perfect floor plan.
-          </p>
-          <button className="px-8 py-3 bg-white text-indigo-600 rounded-lg font-semibold hover:bg-indigo-50">
-            Schedule a Tour
-          </button>
         </div>
       </main>
 
       <footer className="bg-gray-900 text-gray-400 py-12 mt-12">
         <div className="max-w-7xl mx-auto px-4 text-center">
-          <p className="mb-4">123 Sunset Boulevard, Austin, TX 78701</p>
-          <p className="text-sm">This is a demo page for testing the LumaLeasing widget.</p>
+          <p className="text-sm">
+            Internal preview environment. The embedded widget below is loaded from{' '}
+            <code>/lumaleasing.js</code> exactly as a client would on their property website.
+          </p>
         </div>
       </footer>
-
-      {/* LumaLeasing Widget */}
-      <LumaLeasingWidget apiKey={apiKey} />
     </div>
   );
 }
 
 export default function LumaLeasingDemoPage() {
   return (
-    <Suspense fallback={
-      <div className="min-h-screen flex items-center justify-center bg-gray-100">
-        <div className="animate-pulse text-gray-500">Loading...</div>
-      </div>
-    }>
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center bg-gray-100">
+          <div className="animate-pulse text-gray-500">Loading…</div>
+        </div>
+      }
+    >
       <DemoContent />
     </Suspense>
   );
 }
-
