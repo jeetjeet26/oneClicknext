@@ -12,6 +12,7 @@ interface ReportBuilderProps {
   propertyId: string
   propertyName: string
   runId: string | null
+  batchId?: string | null
   runSummary?: {
     surface: Surface
     startedAt: string
@@ -50,6 +51,7 @@ export function ReportBuilder({
   propertyId,
   propertyName,
   runId,
+  batchId,
   runSummary,
 }: ReportBuilderProps) {
   const [config, setConfig] = useState<ReportConfig>({
@@ -106,11 +108,6 @@ export function ReportBuilder({
   ]
 
   const handleGenerate = async () => {
-    if (!runId) {
-      setError('Complete at least one PropertyAudit run before generating a report.')
-      return
-    }
-
     setIsGenerating(true)
     setError(null)
     try {
@@ -119,7 +116,7 @@ export function ReportBuilder({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           propertyId,
-          runId,
+          batchId,
           template: config.template,
           includeSections: config.includeSections,
           recipients: config.recipients,
@@ -129,8 +126,17 @@ export function ReportBuilder({
       if (res.ok) {
         const blob = await res.blob()
         const url = window.URL.createObjectURL(blob)
-        // Open HTML report in new tab - user can print to PDF from browser
-        window.open(url, '_blank')
+        const contentDisposition = res.headers.get('Content-Disposition') || ''
+        const filenameMatch = contentDisposition.match(/filename="?([^";]+)"?/)
+        const filename = filenameMatch?.[1] || `propertyaudit-report-${Date.now()}.html`
+
+        const link = document.createElement('a')
+        link.href = url
+        link.download = filename
+        document.body.appendChild(link)
+        link.click()
+        link.remove()
+        window.URL.revokeObjectURL(url)
         
         // If schedule enabled, show success message
         if (config.schedule) {
@@ -147,6 +153,15 @@ export function ReportBuilder({
     } finally {
       setIsGenerating(false)
     }
+  }
+
+  const handleDownloadMarkdown = () => {
+    if (!runId) {
+      setError('No completed PropertyAudit run is selected yet. Refresh the run history or wait for the latest run to complete, then try again.')
+      return
+    }
+
+    window.location.href = `/api/propertyaudit/export?runId=${encodeURIComponent(runId)}&format=markdown`
   }
 
   const handleAddRecipient = () => {
@@ -199,11 +214,11 @@ export function ReportBuilder({
             <p className="font-medium">Report snapshot</p>
             <p className="mt-1">
               {runId && runSummary
-                ? `This report will use the completed ${runSummary.surface.toUpperCase()} run from ${new Date(runSummary.startedAt).toLocaleString()}.`
+                ? `This report will aggregate the completed LLM surfaces from the selected audit batch, including ${runSummary.surface.toUpperCase()} from ${new Date(runSummary.startedAt).toLocaleString()}.`
                 : 'A completed PropertyAudit run is required before report generation.'}
             </p>
             <p className="mt-2">
-              Output is print-ready HTML. Use your browser&apos;s print dialog to save as PDF.
+              Output downloads as print-ready HTML. Open it in your browser and use the print dialog to save as PDF.
             </p>
           </div>
 
@@ -347,6 +362,18 @@ export function ReportBuilder({
               {error}
             </div>
           )}
+
+          {runId && (
+            <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700">
+              If your browser blocks automatic downloads, use the direct fallback below.
+              <button
+                onClick={handleDownloadMarkdown}
+                className="ml-2 font-medium text-indigo-600 hover:text-indigo-700 underline"
+              >
+                Download Markdown report
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Footer */}
@@ -360,7 +387,7 @@ export function ReportBuilder({
 
           <button
             onClick={handleGenerate}
-            disabled={isGenerating || !runId}
+            disabled={isGenerating}
             className="inline-flex items-center gap-2 px-6 py-2 text-sm font-medium bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
           >
             {isGenerating ? (

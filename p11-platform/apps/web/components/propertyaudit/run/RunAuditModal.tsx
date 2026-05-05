@@ -7,6 +7,7 @@ import { DEFAULT_AUDIT_SURFACES, getSurfaceLabel, type Surface } from '@/utils/p
 
 const SURFACE_OPTIONS: Array<{ id: Surface; description: string }> = [
   { id: 'chatgpt', description: 'Grounded proxy for ChatGPT-style answers' },
+  { id: 'claude', description: 'Claude Sonnet answer measurement' },
   { id: 'gemini', description: 'Grounded Gemini answer measurement' },
   { id: 'perplexity', description: 'Citation-rich Perplexity answer capture' },
   { id: 'google_ai', description: 'Google-grounded AI Overview proxy' },

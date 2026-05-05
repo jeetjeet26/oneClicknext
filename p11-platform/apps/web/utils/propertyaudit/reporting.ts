@@ -138,7 +138,8 @@ const DEFAULT_RUN_WINDOW = 6
 
 export async function buildPropertyReportData(
   supabase: SupabaseClient,
-  propertyId: string
+  propertyId: string,
+  options: { batchId?: string | null } = {}
 ): Promise<ReportData> {
   const runWindow = Math.max(2, parseInt(process.env.PROPERTYAUDIT_REPORT_RUN_WINDOW || `${DEFAULT_RUN_WINDOW}`, 10))
 
@@ -148,13 +149,20 @@ export async function buildPropertyReportData(
     .eq('id', propertyId)
     .single()
 
-  const { data: runs } = await supabase
+  let runsQuery = supabase
     .from('geo_runs')
     .select('id, surface, model_name, status, started_at, finished_at, geo_scores(*)')
     .eq('property_id', propertyId)
     .eq('status', 'completed')
     .order('started_at', { ascending: false })
-    .limit(runWindow)
+
+  if (options.batchId) {
+    runsQuery = runsQuery.eq('batch_id', options.batchId)
+  } else {
+    runsQuery = runsQuery.limit(runWindow)
+  }
+
+  const { data: runs } = await runsQuery
 
   const { data: queries } = await supabase
     .from('geo_queries')

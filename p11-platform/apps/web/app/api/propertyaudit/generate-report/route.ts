@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json()
-    const { propertyId, runId, template, includeSections } = body
+    const { propertyId, runId, batchId, template, includeSections } = body
 
     if (!propertyId || !template) {
       return NextResponse.json(
@@ -45,7 +45,31 @@ export async function POST(req: NextRequest) {
     const serviceClient = createServiceClient()
     let reportData: Awaited<ReturnType<typeof buildPropertyReportData>> | Awaited<ReturnType<typeof buildRunReportData>>
 
-    if (runId) {
+    if (batchId) {
+      const { count, error: batchError } = await serviceClient
+        .from('geo_runs')
+        .select('id', { count: 'exact', head: true })
+        .eq('property_id', propertyId)
+        .eq('batch_id', batchId)
+        .eq('status', 'completed')
+
+      if (batchError) {
+        return NextResponse.json({ error: 'Failed to validate report batch' }, { status: 500 })
+      }
+
+      if (!count) {
+        return NextResponse.json(
+          { error: 'Report generation requires at least one completed run in the selected batch' },
+          { status: 409 }
+        )
+      }
+
+      reportData = await buildPropertyReportData(
+        serviceClient as unknown as ReportingClient,
+        propertyId,
+        { batchId }
+      )
+    } else if (runId) {
       const { data: run, error: runError } = await serviceClient
         .from('geo_runs')
         .select('id, property_id, status')

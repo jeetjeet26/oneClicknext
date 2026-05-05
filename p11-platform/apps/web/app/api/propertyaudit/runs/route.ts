@@ -11,6 +11,7 @@ import { isSupportedSurface, type Surface } from '@/utils/propertyaudit/types'
 export interface GeoRunWithScore {
   id: string
   propertyId: string
+  batchId: string | null
   surface: Surface
   modelName: string
   status: 'queued' | 'running' | 'completed' | 'failed'
@@ -203,6 +204,7 @@ export async function GET(req: NextRequest) {
       return {
         id: run.id,
         propertyId: run.property_id,
+        batchId: asString(run.batch_id),
         surface: run.surface,
         modelName: run.model_name || 'unknown',
         status: run.status,

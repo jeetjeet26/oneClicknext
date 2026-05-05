@@ -84,6 +84,7 @@ interface SurfaceScore {
 
 interface GeoRun {
   id: string
+  batchId: string | null
   surface: Surface
   status: 'queued' | 'running' | 'completed' | 'failed'
   queryCount: number
@@ -401,6 +402,7 @@ export default function PropertyAuditPage() {
     }))
 
   const latestCompletedRun = runs.find(r => r.status === 'completed') || null
+  const latestCompletedBatchId = latestCompletedRun?.batchId || null
 
   // Build comparison data for dumbbell
   const comparisonData = queries
@@ -976,6 +978,7 @@ export default function PropertyAuditPage() {
         propertyId={currentProperty?.id || ''}
         propertyName={currentProperty?.name || 'Property'}
         runId={latestCompletedRun?.id || null}
+        batchId={latestCompletedBatchId}
         runSummary={latestCompletedRun ? {
           surface: latestCompletedRun.surface,
           startedAt: latestCompletedRun.startedAt,
