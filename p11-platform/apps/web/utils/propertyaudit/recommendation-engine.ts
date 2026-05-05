@@ -82,17 +82,60 @@ export interface RecommendationSummary {
   }
 }
 
+type RecommendationScope = {
+  runId?: string | null
+  batchId?: string | null
+  runIds?: string[]
+}
+
+type AnalysisRun = {
+  id: string
+  surface: Surface
+  batchId: string | null
+  startedAt: string | null
+  score: number | null
+  visibilityPct: number | null
+  avgLlmRank: number | null
+  avgSov: number | null
+}
+
+type AnalysisCitation = {
+  url: string
+  domain: string
+  isBrandDomain: boolean
+  answerId: string
+  queryId: string
+  surface: Surface | null
+}
+
+type QuerySignal = {
+  query: AnalysisContext['queries'][number]
+  answers: AnalysisContext['answers']
+  affectedSurfaces: Surface[]
+  presentSurfaces: Surface[]
+  presenceRate: number
+  avgRank: number | null
+  avgSov: number | null
+  aiOverviewVisible: boolean
+  aiOverviewSource: string | null
+  citations: AnalysisCitation[]
+}
+
 interface AnalysisContext {
   propertyId: string
   brandName: string
   websiteUrl: string | null
+  brandDomains: string[]
+  primaryGeo: string | null
   siteAudit: PublicSiteAudit
   runIds: string[]
+  runs: AnalysisRun[]
   queries: Array<{
     id: string
     text: string
     type: string
     geo: string | null
+    weight?: number | null
   }>
   answers: Array<{
     id: string
@@ -102,6 +145,8 @@ interface AnalysisContext {
     llmRank: number | null
     linkRank: number | null
     sov: number | null
+    flags: string[]
+    answerSummary: string | null
     orderedEntities: Array<{
       name: string
       domain: string
@@ -109,6 +154,8 @@ interface AnalysisContext {
       rationale: string
     }>
   }>
+  citations: AnalysisCitation[]
+  aiOverviews: Map<string, { visible: boolean; sourceUrl: string | null }>
   runsBySurface: Map<string, Surface>
   competitors: Array<{
     name: string
@@ -123,22 +170,19 @@ interface AnalysisContext {
  */
 export async function generateRecommendations(
   propertyId: string,
-  runId?: string
+  runIdOrScope?: string | RecommendationScope
 ): Promise<{ recommendations: ContentRecommendation[]; summary: RecommendationSummary }> {
   const supabase = await createClient()
+  const scope = typeof runIdOrScope === 'string' ? { runId: runIdOrScope } : (runIdOrScope || {})
 
   // Fetch analysis context
-  const context = await fetchAnalysisContext(supabase, propertyId, runId)
+  const context = await fetchAnalysisContext(supabase, propertyId, scope)
 
-  // Generate different types of recommendations
-  const recommendations: ContentRecommendation[] = [
-    ...identifyMissingKeywords(context),
-    ...identifyContentGaps(context),
-    ...identifyCitationOpportunities(context),
-    ...identifyRankImprovements(context),
-    ...identifyVoiceSearchOpportunities(context),
+  // Generate strategic workstreams first, then technical site fixes.
+  const recommendations: ContentRecommendation[] = dedupeRecommendations([
+    ...buildStrategicInitiatives(context),
     ...identifyTechnicalDiscoverabilityGaps(context),
-  ]
+  ])
 
   // If no recommendations (perfect performance), add maintenance suggestions
   if (recommendations.length === 0) {
@@ -165,35 +209,39 @@ export async function generateRecommendations(
 async function fetchAnalysisContext(
   supabase: any,
   propertyId: string,
-  runId?: string
+  scope: RecommendationScope = {}
 ): Promise<AnalysisContext> {
   // Fetch property details
   const { data: property } = await supabase
     .from('properties')
-    .select('name, website_url')
+    .select('name, website_url, address')
     .eq('id', propertyId)
     .single()
 
   // Fetch queries
   const { data: queries } = await supabase
     .from('geo_queries')
-    .select('id, text, type, geo')
+    .select('id, text, type, geo, weight')
     .eq('property_id', propertyId)
     .eq('is_active', true)
 
   // Fetch recent runs (or specific run)
   let runsQuery = supabase
     .from('geo_runs')
-    .select('id, surface')
+    .select('id, surface, batch_id, started_at, geo_scores(overall_score, visibility_pct, avg_llm_rank, avg_sov)')
     .eq('property_id', propertyId)
     .eq('status', 'completed')
     .order('started_at', { ascending: false })
 
-  if (runId) {
-    runsQuery = runsQuery.eq('id', runId).limit(1)
+  if (scope.runIds?.length) {
+    runsQuery = runsQuery.in('id', scope.runIds)
+  } else if (scope.batchId) {
+    runsQuery = runsQuery.eq('batch_id', scope.batchId)
+  } else if (scope.runId) {
+    runsQuery = runsQuery.eq('id', scope.runId).limit(1)
   } else {
-    // Get last 2 runs (ideally 1 OpenAI + 1 Claude)
-    runsQuery = runsQuery.limit(2)
+    // Get the latest completed multi-surface batch when possible.
+    runsQuery = runsQuery.limit(6)
   }
 
   const { data: runs } = await runsQuery
@@ -203,6 +251,19 @@ async function fetchAnalysisContext(
   runs?.forEach((r: any) => {
     runsBySurface.set(r.id, r.surface as Surface)
   })
+  const analysisRuns: AnalysisRun[] = (runs || []).map((run: any) => {
+    const score = Array.isArray(run.geo_scores) ? run.geo_scores[0] : null
+    return {
+      id: run.id,
+      surface: run.surface as Surface,
+      batchId: run.batch_id || null,
+      startedAt: run.started_at || null,
+      score: asNullableNumber(score?.overall_score),
+      visibilityPct: asNullableNumber(score?.visibility_pct),
+      avgLlmRank: asNullableNumber(score?.avg_llm_rank),
+      avgSov: asNullableNumber(score?.avg_sov),
+    }
+  })
 
   // Fetch answers for these runs
   // Note: If no runs, avoid .in() with empty array which returns no results
@@ -210,7 +271,7 @@ async function fetchAnalysisContext(
   if (runIds.length > 0) {
     const { data } = await supabase
       .from('geo_answers')
-      .select('id, query_id, run_id, presence, llm_rank, link_rank, sov, ordered_entities')
+      .select('id, query_id, run_id, presence, llm_rank, link_rank, sov, flags, answer_summary, ordered_entities, geo_citations(url, domain, is_brand_domain)')
       .in('run_id', runIds)
     rawAnswers = data || []
   }
@@ -224,8 +285,59 @@ async function fetchAnalysisContext(
     llmRank: a.llm_rank,
     linkRank: a.link_rank,
     sov: a.sov,
+    flags: Array.isArray(a.flags) ? a.flags : [],
+    answerSummary: a.answer_summary || null,
     orderedEntities: a.ordered_entities || [],
   }))
+
+  const citations: AnalysisCitation[] = rawAnswers.flatMap((answer: any) => {
+    const surface = runsBySurface.get(answer.run_id) || null
+    return (answer.geo_citations || []).map((citation: any) => ({
+      url: citation.url || '',
+      domain: normalizeDomain(citation.domain || citation.url || ''),
+      isBrandDomain: Boolean(citation.is_brand_domain),
+      answerId: answer.id,
+      queryId: answer.query_id,
+      surface,
+    }))
+  }).filter((citation: AnalysisCitation) => citation.domain.length > 0)
+
+  const aiOverviews = new Map<string, { visible: boolean; sourceUrl: string | null }>()
+  const { data: overviewRows } = await supabase
+    .from('geo_ai_overviews')
+    .select('query_id, visible, source_url, observed_at')
+    .eq('property_id', propertyId)
+    .order('observed_at', { ascending: false })
+  ;(overviewRows || []).forEach((row: any) => {
+    if (row.query_id && !aiOverviews.has(row.query_id)) {
+      aiOverviews.set(row.query_id, {
+        visible: Boolean(row.visible),
+        sourceUrl: row.source_url || null,
+      })
+    }
+  })
+
+  let propertyConfig: any = null
+  try {
+    const { data } = await supabase
+      .from('geo_property_config')
+      .select('domains, competitor_domains, primary_geo, visibility_target')
+      .eq('property_id', propertyId)
+      .maybeSingle()
+    propertyConfig = data || null
+  } catch {
+    propertyConfig = null
+  }
+
+  const brandDomains = new Set<string>()
+  ;(propertyConfig?.domains || []).forEach((domain: string) => {
+    const normalized = normalizeDomain(domain)
+    if (normalized) brandDomains.add(normalized)
+  })
+  if (property?.website_url) {
+    const normalized = normalizeDomain(property.website_url)
+    if (normalized) brandDomains.add(normalized)
+  }
 
   // Build competitor insights from answers
   const competitorMap = new Map<string, { name: string; domain: string; mentions: number[] }>()
@@ -233,11 +345,12 @@ async function fetchAnalysisContext(
   answers.forEach((answer) => {
     if (answer.orderedEntities && Array.isArray(answer.orderedEntities)) {
       answer.orderedEntities.forEach((entity: any) => {
-        const key = entity.domain
+        if (!isRelevantEntity(entity, property?.name || 'Property', Array.from(brandDomains))) return
+        const key = normalizeDomain(entity.domain || entity.name)
         if (!competitorMap.has(key)) {
           competitorMap.set(key, {
             name: entity.name,
-            domain: entity.domain,
+            domain: key,
             mentions: [],
           })
         }
@@ -259,13 +372,380 @@ async function fetchAnalysisContext(
     propertyId,
     brandName: property?.name || 'Your Property',
     websiteUrl: property?.website_url || null,
+    brandDomains: Array.from(brandDomains),
+    primaryGeo: propertyConfig?.primary_geo || buildPrimaryGeo(property?.address),
     siteAudit: await auditPublicSite(property?.website_url || null),
     runIds,
+    runs: analysisRuns,
     queries: queries || [],
     answers,
+    citations,
+    aiOverviews,
     runsBySurface,
     competitors,
   }
+}
+
+function asNullableNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim().length > 0) {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  return null
+}
+
+function normalizeDomain(value: string | null | undefined): string {
+  if (!value) return ''
+  try {
+    const withProtocol = /^https?:\/\//i.test(value) ? value : `https://${value}`
+    return new URL(withProtocol).hostname.replace(/^www\./, '').toLowerCase()
+  } catch {
+    return value
+      .replace(/^https?:\/\//i, '')
+      .replace(/^www\./i, '')
+      .split('/')[0]
+      .trim()
+      .toLowerCase()
+  }
+}
+
+function buildPrimaryGeo(address: any): string | null {
+  if (!address || typeof address !== 'object') return null
+  return [address.city, address.state].filter(Boolean).join(', ') || null
+}
+
+function isRelevantEntity(
+  entity: { name?: string; domain?: string | null },
+  brandName: string,
+  brandDomains: string[]
+): boolean {
+  const name = (entity.name || '').trim().toLowerCase()
+  const domain = normalizeDomain(entity.domain || '')
+  if (!name && !domain) return false
+  if (name === brandName.toLowerCase()) return false
+  if (domain && brandDomains.includes(domain)) return false
+  return true
+}
+
+function isLikelyNoiseDomain(domain: string, relatedQueries: string[] = []): boolean {
+  const normalized = normalizeDomain(domain)
+  if (!normalized) return true
+  const queryText = relatedQueries.join(' ').toLowerCase()
+  if (/(sports|yahoo|espn|quora|stackexchange|wikipedia)\./i.test(normalized)) {
+    return /(eastlake|millennia|millenium|millennium|vs)/i.test(queryText)
+  }
+  return false
+}
+
+function buildStrategicInitiatives(context: AnalysisContext): ContentRecommendation[] {
+  const signals = buildQuerySignals(context)
+  const recs: ContentRecommendation[] = []
+  const categorySignals = signals.filter(signal => signal.query.type === 'category')
+  const localSignals = signals.filter(signal => signal.query.type === 'local')
+  const comparisonSignals = signals.filter(signal => signal.query.type === 'comparison')
+  const voiceSignals = signals.filter(signal => signal.query.type === 'voice_search' || signal.query.type === 'faq')
+
+  const weakDemandSignals = [...categorySignals, ...localSignals]
+    .filter(signal => signal.presenceRate < 0.5 || !signal.aiOverviewVisible || signal.avgSov === 0)
+
+  if (weakDemandSignals.length > 0) {
+    const topPrompts = weakDemandSignals
+      .sort((a, b) => a.presenceRate - b.presenceRate)
+      .slice(0, 6)
+    const localGeo = context.primaryGeo || inferGeoFromSignals(topPrompts)
+    recs.push(makeStrategicRecommendation({
+      id: 'strategy-owned-local-category-demand',
+      type: 'content_gap',
+      priority: 'high',
+      title: buildDemandCaptureTitle(context, topPrompts),
+      description: `${context.brandName} is weak on non-branded discovery: category presence is ${formatPct(avgPresence(categorySignals))} and local presence is ${formatPct(avgPresence(localSignals))}. This is where prospects ask for places, communities, and apartments before they know the brand.`,
+      relatedSignals: topPrompts,
+      keywords: topPrompts.map(signal => signal.query.text),
+      targetPageType: 'local_landing_page',
+      targetUrl: suggestOwnedPageUrl(context, 'apartments-otay-mesa'),
+      accessLevel: 'CMSOrEditor',
+      owner: 'content',
+      impactScore: 90,
+      impactReason: 'Highest upside: non-branded local/category prompts are the main gap and can be influenced with owned answer-ready pages.',
+      implementationSteps: [
+        `Create or strengthen an "${localGeo || 'local market'} apartment demand page" that answers the tracked prompts directly above the fold.`,
+        `Use H2 blocks for: ${topPrompts.slice(0, 4).map(signal => signal.query.text).join('; ')}.`,
+        'Add short answer-first copy for each prompt before lifestyle copy, including neighborhood, product type, rent/ownership distinction, amenities, and proximity claims.',
+        'Internally link this page from the homepage, FAQ, lifestyle, location, and floorplan pages with descriptive anchor text.',
+        'Add ApartmentComplex/LocalBusiness JSON-LD and FAQPage JSON-LD where answers are visible on the page.',
+        `Use proof points from trusted sources; prioritize ${topCitationDomains(context, topPrompts).slice(0, 3).join(', ') || 'local apartment directories and San Diego real estate sources'}.`,
+      ],
+      acceptanceCriteria: [
+        'A crawlable owned page exists for the local/category prompt cluster and is linked in sitemap.xml and navigation or footer links.',
+        'The page includes answer blocks for each related tracked prompt and the URL-only crawl detects those blocks.',
+        'Relevant JSON-LD validates and includes property name, URL, address, phone if available, and sameAs/citation links.',
+        'After rerun, category/local prompt presence improves and at least one selected LLM cites or names an owned Epoca URL.',
+      ],
+    }))
+  }
+
+  const comparisonGaps = comparisonSignals.filter(signal => signal.presenceRate < 1 || (signal.avgRank || 99) > 1.5)
+  if (comparisonGaps.length > 0) {
+    recs.push(makeStrategicRecommendation({
+      id: 'strategy-comparison-pages',
+      type: 'rank_improvement',
+      priority: 'high',
+      title: 'Publish comparison content for the selected competitive set',
+      description: `${context.brandName} is visible on comparison prompts, but rankings vary by surface. Comparison pages can control the framing and reduce ambiguity from unrelated Eastlake/Millennia web results.`,
+      relatedSignals: comparisonGaps,
+      keywords: comparisonGaps.map(signal => signal.query.text),
+      targetPageType: 'comparison_page',
+      targetUrl: suggestOwnedPageUrl(context, 'compare'),
+      accessLevel: 'CMSOrEditor',
+      owner: 'seo',
+      impactScore: 86,
+      impactReason: 'Comparison prompts are high-intent and already near visibility; better owned framing can push the property higher.',
+      implementationSteps: [
+        'Create a comparison hub or two comparison sections for Epoca vs Eastlake and Epoca vs Millennia.',
+        'Compare location, masterplan context, apartment/home options, amenities, commute patterns, and lifestyle fit without attacking competitors.',
+        'Add a table-style answer block that directly answers each comparison prompt in 2-4 sentences.',
+        'Add FAQPage schema for comparison questions and link the page from location/neighborhood pages.',
+        'Use exact phrasing from the tracked prompts in headings and page intro copy.',
+      ],
+      acceptanceCriteria: [
+        'Comparison page or sections are crawlable and linked from the site.',
+        'Page copy includes the exact comparison prompt language and clear Epoca differentiators.',
+        'Next PropertyAudit run shows fewer irrelevant comparison entities and stronger Epoca rank across selected surfaces.',
+      ],
+    }))
+  }
+
+  const missingFaq = context.siteAudit.missingPageTypes?.includes('faq') || !context.siteAudit.faqStructuredData
+  if (voiceSignals.some(signal => signal.presenceRate < 1) || missingFaq) {
+    recs.push(makeStrategicRecommendation({
+      id: 'strategy-faq-answer-schema',
+      type: 'voice_search',
+      priority: missingFaq ? 'medium' : 'low',
+      title: 'Turn leasing questions into answer-ready FAQ content',
+      description: 'Voice and branded support prompts perform well, but stronger visible FAQ/entity markup will make those answers more reliably citeable.',
+      relatedSignals: voiceSignals.slice(0, 5),
+      keywords: voiceSignals.map(signal => signal.query.text),
+      targetPageType: 'faq_or_support_page',
+      targetUrl: suggestOwnedPageUrl(context, 'faq'),
+      accessLevel: 'CodeRequired',
+      owner: 'engineering',
+      impactScore: 72,
+      impactReason: 'FAQ schema and visible answer blocks improve extraction confidence for voice, branded, and support-style AI answers.',
+      implementationSteps: [
+        'Add or strengthen a public FAQ page with visible answers for application, amenities, availability, parking, pets, tours, and masterplan questions.',
+        'Wrap each answer in concise 40-80 word blocks that can be quoted by answer engines.',
+        'Add FAQPage JSON-LD that exactly matches the visible FAQ content.',
+        'Add Organization or ApartmentComplex JSON-LD on the homepage with canonical URL, address, phone, and sameAs links.',
+      ],
+      acceptanceCriteria: [
+        'FAQ page returns HTTP 200 and is linked from sitemap.xml and navigation/footer.',
+        'Structured data validator passes for FAQPage and ApartmentComplex/Organization schema.',
+        'URL-only crawl detects FAQ schema or answer-block signals on relevant pages.',
+      ],
+    }))
+  }
+
+  const citationTargets = buildCitationTargets(context)
+  if (citationTargets.length > 0) {
+    recs.push({
+      id: 'strategy-citation-authority',
+      type: 'citation_opportunity',
+      priority: 'medium',
+      title: 'Build citation authority on the sources AI already uses',
+      description: `Brand citation share is ${formatPct(calculateBrandCitationShare(context))}. Improve AI rankings by strengthening the trusted third-party sources that already appear in answers.`,
+      accessLevel: 'ThirdParty',
+      owner: 'partnerships',
+      status: 'todo',
+      evidenceMode: 'URLOnly',
+      keywords: citationTargets.slice(0, 5).map(target => target.domain),
+      evidence: citationTargets.slice(0, 5).map(target =>
+        `${target.domain} appears ${target.count} time(s) across: ${target.queries.slice(0, 3).join(', ')}.`
+      ),
+      implementationSteps: [
+        `Update or claim priority listings: ${citationTargets.slice(0, 5).map(target => target.domain).join(', ')}.`,
+        'Make NAP, website URL, property description, floorplan/availability messaging, and images consistent across listings.',
+        'Add Epoca-specific Otay Mesa language to directory/social/video descriptions where editable.',
+        'Create one shareable media asset or short video that supports the Otay Mesa/masterplan positioning and link it from owned pages.',
+      ],
+      acceptanceCriteria: [
+        'Priority third-party listings contain consistent name, address, URL, property description, and current imagery.',
+        'Owned pages link to or reference the strongest third-party proof points where appropriate.',
+        'Next PropertyAudit run shows improved brand citation share or lower link rank on category/local prompts.',
+      ],
+      impact: {
+        score: 78,
+        reason: 'AI answers are citing third-party domains heavily; stronger controlled listings increase attribution odds.',
+      },
+      actionItems: citationTargets.slice(0, 5).map(target => `Strengthen ${target.domain} listing/citation`),
+      relatedQueries: citationTargets.flatMap(target => target.queries).slice(0, 5).map(text => ({
+        id: '',
+        text,
+        type: 'citation',
+      })),
+    })
+  }
+
+  return recs
+}
+
+function buildQuerySignals(context: AnalysisContext): QuerySignal[] {
+  return context.queries.map(query => {
+    const answers = context.answers.filter(answer => answer.queryId === query.id)
+    const present = answers.filter(answer => answer.presence)
+    const ranks = present.map(answer => answer.llmRank).filter((rank): rank is number => typeof rank === 'number')
+    const sovs = answers.map(answer => answer.sov).filter((sov): sov is number => typeof sov === 'number')
+    const aiOverview = context.aiOverviews.get(query.id)
+    return {
+      query,
+      answers,
+      affectedSurfaces: answers
+        .filter(answer => !answer.presence)
+        .map(answer => context.runsBySurface.get(answer.runId))
+        .filter((surface): surface is Surface => Boolean(surface)),
+      presentSurfaces: present
+        .map(answer => context.runsBySurface.get(answer.runId))
+        .filter((surface): surface is Surface => Boolean(surface)),
+      presenceRate: answers.length > 0 ? present.length / answers.length : 0,
+      avgRank: ranks.length > 0 ? average(ranks) : null,
+      avgSov: sovs.length > 0 ? average(sovs) : null,
+      aiOverviewVisible: Boolean(aiOverview?.visible),
+      aiOverviewSource: aiOverview?.sourceUrl || null,
+      citations: context.citations.filter(citation => citation.queryId === query.id),
+    }
+  })
+}
+
+function makeStrategicRecommendation(args: {
+  id: string
+  type: ContentRecommendation['type']
+  priority: ContentRecommendation['priority']
+  title: string
+  description: string
+  relatedSignals: QuerySignal[]
+  keywords: string[]
+  targetPageType: string
+  targetUrl: string | null
+  accessLevel: RecommendationAccessLevel
+  owner: RecommendationOwner
+  impactScore: number
+  impactReason: string
+  implementationSteps: string[]
+  acceptanceCriteria: string[]
+}): ContentRecommendation {
+  const sourceQueryEvidence = args.relatedSignals.map(signal => {
+    const details = [
+      signal.affectedSurfaces.length > 0 ? `absent on ${surfaceList(signal.affectedSurfaces)}` : null,
+      signal.presentSurfaces.length > 0 ? `present on ${surfaceList(signal.presentSurfaces)}${signal.avgRank ? `, avg rank #${signal.avgRank.toFixed(1)}` : ''}` : null,
+      signal.aiOverviewVisible ? 'visible in AI Overview' : 'not visible in AI Overview',
+    ].filter(Boolean).join('; ')
+    return `"${signal.query.text}" (${signal.query.type}): ${details}.`
+  })
+
+  return {
+    id: args.id,
+    type: args.type,
+    priority: args.priority,
+    title: args.title,
+    description: args.description,
+    accessLevel: args.accessLevel,
+    owner: args.owner,
+    status: 'todo',
+    targetPageType: args.targetPageType,
+    targetUrl: args.targetUrl,
+    evidenceMode: 'URLOnly',
+    evidence: [],
+    implementationSteps: args.implementationSteps,
+    acceptanceCriteria: args.acceptanceCriteria,
+    sourceQueryEvidence: Array.from(new Set(sourceQueryEvidence)).slice(0, 8),
+    keywords: Array.from(new Set(args.keywords)).slice(0, 10),
+    impact: { score: args.impactScore, reason: args.impactReason },
+    actionItems: args.implementationSteps.slice(0, 4),
+    relatedQueries: args.relatedSignals.map(signal => ({
+      id: signal.query.id,
+      text: signal.query.text,
+      type: signal.query.type,
+    })),
+  }
+}
+
+function buildDemandCaptureTitle(context: AnalysisContext, signals: QuerySignal[]): string {
+  return signals.some(signal => /otay/i.test(signal.query.text))
+    ? 'Build an Otay Mesa apartment demand-capture page'
+    : `Build a ${context.primaryGeo || 'local'} demand-capture landing page`
+}
+
+function suggestOwnedPageUrl(context: AnalysisContext, slug: string): string | null {
+  if (!context.siteAudit.normalizedOrigin) return null
+  try {
+    return new URL(`/${slug.replace(/^\/+/, '')}/`, context.siteAudit.normalizedOrigin).toString()
+  } catch {
+    return null
+  }
+}
+
+function inferGeoFromSignals(signals: QuerySignal[]): string | null {
+  return signals.map(signal => signal.query.geo).find(Boolean) || null
+}
+
+function avgPresence(signals: QuerySignal[]): number {
+  if (signals.length === 0) return 0
+  return average(signals.map(signal => signal.presenceRate))
+}
+
+function formatPct(value: number): string {
+  return `${Math.round(value * 100)}%`
+}
+
+function average(values: number[]): number {
+  if (values.length === 0) return 0
+  return values.reduce((sum, value) => sum + value, 0) / values.length
+}
+
+function surfaceList(surfaces: Surface[]): string {
+  return Array.from(new Set(surfaces)).map(getSurfaceLabel).join(', ')
+}
+
+function calculateBrandCitationShare(context: AnalysisContext): number {
+  if (context.citations.length === 0) return 0
+  return context.citations.filter(citation => citation.isBrandDomain).length / context.citations.length
+}
+
+function buildCitationTargets(context: AnalysisContext) {
+  const queryTextById = new Map(context.queries.map(query => [query.id, query.text]))
+  const targets = new Map<string, { domain: string; count: number; queries: Set<string> }>()
+  context.citations.forEach(citation => {
+    if (citation.isBrandDomain) return
+    if (context.brandDomains.includes(citation.domain)) return
+    const queryText = queryTextById.get(citation.queryId) || ''
+    if (isLikelyNoiseDomain(citation.domain, [queryText])) return
+    const existing = targets.get(citation.domain) || { domain: citation.domain, count: 0, queries: new Set<string>() }
+    existing.count += 1
+    if (queryText) existing.queries.add(queryText)
+    targets.set(citation.domain, existing)
+  })
+  return Array.from(targets.values())
+    .filter(target => target.domain && target.count >= 2)
+    .sort((a, b) => b.count - a.count)
+    .map(target => ({ domain: target.domain, count: target.count, queries: Array.from(target.queries) }))
+}
+
+function topCitationDomains(context: AnalysisContext, signals: QuerySignal[]) {
+  const ids = new Set(signals.map(signal => signal.query.id))
+  return buildCitationTargets({
+    ...context,
+    citations: context.citations.filter(citation => ids.has(citation.queryId)),
+  }).map(target => target.domain)
+}
+
+function dedupeRecommendations(recommendations: ContentRecommendation[]): ContentRecommendation[] {
+  const seen = new Set<string>()
+  return recommendations.filter(recommendation => {
+    const key = `${recommendation.type}:${recommendation.title}:${recommendation.targetUrl || ''}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
 }
 
 /**

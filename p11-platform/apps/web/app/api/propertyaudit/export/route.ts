@@ -208,9 +208,9 @@ function generateMarkdown(data: Awaited<ReturnType<typeof buildRunReportData>>):
   lines.push(`Sample size: ${answers.length} aggregated prompt results across ${runs.length} completed run${runs.length === 1 ? '' : 's'}.`)
   lines.push(``)
 
-  lines.push(`## 30/60-Day Action Plan`)
-  lines.push(`- **Next 30 days:** Complete high-priority URL-only, CMS/editor, and citation-target actions tied to missing visibility.`)
-  lines.push(`- **Next 60 days:** Re-run monitored money prompts, compare surface drift, and refresh recommendations that remain open.`)
+  lines.push(`## Strategic 30/60-Day Action Plan`)
+  lines.push(`- **Next 30 days:** Execute the highest-impact strategic workstreams: owned demand-capture content, comparison positioning, technical schema/FAQ fixes, and citation authority.`)
+  lines.push(`- **Next 60 days:** Re-run the same selected LLM surfaces, compare surface drift, and update the roadmap based on which prompt clusters improved.`)
   lines.push(``)
 
   lines.push(`## AI Overviews Visibility`)
@@ -253,16 +253,12 @@ function generateMarkdown(data: Awaited<ReturnType<typeof buildRunReportData>>):
         lines.push(`- **Missing Signals:** ${rec.missingSignals.join(', ')}`)
       }
       if (rec.implementationSteps?.length) {
-        lines.push(`- **Implementation Steps:**`)
+        lines.push(`- **Exact Implementation:**`)
         rec.implementationSteps.forEach(item => lines.push(`  - ${item}`))
       }
       if (rec.acceptanceCriteria?.length) {
         lines.push(`- **Acceptance Criteria:**`)
         rec.acceptanceCriteria.forEach(item => lines.push(`  - ${item}`))
-      }
-      if (rec.actionItems?.length) {
-        lines.push(`- **Action Items:**`)
-        rec.actionItems.forEach(item => lines.push(`  - ${item}`))
       }
       lines.push(``)
     })

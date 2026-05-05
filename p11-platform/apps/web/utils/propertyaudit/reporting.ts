@@ -191,7 +191,10 @@ export async function buildPropertyReportData(
     .map((r) => r.geo_scores?.[0])
     .filter(Boolean) as ReportScore[]
 
-  const recommendationsResult = await generateRecommendations(propertyId)
+  const recommendationsResult = await generateRecommendations(propertyId, {
+    batchId: options.batchId || null,
+    runIds,
+  })
   const recommendationSummary = buildRecommendationSummary(recommendationsResult.recommendations)
 
   const queryTypeStats = buildQueryTypeStats(aggregatedAnswers)

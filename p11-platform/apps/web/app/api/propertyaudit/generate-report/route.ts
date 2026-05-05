@@ -691,14 +691,14 @@ function generateReportHTML(
   ` : ''}
 
   ${hasSection('recommendations') ? `
-  <h2>Action Plan</h2>
+  <h2>Strategic Action Plan</h2>
   <p style="color: #6b7280; margin-bottom: 1.5rem;">
     ${recommendationSummary.total} recommendations identified. Priorities: ${recommendationSummary.high} high, ${recommendationSummary.medium} medium, ${recommendationSummary.low} low.
   </p>
   <h3>30/60-Day Action Plan</h3>
   <ul style="line-height: 1.8;">
-    <li><strong>Next 30 days:</strong> Complete high-priority URL-only, CMS/editor, and citation-target actions tied to missing visibility.</li>
-    <li><strong>Next 60 days:</strong> Re-run monitored money prompts, compare surface drift, and refresh recommendations that remain open.</li>
+    <li><strong>Next 30 days:</strong> Execute the highest-impact strategic workstreams below: owned demand-capture content, comparison positioning, technical schema/FAQ fixes, and citation authority.</li>
+    <li><strong>Next 60 days:</strong> Re-run the same selected LLM surfaces, compare surface drift, and update the roadmap based on which prompt clusters improved.</li>
   </ul>
   <div class="chart-grid">
     <div class="chart-card">${charts.recommendationBar}</div>
@@ -731,7 +731,7 @@ function generateReportHTML(
         <p><strong>Missing Signals:</strong> ${escapeHtml(rec.missingSignals.join(', '))}</p>
       ` : ''}
       ${rec.implementationSteps?.length ? `
-        <p><strong>Implementation Steps:</strong></p>
+        <p><strong>Exact Implementation:</strong></p>
         <ul>
           ${rec.implementationSteps.map(item => `<li>${escapeHtml(item)}</li>`).join('')}
         </ul>
@@ -752,11 +752,6 @@ function generateReportHTML(
       ` : ''}
       ${rec.competitorContext ? `
         <p><strong>Competitor Context:</strong> ${escapeHtml(rec.competitorContext.competitorName)} (${escapeHtml(rec.competitorContext.competitorDomain)})</p>
-      ` : ''}
-      ${rec.actionItems?.length ? `
-        <ul>
-          ${rec.actionItems.map(item => `<li>${escapeHtml(item)}</li>`).join('')}
-        </ul>
       ` : ''}
       ${rec.relatedQueries?.length ? `
         <p><strong>Related Queries:</strong> ${rec.relatedQueries.map(q => escapeHtml(q.text)).join(', ')}</p>

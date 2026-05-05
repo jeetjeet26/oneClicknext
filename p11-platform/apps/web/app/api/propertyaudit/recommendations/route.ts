@@ -21,6 +21,7 @@ export async function GET(req: NextRequest) {
     const searchParams = req.nextUrl.searchParams
     const propertyId = searchParams.get('propertyId')
     const runId = searchParams.get('runId') || undefined
+    const batchId = searchParams.get('batchId') || undefined
 
     if (!propertyId) {
       return NextResponse.json({ error: 'propertyId required' }, { status: 400 })
@@ -32,13 +33,14 @@ export async function GET(req: NextRequest) {
     }
 
     // Generate recommendations
-    const { recommendations, summary } = await generateRecommendations(propertyId, runId)
+    const { recommendations, summary } = await generateRecommendations(propertyId, { runId, batchId })
 
     return NextResponse.json({
       recommendations,
       summary,
       propertyId,
       runId: runId || null,
+      batchId: batchId || null,
       generatedAt: new Date().toISOString(),
     })
   } catch (error) {

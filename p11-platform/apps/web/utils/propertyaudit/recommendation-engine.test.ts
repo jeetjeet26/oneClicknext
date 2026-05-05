@@ -14,6 +14,7 @@ function makeQueryBuilder(data: unknown) {
     limit: vi.fn(() => builder),
     in: vi.fn(() => Promise.resolve({ data })),
     single: vi.fn(() => Promise.resolve({ data })),
+    maybeSingle: vi.fn(() => Promise.resolve({ data })),
     then: (resolve: (value: { data: unknown }) => unknown, reject?: (reason: unknown) => unknown) =>
       Promise.resolve({ data }).then(resolve, reject),
   }
@@ -74,7 +75,7 @@ describe('generateRecommendations URL-only page mapping', () => {
           ])
         }
         if (table === 'geo_runs') {
-          return makeQueryBuilder([{ id: 'run-1', surface: 'gemini' }])
+          return makeQueryBuilder([{ id: 'run-1', surface: 'gemini', batch_id: 'batch-1', started_at: new Date().toISOString(), geo_scores: [] }])
         }
         if (table === 'geo_answers') {
           return {
@@ -106,6 +107,12 @@ describe('generateRecommendations URL-only page mapping', () => {
             })),
           }
         }
+        if (table === 'geo_ai_overviews') {
+          return makeQueryBuilder([])
+        }
+        if (table === 'geo_property_config') {
+          return makeQueryBuilder({ domains: ['example.com'], competitor_domains: [], primary_geo: 'Austin, TX' })
+        }
         throw new Error(`Unexpected table ${table}`)
       }),
     })
@@ -113,15 +120,15 @@ describe('generateRecommendations URL-only page mapping', () => {
     const { generateRecommendations } = await import('./recommendation-engine')
     const { recommendations } = await generateRecommendations('property-1')
 
-    const localRecommendation = recommendations.find(rec => rec.id === 'missing-query-local')
-    const faqRecommendation = recommendations.find(rec => rec.id === 'voice-query-faq')
+    const localRecommendation = recommendations.find(rec => rec.id === 'strategy-owned-local-category-demand')
+    const faqRecommendation = recommendations.find(rec => rec.id === 'strategy-faq-answer-schema')
 
-    expect(localRecommendation?.targetUrl).toBe('https://example.com/neighborhood')
+    expect(localRecommendation?.targetUrl).toBe('https://example.com/apartments-otay-mesa/')
     expect(localRecommendation?.evidence?.some(item => item.includes('URL-only crawl audited'))).toBe(true)
     expect(localRecommendation?.sourceQueryEvidence?.some(item => item.includes('absent on Gemini'))).toBe(true)
     expect(localRecommendation?.implementationSteps?.length).toBeGreaterThan(0)
     expect(localRecommendation?.acceptanceCriteria?.length).toBeGreaterThan(0)
-    expect(faqRecommendation?.targetUrl).toBe('https://example.com/faq')
+    expect(faqRecommendation?.targetUrl).toBe('https://example.com/faq/')
     expect(faqRecommendation?.targetPageType).toBe('faq_or_support_page')
   })
 })
