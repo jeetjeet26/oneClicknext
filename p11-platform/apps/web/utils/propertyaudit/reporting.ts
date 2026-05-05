@@ -126,6 +126,12 @@ export type ReportData = {
   recommendationSummary: ReportRecommendationSummary
   recommendations: Awaited<ReturnType<typeof generateRecommendations>>['recommendations']
   queryTypeStats: Array<{ type: string; total: number; presencePct: number; avgRank: number | null; avgSov: number | null }>
+  rankSummary: {
+    brandedRecognitionPct: number | null
+    nonBrandedDiscoveryRank: number | null
+    nonBrandedVisibilityPct: number | null
+    comparisonAvgRank: number | null
+  }
   citationSummary: { total: number; brandPct: number; topDomains: Array<{ domain: string; count: number }> }
   aiOverviewSummary: { totalTracked: number; visibleCount: number; visibilityPct: number; byType: Array<{ type: string; visiblePct: number }> }
   trends: Array<{ label: string; score: number | null; visibility: number | null }>
@@ -198,6 +204,7 @@ export async function buildPropertyReportData(
   const recommendationSummary = buildRecommendationSummary(recommendationsResult.recommendations)
 
   const queryTypeStats = buildQueryTypeStats(aggregatedAnswers)
+  const rankSummary = buildRankSummary(aggregatedAnswers)
   const citationSummary = buildCitationSummary(rawAnswers)
   const aiOverviewSummary = buildAiOverviewSummary(reportQueries, aiOverviewMap)
   const trends = buildTrends(reportRuns)
@@ -207,6 +214,7 @@ export async function buildPropertyReportData(
     scores,
     trends,
     queryTypeStats,
+    rankSummary,
     citationSummary,
     recommendationSummary,
     competitors,
@@ -219,6 +227,7 @@ export async function buildPropertyReportData(
     recommendationSummary,
     trends,
     queryTypeStats,
+    rankSummary,
     citationSummary,
     competitors,
     aiOverviewSummary
@@ -233,6 +242,7 @@ export async function buildPropertyReportData(
     answers: aggregatedAnswers,
     competitors,
     scores,
+    rankSummary,
     recommendationSummary,
     recommendations: recommendationsResult.recommendations,
     queryTypeStats,
@@ -294,6 +304,7 @@ export async function buildRunReportData(
   const aggregatedAnswers = aggregateAnswersByQuery(rawAnswers, Array.from(uniqueQueries.values()), aiOverviewMap)
   const competitors = buildCompetitorsFromAnswers(rawAnswers)
   const queryTypeStats = buildQueryTypeStats(aggregatedAnswers)
+  const rankSummary = buildRankSummary(aggregatedAnswers)
   const citationSummary = buildCitationSummary(rawAnswers)
   const aiOverviewSummary = buildAiOverviewSummary(Array.from(uniqueQueries.values()), aiOverviewMap)
   const trends = buildTrends(runs)
@@ -304,6 +315,7 @@ export async function buildRunReportData(
     scores,
     trends,
     queryTypeStats,
+    rankSummary,
     citationSummary,
     recommendationSummary,
     competitors,
@@ -316,6 +328,7 @@ export async function buildRunReportData(
     recommendationSummary,
     trends,
     queryTypeStats,
+    rankSummary,
     citationSummary,
     competitors,
     aiOverviewSummary
@@ -330,6 +343,7 @@ export async function buildRunReportData(
     answers: aggregatedAnswers,
     competitors,
     scores,
+    rankSummary,
     recommendationSummary,
     recommendations: recommendationsResult.recommendations,
     queryTypeStats,
@@ -557,10 +571,38 @@ function buildQueryTypeStats(answers: ReportAnswer[]) {
       type,
       total: entry.total,
       presencePct,
-      avgRank: entry.ranks.length > 0 ? average(entry.ranks) : null,
+      avgRank: type === 'branded' ? null : entry.ranks.length > 0 ? average(entry.ranks) : null,
       avgSov: isSovApplicable(type) && entry.sovs.length > 0 ? average(entry.sovs) : null
     }
   })
+}
+
+function buildRankSummary(answers: ReportAnswer[]): ReportData['rankSummary'] {
+  const brandedAnswers = answers.filter(answer => answer.geo_queries?.type === 'branded')
+  const discoveryAnswers = answers.filter(answer =>
+    answer.geo_queries?.type === 'category' ||
+    answer.geo_queries?.type === 'local' ||
+    answer.geo_queries?.type === 'comparison'
+  )
+  const comparisonAnswers = answers.filter(answer => answer.geo_queries?.type === 'comparison')
+
+  const brandedRecognitionPct = brandedAnswers.length > 0
+    ? Math.round(average(brandedAnswers.map(answer => answer.presence_rate ?? (answer.presence ? 1 : 0))) * 100)
+    : null
+  const discoveryRanks = discoveryAnswers
+    .map(answer => answer.llm_rank)
+    .filter(isNumber)
+  const discoveryPresenceRates = discoveryAnswers.map(answer => answer.presence_rate ?? (answer.presence ? 1 : 0))
+  const comparisonRanks = comparisonAnswers
+    .map(answer => answer.llm_rank)
+    .filter(isNumber)
+
+  return {
+    brandedRecognitionPct,
+    nonBrandedDiscoveryRank: discoveryRanks.length > 0 ? average(discoveryRanks) : null,
+    nonBrandedVisibilityPct: discoveryPresenceRates.length > 0 ? Math.round(average(discoveryPresenceRates) * 100) : null,
+    comparisonAvgRank: comparisonRanks.length > 0 ? average(comparisonRanks) : null,
+  }
 }
 
 function buildCitationSummary(answers: ReportAnswer[]) {
@@ -723,6 +765,7 @@ function buildInsights(input: {
   scores: ReportScore[]
   trends: Array<{ label: string; score: number | null; visibility: number | null }>
   queryTypeStats: ReportData['queryTypeStats']
+  rankSummary: ReportData['rankSummary']
   citationSummary: ReportData['citationSummary']
   recommendationSummary: ReportData['recommendationSummary']
   competitors: ReportData['competitors']
@@ -741,6 +784,12 @@ function buildInsights(input: {
 
   if (latestScore) {
     highlights.push(`Latest GEO score is ${Math.round(latestScore.overall_score)}/100 with visibility at ${Math.round(latestScore.visibility_pct)}%.`)
+  }
+  if (input.rankSummary.brandedRecognitionPct !== null) {
+    highlights.push(`Branded entity recognition is ${input.rankSummary.brandedRecognitionPct}%; treat this separately from discovery rank.`)
+  }
+  if (input.rankSummary.nonBrandedDiscoveryRank !== null) {
+    risks.push(`Non-branded discovery average rank is #${input.rankSummary.nonBrandedDiscoveryRank.toFixed(1)} across category, local, and comparison prompts.`)
   }
   if (trendDelta !== null) {
     highlights.push(`Score trend over recent runs is ${trendDelta > 0 ? 'up' : trendDelta < 0 ? 'down' : 'flat'} (${trendDelta > 0 ? '+' : ''}${trendDelta.toFixed(1)} pts).`)
@@ -766,6 +815,8 @@ function buildInsights(input: {
   const summaryStats = [
     { label: 'Active Queries', value: `${input.queryTypeStats.reduce((a, b) => a + b.total, 0)}` },
     { label: 'Total Recommendations', value: `${input.recommendationSummary.total}` },
+    { label: 'Discovery Rank', value: input.rankSummary.nonBrandedDiscoveryRank !== null ? `#${input.rankSummary.nonBrandedDiscoveryRank.toFixed(1)}` : 'N/A' },
+    { label: 'Branded Recognition', value: input.rankSummary.brandedRecognitionPct !== null ? `${input.rankSummary.brandedRecognitionPct}%` : 'N/A' },
     { label: 'Brand Citation Share', value: `${input.citationSummary.brandPct}%` },
     { label: 'AI Overview Visibility', value: `${input.aiOverviewSummary.visibilityPct}%` }
   ]
@@ -779,6 +830,7 @@ async function maybeGenerateNarrative(input: {
   recommendationSummary: ReportRecommendationSummary
   trends: Array<{ label: string; score: number | null; visibility: number | null }>
   queryTypeStats: ReportData['queryTypeStats']
+  rankSummary: ReportData['rankSummary']
   citationSummary: ReportData['citationSummary']
   competitors: ReportData['competitors']
   aiOverviewSummary?: ReportData['aiOverviewSummary']
@@ -796,6 +848,8 @@ async function maybeGenerateNarrative(input: {
     `Risks: ${input.insights.risks.join(' ')}`,
     `Opportunities: ${input.insights.opportunities.join(' ')}`,
     `Recommendation summary: High ${input.recommendationSummary.high}, Medium ${input.recommendationSummary.medium}, Low ${input.recommendationSummary.low}`,
+    `Branded recognition: ${input.rankSummary.brandedRecognitionPct ?? 'N/A'}%`,
+    `Non-branded discovery avg rank: ${input.rankSummary.nonBrandedDiscoveryRank?.toFixed(1) ?? 'N/A'}`,
     `Citation share: ${input.citationSummary.brandPct}% of ${input.citationSummary.total} citations`,
     `AI Overview visibility: ${input.aiOverviewSummary?.visibilityPct ?? 0}% of tracked queries`,
     `Top competitors: ${input.competitors.slice(0, 3).map(c => `${c.name} (${c.mentionCount})`).join(', ') || 'None'}`,

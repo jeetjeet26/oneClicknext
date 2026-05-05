@@ -175,6 +175,12 @@ function generateReportHTML(
     recommendations,
     recommendationSummary,
     queryTypeStats,
+    rankSummary = {
+      brandedRecognitionPct: null,
+      nonBrandedDiscoveryRank: null,
+      nonBrandedVisibilityPct: null,
+      comparisonAvgRank: null,
+    },
     citationSummary,
     trends,
     glossary,
@@ -424,8 +430,8 @@ function generateReportHTML(
       <div class="metric-label">Visibility</div>
     </div>
     <div class="metric-card">
-      <div class="metric-value">${latestScore?.avg_llm_rank?.toFixed(1) || 'N/A'}</div>
-      <div class="metric-label">Avg Rank</div>
+      <div class="metric-value">${rankSummary.nonBrandedDiscoveryRank !== null ? rankSummary.nonBrandedDiscoveryRank.toFixed(1) : 'N/A'}</div>
+      <div class="metric-label">Discovery Rank</div>
     </div>
     <div class="metric-card">
       <div class="metric-value">${queries?.length || 0}</div>
@@ -436,6 +442,8 @@ function generateReportHTML(
   <h3>Client Readout</h3>
   <ul style="line-height: 1.8;">
     <li><strong>Where you are:</strong> Overall AI visibility score is <strong>${latestScore ? Math.round(latestScore.overall_score) : 'N/A'}/100</strong> ${getScoreBucket(latestScore?.overall_score)} with <strong>${latestScore ? Math.round(latestScore.visibility_pct) : 0}%</strong> query visibility.</li>
+    <li><strong>Discovery rank:</strong> ${rankSummary.nonBrandedDiscoveryRank !== null ? `Average #${rankSummary.nonBrandedDiscoveryRank.toFixed(1)} across non-branded category, local, and comparison prompts.` : 'Not enough non-branded ranking data yet.'}</li>
+    <li><strong>Branded recognition:</strong> ${rankSummary.brandedRecognitionPct !== null ? `${rankSummary.brandedRecognitionPct}% entity recognition on branded prompts. This is tracked separately from discovery rank.` : 'No branded prompt data yet.'}</li>
     <li><strong>Best surface:</strong> ${bestSurface ? `${escapeHtml(bestSurface.label)} at ${Math.round(bestSurface.overallScore || 0)}/100` : 'More run data needed'}.</li>
     <li><strong>Largest surface gap:</strong> ${weakestSurface ? `${escapeHtml(weakestSurface.label)} at ${Math.round(weakestSurface.overallScore || 0)}/100` : 'More run data needed'}.</li>
     <li><strong>Weakest prompt cluster:</strong> ${weakestType ? `${escapeHtml(weakestType.type)} at ${weakestType.presencePct}% presence` : 'More query data needed'}.</li>
@@ -538,7 +546,7 @@ function generateReportHTML(
         <th>Surface</th>
         <th>Score</th>
         <th>Visibility</th>
-        <th>Avg Rank</th>
+        <th>Avg Rank (all prompts)</th>
       </tr>
     </thead>
     <tbody>
@@ -569,7 +577,7 @@ function generateReportHTML(
         <th>Surface</th>
         <th>Latest Score</th>
         <th>Visibility</th>
-        <th>Avg Rank</th>
+        <th>Avg Rank (all prompts)</th>
         <th>Avg SOV</th>
       </tr>
     </thead>
@@ -618,7 +626,8 @@ function generateReportHTML(
       <strong>Metric Definitions:</strong><br/>
       • <strong>Presence:</strong> % of queries where your property is mentioned in the AI response<br/>
       • <strong>Avg SOV (Share of Voice):</strong> Among cited sources, what % reference your brand<br/>
-      • <strong>Note:</strong> SOV only applies to category, comparison, and local queries. Branded and FAQ queries show "N/A" for SOV.
+      • <strong>Note:</strong> SOV only applies to category, comparison, and local queries. Branded and FAQ queries show "N/A" for SOV.<br>
+      • <strong>Rank note:</strong> branded prompts are entity-recognition checks, so they do not count toward the headline discovery-rank metric.
     </p>
   </div>
   <div class="chart-grid">
@@ -642,7 +651,7 @@ function generateReportHTML(
           <td>${escapeHtml(stat.type)}</td>
           <td>${stat.total}</td>
           <td>${stat.presencePct}%</td>
-          <td>${stat.avgRank?.toFixed(1) || '—'}</td>
+          <td>${stat.type === 'branded' ? 'Entity recognition' : stat.avgRank?.toFixed(1) || '—'}</td>
           <td>${avgSovLabel}</td>
         </tr>
       `

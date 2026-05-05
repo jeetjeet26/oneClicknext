@@ -131,6 +131,12 @@ function generateMarkdown(data: Awaited<ReturnType<typeof buildRunReportData>>):
     recommendations,
     recommendationSummary,
     queryTypeStats,
+    rankSummary = {
+      brandedRecognitionPct: null,
+      nonBrandedDiscoveryRank: null,
+      nonBrandedVisibilityPct: null,
+      comparisonAvgRank: null,
+    },
     citationSummary,
     glossary,
     insights,
@@ -170,9 +176,12 @@ function generateMarkdown(data: Awaited<ReturnType<typeof buildRunReportData>>):
     lines.push(``)
     lines.push(`- **Overall AI visibility score:** ${score.overall_score.toFixed(1)}/100`)
     lines.push(`- **Visibility:** ${score.visibility_pct.toFixed(1)}%`)
-    lines.push(`- **Avg LLM Rank:** ${score.avg_llm_rank?.toFixed(1) ?? 'N/A'}`)
+    lines.push(`- **Non-branded discovery rank:** ${rankSummary.nonBrandedDiscoveryRank !== null ? `#${rankSummary.nonBrandedDiscoveryRank.toFixed(1)}` : 'N/A'}`)
+    lines.push(`- **Branded recognition:** ${rankSummary.brandedRecognitionPct !== null ? `${rankSummary.brandedRecognitionPct}%` : 'N/A'}`)
+    lines.push(`- **Avg LLM Rank (all prompts):** ${score.avg_llm_rank?.toFixed(1) ?? 'N/A'}`)
     lines.push(`- **Avg Link Rank:** ${score.avg_link_rank?.toFixed(1) ?? 'N/A'}`)
     lines.push(`- **Avg SOV:** ${score.avg_sov ? (score.avg_sov * 100).toFixed(1) + '%' : 'N/A'}`)
+    lines.push(`- **Rank note:** branded prompts are entity-recognition checks and are excluded from the headline discovery-rank metric.`)
     lines.push(`- **Best surface:** ${bestSurface ? `${bestSurface.label} (${bestSurface.overallScore?.toFixed(1)}/100)` : 'More run data needed'}`)
     lines.push(`- **Weakest surface:** ${weakestSurface ? `${weakestSurface.label} (${weakestSurface.overallScore?.toFixed(1)}/100)` : 'More run data needed'}`)
     lines.push(`- **Weakest prompt cluster:** ${weakestType ? `${weakestType.type} (${weakestType.presencePct}% presence)` : 'More query data needed'}`)
@@ -267,7 +276,8 @@ function generateMarkdown(data: Awaited<ReturnType<typeof buildRunReportData>>):
   lines.push(`## Query Type Coverage`)
   queryTypeStats.forEach(stat => {
     const avgSovLabel = stat.avgSov === null ? 'N/A' : `${Math.round(stat.avgSov * 100)}%`
-    lines.push(`- ${stat.type}: ${stat.presencePct}% presence, ${stat.total} queries, avg SOV ${avgSovLabel}`)
+    const rankLabel = stat.type === 'branded' ? 'entity recognition' : `avg rank ${stat.avgRank?.toFixed(1) || 'N/A'}`
+    lines.push(`- ${stat.type}: ${stat.presencePct}% presence, ${stat.total} queries, ${rankLabel}, avg SOV ${avgSovLabel}`)
   })
   lines.push(``)
 
@@ -384,6 +394,12 @@ function generateHTML(data: Awaited<ReturnType<typeof buildRunReportData>>): str
     recommendations,
     recommendationSummary,
     queryTypeStats,
+    rankSummary = {
+      brandedRecognitionPct: null,
+      nonBrandedDiscoveryRank: null,
+      nonBrandedVisibilityPct: null,
+      comparisonAvgRank: null,
+    },
     citationSummary,
     glossary,
     insights,
@@ -448,8 +464,12 @@ function generateHTML(data: Awaited<ReturnType<typeof buildRunReportData>>): str
     <div class="metric-value">${score.visibility_pct.toFixed(1)}%</div>
   </div>
   <div class="metric">
-    <div class="metric-label">Avg LLM Rank</div>
-    <div class="metric-value">${score.avg_llm_rank?.toFixed(1) ?? 'N/A'}</div>
+    <div class="metric-label">Discovery Rank</div>
+    <div class="metric-value">${rankSummary.nonBrandedDiscoveryRank !== null ? rankSummary.nonBrandedDiscoveryRank.toFixed(1) : 'N/A'}</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Branded Recognition</div>
+    <div class="metric-value">${rankSummary.brandedRecognitionPct !== null ? `${rankSummary.brandedRecognitionPct}%` : 'N/A'}</div>
   </div>
   <div class="metric">
     <div class="metric-label">Avg SOV</div>
