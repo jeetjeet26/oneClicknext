@@ -1,6 +1,9 @@
 /**
  * PropertyAudit Run Purge API
- * Delete run history for a property (runs + cascaded answers/citations/scores)
+ * Delete run-derived GEO data for a property.
+ *
+ * Deleting geo_runs cascades to geo_scores, geo_answers, and geo_citations.
+ * For a full property reset, clear property-level AI Overview observations too.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -48,6 +51,19 @@ export async function POST(req: NextRequest) {
     }
 
     const service = createServiceClient()
+    const resetAllSurfaces = requestedSurfaces.length === 0
+
+    if (resetAllSurfaces) {
+      const { error: overviewDeleteError } = await service
+        .from('geo_ai_overviews')
+        .delete()
+        .eq('property_id', propertyId)
+
+      if (overviewDeleteError) {
+        console.error('Error purging AI Overview history:', overviewDeleteError)
+        return NextResponse.json({ error: 'Failed to purge AI Overview history' }, { status: 500 })
+      }
+    }
 
     let del = service.from('geo_runs').delete().eq('property_id', propertyId)
     if (requestedSurfaces.length > 0) {
@@ -65,6 +81,8 @@ export async function POST(req: NextRequest) {
       success: true,
       propertyId,
       surfaces: requestedSurfaces.length > 0 ? requestedSurfaces : 'all',
+      resetScope: resetAllSurfaces ? 'all_geo_results' : 'run_history',
+      aiOverviewsCleared: resetAllSurfaces,
     })
   } catch (error) {
     console.error('PropertyAudit Purge Runs Error:', error)

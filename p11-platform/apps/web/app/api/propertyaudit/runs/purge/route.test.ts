@@ -96,7 +96,7 @@ describe('propertyaudit runs purge route', () => {
     expect(createServiceClientMock).not.toHaveBeenCalled()
   })
 
-  it('deletes runs for validated surfaces', async () => {
+  it('deletes runs for validated surfaces without clearing property-level overview history', async () => {
     authGetUserMock.mockResolvedValue({
       data: { user: { id: 'user-1' } },
       error: null,
@@ -110,11 +110,12 @@ describe('propertyaudit runs purge route', () => {
     const eqMock = vi.fn(() => ({ in: inMock }))
     const deleteMock = vi.fn(() => ({ eq: eqMock }))
 
-    createServiceClientMock.mockReturnValue({
-      from: vi.fn((table: string) => {
+    const fromMock = vi.fn((table: string) => {
         if (table !== 'geo_runs') throw new Error(`Unexpected table ${table}`)
         return { delete: deleteMock }
-      }),
+    })
+    createServiceClientMock.mockReturnValue({
+      from: fromMock,
     })
 
     const { POST } = await import('./route')
@@ -131,7 +132,54 @@ describe('propertyaudit runs purge route', () => {
       success: true,
       propertyId: 'property-1',
       surfaces: ['openai'],
+      resetScope: 'run_history',
+      aiOverviewsCleared: false,
     })
     expect(inMock).toHaveBeenCalledWith('surface', ['openai'])
+    expect(fromMock).not.toHaveBeenCalledWith('geo_ai_overviews')
+  })
+
+  it('clears AI Overview history and run history for a full property reset', async () => {
+    authGetUserMock.mockResolvedValue({
+      data: { user: { id: 'user-1' } },
+      error: null,
+    })
+    validatePropertyAccessMock.mockResolvedValue({
+      authorized: true,
+      orgId: 'org-1',
+    })
+
+    const overviewEqMock = vi.fn().mockResolvedValue({ error: null })
+    const overviewDeleteMock = vi.fn(() => ({ eq: overviewEqMock }))
+    const runsEqMock = vi.fn().mockResolvedValue({ error: null })
+    const runsDeleteMock = vi.fn(() => ({ eq: runsEqMock }))
+
+    createServiceClientMock.mockReturnValue({
+      from: vi.fn((table: string) => {
+        if (table === 'geo_ai_overviews') return { delete: overviewDeleteMock }
+        if (table === 'geo_runs') return { delete: runsDeleteMock }
+        throw new Error(`Unexpected table ${table}`)
+      }),
+    })
+
+    const { POST } = await import('./route')
+    const request = new Request('http://localhost/api/propertyaudit/runs/purge', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ propertyId: 'property-1' }),
+    }) as NextRequest
+
+    const response = await POST(request)
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual({
+      success: true,
+      propertyId: 'property-1',
+      surfaces: 'all',
+      resetScope: 'all_geo_results',
+      aiOverviewsCleared: true,
+    })
+    expect(overviewEqMock).toHaveBeenCalledWith('property_id', 'property-1')
+    expect(runsEqMock).toHaveBeenCalledWith('property_id', 'property-1')
   })
 })

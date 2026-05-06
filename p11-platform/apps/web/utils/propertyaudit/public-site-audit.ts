@@ -186,6 +186,29 @@ async function fetchText(
   }
 }
 
+function collectSchemaTypes(value: unknown, types: Set<string>, depth = 0) {
+  if (depth > 20 || value === null) return
+
+  if (Array.isArray(value)) {
+    value.forEach(item => collectSchemaTypes(item, types, depth + 1))
+    return
+  }
+
+  if (typeof value !== 'object') return
+
+  const record = value as Record<string, unknown>
+  const typeValue = record['@type']
+  if (typeof typeValue === 'string') {
+    types.add(typeValue)
+  } else if (Array.isArray(typeValue)) {
+    typeValue.forEach(type => {
+      if (typeof type === 'string') types.add(type)
+    })
+  }
+
+  Object.values(record).forEach(child => collectSchemaTypes(child, types, depth + 1))
+}
+
 function extractStructuredData($: cheerio.CheerioAPI): { types: string[]; parseErrors: number } {
   const types = new Set<string>()
   let parseErrors = 0
@@ -194,17 +217,7 @@ function extractStructuredData($: cheerio.CheerioAPI): { types: string[]; parseE
     if (!raw) return
     try {
       const parsed = JSON.parse(raw)
-      const values = Array.isArray(parsed) ? parsed : [parsed]
-      for (const value of values) {
-        const typeValue = value?.['@type']
-        if (Array.isArray(typeValue)) {
-          typeValue.forEach(type => {
-            if (typeof type === 'string') types.add(type)
-          })
-        } else if (typeof typeValue === 'string') {
-          types.add(typeValue)
-        }
-      }
+      collectSchemaTypes(parsed, types)
     } catch {
       parseErrors += 1
     }

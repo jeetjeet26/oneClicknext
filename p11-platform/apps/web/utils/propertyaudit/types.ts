@@ -84,7 +84,7 @@ export const SURFACE_LABELS: Record<Surface, string> = {
 
 export const SURFACE_MEASUREMENT_NOTES: Record<Surface, string> = {
   openai: 'Legacy provider surface kept for backward compatibility.',
-  claude: 'Legacy provider surface kept for backward compatibility.',
+  claude: 'Claude natural-answer capture with structured extraction.',
   chatgpt: 'Grounded API proxy for ChatGPT-style answer measurement.',
   gemini: 'Grounded API proxy for Gemini-style answer measurement.',
   perplexity: 'Natural-answer API capture with citation-aware parsing.',

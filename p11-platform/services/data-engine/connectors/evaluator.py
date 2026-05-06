@@ -330,6 +330,17 @@ async def check_ai_overview_visibility(
                 'https://serpapi.com/search.json',
                 params=params
             )
+            if response.status_code == 400 and 'location' in params:
+                logger.warning(
+                    "[AI Overview] SerpAPI rejected location '%s' for query '%s'; retrying without location",
+                    params['location'],
+                    query_text[:50],
+                )
+                params_without_location = {key: value for key, value in params.items() if key != 'location'}
+                response = await client.get(
+                    'https://serpapi.com/search.json',
+                    params=params_without_location
+                )
             response.raise_for_status()
             data = response.json()
         

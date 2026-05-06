@@ -43,7 +43,6 @@ import {
   LayoutGrid,
   List,
   FileText,
-  Database,
 } from 'lucide-react'
 import { getSurfaceLabel, type Surface } from '@/utils/propertyaudit/types'
 
@@ -128,6 +127,8 @@ export default function PropertyAuditPage() {
   const [queryView, setQueryView] = useState<'table' | 'cards'>('table')
   const [showReportBuilder, setShowReportBuilder] = useState(false)
   const [showRunAuditModal, setShowRunAuditModal] = useState(false)
+  const [showSettingsMenu, setShowSettingsMenu] = useState(false)
+  const [isResettingGeo, setIsResettingGeo] = useState(false)
   const [dismissedAlertIds, setDismissedAlertIds] = useState<string[]>([])
 
   // Generate alerts and insights
@@ -200,10 +201,11 @@ export default function PropertyAuditPage() {
     }
   }
 
-  const purgeRunHistory = async () => {
+  const resetGeoScores = async () => {
     if (!currentProperty?.id) return
-    if (!confirm('Delete ALL past GEO runs for this property? This cannot be undone.')) return
+    if (!confirm('Reset ALL GEO scores and audit results for this property? This deletes run history, scores, answers, citations, and AI Overview observations. Query prompts will be kept. This cannot be undone.')) return
 
+    setIsResettingGeo(true)
     try {
       const res = await fetch('/api/propertyaudit/runs/purge', {
         method: 'POST',
@@ -215,10 +217,13 @@ export default function PropertyAuditPage() {
         console.error('Failed to purge runs:', data)
         return
       }
+      setShowSettingsMenu(false)
       setSelectedRunId(null)
       await fetchData()
     } catch (err) {
-      console.error('Error purging run history:', err)
+      console.error('Error resetting GEO scores:', err)
+    } finally {
+      setIsResettingGeo(false)
     }
   }
 
@@ -459,9 +464,41 @@ export default function PropertyAuditPage() {
             <Play className={`w-4 h-4 ${isRunning ? 'animate-pulse' : ''}`} />
             {isRunning ? 'Running...' : 'Run Audit'}
           </button>
-          <button className="p-2 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg">
-            <Settings className="w-5 h-5" />
-          </button>
+          <div className="relative">
+            <button
+              onClick={() => setShowSettingsMenu(value => !value)}
+              className="p-2 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"
+              aria-label="PropertyAudit settings"
+              aria-expanded={showSettingsMenu}
+            >
+              <Settings className="w-5 h-5" />
+            </button>
+            {showSettingsMenu && (
+              <div className="absolute right-0 z-20 mt-2 w-72 rounded-xl border border-gray-200 bg-white p-2 shadow-lg dark:border-gray-700 dark:bg-gray-800">
+                <div className="px-3 py-2">
+                  <p className="text-sm font-semibold text-gray-900 dark:text-white">PropertyAudit Settings</p>
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    Reset generated GEO results while keeping the query panel.
+                  </p>
+                </div>
+                <button
+                  onClick={resetGeoScores}
+                  disabled={isResettingGeo || runs.length === 0}
+                  className="flex w-full items-start gap-2 rounded-lg px-3 py-2 text-left text-sm text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-red-300 dark:hover:bg-red-900/20"
+                >
+                  <Trash2 className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>
+                    <span className="block font-medium">
+                      {isResettingGeo ? 'Resetting GEO scores...' : 'Reset all GEO scores'}
+                    </span>
+                    <span className="block text-xs text-red-600/80 dark:text-red-300/80">
+                      Deletes runs, scores, answers, citations, and AI Overview observations.
+                    </span>
+                  </span>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -869,12 +906,12 @@ export default function PropertyAuditPage() {
           <div className="space-y-4">
             <div className="flex items-center justify-end">
               <button
-                onClick={purgeRunHistory}
-                disabled={runs.length === 0}
+                onClick={resetGeoScores}
+                disabled={isResettingGeo || runs.length === 0}
                 className="flex items-center gap-2 px-3 py-1.5 text-sm border border-red-200 dark:border-red-900/40 text-red-700 dark:text-red-300 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Trash2 className="w-4 h-4" />
-                Clear run history
+                {isResettingGeo ? 'Resetting GEO scores...' : 'Reset GEO scores'}
               </button>
             </div>
             {runs.length === 0 ? (

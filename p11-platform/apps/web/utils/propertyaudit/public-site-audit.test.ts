@@ -51,6 +51,52 @@ describe('auditPublicSite', () => {
     expect(audit.crawlSummary?.pagesAudited).toBeGreaterThan(0)
   })
 
+  it('extracts schema types from Yoast-style JSON-LD graphs', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/robots.txt') || url.endsWith('/sitemap.xml') || url.endsWith('/llms.txt')) {
+        return new Response('ok', { status: 200 })
+      }
+
+      return new Response(`
+        <html>
+          <head>
+            <title>Epoca</title>
+            <meta name="description" content="San Diego master planned community">
+            <script type="application/ld+json" class="yoast-schema-graph">
+              {
+                "@context": "https://schema.org",
+                "@graph": [
+                  { "@type": "WebPage", "@id": "https://example.com/" },
+                  { "@type": "ImageObject", "@id": "https://example.com/#primaryimage" },
+                  { "@type": "BreadcrumbList" },
+                  { "@type": "WebSite" },
+                  {
+                    "@type": "Organization",
+                    "logo": { "@type": "ImageObject" }
+                  }
+                ]
+              }
+            </script>
+          </head>
+          <body><h1>Epoca</h1></body>
+        </html>
+      `, { status: 200 })
+    }))
+
+    const audit = await auditPublicSite('https://example.com')
+
+    expect(audit.structuredDataTypes).toEqual([
+      'BreadcrumbList',
+      'ImageObject',
+      'Organization',
+      'WebPage',
+      'WebSite',
+    ])
+    expect(audit.organizationStructuredData).toBe(true)
+    expect(audit.notes).not.toContain('No JSON-LD structured data was detected on audited pages.')
+  })
+
   it('discovers same-origin sitemap and internal-link pages', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
