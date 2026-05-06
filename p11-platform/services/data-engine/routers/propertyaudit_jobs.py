@@ -61,6 +61,27 @@ async def _maybe_analyze_batch(batch_id: Optional[str]):
             logger.warning("[PropertyAudit] Cross-model analysis failed for %s: %s", batch_id, analysis)
 
 
+def _execute_propertyaudit_job(run_id: str, claimed_run: dict, batch_id: Optional[str]):
+    """
+    Run long PropertyAudit execution outside the request event loop.
+
+    The Render service currently runs a small worker count. Keeping the LLM
+    execution on the request event loop can occupy every Uvicorn worker before
+    later surfaces, like Claude in a multi-surface batch, get accepted.
+    """
+
+    async def runner():
+        supabase = get_supabase_client()
+        executor = PropertyAuditExecutor(supabase)
+        try:
+            await executor.execute_run(run_id, claimed_run=claimed_run)
+            await _maybe_analyze_batch(batch_id or claimed_run.get("batch_id"))
+        except Exception as error:
+            logger.exception("[PropertyAudit] Background run failed for %s: %s", run_id, error)
+
+    asyncio.run(runner())
+
+
 @router.post("/run")
 async def run_propertyaudit(
     request: RunRequest,
@@ -77,14 +98,14 @@ async def run_propertyaudit(
             detail=f"Run {request.run_id} is not queued (status={run.get('status')})",
         )
 
-    async def run_job():
-        try:
-            await executor.execute_run(request.run_id, claimed_run=claimed_run)
-            await _maybe_analyze_batch(request.batch_id or claimed_run.get("batch_id"))
-        except Exception as error:
-            logger.exception("[PropertyAudit] Background run failed for %s: %s", request.run_id, error)
-
-    asyncio.create_task(run_job())
+    asyncio.create_task(
+        asyncio.to_thread(
+            _execute_propertyaudit_job,
+            request.run_id,
+            claimed_run,
+            request.batch_id or claimed_run.get("batch_id"),
+        )
+    )
 
     return {
         "success": True,

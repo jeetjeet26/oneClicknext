@@ -107,8 +107,16 @@ export type ReportRecommendationSummary = {
   byType: Record<string, number>
 }
 
+export type ReportCompetitor = {
+  name: string
+  domain: string
+  mentionCount: number
+  avgRank: number
+  ambiguityReason?: string
+}
+
 export type ReportData = {
-  property: { name?: string | null; address?: any } | null
+  property: { name?: string | null; address?: any; website_url?: string | null } | null
   runs: ReportRun[]
   surfaceSummaries: Array<{
     surface: string
@@ -121,7 +129,7 @@ export type ReportData = {
   siteAudit: PublicSiteAudit
   queries: ReportQuery[]
   answers: ReportAnswer[]
-  competitors: Array<{ name: string; domain: string; mentionCount: number; avgRank: number }>
+  competitors: ReportCompetitor[]
   scores: ReportScore[]
   recommendationSummary: ReportRecommendationSummary
   recommendations: Awaited<ReturnType<typeof generateRecommendations>>['recommendations']
@@ -191,7 +199,10 @@ export async function buildPropertyReportData(
   const aiOverviewMap = await fetchAiOverviews(supabase, propertyId, reportQueries.map((q) => q.id))
   const aggregatedAnswers = aggregateAnswersByQuery(rawAnswers, reportQueries, aiOverviewMap)
 
-  const competitors = buildCompetitorsFromAnswers(rawAnswers)
+  const competitors = buildCompetitorsFromAnswers(rawAnswers, {
+    propertyName: property?.name || null,
+    websiteUrl: property?.website_url || null,
+  })
 
   const scores = reportRuns
     .map((r) => r.geo_scores?.[0])
@@ -302,7 +313,10 @@ export async function buildRunReportData(
 
   const aiOverviewMap = await fetchAiOverviews(supabase, propertyId, Array.from(uniqueQueries.keys()))
   const aggregatedAnswers = aggregateAnswersByQuery(rawAnswers, Array.from(uniqueQueries.values()), aiOverviewMap)
-  const competitors = buildCompetitorsFromAnswers(rawAnswers)
+  const competitors = buildCompetitorsFromAnswers(rawAnswers, {
+    propertyName: (run.properties as any)?.name || null,
+    websiteUrl: (run.properties as any)?.website_url || null,
+  })
   const queryTypeStats = buildQueryTypeStats(aggregatedAnswers)
   const rankSummary = buildRankSummary(aggregatedAnswers)
   const citationSummary = buildCitationSummary(rawAnswers)
@@ -390,7 +404,7 @@ export function buildCharts(data: {
 
   const competitorBar = renderBarChart(
     data.competitors.slice(0, 6).map(c => ({ label: c.name, value: c.mentionCount })),
-    'Top Competitor Mentions'
+    'Competitor / Entity Mentions'
   )
 
   return { scoreTrend, visibilityTrend, queryTypeBar, recommendationBar, competitorBar }
@@ -655,15 +669,30 @@ function calculateAnswerDrift(answers: ReportAnswer[]): number {
   return Math.round(((uniqueCount - 1) / Math.max(1, summaries.length - 1)) * 100)
 }
 
-function buildCompetitorsFromAnswers(answers: ReportAnswer[]) {
-  const map = new Map<string, { name: string; domain: string; mentions: number[] }>()
+export function buildCompetitorsFromAnswers(
+  answers: ReportAnswer[],
+  propertyContext: { propertyName?: string | null; websiteUrl?: string | null } = {}
+): ReportCompetitor[] {
+  const brandDomain = normalizeCompetitorDomain(propertyContext.websiteUrl)
+  const map = new Map<string, { name: string; domain: string; mentions: number[]; ambiguityReason?: string }>()
   answers.forEach(answer => {
     (answer.ordered_entities || []).forEach(entity => {
-      if (!entity.domain) return
-      if (!map.has(entity.domain)) {
-        map.set(entity.domain, { name: entity.name, domain: entity.domain, mentions: [] })
+      const domain = normalizeCompetitorDomain(entity.domain)
+      if (!domain) return
+      if (brandDomain && domain === brandDomain) return
+      if (isNonCompetitiveEntity(entity.name, domain)) return
+
+      const ambiguityReason = getCompetitorAmbiguityReason({
+        entityName: entity.name,
+        entityDomain: domain,
+        propertyName: propertyContext.propertyName,
+      })
+      if (!map.has(domain)) {
+        map.set(domain, { name: entity.name, domain, mentions: [], ambiguityReason })
+      } else if (ambiguityReason && !map.get(domain)?.ambiguityReason) {
+        map.get(domain)!.ambiguityReason = ambiguityReason
       }
-      map.get(entity.domain)!.mentions.push(entity.position)
+      map.get(domain)!.mentions.push(entity.position)
     })
   })
 
@@ -672,9 +701,103 @@ function buildCompetitorsFromAnswers(answers: ReportAnswer[]) {
       name: entry.name,
       domain: entry.domain,
       mentionCount: entry.mentions.length,
-      avgRank: entry.mentions.reduce((a, b) => a + b, 0) / entry.mentions.length
+      avgRank: entry.mentions.reduce((a, b) => a + b, 0) / entry.mentions.length,
+      ambiguityReason: entry.ambiguityReason,
     }))
     .sort((a, b) => b.mentionCount - a.mentionCount)
+}
+
+function normalizeCompetitorDomain(value: string | null | undefined): string {
+  if (!value) return ''
+  const trimmed = value.trim().toLowerCase()
+  if (!trimmed) return ''
+  try {
+    const url = new URL(/^https?:\/\//.test(trimmed) ? trimmed : `https://${trimmed}`)
+    return url.hostname.replace(/^www\./, '')
+  } catch {
+    return trimmed.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0] || ''
+  }
+}
+
+function tokenizeEntityName(value: string | null | undefined): string[] {
+  if (!value) return []
+  const stopWords = new Set([
+    'apartments',
+    'apartment',
+    'community',
+    'communities',
+    'residences',
+    'residence',
+    'homes',
+    'home',
+    'the',
+    'at',
+    'in',
+    'of',
+    'and',
+    'luxury',
+  ])
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .split(/\s+/)
+    .filter(token => token.length >= 3 && !stopWords.has(token))
+}
+
+const NON_COMPETITIVE_DOMAIN_PATTERNS = [
+  /(?:^|\.)facebook\.com$/,
+  /(?:^|\.)youtube\.com$/,
+  /(?:^|\.)youtu\.be$/,
+  /(?:^|\.)instagram\.com$/,
+  /(?:^|\.)tiktok\.com$/,
+  /(?:^|\.)twitter\.com$/,
+  /(?:^|\.)x\.com$/,
+  /(?:^|\.)reddit\.com$/,
+  /(?:^|\.)quora\.com$/,
+  /(?:^|\.)wikipedia\.org$/,
+  /(?:^|\.)wiktionary\.org$/,
+  /(?:^|\.)merriam-webster\.com$/,
+  /(?:^|\.)dictionary\.com$/,
+  /(?:^|\.)cambridge\.org$/,
+  /(?:^|\.)spotify\.com$/,
+  /(?:^|\.)soundcloud\.com$/,
+  /(?:^|\.)genius\.com$/,
+  /(?:^|\.)lyrics\.com$/,
+]
+
+function isNonCompetitiveEntity(name: string | null | undefined, domain: string): boolean {
+  const normalizedName = (name || '').toLowerCase()
+  if (NON_COMPETITIVE_DOMAIN_PATTERNS.some(pattern => pattern.test(domain))) return true
+  if (/(facebook|youtube|tiktok|instagram|reddit|quora)\s*(group|post|video|short|thread|comment)?/.test(normalizedName)) return true
+  if (/(song|lyrics|radio mix|music video|official video|come on down)/.test(normalizedName)) return true
+  if (/(what does|meaning of|definition of|word\s+["']?era|century)/.test(normalizedName)) return true
+  return false
+}
+
+function getDomainStem(domain: string): string {
+  const firstLabel = domain.split('.')[0] || ''
+  return firstLabel.replace(/[^a-z0-9]+/g, '')
+}
+
+function getCompetitorAmbiguityReason(input: {
+  entityName: string | null | undefined
+  entityDomain: string
+  propertyName: string | null | undefined
+}): string | undefined {
+  const propertyTokens = new Set(tokenizeEntityName(input.propertyName))
+  if (propertyTokens.size === 0) return undefined
+
+  const entityTokens = tokenizeEntityName(input.entityName)
+  const collidingEntityTokens = entityTokens.filter(token => propertyTokens.has(token) && token.length >= 4)
+  const domainStem = getDomainStem(input.entityDomain)
+
+  if (collidingEntityTokens.length > 0) {
+    return 'Name overlaps with the audited property; review before treating as competitor pressure.'
+  }
+  if (domainStem.length >= 4 && propertyTokens.has(domainStem)) {
+    return 'Domain name overlaps with the audited property; review before treating as competitor pressure.'
+  }
+  return undefined
 }
 
 function isSovApplicable(queryType: string): boolean {
@@ -683,6 +806,11 @@ function isSovApplicable(queryType: string): boolean {
 
 function isNumber(value: unknown): value is number {
   return typeof value === 'number' && !Number.isNaN(value)
+}
+
+function formatQueryTypeList(stats: Array<{ type: string; presencePct: number }>): string {
+  if (stats.length === 0) return 'Selected'
+  return stats.map(stat => `${stat.type} (${stat.presencePct}%)`).join(' and ')
 }
 
 function median(values: number[]): number {
@@ -760,7 +888,7 @@ function buildGlossary(): ReportGlossaryEntry[] {
   ]
 }
 
-function buildInsights(input: {
+export function buildInsights(input: {
   propertyName: string
   scores: ReportScore[]
   trends: Array<{ label: string; score: number | null; visibility: number | null }>
@@ -802,14 +930,23 @@ function buildInsights(input: {
     risks.push(`Brand citation share is ${input.citationSummary.brandPct}% of ${input.citationSummary.total} citations.`)
   }
 
-  if (strongestType && strongestType.presencePct > 80) {
+  const strongTypes = input.queryTypeStats
+    .filter(stat => stat.presencePct >= 95)
+    .sort((a, b) => b.presencePct - a.presencePct)
+  if (strongTypes.length > 0) {
+    highlights.push(`${formatQueryTypeList(strongTypes.slice(0, 2))} prompt coverage is already strong; treat it as maintenance, not a gap.`)
+  } else if (strongestType && strongestType.presencePct > 80) {
     highlights.push(`Strongest query type is ${strongestType.type} at ${strongestType.presencePct}% presence.`)
   }
   if (input.recommendationSummary.high > 0) {
     opportunities.push(`${input.recommendationSummary.high} high-priority recommendations can lift visibility quickly.`)
   }
-  if (input.competitors.length > 0) {
-    opportunities.push(`Top competitor is ${input.competitors[0].name} with ${input.competitors[0].mentionCount} mentions.`)
+  const confirmedCompetitor = input.competitors.find(competitor => !competitor.ambiguityReason)
+  const ambiguousCompetitor = input.competitors.find(competitor => competitor.ambiguityReason)
+  if (confirmedCompetitor) {
+    opportunities.push(`Competitive pressure is led by ${confirmedCompetitor.name} with ${confirmedCompetitor.mentionCount} mentions; prioritize counter-positioning where that entity outranks the property.`)
+  } else if (ambiguousCompetitor) {
+    opportunities.push(`Review ${ambiguousCompetitor.name} (${ambiguousCompetitor.mentionCount} mentions) for brand/entity ambiguity before treating it as competitor pressure.`)
   }
 
   const summaryStats = [
@@ -852,7 +989,9 @@ async function maybeGenerateNarrative(input: {
     `Non-branded discovery avg rank: ${input.rankSummary.nonBrandedDiscoveryRank?.toFixed(1) ?? 'N/A'}`,
     `Citation share: ${input.citationSummary.brandPct}% of ${input.citationSummary.total} citations`,
     `AI Overview visibility: ${input.aiOverviewSummary?.visibilityPct ?? 0}% of tracked queries`,
-    `Top competitors: ${input.competitors.slice(0, 3).map(c => `${c.name} (${c.mentionCount})`).join(', ') || 'None'}`,
+    `Confirmed competitors: ${input.competitors.filter(c => !c.ambiguityReason).slice(0, 3).map(c => `${c.name} (${c.mentionCount})`).join(', ') || 'None'}`,
+    `Ambiguous same-name/entity mentions: ${input.competitors.filter(c => c.ambiguityReason).slice(0, 3).map(c => `${c.name} (${c.mentionCount}; ${c.ambiguityReason})`).join(', ') || 'None'}`,
+    `Writing rules: treat query types at or above 95% presence as strengths or maintenance areas, not gaps or opportunities. Do not call ambiguous same-name/entity mentions competitors; describe them as entity disambiguation work.`,
     `Return 2-3 short paragraphs with actionable tone.`
   ].join('\n')
 

@@ -17,7 +17,7 @@ import {
   type Surface,
 } from '@/utils/propertyaudit/types'
 
-const DATA_ENGINE_DISPATCH_TIMEOUT_MS = 15000
+const DATA_ENGINE_DISPATCH_TIMEOUT_MS = 60000
 const TYPESCRIPT_PROCESS_TIMEOUT_MS = 600000
 
 export interface GeoRun {

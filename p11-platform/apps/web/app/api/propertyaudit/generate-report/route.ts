@@ -217,6 +217,13 @@ function generateReportHTML(
     .sort((a, b) => a.presencePct - b.presencePct)[0]
   const topActions = recommendations.slice(0, 3)
   const groupedRecommendations = groupRecommendationsByWorkstream(recommendations)
+  const confirmedCompetitors = competitors.filter(comp => !comp.ambiguityReason)
+  const ambiguousCompetitors = competitors.filter(comp => comp.ambiguityReason)
+  const competitivePressureText = confirmedCompetitors.length > 0
+    ? `${confirmedCompetitors[0].name} is the top confirmed competitor (${confirmedCompetitors[0].mentionCount} mentions).`
+    : ambiguousCompetitors.length > 0
+      ? `${ambiguousCompetitors[0].name} has ${ambiguousCompetitors[0].mentionCount} ambiguous same-name/entity mentions; review before treating as competitor pressure.`
+      : 'Competitive analysis in progress.'
 
   return `
 <!DOCTYPE html>
@@ -396,8 +403,11 @@ function generateReportHTML(
     }
     
     @media print {
-      body { padding: 0; }
+      body { padding: 0; color: #111827; }
       .no-print { display: none; }
+      h1, h2, h3, .metric-card, .chart-card, .recommendation-card { break-inside: avoid; }
+      .chart-grid { display: block; }
+      .chart-card { margin-bottom: 1rem; }
     }
   </style>
 </head>
@@ -447,14 +457,14 @@ function generateReportHTML(
     <li><strong>Best surface:</strong> ${bestSurface ? `${escapeHtml(bestSurface.label)} at ${Math.round(bestSurface.overallScore || 0)}/100` : 'More run data needed'}.</li>
     <li><strong>Largest surface gap:</strong> ${weakestSurface ? `${escapeHtml(weakestSurface.label)} at ${Math.round(weakestSurface.overallScore || 0)}/100` : 'More run data needed'}.</li>
     <li><strong>Weakest prompt cluster:</strong> ${weakestType ? `${escapeHtml(weakestType.type)} at ${weakestType.presencePct}% presence` : 'More query data needed'}.</li>
-    <li><strong>Competitive pressure:</strong> ${competitors.length > 0 ? `${escapeHtml(competitors[0].name)} is the top mentioned competitor (${competitors[0].mentionCount} mentions).` : 'Competitive analysis in progress.'}</li>
+    <li><strong>Competitive pressure:</strong> ${escapeHtml(competitivePressureText)}</li>
   </ul>
 
   ${topActions.length > 0 ? `
   <h3>Top 3 Next Actions</h3>
   <ol style="line-height: 1.8;">
     ${topActions.map(action => `
-      <li><strong>${escapeHtml(action.title)}</strong> — ${escapeHtml(action.accessLevel || 'URLOnly')} / ${escapeHtml(action.owner || 'seo')} / ${escapeHtml(action.targetPageType || 'target page TBD')}</li>
+      <li><strong>${escapeHtml(action.title)}</strong> — ${escapeHtml(formatAccessLabel(action.accessLevel || 'URLOnly'))}: ${escapeHtml(action.owner || 'seo')} / ${escapeHtml(action.targetPageType || 'target page TBD')}</li>
     `).join('')}
   </ol>
   ` : ''}
@@ -773,7 +783,7 @@ function generateReportHTML(
   ${hasSection('competitors') && competitors.length > 0 ? `
   <h2>Competitive Landscape</h2>
   <p style="color: #6b7280; margin-bottom: 1.5rem;">
-    Analysis of competitor mentions in AI search results:
+    Analysis of competitor and entity mentions in AI search results. Same-name matches are flagged for review before being treated as competitor pressure:
   </p>
   <div class="chart-grid">
     <div class="chart-card">${charts.competitorBar}</div>
@@ -782,9 +792,10 @@ function generateReportHTML(
     <thead>
       <tr>
         <th>Rank</th>
-        <th>Competitor</th>
+        <th>Entity</th>
         <th>Mentions</th>
         <th>Avg Position</th>
+        <th>Note</th>
       </tr>
     </thead>
     <tbody>
@@ -794,6 +805,7 @@ function generateReportHTML(
         <td>${escapeHtml(comp.name)}</td>
         <td>${comp.mentionCount}</td>
         <td>#${comp.avgRank?.toFixed(1) || 'N/A'}</td>
+        <td>${comp.ambiguityReason ? escapeHtml(comp.ambiguityReason) : 'Confirmed non-brand entity'}</td>
       </tr>
       `).join('')}
     </tbody>
@@ -953,6 +965,10 @@ function getScoreBucket(score: number | undefined): string {
   return '(Needs Improvement)'
 }
 
+function formatAccessLabel(accessLevel: string): string {
+  return cleanReportText(accessLevel)
+}
+
 function getRecommendationWorkstream(rec: ReportRecommendation): RecommendationWorkstream {
   if (rec.type === 'citation_opportunity' || rec.accessLevel === 'ThirdParty') {
     return 'Citation Targets'
@@ -994,8 +1010,30 @@ function getWorkstreamDescription(workstream: RecommendationWorkstream): string 
   }
 }
 
-function escapeHtml(input: string): string {
+function cleanReportText(input: string): string {
   return input
+    .replace(/\bAl Overview visibility\b/g, 'AI Overview visibility')
+    .replace(/\bnew-\s+to-brand\b/g, 'new-to-brand')
+    .replace(/\bmedium-\s+priority\b/g, 'medium-priority')
+    .replace(/\bAI answers strong branded\b/g, 'AI answers. Strong branded')
+    .replace(/\bCodeRequired engineering\b/g, 'Code Required: engineering')
+    .replace(/\bCodeRequired\b/g, 'Code Required')
+    .replace(/\bThirdParty\b/g, 'Third Party')
+    .replace(/\bCMSOrEditor\b/g, 'CMS/editor')
+    .replace(/\bCodeAware\b/g, 'Code-aware')
+    .replace(/\bFAQPageJSON-LD\b/g, 'FAQPage JSON-LD')
+    .replace(/\banswer-\s+block\b/g, 'answer-block')
+    .replace(/\bmore-\s+apartments-for-rent\b/g, 'more-apartments-for-rent')
+    .replace(/\bN\/\s+A\b/g, 'N/A')
+    .replace(/\bP11CREATIVE\.\s*PROPERTYAUDIT\b/g, 'P11CREATIVE. PROPERTYAUDIT')
+    .replace(/\bIlms\.txt\b/g, 'llms.txt')
+    .replace(/\bdetected Not\b/g, 'Not detected')
+    .replace(/\bURLOnly\b/g, 'URL-only')
+    .replace(/\bURL-Only\b/g, 'URL-only')
+}
+
+function escapeHtml(input: string): string {
+  return cleanReportText(input)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')

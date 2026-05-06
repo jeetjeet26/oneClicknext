@@ -198,16 +198,16 @@ describe('propertyaudit generate-report route', () => {
           type: 'missing_keyword',
           priority: 'high',
           title: 'Create a neighborhood landing page',
-          description: 'Improve visibility for local prompts.',
-          accessLevel: 'CMSOrEditor',
-          owner: 'content',
+          description: 'Improve visibility with FAQPageJSON-LD and answer- block markup.',
+          accessLevel: 'CodeRequired',
+          owner: 'engineering',
           status: 'todo',
           targetUrl: 'https://aster.example/neighborhood',
           targetPageType: 'local_landing_page',
           evidenceMode: 'URLOnly',
           keywords: ['best apartments near downtown'],
           impact: { score: 80, reason: 'High-intent local prompt gap' },
-          actionItems: ['Create a page answering neighborhood questions'],
+          actionItems: ['Add FAQPageJSON-LD and answer- block markup'],
           relatedQueries: [{ id: 'query-1', text: 'best apartments near downtown', type: 'local' }],
         },
       ],
@@ -217,7 +217,7 @@ describe('propertyaudit generate-report route', () => {
       trends: [],
       glossary: [],
       insights: { highlights: [], risks: [], opportunities: [], summaryStats: [] },
-      narrative: null,
+      narrative: 'Al Overview visibility improved. AI answers strong branded prompts cite new- to-brand pages as medium- priority.',
     })
 
     const { POST } = await import('./route')
@@ -241,6 +241,15 @@ describe('propertyaudit generate-report route', () => {
     expect(text).toContain('AI Visibility Position')
     expect(text).toContain('Owned Content')
     expect(text).toContain('Access Level')
+    expect(text).toContain('AI Overview visibility')
+    expect(text).toContain('AI answers. Strong branded')
+    expect(text).toContain('new-to-brand')
+    expect(text).toContain('medium-priority')
+    expect(text).toContain('Code Required: engineering')
+    expect(text).toContain('FAQPage JSON-LD')
+    expect(text).toContain('answer-block')
+    expect(text).not.toContain('Al Overview visibility')
+    expect(text).not.toContain('CodeRequired')
     expect(text).toContain('Public Site Discoverability')
     expect(text).toContain('URL-only audit section uses public website signals')
     expect(text).toContain('directional AI visibility evidence')

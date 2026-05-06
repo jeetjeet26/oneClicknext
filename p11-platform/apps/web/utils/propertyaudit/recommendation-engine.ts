@@ -425,7 +425,37 @@ function isRelevantEntity(
   if (!name && !domain) return false
   if (name === brandName.toLowerCase()) return false
   if (domain && brandDomains.includes(domain)) return false
+  if (isNonCompetitiveEntity(name, domain)) return false
   return true
+}
+
+const NON_COMPETITIVE_DOMAIN_PATTERNS = [
+  /(?:^|\.)facebook\.com$/,
+  /(?:^|\.)youtube\.com$/,
+  /(?:^|\.)youtu\.be$/,
+  /(?:^|\.)instagram\.com$/,
+  /(?:^|\.)tiktok\.com$/,
+  /(?:^|\.)twitter\.com$/,
+  /(?:^|\.)x\.com$/,
+  /(?:^|\.)reddit\.com$/,
+  /(?:^|\.)quora\.com$/,
+  /(?:^|\.)wikipedia\.org$/,
+  /(?:^|\.)wiktionary\.org$/,
+  /(?:^|\.)merriam-webster\.com$/,
+  /(?:^|\.)dictionary\.com$/,
+  /(?:^|\.)cambridge\.org$/,
+  /(?:^|\.)spotify\.com$/,
+  /(?:^|\.)soundcloud\.com$/,
+  /(?:^|\.)genius\.com$/,
+  /(?:^|\.)lyrics\.com$/,
+]
+
+function isNonCompetitiveEntity(name: string, domain: string): boolean {
+  if (domain && NON_COMPETITIVE_DOMAIN_PATTERNS.some(pattern => pattern.test(domain))) return true
+  if (/(facebook|youtube|tiktok|instagram|reddit|quora)\s*(group|post|video|short|thread|comment)?/.test(name)) return true
+  if (/(song|lyrics|radio mix|music video|official video|come on down)/.test(name)) return true
+  if (/(what does|meaning of|definition of|word\s+["']?era|century)/.test(name)) return true
+  return false
 }
 
 function isLikelyNoiseDomain(domain: string, relatedQueries: string[] = []): boolean {
@@ -516,14 +546,18 @@ function buildStrategicInitiatives(context: AnalysisContext): ContentRecommendat
     }))
   }
 
-  const missingFaq = context.siteAudit.missingPageTypes?.includes('faq') || !context.siteAudit.faqStructuredData
-  if (voiceSignals.some(signal => signal.presenceRate < 1) || missingFaq) {
+  const faqPageMissing = context.siteAudit.missingPageTypes?.includes('faq') || false
+  const faqSchemaMissing = !context.siteAudit.faqStructuredData
+  const faqNeedsWork = faqPageMissing || faqSchemaMissing
+  if (voiceSignals.some(signal => signal.presenceRate < 1) || faqNeedsWork) {
     recs.push(makeStrategicRecommendation({
       id: 'strategy-faq-answer-schema',
       type: 'voice_search',
-      priority: missingFaq ? 'medium' : 'low',
+      priority: faqNeedsWork ? 'medium' : 'low',
       title: 'Turn leasing questions into answer-ready FAQ content',
-      description: 'Voice and branded support prompts perform well, but stronger visible FAQ/entity markup will make those answers more reliably citeable.',
+      description: faqPageMissing
+        ? 'Voice and branded support prompts perform well, but a crawlable FAQ page with entity markup will make those answers more reliably citeable.'
+        : 'The FAQ page is reachable; stronger FAQ/entity schema and answer blocks will make those answers more reliably citeable.',
       relatedSignals: voiceSignals.slice(0, 5),
       keywords: voiceSignals.map(signal => signal.query.text),
       targetPageType: 'faq_or_support_page',
@@ -533,13 +567,19 @@ function buildStrategicInitiatives(context: AnalysisContext): ContentRecommendat
       impactScore: 72,
       impactReason: 'FAQ schema and visible answer blocks improve extraction confidence for voice, branded, and support-style AI answers.',
       implementationSteps: [
-        'Add or strengthen a public FAQ page with visible answers for application, amenities, availability, parking, pets, tours, and masterplan questions.',
+        faqPageMissing
+          ? 'Add a public FAQ page with visible answers for application, amenities, availability, parking, pets, tours, and masterplan questions.'
+          : 'Strengthen the existing FAQ page with visible answers for application, amenities, availability, parking, pets, tours, and masterplan questions.',
         'Wrap each answer in concise 40-80 word blocks that can be quoted by answer engines.',
-        'Add FAQPage JSON-LD that exactly matches the visible FAQ content.',
+        faqSchemaMissing
+          ? 'Add FAQPage JSON-LD that exactly matches the visible FAQ content.'
+          : 'Validate existing FAQPage JSON-LD against the visible FAQ content.',
         'Add Organization or ApartmentComplex JSON-LD on the homepage with canonical URL, address, phone, and sameAs links.',
       ],
       acceptanceCriteria: [
-        'FAQ page returns HTTP 200 and is linked from sitemap.xml and navigation/footer.',
+        faqPageMissing
+          ? 'FAQ page returns HTTP 200 and is linked from sitemap.xml and navigation/footer.'
+          : 'Existing FAQ page remains reachable and is linked from sitemap.xml and navigation/footer.',
         'Structured data validator passes for FAQPage and ApartmentComplex/Organization schema.',
         'URL-only crawl detects FAQ schema or answer-block signals on relevant pages.',
       ],
@@ -1517,11 +1557,12 @@ function findTargetPage(
   const pages = context.siteAudit.pages || []
   const reachablePages = pages.filter(page => page.reachable)
   const preferredTypes = inferTargetPageTypes(recommendation)
-  const exactPage = preferredTypes
-    .map(pageType => reachablePages.find(page => page.pageType === pageType))
-    .find(Boolean) || null
+  const exactMatch = preferredTypes
+    .map(pageType => ({ pageType, page: reachablePages.find(page => page.pageType === pageType) || null }))
+    .find(match => Boolean(match.page)) || null
+  const exactPage = exactMatch?.page || null
   const fallbackPage = reachablePages.find(page => page.pageType === 'home') || reachablePages[0] || null
-  const expectedPageType = preferredTypes[0] || null
+  const expectedPageType = exactMatch?.pageType || preferredTypes[0] || null
 
   if (exactPage) return { page: exactPage, suggestedUrl: null, expectedPageType }
   if (!context.siteAudit.normalizedOrigin || !expectedPageType) {

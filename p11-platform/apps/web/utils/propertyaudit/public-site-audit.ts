@@ -238,6 +238,7 @@ function classifyPage(url: URL, title: string | null, text: string): PublicSiteP
   const haystack = `${path} ${title || ''} ${text.slice(0, 2500)}`.toLowerCase()
 
   if (path === '/' || path === '') return 'home'
+  if (pathLooksLikeFaq(path)) return 'faq'
   if (/floor[-_ ]?plans?|apartments?|availability|pricing/.test(haystack)) return 'floorplans'
   if (/amenit|features/.test(haystack)) return 'amenities'
   if (/neighborhood|location|nearby|directions|map/.test(haystack)) return 'neighborhood'
@@ -248,6 +249,20 @@ function classifyPage(url: URL, title: string | null, text: string): PublicSiteP
   if (/specials?|concession|move[-_ ]?in|free rent|offer/.test(haystack)) return 'specials'
   if (/tour|schedule|visit/.test(haystack)) return 'tour'
   return 'unknown'
+}
+
+function pathLooksLikeFaq(path: string): boolean {
+  return /(?:^|\/)(?:faqs?|frequently-asked-questions?)(?:\/|$)/.test(path)
+}
+
+function pageCountsAsFaqCoverage(page: PublicSitePageAudit): boolean {
+  if (page.pageType === 'faq' || page.faqStructuredData) return true
+  try {
+    if (pathLooksLikeFaq(new URL(page.url).pathname.toLowerCase())) return true
+  } catch {
+    // Ignore malformed URLs in crawl evidence; they should not block the audit.
+  }
+  return page.answerBlockSignals >= 3
 }
 
 function extractSignals(pageType: PublicSitePageType, text: string): string[] {
@@ -414,6 +429,9 @@ export async function auditPublicSite(websiteUrl: string | null | undefined): Pr
   const answerBlockSignals = reachablePages.reduce((sum, page) => sum + page.answerBlockSignals, 0)
   const internalLinkCount = homepageAudit?.internalLinkCount || 0
   const coveredPageTypes = new Set(reachablePages.map(page => page.pageType))
+  if (reachablePages.some(pageCountsAsFaqCoverage)) {
+    coveredPageTypes.add('faq')
+  }
   const missingPageTypes = IMPORTANT_PAGE_TYPES.filter(pageType => !coveredPageTypes.has(pageType))
 
   if (homepage.ok && !homepageAudit?.metaDescription) notes.push('Homepage meta description is missing.')

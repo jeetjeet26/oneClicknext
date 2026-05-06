@@ -47,20 +47,29 @@ export function ExportMenu({ runId, onExportCSV }: ExportMenuProps) {
       const blob = await res.blob()
       const url = window.URL.createObjectURL(blob)
       
-      // Open in new window for printing to PDF
+      // Open print-ready HTML so the browser can save it as a PDF.
       const printWindow = window.open(url)
       if (printWindow) {
+        let revoked = false
+        const revokeUrl = () => {
+          if (revoked) return
+          revoked = true
+          window.URL.revokeObjectURL(url)
+        }
         printWindow.addEventListener('load', () => {
           setTimeout(() => {
             printWindow.print()
+            setTimeout(revokeUrl, 60_000)
           }, 500)
-        })
+        }, { once: true })
+        printWindow.addEventListener('beforeunload', revokeUrl, { once: true })
+      } else {
+        window.URL.revokeObjectURL(url)
+        alert('Please allow pop-ups to open the print-ready report.')
       }
-      
-      window.URL.revokeObjectURL(url)
     } catch (error) {
       console.error('PDF export failed:', error)
-      alert('Failed to export PDF. Please try again.')
+      alert('Failed to open the print-ready report. Please try again.')
     } finally {
       setIsExporting(null)
     }
@@ -101,7 +110,7 @@ export function ExportMenu({ runId, onExportCSV }: ExportMenuProps) {
         ) : (
           <FileText className="w-4 h-4" />
         )}
-        PDF/Print
+        Print/PDF
       </button>
     </div>
   )

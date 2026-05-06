@@ -360,10 +360,10 @@ function generateMarkdown(data: Awaited<ReturnType<typeof buildRunReportData>>):
     siteAudit.notes.forEach(note => lines.push(`  - ${note}`))
   }
   lines.push(``)
-  lines.push(`## URL-Only Readiness Note`)
+  lines.push(`## URL-only Readiness Note`)
   lines.push(`This section is based on public website signals. Code access is not required for diagnosis, but CMS/editor or engineering access may be needed to implement some fixes.`)
 
-  return lines.join('\n')
+  return cleanReportText(lines.join('\n'))
 }
 
 function generateHTML(data: Awaited<ReturnType<typeof buildRunReportData>>): string {
@@ -442,6 +442,13 @@ function generateHTML(data: Awaited<ReturnType<typeof buildRunReportData>>): str
     .chart-card { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 12px; }
     .recommendation-card { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; margin: 12px 0; }
     svg { max-width: 100%; height: auto; display: block; }
+    @media print {
+      body { max-width: none; margin: 0; padding: 18mm; color: #111827; }
+      h1, h2, h3, .metric, .chart-card, .recommendation-card, .query-card { break-inside: avoid; }
+      .chart-grid { display: block; }
+      .chart-card { margin: 0 0 12px 0; }
+      a { color: inherit; text-decoration: none; }
+    }
   </style>
 </head>
 <body>
@@ -672,8 +679,30 @@ function getWorkstreamDescription(workstream: RecommendationWorkstream): string 
   }
 }
 
-function escapeHtml(input: string): string {
+function cleanReportText(input: string): string {
   return input
+    .replace(/\bAl Overview visibility\b/g, 'AI Overview visibility')
+    .replace(/\bnew-\s+to-brand\b/g, 'new-to-brand')
+    .replace(/\bmedium-\s+priority\b/g, 'medium-priority')
+    .replace(/\bAI answers strong branded\b/g, 'AI answers. Strong branded')
+    .replace(/\bCodeRequired engineering\b/g, 'Code Required: engineering')
+    .replace(/\bCodeRequired\b/g, 'Code Required')
+    .replace(/\bThirdParty\b/g, 'Third Party')
+    .replace(/\bCMSOrEditor\b/g, 'CMS/editor')
+    .replace(/\bCodeAware\b/g, 'Code-aware')
+    .replace(/\bFAQPageJSON-LD\b/g, 'FAQPage JSON-LD')
+    .replace(/\banswer-\s+block\b/g, 'answer-block')
+    .replace(/\bmore-\s+apartments-for-rent\b/g, 'more-apartments-for-rent')
+    .replace(/\bN\/\s+A\b/g, 'N/A')
+    .replace(/\bP11CREATIVE\.\s*PROPERTYAUDIT\b/g, 'P11CREATIVE. PROPERTYAUDIT')
+    .replace(/\bIlms\.txt\b/g, 'llms.txt')
+    .replace(/\bdetected Not\b/g, 'Not detected')
+    .replace(/\bURLOnly\b/g, 'URL-only')
+    .replace(/\bURL-Only\b/g, 'URL-only')
+}
+
+function escapeHtml(input: string): string {
+  return cleanReportText(input)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')

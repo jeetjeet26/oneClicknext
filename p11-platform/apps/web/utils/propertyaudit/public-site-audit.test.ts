@@ -99,6 +99,47 @@ describe('auditPublicSite', () => {
     expect(audit.crawlSummary?.discoverySources).toContain('homepage_links')
   })
 
+  it('counts a reachable FAQ URL as FAQ coverage even when apartment terms appear first', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/robots.txt') || url.endsWith('/sitemap.xml') || url.endsWith('/llms.txt')) {
+        return new Response('ok', { status: 200 })
+      }
+      if (url.endsWith('/faq') || url.endsWith('/faq/')) {
+        return new Response(`
+          <html>
+            <head><title>Epoca Apartments FAQ</title></head>
+            <body>
+              <h1>Frequently Asked Questions</h1>
+              <h2>What apartment floor plans are available?</h2>
+              <h2>Where is the community located?</h2>
+              <h2>Do you allow pets?</h2>
+              <div class="faq">Answers about leasing, amenities, location, and tours.</div>
+            </body>
+          </html>
+        `, { status: 200 })
+      }
+
+      return new Response(`
+        <html>
+          <head><title>Epoca Life</title><meta name="description" content="Apartments"></head>
+          <body>
+            <a href="/faq">FAQ</a>
+            <h1>Epoca Life Apartments</h1>
+          </body>
+        </html>
+      `, { status: 200 })
+    }))
+
+    const audit = await auditPublicSite('https://epocalife.com')
+    const faqPage = audit.pages?.find(page => page.url.includes('/faq'))
+
+    expect(faqPage?.pageType).toBe('faq')
+    expect(faqPage?.answerBlockSignals).toBeGreaterThan(0)
+    expect(audit.missingPageTypes).not.toContain('faq')
+    expect(audit.notes).not.toContain('No reachable faq page was detected during the URL-only crawl.')
+  })
+
   it('rejects local or private hosts before fetching', async () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)

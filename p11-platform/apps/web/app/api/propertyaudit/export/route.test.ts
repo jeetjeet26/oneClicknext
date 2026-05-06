@@ -209,7 +209,7 @@ describe('propertyaudit export route', () => {
         organizationStructuredData: false,
         answerBlockSignals: 0,
         internalLinkCount: 1,
-        notes: ['No JSON-LD structured data was detected on the homepage.'],
+        notes: ['No JSON-LD structured data was detected Not on the homepage.', 'Ilms.txt returned N/ A.'],
       },
       scores: [{ overall_score: 75, visibility_pct: 50, avg_llm_rank: 2, avg_link_rank: 3, avg_sov: 0.2, breakdown: { position: 75, link: 60, sov: 40, accuracy: 90 } }],
       answers: [],
@@ -219,7 +219,7 @@ describe('propertyaudit export route', () => {
           type: 'citation_opportunity',
           priority: 'high',
           title: 'Target a cited directory',
-          description: 'This directory appears often in answers.',
+          description: 'This ThirdParty directory appears often in AI answers strong branded prompts on more- apartments-for-rent pages with FAQPageJSON-LD and answer- block support.',
           accessLevel: 'ThirdParty',
           owner: 'partnerships',
           status: 'todo',
@@ -228,7 +228,7 @@ describe('propertyaudit export route', () => {
           evidenceMode: 'URLOnly',
           keywords: ['directory'],
           impact: { score: 90, reason: 'Influential citation source' },
-          actionItems: ['Request listing inclusion'],
+          actionItems: ['Request listing inclusion on more- apartments-for-rent pages with FAQPageJSON-LD and answer- block support.'],
           relatedQueries: [],
         },
       ],
@@ -257,7 +257,18 @@ describe('propertyaudit export route', () => {
     expect(markdown).toContain('Action Plan')
     expect(markdown).toContain('Citation Targets')
     expect(markdown).toContain('Access Level')
-    expect(markdown).toContain('URL-Only Readiness Note')
+    expect(markdown).toContain('Third Party')
+    expect(markdown).toContain('AI answers. Strong branded')
+    expect(markdown).toContain('more-apartments-for-rent')
+    expect(markdown).toContain('FAQPage JSON-LD')
+    expect(markdown).toContain('answer-block')
+    expect(markdown).toContain('Not detected')
+    expect(markdown).toContain('llms.txt')
+    expect(markdown).toContain('N/A')
+    expect(markdown).not.toContain('ThirdParty')
+    expect(markdown).not.toContain('detected Not')
+    expect(markdown).not.toContain('Ilms.txt')
+    expect(markdown).toContain('URL-only Readiness Note')
   })
 
   it('treats pdf export as print-view html', async () => {
