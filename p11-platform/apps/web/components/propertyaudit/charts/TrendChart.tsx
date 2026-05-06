@@ -106,7 +106,7 @@ export function TrendChart({ points, height = 180 }: TrendChartProps) {
     return (
       <div className="flex h-[180px] items-center justify-center rounded-xl border border-dashed border-gray-200 dark:border-gray-700">
         <p className="text-sm text-gray-500 dark:text-gray-400">
-          Trend data will appear after at least two runs.
+          Trend data will appear after at least two completed audit batches.
         </p>
       </div>
     )

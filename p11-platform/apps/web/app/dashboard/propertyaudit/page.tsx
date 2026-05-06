@@ -105,6 +105,42 @@ interface GeoRun {
   } | null
 }
 
+type TrendPoint = {
+  date: string
+  score: number
+  visibility: number
+}
+
+function average(values: number[]) {
+  return values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : 0
+}
+
+function buildBatchTrendData(runs: GeoRun[]): TrendPoint[] {
+  const batches = new Map<string, { startedAt: string; scores: number[]; visibility: number[] }>()
+
+  runs
+    .filter(run => run.status === 'completed' && run.score)
+    .forEach(run => {
+      const batchKey = run.batchId || run.id
+      const entry = batches.get(batchKey) || { startedAt: run.startedAt, scores: [], visibility: [] }
+      if (Date.parse(run.startedAt) < Date.parse(entry.startedAt)) {
+        entry.startedAt = run.startedAt
+      }
+      entry.scores.push(run.score!.overallScore)
+      entry.visibility.push(run.score!.visibilityPct)
+      batches.set(batchKey, entry)
+    })
+
+  return Array.from(batches.values())
+    .sort((a, b) => Date.parse(a.startedAt) - Date.parse(b.startedAt))
+    .slice(-10)
+    .map(batch => ({
+      date: batch.startedAt,
+      score: average(batch.scores),
+      visibility: average(batch.visibility),
+    }))
+}
+
 export default function PropertyAuditPage() {
   const { currentProperty } = usePropertyContext()
   const [score, setScore] = useState<GeoScoreSummary | null>(null)
@@ -395,16 +431,8 @@ export default function PropertyAuditPage() {
     return <Minus className="w-4 h-4 text-gray-400" />
   }
 
-  // Build trend data for chart
-  const trendData = runs
-    .filter(r => r.status === 'completed' && r.score)
-    .slice(0, 10)
-    .reverse()
-    .map(r => ({
-      date: r.startedAt,
-      score: r.score!.overallScore,
-      visibility: r.score!.visibilityPct
-    }))
+  // Build trend data by audit batch so same-day surfaces do not render as history.
+  const trendData = buildBatchTrendData(runs)
 
   const latestCompletedRun = runs.find(r => r.status === 'completed') || null
   const latestCompletedBatchId = latestCompletedRun?.batchId || null

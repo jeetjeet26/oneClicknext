@@ -17,6 +17,7 @@ import os
 import logging
 from typing import Optional, List, Dict, Any
 from datetime import datetime
+from urllib.parse import urlparse
 from supabase import Client
 from postgrest.exceptions import APIError
 
@@ -29,6 +30,20 @@ def _is_no_rows_error(error: Exception) -> bool:
         return True
     message = str(error)
     return 'PGRST116' in message and '0 rows' in message
+
+
+def _normalize_domain(value: Optional[str]) -> str:
+    if not value:
+        return ''
+
+    raw = str(value).strip().lower()
+    if not raw:
+        return ''
+
+    parsed = urlparse(raw if '://' in raw else f'https://{raw}')
+    domain = parsed.netloc or parsed.path.split('/')[0]
+    return domain.replace('www.', '', 1).strip().rstrip('/')
+
 
 class PropertyAuditExecutor:
     """
@@ -296,6 +311,20 @@ class PropertyAuditExecutor:
         }).execute()
         
         return create_response.data[0] if create_response.data else {'domains': [], 'competitor_domains': []}
+
+    def _build_brand_domains(self, config: Dict, property_data: Dict) -> List[str]:
+        """Combine configured brand domains with the property's canonical website URL."""
+        domains = []
+        for domain in config.get('domains') or []:
+            normalized = _normalize_domain(domain)
+            if normalized and normalized not in domains:
+                domains.append(normalized)
+
+        website_domain = _normalize_domain(property_data.get('website_url'))
+        if website_domain and website_domain not in domains:
+            domains.append(website_domain)
+
+        return domains
     
     def _infer_domain_from_name(self, name: str) -> Optional[str]:
         """Infer domain from property name."""
@@ -344,11 +373,12 @@ class PropertyAuditExecutor:
         
         # Build context
         address = property_data.get('address') or {}
+        brand_domains = self._build_brand_domains(config, property_data)
         context = {
             'queryId': query['id'],
             'queryText': query['text'],
             'brandName': property_data['name'],
-            'brandDomains': config.get('domains', []),
+            'brandDomains': brand_domains,
             'competitors': config.get('competitor_domains', []),
             'propertyLocation': {
                 'city': address.get('city', ''),
