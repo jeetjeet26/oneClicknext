@@ -522,7 +522,7 @@ function generateReportHTML(
   
   <h3>Historical Performance</h3>
   <p style="color: #6b7280; margin-bottom: 1rem;">
-    Track your GEO Score and Query Presence rate across recent audit runs to identify trends and measure improvement.
+    Track your GEO Score and Query Presence rate across completed audit batches to identify trends and measure improvement.
   </p>
   <div class="chart-grid">
     <div class="chart-card">${charts.scoreTrend}</div>

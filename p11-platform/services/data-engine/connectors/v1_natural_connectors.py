@@ -20,6 +20,10 @@ from connectors.claude_natural_connector import ClaudeNaturalConnector
 logger = logging.getLogger(__name__)
 
 
+class SearchProviderRateLimitError(RuntimeError):
+    """Raised when the Google search proxy provider rate-limits requests."""
+
+
 def extract_domain(url: str) -> str:
     try:
         parsed = urlparse(url)
@@ -220,7 +224,13 @@ class GoogleProxyNaturalConnector:
                     "num": 10,
                 },
             )
-            response.raise_for_status()
+            if response.status_code == 429:
+                raise SearchProviderRateLimitError(
+                    "Search provider rate limited Google AI Proxy requests (SerpAPI 429). "
+                    "Wait before rerunning or reduce Google AI Proxy execution count."
+                )
+            if response.status_code >= 400:
+                raise RuntimeError(f"Search provider request failed with HTTP {response.status_code}.")
             data = response.json()
         return [
             {

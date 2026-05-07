@@ -497,7 +497,7 @@ function generateHTML(data: Awaited<ReturnType<typeof buildRunReportData>>): str
     ${aiOverviewSummary.byType.map(entry => `<li>${escapeHtml(entry.type)}: ${entry.visiblePct}%</li>`).join('')}
   </ul>
 
-  <h2>Score Trends</h2>
+  <h2>Score Trends by Audit Batch</h2>
   <div class="chart-grid">
     <div class="chart-card">${charts.scoreTrend}</div>
     <div class="chart-card">${charts.visibilityTrend}</div>

@@ -15,6 +15,7 @@ Notes:
 """
 import os
 import logging
+import re
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from urllib.parse import urlparse
@@ -43,6 +44,14 @@ def _normalize_domain(value: Optional[str]) -> str:
     parsed = urlparse(raw if '://' in raw else f'https://{raw}')
     domain = parsed.netloc or parsed.path.split('/')[0]
     return domain.replace('www.', '', 1).strip().rstrip('/')
+
+
+def _sanitize_error_message(message: Optional[str]) -> str:
+    if not message:
+        return ''
+    sanitized = re.sub(r'api_key=[^&\\s;]+', 'api_key=[redacted]', str(message))
+    sanitized = re.sub(r'key=[^&\\s;]+', 'key=[redacted]', sanitized)
+    return sanitized
 
 
 class PropertyAuditExecutor:
@@ -169,8 +178,29 @@ class PropertyAuditExecutor:
                             )
                         
                     except Exception as e:
-                        logger.error(f"[PropertyAudit] Error processing query {query['id']}: {e}")
-                        errors.append(f"Query {query['id']}: {str(e)}")
+                        message = _sanitize_error_message(str(e))
+                        logger.error(f"[PropertyAudit] Error processing query {query['id']}: {message}")
+                        errors.append(f"Query {query['id']}: {message}")
+                        failure_reason = self._classify_failure(message)
+                        if failure_reason in {'rate_limited', 'missing_provider_key'}:
+                            error_summary = '; '.join(errors)
+                            self._update_run_status(
+                                run_id,
+                                'failed',
+                                progress_pct=100,
+                                error_message=error_summary,
+                                provider_failure_reason=failure_reason
+                            )
+                            logger.warning(
+                                f"[PropertyAudit] Stopping run_id={run_id} after non-retryable provider error: {message}"
+                            )
+                            return {
+                                'success': False,
+                                'run_id': run_id,
+                                'processed': len(results),
+                                'errors': len(errors),
+                                'error': message,
+                            }
             
             # 6. Calculate aggregate scores
             aggregate = self._calculate_aggregate_scores(results)
@@ -201,21 +231,24 @@ class PropertyAuditExecutor:
             }
             
         except Exception as e:
-            logger.error(f"[PropertyAudit] Fatal error for run_id={run_id}: {e}", exc_info=True)
+            message = _sanitize_error_message(str(e))
+            logger.error(f"[PropertyAudit] Fatal error for run_id={run_id}: {message}", exc_info=True)
             self._update_run_status(
                 run_id,
                 'failed',
-                error_message=str(e),
+                error_message=message,
                 progress_pct=0,
-                provider_failure_reason=self._classify_failure(str(e))
+                provider_failure_reason=self._classify_failure(message)
             )
-            return {'success': False, 'error': str(e)}
+            return {'success': False, 'error': message}
 
     def _classify_failure(self, message: Optional[str]) -> Optional[str]:
         """Normalize provider/runtime failures for operator reporting."""
         if not message:
             return None
         lower = message.lower()
+        if 'rate limit' in lower or 'too many requests' in lower or '429' in lower:
+            return 'rate_limited'
         if 'api_key' in lower or 'api key' in lower or 'not set' in lower or 'missing' in lower:
             return 'missing_provider_key'
         if 'timeout' in lower or 'timed out' in lower:

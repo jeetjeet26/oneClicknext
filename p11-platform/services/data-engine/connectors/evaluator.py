@@ -387,7 +387,7 @@ async def check_ai_overview_visibility(
         logger.warning(f"[AI Overview] Timeout checking query: {query_text[:50]}...")
         return (False, None)
     except httpx.HTTPStatusError as e:
-        logger.error(f"[AI Overview] HTTP error {e.response.status_code}: {e}")
+        logger.error(f"[AI Overview] HTTP error {e.response.status_code} for query: {query_text[:50]}...")
         return (False, None)
     except Exception as e:
         logger.error(f"[AI Overview] Error checking visibility: {e}")

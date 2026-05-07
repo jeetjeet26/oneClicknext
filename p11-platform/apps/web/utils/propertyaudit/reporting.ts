@@ -14,6 +14,7 @@ export type ReportRun = {
   surface: string
   model_name?: string | null
   status?: string | null
+  batch_id?: string | null
   started_at?: string | null
   finished_at?: string | null
   geo_scores?: Array<{
@@ -165,7 +166,7 @@ export async function buildPropertyReportData(
 
   let runsQuery = supabase
     .from('geo_runs')
-    .select('id, surface, model_name, status, started_at, finished_at, geo_scores(*)')
+    .select('id, surface, batch_id, model_name, status, started_at, finished_at, geo_scores(*)')
     .eq('property_id', propertyId)
     .eq('status', 'completed')
     .order('started_at', { ascending: false })
@@ -411,17 +412,35 @@ export function buildCharts(data: {
 }
 
 function buildTrends(runs: ReportRun[]): Array<{ label: string; score: number | null; visibility: number | null }> {
-  const ordered = [...runs].sort((a, b) => {
-    const aTime = new Date(a.started_at || 0).getTime()
-    const bTime = new Date(b.started_at || 0).getTime()
-    return aTime - bTime
+  const batches = new Map<string, { startedAt: string | null; scores: number[]; visibility: number[] }>()
+
+  runs.forEach(run => {
+    const score = run.geo_scores?.[0]
+    if (!score) return
+    const batchKey = run.batch_id || run.id
+    const entry = batches.get(batchKey) || { startedAt: run.started_at || null, scores: [], visibility: [] }
+    if (
+      run.started_at &&
+      (!entry.startedAt || new Date(run.started_at).getTime() < new Date(entry.startedAt).getTime())
+    ) {
+      entry.startedAt = run.started_at
+    }
+    entry.scores.push(score.overall_score)
+    entry.visibility.push(score.visibility_pct)
+    batches.set(batchKey, entry)
   })
 
-  return ordered.map(run => ({
-    label: formatShortDate(run.started_at),
-    score: run.geo_scores?.[0]?.overall_score ?? null,
-    visibility: run.geo_scores?.[0]?.visibility_pct ?? null
-  }))
+  return Array.from(batches.values())
+    .sort((a, b) => {
+      const aTime = new Date(a.startedAt || 0).getTime()
+      const bTime = new Date(b.startedAt || 0).getTime()
+      return aTime - bTime
+    })
+    .map(batch => ({
+      label: formatShortDate(batch.startedAt),
+      score: batch.scores.length > 0 ? average(batch.scores) : null,
+      visibility: batch.visibility.length > 0 ? average(batch.visibility) : null
+    }))
 }
 
 export function aggregateAnswersByQuery(
@@ -1035,8 +1054,8 @@ function renderLineChart(values: Array<number | null>, labels: string[], title: 
   const height = 180
   const padding = 32
   const filtered = values.filter((v): v is number => typeof v === 'number')
-  if (filtered.length === 0) {
-    return renderChartPlaceholder(title)
+  if (filtered.length < 2) {
+    return renderChartPlaceholder(title, 'Trend appears after at least two completed audit batches.')
   }
 
   const max = Math.max(...filtered)
@@ -1051,7 +1070,7 @@ function renderLineChart(values: Array<number | null>, labels: string[], title: 
 
   const labelItems = labels.map((label, index) => {
     const x = padding + (index / Math.max(1, labels.length - 1)) * (width - padding * 2)
-    return `<text x="${x}" y="${height - 8}" text-anchor="middle" font-size="10" fill="#6b7280">${label}</text>`
+    return `<text x="${x}" y="${height - 8}" text-anchor="middle" font-size="10" fill="#6b7280">${escapeSvgText(label)}</text>`
   }).join('')
 
   return `
@@ -1066,8 +1085,9 @@ function renderLineChart(values: Array<number | null>, labels: string[], title: 
 
 function renderBarChart(data: Array<{ label: string; value: number }>, title: string): string {
   const width = 640
-  const height = 200
+  const height = 240
   const padding = 32
+  const labelAreaHeight = 58
   if (data.length === 0) {
     return renderChartPlaceholder(title)
   }
@@ -1075,12 +1095,17 @@ function renderBarChart(data: Array<{ label: string; value: number }>, title: st
   const max = Math.max(...data.map(d => d.value), 1)
   const barWidth = (width - padding * 2) / data.length
   const bars = data.map((item, index) => {
-    const barHeight = (item.value / max) * (height - padding * 2 - 20)
+    const barHeight = (item.value / max) * (height - padding * 2 - labelAreaHeight)
     const x = padding + index * barWidth
-    const y = height - padding - barHeight - 16
+    const y = height - padding - labelAreaHeight - barHeight
+    const labelLines = wrapSvgLabel(item.label, Math.max(8, Math.floor(barWidth / 7)), 2)
+      .map((line, lineIndex) =>
+        `<tspan x="${x + barWidth / 2}" dy="${lineIndex === 0 ? 0 : 12}">${escapeSvgText(line)}</tspan>`
+      )
+      .join('')
     return `
       <rect x="${x + 6}" y="${y}" width="${barWidth - 12}" height="${barHeight}" fill="#6366f1" rx="4" />
-      <text x="${x + barWidth / 2}" y="${height - 8}" text-anchor="middle" font-size="10" fill="#6b7280">${item.label}</text>
+      <text x="${x + barWidth / 2}" y="${height - padding - labelAreaHeight + 18}" text-anchor="middle" font-size="9" fill="#6b7280">${labelLines}</text>
       <text x="${x + barWidth / 2}" y="${y - 6}" text-anchor="middle" font-size="10" fill="#111827">${item.value}</text>
     `
   }).join('')
@@ -1094,12 +1119,49 @@ function renderBarChart(data: Array<{ label: string; value: number }>, title: st
   `.trim()
 }
 
-function renderChartPlaceholder(title: string): string {
+function renderChartPlaceholder(title: string, message = 'Data not available.'): string {
   return `
     <div style="border: 1px dashed #d1d5db; padding: 16px; border-radius: 8px; color: #6b7280;">
-      ${title} data not available.
+      <strong>${title}</strong><br />
+      ${message}
     </div>
   `.trim()
+}
+
+function escapeSvgText(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+function wrapSvgLabel(label: string, maxChars: number, maxLines: number): string[] {
+  const words = label.split(/\s+/).filter(Boolean)
+  const lines: string[] = []
+
+  words.forEach(word => {
+    const current = lines[lines.length - 1]
+    if (!current) {
+      lines.push(word)
+      return
+    }
+    if (`${current} ${word}`.length <= maxChars) {
+      lines[lines.length - 1] = `${current} ${word}`
+    } else if (lines.length < maxLines) {
+      lines.push(word)
+    } else {
+      lines[lines.length - 1] = `${lines[lines.length - 1]} ${word}`
+    }
+  })
+
+  return (lines.length > 0 ? lines : [label])
+    .slice(0, maxLines)
+    .map((line, index, arr) => {
+      if (index !== arr.length - 1 || line.length <= maxChars) return line
+      return `${line.slice(0, Math.max(1, maxChars - 1)).trimEnd()}…`
+    })
 }
 
 function calculateTrendDelta(values: Array<number | null>): number | null {
