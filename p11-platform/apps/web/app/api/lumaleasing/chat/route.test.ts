@@ -158,7 +158,7 @@ describe('LumaLeasing chat route', () => {
                       widget_name: 'Luma',
                       collect_email: true,
                       lead_capture_prompt: 'share your email',
-                      properties: { name: 'The Beacon' },
+                      properties: { name: 'Acacia', property_type: 'master_planned' },
                     },
                     error: null,
                   }),
@@ -287,7 +287,7 @@ describe('LumaLeasing chat route', () => {
                       widget_name: 'Luma',
                       collect_email: true,
                       lead_capture_prompt: 'share your email',
-                      properties: { name: 'The Beacon' },
+                      properties: { name: 'Acacia', property_type: 'master_planned' },
                     },
                     error: null,
                   }),
@@ -365,7 +365,7 @@ describe('LumaLeasing chat route', () => {
                       widget_name: 'Luma',
                       collect_email: true,
                       lead_capture_prompt: 'share your email',
-                      properties: { name: 'The Beacon' },
+                      properties: { name: 'Acacia', property_type: 'master_planned' },
                     },
                     error: null,
                   }),
@@ -511,7 +511,7 @@ describe('LumaLeasing chat route', () => {
                       widget_name: 'Luma',
                       collect_email: true,
                       lead_capture_prompt: 'share your email',
-                      properties: { name: 'The Beacon' },
+                      properties: { name: 'Acacia', property_type: 'master_planned' },
                     },
                     error: null,
                   }),
@@ -599,6 +599,13 @@ describe('LumaLeasing chat route', () => {
     expect(json).toMatchObject({
       content: 'Thanks, I can help with that.',
     })
+    const firstCompletionArgs = openAiChatCreateMock.mock.calls[0][0]
+    const systemPrompt = firstCompletionArgs.messages[0].content
+    expect(systemPrompt).toContain('Property name: Acacia')
+    expect(systemPrompt).toContain('Property type: Master-Planned Community')
+    expect(systemPrompt).not.toContain('$2,915')
+    expect(systemPrompt).not.toContain('$3,060')
+    expect(systemPrompt).not.toContain('$4,208')
     expect(leadsInsertMock).not.toHaveBeenCalled()
     expect(leadsUpdateEqMock).toHaveBeenCalledWith('id', 'lead-existing')
     expect(syncLeadToCRMMock).not.toHaveBeenCalled()

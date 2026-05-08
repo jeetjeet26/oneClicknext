@@ -9,6 +9,7 @@ import { auditLog, getRequestIp } from '@/utils/services/audit-logger';
 import { createRequestContext } from '@/utils/services/request-context';
 import { bookLumaLeasingTour } from '@/utils/services/lumaleasing-tour-booking';
 import { trackEngagementEvent } from '@/utils/services/engagement-tracker';
+import { getPropertyTypeConfig } from '@/utils/property-types';
 import OpenAI from 'openai';
 
 // Type for extracted conversation data
@@ -588,7 +589,7 @@ export async function POST(req: NextRequest) {
     const { data: config, error: configError } = await supabase
       .from('lumaleasing_config')
       // Avoid !inner join so an orphaned config row doesn't look like "invalid key"
-      .select('*, properties(id, name, address, settings)')
+      .select('*, properties(id, name, address, settings, property_type)')
       .eq('api_key', apiKey)
       .eq('is_active', true)
       .single();
@@ -615,6 +616,7 @@ export async function POST(req: NextRequest) {
       );
     }
     const propertyName = config.properties?.name || 'our community';
+    const propertyTypeConfig = getPropertyTypeConfig(config.properties?.property_type);
 
     // 2. Get or create widget session
     let activeSessionId: string | null = sessionId || null;
@@ -857,7 +859,12 @@ export async function POST(req: NextRequest) {
     const wantsTour = tourKeywords.some(kw => lastMessage.toLowerCase().includes(kw));
 
     // 9. Build system prompt
-    const systemPrompt = `You are ${config.widget_name || 'Luma'}, a friendly AI leasing assistant for ${propertyName}.
+    const systemPrompt = `You are ${config.widget_name || 'Luma'}, a friendly AI assistant for ${propertyName}.
+
+PROPERTY CONTEXT:
+- Property name: ${propertyName}
+- Property type: ${propertyTypeConfig.label}
+- Category: ${propertyTypeConfig.isForSaleResidential ? 'for-sale residential' : 'rental residential'}
 
 PERSONALITY:
 - Warm, helpful, and professional
@@ -871,10 +878,9 @@ ${contextText || 'No specific documents loaded yet.'}
 FORMATTING RULES (CRITICAL):
 1. NEVER use markdown formatting (**, *, -, #) in your responses
 2. Present information in clean, natural sentences or simple paragraphs
-3. When listing floor plans/pricing, use simple text like:
-   "We have Studios starting at $2,915, 1-bedrooms from $3,060, and 2-bedrooms from $4,208"
+3. Do not use example prices, example floor plans, sample unit names, or placeholder availability
 4. For multiple items, use natural language: "We offer A, B, and C" instead of bullet lists
-5. Keep numbers clean: "$2,915" not "**$2,915**"
+5. Keep numbers clean without markdown formatting
 6. Your response should read like a text message, not a formatted document
 
 CUSTOMER SERVICE EXCELLENCE:
@@ -887,10 +893,12 @@ CUSTOMER SERVICE EXCELLENCE:
 
 RESPONSE GUIDELINES:
 1. Answer questions based ONLY on the knowledge base above
-2. If info isn't available, say "I don't have that specific information, but I'd be happy to have someone from our team follow up with you!"
-3. Keep responses under 150 words unless detailed info is requested
-4. Be proactive: suggest tours, mention specials, highlight unique features
-5. Match their energy: formal inquiry → professional tone, casual chat → friendly tone
+2. Pricing, rents, deposits, availability, bedroom counts, floor plans, home plans, and unit types are high-risk facts. Only state them when they appear in the knowledge base for ${propertyName}.
+3. If info isn't available, say "I don't have that specific information, but I'd be happy to have someone from our team follow up with you!"
+4. Never reuse pricing, floor plan names, unit types, amenities, specials, or availability from another property or from examples.
+5. Keep responses under 150 words unless detailed info is requested
+6. Be proactive: suggest tours, mention specials, highlight unique features
+7. Match their energy: formal inquiry → professional tone, casual chat → friendly tone
 
 ${wantsTour ? `
 TOUR BOOKING:

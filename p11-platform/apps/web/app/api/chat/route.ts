@@ -3,6 +3,7 @@ import { createServiceClient } from '@/utils/supabase/admin';
 import { createClient } from '@/utils/supabase/server';
 import OpenAI from 'openai';
 import { validatePropertyAccess } from '@/utils/services/auth-guard';
+import { getPropertyTypeConfig } from '@/utils/property-types';
 
 export async function POST(req: NextRequest) {
   try {
@@ -34,6 +35,19 @@ export async function POST(req: NextRequest) {
     // 1. Initialize Clients
     const supabase = createServiceClient();
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+    const { data: property } = await supabase
+      .from('properties')
+      .select('id, name, property_type')
+      .eq('id', propertyId)
+      .single();
+
+    if (!property) {
+      return NextResponse.json({ error: 'Property not found' }, { status: 404 });
+    }
+
+    const propertyTypeConfig = getPropertyTypeConfig(property.property_type);
+    const propertyName = property.name || 'this property';
 
     // 2. Get or create conversation
     let activeConversationId = conversationId;
@@ -72,22 +86,23 @@ export async function POST(req: NextRequest) {
       activeConversationId = newConversation?.id;
     }
 
-    // 3. Save user message to database
+    // 3. Validate conversation ownership and human-mode state before writing messages.
     if (activeConversationId) {
+      const { data: convState } = await supabase
+        .from('conversations')
+        .select('is_human_mode, property_id')
+        .eq('id', activeConversationId)
+        .single();
+
+      if (!convState || convState.property_id !== propertyId) {
+        return NextResponse.json({ error: 'Invalid conversationId for this property' }, { status: 400 });
+      }
+
       await supabase.from('messages').insert({
         conversation_id: activeConversationId,
         role: isHumanMessage ? 'assistant' : 'user',
         content: lastMessage,
       });
-    }
-
-    // 3.5 Check if conversation is in human mode
-    if (activeConversationId) {
-      const { data: convState } = await supabase
-        .from('conversations')
-        .select('is_human_mode')
-        .eq('id', activeConversationId)
-        .single();
       
       // If in human mode and this is from a user (not agent), just save message, no AI response
       if (convState?.is_human_mode && !isHumanMessage) {
@@ -139,7 +154,12 @@ export async function POST(req: NextRequest) {
     // 6. Construct Context for LLM
     const contextText = documents?.map((doc: { content: string }) => doc.content).join('\n---\n') || "No specific documents found.";
     
-    const systemPrompt = `You are Luma, a helpful AI leasing agent for this apartment community.
+    const systemPrompt = `You are Luma, a helpful AI assistant for ${propertyName}.
+
+PROPERTY CONTEXT:
+- Property name: ${propertyName}
+- Property type: ${propertyTypeConfig.label}
+- Category: ${propertyTypeConfig.isForSaleResidential ? 'for-sale residential' : 'rental residential'}
     
     CONTEXT FROM KNOWLEDGE BASE:
     ${contextText}
@@ -147,10 +167,8 @@ export async function POST(req: NextRequest) {
     FORMATTING RULES (CRITICAL):
     - NEVER use markdown formatting (**, *, -, #, bullets) in your responses
     - Present information in clean, natural sentences or simple paragraphs
-    - When discussing floor plans/pricing, use conversational language:
-      ✓ "We have studios starting at $2,915, 1-bedrooms from $3,060, and 2-bedrooms from $4,208"
-      ✗ "**Studio**: $2,915" or "- Studio: $2,915"
-    - Keep numbers clean without formatting: "$2,915" not "**$2,915**"
+    - Do not use example prices, example floor plans, or sample unit names
+    - Keep numbers clean without markdown formatting
     - Your response should read like a text message conversation
     
     CUSTOMER SERVICE EXCELLENCE:
@@ -163,6 +181,9 @@ export async function POST(req: NextRequest) {
     
     RESPONSE GUIDELINES:
     - Answer questions based ONLY on the context provided
+    - Pricing, rents, deposits, availability, bedroom counts, floor plans, home plans, and unit types are high-risk facts. Only state them when they appear in the context for ${propertyName}.
+    - If the context does not include current pricing or availability, say you do not have that specific information handy and offer to have the team follow up.
+    - Never reuse pricing, floor plan names, unit types, amenities, specials, or availability from another property or from examples.
     - If the answer is not in the context, say "I don't have that information handy, but I'd be happy to have someone from our team follow up with you!"
     - Be warm, professional, and concise (under 150 words unless detailed info requested)
     - Do not make up facts or speculate

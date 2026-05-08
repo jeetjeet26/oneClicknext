@@ -100,7 +100,7 @@ describe('chat route auth', () => {
     const conversationInsertSelectMock = vi.fn().mockReturnValue({ single: conversationInsertSingleMock })
     const conversationInsertMock = vi.fn().mockReturnValue({ select: conversationInsertSelectMock })
     const conversationStateSingleMock = vi.fn().mockResolvedValue({
-      data: { is_human_mode: false },
+      data: { is_human_mode: false, property_id: 'property-1' },
       error: null,
     })
     const conversationStateEqMock = vi.fn().mockReturnValue({ single: conversationStateSingleMock })
@@ -108,9 +108,18 @@ describe('chat route auth', () => {
 
     const messagesInsertMock = vi.fn().mockResolvedValue({ data: null, error: null })
     const rpcMock = vi.fn().mockResolvedValue({ data: [], error: null })
+    const propertySingleMock = vi.fn().mockResolvedValue({
+      data: { id: 'property-1', name: 'Acacia', property_type: 'master_planned' },
+      error: null,
+    })
+    const propertyEqMock = vi.fn().mockReturnValue({ single: propertySingleMock })
+    const propertySelectMock = vi.fn().mockReturnValue({ eq: propertyEqMock })
 
     createServiceClientMock.mockReturnValue({
       from: vi.fn((table: string) => {
+        if (table === 'properties') {
+          return { select: propertySelectMock }
+        }
         if (table === 'leads') {
           return { select: leadSelectMock }
         }
@@ -158,5 +167,61 @@ describe('chat route auth', () => {
         channel: 'chat',
       })
     )
+    const completionArgs = completionCreateMock.mock.calls[0][0]
+    const systemPrompt = completionArgs.messages[0].content
+    expect(systemPrompt).toContain('Property name: Acacia')
+    expect(systemPrompt).toContain('Property type: Master-Planned Community')
+    expect(systemPrompt).not.toContain('$2,915')
+    expect(systemPrompt).not.toContain('$3,060')
+    expect(systemPrompt).not.toContain('$4,208')
+  })
+
+  it('rejects a stale conversationId from another property', async () => {
+    authGetUserMock.mockResolvedValue({
+      data: { user: { id: 'user-1', email: 'u@example.com' } },
+      error: null,
+    })
+    validatePropertyAccessMock.mockResolvedValue({ authorized: true })
+
+    const propertySingleMock = vi.fn().mockResolvedValue({
+      data: { id: 'property-1', name: 'Acacia', property_type: 'master_planned' },
+      error: null,
+    })
+    const propertyEqMock = vi.fn().mockReturnValue({ single: propertySingleMock })
+    const propertySelectMock = vi.fn().mockReturnValue({ eq: propertyEqMock })
+    const conversationStateSingleMock = vi.fn().mockResolvedValue({
+      data: { is_human_mode: false, property_id: 'other-property' },
+      error: null,
+    })
+    const conversationStateEqMock = vi.fn().mockReturnValue({ single: conversationStateSingleMock })
+    const conversationStateSelectMock = vi.fn().mockReturnValue({ eq: conversationStateEqMock })
+    const messagesInsertMock = vi.fn().mockResolvedValue({ data: null, error: null })
+
+    createServiceClientMock.mockReturnValue({
+      from: vi.fn((table: string) => {
+        if (table === 'properties') return { select: propertySelectMock }
+        if (table === 'messages') return { insert: messagesInsertMock }
+        if (table === 'conversations') return { select: conversationStateSelectMock }
+        throw new Error(`Unexpected table ${table}`)
+      }),
+      rpc: vi.fn(),
+    })
+
+    const { POST } = await import('./route')
+    const response = await POST(
+      new Request('http://localhost/api/chat', {
+        method: 'POST',
+        body: JSON.stringify({
+          propertyId: 'property-1',
+          conversationId: 'conversation-1',
+          messages: [{ role: 'user', content: 'Hello' }],
+        }),
+      }) as NextRequest
+    )
+
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toEqual({ error: 'Invalid conversationId for this property' })
+    expect(embeddingCreateMock).not.toHaveBeenCalled()
+    expect(completionCreateMock).not.toHaveBeenCalled()
   })
 })
