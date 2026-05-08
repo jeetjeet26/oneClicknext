@@ -63,4 +63,20 @@ describe('properties add route auth', () => {
     expect(response.status).toBe(403)
     await expect(response.json()).resolves.toEqual({ error: 'Only admins and managers can add properties' })
   })
+
+  it('POST returns 400 for an unknown property type', async () => {
+    authGetUserMock.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
+
+    const { POST } = await import('./route')
+    const response = await POST(
+      new Request('http://localhost/api/properties/add', {
+        method: 'POST',
+        body: JSON.stringify({ name: 'New Property', propertyType: 'hotel' }),
+      }) as NextRequest
+    )
+
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toEqual({ error: 'Invalid property type' })
+    expect(fromMock).not.toHaveBeenCalled()
+  })
 })

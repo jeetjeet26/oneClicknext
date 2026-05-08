@@ -3,17 +3,8 @@
 import { MapPin, ArrowRight, ArrowLeft, Globe, Building, Calendar, Hash, Sparkles, Loader2, CheckCircle2, AlertTriangle, Wand2, Plus, X, Link } from 'lucide-react'
 import { useState, useCallback } from 'react'
 import { useOnboarding } from '../components/OnboardingProvider'
-import { CommunityType, AMENITY_OPTIONS, WebsiteScrapeResult } from '../types'
-
-// Property type options (formerly community types)
-const PROPERTY_TYPE_OPTIONS: { value: CommunityType; label: string; description: string }[] = [
-  { value: 'multifamily', label: 'Multifamily', description: 'Standard apartment community' },
-  { value: 'senior', label: 'Senior Living', description: '55+ or active adult' },
-  { value: 'student', label: 'Student Housing', description: 'Near universities' },
-  { value: 'mixed_use', label: 'Mixed Use', description: 'Residential + commercial' },
-  { value: 'affordable', label: 'Affordable', description: 'Income-restricted housing' },
-  { value: 'luxury', label: 'Luxury', description: 'High-end amenities' },
-]
+import { AMENITY_OPTIONS, WebsiteScrapeResult } from '../types'
+import { PROPERTY_TYPE_OPTIONS } from '@/utils/property-types'
 
 interface ScrapeStatus {
   status: 'idle' | 'scraping' | 'success' | 'error'

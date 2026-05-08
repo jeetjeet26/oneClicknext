@@ -2,6 +2,7 @@ import { subDays, format } from 'date-fns'
 import type { Database } from '@/types/supabase'
 import { deriveSharedLifecycleStatus } from '@/utils/substrate/shared-vocabulary'
 import { deriveImportJobState } from '@/utils/marketvision/import-job-state'
+import { getPropertyTypeConfig } from '@/utils/property-types'
 
 type ServiceClient = {
   from: ReturnType<typeof import('@/utils/supabase/admin').createServiceClient>['from']
@@ -21,6 +22,9 @@ export type BusinessContextBridgePayload = {
     profile: {
       name: string
       propertyType: string | null
+      propertyTypeLabel: string
+      propertyTypeCategory: string
+      isForSaleResidential: boolean
       websiteUrl: string | null
       unitCount: number | null
       targetAudience: string | null
@@ -257,6 +261,7 @@ export async function buildBusinessContextBridge(
     const normalized = deriveSharedLifecycleStatus(job.lifecycle_status).status
     substrateLifecycleCounts[normalized] = (substrateLifecycleCounts[normalized] || 0) + 1
   }
+  const propertyTypeConfig = getPropertyTypeConfig(property.property_type)
 
   return {
     propertyId,
@@ -268,6 +273,9 @@ export async function buildBusinessContextBridge(
       profile: {
         name: property.name,
         propertyType: property.property_type,
+        propertyTypeLabel: propertyTypeConfig.label,
+        propertyTypeCategory: propertyTypeConfig.category,
+        isForSaleResidential: propertyTypeConfig.isForSaleResidential,
         websiteUrl: property.website_url,
         unitCount: property.unit_count,
         targetAudience: property.target_audience,

@@ -3,6 +3,7 @@ import { createAdminClient } from '@/utils/supabase/admin'
 import { NextResponse } from 'next/server'
 import { getAppBaseUrl } from '@/utils/services/runtime-config'
 import { normalizePublicWebsiteUrl } from '@/utils/services/public-url'
+import { assertValidPropertyType } from '@/utils/property-types'
 
 interface OrganizationInput {
   name: string
@@ -163,6 +164,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Property name is required' }, { status: 400 })
     }
 
+    let propertyType: string | null
+    try {
+      propertyType = assertValidPropertyType(property.type)
+    } catch {
+      return NextResponse.json({ error: 'Invalid property type' }, { status: 400 })
+    }
+
     // Validate at least one primary contact
     const primaryContact = contacts?.find(c => c.type === 'primary')
     if (!primaryContact?.name?.trim() || !primaryContact?.email?.trim()) {
@@ -229,8 +237,8 @@ export async function POST(request: Request) {
           timezone: 'America/Los_Angeles',
         },
         // Profile data now directly on properties table
-        property_type: property.type || null,
-          website_url: normalizePublicWebsiteUrl(property.websiteUrl),
+        property_type: propertyType,
+        website_url: normalizePublicWebsiteUrl(property.websiteUrl),
         unit_count: property.unitCount || null,
         year_built: property.yearBuilt || null,
         amenities: property.amenities || [],

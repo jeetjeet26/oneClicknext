@@ -20,7 +20,7 @@ function buildPrompt(context: ConnectorContext): string {
   const location = context.propertyLocation
   
   const lines = [
-    `Task: Perform a GEO audit for this specific apartment property and return ONLY valid JSON matching the exact schema.`,
+    `Task: Perform a GEO audit for this specific real estate property and return ONLY valid JSON matching the exact schema.`,
   ]
 
   // Add property location context if available (prevents hallucinations)
@@ -245,14 +245,14 @@ export class ClaudeConnector implements Connector {
         max_tokens: 2000,
         temperature: config.temperature,
         system: enableWebSearch
-          ? 'You are a precise GEO audit assistant. Use web search to find current, accurate information about apartment properties. After searching, output strict JSON only.'
+          ? 'You are a precise GEO audit assistant. Use web search to find current, accurate information about real estate properties. After searching, output strict JSON only.'
           : 'You are a precise GEO audit assistant. You must output ONLY valid JSON without any markdown formatting, code blocks, or explanatory text. Return raw JSON that can be directly parsed.',
         messages,
         ...(enableWebSearch ? {
           tools: [
             {
               name: 'web_search',
-              description: 'Search the web for current information about apartment properties, reviews, listings, and competitive analysis',
+              description: 'Search the web for current information about real estate properties, reviews, listings, and competitive analysis',
               input_schema: {
                 type: 'object',
                 properties: {

@@ -3,16 +3,8 @@
 import { MapPin, ArrowRight, Globe, Building, Calendar, Hash, Sparkles, Loader2, CheckCircle2, AlertTriangle, Wand2, X, Plus, Link } from 'lucide-react'
 import { useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { useAddProperty, CommunityType, AMENITY_OPTIONS, WebsiteScrapeResult } from '../AddPropertyProvider'
-
-const COMMUNITY_TYPE_OPTIONS: { value: CommunityType; label: string; description: string }[] = [
-  { value: 'multifamily', label: 'Multifamily', description: 'Standard apartment community' },
-  { value: 'senior', label: 'Senior Living', description: '55+ or active adult' },
-  { value: 'student', label: 'Student Housing', description: 'Near universities' },
-  { value: 'mixed_use', label: 'Mixed Use', description: 'Residential + commercial' },
-  { value: 'affordable', label: 'Affordable', description: 'Income-restricted housing' },
-  { value: 'luxury', label: 'Luxury', description: 'High-end amenities' },
-]
+import { useAddProperty, AMENITY_OPTIONS, WebsiteScrapeResult } from '../AddPropertyProvider'
+import { PROPERTY_TYPE_OPTIONS } from '@/utils/property-types'
 
 interface ScrapeStatus {
   status: 'idle' | 'scraping' | 'success' | 'error'
@@ -364,13 +356,13 @@ export function CommunityStep() {
             />
           </div>
 
-          {/* Community Type */}
+          {/* Property Type */}
           <div>
             <label className="block text-sm font-medium text-slate-300 mb-3">
-              Community type
+              Property type
             </label>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-              {COMMUNITY_TYPE_OPTIONS.map(({ value, label, description }) => (
+              {PROPERTY_TYPE_OPTIONS.map(({ value, label, description }) => (
                 <button
                   key={value}
                   type="button"

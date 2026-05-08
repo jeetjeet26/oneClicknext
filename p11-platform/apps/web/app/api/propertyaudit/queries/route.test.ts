@@ -187,6 +187,99 @@ describe('propertyaudit queries route', () => {
     expect(serviceFromMock).toHaveBeenCalledWith('geo_queries')
   })
 
+  it('POST generates for-sale residential queries without apartment defaults', async () => {
+    authGetUserMock.mockResolvedValue({
+      data: { user: { id: 'user-1' } },
+      error: null,
+    })
+    validatePropertyAccessMock.mockResolvedValue({
+      authorized: true,
+      orgId: 'org-1',
+    })
+
+    let insertedQueries: Array<Record<string, unknown>> = []
+    const serviceFromMock = vi.fn((table: string) => {
+      if (table === 'properties') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({
+                data: {
+                  id: 'property-1',
+                  name: 'Acacia',
+                  address: { city: 'Palo Alto', state: 'CA', street: '420 Acacia Avenue' },
+                  property_type: 'townhome',
+                  amenities: ['Rooftop Deck', 'EV Charging'],
+                  special_features: [],
+                },
+                error: null,
+              }),
+            })),
+          })),
+        }
+      }
+      if (table === 'competitors') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+            })),
+          })),
+        }
+      }
+      if (table === 'brand_books') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              order: vi.fn(() => ({
+                limit: vi.fn(() => ({
+                  single: vi.fn().mockResolvedValue({ data: null, error: null }),
+                })),
+              })),
+            })),
+          })),
+        }
+      }
+      if (table === 'geo_queries') {
+        return {
+          insert: vi.fn((queries: Array<Record<string, unknown>>) => {
+            insertedQueries = queries
+            return {
+              select: vi.fn().mockResolvedValue({
+                data: queries.map((query, index) => ({
+                  id: `query-${index}`,
+                  created_at: '2026-03-16T00:00:00.000Z',
+                  updated_at: '2026-03-16T00:00:00.000Z',
+                  ...query,
+                })),
+                error: null,
+              }),
+            }
+          }),
+        }
+      }
+      throw new Error(`Unexpected table ${table}`)
+    })
+
+    createServiceClientMock.mockReturnValue({
+      from: serviceFromMock,
+    })
+
+    const { POST } = await import('./route')
+    const response = await POST(
+      makeNextRequest('http://localhost/api/propertyaudit/queries', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ propertyId: 'property-1', generateFromProperty: true }),
+      })
+    )
+
+    expect(response.status).toBe(200)
+    expect(insertedQueries.map(query => query.text).join(' ')).toContain('townhomes for sale')
+    expect(insertedQueries.map(query => query.text).join(' ')).not.toContain('apartment communities')
+    expect(insertedQueries.map(query => query.text).join(' ')).not.toContain('Best apartments')
+  })
+
   it('DELETE returns 403 when query property access is denied', async () => {
     authGetUserMock.mockResolvedValue({
       data: { user: { id: 'user-1' } },

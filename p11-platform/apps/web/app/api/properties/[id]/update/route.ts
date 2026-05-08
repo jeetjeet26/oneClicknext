@@ -4,6 +4,7 @@ import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { NextRequest, NextResponse } from 'next/server'
 import { logAuditEvent } from '@/utils/audit'
 import { normalizePublicWebsiteUrl } from '@/utils/services/public-url'
+import { assertValidPropertyType } from '@/utils/property-types'
 
 // PUT - Update a property with all details (contacts, integrations)
 export async function PUT(
@@ -31,6 +32,17 @@ export async function PUT(
     // Support both 'property' and legacy 'community' naming
     const propertyData = body.property || body.community
     const { contacts, integrations } = body
+
+    if (!propertyData?.name?.trim()) {
+      return NextResponse.json({ error: 'Property name is required' }, { status: 400 })
+    }
+
+    let propertyType: string | null
+    try {
+      propertyType = assertValidPropertyType(propertyData?.type || propertyData?.propertyType || null)
+    } catch {
+      return NextResponse.json({ error: 'Invalid property type' }, { status: 400 })
+    }
 
     // Get user's profile to find their organization
     const { data: profile } = await supabase
@@ -69,7 +81,7 @@ export async function PUT(
         name: propertyData.name,
         address: propertyData.address || {},
         // Profile data now directly on properties table
-        property_type: propertyData.type || propertyData.propertyType || null,
+        property_type: propertyType,
         website_url: normalizePublicWebsiteUrl(propertyData.websiteUrl),
         unit_count: propertyData.unitCount || null,
         year_built: propertyData.yearBuilt || null,

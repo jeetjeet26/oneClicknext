@@ -382,7 +382,7 @@ test.describe('local smoke flows', () => {
         name: competitorName,
         address: '100 Local Smoke Way, Austin, TX',
         websiteUrl: `https://competitor-${suffix}.p11.test`,
-        propertyType: 'apartment',
+        propertyType: 'multifamily',
         amenities: ['Rooftop pool', 'Coworking lounge'],
         units: [
           {

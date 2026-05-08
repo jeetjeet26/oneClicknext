@@ -1,5 +1,7 @@
 // Onboarding Types for Phase 1
 
+import type { PropertyType } from '@/utils/property-types'
+
 export type OnboardingStep = 
   | 'organization' 
   | 'community' 
@@ -8,15 +10,6 @@ export type OnboardingStep =
   | 'knowledge' 
   | 'review' 
   | 'complete'
-
-// Property types (formerly community types)
-export type PropertyType = 
-  | 'multifamily' 
-  | 'senior' 
-  | 'student' 
-  | 'mixed_use' 
-  | 'affordable' 
-  | 'luxury'
 
 // Alias for backward compatibility
 export type CommunityType = PropertyType

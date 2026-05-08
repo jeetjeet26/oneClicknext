@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
+import { assertValidPropertyType } from '@/utils/property-types'
 
 export interface Competitor {
   id: string
@@ -141,6 +142,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'propertyId and name required' }, { status: 400 })
     }
 
+    let validatedPropertyType: string | null
+    try {
+      validatedPropertyType = assertValidPropertyType(propertyType || 'multifamily')
+    } catch {
+      return NextResponse.json({ error: 'Invalid property type' }, { status: 400 })
+    }
+
     const access = await validatePropertyAccess(user.id, propertyId)
     if (!access.authorized) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
@@ -165,7 +173,7 @@ export async function POST(req: NextRequest) {
         phone: phone || null,
         units_count: toIntOrNull(unitsCount),
         year_built: toIntOrNull(yearBuilt),
-        property_type: propertyType || 'apartment',
+        property_type: validatedPropertyType || 'multifamily',
         amenities: amenities || [],
         ils_listings: ilsListings || {},
         notes: notes || null
@@ -273,7 +281,13 @@ export async function PUT(req: NextRequest) {
     if (updates.phone !== undefined) dbUpdates.phone = updates.phone || null
     if (updates.unitsCount !== undefined) dbUpdates.units_count = toIntOrNull(updates.unitsCount)
     if (updates.yearBuilt !== undefined) dbUpdates.year_built = toIntOrNull(updates.yearBuilt)
-    if (updates.propertyType !== undefined) dbUpdates.property_type = updates.propertyType
+    if (updates.propertyType !== undefined) {
+      try {
+        dbUpdates.property_type = assertValidPropertyType(updates.propertyType || 'multifamily') || 'multifamily'
+      } catch {
+        return NextResponse.json({ error: 'Invalid property type' }, { status: 400 })
+      }
+    }
     if (updates.amenities !== undefined) dbUpdates.amenities = updates.amenities
     if (updates.photos !== undefined) dbUpdates.photos = updates.photos
     if (updates.ilsListings !== undefined) dbUpdates.ils_listings = updates.ilsListings
@@ -374,7 +388,7 @@ function formatCompetitor(data: Record<string, unknown>): Competitor {
     phone: data.phone as string | null,
     unitsCount: data.units_count as number | null,
     yearBuilt: data.year_built as number | null,
-    propertyType: data.property_type as string || 'apartment',
+    propertyType: data.property_type as string || 'multifamily',
     amenities,
     photos: (data.photos as string[]) || [],
     ilsListings: (data.ils_listings as Record<string, string>) || {},

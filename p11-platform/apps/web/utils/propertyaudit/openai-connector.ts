@@ -75,7 +75,7 @@ function buildPrompt(context: ConnectorContext): string {
   const location = context.propertyLocation
   
   const lines = [
-    `Task: Perform a GEO audit for this specific apartment property and return ONLY the JSON object matching the schema.`,
+    `Task: Perform a GEO audit for this specific real estate property and return ONLY the JSON object matching the schema.`,
   ]
 
   // Add property location context if available (prevents hallucinations)

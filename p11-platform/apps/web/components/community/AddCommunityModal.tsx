@@ -10,6 +10,7 @@ import {
   Loader2,
   Check
 } from 'lucide-react'
+import { PROPERTY_TYPE_OPTIONS } from '@/utils/property-types'
 
 type Property = {
   id: string
@@ -31,15 +32,6 @@ type Props = {
   onSuccess?: (property: Property) => void
   existingProperties?: Property[]
 }
-
-const PROPERTY_TYPES = [
-  { value: 'multifamily', label: 'Multifamily' },
-  { value: 'senior', label: 'Senior Living' },
-  { value: 'student', label: 'Student Housing' },
-  { value: 'mixed_use', label: 'Mixed Use' },
-  { value: 'affordable', label: 'Affordable Housing' },
-  { value: 'luxury', label: 'Luxury' },
-]
 
 export function AddCommunityModal({ isOpen, onClose, onSuccess, existingProperties = [] }: Props) {
   const [step, setStep] = useState<'form' | 'template'>('form')
@@ -317,7 +309,7 @@ export function AddCommunityModal({ isOpen, onClose, onSuccess, existingProperti
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm"
                   >
                     <option value="">Select type...</option>
-                    {PROPERTY_TYPES.map(type => (
+                    {PROPERTY_TYPE_OPTIONS.map(type => (
                       <option key={type.value} value={type.value}>{type.label}</option>
                     ))}
                   </select>

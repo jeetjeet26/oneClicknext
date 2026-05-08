@@ -48,7 +48,7 @@ class ScrapedProperty:
     phone: Optional[str] = None
     units_count: Optional[int] = None
     year_built: Optional[int] = None
-    property_type: str = "apartment"
+    property_type: str = "multifamily"
     amenities: List[str] = field(default_factory=list)
     photos: List[str] = field(default_factory=list)
     units: List[ScrapedUnit] = field(default_factory=list)

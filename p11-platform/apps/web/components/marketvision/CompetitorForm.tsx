@@ -9,6 +9,7 @@ import {
   DollarSign,
   Loader2
 } from 'lucide-react'
+import { PROPERTY_TYPE_OPTIONS } from '@/utils/property-types'
 
 interface UnitInput {
   unitType: string
@@ -67,7 +68,7 @@ export function CompetitorForm({
     phone: initialData?.phone || '',
     unitsCount: initialData?.unitsCount?.toString() || '',
     yearBuilt: initialData?.yearBuilt?.toString() || '',
-    propertyType: initialData?.propertyType || 'apartment',
+    propertyType: initialData?.propertyType || 'multifamily',
     amenities: initialData?.amenities || [],
     notes: initialData?.notes || '',
     units: initialData?.units || []
@@ -285,9 +286,9 @@ export function CompetitorForm({
                   onChange={(e) => handleChange('propertyType', e.target.value)}
                   className="w-full px-4 py-2 border border-gray-200 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white dark:bg-gray-700"
                 >
-                  <option value="apartment">Apartment</option>
-                  <option value="townhome">Townhome</option>
-                  <option value="mixed">Mixed Use</option>
+                  {PROPERTY_TYPE_OPTIONS.map(type => (
+                    <option key={type.value} value={type.value}>{type.label}</option>
+                  ))}
                 </select>
               </div>
             </div>

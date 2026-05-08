@@ -64,11 +64,17 @@ export interface PublicSiteAudit {
 
 const DEFAULT_MAX_PAGES = 25
 const FETCH_TIMEOUT_MS = 8000
-const COMMON_APARTMENT_PATHS = [
+const COMMON_REAL_ESTATE_PATHS = [
   '/',
   '/floorplans',
   '/floor-plans',
   '/apartments',
+  '/homes',
+  '/new-homes',
+  '/townhomes',
+  '/condos',
+  '/site-plan',
+  '/available-homes',
   '/amenities',
   '/neighborhood',
   '/location',
@@ -252,7 +258,7 @@ function classifyPage(url: URL, title: string | null, text: string): PublicSiteP
 
   if (path === '/' || path === '') return 'home'
   if (pathLooksLikeFaq(path)) return 'faq'
-  if (/floor[-_ ]?plans?|apartments?|availability|pricing/.test(haystack)) return 'floorplans'
+  if (/floor[-_ ]?plans?|apartments?|homes?|townhomes?|condos?|availability|pricing/.test(haystack)) return 'floorplans'
   if (/amenit|features/.test(haystack)) return 'amenities'
   if (/neighborhood|location|nearby|directions|map/.test(haystack)) return 'neighborhood'
   if (/faq|frequently asked|questions/.test(haystack)) return 'faq'
@@ -356,7 +362,10 @@ function auditPage(url: string, fetched: Awaited<ReturnType<typeof fetchText>>, 
     jsonLdParseErrors: structuredData.parseErrors,
     faqStructuredData: structuredData.types.includes('FAQPage'),
     organizationStructuredData:
-      structuredData.types.includes('Organization') || structuredData.types.includes('ApartmentComplex'),
+      structuredData.types.includes('Organization') ||
+      structuredData.types.includes('ApartmentComplex') ||
+      structuredData.types.includes('Residence') ||
+      structuredData.types.includes('LocalBusiness'),
     answerBlockSignals,
     internalLinkCount,
     signals: extractSignals(pageType, text),
@@ -421,9 +430,9 @@ export async function auditPublicSite(websiteUrl: string | null | undefined): Pr
     discovered.add(linkedUrl)
     discoverySources.add('homepage_links')
   }
-  for (const path of COMMON_APARTMENT_PATHS) {
+    for (const path of COMMON_REAL_ESTATE_PATHS) {
     discovered.add(new URL(path, originUrl).toString())
-    discoverySources.add('apartment_path_fallbacks')
+    discoverySources.add('real_estate_path_fallbacks')
   }
 
   const urlsToAudit = Array.from(discovered).slice(0, DEFAULT_MAX_PAGES)

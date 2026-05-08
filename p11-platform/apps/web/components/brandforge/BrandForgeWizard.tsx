@@ -7,6 +7,7 @@ import { SectionReview } from './SectionReview'
 import { CompletionView } from './CompletionView'
 import { BrandForgeCompetitorCard, type BrandForgeCompetitor } from './BrandForgeCompetitorCard'
 import type { BrandForgeCompletionResult } from './types'
+import { getPropertyTypeLabel } from '@/utils/property-types'
 
 interface BrandForgeWizardProps {
   propertyId: string
@@ -147,7 +148,7 @@ export function BrandForgeWizard({
                   <p className="text-sm text-slate-600">
                     {propertyAddress.city}, {propertyAddress.state} {propertyAddress.zip}
                   </p>
-                  <p className="text-xs text-slate-500 mt-1">{propertyType}</p>
+                  <p className="text-xs text-slate-500 mt-1">{getPropertyTypeLabel(propertyType)}</p>
                 </div>
               </div>
             </div>

@@ -91,6 +91,13 @@ class GooglePlacesScraper:
         'apartment living',
         'multifamily',
     ]
+
+    FOR_SALE_SEARCH_KEYWORDS = {
+        'townhome': ['new townhomes', 'townhomes for sale', 'townhome community', 'new home builder'],
+        'condo': ['new condos', 'condos for sale', 'condo residences', 'new home builder'],
+        'single_family': ['new homes for sale', 'single family homes', 'home builder', 'new home community'],
+        'master_planned': ['master planned community', 'new homes community', 'planned community', 'home builder'],
+    }
     
     # Keywords that indicate non-competitor (filter out)
     # These are filtered regardless of property type
@@ -147,6 +154,26 @@ class GooglePlacesScraper:
         'mobile home',
         'manufactured',
     ]
+
+    FOR_SALE_PROPERTY_TYPES = {'townhome', 'condo', 'single_family', 'master_planned'}
+    FOR_SALE_ALLOWED_EXCLUDE_KEYWORDS = {'development', 'developers', 'construction', 'builder'}
+
+    def _search_keywords_for_type(self, property_type: Optional[str]) -> List[str]:
+        if not property_type:
+            return self.SEARCH_KEYWORDS
+
+        property_type_lower = property_type.lower()
+        for key, keywords in self.FOR_SALE_SEARCH_KEYWORDS.items():
+            if key in property_type_lower:
+                return keywords
+
+        return self.SEARCH_KEYWORDS
+
+    def _is_for_sale_property_type(self, property_type: Optional[str]) -> bool:
+        if not property_type:
+            return False
+        property_type_lower = property_type.lower()
+        return any(key in property_type_lower for key in self.FOR_SALE_PROPERTY_TYPES)
     
     def __init__(self, api_key: Optional[str] = None):
         """
@@ -188,7 +215,8 @@ class GooglePlacesScraper:
         seen_place_ids = set()
         
         # Search using text search with apartment keywords (more effective)
-        for keyword in self.SEARCH_KEYWORDS[:2]:  # Limit to avoid quota
+        search_keywords = self._search_keywords_for_type(property_type)
+        for keyword in search_keywords[:2]:  # Limit to avoid quota
             if len(all_results) >= max_results:
                 break
                 
@@ -331,7 +359,10 @@ class GooglePlacesScraper:
         combined_text = f"{name_lower} {types_str}"
         
         # Check for general exclude keywords
+        is_for_sale_type = self._is_for_sale_property_type(property_type)
         for keyword in self.EXCLUDE_KEYWORDS:
+            if is_for_sale_type and keyword in self.FOR_SALE_ALLOWED_EXCLUDE_KEYWORDS:
+                continue
             if keyword in combined_text:
                 logger.debug(f"Excluding {result.name} - matches exclude keyword: {keyword}")
                 return False

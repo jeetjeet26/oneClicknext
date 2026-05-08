@@ -913,7 +913,7 @@ export default function BrandBookViewerPage({
                                   address: comp.address || null,
                                   websiteUrl: comp.websiteUrl || null,
                                   phone: comp.phone || null,
-                                  propertyType: comp.propertyType || 'apartment',
+                                  propertyType: comp.propertyType || 'multifamily',
                                   unitsCount: comp.unitsCount || null,
                                   yearBuilt: comp.yearBuilt || null,
                                   amenities: comp.amenities || [],

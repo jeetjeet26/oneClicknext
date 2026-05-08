@@ -9,6 +9,7 @@ import {
   Home, 
   Edit2
 } from 'lucide-react'
+import { getPropertyTypeLabel } from '@/utils/property-types'
 
 type Property = {
   id: string
@@ -54,15 +55,6 @@ type Props = {
   onUpdate?: (profile: CommunityProfile | Property) => void
 }
 
-const PROPERTY_TYPES = [
-  { value: 'multifamily', label: 'Multifamily' },
-  { value: 'senior', label: 'Senior Living' },
-  { value: 'student', label: 'Student Housing' },
-  { value: 'mixed_use', label: 'Mixed Use' },
-  { value: 'affordable', label: 'Affordable Housing' },
-  { value: 'luxury', label: 'Luxury' },
-]
-
 export function CommunityProfileCard({ profile, property }: Props) {
   const router = useRouter()
   
@@ -84,7 +76,7 @@ export function CommunityProfileCard({ profile, property }: Props) {
     router.push(`/dashboard/properties/${property.id}/edit`)
   }
 
-  const displayPropertyType = PROPERTY_TYPES.find(t => t.value === propertyType)?.label || 'Not specified'
+  const displayPropertyType = getPropertyTypeLabel(propertyType)
 
   return (
     <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">

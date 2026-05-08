@@ -1,6 +1,7 @@
 'use client'
 
 import { createContext, useContext, useState, useCallback, ReactNode, useEffect } from 'react'
+import type { PropertyType } from '@/utils/property-types'
 
 // Types for Add Property flow (reuses onboarding types but skips org step)
 export type AddPropertyStep = 
@@ -63,13 +64,7 @@ export const STEP_CONFIG: Record<AddPropertyStep, {
   }
 }
 
-export type CommunityType = 
-  | 'multifamily' 
-  | 'senior' 
-  | 'student' 
-  | 'mixed_use' 
-  | 'affordable' 
-  | 'luxury'
+export type CommunityType = PropertyType
 
 export type ContactType = 'primary' | 'secondary' | 'billing' | 'emergency'
 

@@ -7,6 +7,7 @@ import {
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAddProperty, INTEGRATION_CONFIG } from '../AddPropertyProvider'
+import { getPropertyTypeLabel } from '@/utils/property-types'
 
 interface SectionCardProps {
   icon: React.ReactNode
@@ -172,7 +173,7 @@ export function ReviewStep() {
             onEdit={() => setStep('community')}
           >
             <p><span className="text-white">{community.name || 'Not set'}</span></p>
-            {community.type && <p>Type: {community.type.replace('_', ' ')}</p>}
+            {community.type && <p>Type: {getPropertyTypeLabel(community.type)}</p>}
             {community.address.city && (
               <p>{community.address.city}, {community.address.state} {community.address.zip}</p>
             )}

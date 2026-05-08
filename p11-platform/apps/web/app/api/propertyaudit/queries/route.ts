@@ -13,6 +13,7 @@ import {
   type ReportAnswer,
   type ReportQuery,
 } from '@/utils/propertyaudit/reporting'
+import { getPropertyTypeConfig } from '@/utils/property-types'
 
 export interface GeoQuery {
   id: string
@@ -44,6 +45,10 @@ type GeoQueryInsert = Database['public']['Tables']['geo_queries']['Insert']
 type PropertyAuditQueryClient =
   | Awaited<ReturnType<typeof createClient>>
   | ReturnType<typeof createServiceClient>
+
+function capitalizeForPrompt(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1)
+}
 
 // GET: List queries for a property
 export async function GET(req: NextRequest) {
@@ -426,21 +431,25 @@ async function generateQueryPanel(
   const propertyName = property.name
   const amenities = property.amenities || []
   const specialFeatures = property.special_features || []
-  const propertyType = typeof property.property_type === 'string' && property.property_type.length > 0
-    ? property.property_type.toLowerCase()
-    : 'apartments'
+  const propertyTypeConfig = getPropertyTypeConfig(property.property_type)
+  const propertyType = propertyTypeConfig.searchNouns[0]
+  const secondaryPropertyType = propertyTypeConfig.searchNouns[1] || propertyType
+  const tertiaryPropertyType = propertyTypeConfig.searchNouns[2] || secondaryPropertyType
+  const displayNoun = propertyTypeConfig.displayNoun
+  const pluralDisplayNoun = propertyTypeConfig.pluralDisplayNoun
+  const isForSaleResidential = propertyTypeConfig.isForSaleResidential
   const topAmenityCombos = amenities.length >= 2
-    ? generateAmenityCombinations(amenities, neighborhood, city, propertyId, cityState).slice(0, 2)
+    ? generateAmenityCombinations(amenities, neighborhood, propertyId, cityState, propertyType).slice(0, 2)
     : []
   const uspQueries = Array.isArray(brandData?.unique_selling_points)
     ? brandData.unique_selling_points
         .filter((usp): usp is string => typeof usp === 'string' && usp.trim().length > 0)
-        .map(usp => generateUSPQuery(usp, city, neighborhood))
+        .map(usp => generateUSPQuery(usp, neighborhood, propertyType))
         .filter((query): query is string => typeof query === 'string' && query.length > 0)
         .slice(0, 2)
     : []
   const featureQueries = specialFeatures.length > 0
-    ? generateSpecialFeatureQueries(specialFeatures, neighborhood, propertyId, cityState).slice(0, 2)
+    ? generateSpecialFeatureQueries(specialFeatures, neighborhood, propertyId, cityState, propertyType).slice(0, 2)
     : []
   const comparisonTargets =
     (competitors || []).map(entry => entry.name).filter((name): name is string => typeof name === 'string' && name.length > 0)
@@ -458,7 +467,7 @@ async function generateQueryPanel(
     ...featureQueries,
     {
       property_id: propertyId,
-      text: `Apartments with premium amenities in ${neighborhood}`,
+      text: `${capitalizeForPrompt(pluralDisplayNoun)} with premium amenities in ${neighborhood}`,
       type: 'category' as const,
       geo: cityState,
       weight: 1.3,
@@ -467,7 +476,7 @@ async function generateQueryPanel(
     },
     {
       property_id: propertyId,
-      text: `Apartments with modern features in ${neighborhood}`,
+      text: `${capitalizeForPrompt(pluralDisplayNoun)} with modern features in ${neighborhood}`,
       type: 'category' as const,
       geo: cityState,
       weight: 1.3,
@@ -476,7 +485,7 @@ async function generateQueryPanel(
     },
     {
       property_id: propertyId,
-      text: `Amenity-rich apartments in ${cityState}`,
+      text: `Amenity-rich ${pluralDisplayNoun} in ${cityState}`,
       type: 'category' as const,
       geo: cityState,
       weight: 1.2,
@@ -485,7 +494,7 @@ async function generateQueryPanel(
     },
     {
       property_id: propertyId,
-      text: `Apartments with standout amenities in ${neighborhood}`,
+      text: `${capitalizeForPrompt(pluralDisplayNoun)} with standout amenities in ${neighborhood}`,
       type: 'category' as const,
       geo: cityState,
       weight: 1.2,
@@ -499,30 +508,30 @@ async function generateQueryPanel(
     { property_id: propertyId, text: `What is ${propertyName}?`, type: 'branded', geo: cityState, weight: 1.5, run_count: 1, is_active: true },
     { property_id: propertyId, text: `Is ${propertyName} a good place to live?`, type: 'branded', geo: cityState, weight: 1.5, run_count: 1, is_active: true },
     { property_id: propertyId, text: `${propertyName} reviews`, type: 'branded', geo: cityState, weight: 1.5, run_count: 1, is_active: true },
-    { property_id: propertyId, text: `${propertyName} apartments`, type: 'branded', geo: cityState, weight: 1.5, run_count: 1, is_active: true },
+    { property_id: propertyId, text: `${propertyName} ${displayNoun}`, type: 'branded', geo: cityState, weight: 1.5, run_count: 1, is_active: true },
 
     // 6 category / consideration prompts
-    { property_id: propertyId, text: `Best apartments in ${city}`, type: 'category', geo: cityState, weight: 0.8, run_count: 1, is_active: true },
+    { property_id: propertyId, text: `Best ${propertyType} in ${city}`, type: 'category', geo: cityState, weight: 0.8, run_count: 1, is_active: true },
     { property_id: propertyId, text: `Best ${propertyType} in ${neighborhood}`, type: 'category', geo: cityState, weight: 1.1, run_count: 1, is_active: true },
-    { property_id: propertyId, text: `Modern apartments in ${neighborhood}`, type: 'category', geo: cityState, weight: 1.2, run_count: 1, is_active: true },
-    { property_id: propertyId, text: `Luxury apartments near ${neighborhood}`, type: 'category', geo: cityState, weight: 1.2, run_count: 1, is_active: true },
-    { property_id: propertyId, text: `Top rated apartments in ${cityState}`, type: 'category', geo: cityState, weight: 1.0, run_count: 1, is_active: true },
-    { property_id: propertyId, text: `${propertyType} near ${street || neighborhood}`, type: 'category', geo: cityState, weight: 1.1, run_count: 1, is_active: true },
+    { property_id: propertyId, text: `Modern ${secondaryPropertyType} in ${neighborhood}`, type: 'category', geo: cityState, weight: 1.2, run_count: 1, is_active: true },
+    { property_id: propertyId, text: `Luxury ${propertyType} near ${neighborhood}`, type: 'category', geo: cityState, weight: 1.2, run_count: 1, is_active: true },
+    { property_id: propertyId, text: `Top rated ${tertiaryPropertyType} in ${cityState}`, type: 'category', geo: cityState, weight: 1.0, run_count: 1, is_active: true },
+    { property_id: propertyId, text: `${secondaryPropertyType} near ${street || neighborhood}`, type: 'category', geo: cityState, weight: 1.1, run_count: 1, is_active: true },
 
     // 4 amenity / USP prompts
     ...amenityAndUspPrompts.slice(0, 4),
 
     // 3 local-intent prompts
     { property_id: propertyId, text: `Best place to live in ${neighborhood}`, type: 'local', geo: cityState, weight: 1.3, run_count: 1, is_active: true },
-    { property_id: propertyId, text: `${neighborhood} apartment communities`, type: 'local', geo: cityState, weight: 1.3, run_count: 1, is_active: true },
-    { property_id: propertyId, text: `Moving to ${neighborhood} - apartment recommendations`, type: 'local', geo: cityState, weight: 1.2, run_count: 1, is_active: true },
+    { property_id: propertyId, text: `${neighborhood} ${pluralDisplayNoun}`, type: 'local', geo: cityState, weight: 1.3, run_count: 1, is_active: true },
+    { property_id: propertyId, text: isForSaleResidential ? `Moving to ${neighborhood} - new home recommendations` : `Moving to ${neighborhood} - apartment recommendations`, type: 'local', geo: cityState, weight: 1.2, run_count: 1, is_active: true },
 
     // 3 comparison prompts
-    ...buildComparisonPrompts(propertyId, propertyName, comparisonTargets, cityState, neighborhood),
+    ...buildComparisonPrompts(propertyId, propertyName, comparisonTargets, cityState, neighborhood, pluralDisplayNoun, propertyType),
 
     // 2 decision-stage prompts
     { property_id: propertyId, text: `How much does it cost to live at ${propertyName}?`, type: 'faq', geo: cityState, weight: 1.2, run_count: 1, is_active: true },
-    { property_id: propertyId, text: `How do I apply to ${propertyName}?`, type: 'faq', geo: cityState, weight: 1.2, run_count: 1, is_active: true },
+    { property_id: propertyId, text: isForSaleResidential ? `How do I buy at ${propertyName}?` : `How do I apply to ${propertyName}?`, type: 'faq', geo: cityState, weight: 1.2, run_count: 1, is_active: true },
 
     // 2 support / voice-style prompts
     { property_id: propertyId, text: `Tell me about ${propertyName}`, type: 'voice_search', geo: cityState, weight: 1.1, run_count: 1, is_active: true },
@@ -569,7 +578,7 @@ async function generateQueryPanel(
     },
     {
       property_id: propertyId,
-      text: `${propertyName} application process`,
+      text: isForSaleResidential ? `${propertyName} purchase process` : `${propertyName} application process`,
       type: 'faq',
       geo: cityState,
       weight: 1.1,
@@ -578,7 +587,7 @@ async function generateQueryPanel(
     },
     {
       property_id: propertyId,
-      text: `Best apartments for renters in ${cityState}`,
+      text: isForSaleResidential ? `Best ${propertyType} in ${cityState}` : `Best apartments for renters in ${cityState}`,
       type: 'category',
       geo: cityState,
       weight: 1.0,
@@ -587,7 +596,7 @@ async function generateQueryPanel(
     },
     {
       property_id: propertyId,
-      text: `Where should I rent in ${neighborhood}?`,
+      text: isForSaleResidential ? `Where should I buy a new home in ${neighborhood}?` : `Where should I rent in ${neighborhood}?`,
       type: 'voice_search',
       geo: cityState,
       weight: 1.1,
@@ -609,7 +618,9 @@ function buildComparisonPrompts(
   propertyName: string,
   competitors: string[],
   cityState: string,
-  neighborhood: string
+  neighborhood: string,
+  pluralDisplayNoun: string,
+  primarySearchTerm: string
 ): GeoQueryInsert[] {
   const prompts = competitors.slice(0, 3).map((competitor) => ({
     property_id: propertyId,
@@ -624,10 +635,10 @@ function buildComparisonPrompts(
   while (prompts.length < 3) {
     const fallbackText =
       prompts.length === 0
-        ? `${propertyName} vs apartments in ${neighborhood}`
+        ? `${propertyName} vs ${primarySearchTerm} in ${neighborhood}`
         : prompts.length === 1
-          ? `${propertyName} vs luxury apartments in ${cityState}`
-          : `${propertyName} vs nearby apartment communities`
+          ? `${propertyName} vs luxury ${primarySearchTerm} in ${cityState}`
+          : `${propertyName} vs nearby ${pluralDisplayNoun}`
     prompts.push({
       property_id: propertyId,
       text: fallbackText,
@@ -649,9 +660,9 @@ function buildComparisonPrompts(
 function generateAmenityCombinations(
   amenities: string[],
   neighborhood: string,
-  city: string,
   propertyId: string,
-  cityState: string
+  cityState: string,
+  primarySearchTerm: string
 ): GeoQueryInsert[] {
   const combos: Array<{ text: string; weight: number }> = []
   
@@ -699,7 +710,7 @@ function generateAmenityCombinations(
     for (let i = 0; i < Math.min(keyAmenities.length - 1, 3); i++) {
       for (let j = i + 1; j < Math.min(keyAmenities.length, 4); j++) {
         combos.push({
-          text: `Apartments with ${keyAmenities[i]} and ${keyAmenities[j]} in ${neighborhood}`,
+          text: `${capitalizeForPrompt(primarySearchTerm)} with ${keyAmenities[i]} and ${keyAmenities[j]} in ${neighborhood}`,
           weight: 1.4,
         })
         
@@ -713,7 +724,7 @@ function generateAmenityCombinations(
   if (keyAmenities.length >= 3 && combos.length < 4) {
     for (let i = 0; i < Math.min(keyAmenities.length - 2, 2); i++) {
       combos.push({
-        text: `${neighborhood} apartments with ${keyAmenities[i]}, ${keyAmenities[i + 1]}, and ${keyAmenities[i + 2]}`,
+        text: `${neighborhood} ${primarySearchTerm} with ${keyAmenities[i]}, ${keyAmenities[i + 1]}, and ${keyAmenities[i + 2]}`,
         weight: 1.5, // Higher weight - very specific
       })
     }
@@ -722,7 +733,7 @@ function generateAmenityCombinations(
   // If we have nearby landmarks or special features, add those
   if (keyAmenities.length > 0) {
     combos.push({
-      text: `Modern apartments near ${neighborhood} with ${keyAmenities[0]}`,
+      text: `Modern ${primarySearchTerm} near ${neighborhood} with ${keyAmenities[0]}`,
       weight: 1.3,
     })
   }
@@ -743,7 +754,8 @@ function generateSpecialFeatureQueries(
   specialFeatures: string[],
   neighborhood: string,
   propertyId: string,
-  cityState: string
+  cityState: string,
+  primarySearchTerm: string
 ): GeoQueryInsert[] {
   const normalizedFeatures = specialFeatures
     .filter((feature): feature is string => typeof feature === 'string' && feature.trim().length > 0)
@@ -751,7 +763,7 @@ function generateSpecialFeatureQueries(
 
   return normalizedFeatures.map((feature) => ({
     property_id: propertyId,
-    text: `Apartments in ${neighborhood} with ${feature}`,
+    text: `${capitalizeForPrompt(primarySearchTerm)} in ${neighborhood} with ${feature}`,
     type: 'category' as const,
     geo: cityState,
     weight: 1.4,
@@ -764,36 +776,36 @@ function generateSpecialFeatureQueries(
  * Generate query from USP
  * Converts brand USP into searchable query
  */
-function generateUSPQuery(usp: string, city: string, neighborhood: string): string | null {
+function generateUSPQuery(usp: string, neighborhood: string, primarySearchTerm: string): string | null {
   const lowerUSP = usp.toLowerCase()
   
   // Extract key features from USP
   if (lowerUSP.includes('sustainable') || lowerUSP.includes('green') || lowerUSP.includes('solar')) {
-    return `Sustainable green apartments in ${neighborhood} with solar power`
+    return `Sustainable green ${primarySearchTerm} in ${neighborhood} with solar power`
   }
   if (lowerUSP.includes('luxury') || lowerUSP.includes('premium') || lowerUSP.includes('high-end')) {
-    return `Premium luxury apartments in ${neighborhood}`
+    return `Premium luxury ${primarySearchTerm} in ${neighborhood}`
   }
   if (lowerUSP.includes('tech') || lowerUSP.includes('smart home') || lowerUSP.includes('automation')) {
-    return `Apartments with smart home technology in ${neighborhood}`
+    return `${capitalizeForPrompt(primarySearchTerm)} with smart home technology in ${neighborhood}`
   }
   if (lowerUSP.includes('walkable') || lowerUSP.includes('walk score')) {
-    return `Walkable apartments in ${neighborhood} near shops and dining`
+    return `Walkable ${primarySearchTerm} in ${neighborhood} near shops and dining`
   }
   if (lowerUSP.includes('view') || lowerUSP.includes('scenic')) {
-    return `Apartments with views in ${neighborhood}`
+    return `${capitalizeForPrompt(primarySearchTerm)} with views in ${neighborhood}`
   }
   if (lowerUSP.includes('resort') || lowerUSP.includes('amenity')) {
-    return `Resort-style apartments in ${neighborhood}`
+    return `Resort-style ${primarySearchTerm} in ${neighborhood}`
   }
   if (lowerUSP.includes('community') || lowerUSP.includes('social')) {
-    return `Apartments with strong community in ${neighborhood}`
+    return `${capitalizeForPrompt(primarySearchTerm)} with strong community in ${neighborhood}`
   }
   
   // Generic fallback - try to extract key terms
   const words = usp.split(' ').filter(w => w.length > 4)
   if (words.length > 0) {
-    return `${words[0]} apartments in ${neighborhood}`
+    return `${words[0]} ${primarySearchTerm} in ${neighborhood}`
   }
   
   return null

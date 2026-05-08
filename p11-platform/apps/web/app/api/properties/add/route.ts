@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { createAdminClient } from '@/utils/supabase/admin'
 import { normalizePublicWebsiteUrl } from '@/utils/services/public-url'
+import { assertValidPropertyType } from '@/utils/property-types'
 
 /**
  * Add another property to an existing organization
@@ -42,6 +43,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Property name is required' }, { status: 400 })
     }
 
+    let propertyType: string | null
+    try {
+      propertyType = assertValidPropertyType(body.propertyType || body.communityType || null)
+    } catch {
+      return NextResponse.json({ error: 'Invalid property type' }, { status: 400 })
+    }
+
     const adminClient = createAdminClient()
 
     // Get user's profile to find their org
@@ -75,7 +83,7 @@ export async function POST(request: NextRequest) {
           timezone: 'America/Los_Angeles',
         },
         // Profile data now directly on properties table
-        property_type: body.propertyType || body.communityType || null,
+        property_type: propertyType,
         website_url: normalizePublicWebsiteUrl(body.websiteUrl),
         unit_count: body.unitCount || null,
         year_built: body.yearBuilt || null,

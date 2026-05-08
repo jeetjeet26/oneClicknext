@@ -494,7 +494,7 @@ class ApifyApartmentsScraper:
             phone=contact.get("phone"),
             units_count=units_count,
             year_built=year_built,
-            property_type="apartment",
+            property_type="multifamily",
             amenities=amenities,
             photos=item.get("photos", [])[:10],  # Limit photos
             units=units,

@@ -684,7 +684,7 @@ Use conservative, professional defaults that work for most properties.`
   private createFallbackBrandContext(propertyInfo: unknown, scenario: string): BrandContext {
     const info = propertyInfo as any || {}
     const propertyName = info.name || 'Property'
-    const propertyType = info.property_type || 'apartment'
+    const propertyType = info.property_type || 'multifamily'
     
     // Infer basic personality from property type
     const isLuxury = propertyType.toLowerCase().includes('luxury') || 
@@ -692,6 +692,8 @@ Use conservative, professional defaults that work for most properties.`
     const isStudent = propertyType.toLowerCase().includes('student')
     const isSenior = propertyType.toLowerCase().includes('senior') ||
                      propertyType.toLowerCase().includes('55+')
+    const isForSaleResidential = ['townhome', 'condo', 'single_family', 'master_planned']
+      .some(type => propertyType.toLowerCase().includes(type))
     
     let personality = 'professional-welcoming'
     let voiceTone = 'Friendly and professional'
@@ -709,6 +711,10 @@ Use conservative, professional defaults that work for most properties.`
       personality = 'warm-trustworthy'
       voiceTone = 'Warm, reassuring, and clear'
       designStyle = 'Clean with excellent readability'
+    } else if (isForSaleResidential) {
+      personality = 'aspirational-trustworthy'
+      voiceTone = 'Confident, helpful, and buyer-focused'
+      designStyle = 'Polished residential with strong lifestyle imagery'
     }
     
     return {
@@ -734,10 +740,10 @@ Use conservative, professional defaults that work for most properties.`
       },
       
       targetAudience: {
-        demographics: 'Apartment seekers in the local market',
+        demographics: isForSaleResidential ? 'Home shoppers and buyers in the local market' : 'Apartment seekers in the local market',
         psychographics: 'Value quality living and convenience',
-        priorities: ['Location', 'Amenities', 'Value'],
-        painPoints: ['Finding the right home', 'Lease complexity']
+        priorities: isForSaleResidential ? ['Location', 'Home design', 'Long-term value'] : ['Location', 'Amenities', 'Value'],
+        painPoints: isForSaleResidential ? ['Finding the right home', 'Purchase complexity'] : ['Finding the right home', 'Lease complexity']
       },
       
       positioning: {

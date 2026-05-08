@@ -12,6 +12,7 @@ import {
   type RecommendationStatus,
   type Surface,
 } from './types'
+import { getPropertyTypeConfig, type PropertyTypeConfig } from '@/utils/property-types'
 
 export interface ContentRecommendation {
   id: string
@@ -124,6 +125,7 @@ type QuerySignal = {
 interface AnalysisContext {
   propertyId: string
   brandName: string
+  propertyType: PropertyTypeConfig
   websiteUrl: string | null
   brandDomains: string[]
   primaryGeo: string | null
@@ -214,7 +216,7 @@ async function fetchAnalysisContext(
   // Fetch property details
   const { data: property } = await supabase
     .from('properties')
-    .select('name, website_url, address')
+    .select('name, website_url, address, property_type')
     .eq('id', propertyId)
     .single()
 
@@ -371,6 +373,7 @@ async function fetchAnalysisContext(
   return {
     propertyId,
     brandName: property?.name || 'Your Property',
+    propertyType: getPropertyTypeConfig(property?.property_type),
     websiteUrl: property?.website_url || null,
     brandDomains: Array.from(brandDomains),
     primaryGeo: propertyConfig?.primary_geo || buildPrimaryGeo(property?.address),
@@ -475,6 +478,9 @@ function buildStrategicInitiatives(context: AnalysisContext): ContentRecommendat
   const localSignals = signals.filter(signal => signal.query.type === 'local')
   const comparisonSignals = signals.filter(signal => signal.query.type === 'comparison')
   const voiceSignals = signals.filter(signal => signal.query.type === 'voice_search' || signal.query.type === 'faq')
+  const primarySearchTerm = context.propertyType.searchNouns[0]
+  const pluralDisplayNoun = context.propertyType.pluralDisplayNoun
+  const structuredDataType = context.propertyType.isForSaleResidential ? 'RealEstateAgent/LocalBusiness' : 'ApartmentComplex/LocalBusiness'
 
   const weakDemandSignals = [...categorySignals, ...localSignals]
     .filter(signal => signal.presenceRate < 0.5 || !signal.aiOverviewVisible || signal.avgSov === 0)
@@ -489,22 +495,25 @@ function buildStrategicInitiatives(context: AnalysisContext): ContentRecommendat
       type: 'content_gap',
       priority: 'high',
       title: buildDemandCaptureTitle(context, topPrompts),
-      description: `${context.brandName} is weak on non-branded discovery: category presence is ${formatPct(avgPresence(categorySignals))} and local presence is ${formatPct(avgPresence(localSignals))}. This is where prospects ask for places, communities, and apartments before they know the brand.`,
+      description: `${context.brandName} is weak on non-branded discovery: category presence is ${formatPct(avgPresence(categorySignals))} and local presence is ${formatPct(avgPresence(localSignals))}. This is where prospects ask for places, communities, and ${primarySearchTerm} before they know the brand.`,
       relatedSignals: topPrompts,
       keywords: topPrompts.map(signal => signal.query.text),
       targetPageType: 'local_landing_page',
-      targetUrl: suggestOwnedPageUrl(context, 'apartments-otay-mesa'),
+      targetUrl: suggestOwnedPageUrl(
+        context,
+        context.propertyType.isForSaleResidential ? `${context.propertyType.value}-otay-mesa` : 'apartments-otay-mesa'
+      ),
       accessLevel: 'CMSOrEditor',
       owner: 'content',
       impactScore: 90,
       impactReason: 'Highest upside: non-branded local/category prompts are the main gap and can be influenced with owned answer-ready pages.',
       implementationSteps: [
-        `Create or strengthen an "${localGeo || 'local market'} apartment demand page" that answers the tracked prompts directly above the fold.`,
+        `Create or strengthen an "${localGeo || 'local market'} ${primarySearchTerm} demand page" that answers the tracked prompts directly above the fold.`,
         `Use H2 blocks for: ${topPrompts.slice(0, 4).map(signal => signal.query.text).join('; ')}.`,
         'Add short answer-first copy for each prompt before lifestyle copy, including neighborhood, product type, rent/ownership distinction, amenities, and proximity claims.',
         'Internally link this page from the homepage, FAQ, lifestyle, location, and floorplan pages with descriptive anchor text.',
-        'Add ApartmentComplex/LocalBusiness JSON-LD and FAQPage JSON-LD where answers are visible on the page.',
-        `Use proof points from trusted sources; prioritize ${topCitationDomains(context, topPrompts).slice(0, 3).join(', ') || 'local apartment directories and San Diego real estate sources'}.`,
+        `Add ${structuredDataType} JSON-LD and FAQPage JSON-LD where answers are visible on the page.`,
+        `Use proof points from trusted sources; prioritize ${topCitationDomains(context, topPrompts).slice(0, 3).join(', ') || `local ${pluralDisplayNoun} and real estate sources`}.`,
       ],
       acceptanceCriteria: [
         'A crawlable owned page exists for the local/category prompt cluster and is linked in sitemap.xml and navigation or footer links.',
@@ -574,13 +583,13 @@ function buildStrategicInitiatives(context: AnalysisContext): ContentRecommendat
         faqSchemaMissing
           ? 'Add FAQPage JSON-LD that exactly matches the visible FAQ content.'
           : 'Validate existing FAQPage JSON-LD against the visible FAQ content.',
-        'Add Organization or ApartmentComplex JSON-LD on the homepage with canonical URL, address, phone, and sameAs links.',
+        `Add Organization or ${structuredDataType} JSON-LD on the homepage with canonical URL, address, phone, and sameAs links.`,
       ],
       acceptanceCriteria: [
         faqPageMissing
           ? 'FAQ page returns HTTP 200 and is linked from sitemap.xml and navigation/footer.'
           : 'Existing FAQ page remains reachable and is linked from sitemap.xml and navigation/footer.',
-        'Structured data validator passes for FAQPage and ApartmentComplex/Organization schema.',
+        `Structured data validator passes for FAQPage and ${structuredDataType}/Organization schema.`,
         'URL-only crawl detects FAQ schema or answer-block signals on relevant pages.',
       ],
     }))
@@ -711,7 +720,7 @@ function makeStrategicRecommendation(args: {
 
 function buildDemandCaptureTitle(context: AnalysisContext, signals: QuerySignal[]): string {
   return signals.some(signal => /otay/i.test(signal.query.text))
-    ? 'Build an Otay Mesa apartment demand-capture page'
+    ? `Build an Otay Mesa ${context.propertyType.searchNouns[0]} demand-capture page`
     : `Build a ${context.primaryGeo || 'local'} demand-capture landing page`
 }
 
