@@ -612,6 +612,86 @@ describe('LumaLeasing chat route', () => {
     expect(startWorkflowMock).not.toHaveBeenCalled()
   })
 
+  it('adds property-scoped keyword fallback context for feature questions', async () => {
+    validateBodyMock.mockReturnValue({
+      success: true,
+      data: {
+        messages: [{ role: 'user', content: 'features' }],
+        sessionId: null,
+        leadInfo: null,
+      },
+    })
+    openAiEmbeddingsCreateMock.mockResolvedValue({
+      data: [{ embedding: [0.1, 0.2, 0.3] }],
+    })
+    openAiChatCreateMock.mockResolvedValue({
+      choices: [{ message: { content: 'Acacia includes solar and rooftop decks.' } }],
+    })
+
+    const documentsLimitMock = vi.fn().mockResolvedValue({
+      data: [
+        {
+          id: 'doc-feature',
+          content: 'Exceptional Standard Features include all-electric homes with solar panel systems, rooftop decks, EV-prepped garages, Thermador appliances, and curated finish packages.',
+          metadata: { title: 'Acacia Feature List' },
+        },
+      ],
+      error: null,
+    })
+    const documentsOrMock = vi.fn().mockReturnValue({ limit: documentsLimitMock })
+    const documentsEqMock = vi.fn().mockReturnValue({ or: documentsOrMock })
+    const documentsSelectMock = vi.fn().mockReturnValue({ eq: documentsEqMock })
+
+    createServiceClientMock.mockReturnValue({
+      from: vi.fn((table: string) => {
+        if (table === 'lumaleasing_config') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                eq: vi.fn(() => ({
+                  single: vi.fn().mockResolvedValue({
+                    data: {
+                      property_id: 'property-1',
+                      widget_name: 'Luma',
+                      collect_email: true,
+                      lead_capture_prompt: 'share your email',
+                      properties: { name: 'Acacia', property_type: 'master_planned' },
+                    },
+                    error: null,
+                  }),
+                })),
+              })),
+            })),
+          }
+        }
+        if (table === 'documents') return { select: documentsSelectMock }
+        throw new Error(`Unexpected table ${table}`)
+      }),
+      rpc: vi.fn().mockResolvedValue({ data: [], error: null }),
+    })
+
+    const { POST } = await import('./route')
+    const request = new Request('http://localhost/api/lumaleasing/chat', {
+      method: 'POST',
+      headers: {
+        origin: 'http://localhost:3000',
+        'content-type': 'application/json',
+        'x-api-key': 'test-key',
+      },
+      body: JSON.stringify({
+        messages: [{ role: 'user', content: 'features' }],
+      }),
+    }) as NextRequest
+
+    const response = await POST(request)
+    expect(response.status).toBe(200)
+    const firstCompletionArgs = openAiChatCreateMock.mock.calls[0][0]
+    const systemPrompt = firstCompletionArgs.messages[0].content
+    expect(systemPrompt).toContain('Acacia Feature List')
+    expect(systemPrompt).toContain('all-electric homes with solar panel systems')
+    expect(documentsOrMock).toHaveBeenCalled()
+  })
+
   it('reuses extracted phone-only leads and avoids duplicating summary notes', async () => {
     validateBodyMock.mockReturnValue({
       success: true,

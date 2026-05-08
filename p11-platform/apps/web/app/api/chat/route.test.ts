@@ -224,4 +224,76 @@ describe('chat route auth', () => {
     expect(embeddingCreateMock).not.toHaveBeenCalled()
     expect(completionCreateMock).not.toHaveBeenCalled()
   })
+
+  it('adds property-scoped keyword fallback context for feature questions', async () => {
+    authGetUserMock.mockResolvedValue({
+      data: { user: { id: 'user-1', email: 'u@example.com' } },
+      error: null,
+    })
+    validatePropertyAccessMock.mockResolvedValue({ authorized: true })
+
+    const propertySingleMock = vi.fn().mockResolvedValue({
+      data: { id: 'property-1', name: 'Acacia', property_type: 'master_planned' },
+      error: null,
+    })
+    const propertyEqMock = vi.fn().mockReturnValue({ single: propertySingleMock })
+    const propertySelectMock = vi.fn().mockReturnValue({ eq: propertyEqMock })
+    const conversationStateSingleMock = vi.fn().mockResolvedValue({
+      data: { is_human_mode: false, property_id: 'property-1' },
+      error: null,
+    })
+    const conversationStateEqMock = vi.fn().mockReturnValue({ single: conversationStateSingleMock })
+    const conversationStateSelectMock = vi.fn().mockReturnValue({ eq: conversationStateEqMock })
+    const messagesInsertMock = vi.fn().mockResolvedValue({ data: null, error: null })
+    const documentsLimitMock = vi.fn().mockResolvedValue({
+      data: [
+        {
+          id: 'doc-feature',
+          content: 'Exceptional Standard Features include all-electric homes with solar panel systems, rooftop decks, EV-prepped garages, Thermador appliances, and curated finish packages.',
+          metadata: { title: 'Acacia Feature List' },
+        },
+      ],
+      error: null,
+    })
+    const documentsOrMock = vi.fn().mockReturnValue({ limit: documentsLimitMock })
+    const documentsEqMock = vi.fn().mockReturnValue({ or: documentsOrMock })
+    const documentsSelectMock = vi.fn().mockReturnValue({ eq: documentsEqMock })
+
+    createServiceClientMock.mockReturnValue({
+      from: vi.fn((table: string) => {
+        if (table === 'properties') return { select: propertySelectMock }
+        if (table === 'conversations') return { select: conversationStateSelectMock }
+        if (table === 'messages') return { insert: messagesInsertMock }
+        if (table === 'documents') return { select: documentsSelectMock }
+        throw new Error(`Unexpected table ${table}`)
+      }),
+      rpc: vi.fn().mockResolvedValue({ data: [], error: null }),
+    })
+
+    embeddingCreateMock.mockResolvedValue({
+      data: [{ embedding: [0.1, 0.2, 0.3] }],
+    })
+    completionCreateMock.mockResolvedValue({
+      choices: [{ message: { content: 'Acacia homes include rooftop decks and solar.' } }],
+    })
+
+    const { POST } = await import('./route')
+    const response = await POST(
+      new Request('http://localhost/api/chat', {
+        method: 'POST',
+        body: JSON.stringify({
+          propertyId: 'property-1',
+          conversationId: 'conversation-1',
+          messages: [{ role: 'user', content: 'features' }],
+        }),
+      }) as NextRequest
+    )
+
+    expect(response.status).toBe(200)
+    const completionArgs = completionCreateMock.mock.calls[0][0]
+    const systemPrompt = completionArgs.messages[0].content
+    expect(systemPrompt).toContain('Acacia Feature List')
+    expect(systemPrompt).toContain('all-electric homes with solar panel systems')
+    expect(documentsOrMock).toHaveBeenCalled()
+  })
 })

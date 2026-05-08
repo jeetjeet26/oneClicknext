@@ -4,6 +4,7 @@ import { createClient } from '@/utils/supabase/server';
 import OpenAI from 'openai';
 import { validatePropertyAccess } from '@/utils/services/auth-guard';
 import { getPropertyTypeConfig } from '@/utils/property-types';
+import { buildRagContext, fetchKeywordFallbackDocuments, type RagDocument } from '@/utils/chat-rag';
 
 export async function POST(req: NextRequest) {
   try {
@@ -152,7 +153,15 @@ export async function POST(req: NextRequest) {
     }
 
     // 6. Construct Context for LLM
-    const contextText = documents?.map((doc: { content: string }) => doc.content).join('\n---\n') || "No specific documents found.";
+    const vectorDocuments = (Array.isArray(documents) ? documents : []) as RagDocument[];
+    const keywordDocuments = await fetchKeywordFallbackDocuments(
+      supabase,
+      propertyId,
+      lastMessage,
+      vectorDocuments,
+      Math.max(0, 5 - vectorDocuments.length)
+    );
+    const contextText = buildRagContext([...vectorDocuments, ...keywordDocuments]) || "No specific documents found.";
     
     const systemPrompt = `You are Luma, a helpful AI assistant for ${propertyName}.
 

@@ -10,6 +10,7 @@ import { createRequestContext } from '@/utils/services/request-context';
 import { bookLumaLeasingTour } from '@/utils/services/lumaleasing-tour-booking';
 import { trackEngagementEvent } from '@/utils/services/engagement-tracker';
 import { getPropertyTypeConfig } from '@/utils/property-types';
+import { buildRagContext, fetchKeywordFallbackDocuments, type RagDocument } from '@/utils/chat-rag';
 import OpenAI from 'openai';
 
 // Type for extracted conversation data
@@ -852,7 +853,15 @@ export async function POST(req: NextRequest) {
       filter_property: propertyId,
     });
 
-    const contextText = documents?.map((doc: { content: string }) => doc.content).join('\n---\n') || '';
+    const vectorDocuments = (Array.isArray(documents) ? documents : []) as RagDocument[];
+    const keywordDocuments = await fetchKeywordFallbackDocuments(
+      supabase,
+      propertyId,
+      lastMessage,
+      vectorDocuments,
+      Math.max(0, 5 - vectorDocuments.length)
+    );
+    const contextText = buildRagContext([...vectorDocuments, ...keywordDocuments]);
 
     // 8. Detect intent for tour booking
     const tourKeywords = ['tour', 'visit', 'see', 'showing', 'appointment', 'schedule', 'book', 'come by', 'stop by', 'check out'];
