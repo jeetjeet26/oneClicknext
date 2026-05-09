@@ -27,6 +27,12 @@ const KEYWORD_TRIGGER_TERMS = new Set([
   'prices',
   'plan',
   'plans',
+  'br',
+  'brs',
+  'bed',
+  'beds',
+  'bedroom',
+  'bedrooms',
 ])
 
 const STOPWORDS = new Set([
@@ -36,6 +42,7 @@ const STOPWORDS = new Set([
   'thanks',
   'please',
   'tell',
+  'have',
   'what',
   'with',
   'your',
@@ -47,6 +54,14 @@ function normalizeKeywordTerms(query: string): string[] {
     .match(/[a-z0-9]+/g) || []
 
   const terms = new Set<string>()
+  const bedroomMatch = query.toLowerCase().match(/\b([0-9]+)\s*(br|brs|bed|beds|bedroom|bedrooms)\b/)
+  if (bedroomMatch) {
+    const count = bedroomMatch[1]
+    terms.add(`${count} bedroom`)
+    terms.add(`${count} bedrooms`)
+    terms.add(`${count} br`)
+  }
+
   for (const term of rawTerms) {
     if (term.length < 3 || STOPWORDS.has(term)) continue
     terms.add(term)
@@ -55,7 +70,9 @@ function normalizeKeywordTerms(query: string): string[] {
     }
   }
 
-  return Array.from(terms).filter(term => KEYWORD_TRIGGER_TERMS.has(term)).slice(0, 6)
+  return Array.from(terms)
+    .filter(term => term.includes(' ') || KEYWORD_TRIGGER_TERMS.has(term))
+    .slice(0, 8)
 }
 
 function buildIlikeFilters(terms: string[]): string {
