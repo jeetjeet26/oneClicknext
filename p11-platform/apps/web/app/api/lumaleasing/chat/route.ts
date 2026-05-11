@@ -11,6 +11,7 @@ import { bookLumaLeasingTour } from '@/utils/services/lumaleasing-tour-booking';
 import { trackEngagementEvent } from '@/utils/services/engagement-tracker';
 import { getPropertyTypeConfig } from '@/utils/property-types';
 import { buildRagContext, fetchKeywordFallbackDocuments, type RagDocument } from '@/utils/chat-rag';
+import { buildPropertyOnlyResponse, isPropertyChatInScope } from '@/utils/chat-scope';
 import OpenAI from 'openai';
 
 // Type for extracted conversation data
@@ -838,6 +839,38 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    if (!isPropertyChatInScope(lastMessage)) {
+      const reply = buildPropertyOnlyResponse(propertyName);
+      if (conversationId) {
+        await supabase.from('messages').insert({
+          conversation_id: conversationId,
+          role: 'assistant',
+          content: reply,
+        });
+      }
+
+      const messageCount = activeSessionId
+        ? await incrementSessionMessageCount(supabase, activeSessionId)
+        : widgetSession?.message_count ?? null;
+      const shouldPromptLeadCapture = !leadId && config.collect_email && (messageCount ?? widgetSession?.message_count ?? 0) >= 3;
+
+      ctx.logSuccess(200, {
+        conversationId,
+        sessionId: activeSessionId,
+        hasLeadId: !!leadId,
+        outOfScope: true,
+      })
+
+      return NextResponse.json({
+        content: reply,
+        sessionId: activeSessionId,
+        conversationId,
+        shouldPromptLeadCapture,
+        leadCapturePrompt: shouldPromptLeadCapture ? config.lead_capture_prompt : null,
+        wantsTour: false,
+      }, { headers: responseHeaders });
+    }
+
     // 6. Generate embedding for RAG search
     const embeddingResponse = await openai.embeddings.create({
       model: 'text-embedding-3-small',
@@ -908,6 +941,7 @@ RESPONSE GUIDELINES:
 5. Keep responses under 150 words unless detailed info is requested
 6. Be proactive: suggest tours, mention specials, highlight unique features
 7. Match their energy: formal inquiry → professional tone, casual chat → friendly tone
+8. Do not answer unrelated general questions, including math, coding, recipes, trivia, news, or personal advice. Redirect them to property-related questions.
 
 ${wantsTour ? `
 TOUR BOOKING:

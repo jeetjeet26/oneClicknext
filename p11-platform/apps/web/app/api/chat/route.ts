@@ -5,6 +5,7 @@ import OpenAI from 'openai';
 import { validatePropertyAccess } from '@/utils/services/auth-guard';
 import { getPropertyTypeConfig } from '@/utils/property-types';
 import { buildRagContext, fetchKeywordFallbackDocuments, type RagDocument } from '@/utils/chat-rag';
+import { buildPropertyOnlyResponse, isPropertyChatInScope } from '@/utils/chat-scope';
 
 export async function POST(req: NextRequest) {
   try {
@@ -128,6 +129,23 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    if (!isPropertyChatInScope(lastMessage)) {
+      const reply = buildPropertyOnlyResponse(propertyName);
+      if (activeConversationId) {
+        await supabase.from('messages').insert({
+          conversation_id: activeConversationId,
+          role: 'assistant',
+          content: reply,
+        });
+      }
+
+      return NextResponse.json({
+        role: 'assistant',
+        content: reply,
+        conversationId: activeConversationId,
+      });
+    }
+
     // 4. Generate Embedding for User Query
     const embeddingResponse = await openai.embeddings.create({
       model: 'text-embedding-3-small',
@@ -194,6 +212,7 @@ PROPERTY CONTEXT:
     - If the context does not include current pricing or availability, say you do not have that specific information handy and offer to have the team follow up.
     - Never reuse pricing, floor plan names, unit types, amenities, specials, or availability from another property or from examples.
     - If the answer is not in the context, say "I don't have that information handy, but I'd be happy to have someone from our team follow up with you!"
+    - Do not answer unrelated general questions, including math, coding, recipes, trivia, news, or personal advice. Redirect them to property-related questions.
     - Be warm, professional, and concise (under 150 words unless detailed info requested)
     - Do not make up facts or speculate
     - If asked about tours, be helpful and guide them toward booking

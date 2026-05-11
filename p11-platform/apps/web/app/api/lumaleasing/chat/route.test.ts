@@ -692,6 +692,65 @@ describe('LumaLeasing chat route', () => {
     expect(documentsOrMock).toHaveBeenCalled()
   })
 
+  it('returns a property-only reply for off-topic questions without calling the LLM', async () => {
+    validateBodyMock.mockReturnValue({
+      success: true,
+      data: {
+        messages: [{ role: 'user', content: 'teach me math' }],
+        sessionId: null,
+        leadInfo: null,
+      },
+    })
+
+    createServiceClientMock.mockReturnValue({
+      from: vi.fn((table: string) => {
+        if (table === 'lumaleasing_config') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                eq: vi.fn(() => ({
+                  single: vi.fn().mockResolvedValue({
+                    data: {
+                      property_id: 'property-1',
+                      widget_name: 'Luma',
+                      collect_email: true,
+                      lead_capture_prompt: 'share your email',
+                      properties: { name: 'Acacia', property_type: 'master_planned' },
+                    },
+                    error: null,
+                  }),
+                })),
+              })),
+            })),
+          }
+        }
+        throw new Error(`Unexpected table ${table}`)
+      }),
+    })
+
+    const { POST } = await import('./route')
+    const request = new Request('http://localhost/api/lumaleasing/chat', {
+      method: 'POST',
+      headers: {
+        origin: 'http://localhost:3000',
+        'content-type': 'application/json',
+        'x-api-key': 'test-key',
+      },
+      body: JSON.stringify({
+        messages: [{ role: 'user', content: 'teach me math' }],
+      }),
+    }) as NextRequest
+
+    const response = await POST(request)
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      content: expect.stringContaining('I can only help with questions about Acacia'),
+      wantsTour: false,
+    })
+    expect(openAiEmbeddingsCreateMock).not.toHaveBeenCalled()
+    expect(openAiChatCreateMock).not.toHaveBeenCalled()
+  })
+
   it('reuses extracted phone-only leads and avoids duplicating summary notes', async () => {
     validateBodyMock.mockReturnValue({
       success: true,
