@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { createAdminClient } from '@/utils/supabase/admin'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
+import { editPropertyChatbotContext } from '@/utils/services/chatbot-context-editor'
 
 export async function GET(request: NextRequest) {
   try {
@@ -191,6 +192,20 @@ export async function POST(request: NextRequest) {
     if (error) {
       console.error('Error creating knowledge source:', error)
       return NextResponse.json({ error: 'Failed to create knowledge source' }, { status: 500 })
+    }
+
+    try {
+      const contextResult = await editPropertyChatbotContext(adminClient, propertyId, {
+        changeSummary: `Added chatbot source: ${sourceName}`,
+        changedSourceIds: [data.id],
+        requiresReview: false,
+        mode: 'source_change',
+      })
+      if (!contextResult.success) {
+        console.error('Chatbot context edit failed after knowledge source create:', contextResult.error)
+      }
+    } catch (contextError) {
+      console.error('Chatbot context edit failed after knowledge source create:', contextError)
     }
 
     return NextResponse.json({ success: true, source: data })

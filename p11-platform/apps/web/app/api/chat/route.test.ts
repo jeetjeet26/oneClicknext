@@ -7,6 +7,7 @@ const createServiceClientMock = vi.fn()
 const validatePropertyAccessMock = vi.fn()
 const embeddingCreateMock = vi.fn()
 const completionCreateMock = vi.fn()
+const loadPropertyChatbotContextMock = vi.fn()
 
 vi.mock('@/utils/supabase/server', () => ({
   createClient: createClientMock,
@@ -18,6 +19,10 @@ vi.mock('@/utils/supabase/admin', () => ({
 
 vi.mock('@/utils/services/auth-guard', () => ({
   validatePropertyAccess: validatePropertyAccessMock,
+}))
+
+vi.mock('@/utils/services/chatbot-context-editor', () => ({
+  loadPropertyChatbotContext: loadPropertyChatbotContextMock,
 }))
 
 vi.mock('openai', () => ({
@@ -39,6 +44,13 @@ describe('chat route auth', () => {
     vi.clearAllMocks()
     embeddingCreateMock.mockReset()
     completionCreateMock.mockReset()
+    loadPropertyChatbotContextMock.mockReset()
+    loadPropertyChatbotContextMock.mockResolvedValue({
+      contextMarkdown: 'CLIENT PROPERTY CONTEXT\nAcacia includes rooftop decks, solar, and verified floorplan facts.',
+      contextJson: {},
+      status: 'current',
+      requiresReview: false,
+    })
     createClientMock.mockResolvedValue({
       auth: { getUser: authGetUserMock },
     })
@@ -277,7 +289,7 @@ describe('chat route auth', () => {
     expect(completionCreateMock).not.toHaveBeenCalled()
   })
 
-  it('adds property-scoped keyword fallback context for feature questions', async () => {
+  it('adds generated client context for feature questions without vector retrieval', async () => {
     authGetUserMock.mockResolvedValue({
       data: { user: { id: 'user-1', email: 'u@example.com' } },
       error: null,
@@ -297,34 +309,15 @@ describe('chat route auth', () => {
     const conversationStateEqMock = vi.fn().mockReturnValue({ single: conversationStateSingleMock })
     const conversationStateSelectMock = vi.fn().mockReturnValue({ eq: conversationStateEqMock })
     const messagesInsertMock = vi.fn().mockResolvedValue({ data: null, error: null })
-    const documentsLimitMock = vi.fn().mockResolvedValue({
-      data: [
-        {
-          id: 'doc-feature',
-          content: 'Exceptional Standard Features include all-electric homes with solar panel systems, rooftop decks, EV-prepped garages, Thermador appliances, and curated finish packages.',
-          metadata: { title: 'Acacia Feature List' },
-        },
-      ],
-      error: null,
-    })
-    const documentsOrMock = vi.fn().mockReturnValue({ limit: documentsLimitMock })
-    const documentsEqMock = vi.fn().mockReturnValue({ or: documentsOrMock })
-    const documentsSelectMock = vi.fn().mockReturnValue({ eq: documentsEqMock })
-
     createServiceClientMock.mockReturnValue({
       from: vi.fn((table: string) => {
         if (table === 'properties') return { select: propertySelectMock }
         if (table === 'conversations') return { select: conversationStateSelectMock }
         if (table === 'messages') return { insert: messagesInsertMock }
-        if (table === 'documents') return { select: documentsSelectMock }
         throw new Error(`Unexpected table ${table}`)
       }),
-      rpc: vi.fn().mockResolvedValue({ data: [], error: null }),
     })
 
-    embeddingCreateMock.mockResolvedValue({
-      data: [{ embedding: [0.1, 0.2, 0.3] }],
-    })
     completionCreateMock.mockResolvedValue({
       choices: [{ message: { content: 'Acacia homes include rooftop decks and solar.' } }],
     })
@@ -344,12 +337,14 @@ describe('chat route auth', () => {
     expect(response.status).toBe(200)
     const completionArgs = completionCreateMock.mock.calls[0][0]
     const systemPrompt = completionArgs.messages[0].content
-    expect(systemPrompt).toContain('Acacia Feature List')
-    expect(systemPrompt).toContain('all-electric homes with solar panel systems')
-    expect(documentsOrMock).toHaveBeenCalled()
+    expect(systemPrompt).toContain('CLIENT CHATBOT CONTEXT')
+    expect(systemPrompt).toContain('Acacia includes rooftop decks, solar, and verified floorplan facts.')
+    expect(systemPrompt).toContain('CONCIERGE RESPONSE STYLE')
+    expect(systemPrompt).toContain('do NOT list every floor plan/unit')
+    expect(embeddingCreateMock).not.toHaveBeenCalled()
   })
 
-  it('expands bedroom abbreviations for property-scoped pricing retrieval', async () => {
+  it('keeps bedroom abbreviations in scope and uses generated pricing context', async () => {
     authGetUserMock.mockResolvedValue({
       data: { user: { id: 'user-1', email: 'u@example.com' } },
       error: null,
@@ -369,34 +364,22 @@ describe('chat route auth', () => {
     const conversationStateEqMock = vi.fn().mockReturnValue({ single: conversationStateSingleMock })
     const conversationStateSelectMock = vi.fn().mockReturnValue({ eq: conversationStateEqMock })
     const messagesInsertMock = vi.fn().mockResolvedValue({ data: null, error: null })
-    const documentsLimitMock = vi.fn().mockResolvedValue({
-      data: [
-        {
-          id: 'doc-pricing',
-          content: 'FLOOR PLANS & PRICING\nC4 - 2 Bedroom\n2 bathrooms, 1,038 sq ft, Rent: $4,208 per month, 2 available now',
-          metadata: { title: 'Floor Plans & Pricing' },
-        },
-      ],
-      error: null,
+    loadPropertyChatbotContextMock.mockResolvedValue({
+      contextMarkdown: 'FLOORPLANS / PRICING / AVAILABILITY\n- C4: 2 bed, 2 bath, rent $4,208, available 2.',
+      contextJson: {},
+      status: 'current',
+      requiresReview: false,
     })
-    const documentsOrMock = vi.fn().mockReturnValue({ limit: documentsLimitMock })
-    const documentsEqMock = vi.fn().mockReturnValue({ or: documentsOrMock })
-    const documentsSelectMock = vi.fn().mockReturnValue({ eq: documentsEqMock })
 
     createServiceClientMock.mockReturnValue({
       from: vi.fn((table: string) => {
         if (table === 'properties') return { select: propertySelectMock }
         if (table === 'conversations') return { select: conversationStateSelectMock }
         if (table === 'messages') return { insert: messagesInsertMock }
-        if (table === 'documents') return { select: documentsSelectMock }
         throw new Error(`Unexpected table ${table}`)
       }),
-      rpc: vi.fn().mockResolvedValue({ data: [], error: null }),
     })
 
-    embeddingCreateMock.mockResolvedValue({
-      data: [{ embedding: [0.1, 0.2, 0.3] }],
-    })
     completionCreateMock.mockResolvedValue({
       choices: [{ message: { content: 'Yes, AMLI Aero has 2 bedrooms.' } }],
     })
@@ -416,8 +399,8 @@ describe('chat route auth', () => {
     expect(response.status).toBe(200)
     const completionArgs = completionCreateMock.mock.calls[0][0]
     const systemPrompt = completionArgs.messages[0].content
-    expect(systemPrompt).toContain('Floor Plans & Pricing')
-    expect(systemPrompt).toContain('C4 - 2 Bedroom')
-    expect(documentsOrMock).toHaveBeenCalledWith(expect.stringContaining('2 bedroom'))
+    expect(systemPrompt).toContain('FLOORPLANS / PRICING / AVAILABILITY')
+    expect(systemPrompt).toContain('C4: 2 bed, 2 bath')
+    expect(embeddingCreateMock).not.toHaveBeenCalled()
   })
 })

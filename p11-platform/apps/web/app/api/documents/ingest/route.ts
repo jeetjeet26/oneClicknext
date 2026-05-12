@@ -3,6 +3,7 @@ import { createServiceClient } from '@/utils/supabase/admin'
 import { createClient } from '@/utils/supabase/server'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import OpenAI from 'openai'
+import { editPropertyChatbotContext } from '@/utils/services/chatbot-context-editor'
 
 const MAX_CHUNK = 800
 
@@ -56,6 +57,18 @@ export async function POST(req: NextRequest) {
     if (error) {
       console.error(error)
       return NextResponse.json({ error: 'Failed to insert documents' }, { status: 500 })
+    }
+
+    try {
+      const contextResult = await editPropertyChatbotContext(supabase, propertyId, {
+        changeSummary: 'Raw document ingest updated chatbot context source material.',
+        mode: 'source_change',
+      })
+      if (!contextResult.success) {
+        console.error('Chatbot context edit failed after ingest:', contextResult.error)
+      }
+    } catch (contextError) {
+      console.error('Chatbot context edit failed after ingest:', contextError)
     }
 
     return NextResponse.json({ inserted: payload.length })

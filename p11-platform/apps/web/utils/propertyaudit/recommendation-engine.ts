@@ -481,6 +481,7 @@ function buildStrategicInitiatives(context: AnalysisContext): ContentRecommendat
   const primarySearchTerm = context.propertyType.searchNouns[0]
   const pluralDisplayNoun = context.propertyType.pluralDisplayNoun
   const structuredDataType = context.propertyType.isForSaleResidential ? 'RealEstateAgent/LocalBusiness' : 'ApartmentComplex/LocalBusiness'
+  const marketLabel = context.primaryGeo || 'the local market'
 
   const weakDemandSignals = [...categorySignals, ...localSignals]
     .filter(signal => signal.presenceRate < 0.5 || !signal.aiOverviewVisible || signal.avgSov === 0)
@@ -499,10 +500,7 @@ function buildStrategicInitiatives(context: AnalysisContext): ContentRecommendat
       relatedSignals: topPrompts,
       keywords: topPrompts.map(signal => signal.query.text),
       targetPageType: 'local_landing_page',
-      targetUrl: suggestOwnedPageUrl(
-        context,
-        context.propertyType.isForSaleResidential ? `${context.propertyType.value}-otay-mesa` : 'apartments-otay-mesa'
-      ),
+      targetUrl: suggestOwnedPageUrl(context, buildDemandPageSlug(context, localGeo)),
       accessLevel: 'CMSOrEditor',
       owner: 'content',
       impactScore: 90,
@@ -519,7 +517,7 @@ function buildStrategicInitiatives(context: AnalysisContext): ContentRecommendat
         'A crawlable owned page exists for the local/category prompt cluster and is linked in sitemap.xml and navigation or footer links.',
         'The page includes answer blocks for each related tracked prompt and the URL-only crawl detects those blocks.',
         'Relevant JSON-LD validates and includes property name, URL, address, phone if available, and sameAs/citation links.',
-        'After rerun, category/local prompt presence improves and at least one selected LLM cites or names an owned Epoca URL.',
+        `After rerun, category/local prompt presence improves and at least one selected LLM cites or names an owned ${context.brandName} URL.`,
       ],
     }))
   }
@@ -531,7 +529,7 @@ function buildStrategicInitiatives(context: AnalysisContext): ContentRecommendat
       type: 'rank_improvement',
       priority: 'high',
       title: 'Publish comparison content for the selected competitive set',
-      description: `${context.brandName} is visible on comparison prompts, but rankings vary by surface. Comparison pages can control the framing and reduce ambiguity from unrelated Eastlake/Millennia web results.`,
+      description: `${context.brandName} is visible on comparison prompts, but rankings vary by surface. Comparison pages can control the framing and reduce ambiguity from unrelated competitor or market web results.`,
       relatedSignals: comparisonGaps,
       keywords: comparisonGaps.map(signal => signal.query.text),
       targetPageType: 'comparison_page',
@@ -541,16 +539,16 @@ function buildStrategicInitiatives(context: AnalysisContext): ContentRecommendat
       impactScore: 86,
       impactReason: 'Comparison prompts are high-intent and already near visibility; better owned framing can push the property higher.',
       implementationSteps: [
-        'Create a comparison hub or two comparison sections for Epoca vs Eastlake and Epoca vs Millennia.',
-        'Compare location, masterplan context, apartment/home options, amenities, commute patterns, and lifestyle fit without attacking competitors.',
+        `Create a comparison hub or sections for ${context.brandName} against the tracked competitive set.`,
+        `Compare location, ${marketLabel} context, product options, amenities, commute patterns, and lifestyle fit without attacking competitors.`,
         'Add a table-style answer block that directly answers each comparison prompt in 2-4 sentences.',
         'Add FAQPage schema for comparison questions and link the page from location/neighborhood pages.',
         'Use exact phrasing from the tracked prompts in headings and page intro copy.',
       ],
       acceptanceCriteria: [
         'Comparison page or sections are crawlable and linked from the site.',
-        'Page copy includes the exact comparison prompt language and clear Epoca differentiators.',
-        'Next PropertyAudit run shows fewer irrelevant comparison entities and stronger Epoca rank across selected surfaces.',
+        `Page copy includes the exact comparison prompt language and clear ${context.brandName} differentiators.`,
+        `Next PropertyAudit run shows fewer irrelevant comparison entities and stronger ${context.brandName} rank across selected surfaces.`,
       ],
     }))
   }
@@ -577,8 +575,8 @@ function buildStrategicInitiatives(context: AnalysisContext): ContentRecommendat
       impactReason: 'FAQ schema and visible answer blocks improve extraction confidence for voice, branded, and support-style AI answers.',
       implementationSteps: [
         faqPageMissing
-          ? 'Add a public FAQ page with visible answers for application, amenities, availability, parking, pets, tours, and masterplan questions.'
-          : 'Strengthen the existing FAQ page with visible answers for application, amenities, availability, parking, pets, tours, and masterplan questions.',
+          ? `Add a public FAQ page with visible answers for application, amenities, availability, parking, pets, tours, and ${marketLabel} questions.`
+          : `Strengthen the existing FAQ page with visible answers for application, amenities, availability, parking, pets, tours, and ${marketLabel} questions.`,
         'Wrap each answer in concise 40-80 word blocks that can be quoted by answer engines.',
         faqSchemaMissing
           ? 'Add FAQPage JSON-LD that exactly matches the visible FAQ content.'
@@ -614,8 +612,8 @@ function buildStrategicInitiatives(context: AnalysisContext): ContentRecommendat
       implementationSteps: [
         `Update or claim priority listings: ${citationTargets.slice(0, 5).map(target => target.domain).join(', ')}.`,
         'Make NAP, website URL, property description, floorplan/availability messaging, and images consistent across listings.',
-        'Add Epoca-specific Otay Mesa language to directory/social/video descriptions where editable.',
-        'Create one shareable media asset or short video that supports the Otay Mesa/masterplan positioning and link it from owned pages.',
+        `Add ${context.brandName}-specific ${marketLabel} language to directory/social/video descriptions where editable.`,
+        `Create one shareable media asset or short video that supports the ${marketLabel} positioning and link it from owned pages.`,
       ],
       acceptanceCriteria: [
         'Priority third-party listings contain consistent name, address, URL, property description, and current imagery.',
@@ -719,9 +717,23 @@ function makeStrategicRecommendation(args: {
 }
 
 function buildDemandCaptureTitle(context: AnalysisContext, signals: QuerySignal[]): string {
-  return signals.some(signal => /otay/i.test(signal.query.text))
-    ? `Build an Otay Mesa ${context.propertyType.searchNouns[0]} demand-capture page`
-    : `Build a ${context.primaryGeo || 'local'} demand-capture landing page`
+  const geo = context.primaryGeo || inferGeoFromSignals(signals)
+  return `Build a ${geo || 'local'} ${context.propertyType.searchNouns[0]} demand-capture page`
+}
+
+function buildDemandPageSlug(context: AnalysisContext, geo: string | null): string {
+  const base = slugify(context.propertyType.searchNouns[0] || context.propertyType.displayNoun)
+  const market = slugify(geo || context.primaryGeo || 'local')
+  return market ? `${base}-${market}` : base
+}
+
+function slugify(value: string): string {
+  return value
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
 }
 
 function suggestOwnedPageUrl(context: AnalysisContext, slug: string): string | null {

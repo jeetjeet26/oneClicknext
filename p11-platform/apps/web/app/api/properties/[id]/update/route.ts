@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { logAuditEvent } from '@/utils/audit'
 import { normalizePublicWebsiteUrl } from '@/utils/services/public-url'
 import { assertValidPropertyType } from '@/utils/property-types'
+import { editPropertyChatbotContext } from '@/utils/services/chatbot-context-editor'
 
 // PUT - Update a property with all details (contacts, integrations)
 export async function PUT(
@@ -198,6 +199,18 @@ export async function PUT(
       },
       request
     })
+
+    try {
+      const contextResult = await editPropertyChatbotContext(supabase, propertyId, {
+        changeSummary: 'Property setup details changed.',
+        mode: 'source_change',
+      })
+      if (!contextResult.success) {
+        console.error('Chatbot context edit failed after property update:', contextResult.error)
+      }
+    } catch (contextError) {
+      console.error('Chatbot context edit failed after property update:', contextError)
+    }
 
     return NextResponse.json({ 
       property,

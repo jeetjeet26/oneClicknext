@@ -1,4 +1,4 @@
-// schema_migration_version: 20260507154000
+// schema_migration_version: 20260511100300
 export type Json =
   | string
   | number
@@ -2929,6 +2929,153 @@ export type Database = {
             foreignKeyName: "knowledge_sources_property_id_fkey"
             columns: ["property_id"]
             isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+        ]
+      }
+      property_chatbot_context_revisions: {
+        Row: {
+          change_summary: string | null
+          changed_source_ids: string[]
+          context_id: string | null
+          created_at: string
+          id: string
+          model: string | null
+          next_context_json: Json
+          previous_context_json: Json | null
+          property_id: string
+          removed_source_ids: string[]
+        }
+        Insert: {
+          change_summary?: string | null
+          changed_source_ids?: string[]
+          context_id?: string | null
+          created_at?: string
+          id?: string
+          model?: string | null
+          next_context_json?: Json
+          previous_context_json?: Json | null
+          property_id: string
+          removed_source_ids?: string[]
+        }
+        Update: {
+          change_summary?: string | null
+          changed_source_ids?: string[]
+          context_id?: string | null
+          created_at?: string
+          id?: string
+          model?: string | null
+          next_context_json?: Json
+          previous_context_json?: Json | null
+          property_id?: string
+          removed_source_ids?: string[]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "property_chatbot_context_revisions_context_id_fkey"
+            columns: ["context_id"]
+            isOneToOne: false
+            referencedRelation: "property_chatbot_contexts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_chatbot_context_revisions_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_chatbot_context_revisions_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "property_chatbot_context_revisions_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+        ]
+      }
+      property_chatbot_contexts: {
+        Row: {
+          context_json: Json
+          context_markdown: string
+          created_at: string
+          error_message: string | null
+          id: string
+          last_change_summary: string | null
+          last_generated_at: string | null
+          model: string | null
+          property_id: string
+          requires_review: boolean
+          source_ids: string[]
+          source_snapshot: Json
+          stale_at: string | null
+          status: string
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          context_json?: Json
+          context_markdown?: string
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          last_change_summary?: string | null
+          last_generated_at?: string | null
+          model?: string | null
+          property_id: string
+          requires_review?: boolean
+          source_ids?: string[]
+          source_snapshot?: Json
+          stale_at?: string | null
+          status?: string
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          context_json?: Json
+          context_markdown?: string
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          last_change_summary?: string | null
+          last_generated_at?: string | null
+          model?: string | null
+          property_id?: string
+          requires_review?: boolean
+          source_ids?: string[]
+          source_snapshot?: Json
+          stale_at?: string | null
+          status?: string
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "property_chatbot_contexts_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: true
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_chatbot_contexts_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: true
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "property_chatbot_contexts_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: true
             referencedRelation: "vw_property_marketing_setup"
             referencedColumns: ["property_id"]
           },

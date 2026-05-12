@@ -4,8 +4,8 @@ import { createClient } from '@/utils/supabase/server';
 import OpenAI from 'openai';
 import { validatePropertyAccess } from '@/utils/services/auth-guard';
 import { getPropertyTypeConfig } from '@/utils/property-types';
-import { buildRagContext, fetchKeywordFallbackDocuments, type RagDocument } from '@/utils/chat-rag';
 import { buildPropertyOnlyResponse, isPropertyChatInScope } from '@/utils/chat-scope';
+import { loadPropertyChatbotContext } from '@/utils/services/chatbot-context-editor';
 
 export async function POST(req: NextRequest) {
   try {
@@ -146,40 +146,23 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // 4. Generate Embedding for User Query
-    const embeddingResponse = await openai.embeddings.create({
-      model: 'text-embedding-3-small',
-      input: lastMessage,
-    });
-    const embedding = embeddingResponse.data[0].embedding;
+    const generatedContext = await loadPropertyChatbotContext(supabase, propertyId);
+    if (!generatedContext) {
+      const reply = `I'm still getting ${propertyName}'s property information ready. I can have someone from our team follow up with you about that.`;
+      if (activeConversationId) {
+        await supabase.from('messages').insert({
+          conversation_id: activeConversationId,
+          role: 'assistant',
+          content: reply,
+        });
+      }
 
-    // 5. Search Knowledge Base (Supabase Vector)
-    const { data: documents, error: matchError } = await supabase.rpc('match_documents', {
-      query_embedding: embedding as unknown as string,
-      match_threshold: 0.5,
-      match_count: 3,
-      filter_property: propertyId
-    });
-
-    if (matchError) {
-      console.error('Vector search error:', matchError);
-      return NextResponse.json({ 
-        role: 'assistant', 
-        content: "I'm having trouble accessing my knowledge base right now. Please try again.",
+      return NextResponse.json({
+        role: 'assistant',
+        content: reply,
         conversationId: activeConversationId,
       });
     }
-
-    // 6. Construct Context for LLM
-    const vectorDocuments = (Array.isArray(documents) ? documents : []) as RagDocument[];
-    const keywordDocuments = await fetchKeywordFallbackDocuments(
-      supabase,
-      propertyId,
-      lastMessage,
-      vectorDocuments,
-      Math.max(0, 5 - vectorDocuments.length)
-    );
-    const contextText = buildRagContext([...vectorDocuments, ...keywordDocuments]) || "No specific documents found.";
     
     const systemPrompt = `You are Luma, a helpful AI assistant for ${propertyName}.
 
@@ -188,8 +171,8 @@ PROPERTY CONTEXT:
 - Property type: ${propertyTypeConfig.label}
 - Category: ${propertyTypeConfig.isForSaleResidential ? 'for-sale residential' : 'rental residential'}
     
-    CONTEXT FROM KNOWLEDGE BASE:
-    ${contextText}
+    CLIENT CHATBOT CONTEXT:
+    ${generatedContext.contextMarkdown}
     
     FORMATTING RULES (CRITICAL):
     - NEVER use markdown formatting (**, *, -, #, bullets) in your responses
@@ -205,6 +188,13 @@ PROPERTY CONTEXT:
     - Build rapport through personalized, conversational responses
     - If they express urgency (moving soon, need info quickly), prioritize accordingly
     - Always end with an invitation for more questions or next action
+
+    CONCIERGE RESPONSE STYLE:
+    - Speak like a professional property manager or leasing concierge, not like a database report.
+    - For broad prompts like "pricing", "floor plans", "availability", or "what do you have", do NOT list every floor plan/unit. Give a concise overview by home size or price range, then ask a helpful qualifying question such as preferred bedrooms, budget, move-in timing, or tour interest.
+    - Only provide a full itemized list if the user explicitly asks for all floor plans, all pricing, a complete list, or a specific bedroom category.
+    - Lead with the most useful summary first, then offer to narrow the options.
+    - Keep the customer experience warm, polished, and easy to act on.
     
     RESPONSE GUIDELINES:
     - Answer questions based ONLY on the context provided

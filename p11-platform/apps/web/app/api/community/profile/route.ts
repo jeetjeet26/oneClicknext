@@ -4,6 +4,7 @@ import { createAdminClient } from '@/utils/supabase/admin'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { normalizePublicWebsiteUrl } from '@/utils/services/public-url'
 import { assertValidPropertyType } from '@/utils/property-types'
+import { editPropertyChatbotContext } from '@/utils/services/chatbot-context-editor'
 
 export async function GET(request: NextRequest) {
   try {
@@ -125,6 +126,18 @@ export async function PUT(request: NextRequest) {
     if (error) {
       console.error('Error updating property:', error)
       return NextResponse.json({ error: 'Failed to update property' }, { status: 500 })
+    }
+
+    try {
+      const contextResult = await editPropertyChatbotContext(adminClient, propertyId, {
+        changeSummary: 'Community profile details changed.',
+        mode: 'source_change',
+      })
+      if (!contextResult.success) {
+        console.error('Chatbot context edit failed after community profile update:', contextResult.error)
+      }
+    } catch (contextError) {
+      console.error('Chatbot context edit failed after community profile update:', contextError)
     }
 
     // Return in the expected profile format for backward compatibility

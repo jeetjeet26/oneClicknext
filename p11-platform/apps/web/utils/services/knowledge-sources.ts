@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database, Json } from '@/types/supabase'
+import { editPropertyChatbotContext } from './chatbot-context-editor'
 
 type KnowledgeSourceStatus = 'pending' | 'processing' | 'completed' | 'failed'
 
@@ -68,6 +69,20 @@ export async function upsertManagedKnowledgeSource(
       throw updateError ?? new Error('Failed to update managed knowledge source')
     }
 
+    try {
+      const contextResult = await editPropertyChatbotContext(supabase, input.propertyId, {
+        changeSummary: `Updated chatbot source: ${input.sourceName}`,
+        changedSourceIds: [updatedSource.id],
+        requiresReview: false,
+        mode: 'source_change',
+      })
+      if (!contextResult.success) {
+        console.error('[KnowledgeSources] Chatbot context edit failed:', contextResult.error)
+      }
+    } catch (contextError) {
+      console.error('[KnowledgeSources] Chatbot context edit failed:', contextError)
+    }
+
     return { id: updatedSource.id }
   }
 
@@ -79,6 +94,20 @@ export async function upsertManagedKnowledgeSource(
 
   if (createError || !createdSource) {
     throw createError ?? new Error('Failed to create managed knowledge source')
+  }
+
+  try {
+    const contextResult = await editPropertyChatbotContext(supabase, input.propertyId, {
+      changeSummary: `Added chatbot source: ${input.sourceName}`,
+      changedSourceIds: [createdSource.id],
+      requiresReview: false,
+      mode: 'source_change',
+    })
+    if (!contextResult.success) {
+      console.error('[KnowledgeSources] Chatbot context edit failed:', contextResult.error)
+    }
+  } catch (contextError) {
+    console.error('[KnowledgeSources] Chatbot context edit failed:', contextError)
   }
 
   return { id: createdSource.id }

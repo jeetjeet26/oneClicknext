@@ -66,7 +66,12 @@ describe('generateRecommendations URL-only page mapping', () => {
     createClientMock.mockResolvedValue({
       from: vi.fn((table: string) => {
         if (table === 'properties') {
-          return makeQueryBuilder({ name: 'Example Apartments', website_url: 'https://example.com' })
+          return makeQueryBuilder({
+            name: 'Example Apartments',
+            website_url: 'https://example.com',
+            address: { city: 'Austin', state: 'TX' },
+            property_type: 'multifamily',
+          })
         }
         if (table === 'geo_queries') {
           return makeQueryBuilder([
@@ -91,6 +96,10 @@ describe('generateRecommendations URL-only page mapping', () => {
                     link_rank: null,
                     sov: null,
                     ordered_entities: [{ name: 'Competitor', domain: 'competitor.example', position: 1, rationale: 'Strong local content' }],
+                    geo_citations: [
+                      { url: 'https://zillow.com/example', domain: 'zillow.com', is_brand_domain: false },
+                      { url: 'https://zillow.com/example-2', domain: 'zillow.com', is_brand_domain: false },
+                    ],
                   },
                   {
                     id: 'answer-faq',
@@ -101,6 +110,7 @@ describe('generateRecommendations URL-only page mapping', () => {
                     link_rank: null,
                     sov: null,
                     ordered_entities: [],
+                    geo_citations: [],
                   },
                 ],
               })),
@@ -123,12 +133,14 @@ describe('generateRecommendations URL-only page mapping', () => {
     const localRecommendation = recommendations.find(rec => rec.id === 'strategy-owned-local-category-demand')
     const faqRecommendation = recommendations.find(rec => rec.id === 'strategy-faq-answer-schema')
 
-    expect(localRecommendation?.targetUrl).toBe('https://example.com/apartments-otay-mesa/')
+    expect(localRecommendation?.targetUrl).toBe('https://example.com/apartments-austin-tx/')
     expect(localRecommendation?.evidence?.some(item => item.includes('URL-only crawl audited'))).toBe(true)
     expect(localRecommendation?.sourceQueryEvidence?.some(item => item.includes('absent on Gemini'))).toBe(true)
     expect(localRecommendation?.implementationSteps?.length).toBeGreaterThan(0)
     expect(localRecommendation?.acceptanceCriteria?.length).toBeGreaterThan(0)
     expect(faqRecommendation?.targetUrl).toBe('https://example.com/faq/')
     expect(faqRecommendation?.targetPageType).toBe('faq_or_support_page')
+    expect(JSON.stringify(recommendations)).not.toMatch(/Epoca|Otay Mesa/)
+    expect(JSON.stringify(recommendations)).toContain('Example Apartments-specific Austin, TX language')
   })
 })

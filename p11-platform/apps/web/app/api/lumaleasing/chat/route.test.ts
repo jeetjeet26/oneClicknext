@@ -16,6 +16,7 @@ const createCalendarEventMock = vi.fn()
 const startWorkflowMock = vi.fn()
 const trackEngagementEventMock = vi.fn()
 const sendEmailMock = vi.fn()
+const loadPropertyChatbotContextMock = vi.fn()
 const openAiCtorMock = vi.fn(function MockOpenAI() {
   return {
     chat: { completions: { create: openAiChatCreateMock } },
@@ -66,6 +67,10 @@ vi.mock('@/utils/services/messaging', () => ({
   sendEmail: sendEmailMock,
 }))
 
+vi.mock('@/utils/services/chatbot-context-editor', () => ({
+  loadPropertyChatbotContext: loadPropertyChatbotContextMock,
+}))
+
 vi.mock('openai', () => ({
   default: openAiCtorMock,
 }))
@@ -83,6 +88,13 @@ describe('LumaLeasing chat route', () => {
     startWorkflowMock.mockReset()
     trackEngagementEventMock.mockReset()
     sendEmailMock.mockReset()
+    loadPropertyChatbotContextMock.mockReset()
+    loadPropertyChatbotContextMock.mockResolvedValue({
+      contextMarkdown: 'CLIENT PROPERTY CONTEXT\nAcacia includes rooftop decks, solar, and verified floorplan facts.',
+      contextJson: {},
+      status: 'current',
+      requiresReview: false,
+    })
     getRateLimitKeyMock.mockReturnValue('chat-key')
     chatLimiterCheckMock.mockReturnValue({
       allowed: true,
@@ -612,7 +624,7 @@ describe('LumaLeasing chat route', () => {
     expect(startWorkflowMock).not.toHaveBeenCalled()
   })
 
-  it('adds property-scoped keyword fallback context for feature questions', async () => {
+  it('adds generated client context for feature questions without vector retrieval', async () => {
     validateBodyMock.mockReturnValue({
       success: true,
       data: {
@@ -621,26 +633,9 @@ describe('LumaLeasing chat route', () => {
         leadInfo: null,
       },
     })
-    openAiEmbeddingsCreateMock.mockResolvedValue({
-      data: [{ embedding: [0.1, 0.2, 0.3] }],
-    })
     openAiChatCreateMock.mockResolvedValue({
       choices: [{ message: { content: 'Acacia includes solar and rooftop decks.' } }],
     })
-
-    const documentsLimitMock = vi.fn().mockResolvedValue({
-      data: [
-        {
-          id: 'doc-feature',
-          content: 'Exceptional Standard Features include all-electric homes with solar panel systems, rooftop decks, EV-prepped garages, Thermador appliances, and curated finish packages.',
-          metadata: { title: 'Acacia Feature List' },
-        },
-      ],
-      error: null,
-    })
-    const documentsOrMock = vi.fn().mockReturnValue({ limit: documentsLimitMock })
-    const documentsEqMock = vi.fn().mockReturnValue({ or: documentsOrMock })
-    const documentsSelectMock = vi.fn().mockReturnValue({ eq: documentsEqMock })
 
     createServiceClientMock.mockReturnValue({
       from: vi.fn((table: string) => {
@@ -664,10 +659,8 @@ describe('LumaLeasing chat route', () => {
             })),
           }
         }
-        if (table === 'documents') return { select: documentsSelectMock }
         throw new Error(`Unexpected table ${table}`)
       }),
-      rpc: vi.fn().mockResolvedValue({ data: [], error: null }),
     })
 
     const { POST } = await import('./route')
@@ -687,9 +680,11 @@ describe('LumaLeasing chat route', () => {
     expect(response.status).toBe(200)
     const firstCompletionArgs = openAiChatCreateMock.mock.calls[0][0]
     const systemPrompt = firstCompletionArgs.messages[0].content
-    expect(systemPrompt).toContain('Acacia Feature List')
-    expect(systemPrompt).toContain('all-electric homes with solar panel systems')
-    expect(documentsOrMock).toHaveBeenCalled()
+    expect(systemPrompt).toContain('CLIENT PROPERTY CONTEXT')
+    expect(systemPrompt).toContain('Acacia includes rooftop decks, solar, and verified floorplan facts.')
+    expect(systemPrompt).toContain('CONCIERGE RESPONSE STYLE')
+    expect(systemPrompt).toContain('do NOT list every floor plan/unit')
+    expect(openAiEmbeddingsCreateMock).not.toHaveBeenCalled()
   })
 
   it('returns a property-only reply for off-topic questions without calling the LLM', async () => {

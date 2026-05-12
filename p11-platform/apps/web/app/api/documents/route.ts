@@ -9,6 +9,7 @@ import {
 } from '@/utils/services/api-helpers'
 import { createRequestContext } from '@/utils/services/request-context'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
+import { editPropertyChatbotContext } from '@/utils/services/chatbot-context-editor'
 
 function getDocumentMetadata(
   metadata: unknown
@@ -147,6 +148,20 @@ export async function DELETE(req: NextRequest) {
     if (error) {
       ctx.logError(500, error, { operation: 'delete_document' })
       return serverError(error, ctx.responseHeaders)
+    }
+
+    try {
+      const contextResult = await editPropertyChatbotContext(supabase, propertyId, {
+        changeSummary: `Removed chatbot source material: ${source}`,
+        removedSourceIds: [],
+        requiresReview: false,
+        mode: 'source_removal',
+      })
+      if (!contextResult.success) {
+        console.error('[Documents] Chatbot context edit failed after delete:', contextResult.error)
+      }
+    } catch (contextError) {
+      console.error('[Documents] Chatbot context edit failed after delete:', contextError)
     }
 
     ctx.logSuccess(200, { deleted: count || 0, source })

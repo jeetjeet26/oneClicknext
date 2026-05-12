@@ -10,8 +10,8 @@ import { createRequestContext } from '@/utils/services/request-context';
 import { bookLumaLeasingTour } from '@/utils/services/lumaleasing-tour-booking';
 import { trackEngagementEvent } from '@/utils/services/engagement-tracker';
 import { getPropertyTypeConfig } from '@/utils/property-types';
-import { buildRagContext, fetchKeywordFallbackDocuments, type RagDocument } from '@/utils/chat-rag';
 import { buildPropertyOnlyResponse, isPropertyChatInScope } from '@/utils/chat-scope';
+import { loadPropertyChatbotContext } from '@/utils/services/chatbot-context-editor';
 import OpenAI from 'openai';
 
 // Type for extracted conversation data
@@ -871,36 +871,45 @@ export async function POST(req: NextRequest) {
       }, { headers: responseHeaders });
     }
 
-    // 6. Generate embedding for RAG search
-    const embeddingResponse = await openai.embeddings.create({
-      model: 'text-embedding-3-small',
-      input: lastMessage,
-    });
-    const embedding = embeddingResponse.data[0].embedding;
+    const generatedContext = await loadPropertyChatbotContext(supabase, propertyId);
 
-    // 7. Search knowledge base
-    const { data: documents } = await supabase.rpc('match_documents', {
-      query_embedding: embedding as unknown as string,
-      match_threshold: 0.7,
-      match_count: 5,
-      filter_property: propertyId,
-    });
+    if (!generatedContext) {
+      const reply = `I'm still getting ${propertyName}'s property information ready. I can have someone from our team follow up with you about that.`;
+      if (conversationId) {
+        await supabase.from('messages').insert({
+          conversation_id: conversationId,
+          role: 'assistant',
+          content: reply,
+        });
+      }
 
-    const vectorDocuments = (Array.isArray(documents) ? documents : []) as RagDocument[];
-    const keywordDocuments = await fetchKeywordFallbackDocuments(
-      supabase,
-      propertyId,
-      lastMessage,
-      vectorDocuments,
-      Math.max(0, 5 - vectorDocuments.length)
-    );
-    const contextText = buildRagContext([...vectorDocuments, ...keywordDocuments]);
+      const messageCount = activeSessionId
+        ? await incrementSessionMessageCount(supabase, activeSessionId)
+        : widgetSession?.message_count ?? null;
+      const shouldPromptLeadCapture = !leadId && config.collect_email && (messageCount ?? widgetSession?.message_count ?? 0) >= 3;
 
-    // 8. Detect intent for tour booking
+      ctx.logSuccess(200, {
+        conversationId,
+        sessionId: activeSessionId,
+        hasLeadId: !!leadId,
+        missingGeneratedContext: true,
+      })
+
+      return NextResponse.json({
+        content: reply,
+        sessionId: activeSessionId,
+        conversationId,
+        shouldPromptLeadCapture,
+        leadCapturePrompt: shouldPromptLeadCapture ? config.lead_capture_prompt : null,
+        wantsTour: false,
+      }, { headers: responseHeaders });
+    }
+
+    // 6. Detect intent for tour booking
     const tourKeywords = ['tour', 'visit', 'see', 'showing', 'appointment', 'schedule', 'book', 'come by', 'stop by', 'check out'];
     const wantsTour = tourKeywords.some(kw => lastMessage.toLowerCase().includes(kw));
 
-    // 9. Build system prompt
+    // 7. Build system prompt
     const systemPrompt = `You are ${config.widget_name || 'Luma'}, a friendly AI assistant for ${propertyName}.
 
 PROPERTY CONTEXT:
@@ -915,7 +924,7 @@ PERSONALITY:
 - Use emoji sparingly (1-2 max per response)
 
 KNOWLEDGE BASE:
-${contextText || 'No specific documents loaded yet.'}
+${generatedContext.contextMarkdown}
 
 FORMATTING RULES (CRITICAL):
 1. NEVER use markdown formatting (**, *, -, #) in your responses
@@ -932,6 +941,13 @@ CUSTOMER SERVICE EXCELLENCE:
 - Build rapport through personalized, conversational responses
 - If they express urgency, prioritize their request
 - Always end with an invitation for more questions or action (tour, call, etc.)
+
+CONCIERGE RESPONSE STYLE:
+- Speak like a professional property manager or leasing concierge, not like a database report.
+- For broad prompts like "pricing", "floor plans", "availability", or "what do you have", do NOT list every floor plan/unit. Give a concise overview by home size or price range, then ask a helpful qualifying question such as preferred bedrooms, budget, move-in timing, or tour interest.
+- Only provide a full itemized list if the user explicitly asks for all floor plans, all pricing, a complete list, or a specific bedroom category.
+- Lead with the most useful summary first, then offer to narrow the options.
+- Keep the customer experience warm, polished, and easy to act on.
 
 RESPONSE GUIDELINES:
 1. Answer questions based ONLY on the knowledge base above

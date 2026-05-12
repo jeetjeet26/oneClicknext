@@ -8,7 +8,8 @@ import {
   IntegrationStatusList,
   KnowledgeSourcesList,
   OnboardingChecklist,
-  PropertyUnitsCard
+  PropertyUnitsCard,
+  ChatbotContextStatusCard
 } from '@/components/community'
 import { BrandIdentitySection } from '@/components/community/BrandIdentitySection'
 import { DocumentUploader } from '@/components/luma/DocumentUploader'
@@ -288,6 +289,8 @@ export default function PropertyDashboardPage() {
           {/* Knowledge Base Tab */}
           {activeTab === 'knowledge' && (
             <div className="space-y-6">
+              <ChatbotContextStatusCard propertyId={currentProperty?.id || ''} />
+
               <KnowledgeSourcesList
                 sources={knowledgeData.sources}
                 documentsCount={knowledgeData.documentsCount}

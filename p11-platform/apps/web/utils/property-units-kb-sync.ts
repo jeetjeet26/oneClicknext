@@ -4,6 +4,7 @@
 
 import { createAdminClient } from '@/utils/supabase/admin'
 import OpenAI from 'openai'
+import { editPropertyChatbotContext } from '@/utils/services/chatbot-context-editor'
 
 function formatEmbeddingForPgVector(embedding: number[]): string {
   return `[${embedding.join(',')}]`
@@ -121,6 +122,20 @@ export async function syncPropertyUnitsToKnowledgeBase(propertyId: string): Prom
 
     if (insertError) {
       return { success: false, error: insertError.message }
+    }
+
+    try {
+      const contextResult = await editPropertyChatbotContext(adminClient, propertyId, {
+        changeSummary: 'Updated floorplan, pricing, and availability facts from property units.',
+        changedSourceIds: [newDoc.id],
+        requiresReview: false,
+        mode: 'source_change',
+      })
+      if (!contextResult.success) {
+        console.error('Chatbot context edit after property unit sync failed:', contextResult.error)
+      }
+    } catch (contextError) {
+      console.error('Chatbot context edit after property unit sync failed:', contextError)
     }
 
     return { success: true, document_id: newDoc.id }
