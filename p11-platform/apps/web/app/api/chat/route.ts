@@ -129,7 +129,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    if (!isPropertyChatInScope(lastMessage)) {
+    if (!isPropertyChatInScope(lastMessage, propertyName)) {
       const reply = buildPropertyOnlyResponse(propertyName);
       if (activeConversationId) {
         await supabase.from('messages').insert({

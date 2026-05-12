@@ -25,14 +25,37 @@ const OFF_TOPIC_PATTERNS = [
 ]
 
 const QUESTION_START_PATTERN = /^(what|who|when|where|why|how|can|could|should|would|is|are|do|does|did)\b/i
+const BROAD_PROPERTY_INTENT_PATTERN = /\b(tell|show|describe|overview|summary)\b.*\b(me|us|about|this|it)\b/i
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function mentionsPropertyName(text: string, propertyName?: string | null): boolean {
+  const normalizedName = propertyName?.trim().toLowerCase()
+  if (!normalizedName) return false
+
+  if (new RegExp(`\\b${escapeRegExp(normalizedName)}\\b`, 'i').test(text)) {
+    return true
+  }
+
+  const nameWords = normalizedName.match(/[a-z0-9]+/g) || []
+  return nameWords
+    .filter(word => word.length >= 4)
+    .some(word => new RegExp(`\\b${escapeRegExp(word)}\\b`, 'i').test(text))
+}
 
 export function buildPropertyOnlyResponse(propertyName: string): string {
   return `I can only help with questions about ${propertyName}, like availability, pricing, amenities, tours, policies, and neighborhood details. What would you like to know about the property?`
 }
 
-export function isPropertyChatInScope(message: string): boolean {
+export function isPropertyChatInScope(message: string, propertyName?: string | null): boolean {
   const text = message.trim().toLowerCase()
   if (!text) return true
+
+  if (mentionsPropertyName(text, propertyName)) {
+    return true
+  }
 
   if (PROPERTY_TOPIC_PATTERNS.some(pattern => pattern.test(text))) {
     return true
@@ -44,6 +67,10 @@ export function isPropertyChatInScope(message: string): boolean {
 
   if (OFF_TOPIC_PATTERNS.some(pattern => pattern.test(text))) {
     return false
+  }
+
+  if (BROAD_PROPERTY_INTENT_PATTERN.test(text)) {
+    return true
   }
 
   const words = text.match(/[a-z0-9]+/g) || []

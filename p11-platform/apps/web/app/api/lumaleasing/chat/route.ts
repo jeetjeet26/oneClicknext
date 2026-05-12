@@ -839,7 +839,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    if (!isPropertyChatInScope(lastMessage)) {
+    if (!isPropertyChatInScope(lastMessage, propertyName)) {
       const reply = buildPropertyOnlyResponse(propertyName);
       if (conversationId) {
         await supabase.from('messages').insert({
