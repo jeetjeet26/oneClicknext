@@ -21,6 +21,31 @@ from .base import (
 logger = logging.getLogger(__name__)
 
 
+def _compact_lasso_token(raw_token: str) -> str:
+    """Normalize and validate a Lasso JWT API token for HTTP headers."""
+    token = raw_token.strip()
+    has_bearer_prefix = token.lower().startswith("bearer ")
+    token_body = token[7:] if has_bearer_prefix else token
+    compact_body = "".join(token_body.split())
+
+    if not compact_body:
+        raise ValueError("Missing required Lasso credentials: api_key")
+
+    if any(char in compact_body for char in ("•", "●")) or set(compact_body) == {"*"}:
+        raise ValueError(
+            "Paste the actual Lasso API token. The value received contains masked characters."
+        )
+
+    try:
+        compact_body.encode("ascii")
+    except UnicodeEncodeError as exc:
+        raise ValueError(
+            "Lasso API token contains non-ASCII characters. Copy the token again from Lasso using Copy to Clipboard."
+        ) from exc
+
+    return f"Bearer {compact_body}"
+
+
 class LassoAdapter(BaseCRMAdapter):
     """
     Lasso CRM API adapter.
@@ -59,11 +84,7 @@ class LassoAdapter(BaseCRMAdapter):
 
     def _get_headers(self) -> Dict[str, str]:
         """Get standard headers for Lasso API requests."""
-        token = self.api_key.strip()
-        if token.lower().startswith("bearer "):
-            compact_token = f"Bearer {''.join(token[7:].split())}"
-        else:
-            compact_token = f"Bearer {''.join(token.split())}"
+        compact_token = _compact_lasso_token(self.api_key)
 
         return {
             # Lasso CRM requires a Bearer JWT API key in Authorization. Compact

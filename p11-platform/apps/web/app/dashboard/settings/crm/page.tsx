@@ -51,6 +51,10 @@ function isStringRecord(value: unknown): value is Record<string, string> {
   )
 }
 
+function hasMaskedCredentialCharacters(value: string): boolean {
+  return /[•●*]{6,}/.test(value)
+}
+
 async function readCRMResponse(response: Response) {
   const contentType = response.headers.get('content-type') || ''
   const payload = contentType.includes('application/json')
@@ -168,6 +172,10 @@ export default function CRMSettingsPage() {
     setCredentialResult(null)
 
     try {
+      if (hasMaskedCredentialCharacters(credentials.api_key)) {
+        throw new Error('Paste the actual Lasso API token. The field currently contains masked bullet characters, not the token.')
+      }
+
       const response = await fetch('/api/integrations/crm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

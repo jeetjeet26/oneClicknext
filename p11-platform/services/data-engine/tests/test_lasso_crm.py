@@ -4,7 +4,7 @@ from unittest.mock import Mock, patch
 
 from fastapi import HTTPException
 
-from connectors.crm_adapters.lasso_adapter import LassoAdapter
+from connectors.crm_adapters.lasso_adapter import LassoAdapter, _compact_lasso_token
 from routers.crm_integration import SaveMappingRequest, get_crm_adapter, save_mapping
 
 
@@ -69,6 +69,14 @@ class LassoAdapterTest(unittest.TestCase):
 
         self.assertFalse(result.success)
         self.assertIn("Project access denied", result.error)
+
+    def test_compact_lasso_token_rejects_masked_value(self):
+        with self.assertRaisesRegex(ValueError, "masked characters"):
+            _compact_lasso_token("••••••••••••••")
+
+    def test_compact_lasso_token_rejects_non_ascii_value(self):
+        with self.assertRaisesRegex(ValueError, "non-ASCII"):
+            _compact_lasso_token("eyJ.valid.until.é")
 
     @patch("connectors.crm_adapters.lasso_adapter.requests.get")
     def test_search_lead_finds_by_email(self, get_mock):
