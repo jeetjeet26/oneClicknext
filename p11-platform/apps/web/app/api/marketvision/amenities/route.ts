@@ -53,7 +53,8 @@ export async function GET(req: NextRequest) {
       for (const competitor of competitors) {
         competitorIds.push(competitor.id)
         if (competitor.amenities && Array.isArray(competitor.amenities)) {
-          competitor.amenities.forEach((a: string) => {
+          competitor.amenities.forEach((a) => {
+            if (typeof a !== 'string') return
             if (a && a.trim()) scrapedAmenities.add(a.trim())
           })
         }

@@ -8,6 +8,12 @@ import { getMarketingChannelLabel, normalizeMarketingChannelId } from '@/utils/a
 
 type SupabaseClient = Awaited<ReturnType<typeof createClient>>
 
+function normalizeRecipients(value: Json | null): string[] {
+  return Array.isArray(value)
+    ? value.filter((recipient): recipient is string => typeof recipient === 'string')
+    : []
+}
+
 interface ReportTotals {
   impressions: number
   clicks: number
@@ -321,6 +327,7 @@ export async function POST(request: NextRequest) {
 
     for (const report of dueReports) {
       const propertyName = report.property?.name || 'All Properties'
+      const recipients = normalizeRecipients(report.recipients)
       
       // Create history record
       const { data: historyRecord, error: historyError } = await supabase
@@ -328,7 +335,7 @@ export async function POST(request: NextRequest) {
         .insert({
           scheduled_report_id: report.id,
           status: 'pending',
-          recipients_count: report.recipients.length,
+          recipients_count: recipients.length,
         })
         .select()
         .single()
@@ -375,7 +382,7 @@ export async function POST(request: NextRequest) {
         const errors: string[] = []
 
         if (resend) {
-          for (const recipient of report.recipients) {
+          for (const recipient of recipients) {
             try {
               await resend.emails.send({
                 from: fromEmail,
@@ -392,8 +399,8 @@ export async function POST(request: NextRequest) {
           }
         } else {
           // Dev mode - just log
-          console.log(`[Reports CRON] Dev mode - would send to: ${report.recipients.join(', ')}`)
-          sentCount = report.recipients.length
+          console.log(`[Reports CRON] Dev mode - would send to: ${recipients.join(', ')}`)
+          sentCount = recipients.length
         }
 
         // Update history record
@@ -423,7 +430,7 @@ export async function POST(request: NextRequest) {
           errors: errors.length > 0 ? errors : undefined,
         })
 
-        console.log(`[Reports CRON] Processed report ${report.id}: ${sentCount}/${report.recipients.length} sent`)
+        console.log(`[Reports CRON] Processed report ${report.id}: ${sentCount}/${recipients.length} sent`)
 
       } catch (reportError) {
         const errorMsg = reportError instanceof Error ? reportError.message : 'Unknown error'
@@ -498,7 +505,7 @@ export async function GET(request: NextRequest) {
       reports: reports?.map(r => ({
         ...r,
         isDue: isDue(r.next_run_at),
-        recipientCount: r.recipients?.length || 0,
+        recipientCount: normalizeRecipients(r.recipients).length,
       })),
     })
   } catch {

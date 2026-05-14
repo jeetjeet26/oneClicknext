@@ -34,7 +34,9 @@ interface EmailConfigRow {
   id: string
   property_id: string | null
   profile_id: string | null
-  google_email: string
+  provider: string | null
+  google_email: string | null
+  account_email: string | null
   access_token: string | null
   refresh_token: string | null
   token_expires_at: string | null
@@ -45,6 +47,7 @@ interface EmailConfigRow {
   last_sync_at: string | null
   history_id: string | null
   watch_expiration: string | null
+  provider_metadata: Record<string, unknown> | null
 }
 
 function acknowledge(
@@ -81,6 +84,7 @@ function toGmailConfig(config: EmailConfigRow): GmailConfig | null {
   if (
     !config.property_id ||
     !config.profile_id ||
+    (!config.google_email && !config.account_email) ||
     !config.access_token ||
     !config.refresh_token ||
     !config.token_expires_at
@@ -92,7 +96,9 @@ function toGmailConfig(config: EmailConfigRow): GmailConfig | null {
     id: config.id,
     property_id: config.property_id,
     profile_id: config.profile_id,
-    google_email: config.google_email,
+    provider: config.provider === 'microsoft' ? 'microsoft' : 'google',
+    google_email: config.google_email || config.account_email || '',
+    account_email: config.account_email || config.google_email || '',
     access_token: config.access_token,
     refresh_token: config.refresh_token,
     token_expires_at: config.token_expires_at,
@@ -103,6 +109,7 @@ function toGmailConfig(config: EmailConfigRow): GmailConfig | null {
     last_sync_at: config.last_sync_at ?? null,
     history_id: config.history_id ?? null,
     watch_expiration: config.watch_expiration ?? null,
+    provider_metadata: config.provider_metadata ?? {},
   }
 }
 

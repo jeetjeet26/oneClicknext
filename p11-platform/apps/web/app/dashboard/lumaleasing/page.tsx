@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   MessageSquare, Users, Calendar, TrendingUp, Clock, 
   CheckCircle, XCircle, ArrowUpRight, Eye, Settings,
-  Sparkles, Bot, UserCheck
+  Sparkles, Bot, UserCheck, Mail, Copy, Link
 } from 'lucide-react';
 import { usePropertyContext } from '@/components/layout/PropertyContext';
 import { LumaLeasingConfig } from '@/components/lumaleasing/LumaLeasingConfig';
@@ -30,7 +30,7 @@ interface RecentConversation {
 
 export default function LumaLeasingPage() {
   const { currentProperty } = usePropertyContext();
-  const [activeTab, setActiveTab] = useState<'overview' | 'conversations' | 'config'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'conversations' | 'integrations' | 'config'>('overview');
   const [stats, setStats] = useState<WidgetStats | null>(null);
   const [conversations, setConversations] = useState<RecentConversation[]>([]);
   const [loading, setLoading] = useState(true);
@@ -83,6 +83,7 @@ export default function LumaLeasingPage() {
           {[
             { id: 'overview', label: 'Overview', icon: TrendingUp },
             { id: 'conversations', label: 'Conversations', icon: MessageSquare },
+            { id: 'integrations', label: 'Integrations', icon: Link },
             { id: 'config', label: 'Configuration', icon: Settings },
           ].map(({ id, label, icon: Icon }) => (
             <button
@@ -244,6 +245,10 @@ export default function LumaLeasingPage() {
         />
       )}
 
+      {activeTab === 'integrations' && (
+        <IntegrationsPanel propertyId={currentProperty.id} />
+      )}
+
       {activeTab === 'config' && <LumaLeasingConfig />}
     </div>
   );
@@ -355,6 +360,129 @@ function ConversationsList({
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function IntegrationsPanel({ propertyId }: { propertyId: string }) {
+  const [creatingLink, setCreatingLink] = useState<string | null>(null);
+
+  const createExternalAuthLink = async (
+    provider: 'google' | 'microsoft',
+    capability: 'calendar' | 'email'
+  ) => {
+    try {
+      setCreatingLink(`${provider}-${capability}`);
+      const response = await fetch('/api/lumaleasing/integration-invites', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          propertyId,
+          provider,
+          capabilities: [capability],
+        }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload?.url) {
+        throw new Error(payload?.error || 'Failed to create authorization link');
+      }
+      await navigator.clipboard.writeText(payload.url);
+      alert('Authorization link copied.');
+    } catch (error) {
+      console.error('Failed to create authorization link:', error);
+      alert(error instanceof Error ? error.message : 'Failed to create authorization link');
+    } finally {
+      setCreatingLink(null);
+    }
+  };
+
+  const cards = [
+    {
+      key: 'google-calendar',
+      title: 'Google Calendar',
+      description: 'Connect Google Calendar for tour availability and booking events.',
+      provider: 'google' as const,
+      capability: 'calendar' as const,
+      icon: Calendar,
+      connectHref: `/api/lumaleasing/calendar/connect?propertyId=${propertyId}&provider=google`,
+      color: 'bg-indigo-600 hover:bg-indigo-700',
+    },
+    {
+      key: 'microsoft-calendar',
+      title: 'Outlook Calendar / Teams',
+      description: 'Connect Microsoft Outlook Calendar for tour scheduling and optional Teams links.',
+      provider: 'microsoft' as const,
+      capability: 'calendar' as const,
+      icon: Calendar,
+      connectHref: `/api/lumaleasing/calendar/connect?propertyId=${propertyId}&provider=microsoft`,
+      color: 'bg-slate-900 hover:bg-slate-800',
+    },
+    {
+      key: 'google-email',
+      title: 'Gmail Inbox',
+      description: 'Connect Gmail for outbound email and inbound lead reply sync.',
+      provider: 'google' as const,
+      capability: 'email' as const,
+      icon: Mail,
+      connectHref: `/api/lumaleasing/email/connect?propertyId=${propertyId}&provider=google`,
+      color: 'bg-emerald-600 hover:bg-emerald-700',
+    },
+    {
+      key: 'microsoft-email',
+      title: 'Outlook Mail',
+      description: 'Connect Microsoft Outlook Mail for outbound email and inbox reply sync.',
+      provider: 'microsoft' as const,
+      capability: 'email' as const,
+      icon: Mail,
+      connectHref: `/api/lumaleasing/email/connect?propertyId=${propertyId}&provider=microsoft`,
+      color: 'bg-blue-600 hover:bg-blue-700',
+    },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+        <h3 className="text-lg font-semibold text-slate-900">Calendar And Email Integrations</h3>
+        <p className="text-sm text-slate-500 mt-1">
+          Connect directly if you have access, or copy an external auth link for a client to authorize one property without a P11 login.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {cards.map((card) => {
+          const Icon = card.icon;
+          const isCreating = creatingLink === `${card.provider}-${card.capability}`;
+          return (
+            <div key={card.key} className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+              <div className="flex items-start gap-4">
+                <div className="w-11 h-11 rounded-lg bg-slate-100 text-slate-700 flex items-center justify-center">
+                  <Icon className="w-5 h-5" />
+                </div>
+                <div className="flex-1">
+                  <h4 className="font-semibold text-slate-900">{card.title}</h4>
+                  <p className="text-sm text-slate-500 mt-1">{card.description}</p>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2 mt-5">
+                <button
+                  onClick={() => window.location.href = card.connectHref}
+                  className={`px-4 py-2 rounded-lg text-white text-sm font-medium transition-colors ${card.color}`}
+                >
+                  Connect
+                </button>
+                <button
+                  onClick={() => createExternalAuthLink(card.provider, card.capability)}
+                  disabled={isCreating}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-200 text-slate-700 text-sm font-medium hover:bg-slate-50 disabled:opacity-60"
+                >
+                  <Copy className="w-4 h-4" />
+                  {isCreating ? 'Creating...' : 'Copy Client Link'}
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

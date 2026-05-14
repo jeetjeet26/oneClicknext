@@ -10,7 +10,8 @@ import {
 
 type CalendarConfigRow = {
   property_id: string | null
-  google_email: string
+  google_email: string | null
+  account_email: string | null
 }
 
 type IngestLog = {
@@ -53,7 +54,7 @@ export async function GET(request: NextRequest) {
       const supabase = createServiceClient()
       const { data: calendarConfigs, error } = await supabase
         .from('agent_calendars')
-        .select('property_id, google_email')
+        .select('property_id, google_email, account_email')
         .eq('sync_enabled', true)
         .eq('token_status', 'healthy')
         .limit(1000)
@@ -74,7 +75,13 @@ export async function GET(request: NextRequest) {
             .filter((config): config is CalendarConfigRow & { property_id: string } =>
               typeof config.property_id === 'string' && config.property_id.length > 0
             )
-            .map(config => [config.property_id, { propertyId: config.property_id, googleEmail: config.google_email }])
+            .map(config => [
+              config.property_id,
+              {
+                propertyId: config.property_id,
+                googleEmail: config.google_email || config.account_email || undefined,
+              },
+            ])
         ).values()
       )
     }

@@ -240,6 +240,7 @@ async function upsertEmailThread(
       property_id: propertyId,
       lead_id: leadId || null,
       gmail_thread_id: gmailThreadId,
+      provider_thread_id: gmailThreadId,
       subject,
       last_message_at: now,
       message_count: 1,
@@ -307,6 +308,7 @@ async function insertEmailMessage(
   const { error } = await supabase.from('email_messages').insert({
     email_thread_id: emailThreadId,
     gmail_message_id: gmailMessageId,
+    provider_message_id: gmailMessageId,
     direction: 'outbound',
     from_email: fromEmail,
     to_emails: [to],

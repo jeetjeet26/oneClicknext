@@ -403,6 +403,8 @@ export async function POST(request: NextRequest) {
             agent_calendar_id: calendarConfig.id,
             tour_booking_id: bookingId,
             google_event_id: created.eventId,
+            provider_event_id: created.eventId,
+            provider_event_link: created.htmlLink || null,
             sync_status: 'synced',
             last_synced_at: nowIso,
           })

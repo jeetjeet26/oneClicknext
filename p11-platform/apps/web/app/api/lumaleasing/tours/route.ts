@@ -646,6 +646,8 @@ export async function POST(req: NextRequest) {
             agent_calendar_id: calendarConfig.id,
             tour_booking_id: booking.id,
             google_event_id: calendarEvent.eventId,
+            provider_event_id: calendarEvent.eventId,
+            provider_event_link: calendarEvent.htmlLink || null,
             sync_status: 'synced',
             last_synced_at: new Date().toISOString(),
           })

@@ -442,7 +442,15 @@ export async function POST(request: NextRequest) {
       .eq('id', connection.id)
 
     // Analyze new reviews with OpenAI (in background, don't await)
-    const newReviews = upserted?.filter(r => !r.sentiment) || []
+    const newReviews = (upserted || [])
+      .filter(r => !r.sentiment)
+      .map(r => ({
+        id: r.id,
+        review_text: r.review_text || '',
+        rating: r.rating,
+        property_id: r.property_id,
+        reviewer_name: r.reviewer_name,
+      }))
     if (newReviews.length > 0) {
       // Analyze reviews asynchronously - don't block the response
       analyzeReviewsBatch(newReviews)

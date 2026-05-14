@@ -191,7 +191,7 @@ export async function GET(request: NextRequest) {
     const serviceSupabase = createServiceClient()
     const { data: emailConfig, error } = await serviceSupabase
       .from('email_configurations')
-      .select('id, google_email, token_status, last_health_check_at, token_expires_at, sync_enabled, auto_reply_enabled, last_sync_at, history_id, watch_expiration')
+      .select('id, provider, google_email, account_email, token_status, last_health_check_at, token_expires_at, sync_enabled, auto_reply_enabled, last_sync_at, history_id, watch_expiration')
       .eq('property_id', propertyId)
       .eq('sync_enabled', true)
       .maybeSingle()
@@ -280,7 +280,9 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(
       {
         connected: true,
-        email: emailConfig.google_email,
+        provider: emailConfig.provider || 'google',
+        email: emailConfig.account_email || emailConfig.google_email,
+        account_email: emailConfig.account_email || emailConfig.google_email,
         token_status: emailConfig.token_status,
         last_health_check_at: emailConfig.last_health_check_at,
         last_sync_at: emailConfig.last_sync_at,

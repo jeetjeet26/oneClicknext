@@ -10,6 +10,7 @@ import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { createSignedGmailOAuthState } from '@/utils/services/gmail-oauth-state'
 import { createRequestContext } from '@/utils/services/request-context'
 import { getAppBaseUrl } from '@/utils/services/runtime-config'
+import { normalizeProvider } from '@/utils/services/integration-provider-config'
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID
 const GOOGLE_REDIRECT_URI = `${getAppBaseUrl()}/api/lumaleasing/email/callback`
@@ -30,10 +31,23 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
     const propertyId = searchParams.get('propertyId')
+    const provider = normalizeProvider(searchParams.get('provider')) || 'google'
 
     if (!propertyId) {
       ctx.logSuccess(400, { reason: 'missing_property_id' })
       return badRequest('Property ID required', ctx.responseHeaders)
+    }
+
+    if (provider === 'microsoft') {
+      const redirectUrl = new URL('/api/lumaleasing/integrations/oauth/microsoft/start', getAppBaseUrl())
+      redirectUrl.searchParams.set('propertyId', propertyId)
+      redirectUrl.searchParams.set('capabilities', 'email')
+      const response = NextResponse.redirect(redirectUrl.toString())
+      Object.entries(ctx.responseHeaders).forEach(([key, value]) => {
+        response.headers.set(key, value)
+      })
+      ctx.logSuccess(307, { propertyId, provider })
+      return response
     }
 
     if (!GOOGLE_CLIENT_ID) {

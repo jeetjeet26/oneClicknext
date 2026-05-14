@@ -133,7 +133,7 @@ export async function POST(request: NextRequest) {
       try {
         console.log(`Analyzing review ${review.id} from ${review.reviewer_name}...`)
         
-        const analysis = await analyzeReviewSentiment(review.review_text, review.rating)
+        const analysis = await analyzeReviewSentiment(review.review_text || '', review.rating)
         
         // Update the review
         const { error: updateError } = await supabase

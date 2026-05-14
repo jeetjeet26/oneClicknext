@@ -84,7 +84,9 @@ export function LumaLeasingConfig() {
   const [activeTab, setActiveTab] = useState<'branding' | 'behavior' | 'leads' | 'tours' | 'embed'>('branding');
   const [calendarStatus, setCalendarStatus] = useState<{
     connected: boolean;
+    provider?: 'google' | 'microsoft';
     email?: string;
+    account_email?: string;
     token_status?: string;
     last_health_check_at?: string;
     webhook_capability?: {
@@ -109,7 +111,9 @@ export function LumaLeasingConfig() {
   const [emailStatus, setEmailStatus] = useState<{
     connected: boolean;
     message?: string;
+    provider?: 'google' | 'microsoft';
     email?: string;
+    account_email?: string;
     token_status?: string;
     auto_reply_enabled?: boolean;
     webhook_capability?: {
@@ -130,6 +134,7 @@ export function LumaLeasingConfig() {
   const [recoveryBookings, setRecoveryBookings] = useState<RecoveryBooking[]>([]);
   const [recoveryDrafts, setRecoveryDrafts] = useState<Record<string, { date: string; time: string }>>({});
   const [recoveryError, setRecoveryError] = useState<string | null>(null);
+  const [creatingInvite, setCreatingInvite] = useState<string | null>(null);
 
   const loadConfig = useCallback(async () => {
     setLoading(true);
@@ -376,6 +381,35 @@ export function LumaLeasingConfig() {
     navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const createExternalAuthLink = async (
+    provider: 'google' | 'microsoft',
+    capability: 'calendar' | 'email'
+  ) => {
+    try {
+      setCreatingInvite(`${provider}-${capability}`);
+      const res = await fetch('/api/lumaleasing/integration-invites', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          propertyId: currentProperty.id,
+          provider,
+          capabilities: [capability],
+        }),
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok || !payload?.url) {
+        throw new Error(payload?.error || 'Failed to create authorization link');
+      }
+      copyToClipboard(payload.url);
+      alert(`${provider === 'google' ? 'Google' : 'Microsoft'} ${capability} authorization link copied.`);
+    } catch (error) {
+      console.error('Failed to create external auth link:', error);
+      alert(error instanceof Error ? error.message : 'Failed to create authorization link');
+    } finally {
+      setCreatingInvite(null);
+    }
   };
 
   const updateConfig = <K extends keyof WidgetConfig>(key: K, value: WidgetConfig[K]) => {
@@ -672,9 +706,9 @@ export function LumaLeasingConfig() {
                   </div>
                 </div>
                 <div className="flex-1">
-                  <h3 className="text-lg font-semibold text-slate-900 mb-2">Gmail Inbox Integration</h3>
+                  <h3 className="text-lg font-semibold text-slate-900 mb-2">Email Inbox Integration</h3>
                   <p className="text-sm text-slate-600 mb-4">
-                    Connect Gmail to sync inbound lead replies and keep thread lifecycle states visible for leasing follow-up.
+                    Connect Gmail or Outlook to sync inbound lead replies and keep thread lifecycle states visible for leasing follow-up.
                   </p>
 
                   {emailStatus?.connected ? (
@@ -684,7 +718,11 @@ export function LumaLeasingConfig() {
                         <div>
                           <div className="font-medium text-slate-900">{emailStatus.email}</div>
                           <div className="text-xs text-slate-600">
-                            Status:{' '}
+                            Provider:{' '}
+                            <span className="font-medium">
+                              {emailStatus.provider === 'microsoft' ? 'Outlook Mail' : 'Gmail'}
+                            </span>
+                            {' '}• Status:{' '}
                             <span className={`font-medium ${
                               emailStatus.token_status === 'healthy' ? 'text-green-600' :
                               emailStatus.token_status === 'expiring_soon' ? 'text-yellow-600' :
@@ -793,7 +831,7 @@ export function LumaLeasingConfig() {
                             <p className="text-xs text-amber-700">Your Gmail connection needs to be refreshed</p>
                           </div>
                           <button
-                            onClick={() => window.location.href = `/api/lumaleasing/email/connect?propertyId=${currentProperty.id}`}
+                            onClick={() => window.location.href = `/api/lumaleasing/email/connect?propertyId=${currentProperty.id}&provider=${emailStatus.provider || 'google'}`}
                             className="flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded-lg hover:bg-emerald-700 transition-colors text-sm font-medium"
                           >
                             <RefreshCw className="w-4 h-4" />
@@ -803,14 +841,41 @@ export function LumaLeasingConfig() {
                       )}
                     </div>
                   ) : (
-                    <button
-                      onClick={() => window.location.href = `/api/lumaleasing/email/connect?propertyId=${currentProperty.id}`}
-                      className="flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded-lg hover:bg-emerald-700 transition-colors font-medium"
-                    >
-                      <Mail className="w-4 h-4" />
-                      Connect Gmail
-                    </button>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        onClick={() => window.location.href = `/api/lumaleasing/email/connect?propertyId=${currentProperty.id}&provider=google`}
+                        className="flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded-lg hover:bg-emerald-700 transition-colors font-medium"
+                      >
+                        <Mail className="w-4 h-4" />
+                        Connect Gmail
+                      </button>
+                      <button
+                        onClick={() => window.location.href = `/api/lumaleasing/email/connect?propertyId=${currentProperty.id}&provider=microsoft`}
+                        className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition-colors font-medium"
+                      >
+                        <Mail className="w-4 h-4" />
+                        Connect Outlook
+                      </button>
+                    </div>
                   )}
+                  <div className="flex flex-wrap gap-2 mt-3">
+                    <button
+                      onClick={() => createExternalAuthLink('google', 'email')}
+                      disabled={creatingInvite === 'google-email'}
+                      className="flex items-center gap-2 bg-white text-slate-900 px-3 py-2 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors text-xs font-medium disabled:opacity-60"
+                    >
+                      <Copy className="w-3 h-3" />
+                      {creatingInvite === 'google-email' ? 'Creating...' : 'Copy Gmail Auth Link'}
+                    </button>
+                    <button
+                      onClick={() => createExternalAuthLink('microsoft', 'email')}
+                      disabled={creatingInvite === 'microsoft-email'}
+                      className="flex items-center gap-2 bg-white text-slate-900 px-3 py-2 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors text-xs font-medium disabled:opacity-60"
+                    >
+                      <Copy className="w-3 h-3" />
+                      {creatingInvite === 'microsoft-email' ? 'Creating...' : 'Copy Outlook Auth Link'}
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -878,9 +943,9 @@ export function LumaLeasingConfig() {
                   </div>
                 </div>
                 <div className="flex-1">
-                  <h3 className="text-lg font-semibold text-slate-900 mb-2">Google Calendar Integration</h3>
+                  <h3 className="text-lg font-semibold text-slate-900 mb-2">Calendar Integration</h3>
                   <p className="text-sm text-slate-600 mb-4">
-                    Connect your Google Calendar to show real-time availability in the widget. 
+                    Connect Google Calendar or Outlook Calendar to show real-time availability in the widget.
                     Tours will automatically appear in your calendar.
                   </p>
                   
@@ -891,7 +956,11 @@ export function LumaLeasingConfig() {
                         <div>
                           <div className="font-medium text-slate-900">{calendarStatus.email}</div>
                           <div className="text-xs text-slate-600">
-                            Status: <span className={`font-medium ${
+                            Provider:{' '}
+                            <span className="font-medium">
+                              {calendarStatus.provider === 'microsoft' ? 'Outlook Calendar' : 'Google Calendar'}
+                            </span>
+                            {' '}• Status: <span className={`font-medium ${
                               calendarStatus.token_status === 'healthy' ? 'text-green-600' :
                               calendarStatus.token_status === 'expiring_soon' ? 'text-yellow-600' :
                               'text-red-600'
@@ -950,7 +1019,7 @@ export function LumaLeasingConfig() {
                             <p className="text-xs text-amber-700">Your calendar needs to be reconnected</p>
                           </div>
                           <button
-                            onClick={() => window.location.href = `/api/lumaleasing/calendar/connect?propertyId=${currentProperty.id}`}
+                            onClick={() => window.location.href = `/api/lumaleasing/calendar/connect?propertyId=${currentProperty.id}&provider=${calendarStatus.provider || 'google'}`}
                             className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition-colors text-sm font-medium"
                           >
                             <RefreshCw className="w-4 h-4" />
@@ -983,14 +1052,41 @@ export function LumaLeasingConfig() {
                       )}
                     </div>
                   ) : (
-                    <button
-                      onClick={() => window.location.href = `/api/lumaleasing/calendar/connect?propertyId=${currentProperty.id}`}
-                      className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition-colors font-medium"
-                    >
-                      <Calendar className="w-4 h-4" />
-                      Connect Google Calendar
-                    </button>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        onClick={() => window.location.href = `/api/lumaleasing/calendar/connect?propertyId=${currentProperty.id}&provider=google`}
+                        className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition-colors font-medium"
+                      >
+                        <Calendar className="w-4 h-4" />
+                        Connect Google Calendar
+                      </button>
+                      <button
+                        onClick={() => window.location.href = `/api/lumaleasing/calendar/connect?propertyId=${currentProperty.id}&provider=microsoft`}
+                        className="flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-lg hover:bg-slate-800 transition-colors font-medium"
+                      >
+                        <Calendar className="w-4 h-4" />
+                        Connect Outlook Calendar
+                      </button>
+                    </div>
                   )}
+                  <div className="flex flex-wrap gap-2 mt-3">
+                    <button
+                      onClick={() => createExternalAuthLink('google', 'calendar')}
+                      disabled={creatingInvite === 'google-calendar'}
+                      className="flex items-center gap-2 bg-white text-slate-900 px-3 py-2 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors text-xs font-medium disabled:opacity-60"
+                    >
+                      <Copy className="w-3 h-3" />
+                      {creatingInvite === 'google-calendar' ? 'Creating...' : 'Copy Google Calendar Link'}
+                    </button>
+                    <button
+                      onClick={() => createExternalAuthLink('microsoft', 'calendar')}
+                      disabled={creatingInvite === 'microsoft-calendar'}
+                      className="flex items-center gap-2 bg-white text-slate-900 px-3 py-2 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors text-xs font-medium disabled:opacity-60"
+                    >
+                      <Copy className="w-3 h-3" />
+                      {creatingInvite === 'microsoft-calendar' ? 'Creating...' : 'Copy Outlook Calendar Link'}
+                    </button>
+                  </div>
                   
                   {!calendarStatus?.connected && (
                     <p className="text-xs text-slate-500 mt-3">

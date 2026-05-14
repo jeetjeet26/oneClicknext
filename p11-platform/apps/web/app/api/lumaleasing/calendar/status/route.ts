@@ -110,7 +110,7 @@ export async function GET(request: NextRequest) {
     const serviceSupabase = createServiceClient()
     const { data: calendar, error } = await serviceSupabase
       .from('agent_calendars')
-      .select('id, google_email, token_status, last_health_check_at, token_expires_at, timezone, sync_enabled, calendar_id, watch_expiration, watch_channel_id, watch_resource_id, watch_last_message_number')
+      .select('id, provider, google_email, account_email, token_status, last_health_check_at, token_expires_at, timezone, sync_enabled, calendar_id, watch_expiration, watch_channel_id, watch_resource_id, watch_last_message_number')
       .eq('property_id', propertyId)
       .eq('sync_enabled', true)
       .maybeSingle()
@@ -217,7 +217,9 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(
       {
         connected: true,
-        email: calendar.google_email,
+        provider: calendar.provider || 'google',
+        email: calendar.account_email || calendar.google_email,
+        account_email: calendar.account_email || calendar.google_email,
         token_status: calendar.token_status,
         last_health_check_at: calendar.last_health_check_at,
         token_expires_at: calendar.token_expires_at,

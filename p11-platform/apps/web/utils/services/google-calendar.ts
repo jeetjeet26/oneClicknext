@@ -8,12 +8,15 @@ import { createServiceClient } from '@/utils/supabase/admin'
 
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 const GOOGLE_CALENDAR_API = 'https://www.googleapis.com/calendar/v3'
+const MICROSOFT_GRAPH_API = 'https://graph.microsoft.com/v1.0'
 const DEFAULT_CALENDAR_WATCH_TTL_SECONDS = 60 * 60 * 24 * 7
 
 interface CalendarConfigRow {
   id: string
   property_id: string | null
-  google_email: string
+  provider: string | null
+  google_email: string | null
+  account_email: string | null
   calendar_id: string | null
   access_token: string | null
   refresh_token: string | null
@@ -23,6 +26,7 @@ interface CalendarConfigRow {
   buffer_minutes: number | null
   timezone: string | null
   token_status: string | null
+  provider_metadata: Record<string, unknown> | null
   watch_channel_id: string | null
   watch_last_message_number: number | null
   watch_resource_id: string | null
@@ -32,7 +36,9 @@ interface CalendarConfigRow {
 export interface CalendarConfig {
   id: string
   property_id: string
+  provider?: 'google' | 'microsoft'
   google_email: string
+  account_email?: string
   calendar_id: string
   access_token: string
   refresh_token: string
@@ -42,6 +48,7 @@ export interface CalendarConfig {
   buffer_minutes: number
   timezone: string
   token_status: string
+  provider_metadata?: Record<string, unknown>
   watch_channel_id: string | null
   watch_last_message_number: number | null
   watch_resource_id: string | null
@@ -171,6 +178,7 @@ function zonedLocalDateTimeToDate(
 function normalizeCalendarConfig(config: CalendarConfigRow): CalendarConfig | null {
   if (
     !config.property_id ||
+    (!config.google_email && !config.account_email) ||
     !config.access_token ||
     !config.refresh_token ||
     !config.token_expires_at
@@ -181,7 +189,9 @@ function normalizeCalendarConfig(config: CalendarConfigRow): CalendarConfig | nu
   return {
     id: config.id,
     property_id: config.property_id,
-    google_email: config.google_email,
+    provider: config.provider === 'microsoft' ? 'microsoft' : 'google',
+    google_email: config.google_email || config.account_email || '',
+    account_email: config.account_email || config.google_email || '',
     calendar_id: config.calendar_id || 'primary',
     access_token: config.access_token,
     refresh_token: config.refresh_token,
@@ -191,6 +201,7 @@ function normalizeCalendarConfig(config: CalendarConfigRow): CalendarConfig | nu
     buffer_minutes: config.buffer_minutes || 15,
     timezone: config.timezone || 'America/Chicago',
     token_status: config.token_status || 'healthy',
+    provider_metadata: config.provider_metadata || {},
     watch_channel_id: config.watch_channel_id || null,
     watch_last_message_number: config.watch_last_message_number ?? null,
     watch_resource_id: config.watch_resource_id || null,
@@ -243,6 +254,10 @@ export function shouldRenewCalendarWatch(
 export async function setupCalendarWatch(
   config: CalendarConfig
 ): Promise<CalendarWatchRegistration | null> {
+  if (config.provider !== 'google') {
+    return null
+  }
+
   const webhookUrl = resolveCalendarWebhookUrl()
   if (!webhookUrl) {
     return null
@@ -369,14 +384,19 @@ async function refreshAccessToken(
   const supabase = createServiceClient()
 
   try {
-    const response = await fetch(GOOGLE_TOKEN_URL, {
+    const isMicrosoft = config.provider === 'microsoft'
+    const response = await fetch(isMicrosoft ? getMicrosoftCalendarTokenUrl() : GOOGLE_TOKEN_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
       },
       body: new URLSearchParams({
-        client_id: process.env.GOOGLE_CLIENT_ID || '',
-        client_secret: process.env.GOOGLE_CLIENT_SECRET || '',
+        client_id: isMicrosoft
+          ? process.env.MICROSOFT_CLIENT_ID || ''
+          : process.env.GOOGLE_CLIENT_ID || '',
+        client_secret: isMicrosoft
+          ? process.env.MICROSOFT_CLIENT_SECRET || ''
+          : process.env.GOOGLE_CLIENT_SECRET || '',
         refresh_token: config.refresh_token,
         grant_type: 'refresh_token',
       }),
@@ -447,6 +467,11 @@ async function refreshAccessToken(
   }
 }
 
+function getMicrosoftCalendarTokenUrl(): string {
+  const tenantId = process.env.MICROSOFT_TENANT_ID?.trim() || 'common'
+  return `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`
+}
+
 /**
  * Fetch busy times from Google Calendar
  */
@@ -457,6 +482,51 @@ export async function fetchBusyTimes(
 ): Promise<BusyTime[]> {
   // Ensure token is fresh
   const { accessToken } = await refreshAccessTokenIfNeeded(config)
+
+  if (config.provider === 'microsoft') {
+    const response = await fetch(`${MICROSOFT_GRAPH_API}/me/calendar/getSchedule`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        schedules: [config.account_email || config.google_email],
+        startTime: {
+          dateTime: startDate.toISOString(),
+          timeZone: 'UTC',
+        },
+        endTime: {
+          dateTime: endDate.toISOString(),
+          timeZone: 'UTC',
+        },
+        availabilityViewInterval: config.tour_duration_minutes,
+      }),
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      console.error('[MicrosoftCalendar] getSchedule API error:', errorText)
+
+      if (response.status === 401) {
+        const { accessToken: newToken } = await refreshAccessToken(config)
+        return fetchBusyTimes({ ...config, access_token: newToken }, startDate, endDate)
+      }
+
+      throw new Error(`Microsoft Calendar API error: ${response.status}`)
+    }
+
+    const data = await response.json()
+    const schedule = Array.isArray(data?.value) ? data.value[0] : null
+    const items = Array.isArray(schedule?.scheduleItems) ? schedule.scheduleItems : []
+    return items
+      .filter((item: { status?: string }) => item.status !== 'free')
+      .map((item: { start?: { dateTime?: string }, end?: { dateTime?: string } }) => ({
+        start: item.start?.dateTime || '',
+        end: item.end?.dateTime || '',
+      }))
+      .filter((item: BusyTime) => item.start && item.end)
+  }
 
   // Call Google Calendar freebusy API
   const response = await fetch(`${GOOGLE_CALENDAR_API}/freeBusy`, {
@@ -593,6 +663,65 @@ export async function createCalendarEvent(
   }
   description += `\n\nBooked via LumaLeasing widget`
 
+  if (config.provider === 'microsoft') {
+    const createOnlineMeeting = config.provider_metadata?.teams_meeting_enabled === true
+    const response = await fetch(`${MICROSOFT_GRAPH_API}/me/calendar/events`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        subject: `Tour - ${tourDetails.propertyName}`,
+        body: {
+          contentType: 'text',
+          content: description,
+        },
+        location: {
+          displayName: tourDetails.propertyAddress || '',
+        },
+        start: {
+          dateTime: startLocalDateTime,
+          timeZone: config.timezone,
+        },
+        end: {
+          dateTime: endLocalDateTime,
+          timeZone: config.timezone,
+        },
+        attendees: [
+          {
+            emailAddress: {
+              address: tourDetails.prospectEmail,
+              name: tourDetails.prospectName,
+            },
+            type: 'required',
+          },
+        ],
+        ...(createOnlineMeeting
+          ? { isOnlineMeeting: true, onlineMeetingProvider: 'teamsForBusiness' }
+          : {}),
+      }),
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      console.error('[MicrosoftCalendar] Event creation failed:', errorText)
+
+      if (response.status === 401) {
+        const { accessToken: newToken } = await refreshAccessToken(config)
+        return createCalendarEvent({ ...config, access_token: newToken }, tourDetails)
+      }
+
+      throw new Error(`Failed to create Microsoft calendar event: ${response.status}`)
+    }
+
+    const event = await response.json()
+    return {
+      eventId: event.id,
+      htmlLink: event.webLink || event.onlineMeeting?.joinUrl || '',
+    }
+  }
+
   // Create event
   const response = await fetch(`${GOOGLE_CALENDAR_API}/calendars/${config.calendar_id}/events`, {
     method: 'POST',
@@ -683,6 +812,61 @@ export async function updateCalendarEvent(
   }
   description += `\n\nBooked via LumaLeasing widget`
 
+  if (config.provider === 'microsoft') {
+    const response = await fetch(`${MICROSOFT_GRAPH_API}/me/events/${googleEventId}`, {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        subject: `Tour - ${tourDetails.propertyName}`,
+        body: {
+          contentType: 'text',
+          content: description,
+        },
+        location: {
+          displayName: tourDetails.propertyAddress || '',
+        },
+        start: {
+          dateTime: startLocalDateTime,
+          timeZone: config.timezone,
+        },
+        end: {
+          dateTime: endLocalDateTime,
+          timeZone: config.timezone,
+        },
+        attendees: [
+          {
+            emailAddress: {
+              address: tourDetails.prospectEmail,
+              name: tourDetails.prospectName,
+            },
+            type: 'required',
+          },
+        ],
+      }),
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      console.error('[MicrosoftCalendar] Event update failed:', errorText)
+
+      if (response.status === 401) {
+        const { accessToken: newToken } = await refreshAccessToken(config)
+        return updateCalendarEvent({ ...config, access_token: newToken }, googleEventId, tourDetails)
+      }
+
+      throw new Error(`Failed to update Microsoft calendar event: ${response.status}`)
+    }
+
+    const event = await response.json()
+    return {
+      eventId: event.id || googleEventId,
+      htmlLink: event.webLink || event.onlineMeeting?.joinUrl || '',
+    }
+  }
+
   const response = await fetch(
     `${GOOGLE_CALENDAR_API}/calendars/${config.calendar_id}/events/${googleEventId}`,
     {
@@ -735,6 +919,41 @@ export async function getCalendarEvent(
 ): Promise<RemoteCalendarEvent | null> {
   const { accessToken } = await refreshAccessTokenIfNeeded(config)
 
+  if (config.provider === 'microsoft') {
+    const response = await fetch(`${MICROSOFT_GRAPH_API}/me/events/${googleEventId}`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    })
+
+    if (response.status === 404 || response.status === 410) {
+      return null
+    }
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      console.error('[MicrosoftCalendar] Event fetch failed:', errorText)
+
+      if (response.status === 401) {
+        const { accessToken: newToken } = await refreshAccessToken(config)
+        return getCalendarEvent({ ...config, access_token: newToken }, googleEventId)
+      }
+
+      throw new Error(`Failed to fetch Microsoft calendar event: ${response.status}`)
+    }
+
+    const event = await response.json()
+    return {
+      id: typeof event.id === 'string' ? event.id : googleEventId,
+      status: typeof event.isCancelled === 'boolean' && event.isCancelled ? 'cancelled' : 'confirmed',
+      startDateTime:
+        typeof event.start?.dateTime === 'string' ? event.start.dateTime : null,
+      endDateTime:
+        typeof event.end?.dateTime === 'string' ? event.end.dateTime : null,
+    }
+  }
+
   const response = await fetch(
     `${GOOGLE_CALENDAR_API}/calendars/${config.calendar_id}/events/${googleEventId}`,
     {
@@ -780,6 +999,30 @@ export async function cancelCalendarEvent(
   googleEventId: string
 ): Promise<void> {
   const { accessToken } = await refreshAccessTokenIfNeeded(config)
+
+  if (config.provider === 'microsoft') {
+    const response = await fetch(`${MICROSOFT_GRAPH_API}/me/events/${googleEventId}`, {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    })
+
+    if (response.ok || response.status === 404 || response.status === 410) {
+      return
+    }
+
+    const errorText = await response.text()
+    console.error('[MicrosoftCalendar] Event delete failed:', errorText)
+
+    if (response.status === 401) {
+      const { accessToken: newToken } = await refreshAccessToken(config)
+      await cancelCalendarEvent({ ...config, access_token: newToken }, googleEventId)
+      return
+    }
+
+    throw new Error(`Failed to cancel Microsoft calendar event: ${response.status}`)
+  }
 
   const response = await fetch(
     `${GOOGLE_CALENDAR_API}/calendars/${config.calendar_id}/events/${googleEventId}`,

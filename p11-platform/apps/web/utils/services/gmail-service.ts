@@ -8,13 +8,16 @@ import { createServiceClient } from '@/utils/supabase/admin'
 
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 const GMAIL_API = 'https://gmail.googleapis.com/gmail/v1/users/me'
+const MICROSOFT_GRAPH_API = 'https://graph.microsoft.com/v1.0'
 
 // Types
 export interface GmailConfig {
   id: string
   property_id: string
   profile_id: string
+  provider?: 'google' | 'microsoft'
   google_email: string
+  account_email?: string
   access_token: string
   refresh_token: string
   token_expires_at: string
@@ -25,6 +28,7 @@ export interface GmailConfig {
   last_sync_at: string | null
   history_id: string | null
   watch_expiration: string | null
+  provider_metadata?: Record<string, unknown> | null
 }
 
 export interface EmailMessage {
@@ -143,14 +147,19 @@ async function refreshAccessToken(
   const supabase = createServiceClient()
 
   try {
-    const response = await fetch(GOOGLE_TOKEN_URL, {
+    const isMicrosoft = config.provider === 'microsoft'
+    const response = await fetch(isMicrosoft ? getMicrosoftEmailTokenUrl() : GOOGLE_TOKEN_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
       },
       body: new URLSearchParams({
-        client_id: process.env.GOOGLE_CLIENT_ID || '',
-        client_secret: process.env.GOOGLE_CLIENT_SECRET || '',
+        client_id: isMicrosoft
+          ? process.env.MICROSOFT_CLIENT_ID || ''
+          : process.env.GOOGLE_CLIENT_ID || '',
+        client_secret: isMicrosoft
+          ? process.env.MICROSOFT_CLIENT_SECRET || ''
+          : process.env.GOOGLE_CLIENT_SECRET || '',
         refresh_token: config.refresh_token,
         grant_type: 'refresh_token',
       }),
@@ -219,6 +228,11 @@ async function refreshAccessToken(
   }
 }
 
+function getMicrosoftEmailTokenUrl(): string {
+  const tenantId = process.env.MICROSOFT_TENANT_ID?.trim() || 'common'
+  return `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`
+}
+
 // ============================================================================
 // Configuration
 // ============================================================================
@@ -240,7 +254,39 @@ export async function getGmailConfig(propertyId: string): Promise<GmailConfig | 
     return null
   }
 
-  return data as GmailConfig
+  if (!data.property_id || !data.profile_id || !data.access_token || !data.refresh_token || !data.token_expires_at) {
+    return null
+  }
+
+  const accountEmail = data.account_email || data.google_email
+  if (!accountEmail) {
+    return null
+  }
+
+  return {
+    id: data.id,
+    property_id: data.property_id,
+    profile_id: data.profile_id,
+    provider: data.provider === 'microsoft' ? 'microsoft' : 'google',
+    google_email: data.google_email || accountEmail,
+    account_email: accountEmail,
+    access_token: data.access_token,
+    refresh_token: data.refresh_token,
+    token_expires_at: data.token_expires_at,
+    sync_enabled: data.sync_enabled ?? true,
+    auto_reply_enabled: data.auto_reply_enabled ?? false,
+    signature_template: data.signature_template,
+    token_status: data.token_status || 'healthy',
+    last_sync_at: data.last_sync_at,
+    history_id: data.history_id,
+    watch_expiration: data.watch_expiration,
+    provider_metadata:
+      data.provider_metadata &&
+      typeof data.provider_metadata === 'object' &&
+      !Array.isArray(data.provider_metadata)
+        ? data.provider_metadata as Record<string, unknown>
+        : {},
+  }
 }
 
 // ============================================================================
@@ -259,6 +305,53 @@ export async function sendEmail(
   const { accessToken } = await refreshAccessTokenIfNeeded(config)
 
   try {
+    if (config.provider === 'microsoft') {
+      const response = await fetch(`${MICROSOFT_GRAPH_API}/me/sendMail`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          message: {
+            subject: message.subject,
+            body: {
+              contentType: message.bodyHtml ? 'HTML' : 'Text',
+              content: message.bodyHtml || message.bodyText || '',
+            },
+            toRecipients: message.to.map((address) => ({
+              emailAddress: { address },
+            })),
+            ccRecipients: (message.cc || []).map((address) => ({
+              emailAddress: { address },
+            })),
+            bccRecipients: (message.bcc || []).map((address) => ({
+              emailAddress: { address },
+            })),
+          },
+          saveToSentItems: true,
+        }),
+      })
+
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.error('[MicrosoftMail] Send email failed:', errorText)
+
+        if (response.status === 401) {
+          const { accessToken: newToken } = await refreshAccessToken(config)
+          return sendEmail({ ...config, access_token: newToken }, message)
+        }
+
+        throw new Error(`Microsoft Mail API error: ${response.status}`)
+      }
+
+      const generatedId = `microsoft-sent-${Date.now()}`
+      return {
+        messageId: generatedId,
+        threadId: message.threadId || generatedId,
+      }
+    }
+
     // Build MIME message
     const mimeMessage = buildMimeMessage(message, config.google_email, config.signature_template)
 
@@ -570,6 +663,7 @@ async function upsertInboundEmailThread(
       property_id: config.property_id,
       lead_id: leadId,
       gmail_thread_id: gmailThreadId,
+      provider_thread_id: gmailThreadId,
       subject: parsed.subject || null,
       last_message_at: now,
       message_count: 1,
@@ -616,6 +710,7 @@ async function persistInboundMessage({
     .insert({
       email_thread_id: emailThreadId,
       gmail_message_id: parsed.messageId,
+      provider_message_id: parsed.messageId,
       direction: 'inbound',
       from_email: normalizeEmail(parsed.from.email),
       from_name: parsed.from.name || null,
@@ -702,6 +797,79 @@ export async function syncInbox(
   const { accessToken } = await refreshAccessTokenIfNeeded(config)
 
   try {
+    if (config.provider === 'microsoft') {
+      const response = await fetch(
+        `${MICROSOFT_GRAPH_API}/me/messages?$top=25&$orderby=receivedDateTime desc`,
+        {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+        }
+      )
+
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.error('[MicrosoftMail] Inbox sync failed:', errorText)
+        if (response.status === 401) {
+          const { accessToken: newToken } = await refreshAccessToken(config)
+          return syncInbox({ ...config, access_token: newToken }, options)
+        }
+        throw new Error(`Microsoft Mail API error: ${response.status}`)
+      }
+
+      const data = await response.json()
+      const messages = Array.isArray(data?.value) ? data.value : []
+      let newMessages = 0
+      let updatedThreads = 0
+      for (const message of messages) {
+        const senderEmail = normalizeEmail(message?.from?.emailAddress?.address || '')
+        if (!senderEmail || senderEmail === normalizeEmail(config.account_email || config.google_email)) {
+          continue
+        }
+
+        const parsed: ParsedEmail = {
+          messageId: message.id,
+          threadId: message.conversationId || message.id,
+          from: {
+            email: senderEmail,
+            name: message?.from?.emailAddress?.name || '',
+          },
+          to: (message.toRecipients || []).map((recipient: { emailAddress?: { address?: string, name?: string } }) => ({
+            email: recipient.emailAddress?.address || '',
+            name: recipient.emailAddress?.name || '',
+          })),
+          cc: (message.ccRecipients || []).map((recipient: { emailAddress?: { address?: string, name?: string } }) => ({
+            email: recipient.emailAddress?.address || '',
+            name: recipient.emailAddress?.name || '',
+          })),
+          subject: message.subject || '',
+          bodyText: message.bodyPreview || '',
+          bodyHtml: message.body?.content || '',
+          snippet: message.bodyPreview || '',
+          internalDate: message.receivedDateTime || new Date().toISOString(),
+          labels: [],
+          hasAttachments: Boolean(message.hasAttachments),
+          attachments: [],
+        }
+        const leadId = await matchLeadByEmail(config.property_id, senderEmail)
+        const stored = await persistInboundMessage({ supabase, config, parsed, leadId })
+        if (stored) {
+          newMessages += 1
+          updatedThreads += 1
+        }
+      }
+
+      await supabase
+        .from('email_configurations')
+        .update({
+          last_sync_at: new Date().toISOString(),
+        })
+        .eq('id', config.id)
+
+      return { newMessages, updatedThreads }
+    }
+
     let newMessages = 0
     let updatedThreads = 0
     const startHistoryId = config.history_id || options.historyIdHint || null
@@ -834,6 +1002,10 @@ export async function syncInbox(
  * Set up Gmail push notifications via Cloud Pub/Sub
  */
 export async function setupWatch(config: GmailConfig): Promise<string> {
+  if (config.provider === 'microsoft') {
+    return config.watch_expiration || ''
+  }
+
   // Ensure token is fresh
   const { accessToken } = await refreshAccessTokenIfNeeded(config)
   const supabase = createServiceClient()

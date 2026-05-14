@@ -29,7 +29,9 @@ interface EmailConfigRow {
   id: string
   property_id: string | null
   profile_id: string | null
-  google_email: string
+  provider: string | null
+  google_email: string | null
+  account_email: string | null
   access_token: string | null
   refresh_token: string | null
   token_expires_at: string | null
@@ -40,6 +42,7 @@ interface EmailConfigRow {
   last_sync_at: string | null
   history_id: string | null
   watch_expiration: string | null
+  provider_metadata: Record<string, unknown> | null
   last_health_check_at: string | null
 }
 
@@ -47,6 +50,7 @@ function toGmailConfig(config: EmailConfigRow): GmailConfig | null {
   if (
     !config.property_id ||
     !config.profile_id ||
+    (!config.google_email && !config.account_email) ||
     !config.access_token ||
     !config.refresh_token ||
     !config.token_expires_at
@@ -58,7 +62,9 @@ function toGmailConfig(config: EmailConfigRow): GmailConfig | null {
     id: config.id,
     property_id: config.property_id,
     profile_id: config.profile_id,
-    google_email: config.google_email,
+    provider: config.provider === 'microsoft' ? 'microsoft' : 'google',
+    google_email: config.google_email || config.account_email || '',
+    account_email: config.account_email || config.google_email || '',
     access_token: config.access_token,
     refresh_token: config.refresh_token,
     token_expires_at: config.token_expires_at,
@@ -69,6 +75,7 @@ function toGmailConfig(config: EmailConfigRow): GmailConfig | null {
     last_sync_at: config.last_sync_at ?? null,
     history_id: config.history_id ?? null,
     watch_expiration: config.watch_expiration ?? null,
+    provider_metadata: config.provider_metadata ?? {},
   }
 }
 
@@ -137,7 +144,7 @@ export async function GET(request: NextRequest) {
       const log: SyncLog = {
         configId: config.id,
         propertyId: config.property_id || 'unknown',
-        googleEmail: config.google_email,
+        googleEmail: config.google_email || config.account_email || 'unknown',
         status: 'success',
       }
 
@@ -174,11 +181,11 @@ export async function GET(request: NextRequest) {
               .eq('id', config.id)
 
             console.log(
-              `[Gmail Sync CRON] Token health check passed for ${config.google_email}`
+              `[Gmail Sync CRON] Token health check passed for ${config.google_email || config.account_email}`
             )
           } catch (tokenError) {
             console.error(
-              `[Gmail Sync CRON] Token health check failed for ${config.google_email}:`,
+              `[Gmail Sync CRON] Token health check failed for ${config.google_email || config.account_email}:`,
               tokenError
             )
 
@@ -217,11 +224,11 @@ export async function GET(request: NextRequest) {
               await setupWatch(gmailConfig)
               log.watchRenewed = true
               console.log(
-                `[Gmail Sync CRON] Watch subscription renewed for ${config.google_email}`
+                `[Gmail Sync CRON] Watch subscription renewed for ${config.google_email || config.account_email}`
               )
             } catch (watchError) {
               console.warn(
-                `[Gmail Sync CRON] Failed to renew watch for ${config.google_email}:`,
+                `[Gmail Sync CRON] Failed to renew watch for ${config.google_email || config.account_email}:`,
                 watchError
               )
               // Don't fail the sync if watch renewal fails, just log it
@@ -233,11 +240,11 @@ export async function GET(request: NextRequest) {
             await setupWatch(gmailConfig)
             log.watchRenewed = true
             console.log(
-              `[Gmail Sync CRON] Watch subscription established for ${config.google_email}`
+              `[Gmail Sync CRON] Watch subscription established for ${config.google_email || config.account_email}`
             )
           } catch (watchError) {
             console.warn(
-              `[Gmail Sync CRON] Failed to establish watch for ${config.google_email}:`,
+              `[Gmail Sync CRON] Failed to establish watch for ${config.google_email || config.account_email}:`,
               watchError
             )
             // Don't fail the sync if watch setup fails
@@ -255,12 +262,12 @@ export async function GET(request: NextRequest) {
           log.status = 'success'
 
           console.log(
-            `[Gmail Sync CRON] Synced inbox for ${config.google_email}: ` +
+            `[Gmail Sync CRON] Synced inbox for ${config.google_email || config.account_email}: ` +
             `${syncResult.newMessages} new messages, ${syncResult.updatedThreads} updated threads`
           )
         } catch (syncError) {
           console.error(
-            `[Gmail Sync CRON] Inbox sync failed for ${config.google_email}:`,
+            `[Gmail Sync CRON] Inbox sync failed for ${config.google_email || config.account_email}:`,
             syncError
           )
 
@@ -295,7 +302,7 @@ export async function GET(request: NextRequest) {
         }
       } catch (error) {
         console.error(
-          `[Gmail Sync CRON] Unexpected error processing ${config.google_email}:`,
+          `[Gmail Sync CRON] Unexpected error processing ${config.google_email || config.account_email}:`,
           error
         )
 

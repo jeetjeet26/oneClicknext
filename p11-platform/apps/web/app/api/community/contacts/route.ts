@@ -129,6 +129,10 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'Contact not found' }, { status: 404 })
     }
 
+    if (!existingContact.property_id) {
+      return NextResponse.json({ error: 'Contact missing property' }, { status: 400 })
+    }
+
     const access = await validatePropertyAccess(user.id, existingContact.property_id)
     if (!access.authorized) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
@@ -189,6 +193,10 @@ export async function DELETE(request: NextRequest) {
 
     if (existingContactError || !existingContact) {
       return NextResponse.json({ error: 'Contact not found' }, { status: 404 })
+    }
+
+    if (!existingContact.property_id) {
+      return NextResponse.json({ error: 'Contact missing property' }, { status: 400 })
     }
 
     const access = await validatePropertyAccess(user.id, existingContact.property_id)

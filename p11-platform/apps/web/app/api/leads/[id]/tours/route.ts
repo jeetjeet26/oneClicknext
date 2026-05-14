@@ -34,9 +34,9 @@ type TourConfirmationLead = {
   phone?: string | null
   source?: string | null
   move_in_date?: string | null
-  bedrooms?: number | null
+  bedrooms?: string | number | null
   notes?: string | null
-  property?: Record<string, unknown> | null
+  property?: unknown
 }
 
 type PropertyRecord = {

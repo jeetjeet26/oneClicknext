@@ -1,4 +1,4 @@
-// schema_migration_version: 20260511100300
+// schema_migration_version: 20260514170757
 export type Json =
   | string
   | number
@@ -8,6 +8,11 @@ export type Json =
   | Json[]
 
 export type Database = {
+  // Allows to automatically instantiate createClient with right options
+  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
+  __InternalSupabase: {
+    PostgrestVersion: "13.0.5"
+  }
   public: {
     Tables: {
       ad_account_connections: {
@@ -127,18 +132,27 @@ export type Database = {
       agent_calendars: {
         Row: {
           access_token: string | null
+          account_email: string
           alert_sent_at: string | null
+          auth_source: string
+          authorized_by_profile_id: string | null
           buffer_minutes: number | null
           calendar_id: string | null
           created_at: string | null
-          google_email: string
+          external_invite_id: string | null
+          google_email: string | null
           health_check_error: string | null
           id: string
           last_health_check_at: string | null
           profile_id: string | null
           property_id: string | null
+          provider: string
+          provider_metadata: Json
+          provider_subject: string | null
           refresh_token: string | null
+          scopes: string[]
           sync_enabled: boolean | null
+          tenant_id: string | null
           timezone: string | null
           token_expires_at: string | null
           token_status: string | null
@@ -152,18 +166,27 @@ export type Database = {
         }
         Insert: {
           access_token?: string | null
+          account_email: string
           alert_sent_at?: string | null
+          auth_source?: string
+          authorized_by_profile_id?: string | null
           buffer_minutes?: number | null
           calendar_id?: string | null
           created_at?: string | null
-          google_email: string
+          external_invite_id?: string | null
+          google_email?: string | null
           health_check_error?: string | null
           id?: string
           last_health_check_at?: string | null
           profile_id?: string | null
           property_id?: string | null
+          provider?: string
+          provider_metadata?: Json
+          provider_subject?: string | null
           refresh_token?: string | null
+          scopes?: string[]
           sync_enabled?: boolean | null
+          tenant_id?: string | null
           timezone?: string | null
           token_expires_at?: string | null
           token_status?: string | null
@@ -177,18 +200,27 @@ export type Database = {
         }
         Update: {
           access_token?: string | null
+          account_email?: string
           alert_sent_at?: string | null
+          auth_source?: string
+          authorized_by_profile_id?: string | null
           buffer_minutes?: number | null
           calendar_id?: string | null
           created_at?: string | null
-          google_email?: string
+          external_invite_id?: string | null
+          google_email?: string | null
           health_check_error?: string | null
           id?: string
           last_health_check_at?: string | null
           profile_id?: string | null
           property_id?: string | null
+          provider?: string
+          provider_metadata?: Json
+          provider_subject?: string | null
           refresh_token?: string | null
+          scopes?: string[]
           sync_enabled?: boolean | null
+          tenant_id?: string | null
           timezone?: string | null
           token_expires_at?: string | null
           token_status?: string | null
@@ -201,6 +233,20 @@ export type Database = {
           working_hours?: Json | null
         }
         Relationships: [
+          {
+            foreignKeyName: "agent_calendars_authorized_by_profile_id_fkey"
+            columns: ["authorized_by_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_calendars_external_invite_id_fkey"
+            columns: ["external_invite_id"]
+            isOneToOne: false
+            referencedRelation: "integration_auth_invites"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "agent_calendars_profile_id_fkey"
             columns: ["profile_id"]
@@ -241,7 +287,7 @@ export type Database = {
           entity_type: string
           id: string
           ip_address: string | null
-          org_id: string
+          org_id: string | null
           user_agent: string | null
           user_id: string | null
         }
@@ -254,7 +300,7 @@ export type Database = {
           entity_type: string
           id?: string
           ip_address?: string | null
-          org_id: string
+          org_id?: string | null
           user_agent?: string | null
           user_id?: string | null
         }
@@ -267,7 +313,7 @@ export type Database = {
           entity_type?: string
           id?: string
           ip_address?: string | null
-          org_id?: string
+          org_id?: string | null
           user_agent?: string | null
           user_id?: string | null
         }
@@ -295,6 +341,8 @@ export type Database = {
           google_event_id: string
           id: string
           last_synced_at: string | null
+          provider_event_id: string
+          provider_event_link: string | null
           sync_status: string | null
           tour_booking_id: string | null
         }
@@ -304,6 +352,8 @@ export type Database = {
           google_event_id: string
           id?: string
           last_synced_at?: string | null
+          provider_event_id: string
+          provider_event_link?: string | null
           sync_status?: string | null
           tour_booking_id?: string | null
         }
@@ -313,6 +363,8 @@ export type Database = {
           google_event_id?: string
           id?: string
           last_synced_at?: string | null
+          provider_event_id?: string
+          provider_event_link?: string | null
           sync_status?: string | null
           tour_booking_id?: string | null
         }
@@ -422,21 +474,21 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "community_contacts_property_id_fkey"
+            foreignKeyName: "community_contacts_property_id_fkey1"
             columns: ["property_id"]
             isOneToOne: false
             referencedRelation: "properties"
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "community_contacts_property_id_fkey"
+            foreignKeyName: "community_contacts_property_id_fkey1"
             columns: ["property_id"]
             isOneToOne: false
             referencedRelation: "vw_import_status"
             referencedColumns: ["property_id"]
           },
           {
-            foreignKeyName: "community_contacts_property_id_fkey"
+            foreignKeyName: "community_contacts_property_id_fkey1"
             columns: ["property_id"]
             isOneToOne: false
             referencedRelation: "vw_property_marketing_setup"
@@ -668,7 +720,7 @@ export type Database = {
       competitor_price_history: {
         Row: {
           available_count: number | null
-          competitor_unit_id: string
+          competitor_unit_id: string | null
           id: string
           recorded_at: string | null
           rent_max: number | null
@@ -677,7 +729,7 @@ export type Database = {
         }
         Insert: {
           available_count?: number | null
-          competitor_unit_id: string
+          competitor_unit_id?: string | null
           id?: string
           recorded_at?: string | null
           rent_max?: number | null
@@ -686,7 +738,7 @@ export type Database = {
         }
         Update: {
           available_count?: number | null
-          competitor_unit_id?: string
+          competitor_unit_id?: string | null
           id?: string
           recorded_at?: string | null
           rent_max?: number | null
@@ -861,7 +913,7 @@ export type Database = {
           available_count: number | null
           bathrooms: number | null
           bedrooms: number
-          competitor_id: string
+          competitor_id: string | null
           created_at: string | null
           deposit: number | null
           id: string
@@ -877,7 +929,7 @@ export type Database = {
           available_count?: number | null
           bathrooms?: number | null
           bedrooms?: number
-          competitor_id: string
+          competitor_id?: string | null
           created_at?: string | null
           deposit?: number | null
           id?: string
@@ -893,7 +945,7 @@ export type Database = {
           available_count?: number | null
           bathrooms?: number | null
           bedrooms?: number
-          competitor_id?: string
+          competitor_id?: string | null
           created_at?: string | null
           deposit?: number | null
           id?: string
@@ -919,7 +971,7 @@ export type Database = {
         Row: {
           address: string | null
           address_json: Json | null
-          amenities: string[] | null
+          amenities: Json | null
           created_at: string | null
           id: string
           ils_listings: Json | null
@@ -928,8 +980,8 @@ export type Database = {
           name: string
           notes: string | null
           phone: string | null
-          photos: string[] | null
-          property_id: string
+          photos: Json | null
+          property_id: string | null
           property_type: string | null
           units_count: number | null
           updated_at: string | null
@@ -939,7 +991,7 @@ export type Database = {
         Insert: {
           address?: string | null
           address_json?: Json | null
-          amenities?: string[] | null
+          amenities?: Json | null
           created_at?: string | null
           id?: string
           ils_listings?: Json | null
@@ -948,8 +1000,8 @@ export type Database = {
           name: string
           notes?: string | null
           phone?: string | null
-          photos?: string[] | null
-          property_id: string
+          photos?: Json | null
+          property_id?: string | null
           property_type?: string | null
           units_count?: number | null
           updated_at?: string | null
@@ -959,7 +1011,7 @@ export type Database = {
         Update: {
           address?: string | null
           address_json?: Json | null
-          amenities?: string[] | null
+          amenities?: Json | null
           created_at?: string | null
           id?: string
           ils_listings?: Json | null
@@ -968,8 +1020,8 @@ export type Database = {
           name?: string
           notes?: string | null
           phone?: string | null
-          photos?: string[] | null
-          property_id?: string
+          photos?: Json | null
+          property_id?: string | null
           property_type?: string | null
           units_count?: number | null
           updated_at?: string | null
@@ -1005,52 +1057,91 @@ export type Database = {
           asset_type: string
           created_at: string | null
           description: string | null
-          dimensions: Json | null
-          file_size: number | null
+          duration_seconds: number | null
+          embedding: string | null
+          file_size_bytes: number | null
           file_url: string
+          folder: string | null
+          format: string | null
           generation_params: Json | null
           generation_prompt: string | null
           generation_provider: string | null
+          height: number | null
           id: string
           is_ai_generated: boolean | null
+          is_favorite: boolean | null
+          last_used_at: string | null
           name: string
           property_id: string | null
+          source_asset_id: string | null
+          storage_bucket: string | null
+          storage_path: string | null
           tags: string[] | null
           thumbnail_url: string | null
+          updated_at: string | null
+          uploaded_by: string | null
+          usage_count: number | null
+          width: number | null
         }
         Insert: {
           asset_type: string
           created_at?: string | null
           description?: string | null
-          dimensions?: Json | null
-          file_size?: number | null
+          duration_seconds?: number | null
+          embedding?: string | null
+          file_size_bytes?: number | null
           file_url: string
+          folder?: string | null
+          format?: string | null
           generation_params?: Json | null
           generation_prompt?: string | null
           generation_provider?: string | null
+          height?: number | null
           id?: string
           is_ai_generated?: boolean | null
+          is_favorite?: boolean | null
+          last_used_at?: string | null
           name: string
           property_id?: string | null
+          source_asset_id?: string | null
+          storage_bucket?: string | null
+          storage_path?: string | null
           tags?: string[] | null
           thumbnail_url?: string | null
+          updated_at?: string | null
+          uploaded_by?: string | null
+          usage_count?: number | null
+          width?: number | null
         }
         Update: {
           asset_type?: string
           created_at?: string | null
           description?: string | null
-          dimensions?: Json | null
-          file_size?: number | null
+          duration_seconds?: number | null
+          embedding?: string | null
+          file_size_bytes?: number | null
           file_url?: string
+          folder?: string | null
+          format?: string | null
           generation_params?: Json | null
           generation_prompt?: string | null
           generation_provider?: string | null
+          height?: number | null
           id?: string
           is_ai_generated?: boolean | null
+          is_favorite?: boolean | null
+          last_used_at?: string | null
           name?: string
           property_id?: string | null
+          source_asset_id?: string | null
+          storage_bucket?: string | null
+          storage_path?: string | null
           tags?: string[] | null
           thumbnail_url?: string | null
+          updated_at?: string | null
+          uploaded_by?: string | null
+          usage_count?: number | null
+          width?: number | null
         }
         Relationships: [
           {
@@ -1073,6 +1164,20 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "vw_property_marketing_setup"
             referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "content_assets_source_asset_id_fkey"
+            columns: ["source_asset_id"]
+            isOneToOne: false
+            referencedRelation: "content_assets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "content_assets_uploaded_by_fkey"
+            columns: ["uploaded_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
           },
         ]
       }
@@ -1178,13 +1283,16 @@ export type Database = {
           caption: string | null
           content_type: string
           created_at: string | null
+          created_by: string | null
           generation_params: Json | null
           generation_prompt: string | null
           hashtags: string[] | null
           id: string
           media_type: string | null
           media_urls: string[] | null
+          performance_metrics: Json | null
           platform: string | null
+          platform_post_id: string | null
           property_id: string | null
           published_at: string | null
           rejection_reason: string | null
@@ -1192,9 +1300,9 @@ export type Database = {
           status: string | null
           template_id: string | null
           thumbnail_url: string | null
-          title: string | null
+          title: string
           updated_at: string | null
-          variations: string[] | null
+          variations: Json | null
         }
         Insert: {
           ai_model?: string | null
@@ -1204,13 +1312,16 @@ export type Database = {
           caption?: string | null
           content_type: string
           created_at?: string | null
+          created_by?: string | null
           generation_params?: Json | null
           generation_prompt?: string | null
           hashtags?: string[] | null
           id?: string
           media_type?: string | null
           media_urls?: string[] | null
+          performance_metrics?: Json | null
           platform?: string | null
+          platform_post_id?: string | null
           property_id?: string | null
           published_at?: string | null
           rejection_reason?: string | null
@@ -1218,9 +1329,9 @@ export type Database = {
           status?: string | null
           template_id?: string | null
           thumbnail_url?: string | null
-          title?: string | null
+          title: string
           updated_at?: string | null
-          variations?: string[] | null
+          variations?: Json | null
         }
         Update: {
           ai_model?: string | null
@@ -1230,13 +1341,16 @@ export type Database = {
           caption?: string | null
           content_type?: string
           created_at?: string | null
+          created_by?: string | null
           generation_params?: Json | null
           generation_prompt?: string | null
           hashtags?: string[] | null
           id?: string
           media_type?: string | null
           media_urls?: string[] | null
+          performance_metrics?: Json | null
           platform?: string | null
+          platform_post_id?: string | null
           property_id?: string | null
           published_at?: string | null
           rejection_reason?: string | null
@@ -1244,14 +1358,21 @@ export type Database = {
           status?: string | null
           template_id?: string | null
           thumbnail_url?: string | null
-          title?: string | null
+          title?: string
           updated_at?: string | null
-          variations?: string[] | null
+          variations?: Json | null
         }
         Relationships: [
           {
             foreignKeyName: "content_drafts_approved_by_fkey"
             columns: ["approved_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "content_drafts_created_by_fkey"
+            columns: ["created_by"]
             isOneToOne: false
             referencedRelation: "profiles"
             referencedColumns: ["id"]
@@ -1293,11 +1414,11 @@ export type Database = {
           description: string | null
           id: string
           is_active: boolean | null
-          is_default: boolean | null
           name: string
           platform: string[] | null
           prompt_template: string
           property_id: string | null
+          sample_output: string | null
           updated_at: string | null
           variables: Json | null
         }
@@ -1307,11 +1428,11 @@ export type Database = {
           description?: string | null
           id?: string
           is_active?: boolean | null
-          is_default?: boolean | null
           name: string
           platform?: string[] | null
           prompt_template: string
           property_id?: string | null
+          sample_output?: string | null
           updated_at?: string | null
           variables?: Json | null
         }
@@ -1321,11 +1442,11 @@ export type Database = {
           description?: string | null
           id?: string
           is_active?: boolean | null
-          is_default?: boolean | null
           name?: string
           platform?: string[] | null
           prompt_template?: string
           property_id?: string | null
+          sample_output?: string | null
           updated_at?: string | null
           variables?: Json | null
         }
@@ -1440,6 +1561,10 @@ export type Database = {
         Row: {
           channel: string | null
           created_at: string | null
+          human_agent_id: string | null
+          human_ended_at: string | null
+          human_started_at: string | null
+          human_takeover_at: string | null
           id: string
           is_human_mode: boolean | null
           lead_id: string | null
@@ -1449,6 +1574,10 @@ export type Database = {
         Insert: {
           channel?: string | null
           created_at?: string | null
+          human_agent_id?: string | null
+          human_ended_at?: string | null
+          human_started_at?: string | null
+          human_takeover_at?: string | null
           id?: string
           is_human_mode?: boolean | null
           lead_id?: string | null
@@ -1458,6 +1587,10 @@ export type Database = {
         Update: {
           channel?: string | null
           created_at?: string | null
+          human_agent_id?: string | null
+          human_ended_at?: string | null
+          human_started_at?: string | null
+          human_takeover_at?: string | null
           id?: string
           is_human_mode?: boolean | null
           lead_id?: string | null
@@ -1465,6 +1598,13 @@ export type Database = {
           widget_session_id?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "conversations_human_agent_id_fkey"
+            columns: ["human_agent_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "conversations_lead_id_fkey"
             columns: ["lead_id"]
@@ -1611,9 +1751,13 @@ export type Database = {
       email_configurations: {
         Row: {
           access_token: string | null
+          account_email: string
+          auth_source: string
+          authorized_by_profile_id: string | null
           auto_reply_enabled: boolean | null
           created_at: string | null
-          google_email: string
+          external_invite_id: string | null
+          google_email: string | null
           health_check_error: string | null
           history_id: string | null
           id: string
@@ -1621,9 +1765,14 @@ export type Database = {
           last_sync_at: string | null
           profile_id: string | null
           property_id: string | null
+          provider: string
+          provider_metadata: Json
+          provider_subject: string | null
           refresh_token: string | null
+          scopes: string[]
           signature_template: string | null
           sync_enabled: boolean | null
+          tenant_id: string | null
           token_expires_at: string | null
           token_status: string | null
           updated_at: string | null
@@ -1631,9 +1780,13 @@ export type Database = {
         }
         Insert: {
           access_token?: string | null
+          account_email: string
+          auth_source?: string
+          authorized_by_profile_id?: string | null
           auto_reply_enabled?: boolean | null
           created_at?: string | null
-          google_email: string
+          external_invite_id?: string | null
+          google_email?: string | null
           health_check_error?: string | null
           history_id?: string | null
           id?: string
@@ -1641,9 +1794,14 @@ export type Database = {
           last_sync_at?: string | null
           profile_id?: string | null
           property_id?: string | null
+          provider?: string
+          provider_metadata?: Json
+          provider_subject?: string | null
           refresh_token?: string | null
+          scopes?: string[]
           signature_template?: string | null
           sync_enabled?: boolean | null
+          tenant_id?: string | null
           token_expires_at?: string | null
           token_status?: string | null
           updated_at?: string | null
@@ -1651,9 +1809,13 @@ export type Database = {
         }
         Update: {
           access_token?: string | null
+          account_email?: string
+          auth_source?: string
+          authorized_by_profile_id?: string | null
           auto_reply_enabled?: boolean | null
           created_at?: string | null
-          google_email?: string
+          external_invite_id?: string | null
+          google_email?: string | null
           health_check_error?: string | null
           history_id?: string | null
           id?: string
@@ -1661,15 +1823,34 @@ export type Database = {
           last_sync_at?: string | null
           profile_id?: string | null
           property_id?: string | null
+          provider?: string
+          provider_metadata?: Json
+          provider_subject?: string | null
           refresh_token?: string | null
+          scopes?: string[]
           signature_template?: string | null
           sync_enabled?: boolean | null
+          tenant_id?: string | null
           token_expires_at?: string | null
           token_status?: string | null
           updated_at?: string | null
           watch_expiration?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "email_configurations_authorized_by_profile_id_fkey"
+            columns: ["authorized_by_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "email_configurations_external_invite_id_fkey"
+            columns: ["external_invite_id"]
+            isOneToOne: false
+            referencedRelation: "integration_auth_invites"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "email_configurations_profile_id_fkey"
             columns: ["profile_id"]
@@ -1719,6 +1900,7 @@ export type Database = {
           id: string
           internal_date: string | null
           labels: string[] | null
+          provider_message_id: string
           snippet: string | null
           subject: string | null
           to_emails: string[]
@@ -1741,6 +1923,7 @@ export type Database = {
           id?: string
           internal_date?: string | null
           labels?: string[] | null
+          provider_message_id: string
           snippet?: string | null
           subject?: string | null
           to_emails: string[]
@@ -1763,6 +1946,7 @@ export type Database = {
           id?: string
           internal_date?: string | null
           labels?: string[] | null
+          provider_message_id?: string
           snippet?: string | null
           subject?: string | null
           to_emails?: string[]
@@ -1789,6 +1973,7 @@ export type Database = {
           lead_id: string | null
           message_count: number | null
           property_id: string | null
+          provider_thread_id: string
           status: string | null
           subject: string | null
         }
@@ -1803,6 +1988,7 @@ export type Database = {
           lead_id?: string | null
           message_count?: number | null
           property_id?: string | null
+          provider_thread_id: string
           status?: string | null
           subject?: string | null
         }
@@ -1817,6 +2003,7 @@ export type Database = {
           lead_id?: string | null
           message_count?: number | null
           property_id?: string | null
+          provider_thread_id?: string
           status?: string | null
           subject?: string | null
         }
@@ -1908,43 +2095,46 @@ export type Database = {
           campaign_name: string | null
           channel_id: string
           created_at: string | null
-          date_range_end: string | null
-          date_range_start: string | null
+          date_range_end: string
+          date_range_start: string
           dimension_key: string
           dimension_value: string
           id: string
           metrics: Json
-          property_id: string
+          property_id: string | null
           raw_source: string | null
           report_type: string
+          updated_at: string | null
         }
         Insert: {
           campaign_name?: string | null
           channel_id: string
           created_at?: string | null
-          date_range_end?: string | null
-          date_range_start?: string | null
+          date_range_end: string
+          date_range_start: string
           dimension_key: string
           dimension_value: string
           id?: string
           metrics?: Json
-          property_id: string
+          property_id?: string | null
           raw_source?: string | null
           report_type: string
+          updated_at?: string | null
         }
         Update: {
           campaign_name?: string | null
           channel_id?: string
           created_at?: string | null
-          date_range_end?: string | null
-          date_range_start?: string | null
+          date_range_end?: string
+          date_range_start?: string
           dimension_key?: string
           dimension_value?: string
           id?: string
           metrics?: Json
-          property_id?: string
+          property_id?: string | null
           raw_source?: string | null
           report_type?: string
+          updated_at?: string | null
         }
         Relationships: [
           {
@@ -2206,45 +2396,93 @@ export type Database = {
       }
       forgestudio_config: {
         Row: {
-          auto_approve: boolean | null
+          auto_schedule: boolean | null
+          brand_colors: Json | null
+          brand_fonts: Json | null
           brand_voice: string | null
           created_at: string | null
           creativity_level: number | null
-          default_hashtags: string[] | null
+          default_ai_model: string | null
+          facebook_connected: boolean | null
+          facebook_page_id: string | null
           id: string
+          include_cta: boolean | null
+          include_hashtags: boolean | null
+          instagram_account_id: string | null
+          instagram_connected: boolean | null
+          is_active: boolean | null
           key_amenities: string[] | null
+          linkedin_connected: boolean | null
+          linkedin_org_id: string | null
+          max_caption_length: number | null
           nanobanana_default_style: string | null
+          nanobanana_enabled: boolean | null
           nanobanana_quality: string | null
+          preferred_posting_times: Json | null
           property_id: string | null
           target_audience: string | null
+          tiktok_account_id: string | null
+          tiktok_connected: boolean | null
           updated_at: string | null
         }
         Insert: {
-          auto_approve?: boolean | null
+          auto_schedule?: boolean | null
+          brand_colors?: Json | null
+          brand_fonts?: Json | null
           brand_voice?: string | null
           created_at?: string | null
           creativity_level?: number | null
-          default_hashtags?: string[] | null
+          default_ai_model?: string | null
+          facebook_connected?: boolean | null
+          facebook_page_id?: string | null
           id?: string
+          include_cta?: boolean | null
+          include_hashtags?: boolean | null
+          instagram_account_id?: string | null
+          instagram_connected?: boolean | null
+          is_active?: boolean | null
           key_amenities?: string[] | null
+          linkedin_connected?: boolean | null
+          linkedin_org_id?: string | null
+          max_caption_length?: number | null
           nanobanana_default_style?: string | null
+          nanobanana_enabled?: boolean | null
           nanobanana_quality?: string | null
+          preferred_posting_times?: Json | null
           property_id?: string | null
           target_audience?: string | null
+          tiktok_account_id?: string | null
+          tiktok_connected?: boolean | null
           updated_at?: string | null
         }
         Update: {
-          auto_approve?: boolean | null
+          auto_schedule?: boolean | null
+          brand_colors?: Json | null
+          brand_fonts?: Json | null
           brand_voice?: string | null
           created_at?: string | null
           creativity_level?: number | null
-          default_hashtags?: string[] | null
+          default_ai_model?: string | null
+          facebook_connected?: boolean | null
+          facebook_page_id?: string | null
           id?: string
+          include_cta?: boolean | null
+          include_hashtags?: boolean | null
+          instagram_account_id?: string | null
+          instagram_connected?: boolean | null
+          is_active?: boolean | null
           key_amenities?: string[] | null
+          linkedin_connected?: boolean | null
+          linkedin_org_id?: string | null
+          max_caption_length?: number | null
           nanobanana_default_style?: string | null
+          nanobanana_enabled?: boolean | null
           nanobanana_quality?: string | null
+          preferred_posting_times?: Json | null
           property_id?: string | null
           target_audience?: string | null
+          tiktok_account_id?: string | null
+          tiktok_connected?: boolean | null
           updated_at?: string | null
         }
         Relationships: [
@@ -2563,11 +2801,12 @@ export type Database = {
         Row: {
           access_mode: string
           batch_id: string | null
+          batch_size: number | null
           created_at: string | null
           cross_model_analysis: Json | null
           current_query_index: number | null
           error_message: string | null
-          execution_count: number
+          execution_count: number | null
           finished_at: string | null
           id: string
           last_updated_at: string | null
@@ -2587,11 +2826,12 @@ export type Database = {
         Insert: {
           access_mode?: string
           batch_id?: string | null
+          batch_size?: number | null
           created_at?: string | null
           cross_model_analysis?: Json | null
           current_query_index?: number | null
           error_message?: string | null
-          execution_count?: number
+          execution_count?: number | null
           finished_at?: string | null
           id?: string
           last_updated_at?: string | null
@@ -2611,11 +2851,12 @@ export type Database = {
         Update: {
           access_mode?: string
           batch_id?: string | null
+          batch_size?: number | null
           created_at?: string | null
           cross_model_analysis?: Json | null
           current_query_index?: number | null
           error_message?: string | null
-          execution_count?: number
+          execution_count?: number | null
           finished_at?: string | null
           id?: string
           last_updated_at?: string | null
@@ -2714,10 +2955,11 @@ export type Database = {
           error_message: string | null
           id: string
           progress_pct: number | null
-          property_id: string
+          property_id: string | null
           records_imported: number | null
           started_at: string | null
           status: string | null
+          triggered_by: string | null
         }
         Insert: {
           campaigns_found?: number | null
@@ -2729,10 +2971,11 @@ export type Database = {
           error_message?: string | null
           id?: string
           progress_pct?: number | null
-          property_id: string
+          property_id?: string | null
           records_imported?: number | null
           started_at?: string | null
           status?: string | null
+          triggered_by?: string | null
         }
         Update: {
           campaigns_found?: number | null
@@ -2744,10 +2987,11 @@ export type Database = {
           error_message?: string | null
           id?: string
           progress_pct?: number | null
-          property_id?: string
+          property_id?: string | null
           records_imported?: number | null
           started_at?: string | null
           status?: string | null
+          triggered_by?: string | null
         }
         Relationships: [
           {
@@ -2773,6 +3017,106 @@ export type Database = {
           },
         ]
       }
+      integration_auth_invites: {
+        Row: {
+          consumed_at: string | null
+          consumed_calendar_id: string | null
+          consumed_email_configuration_id: string | null
+          created_at: string
+          created_by_profile_id: string | null
+          expires_at: string
+          id: string
+          last_error: string | null
+          metadata: Json
+          property_id: string
+          provider: string
+          requested_capabilities: string[]
+          revoked_at: string | null
+          token_hash: string
+          token_preview: string | null
+          updated_at: string
+        }
+        Insert: {
+          consumed_at?: string | null
+          consumed_calendar_id?: string | null
+          consumed_email_configuration_id?: string | null
+          created_at?: string
+          created_by_profile_id?: string | null
+          expires_at: string
+          id?: string
+          last_error?: string | null
+          metadata?: Json
+          property_id: string
+          provider: string
+          requested_capabilities?: string[]
+          revoked_at?: string | null
+          token_hash: string
+          token_preview?: string | null
+          updated_at?: string
+        }
+        Update: {
+          consumed_at?: string | null
+          consumed_calendar_id?: string | null
+          consumed_email_configuration_id?: string | null
+          created_at?: string
+          created_by_profile_id?: string | null
+          expires_at?: string
+          id?: string
+          last_error?: string | null
+          metadata?: Json
+          property_id?: string
+          provider?: string
+          requested_capabilities?: string[]
+          revoked_at?: string | null
+          token_hash?: string
+          token_preview?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "integration_auth_invites_consumed_calendar_id_fkey"
+            columns: ["consumed_calendar_id"]
+            isOneToOne: false
+            referencedRelation: "agent_calendars"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "integration_auth_invites_consumed_email_configuration_id_fkey"
+            columns: ["consumed_email_configuration_id"]
+            isOneToOne: false
+            referencedRelation: "email_configurations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "integration_auth_invites_created_by_profile_id_fkey"
+            columns: ["created_by_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "integration_auth_invites_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "integration_auth_invites_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "integration_auth_invites_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+        ]
+      }
       integration_credentials: {
         Row: {
           access_type: string | null
@@ -2785,6 +3129,7 @@ export type Database = {
           last_error: string | null
           last_sync_at: string | null
           mapping_validated: boolean | null
+          mapping_validated_at: string | null
           notes: string | null
           platform: string
           property_id: string | null
@@ -2804,6 +3149,7 @@ export type Database = {
           last_error?: string | null
           last_sync_at?: string | null
           mapping_validated?: boolean | null
+          mapping_validated_at?: string | null
           notes?: string | null
           platform: string
           property_id?: string | null
@@ -2823,6 +3169,7 @@ export type Database = {
           last_error?: string | null
           last_sync_at?: string | null
           mapping_validated?: boolean | null
+          mapping_validated_at?: string | null
           notes?: string | null
           platform?: string
           property_id?: string | null
@@ -2934,158 +3281,11 @@ export type Database = {
           },
         ]
       }
-      property_chatbot_context_revisions: {
-        Row: {
-          change_summary: string | null
-          changed_source_ids: string[]
-          context_id: string | null
-          created_at: string
-          id: string
-          model: string | null
-          next_context_json: Json
-          previous_context_json: Json | null
-          property_id: string
-          removed_source_ids: string[]
-        }
-        Insert: {
-          change_summary?: string | null
-          changed_source_ids?: string[]
-          context_id?: string | null
-          created_at?: string
-          id?: string
-          model?: string | null
-          next_context_json?: Json
-          previous_context_json?: Json | null
-          property_id: string
-          removed_source_ids?: string[]
-        }
-        Update: {
-          change_summary?: string | null
-          changed_source_ids?: string[]
-          context_id?: string | null
-          created_at?: string
-          id?: string
-          model?: string | null
-          next_context_json?: Json
-          previous_context_json?: Json | null
-          property_id?: string
-          removed_source_ids?: string[]
-        }
-        Relationships: [
-          {
-            foreignKeyName: "property_chatbot_context_revisions_context_id_fkey"
-            columns: ["context_id"]
-            isOneToOne: false
-            referencedRelation: "property_chatbot_contexts"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "property_chatbot_context_revisions_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "properties"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "property_chatbot_context_revisions_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "vw_import_status"
-            referencedColumns: ["property_id"]
-          },
-          {
-            foreignKeyName: "property_chatbot_context_revisions_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "vw_property_marketing_setup"
-            referencedColumns: ["property_id"]
-          },
-        ]
-      }
-      property_chatbot_contexts: {
-        Row: {
-          context_json: Json
-          context_markdown: string
-          created_at: string
-          error_message: string | null
-          id: string
-          last_change_summary: string | null
-          last_generated_at: string | null
-          model: string | null
-          property_id: string
-          requires_review: boolean
-          source_ids: string[]
-          source_snapshot: Json
-          stale_at: string | null
-          status: string
-          updated_at: string
-          version: number
-        }
-        Insert: {
-          context_json?: Json
-          context_markdown?: string
-          created_at?: string
-          error_message?: string | null
-          id?: string
-          last_change_summary?: string | null
-          last_generated_at?: string | null
-          model?: string | null
-          property_id: string
-          requires_review?: boolean
-          source_ids?: string[]
-          source_snapshot?: Json
-          stale_at?: string | null
-          status?: string
-          updated_at?: string
-          version?: number
-        }
-        Update: {
-          context_json?: Json
-          context_markdown?: string
-          created_at?: string
-          error_message?: string | null
-          id?: string
-          last_change_summary?: string | null
-          last_generated_at?: string | null
-          model?: string | null
-          property_id?: string
-          requires_review?: boolean
-          source_ids?: string[]
-          source_snapshot?: Json
-          stale_at?: string | null
-          status?: string
-          updated_at?: string
-          version?: number
-        }
-        Relationships: [
-          {
-            foreignKeyName: "property_chatbot_contexts_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: true
-            referencedRelation: "properties"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "property_chatbot_contexts_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: true
-            referencedRelation: "vw_import_status"
-            referencedColumns: ["property_id"]
-          },
-          {
-            foreignKeyName: "property_chatbot_contexts_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: true
-            referencedRelation: "vw_property_marketing_setup"
-            referencedColumns: ["property_id"]
-          },
-        ]
-      }
       lead_activities: {
         Row: {
           created_at: string | null
           created_by: string | null
-          description: string
+          description: string | null
           id: string
           lead_id: string | null
           metadata: Json | null
@@ -3094,7 +3294,7 @@ export type Database = {
         Insert: {
           created_at?: string | null
           created_by?: string | null
-          description: string
+          description?: string | null
           id?: string
           lead_id?: string | null
           metadata?: Json | null
@@ -3103,7 +3303,7 @@ export type Database = {
         Update: {
           created_at?: string | null
           created_by?: string | null
-          description?: string
+          description?: string | null
           id?: string
           lead_id?: string | null
           metadata?: Json | null
@@ -3129,30 +3329,27 @@ export type Database = {
       lead_engagement_events: {
         Row: {
           created_at: string | null
-          event_source: string | null
           event_type: string
           id: string
-          lead_id: string | null
+          lead_id: string
           metadata: Json | null
           property_id: string | null
           score_weight: number | null
         }
         Insert: {
           created_at?: string | null
-          event_source?: string | null
           event_type: string
           id?: string
-          lead_id?: string | null
+          lead_id: string
           metadata?: Json | null
           property_id?: string | null
           score_weight?: number | null
         }
         Update: {
           created_at?: string | null
-          event_source?: string | null
           event_type?: string
           id?: string
-          lead_id?: string | null
+          lead_id?: string
           metadata?: Json | null
           property_id?: string | null
           score_weight?: number | null
@@ -3197,10 +3394,10 @@ export type Database = {
           expires_at: string | null
           factors: Json | null
           id: string
-          lead_id: string | null
+          lead_id: string
           model_version: string | null
           score_bucket: string
-          scored_at: string | null
+          scored_at: string
           source_score: number | null
           timing_score: number | null
           total_score: number
@@ -3213,10 +3410,10 @@ export type Database = {
           expires_at?: string | null
           factors?: Json | null
           id?: string
-          lead_id?: string | null
+          lead_id: string
           model_version?: string | null
           score_bucket: string
-          scored_at?: string | null
+          scored_at?: string
           source_score?: number | null
           timing_score?: number | null
           total_score: number
@@ -3229,10 +3426,10 @@ export type Database = {
           expires_at?: string | null
           factors?: Json | null
           id?: string
-          lead_id?: string | null
+          lead_id?: string
           model_version?: string | null
           score_bucket?: string
-          scored_at?: string | null
+          scored_at?: string
           source_score?: number | null
           timing_score?: number | null
           total_score?: number
@@ -3254,10 +3451,9 @@ export type Database = {
           id: string
           last_action_at: string | null
           lead_id: string | null
+          metadata: Json | null
           next_action_at: string | null
-          processing_expires_at: string | null
-          processing_started_at: string | null
-          status: string | null
+          status: string
           updated_at: string | null
           workflow_id: string | null
         }
@@ -3267,10 +3463,9 @@ export type Database = {
           id?: string
           last_action_at?: string | null
           lead_id?: string | null
+          metadata?: Json | null
           next_action_at?: string | null
-          processing_expires_at?: string | null
-          processing_started_at?: string | null
-          status?: string | null
+          status?: string
           updated_at?: string | null
           workflow_id?: string | null
         }
@@ -3280,10 +3475,9 @@ export type Database = {
           id?: string
           last_action_at?: string | null
           lead_id?: string | null
+          metadata?: Json | null
           next_action_at?: string | null
-          processing_expires_at?: string | null
-          processing_started_at?: string | null
-          status?: string | null
+          status?: string
           updated_at?: string | null
           workflow_id?: string | null
         }
@@ -3306,7 +3500,7 @@ export type Database = {
       }
       leads: {
         Row: {
-          bedrooms: number | null
+          bedrooms: string | null
           created_at: string | null
           crm_dead_lettered_at: string | null
           crm_sync_error: string | null
@@ -3322,6 +3516,7 @@ export type Database = {
           last_name: string | null
           move_in_date: string | null
           notes: string | null
+          opted_out: boolean | null
           phone: string | null
           property_id: string | null
           score: number | null
@@ -3331,7 +3526,7 @@ export type Database = {
           updated_at: string | null
         }
         Insert: {
-          bedrooms?: number | null
+          bedrooms?: string | null
           created_at?: string | null
           crm_dead_lettered_at?: string | null
           crm_sync_error?: string | null
@@ -3347,6 +3542,7 @@ export type Database = {
           last_name?: string | null
           move_in_date?: string | null
           notes?: string | null
+          opted_out?: boolean | null
           phone?: string | null
           property_id?: string | null
           score?: number | null
@@ -3356,7 +3552,7 @@ export type Database = {
           updated_at?: string | null
         }
         Update: {
-          bedrooms?: number | null
+          bedrooms?: string | null
           created_at?: string | null
           crm_dead_lettered_at?: string | null
           crm_sync_error?: string | null
@@ -3372,6 +3568,7 @@ export type Database = {
           last_name?: string | null
           move_in_date?: string | null
           notes?: string | null
+          opted_out?: boolean | null
           phone?: string | null
           property_id?: string | null
           score?: number | null
@@ -3406,7 +3603,7 @@ export type Database = {
       }
       lumaleasing_config: {
         Row: {
-          api_key: string
+          api_key: string | null
           auto_popup_delay_seconds: number | null
           business_hours: Json | null
           collect_email: boolean | null
@@ -3422,7 +3619,6 @@ export type Database = {
           offline_message: string | null
           primary_color: string | null
           property_id: string | null
-          rag_enabled: boolean | null
           require_email_before_chat: boolean | null
           secondary_color: string | null
           timezone: string | null
@@ -3431,11 +3627,10 @@ export type Database = {
           tours_enabled: boolean | null
           updated_at: string | null
           welcome_message: string | null
-          widget_color: string | null
           widget_name: string | null
         }
         Insert: {
-          api_key: string
+          api_key?: string | null
           auto_popup_delay_seconds?: number | null
           business_hours?: Json | null
           collect_email?: boolean | null
@@ -3451,7 +3646,6 @@ export type Database = {
           offline_message?: string | null
           primary_color?: string | null
           property_id?: string | null
-          rag_enabled?: boolean | null
           require_email_before_chat?: boolean | null
           secondary_color?: string | null
           timezone?: string | null
@@ -3460,11 +3654,10 @@ export type Database = {
           tours_enabled?: boolean | null
           updated_at?: string | null
           welcome_message?: string | null
-          widget_color?: string | null
           widget_name?: string | null
         }
         Update: {
-          api_key?: string
+          api_key?: string | null
           auto_popup_delay_seconds?: number | null
           business_hours?: Json | null
           collect_email?: boolean | null
@@ -3480,7 +3673,6 @@ export type Database = {
           offline_message?: string | null
           primary_color?: string | null
           property_id?: string | null
-          rag_enabled?: boolean | null
           require_email_before_chat?: boolean | null
           secondary_color?: string | null
           timezone?: string | null
@@ -3489,7 +3681,6 @@ export type Database = {
           tours_enabled?: boolean | null
           updated_at?: string | null
           welcome_message?: string | null
-          widget_color?: string | null
           widget_name?: string | null
         }
         Relationships: [
@@ -3533,7 +3724,7 @@ export type Database = {
           id: string
           is_dismissed: boolean | null
           is_read: boolean | null
-          property_id: string
+          property_id: string | null
           read_at: string | null
           severity: string | null
           title: string
@@ -3547,7 +3738,7 @@ export type Database = {
           id?: string
           is_dismissed?: boolean | null
           is_read?: boolean | null
-          property_id: string
+          property_id?: string | null
           read_at?: string | null
           severity?: string | null
           title: string
@@ -3561,7 +3752,7 @@ export type Database = {
           id?: string
           is_dismissed?: boolean | null
           is_read?: boolean | null
-          property_id?: string
+          property_id?: string | null
           read_at?: string | null
           severity?: string | null
           title?: string
@@ -3599,37 +3790,34 @@ export type Database = {
       }
       market_insights: {
         Row: {
-          created_at: string | null
           data: Json
           expires_at: string | null
+          generated_at: string | null
           id: string
           insight_type: string
           period_end: string | null
           period_start: string | null
-          property_id: string
-          updated_at: string | null
+          property_id: string | null
         }
         Insert: {
-          created_at?: string | null
-          data?: Json
+          data: Json
           expires_at?: string | null
+          generated_at?: string | null
           id?: string
           insight_type: string
           period_end?: string | null
           period_start?: string | null
-          property_id: string
-          updated_at?: string | null
+          property_id?: string | null
         }
         Update: {
-          created_at?: string | null
           data?: Json
           expires_at?: string | null
+          generated_at?: string | null
           id?: string
           insight_type?: string
           period_end?: string | null
           period_start?: string | null
-          property_id?: string
-          updated_at?: string | null
+          property_id?: string | null
         }
         Relationships: [
           {
@@ -3660,10 +3848,10 @@ export type Database = {
           created_at: string | null
           date_range_end: string | null
           date_range_start: string | null
-          file_name: string
+          file_name: string | null
           id: string
           platform: string
-          property_id: string
+          property_id: string | null
           report_type: string
           rows_imported: number | null
           uploaded_by: string | null
@@ -3672,10 +3860,10 @@ export type Database = {
           created_at?: string | null
           date_range_end?: string | null
           date_range_start?: string | null
-          file_name: string
+          file_name?: string | null
           id?: string
           platform: string
-          property_id: string
+          property_id?: string | null
           report_type: string
           rows_imported?: number | null
           uploaded_by?: string | null
@@ -3684,10 +3872,10 @@ export type Database = {
           created_at?: string | null
           date_range_end?: string | null
           date_range_start?: string | null
-          file_name?: string
+          file_name?: string | null
           id?: string
           platform?: string
-          property_id?: string
+          property_id?: string | null
           report_type?: string
           rows_imported?: number | null
           uploaded_by?: string | null
@@ -3718,52 +3906,46 @@ export type Database = {
       }
       mcp_audit_log: {
         Row: {
-          action_details: Json | null
           created_at: string | null
           error_message: string | null
+          execution_time_ms: number | null
           id: string
-          operation_type: string | null
+          operation_type: string
           parameters: Json | null
-          platform: string | null
+          platform: string
           property_id: string | null
           result: Json | null
-          server: string | null
           success: boolean | null
-          timestamp: string | null
-          tool: string | null
-          tool_name: string | null
+          tool_name: string
+          user_id: string | null
         }
         Insert: {
-          action_details?: Json | null
           created_at?: string | null
           error_message?: string | null
+          execution_time_ms?: number | null
           id?: string
-          operation_type?: string | null
+          operation_type?: string
           parameters?: Json | null
-          platform?: string | null
+          platform: string
           property_id?: string | null
           result?: Json | null
-          server?: string | null
           success?: boolean | null
-          timestamp?: string | null
-          tool?: string | null
-          tool_name?: string | null
+          tool_name: string
+          user_id?: string | null
         }
         Update: {
-          action_details?: Json | null
           created_at?: string | null
           error_message?: string | null
+          execution_time_ms?: number | null
           id?: string
-          operation_type?: string | null
+          operation_type?: string
           parameters?: Json | null
-          platform?: string | null
+          platform?: string
           property_id?: string | null
           result?: Json | null
-          server?: string | null
           success?: boolean | null
-          timestamp?: string | null
-          tool?: string | null
-          tool_name?: string | null
+          tool_name?: string
+          user_id?: string | null
         }
         Relationships: [
           {
@@ -3823,8 +4005,8 @@ export type Database = {
       }
       metric_goals: {
         Row: {
-          alert_threshold_percent: number
-          created_at: string
+          alert_threshold_percent: number | null
+          created_at: string | null
           created_by: string | null
           goal_type: string
           id: string
@@ -3833,11 +4015,11 @@ export type Database = {
           metric_key: string
           property_id: string
           target_value: number
-          updated_at: string
+          updated_at: string | null
         }
         Insert: {
-          alert_threshold_percent?: number
-          created_at?: string
+          alert_threshold_percent?: number | null
+          created_at?: string | null
           created_by?: string | null
           goal_type?: string
           id?: string
@@ -3846,11 +4028,11 @@ export type Database = {
           metric_key: string
           property_id: string
           target_value: number
-          updated_at?: string
+          updated_at?: string | null
         }
         Update: {
-          alert_threshold_percent?: number
-          created_at?: string
+          alert_threshold_percent?: number | null
+          created_at?: string | null
           created_by?: string | null
           goal_type?: string
           id?: string
@@ -3859,7 +4041,7 @@ export type Database = {
           metric_key?: string
           property_id?: string
           target_value?: number
-          updated_at?: string
+          updated_at?: string | null
         }
         Relationships: [
           {
@@ -4066,6 +4248,7 @@ export type Database = {
           special_features: string[] | null
           target_audience: string | null
           unit_count: number | null
+          updated_at: string | null
           website_url: string | null
           year_built: number | null
         }
@@ -4087,6 +4270,7 @@ export type Database = {
           special_features?: string[] | null
           target_audience?: string | null
           unit_count?: number | null
+          updated_at?: string | null
           website_url?: string | null
           year_built?: number | null
         }
@@ -4108,6 +4292,7 @@ export type Database = {
           special_features?: string[] | null
           target_audience?: string | null
           unit_count?: number | null
+          updated_at?: string | null
           website_url?: string | null
           year_built?: number | null
         }
@@ -4125,6 +4310,7 @@ export type Database = {
         Row: {
           brand_book_pdf_url: string | null
           competitive_analysis: Json | null
+          competitor_ids: string[] | null
           conversation_summary: Json | null
           created_at: string | null
           current_step: number | null
@@ -4134,8 +4320,9 @@ export type Database = {
           generated_by: string | null
           generation_status: string | null
           id: string
+          model_version: string | null
           pdf_generated_at: string | null
-          property_id: string
+          property_id: string | null
           section_1_introduction: Json | null
           section_10_photo_yep: Json | null
           section_11_photo_nope: Json | null
@@ -4154,6 +4341,7 @@ export type Database = {
         Insert: {
           brand_book_pdf_url?: string | null
           competitive_analysis?: Json | null
+          competitor_ids?: string[] | null
           conversation_summary?: Json | null
           created_at?: string | null
           current_step?: number | null
@@ -4163,8 +4351,9 @@ export type Database = {
           generated_by?: string | null
           generation_status?: string | null
           id?: string
+          model_version?: string | null
           pdf_generated_at?: string | null
-          property_id: string
+          property_id?: string | null
           section_1_introduction?: Json | null
           section_10_photo_yep?: Json | null
           section_11_photo_nope?: Json | null
@@ -4183,6 +4372,7 @@ export type Database = {
         Update: {
           brand_book_pdf_url?: string | null
           competitive_analysis?: Json | null
+          competitor_ids?: string[] | null
           conversation_summary?: Json | null
           created_at?: string | null
           current_step?: number | null
@@ -4192,8 +4382,9 @@ export type Database = {
           generated_by?: string | null
           generation_status?: string | null
           id?: string
+          model_version?: string | null
           pdf_generated_at?: string | null
-          property_id?: string
+          property_id?: string | null
           section_1_introduction?: Json | null
           section_10_photo_yep?: Json | null
           section_11_photo_nope?: Json | null
@@ -4210,6 +4401,13 @@ export type Database = {
           vision_board_url?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "property_brand_assets_generated_by_fkey"
+            columns: ["generated_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "property_brand_assets_property_id_fkey"
             columns: ["property_id"]
@@ -4233,6 +4431,153 @@ export type Database = {
           },
         ]
       }
+      property_chatbot_context_revisions: {
+        Row: {
+          change_summary: string | null
+          changed_source_ids: string[]
+          context_id: string | null
+          created_at: string
+          id: string
+          model: string | null
+          next_context_json: Json
+          previous_context_json: Json | null
+          property_id: string
+          removed_source_ids: string[]
+        }
+        Insert: {
+          change_summary?: string | null
+          changed_source_ids?: string[]
+          context_id?: string | null
+          created_at?: string
+          id?: string
+          model?: string | null
+          next_context_json?: Json
+          previous_context_json?: Json | null
+          property_id: string
+          removed_source_ids?: string[]
+        }
+        Update: {
+          change_summary?: string | null
+          changed_source_ids?: string[]
+          context_id?: string | null
+          created_at?: string
+          id?: string
+          model?: string | null
+          next_context_json?: Json
+          previous_context_json?: Json | null
+          property_id?: string
+          removed_source_ids?: string[]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "property_chatbot_context_revisions_context_id_fkey"
+            columns: ["context_id"]
+            isOneToOne: false
+            referencedRelation: "property_chatbot_contexts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_chatbot_context_revisions_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_chatbot_context_revisions_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "property_chatbot_context_revisions_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+        ]
+      }
+      property_chatbot_contexts: {
+        Row: {
+          context_json: Json
+          context_markdown: string
+          created_at: string
+          error_message: string | null
+          id: string
+          last_change_summary: string | null
+          last_generated_at: string | null
+          model: string | null
+          property_id: string
+          requires_review: boolean
+          source_ids: string[]
+          source_snapshot: Json
+          stale_at: string | null
+          status: string
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          context_json?: Json
+          context_markdown?: string
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          last_change_summary?: string | null
+          last_generated_at?: string | null
+          model?: string | null
+          property_id: string
+          requires_review?: boolean
+          source_ids?: string[]
+          source_snapshot?: Json
+          stale_at?: string | null
+          status?: string
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          context_json?: Json
+          context_markdown?: string
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          last_change_summary?: string | null
+          last_generated_at?: string | null
+          model?: string | null
+          property_id?: string
+          requires_review?: boolean
+          source_ids?: string[]
+          source_snapshot?: Json
+          stale_at?: string | null
+          status?: string
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "property_chatbot_contexts_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: true
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_chatbot_contexts_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: true
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "property_chatbot_contexts_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: true
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+        ]
+      }
       property_contacts: {
         Row: {
           billing_address: Json | null
@@ -4245,7 +4590,7 @@ export type Database = {
           name: string
           needs_w9: boolean | null
           phone: string | null
-          property_id: string
+          property_id: string | null
           role: string | null
           special_instructions: string | null
           updated_at: string | null
@@ -4261,7 +4606,7 @@ export type Database = {
           name: string
           needs_w9?: boolean | null
           phone?: string | null
-          property_id: string
+          property_id?: string | null
           role?: string | null
           special_instructions?: string | null
           updated_at?: string | null
@@ -4277,28 +4622,28 @@ export type Database = {
           name?: string
           needs_w9?: boolean | null
           phone?: string | null
-          property_id?: string
+          property_id?: string | null
           role?: string | null
           special_instructions?: string | null
           updated_at?: string | null
         }
         Relationships: [
           {
-            foreignKeyName: "property_contacts_property_id_fkey"
+            foreignKeyName: "community_contacts_property_id_fkey"
             columns: ["property_id"]
             isOneToOne: false
             referencedRelation: "properties"
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "property_contacts_property_id_fkey"
+            foreignKeyName: "community_contacts_property_id_fkey"
             columns: ["property_id"]
             isOneToOne: false
             referencedRelation: "vw_import_status"
             referencedColumns: ["property_id"]
           },
           {
-            foreignKeyName: "property_contacts_property_id_fkey"
+            foreignKeyName: "community_contacts_property_id_fkey"
             columns: ["property_id"]
             isOneToOne: false
             referencedRelation: "vw_property_marketing_setup"
@@ -4505,8 +4850,9 @@ export type Database = {
           previous_version_id: string | null
           property_id: string
           site_architecture: Json | null
+          site_blueprint: Json | null
           site_blueprint_updated_at: string | null
-          site_blueprint_version: number | null
+          site_blueprint_version: number
           tour_requests: number | null
           updated_at: string | null
           user_preferences: Json | null
@@ -4539,8 +4885,9 @@ export type Database = {
           previous_version_id?: string | null
           property_id: string
           site_architecture?: Json | null
+          site_blueprint?: Json | null
           site_blueprint_updated_at?: string | null
-          site_blueprint_version?: number | null
+          site_blueprint_version?: number
           tour_requests?: number | null
           updated_at?: string | null
           user_preferences?: Json | null
@@ -4573,8 +4920,9 @@ export type Database = {
           previous_version_id?: string | null
           property_id?: string
           site_architecture?: Json | null
+          site_blueprint?: Json | null
           site_blueprint_updated_at?: string | null
-          site_blueprint_version?: number | null
+          site_blueprint_version?: number
           tour_requests?: number | null
           updated_at?: string | null
           user_preferences?: Json | null
@@ -4631,38 +4979,53 @@ export type Database = {
       }
       published_posts: {
         Row: {
+          comments_count: number | null
           content_draft_id: string | null
           created_at: string | null
-          engagement_metrics: Json | null
           error_message: string | null
           id: string
+          impressions: number | null
+          likes_count: number | null
+          metrics_updated_at: string | null
           platform_post_id: string | null
           platform_post_url: string | null
           published_at: string | null
+          reach: number | null
+          shares_count: number | null
           social_connection_id: string | null
           status: string | null
         }
         Insert: {
+          comments_count?: number | null
           content_draft_id?: string | null
           created_at?: string | null
-          engagement_metrics?: Json | null
           error_message?: string | null
           id?: string
+          impressions?: number | null
+          likes_count?: number | null
+          metrics_updated_at?: string | null
           platform_post_id?: string | null
           platform_post_url?: string | null
           published_at?: string | null
+          reach?: number | null
+          shares_count?: number | null
           social_connection_id?: string | null
           status?: string | null
         }
         Update: {
+          comments_count?: number | null
           content_draft_id?: string | null
           created_at?: string | null
-          engagement_metrics?: Json | null
           error_message?: string | null
           id?: string
+          impressions?: number | null
+          likes_count?: number | null
+          metrics_updated_at?: string | null
           platform_post_id?: string | null
           platform_post_url?: string | null
           published_at?: string | null
+          reach?: number | null
+          shares_count?: number | null
           social_connection_id?: string | null
           status?: string | null
         }
@@ -4686,7 +5049,7 @@ export type Database = {
       report_send_history: {
         Row: {
           completed_at: string | null
-          created_at: string
+          created_at: string | null
           error_message: string | null
           id: string
           metrics_snapshot: Json | null
@@ -4695,11 +5058,10 @@ export type Database = {
           report_date_start: string | null
           scheduled_report_id: string
           status: string
-          updated_at: string
         }
         Insert: {
           completed_at?: string | null
-          created_at?: string
+          created_at?: string | null
           error_message?: string | null
           id?: string
           metrics_snapshot?: Json | null
@@ -4707,12 +5069,11 @@ export type Database = {
           report_date_end?: string | null
           report_date_start?: string | null
           scheduled_report_id: string
-          status?: string
-          updated_at?: string
+          status: string
         }
         Update: {
           completed_at?: string | null
-          created_at?: string
+          created_at?: string | null
           error_message?: string | null
           id?: string
           metrics_snapshot?: Json | null
@@ -4721,7 +5082,6 @@ export type Database = {
           report_date_start?: string | null
           scheduled_report_id?: string
           status?: string
-          updated_at?: string
         }
         Relationships: [
           {
@@ -4748,9 +5108,11 @@ export type Database = {
           last_review_date: string | null
           last_sync_at: string | null
           limitation_note: string | null
+          next_sync_at: string | null
           place_id: string | null
           platform: string
           property_id: string | null
+          refresh_token: string | null
           scraping_config: Json | null
           sync_frequency: string | null
           token_expires_at: string | null
@@ -4773,9 +5135,11 @@ export type Database = {
           last_review_date?: string | null
           last_sync_at?: string | null
           limitation_note?: string | null
+          next_sync_at?: string | null
           place_id?: string | null
           platform: string
           property_id?: string | null
+          refresh_token?: string | null
           scraping_config?: Json | null
           sync_frequency?: string | null
           token_expires_at?: string | null
@@ -4798,9 +5162,11 @@ export type Database = {
           last_review_date?: string | null
           last_sync_at?: string | null
           limitation_note?: string | null
+          next_sync_at?: string | null
           place_id?: string | null
           platform?: string
           property_id?: string | null
+          refresh_token?: string | null
           scraping_config?: Json | null
           sync_frequency?: string | null
           token_expires_at?: string | null
@@ -4839,10 +5205,12 @@ export type Database = {
           approved_at: string | null
           approved_by: string | null
           created_at: string | null
+          created_by: string | null
           generation_prompt: string | null
           id: string
+          platform_response_id: string | null
           posted_at: string | null
-          rejection_reason: string | null
+          rejected_reason: string | null
           response_text: string
           response_type: string | null
           review_id: string | null
@@ -4855,10 +5223,12 @@ export type Database = {
           approved_at?: string | null
           approved_by?: string | null
           created_at?: string | null
+          created_by?: string | null
           generation_prompt?: string | null
           id?: string
+          platform_response_id?: string | null
           posted_at?: string | null
-          rejection_reason?: string | null
+          rejected_reason?: string | null
           response_text: string
           response_type?: string | null
           review_id?: string | null
@@ -4871,10 +5241,12 @@ export type Database = {
           approved_at?: string | null
           approved_by?: string | null
           created_at?: string | null
+          created_by?: string | null
           generation_prompt?: string | null
           id?: string
+          platform_response_id?: string | null
           posted_at?: string | null
-          rejection_reason?: string | null
+          rejected_reason?: string | null
           response_text?: string
           response_type?: string | null
           review_id?: string | null
@@ -4891,6 +5263,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "review_responses_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "review_responses_review_id_fkey"
             columns: ["review_id"]
             isOneToOne: false
@@ -4901,42 +5280,54 @@ export type Database = {
       }
       review_tickets: {
         Row: {
+          assigned_at: string | null
           assigned_to: string | null
           created_at: string | null
           description: string | null
           id: string
+          notification_channel: string | null
+          notification_sent_at: string | null
           priority: string | null
           property_id: string | null
           resolution_notes: string | null
           resolved_at: string | null
+          resolved_by: string | null
           review_id: string | null
           status: string | null
           title: string
           updated_at: string | null
         }
         Insert: {
+          assigned_at?: string | null
           assigned_to?: string | null
           created_at?: string | null
           description?: string | null
           id?: string
+          notification_channel?: string | null
+          notification_sent_at?: string | null
           priority?: string | null
           property_id?: string | null
           resolution_notes?: string | null
           resolved_at?: string | null
+          resolved_by?: string | null
           review_id?: string | null
           status?: string | null
           title: string
           updated_at?: string | null
         }
         Update: {
+          assigned_at?: string | null
           assigned_to?: string | null
           created_at?: string | null
           description?: string | null
           id?: string
+          notification_channel?: string | null
+          notification_sent_at?: string | null
           priority?: string | null
           property_id?: string | null
           resolution_notes?: string | null
           resolved_at?: string | null
+          resolved_by?: string | null
           review_id?: string | null
           status?: string | null
           title?: string
@@ -4972,9 +5363,16 @@ export type Database = {
             referencedColumns: ["property_id"]
           },
           {
+            foreignKeyName: "review_tickets_resolved_by_fkey"
+            columns: ["resolved_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "review_tickets_review_id_fkey"
             columns: ["review_id"]
-            isOneToOne: false
+            isOneToOne: true
             referencedRelation: "reviews"
             referencedColumns: ["id"]
           },
@@ -4982,19 +5380,20 @@ export type Database = {
       }
       reviewflow_config: {
         Row: {
-          auto_analyze_reviews: boolean | null
-          auto_generate_responses: boolean | null
-          auto_respond_min_rating: number | null
+          apartments_com_connected: boolean | null
+          apartments_com_property_url: string | null
           auto_respond_positive: boolean | null
           auto_respond_threshold: number | null
           created_at: string | null
-          default_signature: string | null
           default_tone: string | null
-          escalation_threshold: number | null
+          facebook_connected: boolean | null
+          facebook_page_id: string | null
+          google_business_id: string | null
+          google_connected: boolean | null
           id: string
           is_active: boolean | null
+          last_polled_at: string | null
           notification_email: string | null
-          notification_slack_webhook: string | null
           notify_on_negative: boolean | null
           notify_on_urgent: boolean | null
           poll_frequency_hours: number | null
@@ -5002,26 +5401,27 @@ export type Database = {
           property_id: string | null
           property_personality: string | null
           response_delay_minutes: number | null
-          response_templates: Json | null
-          response_tone: string | null
           slack_webhook_url: string | null
           sync_schedule: string | null
           updated_at: string | null
+          yelp_business_id: string | null
+          yelp_connected: boolean | null
         }
         Insert: {
-          auto_analyze_reviews?: boolean | null
-          auto_generate_responses?: boolean | null
-          auto_respond_min_rating?: number | null
+          apartments_com_connected?: boolean | null
+          apartments_com_property_url?: string | null
           auto_respond_positive?: boolean | null
           auto_respond_threshold?: number | null
           created_at?: string | null
-          default_signature?: string | null
           default_tone?: string | null
-          escalation_threshold?: number | null
+          facebook_connected?: boolean | null
+          facebook_page_id?: string | null
+          google_business_id?: string | null
+          google_connected?: boolean | null
           id?: string
           is_active?: boolean | null
+          last_polled_at?: string | null
           notification_email?: string | null
-          notification_slack_webhook?: string | null
           notify_on_negative?: boolean | null
           notify_on_urgent?: boolean | null
           poll_frequency_hours?: number | null
@@ -5029,26 +5429,27 @@ export type Database = {
           property_id?: string | null
           property_personality?: string | null
           response_delay_minutes?: number | null
-          response_templates?: Json | null
-          response_tone?: string | null
           slack_webhook_url?: string | null
           sync_schedule?: string | null
           updated_at?: string | null
+          yelp_business_id?: string | null
+          yelp_connected?: boolean | null
         }
         Update: {
-          auto_analyze_reviews?: boolean | null
-          auto_generate_responses?: boolean | null
-          auto_respond_min_rating?: number | null
+          apartments_com_connected?: boolean | null
+          apartments_com_property_url?: string | null
           auto_respond_positive?: boolean | null
           auto_respond_threshold?: number | null
           created_at?: string | null
-          default_signature?: string | null
           default_tone?: string | null
-          escalation_threshold?: number | null
+          facebook_connected?: boolean | null
+          facebook_page_id?: string | null
+          google_business_id?: string | null
+          google_connected?: boolean | null
           id?: string
           is_active?: boolean | null
+          last_polled_at?: string | null
           notification_email?: string | null
-          notification_slack_webhook?: string | null
           notify_on_negative?: boolean | null
           notify_on_urgent?: boolean | null
           poll_frequency_hours?: number | null
@@ -5056,11 +5457,11 @@ export type Database = {
           property_id?: string | null
           property_personality?: string | null
           response_delay_minutes?: number | null
-          response_templates?: Json | null
-          response_tone?: string | null
           slack_webhook_url?: string | null
           sync_schedule?: string | null
           updated_at?: string | null
+          yelp_business_id?: string | null
+          yelp_connected?: boolean | null
         }
         Relationships: [
           {
@@ -5088,6 +5489,7 @@ export type Database = {
       }
       reviews: {
         Row: {
+          auto_respond_eligible: boolean | null
           created_at: string | null
           id: string
           is_urgent: boolean | null
@@ -5098,15 +5500,16 @@ export type Database = {
           raw_data: Json | null
           response_status: string | null
           review_date: string | null
-          review_text: string
+          review_text: string | null
           reviewer_avatar_url: string | null
           reviewer_name: string | null
           sentiment: string | null
           sentiment_score: number | null
-          topics: string[] | null
+          topics: Json | null
           updated_at: string | null
         }
         Insert: {
+          auto_respond_eligible?: boolean | null
           created_at?: string | null
           id?: string
           is_urgent?: boolean | null
@@ -5117,15 +5520,16 @@ export type Database = {
           raw_data?: Json | null
           response_status?: string | null
           review_date?: string | null
-          review_text: string
+          review_text?: string | null
           reviewer_avatar_url?: string | null
           reviewer_name?: string | null
           sentiment?: string | null
           sentiment_score?: number | null
-          topics?: string[] | null
+          topics?: Json | null
           updated_at?: string | null
         }
         Update: {
+          auto_respond_eligible?: boolean | null
           created_at?: string | null
           id?: string
           is_urgent?: boolean | null
@@ -5136,12 +5540,12 @@ export type Database = {
           raw_data?: Json | null
           response_status?: string | null
           review_date?: string | null
-          review_text?: string
+          review_text?: string | null
           reviewer_avatar_url?: string | null
           reviewer_name?: string | null
           sentiment?: string | null
           sentiment_score?: number | null
-          topics?: string[] | null
+          topics?: Json | null
           updated_at?: string | null
         }
         Relationships: [
@@ -5170,7 +5574,7 @@ export type Database = {
       }
       scheduled_reports: {
         Row: {
-          created_at: string
+          created_at: string | null
           created_by: string | null
           date_range_type: string
           day_of_month: number | null
@@ -5185,13 +5589,13 @@ export type Database = {
           next_run_at: string | null
           org_id: string
           property_id: string | null
-          recipients: string[]
+          recipients: Json
           report_type: string
           schedule_type: string
-          updated_at: string
+          updated_at: string | null
         }
         Insert: {
-          created_at?: string
+          created_at?: string | null
           created_by?: string | null
           date_range_type?: string
           day_of_month?: number | null
@@ -5206,13 +5610,13 @@ export type Database = {
           next_run_at?: string | null
           org_id: string
           property_id?: string | null
-          recipients?: string[]
+          recipients?: Json
           report_type?: string
           schedule_type: string
-          updated_at?: string
+          updated_at?: string | null
         }
         Update: {
-          created_at?: string
+          created_at?: string | null
           created_by?: string | null
           date_range_type?: string
           day_of_month?: number | null
@@ -5227,10 +5631,10 @@ export type Database = {
           next_run_at?: string | null
           org_id?: string
           property_id?: string | null
-          recipients?: string[]
+          recipients?: Json
           report_type?: string
           schedule_type?: string
-          updated_at?: string
+          updated_at?: string | null
         }
         Relationships: [
           {
@@ -5348,45 +5752,45 @@ export type Database = {
       }
       scrape_config: {
         Row: {
-          auto_add: boolean | null
           created_at: string | null
           error_count: number | null
           id: string
           is_enabled: boolean | null
           last_error: string | null
           last_run_at: string | null
-          max_competitors: number | null
-          property_id: string
-          radius_miles: number | null
+          next_run_at: string | null
+          property_id: string | null
+          proxy_enabled: boolean | null
           scrape_frequency: string | null
+          sources: Json | null
           updated_at: string | null
         }
         Insert: {
-          auto_add?: boolean | null
           created_at?: string | null
           error_count?: number | null
           id?: string
           is_enabled?: boolean | null
           last_error?: string | null
           last_run_at?: string | null
-          max_competitors?: number | null
-          property_id: string
-          radius_miles?: number | null
+          next_run_at?: string | null
+          property_id?: string | null
+          proxy_enabled?: boolean | null
           scrape_frequency?: string | null
+          sources?: Json | null
           updated_at?: string | null
         }
         Update: {
-          auto_add?: boolean | null
           created_at?: string | null
           error_count?: number | null
           id?: string
           is_enabled?: boolean | null
           last_error?: string | null
           last_run_at?: string | null
-          max_competitors?: number | null
-          property_id?: string
-          radius_miles?: number | null
+          next_run_at?: string | null
+          property_id?: string | null
+          proxy_enabled?: boolean | null
           scrape_frequency?: string | null
+          sources?: Json | null
           updated_at?: string | null
         }
         Relationships: [
@@ -5978,37 +6382,25 @@ export type Database = {
       siteforge_blueprint_versions: {
         Row: {
           blueprint: Json
-          changes_summary: string | null
-          created_at: string | null
+          created_at: string
           created_by: string | null
-          edit_intent: string | null
           id: string
-          patches_applied: Json | null
-          quality_score: number | null
           version: number
           website_id: string
         }
         Insert: {
           blueprint: Json
-          changes_summary?: string | null
-          created_at?: string | null
+          created_at?: string
           created_by?: string | null
-          edit_intent?: string | null
           id?: string
-          patches_applied?: Json | null
-          quality_score?: number | null
           version: number
           website_id: string
         }
         Update: {
           blueprint?: Json
-          changes_summary?: string | null
-          created_at?: string | null
+          created_at?: string
           created_by?: string | null
-          edit_intent?: string | null
           id?: string
-          patches_applied?: Json | null
-          quality_score?: number | null
           version?: number
           website_id?: string
         }
@@ -6031,7 +6423,6 @@ export type Database = {
       }
       siteforge_jobs: {
         Row: {
-          agent_logs: Json | null
           attempts: number | null
           completed_at: string | null
           created_at: string | null
@@ -6046,7 +6437,6 @@ export type Database = {
           website_id: string
         }
         Insert: {
-          agent_logs?: Json | null
           attempts?: number | null
           completed_at?: string | null
           created_at?: string | null
@@ -6061,7 +6451,6 @@ export type Database = {
           website_id: string
         }
         Update: {
-          agent_logs?: Json | null
           attempts?: number | null
           completed_at?: string | null
           created_at?: string | null
@@ -6216,11 +6605,12 @@ export type Database = {
       }
       social_connections: {
         Row: {
-          access_token: string | null
+          access_token: string
           account_avatar_url: string | null
-          account_id: string | null
+          account_id: string
           account_name: string | null
           account_username: string | null
+          connected_by: string | null
           created_at: string | null
           error_count: number | null
           id: string
@@ -6232,17 +6622,18 @@ export type Database = {
           platform: string
           property_id: string | null
           raw_profile: Json | null
+          refresh_token: string | null
           scopes: string[] | null
           token_expires_at: string | null
           updated_at: string | null
-          user_access_token: string | null
         }
         Insert: {
-          access_token?: string | null
+          access_token: string
           account_avatar_url?: string | null
-          account_id?: string | null
+          account_id: string
           account_name?: string | null
           account_username?: string | null
+          connected_by?: string | null
           created_at?: string | null
           error_count?: number | null
           id?: string
@@ -6254,17 +6645,18 @@ export type Database = {
           platform: string
           property_id?: string | null
           raw_profile?: Json | null
+          refresh_token?: string | null
           scopes?: string[] | null
           token_expires_at?: string | null
           updated_at?: string | null
-          user_access_token?: string | null
         }
         Update: {
-          access_token?: string | null
+          access_token?: string
           account_avatar_url?: string | null
-          account_id?: string | null
+          account_id?: string
           account_name?: string | null
           account_username?: string | null
+          connected_by?: string | null
           created_at?: string | null
           error_count?: number | null
           id?: string
@@ -6276,12 +6668,19 @@ export type Database = {
           platform?: string
           property_id?: string | null
           raw_profile?: Json | null
+          refresh_token?: string | null
           scopes?: string[] | null
           token_expires_at?: string | null
           updated_at?: string | null
-          user_access_token?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "social_connections_connected_by_fkey"
+            columns: ["connected_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "social_connections_property_id_fkey"
             columns: ["property_id"]
@@ -6310,13 +6709,16 @@ export type Database = {
           booked_via_conversation_id: string | null
           completed_at: string | null
           completion_notes: string | null
+          confirmation_sent_at: string | null
           created_at: string | null
           duration_minutes: number | null
           id: string
+          internal_notes: string | null
           lead_id: string | null
           property_id: string | null
           reminder_1h_sent_at: string | null
           reminder_24h_sent_at: string | null
+          reminder_sent_at: string | null
           scheduled_date: string
           scheduled_time: string
           slot_id: string | null
@@ -6329,13 +6731,16 @@ export type Database = {
           booked_via_conversation_id?: string | null
           completed_at?: string | null
           completion_notes?: string | null
+          confirmation_sent_at?: string | null
           created_at?: string | null
           duration_minutes?: number | null
           id?: string
+          internal_notes?: string | null
           lead_id?: string | null
           property_id?: string | null
           reminder_1h_sent_at?: string | null
           reminder_24h_sent_at?: string | null
+          reminder_sent_at?: string | null
           scheduled_date: string
           scheduled_time: string
           slot_id?: string | null
@@ -6348,13 +6753,16 @@ export type Database = {
           booked_via_conversation_id?: string | null
           completed_at?: string | null
           completion_notes?: string | null
+          confirmation_sent_at?: string | null
           created_at?: string | null
           duration_minutes?: number | null
           id?: string
+          internal_notes?: string | null
           lead_id?: string | null
           property_id?: string | null
           reminder_1h_sent_at?: string | null
           reminder_24h_sent_at?: string | null
+          reminder_sent_at?: string | null
           scheduled_date?: string
           scheduled_time?: string
           slot_id?: string | null
@@ -6479,10 +6887,10 @@ export type Database = {
           property_id: string | null
           reminder_24h_sent_at: string | null
           reminder_sent_at: string | null
-          status: string | null
+          status: string
           tour_date: string
           tour_time: string
-          tour_type: string | null
+          tour_type: string
           updated_at: string | null
         }
         Insert: {
@@ -6497,10 +6905,10 @@ export type Database = {
           property_id?: string | null
           reminder_24h_sent_at?: string | null
           reminder_sent_at?: string | null
-          status?: string | null
+          status?: string
           tour_date: string
           tour_time: string
-          tour_type?: string | null
+          tour_type?: string
           updated_at?: string | null
         }
         Update: {
@@ -6515,10 +6923,10 @@ export type Database = {
           property_id?: string | null
           reminder_24h_sent_at?: string | null
           reminder_sent_at?: string | null
-          status?: string | null
+          status?: string
           tour_date?: string
           tour_time?: string
-          tour_type?: string | null
+          tour_type?: string
           updated_at?: string | null
         }
         Relationships: [
@@ -6570,17 +6978,14 @@ export type Database = {
         Row: {
           alt_text: string | null
           asset_type: string
-          brand_alignment_score: number | null
           caption: string | null
           created_at: string | null
           file_size_bytes: number | null
           file_url: string
-          generation_prompt: string | null
           id: string
           mime_type: string | null
           optimized: boolean | null
           original_url: string | null
-          quality_score: number | null
           source: string
           usage_context: Json | null
           website_id: string
@@ -6589,17 +6994,14 @@ export type Database = {
         Insert: {
           alt_text?: string | null
           asset_type: string
-          brand_alignment_score?: number | null
           caption?: string | null
           created_at?: string | null
           file_size_bytes?: number | null
           file_url: string
-          generation_prompt?: string | null
           id?: string
           mime_type?: string | null
           optimized?: boolean | null
           original_url?: string | null
-          quality_score?: number | null
           source: string
           usage_context?: Json | null
           website_id: string
@@ -6608,17 +7010,14 @@ export type Database = {
         Update: {
           alt_text?: string | null
           asset_type?: string
-          brand_alignment_score?: number | null
           caption?: string | null
           created_at?: string | null
           file_size_bytes?: number | null
           file_url?: string
-          generation_prompt?: string | null
           id?: string
           mime_type?: string | null
           optimized?: boolean | null
           original_url?: string | null
-          quality_score?: number | null
           source?: string
           usage_context?: Json | null
           website_id?: string
@@ -6692,48 +7091,48 @@ export type Database = {
       widget_sessions: {
         Row: {
           converted_at: string | null
-          created_at: string | null
           id: string
+          ip_address: unknown
+          landing_page: string | null
           last_activity_at: string | null
           lead_id: string | null
           message_count: number | null
           metadata: Json | null
           property_id: string | null
           referrer_url: string | null
-          session_end: string | null
-          session_start: string | null
+          started_at: string | null
           user_agent: string | null
-          visitor_id: string | null
+          visitor_id: string
         }
         Insert: {
           converted_at?: string | null
-          created_at?: string | null
           id?: string
+          ip_address?: unknown
+          landing_page?: string | null
           last_activity_at?: string | null
           lead_id?: string | null
           message_count?: number | null
           metadata?: Json | null
           property_id?: string | null
           referrer_url?: string | null
-          session_end?: string | null
-          session_start?: string | null
+          started_at?: string | null
           user_agent?: string | null
-          visitor_id?: string | null
+          visitor_id: string
         }
         Update: {
           converted_at?: string | null
-          created_at?: string | null
           id?: string
+          ip_address?: unknown
+          landing_page?: string | null
           last_activity_at?: string | null
           lead_id?: string | null
           message_count?: number | null
           metadata?: Json | null
           property_id?: string | null
           referrer_url?: string | null
-          session_end?: string | null
-          session_start?: string | null
+          started_at?: string | null
           user_agent?: string | null
-          visitor_id?: string | null
+          visitor_id?: string
         }
         Relationships: [
           {
@@ -6774,7 +7173,7 @@ export type Database = {
           external_id: string | null
           id: string
           lead_workflow_id: string | null
-          status: string | null
+          status: string
           step_number: number
           template_id: string | null
         }
@@ -6785,7 +7184,7 @@ export type Database = {
           external_id?: string | null
           id?: string
           lead_workflow_id?: string | null
-          status?: string | null
+          status?: string
           step_number: number
           template_id?: string | null
         }
@@ -6796,7 +7195,7 @@ export type Database = {
           external_id?: string | null
           id?: string
           lead_workflow_id?: string | null
-          status?: string | null
+          status?: string
           step_number?: number
           template_id?: string | null
         }
@@ -6806,6 +7205,13 @@ export type Database = {
             columns: ["lead_workflow_id"]
             isOneToOne: false
             referencedRelation: "lead_workflows"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "workflow_actions_template_id_fkey"
+            columns: ["template_id"]
+            isOneToOne: false
+            referencedRelation: "follow_up_templates"
             referencedColumns: ["id"]
           },
         ]
@@ -6832,7 +7238,7 @@ export type Database = {
           name: string
           property_id?: string | null
           steps?: Json
-          trigger_on: string
+          trigger_on?: string
           updated_at?: string | null
         }
         Update: {
@@ -7029,11 +7435,54 @@ export type Database = {
       }
     }
     Functions: {
+      calculate_lead_score: {
+        Args: { p_lead_id: string }
+        Returns: {
+          behavior_score: number
+          completeness_score: number
+          engagement_score: number
+          factors: Json
+          score_bucket: string
+          source_score: number
+          timing_score: number
+          total_score: number
+        }[]
+      }
+      calculate_next_run: {
+        Args: {
+          p_day_of_month: number
+          p_day_of_week: number
+          p_from_time?: string
+          p_hour_utc: number
+          p_schedule_type: string
+        }
+        Returns: string
+      }
       create_default_onboarding_tasks: {
         Args: { p_property_id: string }
         Returns: undefined
       }
       execute_readonly_query: { Args: { query_text: string }; Returns: Json }
+      generate_tour_slots: {
+        Args: {
+          p_end_date: string
+          p_property_id: string
+          p_start_date: string
+        }
+        Returns: undefined
+      }
+      get_brand_section_column: { Args: { step_num: number }; Returns: string }
+      get_market_position: {
+        Args: { p_our_rent: number; p_property_id: string; p_unit_type: string }
+        Returns: {
+          avg_market_rent: number
+          max_market_rent: number
+          min_market_rent: number
+          position_rank: number
+          price_vs_avg_percent: number
+          total_competitors: number
+        }[]
+      }
       get_onboarding_progress: {
         Args: { p_property_id: string }
         Returns: {
@@ -7041,6 +7490,19 @@ export type Database = {
           progress_percentage: number
           total_tasks: number
         }[]
+      }
+      get_user_org_id: { Args: { user_id: string }; Returns: string }
+      link_property_to_google_ads: {
+        Args: {
+          p_google_customer_id: string
+          p_manager_account_id?: string
+          p_property_name: string
+        }
+        Returns: string
+      }
+      link_property_to_meta_ads: {
+        Args: { p_meta_account_id: string; p_property_name: string }
+        Returns: string
       }
       match_competitor_content: {
         Args: {
@@ -7073,6 +7535,15 @@ export type Database = {
           metadata: Json
           similarity: number
         }[]
+      }
+      record_mapping_correction: {
+        Args: {
+          p_crm_type: string
+          p_final_crm_field: string
+          p_suggested_crm_field: string
+          p_tourspark_field: string
+        }
+        Returns: undefined
       }
       score_lead: { Args: { p_lead_id: string }; Returns: string }
       update_scrape_job_progress: {
@@ -7250,4 +7721,3 @@ export const Constants = {
     },
   },
 } as const
-

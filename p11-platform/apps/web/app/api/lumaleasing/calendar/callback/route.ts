@@ -206,7 +206,15 @@ export async function GET(request: NextRequest) {
       const { error: updateError } = await supabase
         .from('agent_calendars')
         .update({
+          provider: 'google',
           google_email: googleEmail,
+          account_email: googleEmail,
+          scopes: [
+            'https://www.googleapis.com/auth/calendar',
+            'https://www.googleapis.com/auth/calendar.events',
+          ],
+          auth_source: 'dashboard',
+          authorized_by_profile_id: profileId,
           access_token,
           refresh_token,
           token_expires_at: tokenExpiresAt,
@@ -236,7 +244,15 @@ export async function GET(request: NextRequest) {
         .insert({
           profile_id: profileId,
           property_id: propertyId,
+          provider: 'google',
           google_email: googleEmail,
+          account_email: googleEmail,
+          scopes: [
+            'https://www.googleapis.com/auth/calendar',
+            'https://www.googleapis.com/auth/calendar.events',
+          ],
+          auth_source: 'dashboard',
+          authorized_by_profile_id: profileId,
           access_token,
           refresh_token,
           token_expires_at: tokenExpiresAt,

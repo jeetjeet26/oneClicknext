@@ -141,6 +141,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Brand asset not found' }, { status: 404 })
     }
 
+    if (!brand.property_id) {
+      return NextResponse.json({ error: 'Brand asset missing property' }, { status: 400 })
+    }
+
     const brandAccess = await validatePropertyAccess(user.id, brand.property_id)
     if (!brandAccess.authorized) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })

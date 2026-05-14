@@ -472,6 +472,8 @@ export async function bookLumaLeasingTour(
             agent_calendar_id: calendarConfig.id,
             tour_booking_id: bookingRow.id,
             google_event_id: event.eventId,
+            provider_event_id: event.eventId,
+            provider_event_link: event.htmlLink || null,
             sync_status: 'synced',
             last_synced_at: new Date().toISOString(),
           })

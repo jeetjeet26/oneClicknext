@@ -121,7 +121,9 @@ export async function GET(req: NextRequest) {
         name: comp.name,
         avgRent,
         unitsTracked: units.length,
-        amenities: comp.amenities || []
+        amenities: Array.isArray(comp.amenities)
+          ? comp.amenities.filter((amenity): amenity is string => typeof amenity === 'string')
+          : []
       })
 
       units.forEach((u: Record<string, unknown>) => {

@@ -85,15 +85,17 @@ export async function POST(
     await serviceClient
       .from('mcp_audit_log')
       .insert({
-        server: 'siteforge-edit',
-        tool: 'edit_section',
+        platform: 'siteforge-edit',
+        tool_name: 'edit_section',
+        operation_type: 'siteforge_edit_section',
         property_id: website.property_id,
-        action_details: {
+        parameters: {
           websiteId,
           sectionId,
           userIntent,
           patchCount: patches.length
-        }
+        },
+        success: true,
       })
     
     return NextResponse.json({

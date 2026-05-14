@@ -187,6 +187,8 @@ export async function reconcileCalendarForProperty(
             .from('calendar_events')
             .update({
               google_event_id: createdEvent.eventId,
+              provider_event_id: createdEvent.eventId,
+              provider_event_link: createdEvent.htmlLink || null,
               sync_status: 'synced',
               last_synced_at: reconciledAt,
             })
@@ -196,6 +198,8 @@ export async function reconcileCalendarForProperty(
             agent_calendar_id: calendarConfig.id,
             tour_booking_id: booking.id,
             google_event_id: createdEvent.eventId,
+            provider_event_id: createdEvent.eventId,
+            provider_event_link: createdEvent.htmlLink || null,
             sync_status: 'synced',
             last_synced_at: reconciledAt,
           })
@@ -221,6 +225,8 @@ export async function reconcileCalendarForProperty(
           .from('calendar_events')
           .update({
             google_event_id: recreatedEvent.eventId,
+            provider_event_id: recreatedEvent.eventId,
+            provider_event_link: recreatedEvent.htmlLink || null,
             sync_status: 'synced',
             last_synced_at: reconciledAt,
           })

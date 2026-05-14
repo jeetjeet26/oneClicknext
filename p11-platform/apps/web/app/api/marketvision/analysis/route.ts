@@ -20,11 +20,11 @@ export interface CompetitorComparison {
   competitor: {
     id: string
     name: string
-    address: string | null
+    address: unknown
   }
   units: {
     unitType: string
-    bedrooms: number
+    bedrooms: number | null
     rentMin: number | null
     rentMax: number | null
     sqftMin: number | null
@@ -235,7 +235,7 @@ async function getCompetitorComparison(
       },
       units: units.map((u: Record<string, unknown>) => ({
         unitType: u.unit_type as string,
-        bedrooms: u.bedrooms as number,
+        bedrooms: u.bedrooms as number | null,
         rentMin: u.rent_min as number | null,
         rentMax: u.rent_max as number | null,
         sqftMin: u.sqft_min as number | null,
@@ -247,7 +247,9 @@ async function getCompetitorComparison(
       })),
       avgRent: Math.round(avgRent),
       avgPricePerSqft: avgPricePerSqft ? Math.round(avgPricePerSqft * 100) / 100 : null,
-      amenities: comp.amenities || []
+      amenities: Array.isArray(comp.amenities)
+        ? comp.amenities.filter((amenity): amenity is string => typeof amenity === 'string')
+        : []
     }
   })
 

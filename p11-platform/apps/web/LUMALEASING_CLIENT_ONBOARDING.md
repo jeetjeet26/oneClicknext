@@ -55,21 +55,27 @@ Embed needs at least baseline content to avoid "I don't have that info" answers.
 
 ## 4. Provider Integrations
 
-### Google Calendar (required for live tour booking)
+### Calendar (required for live tour booking)
 
-- [ ] Property operator clicks "Connect Google Calendar" in `/dashboard/lumaleasing` → Tours tab.
-- [ ] Completes Google OAuth with the calendar account.
+- [ ] Choose the client provider: Google Calendar or Microsoft Outlook Calendar.
+- [ ] If the operator has P11 access, they click the matching connect button in `/dashboard/lumaleasing` → Tours tab.
+- [ ] If the client should not receive P11 access, generate and send/copy the provider-specific external calendar auth link from the Tours tab.
+- [ ] Client completes Google or Microsoft OAuth with the property calendar account.
 - [ ] `agent_calendars` row appears with `sync_enabled = true`, `token_status = 'healthy'`.
+- [ ] `agent_calendars.provider` and `agent_calendars.account_email` match the authorized account.
 - [ ] `GET /api/lumaleasing/calendar/status?propertyId=…` returns `connected: true`, `webhook_capability.ready: true`.
 - [ ] Operator confirms the calendar that should receive bookings is the default calendar on that account, or update `calendar_id` if otherwise.
 
 If tours are not part of the package, set `tours_enabled = false` and skip this section.
 
-### Gmail (required for inbound thread sync)
+### Email Inbox (required for inbound thread sync)
 
-- [ ] Operator clicks "Connect Gmail" in `/dashboard/lumaleasing` → Leads tab.
-- [ ] Completes Google OAuth on the inbox account.
+- [ ] Choose the client provider: Gmail or Microsoft Outlook Mail.
+- [ ] If the operator has P11 access, they click the matching connect button in `/dashboard/lumaleasing` → Leads tab.
+- [ ] If the client should not receive P11 access, generate and send/copy the provider-specific external email auth link from the Leads tab.
+- [ ] Client completes Google or Microsoft OAuth on the inbox account.
 - [ ] `email_configurations` row appears with `sync_enabled = true`, `token_status = 'healthy'`.
+- [ ] `email_configurations.provider` and `email_configurations.account_email` match the authorized inbox.
 - [ ] `GET /api/lumaleasing/email/status?propertyId=…` returns `connected: true`, `webhook_capability.ready: true`.
 - [ ] Operator confirms `auto_reply_enabled` setting matches their preference.
 

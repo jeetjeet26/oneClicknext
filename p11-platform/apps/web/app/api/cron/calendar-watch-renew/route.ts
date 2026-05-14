@@ -12,7 +12,9 @@ import {
 type CalendarConfigRow = {
   id: string
   property_id: string | null
-  google_email: string
+  provider: string | null
+  google_email: string | null
+  account_email: string | null
   calendar_id: string | null
   access_token: string | null
   refresh_token: string | null
@@ -22,6 +24,7 @@ type CalendarConfigRow = {
   buffer_minutes: number | null
   timezone: string | null
   token_status: string | null
+  provider_metadata: Record<string, unknown> | null
   watch_channel_id: string | null
   watch_last_message_number: number | null
   watch_resource_id: string | null
@@ -40,6 +43,7 @@ type RenewLog = {
 function toCalendarConfig(config: CalendarConfigRow): CalendarConfig | null {
   if (
     !config.property_id ||
+    (!config.google_email && !config.account_email) ||
     !config.access_token ||
     !config.refresh_token ||
     !config.token_expires_at
@@ -50,7 +54,9 @@ function toCalendarConfig(config: CalendarConfigRow): CalendarConfig | null {
   return {
     id: config.id,
     property_id: config.property_id,
-    google_email: config.google_email,
+    provider: config.provider === 'microsoft' ? 'microsoft' : 'google',
+    google_email: config.google_email || config.account_email || '',
+    account_email: config.account_email || config.google_email || '',
     calendar_id: config.calendar_id || 'primary',
     access_token: config.access_token,
     refresh_token: config.refresh_token,
@@ -68,6 +74,7 @@ function toCalendarConfig(config: CalendarConfigRow): CalendarConfig | null {
     buffer_minutes: config.buffer_minutes || 15,
     timezone: config.timezone || 'America/Chicago',
     token_status: config.token_status || 'healthy',
+    provider_metadata: config.provider_metadata || {},
     watch_channel_id: config.watch_channel_id,
     watch_last_message_number: config.watch_last_message_number,
     watch_resource_id: config.watch_resource_id,
@@ -116,7 +123,7 @@ export async function GET(request: NextRequest) {
       if (!calendarConfig) {
         logs.push({
           propertyId: row.property_id || 'unknown',
-          googleEmail: row.google_email,
+          googleEmail: row.google_email || row.account_email || 'unknown',
           status: 'skipped',
           reason: 'incomplete_calendar_config',
         })
