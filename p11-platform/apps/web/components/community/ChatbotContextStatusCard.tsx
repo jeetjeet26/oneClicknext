@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { AlertCircle, Bot, CheckCircle2, Clock, Copy, FileText, Maximize2, RefreshCw, X } from 'lucide-react'
+import { AlertCircle, Bot, Check, CheckCircle2, Clock, Copy, Edit3, FileText, Maximize2, RefreshCw, X } from 'lucide-react'
 
 type ChatbotContext = {
   status: string
@@ -55,6 +55,9 @@ export function ChatbotContextStatusCard({ propertyId }: ChatbotContextStatusCar
   const [error, setError] = useState<string | null>(null)
   const [showFullPrompt, setShowFullPrompt] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [draftPrompt, setDraftPrompt] = useState('')
 
   const loadContext = useCallback(async () => {
     if (!propertyId) return
@@ -68,6 +71,8 @@ export function ChatbotContextStatusCard({ propertyId }: ChatbotContextStatusCar
       }
       setContext(data.context ?? null)
       setRevisions(data.revisions ?? [])
+      setEditing(false)
+      setDraftPrompt(data.context?.context_markdown ?? '')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load chatbot context')
     } finally {
@@ -97,6 +102,39 @@ export function ChatbotContextStatusCard({ propertyId }: ChatbotContextStatusCar
       setError(err instanceof Error ? err.message : 'Failed to regenerate chatbot context')
     } finally {
       setRegenerating(false)
+    }
+  }
+
+  const startEditing = () => {
+    setDraftPrompt(context?.context_markdown ?? '')
+    setEditing(true)
+    setError(null)
+  }
+
+  const cancelEditing = () => {
+    setDraftPrompt(context?.context_markdown ?? '')
+    setEditing(false)
+    setError(null)
+  }
+
+  const savePrompt = async () => {
+    setSaving(true)
+    setError(null)
+    try {
+      const response = await fetch('/api/chatbot-context', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ propertyId, contextMarkdown: draftPrompt }),
+      })
+      const data = await response.json()
+      if (!response.ok) {
+        throw new Error(data?.error || 'Failed to save chatbot context')
+      }
+      await loadContext()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save chatbot context')
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -178,6 +216,15 @@ export function ChatbotContextStatusCard({ propertyId }: ChatbotContextStatusCar
           <div className="flex items-center gap-2">
             <button
               type="button"
+              onClick={startEditing}
+              disabled={loading || !context?.context_markdown || editing}
+              className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            >
+              <Edit3 className="h-3.5 w-3.5" />
+              Edit
+            </button>
+            <button
+              type="button"
               onClick={copyPrompt}
               disabled={loading || !context?.context_markdown}
               className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
@@ -196,9 +243,45 @@ export function ChatbotContextStatusCard({ propertyId }: ChatbotContextStatusCar
             </button>
           </div>
         </div>
-        <pre className="max-h-[520px] overflow-auto whitespace-pre-wrap rounded-md bg-white p-4 font-mono text-xs leading-5 text-slate-700">
-          {loading ? 'Loading chatbot context...' : systemPrompt}
-        </pre>
+        {editing ? (
+          <div className="space-y-3">
+            <textarea
+              value={draftPrompt}
+              onChange={(event) => setDraftPrompt(event.target.value)}
+              className="min-h-[520px] w-full resize-y rounded-md border border-slate-200 bg-white p-4 font-mono text-xs leading-5 text-slate-700 outline-none focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100"
+              aria-label="Edit chatbot context"
+            />
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-xs text-slate-500">
+                Regenerate will overwrite manual text with a fresh generated context.
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={cancelEditing}
+                  disabled={saving}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  <X className="h-4 w-4" />
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={savePrompt}
+                  disabled={saving || !draftPrompt.trim()}
+                  className="inline-flex items-center gap-1.5 rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  <Check className="h-4 w-4" />
+                  {saving ? 'Saving...' : 'Save'}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <pre className="max-h-[520px] overflow-auto whitespace-pre-wrap rounded-md bg-white p-4 font-mono text-xs leading-5 text-slate-700">
+            {loading ? 'Loading chatbot context...' : systemPrompt}
+          </pre>
+        )}
       </div>
 
       {showFullPrompt && (

@@ -14,6 +14,11 @@ const CONVERSATIONAL_PATTERNS = [
   /\b(my\s+name\s+is|i\s+am|i'm|call\s+me|my\s+email|my\s+phone|reach\s+me)\b/i,
 ]
 
+const CONTACT_INFO_PATTERNS = [
+  /\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b/,
+  /\b(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)?\d{3}[-.\s]?\d{4}\b/,
+]
+
 const OFF_TOPIC_PATTERNS = [
   /\b(math|algebra|geometry|calculus|trigonometry|equation|equations|derivative|integral|homework)\b/,
   /\b(code|coding|programming|javascript|typescript|python|java|sql|debug|algorithm|regex)\b/,
@@ -62,6 +67,10 @@ export function isPropertyChatInScope(message: string, propertyName?: string | n
   }
 
   if (CONVERSATIONAL_PATTERNS.some(pattern => pattern.test(text))) {
+    return true
+  }
+
+  if (CONTACT_INFO_PATTERNS.some(pattern => pattern.test(text))) {
     return true
   }
 

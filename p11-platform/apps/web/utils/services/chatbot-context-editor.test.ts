@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { editPropertyChatbotContext, loadPropertyChatbotContext } from './chatbot-context-editor'
+import { editPropertyChatbotContext, loadPropertyChatbotContext, saveManualPropertyChatbotContext } from './chatbot-context-editor'
 
 class QueryBuilder {
   private filters: Record<string, unknown> = {}
@@ -330,5 +330,47 @@ describe('chatbot context editor', () => {
 
     expect(context?.contextMarkdown).toBe('CLIENT PROPERTY CONTEXT')
     expect(context?.status).toBe('current')
+  })
+
+  it('saves manual markdown edits without regenerating source facts', async () => {
+    const { db, supabase } = createMockSupabase({
+      context: {
+        id: 'context-1',
+        property_id: 'property-1',
+        status: 'stale',
+        context_markdown: 'Old generated context',
+        context_json: { property_profile: { name: 'Acacia' } },
+        version: 2,
+        requires_review: true,
+      },
+    })
+
+    const result = await saveManualPropertyChatbotContext(supabase as never, 'property-1', {
+      contextMarkdown: 'Manually edited context',
+    })
+
+    expect(result).toEqual({ success: true, status: 'current' })
+    expect(db.context?.context_markdown).toBe('Manually edited context')
+    expect(db.context?.status).toBe('current')
+    expect(db.context?.version).toBe(3)
+    expect(db.context?.requires_review).toBe(false)
+    expect(db.context?.last_change_summary).toBe('Manual chatbot context edit saved.')
+    expect(db.revisions).toHaveLength(1)
+  })
+
+  it('does not create a manual context when none exists', async () => {
+    const { db, supabase } = createMockSupabase()
+
+    const result = await saveManualPropertyChatbotContext(supabase as never, 'property-1', {
+      contextMarkdown: 'Manual context',
+    })
+
+    expect(result).toEqual({
+      success: false,
+      status: 'failed',
+      error: 'Chatbot context not found',
+    })
+    expect(db.context).toBeNull()
+    expect(db.revisions).toHaveLength(0)
   })
 })

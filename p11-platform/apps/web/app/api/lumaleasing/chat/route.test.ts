@@ -746,6 +746,122 @@ describe('LumaLeasing chat route', () => {
     expect(openAiChatCreateMock).not.toHaveBeenCalled()
   })
 
+  it('continues the chat after a contact-info reply instead of returning the property-only fallback', async () => {
+    validateBodyMock.mockReturnValue({
+      success: true,
+      data: {
+        messages: [
+          { role: 'assistant', content: 'Before we continue, can I get your contact info so we can follow up?' },
+          { role: 'user', content: 'sure jesse gill jesse55555@gmail.com' },
+        ],
+        sessionId: null,
+        leadInfo: {
+          first_name: 'jesse',
+          last_name: 'gill',
+          email: 'jesse55555@gmail.com',
+          phone: null,
+        },
+      },
+    })
+
+    openAiChatCreateMock
+      .mockResolvedValueOnce({
+        choices: [{ message: { content: 'Thanks Jesse, I have your info. What would you like to know about Acacia?' } }],
+      })
+      .mockResolvedValueOnce({
+        choices: [{ message: { content: '{"lead":null,"tour":{"requested":false,"date":null,"time":null,"notes":null}}' } }],
+      })
+      .mockResolvedValueOnce({
+        choices: [{ message: { content: 'Prospect shared contact details for follow-up.' } }],
+      })
+
+    const leadsInsertSingleMock = vi.fn().mockResolvedValue({
+      data: { id: 'lead-1' },
+      error: null,
+    })
+    const leadsInsertSelectMock = vi.fn(() => ({
+      single: leadsInsertSingleMock,
+    }))
+    const leadsInsertMock = vi.fn(() => ({
+      select: leadsInsertSelectMock,
+    }))
+
+    createServiceClientMock.mockReturnValue({
+      from: vi.fn((table: string) => {
+        if (table === 'lumaleasing_config') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                eq: vi.fn(() => ({
+                  single: vi.fn().mockResolvedValue({
+                    data: {
+                      property_id: 'property-1',
+                      widget_name: 'Luma',
+                      collect_email: true,
+                      lead_capture_prompt: 'share your email',
+                      properties: { name: 'Acacia', property_type: 'master_planned' },
+                    },
+                    error: null,
+                  }),
+                })),
+              })),
+            })),
+          }
+        }
+
+        if (table === 'leads') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                eq: vi.fn(() => ({
+                  limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+                })),
+              })),
+            })),
+            insert: leadsInsertMock,
+          }
+        }
+
+        throw new Error(`Unexpected table ${table}`)
+      }),
+    })
+
+    const { POST } = await import('./route')
+    const request = new Request('http://localhost/api/lumaleasing/chat', {
+      method: 'POST',
+      headers: {
+        origin: 'http://localhost:3000',
+        'content-type': 'application/json',
+        'x-api-key': 'test-key',
+      },
+      body: JSON.stringify({
+        messages: [
+          { role: 'assistant', content: 'Before we continue, can I get your contact info so we can follow up?' },
+          { role: 'user', content: 'sure jesse gill jesse55555@gmail.com' },
+        ],
+        leadInfo: {
+          first_name: 'jesse',
+          last_name: 'gill',
+          email: 'jesse55555@gmail.com',
+        },
+      }),
+    }) as NextRequest
+
+    const response = await POST(request)
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      content: 'Thanks Jesse, I have your info. What would you like to know about Acacia?',
+      shouldPromptLeadCapture: false,
+      wantsTour: false,
+    })
+    expect(leadsInsertMock).toHaveBeenCalledWith(expect.objectContaining({
+      email: 'jesse55555@gmail.com',
+      source: 'LumaLeasing Widget',
+    }))
+    expect(loadPropertyChatbotContextMock).toHaveBeenCalledWith(expect.anything(), 'property-1')
+    expect(openAiChatCreateMock).toHaveBeenCalled()
+  })
+
   it('reuses extracted phone-only leads and avoids duplicating summary notes', async () => {
     validateBodyMock.mockReturnValue({
       success: true,

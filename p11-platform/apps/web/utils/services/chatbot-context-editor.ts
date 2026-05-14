@@ -44,6 +44,11 @@ export type ChatbotContextEditInput = {
   mode?: 'regenerate' | 'source_change' | 'source_removal' | 'mark_stale'
 }
 
+export type ManualChatbotContextEditInput = {
+  contextMarkdown: string
+  changeSummary?: string
+}
+
 type SourceFact = {
   id: string
   sourceType: string
@@ -482,6 +487,52 @@ export async function loadPropertyChatbotContext(
     status: row.status as ChatbotContextStatus,
     requiresReview: row.requires_review,
   }
+}
+
+export async function saveManualPropertyChatbotContext(
+  supabase: ServiceClient,
+  propertyId: string,
+  input: ManualChatbotContextEditInput
+): Promise<{ success: boolean; status: ChatbotContextStatus; error?: string }> {
+  const now = new Date().toISOString()
+  const currentRow = await loadCurrentContext(supabase, propertyId)
+  if (!currentRow) {
+    return { success: false, status: 'failed', error: 'Chatbot context not found' }
+  }
+
+  const nextVersion = (currentRow.version ?? 0) + 1
+  const changeSummary = input.changeSummary ?? 'Manual chatbot context edit saved.'
+  const { error: updateError } = await supabase
+    .from('property_chatbot_contexts')
+    .update({
+      context_markdown: input.contextMarkdown,
+      status: 'current',
+      version: nextVersion,
+      stale_at: null,
+      error_message: null,
+      last_change_summary: changeSummary,
+      requires_review: false,
+    })
+    .eq('property_id', propertyId)
+
+  if (updateError) {
+    return { success: false, status: 'failed', error: updateError.message }
+  }
+
+  await supabase
+    .from('property_chatbot_context_revisions')
+    .insert({
+      property_id: propertyId,
+      context_id: currentRow.id,
+      previous_context_json: currentRow.context_json,
+      next_context_json: currentRow.context_json,
+      change_summary: changeSummary,
+      changed_source_ids: [],
+      removed_source_ids: [],
+      model: 'manual-context-edit',
+    })
+
+  return { success: true, status: 'current' }
 }
 
 export async function editPropertyChatbotContext(
