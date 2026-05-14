@@ -46,6 +46,31 @@ class LassoAdapterTest(unittest.TestCase):
         self.assertEqual(kwargs["params"]["projectId"], "project-1")
 
     @patch("connectors.crm_adapters.lasso_adapter.requests.get")
+    def test_auth_header_compacts_wrapped_jwt(self, get_mock):
+        get_mock.return_value = mock_response(200, {"results": []})
+
+        adapter = LassoAdapter({"api_key": " eyJ.one \n two.three "})
+        result = adapter.test_connection()
+
+        self.assertTrue(result.success)
+        _, kwargs = get_mock.call_args
+        self.assertEqual(kwargs["headers"]["Authorization"], "eyJ.onetwo.three")
+
+    @patch("connectors.crm_adapters.lasso_adapter.requests.get")
+    def test_connection_surfaces_lasso_auth_response(self, get_mock):
+        get_mock.return_value = mock_response(
+            403,
+            {"message": "Project access denied"},
+            text='{"message":"Project access denied"}',
+        )
+
+        adapter = LassoAdapter({"api_key": "secret"})
+        result = adapter.test_connection()
+
+        self.assertFalse(result.success)
+        self.assertIn("Project access denied", result.error)
+
+    @patch("connectors.crm_adapters.lasso_adapter.requests.get")
     def test_search_lead_finds_by_email(self, get_mock):
         get_mock.return_value = mock_response(
             200,

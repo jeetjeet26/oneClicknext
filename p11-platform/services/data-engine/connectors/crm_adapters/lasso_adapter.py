@@ -60,12 +60,16 @@ class LassoAdapter(BaseCRMAdapter):
     def _get_headers(self) -> Dict[str, str]:
         """Get standard headers for Lasso API requests."""
         token = self.api_key.strip()
+        if token.lower().startswith("bearer "):
+            compact_token = f"Bearer {''.join(token[7:].split())}"
+        else:
+            compact_token = "".join(token.split())
 
         return {
             # Lasso issues JWT-style API tokens and their generated SDK sends the
             # token directly in Authorization. If an operator pastes a full
             # "Bearer ..." value, preserve it as-is.
-            "Authorization": token,
+            "Authorization": compact_token,
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
@@ -157,7 +161,7 @@ class LassoAdapter(BaseCRMAdapter):
             if response.status_code in (401, 403):
                 return ConnectionResult(
                     success=False,
-                    error="Authentication failed - check Lasso API key and project access",
+                    error=self._error_from_response(response),
                 )
             if response.status_code == 429:
                 return ConnectionResult(
