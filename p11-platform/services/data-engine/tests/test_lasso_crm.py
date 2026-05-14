@@ -33,7 +33,7 @@ class LassoAdapterTest(unittest.TestCase):
         self.assertIn("lasso", exc.exception.detail)
 
     @patch("connectors.crm_adapters.lasso_adapter.requests.get")
-    def test_test_connection_uses_raw_jwt_auth_and_project_scope(self, get_mock):
+    def test_test_connection_uses_bearer_jwt_auth_and_project_scope(self, get_mock):
         get_mock.return_value = mock_response(200, {"results": []})
 
         adapter = LassoAdapter({"api_key": "secret", "project_id": "project-1"})
@@ -42,7 +42,7 @@ class LassoAdapterTest(unittest.TestCase):
         self.assertTrue(result.success)
         get_mock.assert_called_once()
         _, kwargs = get_mock.call_args
-        self.assertEqual(kwargs["headers"]["Authorization"], "secret")
+        self.assertEqual(kwargs["headers"]["Authorization"], "Bearer secret")
         self.assertEqual(kwargs["params"]["projectId"], "project-1")
 
     @patch("connectors.crm_adapters.lasso_adapter.requests.get")
@@ -54,7 +54,7 @@ class LassoAdapterTest(unittest.TestCase):
 
         self.assertTrue(result.success)
         _, kwargs = get_mock.call_args
-        self.assertEqual(kwargs["headers"]["Authorization"], "eyJ.onetwo.three")
+        self.assertEqual(kwargs["headers"]["Authorization"], "Bearer eyJ.onetwo.three")
 
     @patch("connectors.crm_adapters.lasso_adapter.requests.get")
     def test_connection_surfaces_lasso_auth_response(self, get_mock):

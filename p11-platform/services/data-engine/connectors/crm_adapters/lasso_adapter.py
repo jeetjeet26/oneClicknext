@@ -63,12 +63,11 @@ class LassoAdapter(BaseCRMAdapter):
         if token.lower().startswith("bearer "):
             compact_token = f"Bearer {''.join(token[7:].split())}"
         else:
-            compact_token = "".join(token.split())
+            compact_token = f"Bearer {''.join(token.split())}"
 
         return {
-            # Lasso issues JWT-style API tokens and their generated SDK sends the
-            # token directly in Authorization. If an operator pastes a full
-            # "Bearer ..." value, preserve it as-is.
+            # Lasso CRM requires a Bearer JWT API key in Authorization. Compact
+            # copied tokens because the dashboard can display long JWTs wrapped.
             "Authorization": compact_token,
             "Content-Type": "application/json",
             "Accept": "application/json",
