@@ -1,10 +1,11 @@
+import asyncio
 import unittest
 from unittest.mock import Mock, patch
 
 from fastapi import HTTPException
 
 from connectors.crm_adapters.lasso_adapter import LassoAdapter
-from routers.crm_integration import get_crm_adapter
+from routers.crm_integration import SaveMappingRequest, get_crm_adapter, save_mapping
 
 
 def mock_response(status_code=200, payload=None, text=""):
@@ -32,7 +33,7 @@ class LassoAdapterTest(unittest.TestCase):
         self.assertIn("lasso", exc.exception.detail)
 
     @patch("connectors.crm_adapters.lasso_adapter.requests.get")
-    def test_test_connection_uses_bearer_auth_and_project_scope(self, get_mock):
+    def test_test_connection_uses_raw_jwt_auth_and_project_scope(self, get_mock):
         get_mock.return_value = mock_response(200, {"results": []})
 
         adapter = LassoAdapter({"api_key": "secret", "project_id": "project-1"})
@@ -41,7 +42,7 @@ class LassoAdapterTest(unittest.TestCase):
         self.assertTrue(result.success)
         get_mock.assert_called_once()
         _, kwargs = get_mock.call_args
-        self.assertEqual(kwargs["headers"]["Authorization"], "Bearer secret")
+        self.assertEqual(kwargs["headers"]["Authorization"], "secret")
         self.assertEqual(kwargs["params"]["projectId"], "project-1")
 
     @patch("connectors.crm_adapters.lasso_adapter.requests.get")
@@ -129,6 +130,32 @@ class LassoAdapterTest(unittest.TestCase):
 
         self.assertFalse(result.success)
         self.assertIn("email is invalid", result.error)
+
+    @patch("routers.crm_integration.get_supabase_client")
+    def test_save_mapping_sets_validation_timestamp(self, get_supabase_client_mock):
+        execute_mock = Mock(return_value=Mock(data=[]))
+        upsert_mock = Mock(return_value=Mock(execute=execute_mock))
+        table_mock = Mock(return_value=Mock(upsert=upsert_mock))
+        get_supabase_client_mock.return_value = Mock(table=table_mock)
+
+        response = asyncio.run(
+            save_mapping(
+                SaveMappingRequest(
+                    property_id="00000000-0000-0000-0000-000000000001",
+                    crm_type="lasso",
+                    credentials={"api_key": "secret"},
+                    field_mapping={"first_name": "first_name"},
+                    validated=True,
+                ),
+                api_key="engine-key",
+            )
+        )
+
+        self.assertTrue(response["success"])
+        upsert_payload = upsert_mock.call_args.args[0]
+        self.assertEqual(upsert_payload["platform"], "lasso")
+        self.assertTrue(upsert_payload["mapping_validated"])
+        self.assertIsNotNone(upsert_payload["mapping_validated_at"])
 
 
 if __name__ == "__main__":

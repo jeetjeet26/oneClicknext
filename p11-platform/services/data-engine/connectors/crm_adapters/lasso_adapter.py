@@ -60,12 +60,12 @@ class LassoAdapter(BaseCRMAdapter):
     def _get_headers(self) -> Dict[str, str]:
         """Get standard headers for Lasso API requests."""
         token = self.api_key.strip()
-        authorization = (
-            token if token.lower().startswith("bearer ") else f"Bearer {token}"
-        )
 
         return {
-            "Authorization": authorization,
+            # Lasso issues JWT-style API tokens and their generated SDK sends the
+            # token directly in Authorization. If an operator pastes a full
+            # "Bearer ..." value, preserve it as-is.
+            "Authorization": token,
             "Content-Type": "application/json",
             "Accept": "application/json",
         }

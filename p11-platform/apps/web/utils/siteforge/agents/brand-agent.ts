@@ -105,6 +105,16 @@ interface BrandSources {
   dataScenario?: 'both' | 'brandbook_only' | 'kb_only' | 'neither'
 }
 
+type CompetitorSnapshotQuery = {
+  select: (columns: string) => {
+    eq: (column: 'property_id', value: string) => {
+      order: (column: 'scraped_at', options: { ascending: boolean }) => {
+        limit: (count: number) => PromiseLike<{ data: unknown[] | null }>
+      }
+    }
+  }
+}
+
 /**
  * Brand Agent - Foundation agent that establishes brand context
  * All other agents depend on BrandContext output
@@ -399,7 +409,11 @@ export class BrandAgent extends BaseAgent {
    * Get competitor analysis from MarketVision
    */
   private async getCompetitorAnalysis(): Promise<unknown> {
-    const { data } = await this.supabase
+    const supabase = this.supabase as unknown as {
+      from: (table: 'competitor_snapshots') => CompetitorSnapshotQuery
+    }
+
+    const { data } = await supabase
       .from('competitor_snapshots')
       .select('*')
       .eq('property_id', this.propertyId)

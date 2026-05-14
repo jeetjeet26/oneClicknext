@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
 import { usePropertyContext } from '@/components/layout/PropertyContext'
@@ -51,6 +51,23 @@ function isStringRecord(value: unknown): value is Record<string, string> {
   )
 }
 
+async function readCRMResponse(response: Response) {
+  const contentType = response.headers.get('content-type') || ''
+  const payload = contentType.includes('application/json')
+    ? await response.json()
+    : { error: await response.text() }
+
+  if (!response.ok) {
+    const message =
+      payload && typeof payload === 'object' && 'error' in payload && typeof payload.error === 'string'
+        ? payload.error
+        : `CRM request failed (${response.status})`
+    throw new Error(message)
+  }
+
+  return payload
+}
+
 export default function CRMSettingsPage() {
   const router = useRouter()
   const supabase = createClient()
@@ -69,6 +86,11 @@ export default function CRMSettingsPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+  const [credentialResult, setCredentialResult] = useState<{
+    type: 'success' | 'error'
+    message: string
+  } | null>(null)
+  const credentialResultRef = useRef<HTMLDivElement | null>(null)
 
   const [schema, setSchema] = useState<CRMSchema | null>(null)
   const [mappings, setMappings] = useState<FieldMapping[]>([])
@@ -125,6 +147,15 @@ export default function CRMSettingsPage() {
   )
 
   useEffect(() => {
+    if (credentialResult) {
+      credentialResultRef.current?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      })
+    }
+  }, [credentialResult])
+
+  useEffect(() => {
     if (selectedProperty) {
       checkExistingIntegration()
     }
@@ -133,6 +164,8 @@ export default function CRMSettingsPage() {
   const testConnection = async () => {
     setLoading(true)
     setError(null)
+    setSuccess(null)
+    setCredentialResult(null)
 
     try {
       const response = await fetch('/api/integrations/crm', {
@@ -140,21 +173,28 @@ export default function CRMSettingsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'test-connection',
+          propertyId: selectedProperty,
           crmType: selectedCRM,
           credentials,
         }),
       })
 
-      const data = await response.json()
+      const data = await readCRMResponse(response)
 
       if (data.success) {
-        setSuccess('Connection successful!')
+        const message = data.message || 'Connection successful! Continue to schema discovery.'
+        setSuccess(message)
+        setCredentialResult({ type: 'success', message })
         setStep('discovery')
       } else {
-        setError(data.error || 'Connection failed')
+        const message = data.error || data.message || 'Connection failed'
+        setError(message)
+        setCredentialResult({ type: 'error', message })
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to test connection')
+      const message = err instanceof Error ? err.message : 'Failed to test connection'
+      setError(message)
+      setCredentialResult({ type: 'error', message })
     } finally {
       setLoading(false)
     }
@@ -163,6 +203,7 @@ export default function CRMSettingsPage() {
   const discoverSchema = async () => {
     setLoading(true)
     setError(null)
+    setSuccess(null)
 
     try {
       const response = await fetch('/api/integrations/crm', {
@@ -176,7 +217,7 @@ export default function CRMSettingsPage() {
         }),
       })
 
-      const data = await response.json()
+      const data = await readCRMResponse(response)
 
       if (data.success !== false) {
         setSchema(data.schema)
@@ -204,6 +245,7 @@ export default function CRMSettingsPage() {
   const validateMapping = async () => {
     setLoading(true)
     setError(null)
+    setSuccess(null)
 
     try {
       const response = await fetch('/api/integrations/crm', {
@@ -218,7 +260,7 @@ export default function CRMSettingsPage() {
         }),
       })
 
-      const data = await response.json()
+      const data = await readCRMResponse(response)
 
       setValidationResult({
         valid: data.valid || false,
@@ -227,7 +269,7 @@ export default function CRMSettingsPage() {
 
       if (data.valid) {
         // Save validated mapping
-        await fetch('/api/integrations/crm', {
+        const saveResponse = await fetch('/api/integrations/crm', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -239,6 +281,7 @@ export default function CRMSettingsPage() {
             validated: true,
           }),
         })
+        await readCRMResponse(saveResponse)
 
         setSuccess('Mapping validated and saved!')
         setStep('validation')
@@ -253,9 +296,10 @@ export default function CRMSettingsPage() {
   const saveMappingWithoutValidation = async () => {
     setLoading(true)
     setError(null)
+    setSuccess(null)
 
     try {
-      await fetch('/api/integrations/crm', {
+      const response = await fetch('/api/integrations/crm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -267,6 +311,7 @@ export default function CRMSettingsPage() {
           validated: false,
         }),
       })
+      await readCRMResponse(response)
 
       setSuccess('Mapping saved (not validated)')
       setTimeout(() => setSuccess(null), 3000)
@@ -341,6 +386,7 @@ export default function CRMSettingsPage() {
                 value={selectedCRM}
                 onChange={(e) => {
                   setSelectedCRM(e.target.value)
+                  setCredentialResult(null)
                   if (step !== 'select') setStep('credentials')
                 }}
                 className="w-full px-3 py-2.5 bg-slate-900 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-teal-500/50"
@@ -420,8 +466,37 @@ export default function CRMSettingsPage() {
                 className="px-4 py-2.5 bg-teal-600 text-white rounded-lg hover:bg-teal-500 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {loading ? <Loader2 className="animate-spin" size={18} /> : <Zap size={18} />}
-                Test Connection
+                {loading ? 'Testing Connection...' : 'Test Connection'}
               </button>
+
+              {credentialResult && (
+                <div
+                  ref={credentialResultRef}
+                  className={`p-4 rounded-xl border flex items-start gap-3 ${
+                    credentialResult.type === 'success'
+                      ? 'bg-emerald-500/10 border-emerald-500/30'
+                      : 'bg-red-500/10 border-red-500/30'
+                  }`}
+                >
+                  {credentialResult.type === 'success' ? (
+                    <CheckCircle2 className="text-emerald-400 flex-shrink-0 mt-0.5" size={20} />
+                  ) : (
+                    <AlertCircle className="text-red-400 flex-shrink-0 mt-0.5" size={20} />
+                  )}
+                  <div>
+                    <p
+                      className={`font-medium ${
+                        credentialResult.type === 'success' ? 'text-emerald-300' : 'text-red-300'
+                      }`}
+                    >
+                      {credentialResult.type === 'success'
+                        ? 'Connection test succeeded'
+                        : 'Connection test failed'}
+                    </p>
+                    <p className="text-sm text-slate-300 mt-1">{credentialResult.message}</p>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -562,8 +637,10 @@ export default function CRMSettingsPage() {
                 <button
                   onClick={async () => {
                     setLoading(true)
+                    setError(null)
+                    setSuccess(null)
                     try {
-                      await fetch('/api/integrations/crm', {
+                      const response = await fetch('/api/integrations/crm', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -575,6 +652,7 @@ export default function CRMSettingsPage() {
                           validated: true,
                         }),
                       })
+                      await readCRMResponse(response)
                       setSuccess('Integration saved and activated!')
                       setStep('validation')
                     } catch (err) {

@@ -127,6 +127,83 @@ describe('integrations crm route auth', () => {
     )
   })
 
+  it('POST test-connection verifies property access and returns provider result', async () => {
+    authGetUserMock.mockResolvedValue({
+      data: { user: { id: 'user-1' } },
+      error: null,
+    })
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          success: false,
+          message: 'Connection test failed',
+          error: 'Authentication failed - check Lasso API key and project access',
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      )
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    createClientMock.mockResolvedValue({
+      auth: { getUser: authGetUserMock },
+      from: vi.fn((table: string) => {
+        if (table === 'profiles') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                single: vi.fn().mockResolvedValue({
+                  data: { org_id: 'org-1', role: 'admin' },
+                  error: null,
+                }),
+              })),
+            })),
+          }
+        }
+        if (table === 'properties') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                single: vi.fn().mockResolvedValue({
+                  data: { org_id: 'org-1' },
+                  error: null,
+                }),
+              })),
+            })),
+          }
+        }
+        throw new Error(`Unexpected table ${table}`)
+      }),
+    })
+
+    const { POST } = await import('./route')
+    const response = await POST(
+      new Request('http://localhost/api/integrations/crm', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'test-connection',
+          propertyId: 'property-1',
+          crmType: 'lasso',
+          credentials: { api_key: 'bad-key' },
+        }),
+      }) as NextRequest
+    )
+
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toMatchObject({
+      success: false,
+      error: 'Authentication failed - check Lasso API key and project access',
+    })
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/crm/test-connection'),
+      expect.objectContaining({
+        method: 'POST',
+        body: expect.stringContaining('"crm_type":"lasso"'),
+      })
+    )
+  })
+
   it('POST dead-letter-list returns dead-lettered leads for authorized user', async () => {
     authGetUserMock.mockResolvedValue({
       data: { user: { id: 'user-1' } },

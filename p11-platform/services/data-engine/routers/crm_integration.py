@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from typing import Dict, Any, List, Optional
 import logging
 from dataclasses import asdict
+from datetime import datetime, timezone
 
 from utils.auth import verify_api_key
 from utils.supabase_client import get_supabase_client
@@ -447,6 +448,9 @@ async def save_mapping(
     
     try:
         supabase = get_supabase_client()
+        mapping_validated_at = (
+            datetime.now(timezone.utc).isoformat() if request.validated else None
+        )
         
         # Upsert to integration_credentials (including credentials)
         result = supabase.table('integration_credentials').upsert({
@@ -455,6 +459,7 @@ async def save_mapping(
             'credentials': request.credentials,
             'field_mapping': request.field_mapping,
             'mapping_validated': request.validated,
+            'mapping_validated_at': mapping_validated_at,
             'status': 'connected' if request.validated else 'pending'
         }, on_conflict='property_id,platform').execute()
         

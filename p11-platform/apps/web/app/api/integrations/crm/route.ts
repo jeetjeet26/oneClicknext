@@ -27,6 +27,35 @@ type ReplayableLead = {
   crm_sync_retry_count: number | null
 }
 
+function getDataEngineError(data: unknown, fallback: string): string {
+  if (data && typeof data === 'object') {
+    const record = data as Record<string, unknown>
+    for (const key of ['detail', 'error', 'message']) {
+      const value = record[key]
+      if (typeof value === 'string' && value.trim().length > 0) {
+        return value
+      }
+    }
+  }
+
+  return fallback
+}
+
+function summarizeCRMResult(data: unknown): Record<string, unknown> {
+  if (!data || typeof data !== 'object') {
+    return { responseType: typeof data }
+  }
+
+  const record = data as Record<string, unknown>
+  return {
+    success: typeof record.success === 'boolean' ? record.success : undefined,
+    valid: typeof record.valid === 'boolean' ? record.valid : undefined,
+    message: typeof record.message === 'string' ? record.message : undefined,
+    error: typeof record.error === 'string' ? record.error : undefined,
+    stepFailed: typeof record.step_failed === 'string' ? record.step_failed : undefined,
+  }
+}
+
 /**
  * Helper to call data-engine with proper auth
  */
@@ -45,12 +74,15 @@ async function callDataEngine(
       body: body ? JSON.stringify(body) : undefined,
     })
 
-    const data = await response.json()
+    const contentType = response.headers.get('content-type') || ''
+    const data = contentType.includes('application/json')
+      ? await response.json()
+      : { error: await response.text() }
 
     if (!response.ok) {
       return {
         success: false,
-        error: data.detail || data.error || `API returned ${response.status}`,
+        error: getDataEngineError(data, `API returned ${response.status}`),
       }
     }
 
@@ -359,11 +391,39 @@ export async function POST(request: NextRequest) {
 
     // Call data engine
     const result = await callDataEngine(endpoint, 'POST', requestBody)
+    const resultSummary = {
+      action,
+      crmType: typeof params.crmType === 'string' ? params.crmType : undefined,
+      propertyScoped: Boolean(propertyId),
+      endpoint,
+      success: result.success,
+      error: result.error,
+      data: summarizeCRMResult(result.data),
+    }
+    console.log(`[CRM API] Data-engine result ${JSON.stringify(resultSummary)}`)
 
     if (!result.success) {
       return NextResponse.json(
         { error: result.error },
         { status: 500 }
+      )
+    }
+
+    const summarizedData = summarizeCRMResult(result.data)
+    if (summarizedData.success === false) {
+      const providerError =
+        typeof summarizedData.error === 'string' && summarizedData.error.trim().length > 0
+          ? summarizedData.error
+          : typeof summarizedData.message === 'string' && summarizedData.message.trim().length > 0
+            ? summarizedData.message
+            : 'CRM provider rejected the connection test'
+
+      return NextResponse.json(
+        {
+          ...(result.data && typeof result.data === 'object' ? result.data : {}),
+          error: providerError,
+        },
+        { status: 400 }
       )
     }
 
