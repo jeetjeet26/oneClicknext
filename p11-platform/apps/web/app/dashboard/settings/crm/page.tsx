@@ -82,6 +82,7 @@ export default function CRMSettingsPage() {
   const [credentials, setCredentials] = useState({
     api_endpoint: '',
     api_key: '',
+    client_id: '',
     property_code: '',
     project_id: '',
   })
@@ -128,6 +129,7 @@ export default function CRMSettingsPage() {
       setCredentials({
         api_endpoint: '',
         api_key: '',
+        client_id: '',
         property_code: '',
         project_id: '',
         ...savedCredentials,
@@ -454,19 +456,40 @@ export default function CRMSettingsPage() {
 
               <div>
                 <label className="block text-sm font-medium text-slate-300 mb-2">
-                  {isLasso ? 'Project / Community ID (Optional)' : 'Property Code (Yardi/RealPage)'}
+                  {isLasso ? 'Client ID' : 'Property Code (Yardi/RealPage)'}
                 </label>
                 <input
                   type="text"
-                  value={isLasso ? credentials.project_id : credentials.property_code}
+                  value={isLasso ? credentials.client_id : credentials.property_code}
                   onChange={(e) => setCredentials({
                     ...credentials,
-                    [isLasso ? 'project_id' : 'property_code']: e.target.value,
+                    [isLasso ? 'client_id' : 'property_code']: e.target.value,
                   })}
-                  placeholder={isLasso ? 'e.g., lasso project id' : 'e.g., PROP001'}
+                  placeholder={isLasso ? 'e.g., 920' : 'e.g., PROP001'}
                   className="w-full px-3 py-2.5 bg-slate-900 border border-slate-600 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-teal-500/50"
                 />
               </div>
+
+              {isLasso && (
+                <div>
+                  <label className="block text-sm font-medium text-slate-300 mb-2">
+                    Project ID
+                  </label>
+                  <input
+                    type="text"
+                    value={credentials.project_id}
+                    onChange={(e) => setCredentials({
+                      ...credentials,
+                      project_id: e.target.value,
+                    })}
+                    placeholder="e.g., 23969"
+                    className="w-full px-3 py-2.5 bg-slate-900 border border-slate-600 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-teal-500/50"
+                  />
+                  <p className="text-xs text-slate-500 mt-1">
+                    For Lasso registration page keys, use the Client ID and Project ID from View Registration Page Code.
+                  </p>
+                </div>
+              )}
 
               <button
                 onClick={testConnection}

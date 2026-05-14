@@ -70,6 +70,20 @@ class LassoAdapterTest(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertIn("Project access denied", result.error)
 
+    @patch("connectors.crm_adapters.lasso_adapter.requests.get")
+    def test_public_registration_credentials_skip_read_connection_test(self, get_mock):
+        adapter = LassoAdapter({
+            "api_key": "eyJ.token.value",
+            "client_id": "920",
+            "project_id": "23969",
+        })
+
+        result = adapter.test_connection()
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.api_version, "public-registration")
+        get_mock.assert_not_called()
+
     def test_compact_lasso_token_rejects_masked_value(self):
         with self.assertRaisesRegex(ValueError, "masked characters"):
             _compact_lasso_token("••••••••••••••")
@@ -149,6 +163,27 @@ class LassoAdapterTest(unittest.TestCase):
             "Desired move-in date: 2026-06-01",
             payload["history"][0]["body"],
         )
+
+    @patch("connectors.crm_adapters.lasso_adapter.requests.post")
+    def test_create_lead_builds_public_registration_payload(self, post_mock):
+        post_mock.return_value = mock_response(201, {"registrantId": "lasso-456"})
+
+        adapter = LassoAdapter({
+            "api_key": "secret",
+            "client_id": "920",
+            "project_id": "23969",
+        })
+        result = adapter.create_lead({
+            "first_name": "Jane",
+            "last_name": "Doe",
+            "email": "jane@example.com",
+        })
+
+        self.assertTrue(result.success)
+        _, kwargs = post_mock.call_args
+        payload = kwargs["json"]
+        self.assertEqual(payload["clientId"], 920)
+        self.assertEqual(payload["projectIds"], [23969])
 
     @patch("connectors.crm_adapters.lasso_adapter.requests.post")
     def test_create_lead_surfaces_api_error(self, post_mock):

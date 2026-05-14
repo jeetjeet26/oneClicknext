@@ -55,6 +55,7 @@ class LassoAdapter(BaseCRMAdapter):
 
     Credentials optional:
     - api_endpoint: Base URL for Lasso API (defaults to https://api.lassocrm.com/v1)
+    - client_id: Lasso client identifier from View Registration Page Code
     - project_id: Lasso project/community identifier when the account requires scoping
     - community_id: Alias for project_id used by some operators
     - rotation_id: Optional Lasso sales rotation assignment
@@ -70,6 +71,7 @@ class LassoAdapter(BaseCRMAdapter):
             credentials.get("api_endpoint") or self.DEFAULT_API_ENDPOINT
         ).rstrip("/")
         self.api_key = credentials.get("api_key", "")
+        self.client_id = credentials.get("client_id")
         self.project_id = credentials.get("project_id") or credentials.get("community_id")
         self.rotation_id = credentials.get("rotation_id")
         self.thank_you_email_template_id = credentials.get(
@@ -163,6 +165,17 @@ class LassoAdapter(BaseCRMAdapter):
         logger.info("[Lasso] Testing connection to %s", self.api_endpoint)
 
         try:
+            if self.client_id and self.project_id:
+                _compact_lasso_token(self.api_key)
+                return ConnectionResult(
+                    success=True,
+                    message=(
+                        "Lasso public registration credentials accepted. "
+                        "This key may not permit read/search API calls."
+                    ),
+                    api_version="public-registration",
+                )
+
             response = requests.get(
                 f"{self.api_endpoint}/registrants/search",
                 headers=self._get_headers(),
@@ -270,6 +283,9 @@ class LassoAdapter(BaseCRMAdapter):
         logger.info("[Lasso] Searching for registrant: email='%s'", email)
 
         try:
+            if self.client_id and self.project_id:
+                return SearchResult(found=False)
+
             if email and email.strip():
                 result = self._search_registrants({"email": email.strip()}, "email")
                 if result.found:
@@ -374,7 +390,12 @@ class LassoAdapter(BaseCRMAdapter):
         if history_parts:
             payload["history"] = [{"body": "\n".join(history_parts)}]
 
-        if self.project_id and "project_id" not in payload:
+        if self.client_id and "clientId" not in payload:
+            payload["clientId"] = int(self.client_id) if str(self.client_id).isdigit() else self.client_id
+        if self.client_id and self.project_id and "projectIds" not in payload:
+            project_id = int(self.project_id) if str(self.project_id).isdigit() else self.project_id
+            payload["projectIds"] = [project_id]
+        elif self.project_id and "project_id" not in payload:
             payload["project_id"] = self.project_id
         if self.rotation_id and "rotation_id" not in payload:
             payload["rotation_id"] = self.rotation_id
