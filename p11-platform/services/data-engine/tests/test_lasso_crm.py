@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 from fastapi import HTTPException
 
 from connectors.crm_adapters.lasso_adapter import LassoAdapter, _compact_lasso_token
-from routers.crm_integration import SaveMappingRequest, get_crm_adapter, save_mapping
+from routers.crm_integration import SaveMappingRequest, ValidateMappingRequest, get_crm_adapter, save_mapping, validate_mapping
 
 
 def mock_response(status_code=200, payload=None, text=""):
@@ -224,6 +224,26 @@ class LassoAdapterTest(unittest.TestCase):
         self.assertEqual(upsert_payload["platform"], "lasso")
         self.assertTrue(upsert_payload["mapping_validated"])
         self.assertIsNotNone(upsert_payload["mapping_validated_at"])
+
+    def test_validate_mapping_accepts_lasso_public_registration_key_without_test_write(self):
+        response = asyncio.run(
+            validate_mapping(
+                ValidateMappingRequest(
+                    property_id="00000000-0000-0000-0000-000000000001",
+                    crm_type="lasso",
+                    credentials={
+                        "api_key": "eyJ.token.value",
+                        "client_id": "920",
+                        "project_id": "23969",
+                    },
+                    field_mapping={"first_name": "first_name"},
+                ),
+                api_key="engine-key",
+            )
+        )
+
+        self.assertTrue(response["valid"])
+        self.assertIn("write-only", response["warnings"][0])
 
 
 if __name__ == "__main__":

@@ -356,6 +356,29 @@ async def validate_mapping(
     
     try:
         adapter = get_crm_adapter(request.crm_type, request.credentials)
+
+        if (
+            request.crm_type.lower() == "lasso"
+            and request.credentials.get("client_id")
+            and request.credentials.get("project_id")
+        ):
+            conn_result = adapter.test_connection()
+            if not conn_result.success:
+                return {
+                    "valid": False,
+                    "step_failed": "connection",
+                    "errors": [conn_result.error],
+                    "warnings": [],
+                }
+
+            return {
+                "valid": True,
+                "errors": [],
+                "warnings": [
+                    "Lasso public registration keys are write-only; skipped create/read/delete test sync."
+                ],
+                "message": "Lasso public registration mapping accepted",
+            }
         
         # Create test lead data - only basic required fields to avoid picklist validation issues
         test_data = {
