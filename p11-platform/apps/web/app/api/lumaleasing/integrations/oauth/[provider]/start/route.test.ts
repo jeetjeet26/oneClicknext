@@ -67,4 +67,24 @@ describe('integration OAuth start route', () => {
       })
     )
   })
+
+  it('includes Google identity scopes for dashboard Google calendar auth', async () => {
+    vi.stubEnv('GOOGLE_CLIENT_ID', 'google-client-id')
+
+    const { GET } = await import('./route')
+    const request = new Request(
+      'http://localhost/api/lumaleasing/integrations/oauth/google/start?propertyId=property-1&capabilities=calendar'
+    ) as NextRequest
+
+    const response = await GET(request, { params: Promise.resolve({ provider: 'google' }) })
+    const location = new URL(response.headers.get('location') as string)
+    const scope = location.searchParams.get('scope') || ''
+
+    expect(response.status).toBe(307)
+    expect(location.origin).toBe('https://accounts.google.com')
+    expect(scope).toContain('openid')
+    expect(scope).toContain('email')
+    expect(scope).toContain('profile')
+    expect(scope).toContain('https://www.googleapis.com/auth/calendar')
+  })
 })

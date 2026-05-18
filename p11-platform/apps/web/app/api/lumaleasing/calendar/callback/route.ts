@@ -167,21 +167,29 @@ export async function GET(request: NextRequest) {
     if (calendarResponse.ok) {
       const calendarData = await calendarResponse.json()
       timezone = calendarData.value || 'America/Chicago'
-      
-      // Get email from userinfo API
-      const userinfoResponse = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
-        headers: {
-          Authorization: `Bearer ${access_token}`,
-        },
+    } else {
+      console.error('[GoogleCalendar] Timezone fetch failed:', await calendarResponse.text())
+    }
+
+    // Get email from userinfo API. This requires openid/email scopes and should
+    // not depend on Calendar settings succeeding.
+    const userinfoResponse = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+      headers: {
+        Authorization: `Bearer ${access_token}`,
+      },
+    })
+
+    if (userinfoResponse.ok) {
+      const userinfo = await userinfoResponse.json()
+      googleEmail =
+        typeof userinfo?.email === 'string' && userinfo.email.length > 0
+          ? userinfo.email
+          : null
+    } else {
+      console.error('[GoogleCalendar] Userinfo fetch failed:', {
+        status: userinfoResponse.status,
+        body: await userinfoResponse.text(),
       })
-      
-      if (userinfoResponse.ok) {
-        const userinfo = await userinfoResponse.json()
-        googleEmail =
-          typeof userinfo?.email === 'string' && userinfo.email.length > 0
-            ? userinfo.email
-            : null
-      }
     }
 
     if (!googleEmail) {

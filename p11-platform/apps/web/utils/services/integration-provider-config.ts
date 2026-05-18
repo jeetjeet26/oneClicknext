@@ -14,12 +14,16 @@ const GOOGLE_CALENDAR_SCOPES = [
   'https://www.googleapis.com/auth/calendar.events',
 ]
 
+const GOOGLE_IDENTITY_SCOPES = [
+  'openid',
+  'email',
+  'profile',
+]
+
 const GOOGLE_EMAIL_SCOPES = [
   'https://www.googleapis.com/auth/gmail.send',
   'https://www.googleapis.com/auth/gmail.readonly',
   'https://www.googleapis.com/auth/gmail.modify',
-  'openid',
-  'email',
 ]
 
 const MICROSOFT_BASE_SCOPES = ['openid', 'email', 'profile', 'offline_access', 'User.Read']
@@ -53,10 +57,11 @@ export function getProviderScopes(
   const scopedCapabilities = new Set(capabilities)
 
   if (provider === 'google') {
-    return [
+    return [...new Set([
+      ...GOOGLE_IDENTITY_SCOPES,
       ...(scopedCapabilities.has('calendar') ? GOOGLE_CALENDAR_SCOPES : []),
       ...(scopedCapabilities.has('email') ? GOOGLE_EMAIL_SCOPES : []),
-    ]
+    ])]
   }
 
   return [

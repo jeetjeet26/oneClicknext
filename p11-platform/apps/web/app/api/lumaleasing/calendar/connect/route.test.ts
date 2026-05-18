@@ -108,6 +108,10 @@ describe('Calendar connect route', () => {
     expect(redirectUrl.searchParams.get('redirect_uri')).toBe(
       'https://app.example.com/api/lumaleasing/calendar/callback'
     )
+    expect(redirectUrl.searchParams.get('scope')).toContain('openid')
+    expect(redirectUrl.searchParams.get('scope')).toContain('email')
+    expect(redirectUrl.searchParams.get('scope')).toContain('profile')
+    expect(redirectUrl.searchParams.get('scope')).toContain('https://www.googleapis.com/auth/calendar')
     expect(redirectUrl.searchParams.get('state')).toBe('signed-state')
   })
 })
