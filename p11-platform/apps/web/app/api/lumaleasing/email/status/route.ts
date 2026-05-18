@@ -40,6 +40,8 @@ type WebhookCapability = {
   history_id: string | null
 }
 
+type ConnectionState = 'connected' | 'reconnect_required' | 'disconnected'
+
 const INTERNAL_REPLY_OVERDUE_DAYS = 2
 const MS_PER_DAY = 24 * 60 * 60 * 1000
 
@@ -159,6 +161,23 @@ function getEmailWebhookCapability(params: {
   }
 }
 
+function getConnectionState(params: {
+  tokenStatus: string | null
+  syncEnabled: boolean | null
+  tokenExpiresAt: string | null
+}): ConnectionState {
+  if (params.syncEnabled !== true || params.tokenStatus === 'disconnected') {
+    return 'disconnected'
+  }
+
+  const tokenExpiresMs = parseIsoTimestamp(params.tokenExpiresAt)
+  if (params.tokenStatus !== 'healthy' || (tokenExpiresMs !== null && tokenExpiresMs <= Date.now())) {
+    return 'reconnect_required'
+  }
+
+  return 'connected'
+}
+
 export async function GET(request: NextRequest) {
   const ctx = createRequestContext(request, '/api/lumaleasing/email/status')
   ctx.logStart()
@@ -193,7 +212,6 @@ export async function GET(request: NextRequest) {
       .from('email_configurations')
       .select('id, provider, google_email, account_email, token_status, last_health_check_at, token_expires_at, sync_enabled, auto_reply_enabled, last_sync_at, history_id, watch_expiration')
       .eq('property_id', propertyId)
-      .eq('sync_enabled', true)
       .maybeSingle()
 
     if (error || !emailConfig) {
@@ -201,6 +219,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json(
         {
           connected: false,
+          state: 'disconnected',
           message: 'Gmail not connected',
           webhook_capability: getEmailWebhookCapability({
             connected: false,
@@ -213,6 +232,12 @@ export async function GET(request: NextRequest) {
         { headers: ctx.responseHeaders }
       )
     }
+
+    const state = getConnectionState({
+      tokenStatus: emailConfig.token_status,
+      syncEnabled: emailConfig.sync_enabled,
+      tokenExpiresAt: emailConfig.token_expires_at,
+    })
 
     const { data: threadRows, error: threadError } = await serviceSupabase
       .from('email_threads')
@@ -262,7 +287,8 @@ export async function GET(request: NextRequest) {
 
     ctx.logSuccess(200, {
       propertyId,
-      connected: true,
+      connected: state === 'connected',
+      state,
       tokenStatus: emailConfig.token_status,
       webhookReady: getEmailWebhookCapability({
         connected: true,
@@ -279,7 +305,8 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(
       {
-        connected: true,
+        connected: state === 'connected',
+        state,
         provider: emailConfig.provider || 'google',
         email: emailConfig.account_email || emailConfig.google_email,
         account_email: emailConfig.account_email || emailConfig.google_email,

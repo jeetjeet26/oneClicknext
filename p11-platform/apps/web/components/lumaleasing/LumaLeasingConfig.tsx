@@ -84,6 +84,7 @@ export function LumaLeasingConfig() {
   const [activeTab, setActiveTab] = useState<'branding' | 'behavior' | 'leads' | 'tours' | 'embed'>('branding');
   const [calendarStatus, setCalendarStatus] = useState<{
     connected: boolean;
+    state?: 'connected' | 'reconnect_required' | 'disconnected';
     provider?: 'google' | 'microsoft';
     email?: string;
     account_email?: string;
@@ -110,6 +111,7 @@ export function LumaLeasingConfig() {
   } | null>(null);
   const [emailStatus, setEmailStatus] = useState<{
     connected: boolean;
+    state?: 'connected' | 'reconnect_required' | 'disconnected';
     message?: string;
     provider?: 'google' | 'microsoft';
     email?: string;
@@ -135,6 +137,7 @@ export function LumaLeasingConfig() {
   const [recoveryDrafts, setRecoveryDrafts] = useState<Record<string, { date: string; time: string }>>({});
   const [recoveryError, setRecoveryError] = useState<string | null>(null);
   const [creatingInvite, setCreatingInvite] = useState<string | null>(null);
+  const [disconnectingIntegration, setDisconnectingIntegration] = useState<'calendar' | 'email' | null>(null);
 
   const loadConfig = useCallback(async () => {
     setLoading(true);
@@ -303,6 +306,40 @@ export function LumaLeasingConfig() {
       alert(error instanceof Error ? error.message : 'Failed to repair calendar sync');
     } finally {
       setRepairingCalendarSync(false);
+    }
+  };
+
+  const disconnectIntegration = async (kind: 'calendar' | 'email') => {
+    const status = kind === 'calendar' ? calendarStatus : emailStatus;
+    const account = status?.account_email || status?.email || 'this account';
+    if (!confirm(`Remove ${account} from ${kind === 'calendar' ? 'calendar' : 'email'} integration? You can reconnect a new account afterward.`)) {
+      return;
+    }
+
+    try {
+      setDisconnectingIntegration(kind);
+      const res = await fetch(`/api/lumaleasing/${kind}/disconnect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          propertyId: currentProperty.id,
+          provider: status?.provider,
+        }),
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(payload?.error || `Failed to disconnect ${kind}`);
+      }
+      if (kind === 'calendar') {
+        await loadCalendarStatus();
+      } else {
+        await loadEmailStatus();
+      }
+    } catch (error) {
+      console.error(`Failed to disconnect ${kind}:`, error);
+      alert(error instanceof Error ? error.message : `Failed to disconnect ${kind}`);
+    } finally {
+      setDisconnectingIntegration(null);
     }
   };
 
@@ -711,10 +748,14 @@ export function LumaLeasingConfig() {
                     Connect Gmail or Outlook to sync inbound lead replies and keep thread lifecycle states visible for leasing follow-up.
                   </p>
 
-                  {emailStatus?.connected ? (
+                  {emailStatus && emailStatus.state !== 'disconnected' ? (
                     <div className="space-y-3">
                       <div className="flex items-center gap-2 text-sm bg-white/60 rounded-lg p-3">
-                        <CheckCircle className="w-4 h-4 text-green-600 flex-shrink-0" />
+                        {emailStatus.state === 'reconnect_required' ? (
+                          <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                        ) : (
+                          <CheckCircle className="w-4 h-4 text-green-600 flex-shrink-0" />
+                        )}
                         <div>
                           <div className="font-medium text-slate-900">{emailStatus.email}</div>
                           <div className="text-xs text-slate-600">
@@ -729,6 +770,12 @@ export function LumaLeasingConfig() {
                               'text-red-600'
                             }`}>
                               {emailStatus.token_status}
+                            </span>
+                            {' '}• Connection:{' '}
+                            <span className={`font-medium ${
+                              emailStatus.state === 'connected' ? 'text-green-600' : 'text-amber-700'
+                            }`}>
+                              {emailStatus.state === 'connected' ? 'connected' : 'reconnect required'}
                             </span>
                           </div>
                           {emailStatus.webhook_capability && (
@@ -823,7 +870,7 @@ export function LumaLeasingConfig() {
                         </div>
                       )}
 
-                      {emailStatus.token_status !== 'healthy' && (
+                      {emailStatus.state === 'reconnect_required' && (
                         <div className="flex items-center gap-3">
                           <AlertCircle className="w-5 h-5 text-amber-600" />
                           <div className="flex-1">
@@ -839,6 +886,14 @@ export function LumaLeasingConfig() {
                           </button>
                         </div>
                       )}
+                      <button
+                        onClick={() => disconnectIntegration('email')}
+                        disabled={disconnectingIntegration === 'email'}
+                        className="flex items-center gap-2 bg-white text-red-700 px-4 py-2 rounded-lg border border-red-200 hover:bg-red-50 transition-colors text-sm font-medium disabled:opacity-60"
+                      >
+                        <XCircle className="w-4 h-4" />
+                        {disconnectingIntegration === 'email' ? 'Removing...' : 'Remove Email Account'}
+                      </button>
                     </div>
                   ) : (
                     <div className="flex flex-wrap gap-2">
@@ -949,10 +1004,14 @@ export function LumaLeasingConfig() {
                     Tours will automatically appear in your calendar.
                   </p>
                   
-                  {calendarStatus?.connected ? (
+                  {calendarStatus && calendarStatus.state !== 'disconnected' ? (
                     <div className="space-y-3">
                       <div className="flex items-center gap-2 text-sm bg-white/50 rounded-lg p-3">
-                        <CheckCircle className="w-4 h-4 text-green-600 flex-shrink-0" />
+                        {calendarStatus.state === 'reconnect_required' ? (
+                          <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                        ) : (
+                          <CheckCircle className="w-4 h-4 text-green-600 flex-shrink-0" />
+                        )}
                         <div>
                           <div className="font-medium text-slate-900">{calendarStatus.email}</div>
                           <div className="text-xs text-slate-600">
@@ -965,6 +1024,12 @@ export function LumaLeasingConfig() {
                               calendarStatus.token_status === 'expiring_soon' ? 'text-yellow-600' :
                               'text-red-600'
                             }`}>{calendarStatus.token_status}</span>
+                            {' '}• Connection:{' '}
+                            <span className={`font-medium ${
+                              calendarStatus.state === 'connected' ? 'text-green-600' : 'text-amber-700'
+                            }`}>
+                              {calendarStatus.state === 'connected' ? 'connected' : 'reconnect required'}
+                            </span>
                             {calendarStatus.last_health_check_at && (
                               <span> • Last checked: {new Date(calendarStatus.last_health_check_at).toLocaleString()}</span>
                             )}
@@ -1011,7 +1076,7 @@ export function LumaLeasingConfig() {
                           </div>
                         </div>
                       )}
-                      {calendarStatus.token_status !== 'healthy' && (
+                      {calendarStatus.state === 'reconnect_required' && (
                         <div className="flex items-center gap-3">
                           <AlertCircle className="w-5 h-5 text-amber-600" />
                           <div className="flex-1">
@@ -1027,6 +1092,14 @@ export function LumaLeasingConfig() {
                           </button>
                         </div>
                       )}
+                      <button
+                        onClick={() => disconnectIntegration('calendar')}
+                        disabled={disconnectingIntegration === 'calendar'}
+                        className="flex items-center gap-2 bg-white text-red-700 px-4 py-2 rounded-lg border border-red-200 hover:bg-red-50 transition-colors text-sm font-medium disabled:opacity-60"
+                      >
+                        <XCircle className="w-4 h-4" />
+                        {disconnectingIntegration === 'calendar' ? 'Removing...' : 'Remove Calendar Account'}
+                      </button>
                       {calendarStatus.webhook_capability && !calendarStatus.webhook_capability.ready && (
                         <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
                           Calendar webhook degraded: {calendarStatus.webhook_capability.blockers.join(', ')}.

@@ -19,6 +19,8 @@ type WebhookCapability = {
   watch_last_message_number: number | null
 }
 
+type ConnectionState = 'connected' | 'reconnect_required' | 'disconnected'
+
 function parseIsoTimestamp(value: string | null | undefined): number | null {
   if (!value) {
     return null
@@ -78,6 +80,23 @@ function getCalendarWebhookCapability(params: {
   }
 }
 
+function getConnectionState(params: {
+  tokenStatus: string | null
+  syncEnabled: boolean | null
+  tokenExpiresAt: string | null
+}): ConnectionState {
+  if (params.syncEnabled !== true || params.tokenStatus === 'disconnected') {
+    return 'disconnected'
+  }
+
+  const tokenExpiresMs = parseIsoTimestamp(params.tokenExpiresAt)
+  if (params.tokenStatus !== 'healthy' || (tokenExpiresMs !== null && tokenExpiresMs <= Date.now())) {
+    return 'reconnect_required'
+  }
+
+  return 'connected'
+}
+
 export async function GET(request: NextRequest) {
   const ctx = createRequestContext(request, '/api/lumaleasing/calendar/status')
   ctx.logStart()
@@ -112,7 +131,6 @@ export async function GET(request: NextRequest) {
       .from('agent_calendars')
       .select('id, provider, google_email, account_email, token_status, last_health_check_at, token_expires_at, timezone, sync_enabled, calendar_id, watch_expiration, watch_channel_id, watch_resource_id, watch_last_message_number')
       .eq('property_id', propertyId)
-      .eq('sync_enabled', true)
       .maybeSingle()
 
     if (error || !calendar) {
@@ -120,6 +138,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json(
         {
           connected: false,
+          state: 'disconnected',
           message: 'Google Calendar not connected',
           webhook_capability: getCalendarWebhookCapability({
             connected: false,
@@ -135,9 +154,16 @@ export async function GET(request: NextRequest) {
       )
     }
 
+    const state = getConnectionState({
+      tokenStatus: calendar.token_status,
+      syncEnabled: calendar.sync_enabled,
+      tokenExpiresAt: calendar.token_expires_at,
+    })
+
     ctx.logSuccess(200, {
       propertyId,
-      connected: true,
+      connected: state === 'connected',
+      state,
       tokenStatus: calendar.token_status,
       webhookReady: getCalendarWebhookCapability({
         connected: true,
@@ -216,7 +242,8 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(
       {
-        connected: true,
+        connected: state === 'connected',
+        state,
         provider: calendar.provider || 'google',
         email: calendar.account_email || calendar.google_email,
         account_email: calendar.account_email || calendar.google_email,

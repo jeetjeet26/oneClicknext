@@ -91,12 +91,10 @@ describe('Calendar status route', () => {
           return {
             select: vi.fn(() => ({
               eq: vi.fn(() => ({
-                eq: vi.fn(() => ({
-                  maybeSingle: vi.fn().mockResolvedValue({
-                    data: null,
-                    error: null,
-                  }),
-                })),
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: null,
+                  error: null,
+                }),
               })),
             })),
           }
@@ -142,25 +140,23 @@ describe('Calendar status route', () => {
           return {
             select: vi.fn(() => ({
               eq: vi.fn(() => ({
-                eq: vi.fn(() => ({
-                  maybeSingle: vi.fn().mockResolvedValue({
-                    data: {
-                      id: 'calendar-1',
-                      google_email: 'leasing@example.com',
-                      token_status: 'healthy',
-                      last_health_check_at: '2026-03-10T00:00:00.000Z',
-                      token_expires_at: '2026-03-11T00:00:00.000Z',
-                      timezone: 'America/Chicago',
-                      sync_enabled: true,
-                      calendar_id: 'primary',
-                      watch_expiration: '2026-03-20T14:00:00.000Z',
-                      watch_channel_id: 'channel-1',
-                      watch_resource_id: 'resource-1',
-                      watch_last_message_number: 12,
-                    },
-                    error: null,
-                  }),
-                })),
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: {
+                    id: 'calendar-1',
+                    google_email: 'leasing@example.com',
+                    token_status: 'healthy',
+                    last_health_check_at: '2026-03-10T00:00:00.000Z',
+                    token_expires_at: '2026-03-11T00:00:00.000Z',
+                    timezone: 'America/Chicago',
+                    sync_enabled: true,
+                    calendar_id: 'primary',
+                    watch_expiration: '2026-03-20T14:00:00.000Z',
+                    watch_channel_id: 'channel-1',
+                    watch_resource_id: 'resource-1',
+                    watch_last_message_number: 12,
+                  },
+                  error: null,
+                }),
               })),
             })),
           }

@@ -89,12 +89,10 @@ describe('Gmail status route', () => {
       from: vi.fn(() => ({
         select: vi.fn(() => ({
           eq: vi.fn(() => ({
-            eq: vi.fn(() => ({
-              maybeSingle: vi.fn().mockResolvedValue({
-                data: null,
-                error: null,
-              }),
-            })),
+            maybeSingle: vi.fn().mockResolvedValue({
+              data: null,
+              error: null,
+            }),
           })),
         })),
       })),
@@ -188,22 +186,20 @@ describe('Gmail status route', () => {
           return {
             select: vi.fn(() => ({
               eq: vi.fn(() => ({
-                eq: vi.fn(() => ({
-                  maybeSingle: vi.fn().mockResolvedValue({
-                    data: {
-                      id: 'config-1',
-                      google_email: 'leasing@example.com',
-                      token_status: 'healthy',
-                      last_health_check_at: '2026-03-10T00:00:00.000Z',
-                      last_sync_at: '2026-03-10T00:05:00.000Z',
-                      sync_enabled: true,
-                      auto_reply_enabled: false,
-                      history_id: '101',
-                      watch_expiration: '2026-03-12T14:00:00.000Z',
-                    },
-                    error: null,
-                  }),
-                })),
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: {
+                    id: 'config-1',
+                    google_email: 'leasing@example.com',
+                    token_status: 'healthy',
+                    last_health_check_at: '2026-03-10T00:00:00.000Z',
+                    last_sync_at: '2026-03-10T00:05:00.000Z',
+                    sync_enabled: true,
+                    auto_reply_enabled: false,
+                    history_id: '101',
+                    watch_expiration: '2026-03-12T14:00:00.000Z',
+                  },
+                  error: null,
+                }),
               })),
             })),
           }
