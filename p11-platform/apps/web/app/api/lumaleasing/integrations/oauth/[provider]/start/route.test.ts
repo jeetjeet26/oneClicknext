@@ -27,6 +27,7 @@ describe('integration OAuth start route', () => {
     vi.clearAllMocks()
     vi.resetModules()
     vi.stubEnv('MICROSOFT_CLIENT_ID', 'microsoft-client-id')
+    vi.stubEnv('MICROSOFT_TENANT_ID', 'tenant-1')
     vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://app.example.com')
     createSignedIntegrationOAuthStateMock.mockReturnValue('signed-state')
     createClientMock.mockResolvedValue({
@@ -55,6 +56,7 @@ describe('integration OAuth start route', () => {
 
     expect(response.status).toBe(307)
     expect(location.origin).toBe('https://login.microsoftonline.com')
+    expect(location.pathname).toContain('/tenant-1/')
     expect(location.searchParams.get('client_id')).toBe('microsoft-client-id')
     expect(location.searchParams.get('state')).toBe('signed-state')
     expect(createSignedIntegrationOAuthStateMock).toHaveBeenCalledWith(
@@ -86,5 +88,19 @@ describe('integration OAuth start route', () => {
     expect(scope).toContain('email')
     expect(scope).toContain('profile')
     expect(scope).toContain('https://www.googleapis.com/auth/calendar')
+  })
+
+  it('fails Microsoft auth clearly when tenant id is not configured', async () => {
+    vi.stubEnv('MICROSOFT_TENANT_ID', '')
+
+    const { GET } = await import('./route')
+    const request = new Request(
+      'http://localhost/api/lumaleasing/integrations/oauth/microsoft/start?propertyId=property-1&capabilities=calendar'
+    ) as NextRequest
+
+    const response = await GET(request, { params: Promise.resolve({ provider: 'microsoft' }) })
+
+    expect(response.status).toBe(500)
+    await expect(response.json()).resolves.toEqual({ error: 'Internal server error' })
   })
 })

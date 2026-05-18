@@ -229,7 +229,10 @@ async function refreshAccessToken(
 }
 
 function getMicrosoftEmailTokenUrl(): string {
-  const tenantId = process.env.MICROSOFT_TENANT_ID?.trim() || 'common'
+  const tenantId = process.env.MICROSOFT_TENANT_ID?.trim()
+  if (!tenantId) {
+    throw new Error('Missing MICROSOFT_TENANT_ID for single-tenant Microsoft OAuth app')
+  }
   return `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`
 }
 

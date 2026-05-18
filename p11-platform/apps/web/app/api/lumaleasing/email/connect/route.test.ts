@@ -111,4 +111,31 @@ describe('Gmail connect route', () => {
     )
     expect(redirectUrl.searchParams.get('state')).toBe('signed-state')
   })
+
+  it('redirects Microsoft connects to same-origin unified OAuth start', async () => {
+    authGetUserMock.mockResolvedValue({
+      data: { user: { id: 'user-1' } },
+    })
+    createClientMock.mockResolvedValue({
+      auth: { getUser: authGetUserMock },
+    })
+    validatePropertyAccessMock.mockResolvedValue({
+      authorized: true,
+      orgId: 'org-1',
+    })
+
+    const { GET } = await import('./route')
+    const request = new Request(
+      'https://current.example.com/api/lumaleasing/email/connect?propertyId=property-1&provider=microsoft'
+    ) as NextRequest
+
+    const response = await GET(request)
+    const redirectUrl = new URL(response.headers.get('location') as string)
+
+    expect(response.status).toBe(307)
+    expect(redirectUrl.origin).toBe('https://current.example.com')
+    expect(redirectUrl.pathname).toBe('/api/lumaleasing/integrations/oauth/microsoft/start')
+    expect(redirectUrl.searchParams.get('propertyId')).toBe('property-1')
+    expect(redirectUrl.searchParams.get('capabilities')).toBe('email')
+  })
 })

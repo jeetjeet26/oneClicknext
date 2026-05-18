@@ -71,16 +71,24 @@ export function getProviderScopes(
   ]
 }
 
-export function getMicrosoftTenantId(): string {
-  return process.env.MICROSOFT_TENANT_ID?.trim() || 'common'
+export function getMicrosoftTenantId(): string | undefined {
+  return process.env.MICROSOFT_TENANT_ID?.trim() || undefined
 }
 
 export function getMicrosoftAuthUrl(): string {
-  return `https://login.microsoftonline.com/${getMicrosoftTenantId()}/oauth2/v2.0/authorize`
+  const tenantId = getMicrosoftTenantId()
+  if (!tenantId) {
+    throw new Error('Missing MICROSOFT_TENANT_ID for single-tenant Microsoft OAuth app')
+  }
+  return `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/authorize`
 }
 
 export function getMicrosoftTokenUrl(): string {
-  return `https://login.microsoftonline.com/${getMicrosoftTenantId()}/oauth2/v2.0/token`
+  const tenantId = getMicrosoftTenantId()
+  if (!tenantId) {
+    throw new Error('Missing MICROSOFT_TENANT_ID for single-tenant Microsoft OAuth app')
+  }
+  return `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`
 }
 
 export function getProviderClientId(provider: IntegrationProvider): string | undefined {

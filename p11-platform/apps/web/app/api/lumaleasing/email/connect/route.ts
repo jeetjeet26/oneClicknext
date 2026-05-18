@@ -39,7 +39,7 @@ export async function GET(request: NextRequest) {
     }
 
     if (provider === 'microsoft') {
-      const redirectUrl = new URL('/api/lumaleasing/integrations/oauth/microsoft/start', getAppBaseUrl())
+      const redirectUrl = new URL('/api/lumaleasing/integrations/oauth/microsoft/start', request.url)
       redirectUrl.searchParams.set('propertyId', propertyId)
       redirectUrl.searchParams.set('capabilities', 'email')
       const response = NextResponse.redirect(redirectUrl.toString())
