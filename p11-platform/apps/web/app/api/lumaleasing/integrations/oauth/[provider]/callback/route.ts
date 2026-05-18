@@ -338,8 +338,8 @@ export async function GET(
       }
     }
 
-    const appUrl = getAppBaseUrl()
-    const redirectUri = `${appUrl}/api/lumaleasing/integrations/oauth/${provider}/callback`
+    const requestOrigin = new URL(request.url).origin
+    const redirectUri = `${requestOrigin}/api/lumaleasing/integrations/oauth/${provider}/callback`
     const tokens = await exchangeCode({ provider, code, redirectUri })
     if (!tokens.access_token || !tokens.refresh_token || typeof tokens.expires_in !== 'number') {
       throw new Error('OAuth token response missing required tokens')

@@ -86,8 +86,8 @@ export async function GET(
       return badRequest('OAuth context is incomplete', ctx.responseHeaders)
     }
 
-    const appUrl = getAppBaseUrl()
-    const redirectUri = `${appUrl}/api/lumaleasing/integrations/oauth/${provider}/callback`
+    const requestOrigin = new URL(request.url).origin
+    const redirectUri = `${requestOrigin}/api/lumaleasing/integrations/oauth/${provider}/callback`
     const scopes = getProviderScopes(provider, capabilities)
     const state = createSignedIntegrationOAuthState({
       propertyId,

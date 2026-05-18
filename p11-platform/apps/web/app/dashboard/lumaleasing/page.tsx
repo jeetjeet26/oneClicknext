@@ -366,6 +366,44 @@ function ConversationsList({
 
 function IntegrationsPanel({ propertyId }: { propertyId: string }) {
   const [creatingLink, setCreatingLink] = useState<string | null>(null);
+  const [calendarStatus, setCalendarStatus] = useState<{
+    connected: boolean;
+    state?: 'connected' | 'reconnect_required' | 'disconnected';
+    provider?: 'google' | 'microsoft';
+    account_email?: string;
+    email?: string;
+    token_status?: string;
+  } | null>(null);
+  const [emailStatus, setEmailStatus] = useState<{
+    connected: boolean;
+    state?: 'connected' | 'reconnect_required' | 'disconnected';
+    provider?: 'google' | 'microsoft';
+    account_email?: string;
+    email?: string;
+    token_status?: string;
+  } | null>(null);
+
+  useEffect(() => {
+    const loadIntegrationStatus = async () => {
+      try {
+        const [calendarResponse, emailResponse] = await Promise.all([
+          fetch(`/api/lumaleasing/calendar/status?propertyId=${propertyId}`),
+          fetch(`/api/lumaleasing/email/status?propertyId=${propertyId}`),
+        ]);
+
+        if (calendarResponse.ok) {
+          setCalendarStatus(await calendarResponse.json());
+        }
+        if (emailResponse.ok) {
+          setEmailStatus(await emailResponse.json());
+        }
+      } catch (error) {
+        console.error('Failed to load integration status:', error);
+      }
+    };
+
+    loadIntegrationStatus();
+  }, [propertyId]);
 
   const createExternalAuthLink = async (
     provider: 'google' | 'microsoft',
@@ -452,6 +490,13 @@ function IntegrationsPanel({ propertyId }: { propertyId: string }) {
         {cards.map((card) => {
           const Icon = card.icon;
           const isCreating = creatingLink === `${card.provider}-${card.capability}`;
+          const status = card.capability === 'calendar' ? calendarStatus : emailStatus;
+          const matchesConnectedProvider =
+            status?.provider === card.provider && status.state !== 'disconnected';
+          const isHealthy = matchesConnectedProvider && status?.state === 'connected';
+          const needsReconnect = matchesConnectedProvider && status?.state === 'reconnect_required';
+          const accountEmail = status?.account_email || status?.email;
+
           return (
             <div key={card.key} className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
               <div className="flex items-start gap-4">
@@ -461,6 +506,28 @@ function IntegrationsPanel({ propertyId }: { propertyId: string }) {
                 <div className="flex-1">
                   <h4 className="font-semibold text-slate-900">{card.title}</h4>
                   <p className="text-sm text-slate-500 mt-1">{card.description}</p>
+                  {matchesConnectedProvider && (
+                    <div className={`mt-3 rounded-lg border px-3 py-2 text-sm ${
+                      isHealthy
+                        ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                        : 'bg-amber-50 border-amber-200 text-amber-800'
+                    }`}>
+                      <div className="flex items-center gap-2 font-medium">
+                        {isHealthy ? (
+                          <CheckCircle className="w-4 h-4" />
+                        ) : (
+                          <XCircle className="w-4 h-4" />
+                        )}
+                        {isHealthy ? 'Connected' : 'Reconnect required'}
+                      </div>
+                      {accountEmail && (
+                        <p className="mt-1 text-xs">{accountEmail}</p>
+                      )}
+                      {status?.token_status && (
+                        <p className="mt-1 text-xs">Token: {status.token_status}</p>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="flex flex-wrap gap-2 mt-5">
@@ -468,7 +535,7 @@ function IntegrationsPanel({ propertyId }: { propertyId: string }) {
                   onClick={() => window.location.href = card.connectHref}
                   className={`px-4 py-2 rounded-lg text-white text-sm font-medium transition-colors ${card.color}`}
                 >
-                  Connect
+                  {needsReconnect ? 'Reconnect' : matchesConnectedProvider ? 'Reconnect / Change Account' : 'Connect'}
                 </button>
                 <button
                   onClick={() => createExternalAuthLink(card.provider, card.capability)}
