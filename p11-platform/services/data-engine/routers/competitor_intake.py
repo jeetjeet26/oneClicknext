@@ -94,7 +94,7 @@ def _find_online_evidence(candidate: Dict[str, Any]) -> Dict[str, Any]:
         if place_id:
             details_result = scraper.client.place(
                 place_id=place_id,
-                fields=["name", "formatted_address", "website", "formatted_phone_number", "geometry", "types"],
+                fields=["name", "formatted_address", "website", "formatted_phone_number", "geometry", "type"],
             )
             details = details_result.get("result", {})
 
