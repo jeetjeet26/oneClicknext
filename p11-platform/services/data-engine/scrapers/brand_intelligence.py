@@ -248,6 +248,7 @@ class BrandIntelligenceExtractor:
     ) -> List[Dict[str, Any]]:
         """Prepare content chunks for database storage"""
         chunks = []
+        seen_hashes = set()
         
         for idx, chunk in enumerate(knowledge.raw_chunks):
             # Extract page type from chunk context
@@ -261,12 +262,15 @@ class BrandIntelligenceExtractor:
             
             # Create content hash for deduplication
             content_hash = hashlib.md5(chunk.encode()).hexdigest()
+            if content_hash in seen_hashes:
+                continue
+            seen_hashes.add(content_hash)
             
             chunks.append({
                 "competitor_id": competitor_id,
                 "page_url": website_url,
                 "page_type": page_type,
-                "chunk_index": idx,
+                "chunk_index": len(chunks),
                 "content": chunk,
                 "content_hash": content_hash
             })
@@ -392,10 +396,25 @@ class BrandIntelligenceExtractor:
                 'competitor_id', brand_intel.competitor_id
             ).execute()
             
-            # Insert new chunks (batch in groups of 50)
-            for i in range(0, len(content_chunks), 50):
-                batch = content_chunks[i:i+50]
-                self.supabase.table('competitor_content_chunks').insert(batch).execute()
+            # Insert new chunks (batch in groups of 50). Scrapers can emit duplicate
+            # content across pages, so dedupe again before insert to avoid blocking
+            # brand intelligence storage on repeated content hashes.
+            deduped_chunks = []
+            seen_hashes = set()
+            for chunk in content_chunks:
+                content_hash = chunk.get('content_hash')
+                if content_hash and content_hash in seen_hashes:
+                    continue
+                if content_hash:
+                    seen_hashes.add(content_hash)
+                deduped_chunks.append(chunk)
+
+            for i in range(0, len(deduped_chunks), 50):
+                batch = deduped_chunks[i:i+50]
+                self.supabase.table('competitor_content_chunks').upsert(
+                    batch,
+                    on_conflict='competitor_id,content_hash'
+                ).execute()
             
             # Store floor plans/pricing data if available
             if floor_plans:
