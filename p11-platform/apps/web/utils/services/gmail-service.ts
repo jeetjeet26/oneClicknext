@@ -5,6 +5,7 @@
  */
 
 import { createServiceClient } from '@/utils/supabase/admin'
+import { getMicrosoftTokenUrl } from '@/utils/services/integration-provider-config'
 
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 const GMAIL_API = 'https://gmail.googleapis.com/gmail/v1/users/me'
@@ -148,7 +149,7 @@ async function refreshAccessToken(
 
   try {
     const isMicrosoft = config.provider === 'microsoft'
-    const response = await fetch(isMicrosoft ? getMicrosoftEmailTokenUrl() : GOOGLE_TOKEN_URL, {
+    const response = await fetch(isMicrosoft ? getMicrosoftTokenUrl() : GOOGLE_TOKEN_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -226,14 +227,6 @@ async function refreshAccessToken(
 
     throw error
   }
-}
-
-function getMicrosoftEmailTokenUrl(): string {
-  const tenantId = process.env.MICROSOFT_TENANT_ID?.trim()
-  if (!tenantId) {
-    throw new Error('Missing MICROSOFT_TENANT_ID for single-tenant Microsoft OAuth app')
-  }
-  return `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`
 }
 
 // ============================================================================

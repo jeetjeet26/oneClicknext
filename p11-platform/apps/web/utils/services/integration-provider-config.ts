@@ -29,6 +29,7 @@ const GOOGLE_EMAIL_SCOPES = [
 const MICROSOFT_BASE_SCOPES = ['openid', 'email', 'profile', 'offline_access', 'User.Read']
 const MICROSOFT_CALENDAR_SCOPES = ['Calendars.ReadWrite']
 const MICROSOFT_EMAIL_SCOPES = ['Mail.Send', 'Mail.Read']
+const MICROSOFT_DEFAULT_TENANT = 'organizations'
 
 export function normalizeProvider(value: string | null | undefined): IntegrationProvider | null {
   return value === 'google' || value === 'microsoft' ? value : null
@@ -71,23 +72,17 @@ export function getProviderScopes(
   ]
 }
 
-export function getMicrosoftTenantId(): string | undefined {
-  return process.env.MICROSOFT_TENANT_ID?.trim() || undefined
+export function getMicrosoftTenantId(): string {
+  return process.env.MICROSOFT_TENANT_ID?.trim() || MICROSOFT_DEFAULT_TENANT
 }
 
 export function getMicrosoftAuthUrl(): string {
   const tenantId = getMicrosoftTenantId()
-  if (!tenantId) {
-    throw new Error('Missing MICROSOFT_TENANT_ID for single-tenant Microsoft OAuth app')
-  }
   return `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/authorize`
 }
 
 export function getMicrosoftTokenUrl(): string {
   const tenantId = getMicrosoftTenantId()
-  if (!tenantId) {
-    throw new Error('Missing MICROSOFT_TENANT_ID for single-tenant Microsoft OAuth app')
-  }
   return `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`
 }
 

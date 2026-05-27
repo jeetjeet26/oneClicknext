@@ -18,6 +18,7 @@ export { BrandIntelligenceCard } from './BrandIntelligenceCard'
 export { CompetitorComparisonView } from './CompetitorComparisonView'
 export { SemanticSearchPanel } from './SemanticSearchPanel'
 export { BrandIntelligenceJobProgress } from './BrandIntelligenceJobProgress'
+export { CompetitorIntakePanel } from './CompetitorIntakePanel'
 
 // Types
 export type {

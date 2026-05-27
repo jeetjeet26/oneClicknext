@@ -14,6 +14,7 @@ import {
   type ReportQuery,
 } from '@/utils/propertyaudit/reporting'
 import { getPropertyTypeConfig } from '@/utils/property-types'
+import { retrieveCompetitorKbContext } from '@/utils/services/competitor-kb'
 
 export interface GeoQuery {
   id: string
@@ -412,12 +413,14 @@ async function generateQueryPanel(
   const neighborhood = addressObj?.neighborhood || city
   const street = addressObj?.street || ''
 
-  // Fetch competitors from MarketVision
+  // Fetch competitors from MarketVision. Intake-enriched competitors are ranked first
+  // when brand intelligence confidence is available.
   const { data: competitors } = await supabase
     .from('competitors')
-    .select('name')
+    .select('id,name,is_active,brand_intel:competitor_brand_intelligence(confidence_score,last_analyzed_at)')
     .eq('property_id', propertyId)
-    .limit(5)
+    .eq('is_active', true)
+    .limit(10)
 
   // Fetch BrandForge data for USPs (optional)
   const { data: brandData } = await supabase
@@ -451,8 +454,31 @@ async function generateQueryPanel(
   const featureQueries = specialFeatures.length > 0
     ? generateSpecialFeatureQueries(specialFeatures, neighborhood, propertyId, cityState, propertyType).slice(0, 2)
     : []
-  const comparisonTargets =
-    (competitors || []).map(entry => entry.name).filter((name): name is string => typeof name === 'string' && name.length > 0)
+  const competitorKbContext = await retrieveCompetitorKbContext({
+    propertyId,
+    query: `competitor positioning and comparison targets for ${propertyName} in ${cityState}`,
+    matchCount: 12,
+  })
+  const structuredComparisonTargets = (competitors || [])
+    .map(entry => {
+      const brandIntel = Array.isArray(entry.brand_intel)
+        ? entry.brand_intel[0]
+        : entry.brand_intel
+      return {
+        name: entry.name,
+        confidence: Number(brandIntel?.confidence_score ?? 0),
+        analyzedAt: brandIntel?.last_analyzed_at ? Date.parse(brandIntel.last_analyzed_at) : 0,
+      }
+    })
+    .filter((entry): entry is { name: string; confidence: number; analyzedAt: number } =>
+      typeof entry.name === 'string' && entry.name.length > 0
+    )
+    .sort((a, b) => (b.confidence - a.confidence) || (b.analyzedAt - a.analyzedAt))
+    .map(entry => entry.name)
+  const comparisonTargets = Array.from(new Set([
+    ...structuredComparisonTargets,
+    ...competitorKbContext.competitorNames,
+  ])).slice(0, 5)
   const amenityAndUspPrompts = [
     ...topAmenityCombos,
     ...uspQueries.map(text => ({

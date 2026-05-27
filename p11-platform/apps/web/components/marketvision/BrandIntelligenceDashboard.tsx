@@ -11,6 +11,7 @@ import { BrandIntelligenceCard } from './BrandIntelligenceCard'
 import { CompetitorComparisonView } from './CompetitorComparisonView'
 import { SemanticSearchPanel } from './SemanticSearchPanel'
 import { BrandIntelligenceJobProgress } from './BrandIntelligenceJobProgress'
+import { CompetitorIntakePanel } from './CompetitorIntakePanel'
 
 interface BrandIntelligenceDashboardProps {
   propertyId: string
@@ -175,6 +176,11 @@ export function BrandIntelligenceDashboard({
           }}
         />
       )}
+
+      <CompetitorIntakePanel
+        propertyId={propertyId}
+        onComplete={fetchBrandIntelligence}
+      />
 
       {/* Error State */}
       {error && !extractionJobId && (

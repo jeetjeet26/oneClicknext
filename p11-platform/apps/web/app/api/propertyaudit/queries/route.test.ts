@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NextRequest } from 'next/server'
+import { retrieveCompetitorKbContext } from '@/utils/services/competitor-kb'
 
 const authGetUserMock = vi.fn()
 const createClientMock = vi.fn()
@@ -16,6 +17,14 @@ vi.mock('@/utils/supabase/admin', () => ({
 
 vi.mock('@/utils/services/auth-guard', () => ({
   validatePropertyAccess: validatePropertyAccessMock,
+}))
+
+vi.mock('@/utils/services/competitor-kb', () => ({
+  retrieveCompetitorKbContext: vi.fn().mockResolvedValue({
+    contextText: '',
+    competitorNames: [],
+    chunks: [],
+  }),
 }))
 
 function makeNextRequest(url: string, init?: RequestInit): NextRequest {
@@ -219,12 +228,12 @@ describe('propertyaudit queries route', () => {
         }
       }
       if (table === 'competitors') {
+        const competitorQuery = {
+          eq: vi.fn(() => competitorQuery),
+          limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+        }
         return {
-          select: vi.fn(() => ({
-            eq: vi.fn(() => ({
-              limit: vi.fn().mockResolvedValue({ data: [], error: null }),
-            })),
-          })),
+          select: vi.fn(() => competitorQuery),
         }
       }
       if (table === 'brand_books') {
@@ -278,6 +287,118 @@ describe('propertyaudit queries route', () => {
     expect(insertedQueries.map(query => query.text).join(' ')).toContain('townhomes for sale')
     expect(insertedQueries.map(query => query.text).join(' ')).not.toContain('apartment communities')
     expect(insertedQueries.map(query => query.text).join(' ')).not.toContain('Best apartments')
+  })
+
+  it('POST prefers enriched competitors for comparison query generation', async () => {
+    authGetUserMock.mockResolvedValue({
+      data: { user: { id: 'user-1' } },
+      error: null,
+    })
+    validatePropertyAccessMock.mockResolvedValue({
+      authorized: true,
+      orgId: 'org-1',
+    })
+    vi.mocked(retrieveCompetitorKbContext).mockResolvedValueOnce({
+      contextText: '',
+      competitorNames: ['Vector KB Villas'],
+      chunks: [],
+    })
+
+    let insertedQueries: Array<Record<string, unknown>> = []
+    const serviceFromMock = vi.fn((table: string) => {
+      if (table === 'properties') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({
+                data: {
+                  id: 'property-1',
+                  name: 'Acacia',
+                  address: { city: 'Palo Alto', state: 'CA', street: '420 Acacia Avenue' },
+                  property_type: 'townhome',
+                  amenities: [],
+                  special_features: [],
+                },
+                error: null,
+              }),
+            })),
+          })),
+        }
+      }
+      if (table === 'competitors') {
+        const competitorQuery = {
+          eq: vi.fn(() => competitorQuery),
+          limit: vi.fn().mockResolvedValue({
+            data: [
+              {
+                id: 'competitor-low',
+                name: 'Low Confidence Homes',
+                is_active: true,
+                brand_intel: { confidence_score: 0.4, last_analyzed_at: '2026-03-16T00:00:00.000Z' },
+              },
+              {
+                id: 'competitor-high',
+                name: 'Enriched Homes',
+                is_active: true,
+                brand_intel: { confidence_score: 0.9, last_analyzed_at: '2026-03-17T00:00:00.000Z' },
+              },
+            ],
+            error: null,
+          }),
+        }
+        return { select: vi.fn(() => competitorQuery) }
+      }
+      if (table === 'brand_books') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              order: vi.fn(() => ({
+                limit: vi.fn(() => ({
+                  single: vi.fn().mockResolvedValue({ data: null, error: null }),
+                })),
+              })),
+            })),
+          })),
+        }
+      }
+      if (table === 'geo_queries') {
+        return {
+          insert: vi.fn((queries: Array<Record<string, unknown>>) => {
+            insertedQueries = queries
+            return {
+              select: vi.fn().mockResolvedValue({
+                data: queries.map((query, index) => ({
+                  id: `query-${index}`,
+                  created_at: '2026-03-16T00:00:00.000Z',
+                  updated_at: '2026-03-16T00:00:00.000Z',
+                  ...query,
+                })),
+                error: null,
+              }),
+            }
+          }),
+        }
+      }
+      throw new Error(`Unexpected table ${table}`)
+    })
+
+    createServiceClientMock.mockReturnValue({
+      from: serviceFromMock,
+    })
+
+    const { POST } = await import('./route')
+    const response = await POST(
+      makeNextRequest('http://localhost/api/propertyaudit/queries', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ propertyId: 'property-1', generateFromProperty: true }),
+      })
+    )
+
+    expect(response.status).toBe(200)
+    const comparisonQueries = insertedQueries.filter(query => query.type === 'comparison')
+    expect(comparisonQueries[0].text).toBe('Acacia vs Enriched Homes')
+    expect(comparisonQueries.map(query => query.text)).toContain('Acacia vs Vector KB Villas')
   })
 
   it('DELETE returns 403 when query property access is denied', async () => {

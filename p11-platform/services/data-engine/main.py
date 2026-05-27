@@ -13,6 +13,7 @@ import os
 
 # Import routers
 from routers.brand_intelligence import router as brand_intelligence_router
+from routers.competitor_intake import router as competitor_intake_router
 from routers.crm_integration import router as crm_integration_router
 from routers.propertyaudit_jobs import router as propertyaudit_jobs_router
 from routers.scraper import router as scraper_router
@@ -21,6 +22,7 @@ app = FastAPI(title="P11 Data Engine", version="1.0.0")
 
 # Mount routers
 app.include_router(brand_intelligence_router)
+app.include_router(competitor_intake_router)
 app.include_router(crm_integration_router)
 app.include_router(propertyaudit_jobs_router)
 app.include_router(scraper_router)
