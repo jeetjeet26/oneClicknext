@@ -88,8 +88,8 @@ export function SeedKeywordUploadModal({
   const previewSeeds = parseResult?.seeds.slice(0, 10) || []
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-2 sm:p-4">
-      <div className="flex max-h-[calc(100vh-1rem)] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-800 sm:max-h-[calc(100vh-2rem)]">
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-2 sm:p-4">
+      <div className="my-2 flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-800 sm:my-4">
         <div className="shrink-0 flex items-center justify-between border-b border-gray-200 p-4 dark:border-gray-700">
           <div>
             <h2 className="flex items-center gap-2 text-lg font-semibold text-gray-900 dark:text-white">
@@ -165,16 +165,26 @@ export function SeedKeywordUploadModal({
 
           {parseResult && parseResult.seeds.length > 0 && (
             <div className="space-y-3">
-              <div className="flex items-center justify-between rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-800 dark:border-green-900/50 dark:bg-green-900/20 dark:text-green-300">
+              <div className="flex flex-col gap-3 rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-800 dark:border-green-900/50 dark:bg-green-900/20 dark:text-green-300 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-center gap-2">
                   <CheckCircle2 className="h-4 w-4" />
                   <span>
                     Found {parseResult.seeds.length} seed keywords from {parseResult.totalRows} rows.
                   </span>
                 </div>
-                <span className="text-xs">
-                  {parseResult.duplicateRows} duplicates, {parseResult.skippedRows} skipped
-                </span>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs">
+                    {parseResult.duplicateRows} duplicates, {parseResult.skippedRows} skipped
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleGenerate}
+                    disabled={isGenerating}
+                    className="rounded-md bg-green-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {isGenerating ? 'Generating...' : 'Generate now'}
+                  </button>
+                </div>
               </div>
 
               <div className="max-h-72 overflow-auto rounded-lg border border-gray-200 dark:border-gray-700">
