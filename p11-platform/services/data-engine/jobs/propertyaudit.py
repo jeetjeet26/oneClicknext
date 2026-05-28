@@ -33,6 +33,14 @@ def _is_no_rows_error(error: Exception) -> bool:
     return 'PGRST116' in message and '0 rows' in message
 
 
+def _is_duplicate_key_error(error: Exception) -> bool:
+    code = getattr(error, 'code', None)
+    if code == '23505':
+        return True
+    message = str(error)
+    return '23505' in message or 'duplicate key value violates unique constraint' in message
+
+
 def _normalize_domain(value: Optional[str]) -> str:
     if not value:
         return ''
@@ -318,7 +326,7 @@ class PropertyAuditExecutor:
     
     def _get_property_config(self, property_id: str, property_name: str) -> Dict:
         """Get or create property config for domains."""
-        try:
+        def fetch_config() -> Optional[Dict]:
             response = self.supabase.table('geo_property_config')\
                 .select('domains, competitor_domains')\
                 .eq('property_id', property_id)\
@@ -327,6 +335,12 @@ class PropertyAuditExecutor:
 
             if response.data:
                 return response.data
+            return None
+
+        try:
+            config = fetch_config()
+            if config:
+                return config
         except APIError as error:
             if not _is_no_rows_error(error):
                 raise
@@ -336,14 +350,22 @@ class PropertyAuditExecutor:
         
         inferred_domain = self._infer_domain_from_name(property_name)
         
-        create_response = self.supabase.table('geo_property_config').insert({
-            'property_id': property_id,
-            'domains': [inferred_domain] if inferred_domain else [],
-            'competitor_domains': [],
-            'is_active': True
-        }).execute()
-        
-        return create_response.data[0] if create_response.data else {'domains': [], 'competitor_domains': []}
+        try:
+            create_response = self.supabase.table('geo_property_config').insert({
+                'property_id': property_id,
+                'domains': [inferred_domain] if inferred_domain else [],
+                'competitor_domains': [],
+                'is_active': True
+            }).execute()
+            return create_response.data[0] if create_response.data else {'domains': [], 'competitor_domains': []}
+        except APIError as error:
+            if not _is_duplicate_key_error(error):
+                raise
+            logger.info(
+                "[PropertyAudit] Property config for %s was created concurrently; reusing existing config",
+                property_id,
+            )
+            return fetch_config() or {'domains': [], 'competitor_domains': []}
 
     def _build_brand_domains(self, config: Dict, property_data: Dict) -> List[str]:
         """Combine configured brand domains with the property's canonical website URL."""
