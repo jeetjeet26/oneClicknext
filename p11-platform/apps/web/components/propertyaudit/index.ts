@@ -5,7 +5,7 @@ export { Sparkline, DeltaBadge, TrendChart, DumbbellChart } from './charts'
 export { ScoreBreakdown, ScoreRing } from './score'
 
 // Query
-export { QueryTable, QueryFilters, CreateQueryModal, ExportMenu, QueryPerformanceCards, type QueryRow } from './query'
+export { QueryTable, QueryFilters, CreateQueryModal, SeedKeywordUploadModal, ExportMenu, QueryPerformanceCards, type QueryRow } from './query'
 
 // Answer
 export { AnswerPreview } from './answer'
