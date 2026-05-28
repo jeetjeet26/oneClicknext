@@ -9,8 +9,10 @@ Google Places result.
 import logging
 import os
 import re
+import json
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from openai import OpenAI
@@ -40,6 +42,174 @@ def _normalize_name(value: str) -> str:
 
 def _format_embedding_for_pgvector(embedding: List[float]) -> str:
     return f"[{','.join(str(v) for v in embedding)}]"
+
+
+def _extract_text_and_sources_from_response(response: Any) -> Dict[str, Any]:
+    text = ""
+    sources: List[Dict[str, str]] = []
+    seen_urls = set()
+
+    for item in getattr(response, "output", []) or []:
+        if getattr(item, "type", None) != "message" or not getattr(item, "content", None):
+            continue
+        for content_block in item.content:
+            if getattr(content_block, "type", None) != "output_text":
+                continue
+            text += getattr(content_block, "text", "") or ""
+            for annotation in getattr(content_block, "annotations", []) or []:
+                ann = annotation if isinstance(annotation, dict) else vars(annotation)
+                url = ann.get("url")
+                if ann.get("type") != "url_citation" or not url or url in seen_urls:
+                    continue
+                seen_urls.add(url)
+                sources.append({
+                    "title": ann.get("title", ""),
+                    "url": url,
+                    "domain": _domain(url),
+                    "snippet": "",
+                })
+
+    return {"text": text.strip(), "sources": sources}
+
+
+def _domain(url: Optional[str]) -> str:
+    if not url:
+        return ""
+    try:
+        host = urlparse(url).hostname or ""
+        return host.lower().replace("www.", "", 1)
+    except Exception:
+        return ""
+
+
+def _extract_json_object(text: str) -> Optional[Dict[str, Any]]:
+    if not text:
+        return None
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        stripped = re.sub(r"^```(?:json)?\s*", "", stripped)
+        stripped = re.sub(r"\s*```$", "", stripped)
+
+    try:
+        parsed = json.loads(stripped)
+        return parsed if isinstance(parsed, dict) else None
+    except json.JSONDecodeError:
+        match = re.search(r"\{[\s\S]*\}", stripped)
+        if not match:
+            return None
+        try:
+            parsed = json.loads(match.group(0))
+            return parsed if isinstance(parsed, dict) else None
+        except json.JSONDecodeError:
+            return None
+
+
+def _url_is_from_sources(url: str, sources: List[Dict[str, str]]) -> bool:
+    target_domain = _domain(url)
+    if not target_domain:
+        return False
+    for source in sources:
+        source_domain = _domain(source.get("url"))
+        if source_domain == target_domain or source_domain.endswith(f".{target_domain}") or target_domain.endswith(f".{source_domain}"):
+            return True
+    return False
+
+
+def _resolve_with_ai_web_search(candidate: Dict[str, Any]) -> Dict[str, Any]:
+    openai_key = os.environ.get("OPENAI_API_KEY")
+    if not openai_key:
+        return {"source": "ai_web_search", "error": "OPENAI_API_KEY is not configured"}
+
+    seed_name = candidate.get("seed_name") or ""
+    seed_location = candidate.get("seed_location") or ""
+    seed_claims = candidate.get("seed_claims") or {}
+    seed_snippet = candidate.get("seed_snippet") or ""
+    builder = seed_claims.get("builder") if isinstance(seed_claims, dict) else None
+    seo_angle = seed_claims.get("seoAngle") if isinstance(seed_claims, dict) else None
+
+    model = os.environ.get("COMPETITOR_INTAKE_RESOLVER_MODEL", "gpt-5")
+    client = OpenAI(api_key=openai_key, timeout=120.0, max_retries=2)
+    prompt = f"""
+Find the official community or builder page for this real estate competitor.
+
+Competitor name: {seed_name}
+Builder / operator hint: {builder or "unknown"}
+Location hint: {seed_location or "unknown"}
+SEO/search hint: {seo_angle or "unknown"}
+Client-provided seed snippet, for search grounding only: {seed_snippet[:1200]}
+
+Use web search. Prefer the official community page or official builder page over
+directories, maps, social profiles, portals, and review sites. Return only JSON:
+{{
+  "official_url": "https://...",
+  "canonical_name": "...",
+  "address": "... or null",
+  "phone": "... or null",
+  "confidence": 0.0,
+  "reason": "short reason why this is official",
+  "source_urls": ["https://..."]
+}}
+
+If you cannot find an official page with citations, return:
+{{"official_url": null, "confidence": 0, "reason": "not found", "source_urls": []}}
+"""
+
+    try:
+        response = client.responses.create(
+            model=model,
+            input=prompt,
+            instructions=(
+                "You resolve official competitor websites for property intelligence. "
+                "Use citations from web search. Do not treat client-provided notes as truth."
+            ),
+            tools=[{"type": "web_search_preview"}],
+        )
+        extracted = _extract_text_and_sources_from_response(response)
+        parsed = _extract_json_object(extracted["text"])
+        if not parsed:
+            return {
+                "source": "ai_web_search",
+                "error": "AI resolver did not return parseable JSON",
+                "raw_text": extracted["text"][:500],
+                "sources": extracted["sources"],
+            }
+
+        official_url = parsed.get("official_url")
+        confidence = float(parsed.get("confidence") or 0)
+        sources = extracted["sources"]
+        source_urls = parsed.get("source_urls") if isinstance(parsed.get("source_urls"), list) else []
+        merged_sources = sources + [
+            {"title": "", "url": url, "domain": _domain(url), "snippet": ""}
+            for url in source_urls
+            if isinstance(url, str)
+        ]
+
+        if not official_url or confidence < 0.55 or not _url_is_from_sources(official_url, merged_sources):
+            return {
+                "source": "ai_web_search",
+                "error": parsed.get("reason") or "No cited official URL found",
+                "sources": merged_sources,
+                "confidence": confidence,
+            }
+
+        return {
+            "name": parsed.get("canonical_name") or seed_name,
+            "website_url": official_url,
+            "address": parsed.get("address") or seed_location or None,
+            "phone": parsed.get("phone"),
+            "address_json": {
+                **_parse_location(seed_location),
+                "formatted": parsed.get("address") or seed_location or None,
+            },
+            "source": "ai_web_search",
+            "confidence": confidence,
+            "sources": merged_sources,
+            "reason": parsed.get("reason"),
+            "resolver_model": model,
+        }
+    except Exception as exc:
+        logger.warning("AI web search competitor resolution failed: %s", exc)
+        return {"source": "ai_web_search", "error": str(exc)}
 
 
 def _parse_location(location: Optional[str]) -> Dict[str, Optional[str]]:
@@ -74,10 +244,15 @@ def _find_online_evidence(candidate: Dict[str, Any]) -> Dict[str, Any]:
             "confidence": 0.75,
         }
 
+    ai_evidence = _resolve_with_ai_web_search(candidate)
+    if ai_evidence.get("website_url"):
+        return ai_evidence
+
     if not os.environ.get("GOOGLE_MAPS_API_KEY"):
         return {
             "source": "none",
-            "error": "GOOGLE_MAPS_API_KEY is not configured for online competitor resolution",
+            "error": ai_evidence.get("error") or "No AI or Google resolver found online evidence",
+            "ai_web_search": ai_evidence,
         }
 
     try:
@@ -86,7 +261,11 @@ def _find_online_evidence(candidate: Dict[str, Any]) -> Dict[str, Any]:
         results = scraper.client.places(query=query)
         places = results.get("results", [])
         if not places:
-            return {"source": "google_places", "error": "No online match found"}
+            return {
+                "source": "google_places",
+                "error": "No online match found",
+                "ai_web_search": ai_evidence,
+            }
 
         best = places[0]
         place_id = best.get("place_id")
@@ -116,10 +295,11 @@ def _find_online_evidence(candidate: Dict[str, Any]) -> Dict[str, Any]:
             },
             "source": "google_places",
             "confidence": 0.85 if details.get("website") else 0.65,
+            "ai_web_search": ai_evidence,
         }
     except Exception as exc:
         logger.warning("Google Places competitor resolution failed: %s", exc)
-        return {"source": "google_places", "error": str(exc)}
+        return {"source": "google_places", "error": str(exc), "ai_web_search": ai_evidence}
 
 
 def _upsert_competitor(supabase, property_id: str, candidate: Dict[str, Any], evidence: Dict[str, Any]) -> str:
