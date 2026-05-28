@@ -529,6 +529,9 @@ function generateReportHTML(
     <div class="chart-card">${charts.visibilityTrend}</div>
   </div>
   <h3>Surface Coverage</h3>
+  <p style="color: #6b7280; margin-bottom: 1rem;">
+    The headline GEO Score averages the latest selected surface scores. Surface scores include position, citation link rank, share of voice, and accuracy; visibility is shown separately.
+  </p>
   <table class="query-table">
     <thead>
       <tr>
@@ -556,7 +559,7 @@ function generateReportHTML(
         <th>Surface</th>
         <th>Score</th>
         <th>Visibility</th>
-        <th>Avg Rank (all prompts)</th>
+        <th>Avg Rank (present prompts)</th>
       </tr>
     </thead>
     <tbody>
@@ -587,7 +590,7 @@ function generateReportHTML(
         <th>Surface</th>
         <th>Latest Score</th>
         <th>Visibility</th>
-        <th>Avg Rank (all prompts)</th>
+        <th>Avg Rank (present prompts)</th>
         <th>Avg SOV</th>
       </tr>
     </thead>

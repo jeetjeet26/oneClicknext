@@ -205,9 +205,7 @@ export async function buildPropertyReportData(
     websiteUrl: property?.website_url || null,
   })
 
-  const scores = reportRuns
-    .map((r) => r.geo_scores?.[0])
-    .filter(Boolean) as ReportScore[]
+  const scores = buildReportScores(reportRuns)
 
   const recommendationsResult = await generateRecommendations(propertyId, {
     batchId: options.batchId || null,
@@ -508,7 +506,7 @@ export function aggregateAnswersByQuery(
 }
 
 function buildSurfaceSummaries(runs: ReportRun[]) {
-  return runs.map(run => ({
+  return getLatestScoredRunsBySurface(runs).map(run => ({
     surface: run.surface,
     label: getSurfaceLabel(run.surface),
     measurementNote: getSurfaceMeasurementNote(run.surface),
@@ -516,6 +514,54 @@ function buildSurfaceSummaries(runs: ReportRun[]) {
     overallScore: run.geo_scores?.[0]?.overall_score ?? null,
     visibilityPct: run.geo_scores?.[0]?.visibility_pct ?? null,
   }))
+}
+
+function getLatestScoredRunsBySurface(runs: ReportRun[]): ReportRun[] {
+  const bySurface = new Map<string, ReportRun>()
+  runs.forEach(run => {
+    if (!run.surface || !run.geo_scores?.[0]) return
+    const existing = bySurface.get(run.surface)
+    if (!existing) {
+      bySurface.set(run.surface, run)
+      return
+    }
+
+    const currentTime = run.started_at ? new Date(run.started_at).getTime() : 0
+    const existingTime = existing.started_at ? new Date(existing.started_at).getTime() : 0
+    if (currentTime > existingTime) {
+      bySurface.set(run.surface, run)
+    }
+  })
+  return Array.from(bySurface.values())
+}
+
+export function buildReportScores(runs: ReportRun[]): ReportScore[] {
+  const surfaceScores = getLatestScoredRunsBySurface(runs)
+    .map(run => run.geo_scores?.[0])
+    .filter(Boolean) as ReportScore[]
+
+  if (surfaceScores.length <= 1) return surfaceScores
+
+  const averageNullable = (values: Array<number | null | undefined>) => {
+    const numeric = values.filter(isNumber)
+    return numeric.length > 0 ? average(numeric) : null
+  }
+  const averageBreakdown = (key: keyof NonNullable<ReportScore['breakdown']>) =>
+    averageNullable(surfaceScores.map(score => score.breakdown?.[key])) ?? 0
+
+  return [{
+    overall_score: average(surfaceScores.map(score => score.overall_score)),
+    visibility_pct: average(surfaceScores.map(score => score.visibility_pct)),
+    avg_llm_rank: averageNullable(surfaceScores.map(score => score.avg_llm_rank)),
+    avg_link_rank: averageNullable(surfaceScores.map(score => score.avg_link_rank)),
+    avg_sov: averageNullable(surfaceScores.map(score => score.avg_sov)),
+    breakdown: {
+      position: averageBreakdown('position'),
+      link: averageBreakdown('link'),
+      sov: averageBreakdown('sov'),
+      accuracy: averageBreakdown('accuracy'),
+    },
+  }]
 }
 
 async function fetchAiOverviews(
@@ -803,12 +849,20 @@ function getCompetitorAmbiguityReason(input: {
   entityDomain: string
   propertyName: string | null | undefined
 }): string | undefined {
+  const domainStem = getDomainStem(input.entityDomain)
+  const normalizedEntityName = (input.entityName || '').toLowerCase()
+  if (domainStem && !normalizedEntityName.includes(domainStem)) {
+    return undefined
+  }
+
   const propertyTokens = new Set(tokenizeEntityName(input.propertyName))
   if (propertyTokens.size === 0) return undefined
+  if (domainStem && normalizedEntityName.includes(domainStem) && !propertyTokens.has(domainStem)) {
+    return undefined
+  }
 
   const entityTokens = tokenizeEntityName(input.entityName)
   const collidingEntityTokens = entityTokens.filter(token => propertyTokens.has(token) && token.length >= 4)
-  const domainStem = getDomainStem(input.entityDomain)
 
   if (collidingEntityTokens.length > 0) {
     return 'Name overlaps with the audited property; review before treating as competitor pressure.'
@@ -875,7 +929,7 @@ function buildGlossary(): ReportGlossaryEntry[] {
       term: 'GEO Score',
       definition: 'Weighted score of how well the property appears in LLM search responses.',
       formula: '45% Position + 25% Link Rank + 20% SOV + 10% Accuracy',
-      interpretation: 'Higher is better. Scores above 75 are considered strong.'
+      interpretation: 'Higher is better. The report headline averages the latest selected surface scores; each surface row uses the same component formula. Scores above 75 are considered strong.'
     },
     {
       term: 'Visibility / Presence',
@@ -886,7 +940,7 @@ function buildGlossary(): ReportGlossaryEntry[] {
     {
       term: 'LLM Rank',
       definition: 'Position of the property in the ordered list of entities returned by the LLM.',
-      interpretation: 'Lower is better; rank 1 indicates primary recommendation.'
+      interpretation: 'Lower is better; rank 1 indicates primary recommendation. Avg rank is calculated only from prompts where a ranked mention exists, so absences are reflected through visibility and score rather than the rank average.'
     },
     {
       term: 'Link Rank',

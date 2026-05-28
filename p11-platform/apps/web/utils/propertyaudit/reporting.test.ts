@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildCompetitorsFromAnswers, buildInsights, type ReportAnswer, type ReportCompetitor } from './reporting'
+import { buildCompetitorsFromAnswers, buildInsights, buildReportScores, type ReportAnswer, type ReportCompetitor } from './reporting'
 
 function makeAnswer(orderedEntities: ReportAnswer['ordered_entities']): ReportAnswer {
   return {
@@ -33,6 +33,33 @@ function makeInsightsInput(overrides: Partial<Parameters<typeof buildInsights>[0
 }
 
 describe('PropertyAudit reporting insights', () => {
+  it('uses the latest score per surface for the headline report score', () => {
+    const scores = buildReportScores([
+      {
+        id: 'claude-latest',
+        surface: 'claude',
+        started_at: '2026-05-28T22:21:35.000Z',
+        geo_scores: [{ overall_score: 19, visibility_pct: 41, avg_llm_rank: 1, avg_link_rank: null, avg_sov: null }],
+      },
+      {
+        id: 'google-latest',
+        surface: 'google_ai',
+        started_at: '2026-05-28T22:21:35.000Z',
+        geo_scores: [{ overall_score: 38, visibility_pct: 46, avg_llm_rank: 1.8, avg_link_rank: null, avg_sov: 0.06 }],
+      },
+      {
+        id: 'claude-older',
+        surface: 'claude',
+        started_at: '2026-05-27T22:21:35.000Z',
+        geo_scores: [{ overall_score: 90, visibility_pct: 90, avg_llm_rank: 1, avg_link_rank: null, avg_sov: null }],
+      },
+    ])
+
+    expect(scores).toHaveLength(1)
+    expect(scores[0]?.overall_score).toBe(28.5)
+    expect(scores[0]?.visibility_pct).toBe(43.5)
+  })
+
   it('flags same-name entity mentions before treating them as competitor pressure', () => {
     const competitors = buildCompetitorsFromAnswers([
       makeAnswer([
@@ -102,6 +129,23 @@ describe('PropertyAudit reporting insights', () => {
       name: 'Otay Ranch Apartments',
       domain: 'otayranch.example',
       mentionCount: 1,
+    })
+  })
+
+  it('does not mark generic listing domains as ambiguous just because their titles mention the property', () => {
+    const competitors = buildCompetitorsFromAnswers([
+      makeAnswer([
+        { name: 'Epoca Life - Apartments on Trulia', domain: 'trulia.com', position: 3 },
+      ]),
+    ], {
+      propertyName: 'Epoca Life',
+      websiteUrl: 'https://epocalife.com',
+    })
+
+    expect(competitors[0]).toMatchObject({
+      name: 'Epoca Life - Apartments on Trulia',
+      domain: 'trulia.com',
+      ambiguityReason: undefined,
     })
   })
 })

@@ -145,6 +145,32 @@ describe('auditPublicSite', () => {
     expect(audit.crawlSummary?.discoverySources).toContain('homepage_links')
   })
 
+  it('classifies an amenities URL as amenities before broad real estate copy', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/robots.txt') || url.endsWith('/sitemap.xml') || url.endsWith('/llms.txt')) {
+        return new Response('ok', { status: 200 })
+      }
+      if (url.endsWith('/amenities') || url.endsWith('/amenities/')) {
+        return new Response('<html><head><title>Kahuina Amenities</title></head><body><h1>Amenities</h1><p>Condos, residences, parking, gathering spaces, and fitness features.</p></body></html>', { status: 200 })
+      }
+
+      return new Response(`
+        <html>
+          <head><title>Kahuina</title><meta name="description" content="Honolulu condos"></head>
+          <body><a href="/amenities/">Amenities</a><h1>Kahuina condos</h1></body>
+        </html>
+      `, { status: 200 })
+    }))
+
+    const audit = await auditPublicSite('https://mykahuina.com')
+    const amenitiesPage = audit.pages?.find(page => page.url.endsWith('/amenities/'))
+
+    expect(amenitiesPage?.pageType).toBe('amenities')
+    expect(audit.missingPageTypes).not.toContain('amenities')
+    expect(audit.notes).not.toContain('No reachable amenities page was detected during the URL-only crawl.')
+  })
+
   it('counts a reachable FAQ URL as FAQ coverage even when apartment terms appear first', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
