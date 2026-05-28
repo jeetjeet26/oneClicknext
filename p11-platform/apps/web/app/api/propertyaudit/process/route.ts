@@ -379,11 +379,16 @@ export async function POST(req: NextRequest) {
       console.log(`[geo] Property location context: ${propertyLocation.city}, ${propertyLocation.state}`)
 
       // Get property config for domains
-      let { data: config } = await supabase
+      const { data: existingConfig, error: configError } = await supabase
         .from('geo_property_config')
         .select('domains, competitor_domains')
         .eq('property_id', claimedRun.property_id)
-        .single()
+        .maybeSingle()
+
+      if (configError) {
+        throw configError
+      }
+      let config = existingConfig
 
       // Auto-create config if it doesn't exist
       if (!config) {
@@ -392,19 +397,34 @@ export async function POST(req: NextRequest) {
         // Try to infer domain from property name
         const inferredDomain = inferDomainFromName(property.name)
         
-        const { data: newConfig, error: createError } = await supabase
+        const { error: createError } = await supabase
           .from('geo_property_config')
-          .insert({
+          .upsert({
             property_id: claimedRun.property_id,
             domains: inferredDomain ? [inferredDomain] : [],
             competitor_domains: [],
             is_active: true
+          }, {
+            onConflict: 'property_id',
+            ignoreDuplicates: true
           })
-          .select()
-          .single()
 
-        if (!createError && newConfig) {
-          config = newConfig
+        if (createError) {
+          throw createError
+        }
+
+        const { data: resolvedConfig, error: resolvedConfigError } = await supabase
+          .from('geo_property_config')
+          .select('domains, competitor_domains')
+          .eq('property_id', claimedRun.property_id)
+          .maybeSingle()
+
+        if (resolvedConfigError) {
+          throw resolvedConfigError
+        }
+
+        if (resolvedConfig) {
+          config = resolvedConfig
           console.log(`[geo] Created config with domain: ${inferredDomain || 'none'}`)
         }
       }

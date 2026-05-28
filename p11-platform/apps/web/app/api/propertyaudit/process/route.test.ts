@@ -331,4 +331,167 @@ describe('propertyaudit process route auth', () => {
     await expect(response.json()).resolves.toEqual({ error: 'Internal server error' })
     expect(geoRunsUpdateEqMock).toHaveBeenCalledWith('id', 'run-1')
   })
+
+  it('creates missing property config idempotently before processing a run', async () => {
+    authGetUserMock.mockResolvedValue({
+      data: { user: { id: 'user-1' } },
+      error: null,
+    })
+    validatePropertyAccessMock.mockResolvedValue({
+      authorized: true,
+    })
+
+    const geoRunsUpdateClaimSelectMaybeSingle = vi.fn().mockResolvedValue({
+      data: {
+        id: 'run-1',
+        property_id: 'property-1',
+        status: 'running',
+        surface: 'google_ai',
+        execution_count: 1,
+      },
+      error: null,
+    })
+    const geoRunsSelectSingle = vi.fn().mockResolvedValue({
+      data: {
+        id: 'run-1',
+        property_id: 'property-1',
+        status: 'queued',
+        surface: 'google_ai',
+      },
+      error: null,
+    })
+    const propertyConfigMaybeSingle = vi.fn()
+      .mockResolvedValueOnce({ data: null, error: null })
+      .mockResolvedValueOnce({
+        data: { domains: ['amli.com'], competitor_domains: [] },
+        error: null,
+      })
+    const propertyConfigUpsert = vi.fn().mockResolvedValue({ error: null })
+
+    createServiceClientMock.mockReturnValue({
+      from: vi.fn((table: string) => {
+        if (table === 'geo_runs') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                single: geoRunsSelectSingle,
+              })),
+            })),
+            update: vi.fn((payload?: Record<string, unknown>) => {
+              if (payload?.status === 'running') {
+                return {
+                  eq: vi.fn(() => ({
+                    eq: vi.fn(() => ({
+                      select: vi.fn(() => ({
+                        maybeSingle: geoRunsUpdateClaimSelectMaybeSingle,
+                      })),
+                    })),
+                  })),
+                }
+              }
+
+              return {
+                eq: vi.fn().mockResolvedValue({ error: null }),
+              }
+            }),
+          }
+        }
+
+        if (table === 'geo_queries') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                eq: vi.fn().mockResolvedValue({
+                  data: [{ id: 'query-1', text: 'best apartments in Austin' }],
+                  error: null,
+                }),
+              })),
+            })),
+          }
+        }
+
+        if (table === 'properties') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                single: vi.fn().mockResolvedValue({
+                  data: {
+                    name: 'AMLI Austin',
+                    address: { city: 'Austin', state: 'TX' },
+                    website_url: 'https://amli.com',
+                  },
+                  error: null,
+                }),
+              })),
+            })),
+          }
+        }
+
+        if (table === 'geo_property_config') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                maybeSingle: propertyConfigMaybeSingle,
+              })),
+            })),
+            upsert: propertyConfigUpsert,
+          }
+        }
+
+        if (table === 'geo_answers') {
+          return {
+            insert: vi.fn(() => ({
+              select: vi.fn(() => ({
+                single: vi.fn().mockResolvedValue({
+                  data: { id: 'answer-1' },
+                  error: null,
+                }),
+              })),
+            })),
+          }
+        }
+
+        if (table === 'geo_citations' || table === 'geo_scores') {
+          return {
+            insert: vi.fn().mockResolvedValue({ error: null }),
+          }
+        }
+
+        throw new Error(`Unexpected table ${table}`)
+      }),
+    })
+
+    const { POST } = await import('./route')
+    const request = new Request('http://localhost/api/propertyaudit/process', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-propertyaudit-local-fixture': '1',
+      },
+      body: JSON.stringify({ runId: 'run-1' }),
+    }) as NextRequest
+
+    const response = await POST(request)
+    const body = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(body).toEqual(expect.objectContaining({
+      success: true,
+      runId: 'run-1',
+      processed: 1,
+    }))
+    expect(propertyConfigMaybeSingle).toHaveBeenCalledTimes(2)
+    expect(propertyConfigUpsert).toHaveBeenCalledWith(
+      {
+        property_id: 'property-1',
+        domains: ['amli.com'],
+        competitor_domains: [],
+        is_active: true,
+      },
+      {
+        onConflict: 'property_id',
+        ignoreDuplicates: true,
+      }
+    )
+  })
 })
