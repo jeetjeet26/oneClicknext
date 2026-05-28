@@ -9,7 +9,11 @@ These mirror the TypeScript v1 surfaces:
 """
 import os
 import logging
-from typing import Dict, Any, List, Tuple
+import asyncio
+import random
+from email.utils import parsedate_to_datetime
+from datetime import datetime, timezone
+from typing import Dict, Any, List, Tuple, Optional
 from urllib.parse import urlparse
 
 import httpx
@@ -20,8 +24,90 @@ from connectors.claude_natural_connector import ClaudeNaturalConnector
 logger = logging.getLogger(__name__)
 
 
+_gemini_throttle_lock = asyncio.Lock()
+_last_gemini_request_at = 0.0
+
+
 class SearchProviderRateLimitError(RuntimeError):
     """Raised when the Google search proxy provider rate-limits requests."""
+
+
+def parse_non_negative_int(value: Optional[str], fallback: int) -> int:
+    try:
+        parsed = int(value or "")
+        return parsed if parsed >= 0 else fallback
+    except (TypeError, ValueError):
+        return fallback
+
+
+def get_retry_after_ms(response: Optional[httpx.Response]) -> Optional[int]:
+    if response is None:
+        return None
+    retry_after = response.headers.get("retry-after")
+    if not retry_after:
+        return None
+    try:
+        seconds = float(retry_after)
+        return max(0, int(seconds * 1000))
+    except ValueError:
+        try:
+            retry_at = parsedate_to_datetime(retry_after)
+            if retry_at.tzinfo is None:
+                retry_at = retry_at.replace(tzinfo=timezone.utc)
+            return max(0, int((retry_at - datetime.now(timezone.utc)).total_seconds() * 1000))
+        except (TypeError, ValueError):
+            return None
+
+
+def is_gemini_rate_limit_error(error: Exception) -> bool:
+    if isinstance(error, httpx.HTTPStatusError) and error.response.status_code == 429:
+        return True
+    message = str(error).lower()
+    return "429" in message or "too many requests" in message or "rate limit" in message
+
+
+async def run_with_gemini_throttle(client: httpx.AsyncClient, url: str, payload: Dict[str, Any]) -> httpx.Response:
+    global _last_gemini_request_at
+
+    min_interval_ms = parse_non_negative_int(os.environ.get("GEO_GEMINI_THROTTLE_MS"), 1000)
+    async with _gemini_throttle_lock:
+        loop = asyncio.get_running_loop()
+        elapsed_ms = int((loop.time() - _last_gemini_request_at) * 1000)
+        if elapsed_ms < min_interval_ms:
+            await asyncio.sleep((min_interval_ms - elapsed_ms) / 1000)
+        _last_gemini_request_at = loop.time()
+        return await client.post(url, json=payload)
+
+
+async def post_gemini_with_retry(client: httpx.AsyncClient, url: str, payload: Dict[str, Any]) -> httpx.Response:
+    max_retries = parse_non_negative_int(os.environ.get("GEO_GEMINI_MAX_RETRIES"), 3)
+    base_backoff_ms = parse_non_negative_int(os.environ.get("GEO_GEMINI_BASE_BACKOFF_MS"), 5000)
+    max_backoff_ms = parse_non_negative_int(os.environ.get("GEO_GEMINI_MAX_BACKOFF_MS"), 90000)
+
+    last_error: Optional[Exception] = None
+    for attempt in range(max_retries + 1):
+        try:
+            response = await run_with_gemini_throttle(client, url, payload)
+            response.raise_for_status()
+            return response
+        except Exception as error:
+            last_error = error
+            if not is_gemini_rate_limit_error(error) or attempt == max_retries:
+                raise
+
+            retry_after_ms = get_retry_after_ms(getattr(error, "response", None))
+            exponential_ms = min(max_backoff_ms, base_backoff_ms * (3 ** attempt))
+            jitter_ms = random.randint(0, min(1000, max(1, int(exponential_ms * 0.2))))
+            delay_ms = retry_after_ms if retry_after_ms is not None else min(max_backoff_ms, exponential_ms + jitter_ms)
+            logger.warning(
+                "[PropertyAudit] Gemini rate limited; retrying attempt %s/%s in %sms",
+                attempt + 2,
+                max_retries + 1,
+                delay_ms,
+            )
+            await asyncio.sleep(delay_ms / 1000)
+
+    raise last_error or RuntimeError("Gemini request failed")
 
 
 def extract_domain(url: str) -> str:
@@ -95,8 +181,7 @@ class GeminiNaturalConnector:
             payload["tools"] = [{"googleSearchRetrieval": {}}]
 
         async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.post(url, json=payload)
-            response.raise_for_status()
+            response = await post_gemini_with_retry(client, url, payload)
             data = response.json()
 
         candidate = (data.get("candidates") or [{}])[0]
