@@ -105,6 +105,34 @@ describe('propertyaudit queries route', () => {
     await expect(response.json()).resolves.toEqual({ error: 'Forbidden' })
   })
 
+  it('POST does not generate seeded queries when property access is denied', async () => {
+    authGetUserMock.mockResolvedValue({
+      data: { user: { id: 'user-1' } },
+      error: null,
+    })
+    validatePropertyAccessMock.mockResolvedValue({
+      authorized: false,
+      error: 'Forbidden',
+    })
+
+    const { POST } = await import('./route')
+    const response = await POST(
+      makeNextRequest('http://localhost/api/propertyaudit/queries', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          propertyId: 'property-1',
+          generateFromProperty: true,
+          seedKeywords: [{ keyword: '2 bedroom Townhomes near me', conversions: 12 }],
+        }),
+      })
+    )
+
+    expect(response.status).toBe(403)
+    await expect(response.json()).resolves.toEqual({ error: 'Forbidden' })
+    expect(createServiceClientMock).not.toHaveBeenCalled()
+  })
+
   it('GET returns queries for an authorized property using the service client', async () => {
     authGetUserMock.mockResolvedValue({
       data: { user: { id: 'user-1' } },
@@ -399,6 +427,223 @@ describe('propertyaudit queries route', () => {
     const comparisonQueries = insertedQueries.filter(query => query.type === 'comparison')
     expect(comparisonQueries[0].text).toBe('Acacia vs Enriched Homes')
     expect(comparisonQueries.map(query => query.text)).toContain('Acacia vs Vector KB Villas')
+  })
+
+  it('POST blends seed keywords into generated discovery prompts without replacing enriched comparisons', async () => {
+    authGetUserMock.mockResolvedValue({
+      data: { user: { id: 'user-1' } },
+      error: null,
+    })
+    validatePropertyAccessMock.mockResolvedValue({
+      authorized: true,
+      orgId: 'org-1',
+    })
+    vi.mocked(retrieveCompetitorKbContext).mockResolvedValueOnce({
+      contextText: '',
+      competitorNames: ['Vector KB Villas'],
+      chunks: [],
+    })
+
+    let insertedQueries: Array<Record<string, unknown>> = []
+    const serviceFromMock = vi.fn((table: string) => {
+      if (table === 'properties') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({
+                data: {
+                  id: 'property-1',
+                  name: 'Acacia',
+                  address: { city: 'Glendora', state: 'CA', street: '420 Acacia Avenue' },
+                  property_type: 'townhome',
+                  amenities: ['EV Charging', 'Rooftop Deck'],
+                  special_features: [],
+                },
+                error: null,
+              }),
+            })),
+          })),
+        }
+      }
+      if (table === 'competitors') {
+        const competitorQuery = {
+          eq: vi.fn(() => competitorQuery),
+          limit: vi.fn().mockResolvedValue({
+            data: [
+              {
+                id: 'competitor-high',
+                name: 'Enriched Homes',
+                is_active: true,
+                brand_intel: { confidence_score: 0.9, last_analyzed_at: '2026-03-17T00:00:00.000Z' },
+              },
+            ],
+            error: null,
+          }),
+        }
+        return { select: vi.fn(() => competitorQuery) }
+      }
+      if (table === 'brand_books') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              order: vi.fn(() => ({
+                limit: vi.fn(() => ({
+                  single: vi.fn().mockResolvedValue({ data: null, error: null }),
+                })),
+              })),
+            })),
+          })),
+        }
+      }
+      if (table === 'geo_queries') {
+        return {
+          insert: vi.fn((queries: Array<Record<string, unknown>>) => {
+            insertedQueries = queries
+            return {
+              select: vi.fn().mockResolvedValue({
+                data: queries.map((query, index) => ({
+                  id: `query-${index}`,
+                  created_at: '2026-03-16T00:00:00.000Z',
+                  updated_at: '2026-03-16T00:00:00.000Z',
+                  ...query,
+                })),
+                error: null,
+              }),
+            }
+          }),
+        }
+      }
+      throw new Error(`Unexpected table ${table}`)
+    })
+
+    createServiceClientMock.mockReturnValue({
+      from: serviceFromMock,
+    })
+
+    const { POST } = await import('./route')
+    const response = await POST(
+      makeNextRequest('http://localhost/api/propertyaudit/queries', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          propertyId: 'property-1',
+          generateFromProperty: true,
+          seedKeywords: [
+            { keyword: '2 bedroom Townhomes near me', conversions: 24, interactions: 632 },
+            { keyword: 'new townhomes for sale Glendora', impressions: 1200, interactions: 50 },
+            { keyword: 'Enriched Homes', conversions: 99 },
+          ],
+        }),
+      })
+    )
+
+    expect(response.status).toBe(200)
+    expect(insertedQueries).toHaveLength(24)
+    expect(insertedQueries.map(query => query.text)).toContain('2 bedroom Townhomes near me')
+    expect(insertedQueries.map(query => query.text)).toContain('new townhomes for sale Glendora')
+    expect(insertedQueries.filter(query => query.type === 'comparison').map(query => query.text)).toContain('Acacia vs Enriched Homes')
+    expect(insertedQueries.map(query => query.text)).not.toContain('Enriched Homes')
+  })
+
+  it('POST dedupes and caps seed keyword influence', async () => {
+    authGetUserMock.mockResolvedValue({
+      data: { user: { id: 'user-1' } },
+      error: null,
+    })
+    validatePropertyAccessMock.mockResolvedValue({
+      authorized: true,
+      orgId: 'org-1',
+    })
+
+    let insertedQueries: Array<Record<string, unknown>> = []
+    const serviceFromMock = vi.fn((table: string) => {
+      if (table === 'properties') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({
+                data: {
+                  id: 'property-1',
+                  name: 'Acacia',
+                  address: { city: 'Glendora', state: 'CA', street: '420 Acacia Avenue' },
+                  property_type: 'townhome',
+                  amenities: [],
+                  special_features: [],
+                },
+                error: null,
+              }),
+            })),
+          })),
+        }
+      }
+      if (table === 'competitors') {
+        const competitorQuery = {
+          eq: vi.fn(() => competitorQuery),
+          limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+        }
+        return { select: vi.fn(() => competitorQuery) }
+      }
+      if (table === 'brand_books') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              order: vi.fn(() => ({
+                limit: vi.fn(() => ({
+                  single: vi.fn().mockResolvedValue({ data: null, error: null }),
+                })),
+              })),
+            })),
+          })),
+        }
+      }
+      if (table === 'geo_queries') {
+        return {
+          insert: vi.fn((queries: Array<Record<string, unknown>>) => {
+            insertedQueries = queries
+            return {
+              select: vi.fn().mockResolvedValue({
+                data: queries.map((query, index) => ({
+                  id: `query-${index}`,
+                  created_at: '2026-03-16T00:00:00.000Z',
+                  updated_at: '2026-03-16T00:00:00.000Z',
+                  ...query,
+                })),
+                error: null,
+              }),
+            }
+          }),
+        }
+      }
+      throw new Error(`Unexpected table ${table}`)
+    })
+
+    createServiceClientMock.mockReturnValue({
+      from: serviceFromMock,
+    })
+
+    const { POST } = await import('./route')
+    const response = await POST(
+      makeNextRequest('http://localhost/api/propertyaudit/queries', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          propertyId: 'property-1',
+          generateFromProperty: true,
+          seedKeywords: [
+            ' ',
+            'Total: Account',
+            { keyword: 'Glendora new construction', conversions: 1 },
+            { keyword: 'glendora new construction', conversions: 10 },
+            ...Array.from({ length: 20 }, (_, index) => ({ keyword: `seed phrase ${index}`, interactions: index })),
+          ],
+        }),
+      })
+    )
+
+    expect(response.status).toBe(200)
+    expect(insertedQueries).toHaveLength(24)
+    expect(insertedQueries.filter(query => String(query.text).toLowerCase() === 'glendora new construction')).toHaveLength(1)
+    expect(insertedQueries.filter(query => String(query.text).startsWith('seed phrase'))).toHaveLength(3)
   })
 
   it('DELETE returns 403 when query property access is denied', async () => {

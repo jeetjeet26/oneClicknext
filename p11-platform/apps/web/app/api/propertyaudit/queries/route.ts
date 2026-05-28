@@ -13,6 +13,10 @@ import {
   type ReportAnswer,
   type ReportQuery,
 } from '@/utils/propertyaudit/reporting'
+import {
+  normalizeSeedKeywords,
+  type PropertyAuditSeedKeyword,
+} from '@/utils/propertyaudit/seed-keywords'
 import { getPropertyTypeConfig } from '@/utils/property-types'
 import { retrieveCompetitorKbContext } from '@/utils/services/competitor-kb'
 
@@ -213,7 +217,7 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json()
-    const { propertyId, query, queries, generateFromProperty } = body
+    const { propertyId, query, queries, generateFromProperty, seedKeywords } = body
 
     if (!propertyId) {
       return NextResponse.json({ error: 'propertyId required' }, { status: 400 })
@@ -228,7 +232,11 @@ export async function POST(req: NextRequest) {
 
     // Generate query panel from property data
     if (generateFromProperty) {
-      const queries = await generateQueryPanel(serviceClient, propertyId)
+      const queries = await generateQueryPanel(
+        serviceClient,
+        propertyId,
+        normalizeSeedKeywords(seedKeywords, { limit: 20 })
+      )
       
       // Insert all generated queries
       const { data: insertedQueries, error: insertError } = await serviceClient
@@ -377,7 +385,8 @@ export async function DELETE(req: NextRequest) {
 // Generate query panel from property data
 async function generateQueryPanel(
   supabase: PropertyAuditQueryClient,
-  propertyId: string
+  propertyId: string,
+  seedKeywords: PropertyAuditSeedKeyword[] = []
 ): Promise<GeoQueryInsert[]> {
   // Fetch property data
   const { data: property, error: propertyError } = await supabase
@@ -454,9 +463,12 @@ async function generateQueryPanel(
   const featureQueries = specialFeatures.length > 0
     ? generateSpecialFeatureQueries(specialFeatures, neighborhood, propertyId, cityState, propertyType).slice(0, 2)
     : []
+  const topSeedTheme = seedKeywords.slice(0, 5).map(seed => seed.keyword).join(', ')
   const competitorKbContext = await retrieveCompetitorKbContext({
     propertyId,
-    query: `competitor positioning and comparison targets for ${propertyName} in ${cityState}`,
+    query: topSeedTheme
+      ? `competitor positioning and comparison targets for ${propertyName} in ${cityState}; keyword themes: ${topSeedTheme}`
+      : `competitor positioning and comparison targets for ${propertyName} in ${cityState}`,
     matchCount: 12,
   })
   const structuredComparisonTargets = (competitors || [])
@@ -479,6 +491,16 @@ async function generateQueryPanel(
     ...structuredComparisonTargets,
     ...competitorKbContext.competitorNames,
   ])).slice(0, 5)
+  const seedPrompts = buildSeedKeywordPrompts({
+    seeds: seedKeywords,
+    propertyId,
+    city,
+    cityState,
+    neighborhood,
+    propertyType,
+    pluralDisplayNoun,
+    enrichedCompetitorNames: comparisonTargets,
+  })
   const amenityAndUspPrompts = [
     ...topAmenityCombos,
     ...uspQueries.map(text => ({
@@ -536,16 +558,21 @@ async function generateQueryPanel(
     { property_id: propertyId, text: `${propertyName} reviews`, type: 'branded', geo: cityState, weight: 1.5, run_count: 1, is_active: true },
     { property_id: propertyId, text: `${propertyName} ${displayNoun}`, type: 'branded', geo: cityState, weight: 1.5, run_count: 1, is_active: true },
 
-    // 6 category / consideration prompts
+    // Category / consideration prompts. Seeded panels reserve room for top
+    // keyword-derived discovery prompts without crowding out comparisons.
     { property_id: propertyId, text: `Best ${propertyType} in ${city}`, type: 'category', geo: cityState, weight: 0.8, run_count: 1, is_active: true },
     { property_id: propertyId, text: `Best ${propertyType} in ${neighborhood}`, type: 'category', geo: cityState, weight: 1.1, run_count: 1, is_active: true },
     { property_id: propertyId, text: `Modern ${secondaryPropertyType} in ${neighborhood}`, type: 'category', geo: cityState, weight: 1.2, run_count: 1, is_active: true },
     { property_id: propertyId, text: `Luxury ${propertyType} near ${neighborhood}`, type: 'category', geo: cityState, weight: 1.2, run_count: 1, is_active: true },
-    { property_id: propertyId, text: `Top rated ${tertiaryPropertyType} in ${cityState}`, type: 'category', geo: cityState, weight: 1.0, run_count: 1, is_active: true },
-    { property_id: propertyId, text: `${secondaryPropertyType} near ${street || neighborhood}`, type: 'category', geo: cityState, weight: 1.1, run_count: 1, is_active: true },
+    ...(seedPrompts.length > 0
+      ? seedPrompts.slice(0, 3)
+      : [
+          { property_id: propertyId, text: `Top rated ${tertiaryPropertyType} in ${cityState}`, type: 'category' as const, geo: cityState, weight: 1.0, run_count: 1, is_active: true },
+          { property_id: propertyId, text: `${secondaryPropertyType} near ${street || neighborhood}`, type: 'category' as const, geo: cityState, weight: 1.1, run_count: 1, is_active: true },
+        ]),
 
-    // 4 amenity / USP prompts
-    ...amenityAndUspPrompts.slice(0, 4),
+    // Amenity / USP prompts
+    ...amenityAndUspPrompts.slice(0, seedPrompts.length > 0 ? 3 : 4),
 
     // 3 local-intent prompts
     { property_id: propertyId, text: `Best place to live in ${neighborhood}`, type: 'local', geo: cityState, weight: 1.3, run_count: 1, is_active: true },
@@ -585,6 +612,11 @@ async function generateQueryPanel(
       run_count: 1,
       is_active: true,
     })
+  }
+
+  for (const generatedQuery of seedPrompts.slice(3)) {
+    if (deduped.size >= 24) break
+    deduped.set(generatedQuery.text.toLowerCase(), generatedQuery)
   }
 
   for (const generatedQuery of fallbackAmenityOrFeature) {
@@ -637,6 +669,57 @@ async function generateQueryPanel(
   }
 
   return Array.from(deduped.values()).slice(0, 24)
+}
+
+function buildSeedKeywordPrompts(args: {
+  seeds: PropertyAuditSeedKeyword[]
+  propertyId: string
+  city: string
+  cityState: string
+  neighborhood: string
+  propertyType: string
+  pluralDisplayNoun: string
+  enrichedCompetitorNames: string[]
+}): GeoQueryInsert[] {
+  const competitorNameFragments = args.enrichedCompetitorNames
+    .map(name => name.toLowerCase().trim())
+    .filter(name => name.length >= 3)
+
+  const prompts: GeoQueryInsert[] = []
+  for (const seed of args.seeds) {
+    const keyword = seed.keyword.trim()
+    const keywordLower = keyword.toLowerCase()
+    if (!keyword) continue
+    if (competitorNameFragments.some(name => keywordLower.includes(name))) {
+      continue
+    }
+
+    const hasLocalIntent =
+      keywordLower.includes('near me') ||
+      keywordLower.includes(args.city.toLowerCase()) ||
+      keywordLower.includes(args.neighborhood.toLowerCase())
+    const hasPropertyType =
+      keywordLower.includes(args.propertyType.toLowerCase()) ||
+      keywordLower.includes(args.pluralDisplayNoun.toLowerCase())
+
+    prompts.push({
+      property_id: args.propertyId,
+      text: hasPropertyType || hasLocalIntent ? keyword : `${keyword} ${args.pluralDisplayNoun}`,
+      type: hasLocalIntent ? 'local' : 'category',
+      geo: args.cityState,
+      weight: seed.score > 0 ? 1.45 : 1.25,
+      run_count: 1,
+      is_active: true,
+    })
+  }
+
+  const deduped = new Map<string, GeoQueryInsert>()
+  for (const prompt of prompts) {
+    deduped.set(prompt.text.toLowerCase(), prompt)
+    if (deduped.size >= 8) break
+  }
+
+  return Array.from(deduped.values())
 }
 
 function buildComparisonPrompts(

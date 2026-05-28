@@ -9,6 +9,7 @@ import {
   QueryTable,
   QueryFilters,
   CreateQueryModal,
+  SeedKeywordUploadModal,
   ExportMenu,
   RunDetails,
   RunStatusIndicator,
@@ -43,8 +44,10 @@ import {
   LayoutGrid,
   List,
   FileText,
+  Upload,
 } from 'lucide-react'
 import { getSurfaceLabel, type Surface } from '@/utils/propertyaudit/types'
+import type { PropertyAuditSeedKeyword } from '@/utils/propertyaudit/seed-keywords'
 
 interface GeoScoreSummary {
   propertyId: string
@@ -159,6 +162,7 @@ export default function PropertyAuditPage() {
   const [runAuditError, setRunAuditError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<'overview' | 'queries' | 'recommendations' | 'insights' | 'history'>('overview')
   const [showCreateModal, setShowCreateModal] = useState(false)
+  const [showSeedUploadModal, setShowSeedUploadModal] = useState(false)
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
   const [queryView, setQueryView] = useState<'table' | 'cards'>('table')
   const [showReportBuilder, setShowReportBuilder] = useState(false)
@@ -305,7 +309,7 @@ export default function PropertyAuditPage() {
     }
   }
 
-  const generateQueryPanel = async () => {
+  const generateQueryPanel = async (seedKeywords?: PropertyAuditSeedKeyword[]) => {
     if (!currentProperty?.id) return
 
     setIsGeneratingQueries(true)
@@ -315,7 +319,8 @@ export default function PropertyAuditPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           propertyId: currentProperty.id,
-          generateFromProperty: true
+          generateFromProperty: true,
+          ...(seedKeywords?.length ? { seedKeywords } : {})
         })
       })
 
@@ -327,6 +332,10 @@ export default function PropertyAuditPage() {
     } finally {
       setIsGeneratingQueries(false)
     }
+  }
+
+  const generateSeededQueryPanel = async (seedKeywords: PropertyAuditSeedKeyword[]) => {
+    await generateQueryPanel(seedKeywords)
   }
 
   const runAudit = async (config: { surfaces: Surface[]; executionCount: number }) => {
@@ -675,7 +684,7 @@ export default function PropertyAuditPage() {
                   Generate a query panel from your property data to start tracking GEO visibility.
                 </p>
                 <button
-                  onClick={generateQueryPanel}
+                  onClick={() => generateQueryPanel()}
                   disabled={isGeneratingQueries}
                   className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
                 >
@@ -856,7 +865,15 @@ export default function PropertyAuditPage() {
                   Add Query
                 </button>
                 <button
-                  onClick={generateQueryPanel}
+                  onClick={() => setShowSeedUploadModal(true)}
+                  disabled={isGeneratingQueries}
+                  className="flex items-center gap-2 px-3 py-1.5 text-sm border border-indigo-200 text-indigo-700 rounded-lg hover:bg-indigo-50 disabled:opacity-50 dark:border-indigo-900/50 dark:text-indigo-300 dark:hover:bg-indigo-900/20"
+                >
+                  <Upload className="w-4 h-4" />
+                  Seed CSV
+                </button>
+                <button
+                  onClick={() => generateQueryPanel()}
                   disabled={isGeneratingQueries}
                   className="flex items-center gap-2 px-3 py-1.5 text-sm border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700"
                 >
@@ -1028,6 +1045,14 @@ export default function PropertyAuditPage() {
         onClose={() => setShowCreateModal(false)}
         onSubmit={handleCreateQuery}
         defaultGeo={currentProperty?.city}
+        propertyName={currentProperty?.name}
+      />
+
+      <SeedKeywordUploadModal
+        isOpen={showSeedUploadModal}
+        onClose={() => setShowSeedUploadModal(false)}
+        onGenerate={generateSeededQueryPanel}
+        isGenerating={isGeneratingQueries}
         propertyName={currentProperty?.name}
       />
 
