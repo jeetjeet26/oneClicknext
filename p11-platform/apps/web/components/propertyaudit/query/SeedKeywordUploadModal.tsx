@@ -88,9 +88,9 @@ export function SeedKeywordUploadModal({
   const previewSeeds = parseResult?.seeds.slice(0, 10) || []
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="w-full max-w-2xl rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-800">
-        <div className="flex items-center justify-between border-b border-gray-200 p-4 dark:border-gray-700">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-2 sm:p-4">
+      <div className="flex max-h-[calc(100vh-1rem)] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-800 sm:max-h-[calc(100vh-2rem)]">
+        <div className="shrink-0 flex items-center justify-between border-b border-gray-200 p-4 dark:border-gray-700">
           <div>
             <h2 className="flex items-center gap-2 text-lg font-semibold text-gray-900 dark:text-white">
               <FileSpreadsheet className="h-5 w-5 text-indigo-500" />
@@ -111,9 +111,11 @@ export function SeedKeywordUploadModal({
           </button>
         </div>
 
-        <div className="space-y-4 p-4">
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
           <div
-            className="rounded-xl border-2 border-dashed border-gray-200 bg-gray-50 p-6 text-center dark:border-gray-700 dark:bg-gray-900/40"
+            className={`rounded-xl border-2 border-dashed border-gray-200 bg-gray-50 text-center dark:border-gray-700 dark:bg-gray-900/40 ${
+              parseResult?.seeds.length ? 'p-3' : 'p-6'
+            }`}
             onDragOver={event => event.preventDefault()}
             onDrop={event => {
               event.preventDefault()
@@ -122,13 +124,15 @@ export function SeedKeywordUploadModal({
               void parseFile(file)
             }}
           >
-            <Upload className="mx-auto mb-3 h-8 w-8 text-gray-400" />
+            <Upload className={`${parseResult?.seeds.length ? 'mb-1 h-5 w-5' : 'mb-3 h-8 w-8'} mx-auto text-gray-400`} />
             <p className="text-sm font-medium text-gray-900 dark:text-white">
               Drop a keyword CSV here, or choose a file
             </p>
-            <p className="mt-1 text-xs text-gray-500">
-              Looks for columns like Keyword, Search keyword, Search term, Impr., Interactions, Cost, and Conversions.
-            </p>
+            {!parseResult?.seeds.length && (
+              <p className="mt-1 text-xs text-gray-500">
+                Looks for columns like Keyword, Search keyword, Search term, Impr., Interactions, Cost, and Conversions.
+              </p>
+            )}
             <input
               ref={fileInputRef}
               type="file"
@@ -139,7 +143,7 @@ export function SeedKeywordUploadModal({
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="mt-4 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+              className={`${parseResult?.seeds.length ? 'mt-2' : 'mt-4'} rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700`}
             >
               Choose CSV
             </button>
@@ -173,9 +177,9 @@ export function SeedKeywordUploadModal({
                 </span>
               </div>
 
-              <div className="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
+              <div className="max-h-72 overflow-auto rounded-lg border border-gray-200 dark:border-gray-700">
                 <table className="w-full text-left text-sm">
-                  <thead className="bg-gray-50 text-xs uppercase text-gray-500 dark:bg-gray-900 dark:text-gray-400">
+                  <thead className="sticky top-0 bg-gray-50 text-xs uppercase text-gray-500 dark:bg-gray-900 dark:text-gray-400">
                     <tr>
                       <th className="px-3 py-2">Keyword</th>
                       <th className="px-3 py-2">Impr.</th>
@@ -197,7 +201,7 @@ export function SeedKeywordUploadModal({
               </div>
 
               {parseResult.warnings.length > 0 && (
-                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-300">
+                <div className="max-h-24 overflow-y-auto rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-300">
                   {parseResult.warnings.slice(0, 3).map(warning => (
                     <p key={warning}>{warning}</p>
                   ))}
@@ -207,7 +211,7 @@ export function SeedKeywordUploadModal({
           )}
         </div>
 
-        <div className="flex items-center justify-end gap-3 border-t border-gray-200 p-4 dark:border-gray-700">
+        <div className="shrink-0 flex items-center justify-end gap-3 border-t border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
           <button
             type="button"
             onClick={handleClose}
