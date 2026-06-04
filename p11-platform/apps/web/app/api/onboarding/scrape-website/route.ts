@@ -16,6 +16,12 @@ interface ExtractedContent {
   pageType: string
 }
 
+interface FetchedPage {
+  body: string
+  contentType: string
+  source: 'direct' | 'reader'
+}
+
 interface PetPolicy {
   petsAllowed: boolean
   deposit?: number
@@ -68,6 +74,28 @@ const AMENITY_KEYWORDS = [
 function cleanText(text: string | undefined | null): string {
   if (!text) return ''
   return text.replace(/\s+/g, ' ').trim()
+}
+
+function extractTitleFromPlainText(text: string): string {
+  const titleMatch = text.match(/^Title:\s*(.+)$/im)
+  if (titleMatch) return cleanText(titleMatch[1])
+
+  const headingMatch = text.match(/^#\s+(.+)$/m)
+  return headingMatch ? cleanText(headingMatch[1]) : ''
+}
+
+function extractTextFromPlainText(text: string): string {
+  return text
+    .replace(/^Title:\s*.+$/gim, '')
+    .replace(/^URL Source:\s*.+$/gim, '')
+    .replace(/^Markdown Content:\s*/gim, '')
+    .replace(/!\[[^\]]*]\([^)]*\)/g, '')
+    .replace(/\[([^\]]+)]\([^)]*\)/g, '$1')
+    .replace(/^[#>*\-\s]+/gm, '')
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line.length > 3)
+    .join('\n')
 }
 
 // Helper to extract text from HTML
@@ -288,8 +316,13 @@ function chunkContent(content: string, maxSize = 800, overlap = 100): string[] {
   return chunks.filter(chunk => chunk.length > 50)
 }
 
-// Fetch a single page
-async function fetchPage(url: string): Promise<string | null> {
+function buildReaderUrl(url: string): string {
+  return `https://r.jina.ai/${url}`
+}
+
+// Fetch a single page. Some public community sites block Node/serverless fetches
+// while still allowing browser-readable content, so fall back to a text reader.
+async function fetchPage(url: string): Promise<FetchedPage | null> {
   try {
     const response = await fetch(url, {
       headers: {
@@ -301,10 +334,37 @@ async function fetchPage(url: string): Promise<string | null> {
       signal: AbortSignal.timeout(10000),
     })
     
-    if (!response.ok) return null
-    return await response.text()
+    if (response.ok) {
+      return {
+        body: await response.text(),
+        contentType: response.headers.get('content-type') || '',
+        source: 'direct',
+      }
+    }
+
+    console.warn(`Direct fetch returned ${response.status} for ${url}; trying reader fallback`)
   } catch (error) {
     console.warn(`Failed to fetch ${url}:`, error)
+  }
+
+  try {
+    const readerResponse = await fetch(buildReaderUrl(url), {
+      headers: {
+        'Accept': 'text/plain,text/markdown,*/*;q=0.8',
+        'User-Agent': 'Mozilla/5.0 (compatible; oneClickBot/1.0; +https://oneclick.local)',
+      },
+      signal: AbortSignal.timeout(15000),
+    })
+
+    if (!readerResponse.ok) return null
+
+    return {
+      body: await readerResponse.text(),
+      contentType: readerResponse.headers.get('content-type') || 'text/plain',
+      source: 'reader',
+    }
+  } catch (error) {
+    console.warn(`Reader fallback failed for ${url}:`, error)
     return null
   }
 }
@@ -433,15 +493,19 @@ export async function POST(req: NextRequest) {
       if (scrapedUrls.has(pageUrl)) continue
       scrapedUrls.add(pageUrl)
 
-      const html = await fetchPage(pageUrl)
-      if (!html) {
+      const page = await fetchPage(pageUrl)
+      if (!page) {
         console.warn(`Failed to fetch: ${pageUrl}`)
         continue
       }
 
-      const $ = cheerio.load(html)
-      const title = cleanText($('title').text())
-      const content = extractTextFromHtml($)
+      const isPlainText = page.source === 'reader' || page.contentType.toLowerCase().includes('text/plain')
+      const title = isPlainText
+        ? extractTitleFromPlainText(page.body)
+        : cleanText(cheerio.load(page.body)('title').text())
+      const content = isPlainText
+        ? extractTextFromPlainText(page.body)
+        : extractTextFromHtml(cheerio.load(page.body))
 
       if (content.length < 100) {
         console.warn(`Skipping ${pageUrl} - content too short`)

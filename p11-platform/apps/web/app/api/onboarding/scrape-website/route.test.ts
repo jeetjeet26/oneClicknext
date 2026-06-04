@@ -141,6 +141,56 @@ describe('onboarding scrape-website route', () => {
     expect(payload.pagesScraped).toBe(1)
   })
 
+  it('falls back to reader content when direct fetch is blocked', async () => {
+    authGetUserMock.mockResolvedValue({
+      data: { user: { id: 'user-1' } },
+      error: null,
+    })
+
+    const directBlock = new Response('<html><title>403 - Forbidden</title></html>', {
+      status: 403,
+      headers: { 'content-type': 'text/html' },
+    })
+    const readerContent = [
+      'Title: Pomona New Homes for Sale | Persimmon',
+      'URL Source: https://www.brandywine-homes.com/communities/persimmon/',
+      'Markdown Content:',
+      '# New Gated Townhomes Now Selling in Pomona',
+      'Persimmon has spacious 3 bedroom and 4 bedroom floor plans with 2 and 3-car garages.',
+      'Modern details include energy efficiency and smart home features.',
+      'Call 909-552-6088. OPEN Daily from 10am to 5pm.',
+    ].join('\n')
+
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce(directBlock)
+      .mockResolvedValueOnce(new Response(readerContent, {
+        status: 200,
+        headers: { 'content-type': 'text/plain; charset=utf-8' },
+      })) as typeof global.fetch
+
+    const { POST } = await import('./route')
+    const request = new Request('http://localhost/api/onboarding/scrape-website', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        urls: ['https://www.brandywine-homes.com/communities/persimmon/'],
+      }),
+    }) as NextRequest
+
+    const response = await POST(request)
+    const payload = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(payload.success).toBe(true)
+    expect(payload.propertyName).toBe('Pomona New Homes for Sale | Persimmon')
+    expect(payload.unitTypes).toContain('3 Bedroom')
+    expect(payload.unitTypes).toContain('4 Bedroom')
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(fetch).mock.calls[1][0]).toBe(
+      'https://r.jina.ai/https://www.brandywine-homes.com/communities/persimmon/'
+    )
+  })
+
   it('writes extracted setup fields to properties for propertyId calls', async () => {
     authGetUserMock.mockResolvedValue({
       data: { user: { id: 'user-1' } },
