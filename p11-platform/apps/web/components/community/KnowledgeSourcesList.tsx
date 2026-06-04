@@ -30,7 +30,7 @@ import { PasteTextModal } from './PasteTextModal'
 type KnowledgeSource = {
   id: string
   property_id: string
-  source_type: 'intake_form' | 'document' | 'website' | 'integration' | 'manual' | 'brand_book'
+  source_type: 'intake_form' | 'document' | 'website' | 'integration' | 'manual' | 'brand_book' | 'competitor_intelligence'
   source_name: string
   source_url: string | null
   file_name: string | null
@@ -61,7 +61,9 @@ const SOURCE_TYPE_CONFIG = {
   integration: { icon: Database, label: 'Integration', color: 'text-amber-500' },
   manual: { icon: FileText, label: 'Manual Entry', color: 'text-slate-500' },
   brand_book: { icon: Sparkles, label: 'Brand Book', color: 'text-fuchsia-500' },
+  competitor_intelligence: { icon: Shield, label: 'Competitor Intelligence', color: 'text-cyan-500' },
 }
+const DEFAULT_SOURCE_TYPE_CONFIG = { icon: FileText, label: 'Other Source', color: 'text-slate-500' }
 
 const STATUS_CONFIG = {
   pending: { label: 'Pending', color: 'text-slate-400', bgColor: 'bg-slate-100', icon: Clock },
@@ -69,6 +71,7 @@ const STATUS_CONFIG = {
   completed: { label: 'Processed', color: 'text-emerald-500', bgColor: 'bg-emerald-50', icon: Check },
   failed: { label: 'Failed', color: 'text-red-500', bgColor: 'bg-red-50', icon: AlertCircle },
 }
+const DEFAULT_STATUS_CONFIG = STATUS_CONFIG.pending
 
 const CATEGORY_CONFIG = {
   property: { icon: Home, label: 'Property Details', color: 'text-indigo-500', bgColor: 'bg-indigo-50' },
@@ -328,8 +331,8 @@ export function KnowledgeSourcesList({
           ) : (
             <div className="space-y-2">
               {sources.map((source) => {
-                const typeConfig = SOURCE_TYPE_CONFIG[source.source_type]
-                const statusConfig = STATUS_CONFIG[source.status]
+                const typeConfig = SOURCE_TYPE_CONFIG[source.source_type] ?? DEFAULT_SOURCE_TYPE_CONFIG
+                const statusConfig = STATUS_CONFIG[source.status] ?? DEFAULT_STATUS_CONFIG
                 const TypeIcon = typeConfig.icon
                 const StatusIcon = statusConfig.icon
                 const sourceBrandOrigin = source.extracted_data?.brand_origin
