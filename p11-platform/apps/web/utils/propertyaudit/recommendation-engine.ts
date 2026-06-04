@@ -4,7 +4,7 @@
  */
 
 import { createClient } from '@/utils/supabase/server'
-import { auditPublicSite, type PublicSiteAudit, type PublicSitePageAudit, type PublicSitePageType } from './public-site-audit'
+import { auditPublicSiteForProperty, type PublicSiteAudit, type PublicSitePageAudit, type PublicSitePageType } from './public-site-audit'
 import {
   getSurfaceLabel,
   type RecommendationAccessLevel,
@@ -377,7 +377,7 @@ async function fetchAnalysisContext(
     websiteUrl: property?.website_url || null,
     brandDomains: Array.from(brandDomains),
     primaryGeo: propertyConfig?.primary_geo || buildPrimaryGeo(property?.address),
-    siteAudit: await auditPublicSite(property?.website_url || null),
+    siteAudit: await auditPublicSiteForProperty(supabase, propertyId, property?.website_url || null),
     runIds,
     runs: analysisRuns,
     queries: queries || [],

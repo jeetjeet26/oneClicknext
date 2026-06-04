@@ -1,7 +1,7 @@
 import OpenAI from 'openai'
 import Anthropic from '@anthropic-ai/sdk'
 import { generateRecommendations } from './recommendation-engine'
-import { auditPublicSite, type PublicSiteAudit } from './public-site-audit'
+import { auditPublicSiteForProperty, type PublicSiteAudit } from './public-site-audit'
 import { getGeoConfig, getSurfaceLabel, getSurfaceMeasurementNote } from './types'
 
 type SupabaseClient = {
@@ -247,7 +247,7 @@ export async function buildPropertyReportData(
     property: property || null,
     runs: runs || [],
     surfaceSummaries: buildSurfaceSummaries(runs || []),
-    siteAudit: await auditPublicSite(property?.website_url || null),
+    siteAudit: await auditPublicSiteForProperty(supabase, propertyId, property?.website_url || null),
     queries: queries || [],
     answers: aggregatedAnswers,
     competitors,
@@ -351,7 +351,7 @@ export async function buildRunReportData(
     property: run.properties || null,
     runs,
     surfaceSummaries: buildSurfaceSummaries(runs),
-    siteAudit: await auditPublicSite((run.properties as any)?.website_url || null),
+    siteAudit: await auditPublicSiteForProperty(supabase, propertyId, (run.properties as any)?.website_url || null),
     queries: Array.from(uniqueQueries.values()),
     answers: aggregatedAnswers,
     competitors,

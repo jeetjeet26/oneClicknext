@@ -3,6 +3,7 @@ import { createClient } from '@/utils/supabase/server'
 import { createAdminClient } from '@/utils/supabase/admin'
 import { normalizePublicWebsiteUrl } from '@/utils/services/public-url'
 import { assertValidPropertyType } from '@/utils/property-types'
+import { getAppBaseUrl } from '@/utils/services/runtime-config'
 
 /**
  * Add another property to an existing organization
@@ -26,6 +27,46 @@ interface AddPropertyRequest {
   copyIntegrations?: boolean
   // Legacy support for communityType naming
   communityType?: string | null
+}
+
+async function scrapeWebsiteForProperty(
+  propertyId: string,
+  websiteUrl: string | null | undefined,
+  forwardedCookie?: string | null
+): Promise<{ success: boolean; error?: string }> {
+  const canonicalWebsiteUrl = normalizePublicWebsiteUrl(websiteUrl)
+  if (!canonicalWebsiteUrl) return { success: true }
+
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (process.env.INTERNAL_API_KEY) {
+      headers.Authorization = `Bearer ${process.env.INTERNAL_API_KEY}`
+    }
+    if (forwardedCookie) {
+      headers.cookie = forwardedCookie
+    }
+
+    const response = await fetch(`${getAppBaseUrl()}/api/onboarding/scrape-website`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        propertyId,
+        websiteUrl: canonicalWebsiteUrl,
+      }),
+    })
+
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}))
+      return { success: false, error: payload.error || 'Website scrape failed' }
+    }
+
+    return { success: true }
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Website scrape failed',
+    }
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -183,6 +224,17 @@ export async function POST(request: NextRequest) {
       })
     } catch (taskError) {
       console.error('Error creating onboarding tasks:', taskError)
+    }
+
+    if (body.websiteUrl) {
+      const scrapeResult = await scrapeWebsiteForProperty(
+        property.id,
+        body.websiteUrl,
+        request.headers.get('cookie')
+      )
+      if (!scrapeResult.success) {
+        console.error('Website scrape failed after property add:', scrapeResult.error)
+      }
     }
 
     return NextResponse.json({

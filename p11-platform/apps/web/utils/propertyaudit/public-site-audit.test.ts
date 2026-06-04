@@ -145,6 +145,60 @@ describe('auditPublicSite', () => {
     expect(audit.crawlSummary?.discoverySources).toContain('homepage_links')
   })
 
+  it('keeps corporate community crawls scoped to the selected property path', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/robots.txt') || url.endsWith('/llms.txt')) {
+        return new Response('ok', { status: 200 })
+      }
+      if (url.endsWith('/sitemap.xml')) {
+        return new Response(`
+          <urlset>
+            <url><loc>https://www.brandywine-homes.com/communities/persimmon/features/</loc></url>
+            <url><loc>https://www.brandywine-homes.com/communities/persimmon/floor-plans/</loc></url>
+            <url><loc>https://www.brandywine-homes.com/communities/persimmon/availability/</loc></url>
+            <url><loc>https://www.brandywine-homes.com/communities/alisal/</loc></url>
+            <url><loc>https://www.brandywine-homes.com/compare/</loc></url>
+          </urlset>
+        `, { status: 200, headers: { 'content-type': 'application/xml' } })
+      }
+      if (url.includes('/communities/persimmon/features/')) {
+        return new Response('<html><head><title>Persimmon Features</title></head><body><h1>Features</h1><p>Persimmon offers smart home features, gated access, garages, and energy efficient townhomes.</p></body></html>', { status: 200 })
+      }
+      if (url.includes('/communities/persimmon/floor-plans/')) {
+        return new Response('<html><head><title>Persimmon Floor Plans</title></head><body><h1>Floor Plans</h1><p>3 bedroom and 4 bedroom floor plans with pricing and availability.</p></body></html>', { status: 200 })
+      }
+      if (url.includes('/communities/persimmon/availability/')) {
+        return new Response('<html><head><title>Persimmon Availability</title></head><body><h1>Availability</h1><p>Available homes and pricing for Persimmon.</p></body></html>', { status: 200 })
+      }
+      if (url.includes('/communities/alisal/') || url.includes('/compare/')) {
+        return new Response('<html><head><title>Other Page</title></head><body><h1>Other Page</h1></body></html>', { status: 200 })
+      }
+
+      return new Response(`
+        <html>
+          <head><title>Persimmon</title><meta name="description" content="Pomona new homes"></head>
+          <body>
+            <a href="/communities/persimmon/features/">Features</a>
+            <a href="/communities/persimmon/contact-us/">Contact</a>
+            <a href="/communities/alisal/">Alisal</a>
+            <h1>Persimmon New Homes</h1>
+          </body>
+        </html>
+      `, { status: 200 })
+    }))
+
+    const audit = await auditPublicSite('https://www.brandywine-homes.com/communities/persimmon/')
+
+    expect(audit.discoveredUrls).toContain('https://www.brandywine-homes.com/communities/persimmon/features/')
+    expect(audit.discoveredUrls).toContain('https://www.brandywine-homes.com/communities/persimmon/floor-plans/')
+    expect(audit.discoveredUrls).not.toContain('https://www.brandywine-homes.com/communities/alisal/')
+    expect(audit.filteredOutUrls).toContain('https://www.brandywine-homes.com/communities/alisal/')
+    expect(audit.filteredOutUrls).toContain('https://www.brandywine-homes.com/compare/')
+    expect(audit.pages?.some(page => page.url.includes('/communities/persimmon/features/'))).toBe(true)
+    expect(audit.pages?.every(page => !page.url.includes('/communities/alisal/'))).toBe(true)
+  })
+
   it('classifies an amenities URL as amenities before broad real estate copy', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
