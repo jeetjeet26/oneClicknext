@@ -2,8 +2,10 @@ import asyncio
 
 import httpx
 import pytest
+from datetime import datetime, timezone
 
 from connectors.v1_natural_connectors import post_gemini_with_retry
+from jobs.propertyaudit import is_stale_running_run
 
 
 class FakeGeminiClient:
@@ -32,6 +34,37 @@ def make_response(status_code=200, payload=None, headers=None):
 def make_rate_limit_error(headers=None):
     response = make_response(429, {"error": "Too Many Requests"}, headers=headers)
     return httpx.HTTPStatusError("429 Too Many Requests", request=response.request, response=response)
+
+
+def test_is_stale_running_run_requires_running_status():
+    cutoff = datetime(2026, 6, 5, 1, 0, tzinfo=timezone.utc)
+
+    assert not is_stale_running_run(
+        {
+            "status": "completed",
+            "last_updated_at": "2026-06-05T00:00:00+00:00",
+        },
+        cutoff,
+    )
+
+
+def test_is_stale_running_run_uses_last_updated_cutoff():
+    cutoff = datetime(2026, 6, 5, 1, 0, tzinfo=timezone.utc)
+
+    assert is_stale_running_run(
+        {
+            "status": "running",
+            "last_updated_at": "2026-06-05T00:59:59+00:00",
+        },
+        cutoff,
+    )
+    assert not is_stale_running_run(
+        {
+            "status": "running",
+            "last_updated_at": "2026-06-05T01:00:01+00:00",
+        },
+        cutoff,
+    )
 
 
 @pytest.mark.asyncio

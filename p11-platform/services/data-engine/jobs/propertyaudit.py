@@ -13,16 +13,104 @@ Notes:
 - OpenAI natural mode supports source-aware web search provenance.
 - Claude natural mode currently disables web search until source extraction is implemented.
 """
+import asyncio
 import os
 import logging
 import re
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 from supabase import Client
 from postgrest.exceptions import APIError
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_HEARTBEAT_SECONDS = 60
+DEFAULT_STALE_RUN_SECONDS = 600
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _parse_positive_int(value: Optional[str], fallback: int) -> int:
+    try:
+        parsed = int(value or "")
+        return parsed if parsed > 0 else fallback
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        normalized = str(value).replace("Z", "+00:00")
+        parsed = datetime.fromisoformat(normalized)
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def is_stale_running_run(run: Dict[str, Any], cutoff: datetime) -> bool:
+    """Return true when a running PropertyAudit run has missed its worker heartbeat."""
+    if run.get("status") != "running":
+        return False
+
+    last_seen = _parse_datetime(run.get("last_updated_at")) or _parse_datetime(run.get("started_at"))
+    return bool(last_seen and last_seen <= cutoff)
+
+
+def recover_stale_running_runs(
+    supabase: Client,
+    stale_after_seconds: Optional[int] = None,
+    now: Optional[datetime] = None,
+) -> int:
+    """
+    Fail orphaned PropertyAudit runs whose data-engine heartbeat stopped.
+
+    Render restarts terminate in-process background tasks. Without this recovery,
+    those runs remain stuck as "running" forever.
+    """
+    stale_after = stale_after_seconds or _parse_positive_int(
+        os.environ.get("PROPERTYAUDIT_STALE_RUN_SECONDS"),
+        DEFAULT_STALE_RUN_SECONDS,
+    )
+    cutoff = (now or _utc_now()) - timedelta(seconds=stale_after)
+
+    response = (
+        supabase.table("geo_runs")
+        .select("id, status, surface, started_at, last_updated_at, current_query_index, query_count")
+        .eq("status", "running")
+        .execute()
+    )
+    runs = response.data or []
+    stale_runs = [run for run in runs if is_stale_running_run(run, cutoff)]
+
+    for run in stale_runs:
+        current = run.get("current_query_index") or 0
+        total = run.get("query_count") or 0
+        message = (
+            "Data-engine worker heartbeat expired; run was likely orphaned by a service restart "
+            f"after {current}/{total} query executions."
+        )
+        (
+            supabase.table("geo_runs")
+            .update({
+                "status": "failed",
+                "finished_at": _utc_now().isoformat(),
+                "error_message": message,
+                "provider_failure_reason": "timeout",
+            })
+            .eq("id", run["id"])
+            .eq("status", "running")
+            .execute()
+        )
+        logger.warning("[PropertyAudit] Recovered stale run %s (%s): %s", run["id"], run.get("surface"), message)
+
+    return len(stale_runs)
 
 
 def _is_no_rows_error(error: Exception) -> bool:
@@ -73,6 +161,10 @@ class PropertyAuditExecutor:
         self.anthropic_api_key = os.environ.get('ANTHROPIC_API_KEY')
         self.enable_web_search = os.environ.get('GEO_ENABLE_WEB_SEARCH', 'false').lower() == 'true'
         self.audit_mode = os.environ.get('GEO_AUDIT_MODE', 'natural').lower()
+        self.heartbeat_seconds = _parse_positive_int(
+            os.environ.get('PROPERTYAUDIT_HEARTBEAT_SECONDS'),
+            DEFAULT_HEARTBEAT_SECONDS,
+        )
         
         if self.audit_mode not in ['structured', 'natural']:
             logger.warning(f"Unknown GEO_AUDIT_MODE '{self.audit_mode}', defaulting to 'natural'")
@@ -110,6 +202,8 @@ class PropertyAuditExecutor:
         """
         logger.info(f"[PropertyAudit] Starting execution for run_id={run_id}")
         
+        heartbeat_task: Optional[asyncio.Task] = None
+
         try:
             # 1. Claim run if not already claimed by caller.
             run = claimed_run
@@ -121,6 +215,8 @@ class PropertyAuditExecutor:
                 if not latest_run:
                     raise ValueError(f"Run {run_id} not found")
                 raise ValueError(f"Run {run_id} is not in queued state (status={latest_run.get('status')})")
+
+            heartbeat_task = asyncio.create_task(self._heartbeat_run(run_id))
 
             if self.audit_mode == 'natural' and run.get('surface') == 'claude' and self.enable_web_search:
                 logger.warning(
@@ -249,6 +345,13 @@ class PropertyAuditExecutor:
                 provider_failure_reason=self._classify_failure(message)
             )
             return {'success': False, 'error': message}
+        finally:
+            if heartbeat_task:
+                heartbeat_task.cancel()
+                try:
+                    await heartbeat_task
+                except asyncio.CancelledError:
+                    pass
 
     def _classify_failure(self, message: Optional[str]) -> Optional[str]:
         """Normalize provider/runtime failures for operator reporting."""
@@ -305,6 +408,17 @@ class PropertyAuditExecutor:
             'progress_pct': progress_pct,
             'current_query_index': current_query_index
         }).eq('id', run_id).execute()
+
+    async def _heartbeat_run(self, run_id: str):
+        """Keep last_updated_at fresh while a long provider call is in flight."""
+        while True:
+            await asyncio.sleep(self.heartbeat_seconds)
+            try:
+                self.supabase.table('geo_runs').update({
+                    'last_updated_at': _utc_now().isoformat()
+                }).eq('id', run_id).eq('status', 'running').execute()
+            except Exception as error:
+                logger.warning("[PropertyAudit] Heartbeat failed for run %s: %s", run_id, error)
     
     def _get_queries(self, property_id: str) -> List[Dict]:
         """Get active queries for property."""

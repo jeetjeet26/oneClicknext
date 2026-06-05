@@ -9,6 +9,8 @@ from fastapi import FastAPI, HTTPException, Header, BackgroundTasks, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
+import asyncio
+import logging
 import os
 
 # Import routers
@@ -17,8 +19,11 @@ from routers.competitor_intake import router as competitor_intake_router
 from routers.crm_integration import router as crm_integration_router
 from routers.propertyaudit_jobs import router as propertyaudit_jobs_router
 from routers.scraper import router as scraper_router
+from jobs.propertyaudit import recover_stale_running_runs
+from utils.supabase_client import get_supabase_client
 
 app = FastAPI(title="P11 Data Engine", version="1.0.0")
+logger = logging.getLogger(__name__)
 
 # Mount routers
 app.include_router(brand_intelligence_router)
@@ -35,6 +40,26 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+async def _propertyaudit_stale_run_sweeper():
+    try:
+        interval_seconds = int(os.environ.get("PROPERTYAUDIT_STALE_SWEEP_SECONDS", "60"))
+    except ValueError:
+        interval_seconds = 60
+    while True:
+        try:
+            recovered = recover_stale_running_runs(get_supabase_client())
+            if recovered:
+                logger.warning("[PropertyAudit] Recovered %s stale running run(s)", recovered)
+        except Exception as error:
+            logger.exception("[PropertyAudit] Stale run recovery failed: %s", error)
+        await asyncio.sleep(max(10, interval_seconds))
+
+
+@app.on_event("startup")
+async def start_propertyaudit_recovery():
+    asyncio.create_task(_propertyaudit_stale_run_sweeper())
 
 # Authentication
 def verify_api_key(authorization: Optional[str] = Header(None)):
