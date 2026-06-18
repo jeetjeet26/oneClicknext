@@ -502,10 +502,8 @@ export async function processPendingCRMSyncs(limit: number = 50): Promise<Proces
       continue
     }
 
-    const claimStartedAt = new Date()
-    const claimStartedAtIso = claimStartedAt.toISOString()
     const leaseExpiresAtIso = new Date(
-      claimStartedAt.getTime() + CRM_SYNC_PROCESSING_LEASE_MS
+      Date.now() + CRM_SYNC_PROCESSING_LEASE_MS
     ).toISOString()
 
     const { data: claimedLead, error: claimError } = await supabase
@@ -519,7 +517,6 @@ export async function processPendingCRMSyncs(limit: number = 50): Promise<Proces
       .eq('id', lead.id)
       .eq('crm_sync_status', lead.crm_sync_status || 'pending')
       .eq('crm_sync_retry_count', lead.crm_sync_retry_count ?? 0)
-      .or(`crm_sync_next_retry_at.is.null,crm_sync_next_retry_at.lte.${claimStartedAtIso}`)
       .select('id')
       .maybeSingle()
 
