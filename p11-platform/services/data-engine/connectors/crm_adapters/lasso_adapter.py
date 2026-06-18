@@ -166,12 +166,6 @@ class LassoAdapter(BaseCRMAdapter):
 
         return f"Lasso API returned {response.status_code}: {response.text[:200]}"
 
-    def _registration_endpoint(self) -> str:
-        """Use Lasso's public registration endpoint when posting registration keys."""
-        if self.client_id and self.project_id and self.api_endpoint.rstrip("/").endswith("/v1"):
-            return self.api_endpoint.rsplit("/v1", 1)[0]
-        return self.api_endpoint
-
     def test_connection(self) -> ConnectionResult:
         """Test API connection with a low-impact registrant search."""
         logger.info("[Lasso] Testing connection to %s", self.api_endpoint)
@@ -345,7 +339,7 @@ class LassoAdapter(BaseCRMAdapter):
         try:
             payload = self._build_registrant_payload(mapped_data)
             response = requests.post(
-                f"{self._registration_endpoint()}/registrants",
+                f"{self.api_endpoint}/registrants",
                 headers=self._get_headers(),
                 json=payload,
                 timeout=self.timeout,

@@ -181,7 +181,7 @@ class LassoAdapterTest(unittest.TestCase):
 
         self.assertTrue(result.success)
         _, kwargs = post_mock.call_args
-        self.assertEqual(post_mock.call_args.args[0], "https://api.lassocrm.com/registrants")
+        self.assertEqual(post_mock.call_args.args[0], "https://api.lassocrm.com/v1/registrants")
         payload = kwargs["json"]
         self.assertEqual(payload["clientId"], 920)
         self.assertEqual(payload["projectId"], 23969)
