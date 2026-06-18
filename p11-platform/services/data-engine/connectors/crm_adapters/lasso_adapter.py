@@ -145,6 +145,12 @@ class LassoAdapter(BaseCRMAdapter):
         try:
             data = response.json()
             if isinstance(data, dict):
+                validation_errors = data.get("errors")
+                if validation_errors:
+                    return (
+                        f"Lasso API returned {response.status_code}: "
+                        f"{str(validation_errors)[:500]}"
+                    )
                 for key in (
                     "message",
                     "error",
@@ -159,6 +165,12 @@ class LassoAdapter(BaseCRMAdapter):
             pass
 
         return f"Lasso API returned {response.status_code}: {response.text[:200]}"
+
+    def _registration_endpoint(self) -> str:
+        """Use Lasso's public registration endpoint when posting registration keys."""
+        if self.client_id and self.project_id and self.api_endpoint.rstrip("/").endswith("/v1"):
+            return self.api_endpoint.rsplit("/v1", 1)[0]
+        return self.api_endpoint
 
     def test_connection(self) -> ConnectionResult:
         """Test API connection with a low-impact registrant search."""
@@ -333,7 +345,7 @@ class LassoAdapter(BaseCRMAdapter):
         try:
             payload = self._build_registrant_payload(mapped_data)
             response = requests.post(
-                f"{self.api_endpoint}/registrants",
+                f"{self._registration_endpoint()}/registrants",
                 headers=self._get_headers(),
                 json=payload,
                 timeout=self.timeout,
@@ -360,9 +372,25 @@ class LassoAdapter(BaseCRMAdapter):
             key: value for key, value in mapped_data.items() if value not in (None, "")
         }
 
+        first_name = payload.pop("first_name", None)
+        last_name = payload.pop("last_name", None)
+        if self.client_id and self.project_id:
+            person: Dict[str, Any] = {}
+            if first_name:
+                person["firstName"] = first_name
+            if last_name:
+                person["lastName"] = last_name
+            if person:
+                payload["person"] = person
+        else:
+            if first_name:
+                payload["first_name"] = first_name
+            if last_name:
+                payload["last_name"] = last_name
+
         email = payload.pop("email", None)
         if email:
-            payload["emails"] = [{"email": email, "type": "Home", "primary": True}]
+            payload["emails"] = [{"email": email, "type": "Personal", "primary": True}]
 
         phone = payload.pop("phone", None)
         if phone:
@@ -392,9 +420,9 @@ class LassoAdapter(BaseCRMAdapter):
 
         if self.client_id and "clientId" not in payload:
             payload["clientId"] = int(self.client_id) if str(self.client_id).isdigit() else self.client_id
-        if self.client_id and self.project_id and "projectIds" not in payload:
+        if self.client_id and self.project_id and "projectId" not in payload:
             project_id = int(self.project_id) if str(self.project_id).isdigit() else self.project_id
-            payload["projectIds"] = [project_id]
+            payload["projectId"] = project_id
         elif self.project_id and "project_id" not in payload:
             payload["project_id"] = self.project_id
         if self.rotation_id and "rotation_id" not in payload:

@@ -151,7 +151,7 @@ class LassoAdapterTest(unittest.TestCase):
         payload = kwargs["json"]
         self.assertEqual(
             payload["emails"],
-            [{"email": "jane@example.com", "type": "Home", "primary": True}],
+            [{"email": "jane@example.com", "type": "Personal", "primary": True}],
         )
         self.assertEqual(
             payload["phones"],
@@ -181,9 +181,14 @@ class LassoAdapterTest(unittest.TestCase):
 
         self.assertTrue(result.success)
         _, kwargs = post_mock.call_args
+        self.assertEqual(post_mock.call_args.args[0], "https://api.lassocrm.com/registrants")
         payload = kwargs["json"]
         self.assertEqual(payload["clientId"], 920)
-        self.assertEqual(payload["projectIds"], [23969])
+        self.assertEqual(payload["projectId"], 23969)
+        self.assertEqual(payload["person"], {
+            "firstName": "Jane",
+            "lastName": "Doe",
+        })
 
     @patch("connectors.crm_adapters.lasso_adapter.requests.post")
     def test_create_lead_surfaces_api_error(self, post_mock):
@@ -198,6 +203,20 @@ class LassoAdapterTest(unittest.TestCase):
 
         self.assertFalse(result.success)
         self.assertIn("email is invalid", result.error)
+
+    @patch("connectors.crm_adapters.lasso_adapter.requests.post")
+    def test_create_lead_surfaces_lasso_validation_errors(self, post_mock):
+        post_mock.return_value = mock_response(
+            400,
+            {"errors": {"projectId": ["This field is required."]}},
+            text='{"errors":{"projectId":["This field is required."]}}',
+        )
+
+        adapter = LassoAdapter({"api_key": "secret"})
+        result = adapter.create_lead({"email": "jane@example.com"})
+
+        self.assertFalse(result.success)
+        self.assertIn("projectId", result.error)
 
     @patch("routers.crm_integration.get_supabase_client")
     def test_save_mapping_sets_validation_timestamp(self, get_supabase_client_mock):

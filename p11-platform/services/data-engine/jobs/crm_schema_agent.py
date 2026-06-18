@@ -15,6 +15,19 @@ from connectors.crm_adapters.base import TOURSPARK_SCHEMA, CRMSchema
 logger = logging.getLogger(__name__)
 
 
+COMMON_FALLBACK_MAPPINGS = {
+    'first_name': ['FirstName', 'first_name', 'fname', 'First_Name'],
+    'last_name': ['LastName', 'last_name', 'lname', 'Last_Name'],
+    'email': ['Email', 'email', 'EmailAddress', 'email_address'],
+    'phone': ['Phone', 'phone', 'PhoneNumber', 'phone_number', 'CellPhone', 'MobilePhone'],
+    'source': ['LeadSource', 'Source', 'lead_source', 'source'],
+    'status': ['Status', 'status', 'LeadStatus', 'lead_status'],
+    'move_in_date': ['MoveInDate', 'move_in_date', 'Move_In_Date', 'desired_move_in_date'],
+    'bedrooms': ['Bedrooms', 'bedrooms', 'BedroomPreference', 'bedroom_preference'],
+    'notes': ['Notes', 'Comments', 'Description', 'notes', 'comments'],
+}
+
+
 @dataclass
 class FieldMapping:
     """A single field mapping with confidence"""
@@ -247,41 +260,34 @@ Only include mappings with confidence >= 50. Return valid JSON only, no markdown
     
     def _create_fallback_mappings(self, crm_schema: Dict[str, Any]) -> List[FieldMapping]:
         """Create basic fallback mappings when AI fails."""
-        
-        # Common field name patterns
-        common_mappings = {
-            'first_name': ['FirstName', 'first_name', 'fname', 'First_Name'],
-            'last_name': ['LastName', 'last_name', 'lname', 'Last_Name'],
-            'email': ['Email', 'email', 'EmailAddress', 'email_address'],
-            'phone': ['Phone', 'phone', 'PhoneNumber', 'phone_number', 'CellPhone', 'MobilePhone'],
-            'source': ['LeadSource', 'Source', 'lead_source', 'source'],
-            'notes': ['Notes', 'Comments', 'Description', 'notes', 'comments'],
-        }
-        
-        # Get CRM field names
-        crm_fields = []
-        if 'objects' in crm_schema and crm_schema['objects']:
-            for obj in crm_schema['objects']:
-                crm_fields.extend([f.get('name', '') for f in obj.get('fields', [])])
-        elif 'fields' in crm_schema:
-            crm_fields = [f.get('name', '') for f in crm_schema['fields']]
-        
-        crm_fields_lower = {f.lower(): f for f in crm_fields}
-        
-        mappings = []
-        for ts_field, candidates in common_mappings.items():
-            for candidate in candidates:
-                if candidate.lower() in crm_fields_lower:
-                    mappings.append(FieldMapping(
-                        tourspark_field=ts_field,
-                        crm_field=crm_fields_lower[candidate.lower()],
-                        confidence=70,  # Lower confidence for fallback
-                        reasoning="Fallback mapping based on common field names",
-                        alternatives=[]
-                    ))
-                    break
-        
-        return mappings
+        return create_fallback_mappings(crm_schema)
+
+
+def create_fallback_mappings(crm_schema: Dict[str, Any]) -> List[FieldMapping]:
+    """Create basic field mappings without requiring an AI provider."""
+    crm_fields = []
+    if 'objects' in crm_schema and crm_schema['objects']:
+        for obj in crm_schema['objects']:
+            crm_fields.extend([f.get('name', '') for f in obj.get('fields', [])])
+    elif 'fields' in crm_schema:
+        crm_fields = [f.get('name', '') for f in crm_schema['fields']]
+
+    crm_fields_lower = {f.lower(): f for f in crm_fields}
+
+    mappings = []
+    for ts_field, candidates in COMMON_FALLBACK_MAPPINGS.items():
+        for candidate in candidates:
+            if candidate.lower() in crm_fields_lower:
+                mappings.append(FieldMapping(
+                    tourspark_field=ts_field,
+                    crm_field=crm_fields_lower[candidate.lower()],
+                    confidence=70,
+                    reasoning="Fallback mapping based on common field names",
+                    alternatives=[]
+                ))
+                break
+
+    return mappings
 
 
 def get_tourspark_schema() -> Dict[str, Any]:

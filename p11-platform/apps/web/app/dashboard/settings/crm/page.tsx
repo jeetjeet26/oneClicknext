@@ -230,13 +230,18 @@ export default function CRMSettingsPage() {
       const data = await readCRMResponse(response)
 
       if (data.success !== false) {
+        const discoveredMappings = Array.isArray(data.mappings) ? data.mappings : []
+        if (discoveredMappings.length === 0) {
+          throw new Error('Schema discovery returned no field mappings. Please review the CRM credentials and try again.')
+        }
+
         setSchema(data.schema)
-        setMappings(data.mappings || [])
+        setMappings(discoveredMappings)
         setAgentReasoning(data.agent_reasoning || '')
         
         // Initialize edited mappings from AI suggestions
         const initial: Record<string, string> = {}
-        data.mappings?.forEach((m: FieldMapping) => {
+        discoveredMappings.forEach((m: FieldMapping) => {
           initial[m.tourspark_field] = m.crm_field
         })
         setEditedMappings(initial)

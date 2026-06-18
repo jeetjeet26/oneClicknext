@@ -12,7 +12,11 @@ from datetime import datetime, timezone
 
 from utils.auth import verify_api_key
 from utils.supabase_client import get_supabase_client
-from jobs.crm_schema_agent import CRMSchemaAgent, get_tourspark_schema
+from jobs.crm_schema_agent import (
+    CRMSchemaAgent,
+    create_fallback_mappings,
+    get_tourspark_schema,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -209,22 +213,38 @@ async def discover_schema(
         # Get learned patterns for this CRM type
         learned_patterns = await get_learned_patterns(request.crm_type)
         
-        # Run AI agent to generate mappings
-        agent = CRMSchemaAgent()
-        mapping_result = agent.discover_and_map(
-            crm_type=request.crm_type,
-            crm_schema=schema_dict,
-            learned_patterns=learned_patterns
-        )
-        
-        if not mapping_result.success:
-            return {
-                "success": False,
-                "error": mapping_result.error
-            }
-        
-        # Convert mappings to serializable format
-        mappings = [asdict(m) for m in mapping_result.mappings]
+        try:
+            # Run AI agent to generate mappings when configured.
+            agent = CRMSchemaAgent()
+            mapping_result = agent.discover_and_map(
+                crm_type=request.crm_type,
+                crm_schema=schema_dict,
+                learned_patterns=learned_patterns
+            )
+
+            if not mapping_result.success:
+                logger.warning(
+                    "[CRM] AI schema mapping failed, using fallback mappings: %s",
+                    mapping_result.error,
+                )
+                mappings = [asdict(m) for m in create_fallback_mappings(schema_dict)]
+                agent_reasoning = (
+                    "AI schema mapping was unavailable, so these mappings were generated "
+                    "from known CRM field names. Review them before saving."
+                )
+            else:
+                mappings = [asdict(m) for m in mapping_result.mappings]
+                agent_reasoning = mapping_result.agent_reasoning
+        except Exception as mapping_error:
+            logger.warning(
+                "[CRM] AI schema mapping unavailable, using fallback mappings: %s",
+                mapping_error,
+            )
+            mappings = [asdict(m) for m in create_fallback_mappings(schema_dict)]
+            agent_reasoning = (
+                "AI schema mapping was unavailable, so these mappings were generated "
+                "from known CRM field names. Review them before saving."
+            )
         
         logger.info(f"[CRM] Schema discovery complete: {len(mappings)} field mappings generated")
         
@@ -232,7 +252,7 @@ async def discover_schema(
             "success": True,
             "schema": schema_dict,
             "mappings": mappings,
-            "agent_reasoning": mapping_result.agent_reasoning,
+            "agent_reasoning": agent_reasoning,
             "tourspark_schema": get_tourspark_schema()
         }
         
