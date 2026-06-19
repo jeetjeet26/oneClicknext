@@ -140,6 +140,123 @@ class LassoAdapter(BaseCRMAdapter):
 
         return None
 
+    def _question_field_name(self, question_id: Any) -> Optional[str]:
+        if question_id in (None, ""):
+            return None
+
+        normalized = str(question_id).strip()
+        return f"question_{normalized}" if normalized else None
+
+    def _field_type_from_question(self, question_type: Any) -> FieldType:
+        normalized = str(question_type or "").lower()
+        if "date" in normalized:
+            return FieldType.DATE
+        if "checkbox" in normalized or "select" in normalized or "radio" in normalized:
+            return FieldType.PICKLIST
+        return FieldType.TEXT
+
+    def _default_schema_fields(self) -> List[CRMField]:
+        return [
+            CRMField(
+                name="first_name",
+                label="First Name",
+                type=FieldType.STRING,
+                required=True,
+            ),
+            CRMField(
+                name="last_name",
+                label="Last Name",
+                type=FieldType.STRING,
+                required=True,
+            ),
+            CRMField(name="email", label="Email", type=FieldType.EMAIL, required=False),
+            CRMField(name="phone", label="Phone", type=FieldType.PHONE, required=False),
+            CRMField(
+                name="source",
+                label="Lead Source",
+                type=FieldType.STRING,
+                required=False,
+            ),
+            CRMField(name="status", label="Status", type=FieldType.STRING, required=False),
+            CRMField(
+                name="move_in_date",
+                label="Move-in Date",
+                type=FieldType.DATE,
+                required=False,
+            ),
+            CRMField(
+                name="bedrooms",
+                label="Bedroom Preference",
+                type=FieldType.STRING,
+                required=False,
+            ),
+            CRMField(
+                name="notes",
+                label="Notes",
+                type=FieldType.TEXT,
+                required=False,
+                max_length=4000,
+            ),
+            CRMField(
+                name="project_id",
+                label="Project ID",
+                type=FieldType.STRING,
+                required=False,
+            ),
+            CRMField(
+                name="external_id",
+                label="External ID",
+                type=FieldType.STRING,
+                required=False,
+            ),
+        ]
+
+    def _extract_question_fields(self, settings: Dict[str, Any]) -> List[CRMField]:
+        questions = settings.get("questions")
+        if not isinstance(questions, list):
+            return []
+
+        fields: List[CRMField] = []
+        for question in questions:
+            if not isinstance(question, dict):
+                continue
+
+            question_id = (
+                question.get("questionId")
+                or question.get("question_id")
+                or question.get("id")
+            )
+            field_name = self._question_field_name(question_id)
+            if not field_name:
+                continue
+
+            answers = question.get("answers")
+            picklist_values: List[str] = []
+            if isinstance(answers, list):
+                for answer in answers:
+                    if isinstance(answer, dict):
+                        answer_label = answer.get("answer") or answer.get("name") or answer.get("label")
+                        if answer_label:
+                            picklist_values.append(str(answer_label))
+
+            question_name = str(question.get("name") or f"Lasso Question {question_id}")
+            question_path = question.get("path")
+            description_parts = [f"Lasso question ID: {question_id}"]
+            if question_path:
+                description_parts.append(f"Path: {question_path}")
+
+            fields.append(CRMField(
+                name=field_name,
+                label=question_name,
+                type=self._field_type_from_question(question.get("type")),
+                required=False,
+                picklist_values=picklist_values,
+                custom_field=True,
+                description="; ".join(description_parts),
+            ))
+
+        return fields
+
     def _error_from_response(self, response: requests.Response) -> str:
         """Build a concise, operator-readable API error."""
         try:
@@ -222,66 +339,32 @@ class LassoAdapter(BaseCRMAdapter):
             return ConnectionResult(success=False, error=str(e))
 
     def get_schema(self) -> CRMSchema:
-        """Return Lasso registrant fields used by the TourSpark mapping flow."""
+        """Return Lasso registrant fields plus project-specific questions."""
+        fields = self._default_schema_fields()
+
+        try:
+            response = requests.get(
+                f"{self.api_endpoint}/projects/settings",
+                headers=self._get_headers(),
+                timeout=self.timeout,
+            )
+
+            if response.status_code == 200:
+                fields.extend(self._extract_question_fields(response.json()))
+            else:
+                logger.warning(
+                    "[Lasso] Project settings schema discovery failed: %s",
+                    self._error_from_response(response),
+                )
+        except Exception as e:
+            logger.warning("[Lasso] Project settings schema discovery unavailable: %s", e)
+
         return CRMSchema(
             crm_type="lasso",
             api_version="v1",
             object_name="Registrant",
             object_label="Registrant",
-            fields=[
-                CRMField(
-                    name="first_name",
-                    label="First Name",
-                    type=FieldType.STRING,
-                    required=True,
-                ),
-                CRMField(
-                    name="last_name",
-                    label="Last Name",
-                    type=FieldType.STRING,
-                    required=True,
-                ),
-                CRMField(name="email", label="Email", type=FieldType.EMAIL, required=False),
-                CRMField(name="phone", label="Phone", type=FieldType.PHONE, required=False),
-                CRMField(
-                    name="source",
-                    label="Lead Source",
-                    type=FieldType.STRING,
-                    required=False,
-                ),
-                CRMField(name="status", label="Status", type=FieldType.STRING, required=False),
-                CRMField(
-                    name="move_in_date",
-                    label="Move-in Date",
-                    type=FieldType.DATE,
-                    required=False,
-                ),
-                CRMField(
-                    name="bedrooms",
-                    label="Bedroom Preference",
-                    type=FieldType.STRING,
-                    required=False,
-                ),
-                CRMField(
-                    name="notes",
-                    label="Notes",
-                    type=FieldType.TEXT,
-                    required=False,
-                    max_length=4000,
-                ),
-                CRMField(
-                    name="project_id",
-                    label="Project ID",
-                    type=FieldType.STRING,
-                    required=False,
-                ),
-                CRMField(
-                    name="external_id",
-                    label="External ID",
-                    type=FieldType.STRING,
-                    required=False,
-                ),
-            ],
+            fields=fields,
         )
 
     def search_lead(self, email: str, phone: Optional[str] = None) -> SearchResult:
@@ -365,6 +448,7 @@ class LassoAdapter(BaseCRMAdapter):
         payload: Dict[str, Any] = {
             key: value for key, value in mapped_data.items() if value not in (None, "")
         }
+        questions = self._build_question_answers(payload)
 
         first_name = payload.pop("first_name", None)
         last_name = payload.pop("last_name", None)
@@ -411,6 +495,8 @@ class LassoAdapter(BaseCRMAdapter):
             history_parts.append(f"Bedroom preference: {bedrooms}")
         if history_parts:
             payload["history"] = [{"body": "\n".join(history_parts)}]
+        if questions:
+            payload["questions"] = questions
 
         if self.client_id and "clientId" not in payload:
             payload["clientId"] = int(self.client_id) if str(self.client_id).isdigit() else self.client_id
@@ -428,6 +514,32 @@ class LassoAdapter(BaseCRMAdapter):
             payload["thank_you_email_template_id"] = self.thank_you_email_template_id
 
         return payload
+
+    def _build_question_answers(self, payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Move mapped question_<id> values into Lasso's questions payload."""
+        questions: List[Dict[str, Any]] = []
+        for key in list(payload.keys()):
+            if not key.startswith("question_"):
+                continue
+
+            question_id = key.removeprefix("question_")
+            value = payload.pop(key)
+            values = value if isinstance(value, list) else [value]
+            answers = [
+                {"answer": str(answer)}
+                for answer in values
+                if answer not in (None, "")
+            ]
+            if not answers:
+                continue
+
+            normalized_id: Any = int(question_id) if question_id.isdigit() else question_id
+            questions.append({
+                "questionId": normalized_id,
+                "answers": answers,
+            })
+
+        return questions
 
     def get_lead(self, external_id: str) -> Dict[str, Any]:
         """Get a Lasso registrant by ID."""

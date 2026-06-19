@@ -127,6 +127,51 @@ class LassoAdapterTest(unittest.TestCase):
         self.assertEqual(result.external_id, "lasso-phone")
         self.assertEqual(result.match_type, "phone")
 
+    @patch("connectors.crm_adapters.lasso_adapter.requests.get")
+    def test_get_schema_includes_project_questions(self, get_mock):
+        get_mock.return_value = mock_response(
+            200,
+            {
+                "questions": [
+                    {
+                        "questionId": 249016,
+                        "type": "Text",
+                        "name": "Preferred Floor Plan",
+                        "path": "/Registration Page",
+                    },
+                    {
+                        "questionId": 249017,
+                        "type": "single_select",
+                        "name": "How did you hear about us?",
+                        "answers": [
+                            {"answerId": 62333, "answer": "Email"},
+                            {"answerId": 62334, "answer": "Search"},
+                        ],
+                    },
+                ]
+            },
+        )
+
+        adapter = LassoAdapter({"api_key": "secret", "project_id": "23969"})
+        schema = adapter.get_schema()
+
+        fields = {field.name: field for field in schema.fields}
+        self.assertIn("question_249016", fields)
+        self.assertEqual(fields["question_249016"].label, "Preferred Floor Plan")
+        self.assertTrue(fields["question_249016"].custom_field)
+        self.assertIn("249016", fields["question_249016"].description)
+        self.assertIn("question_249017", fields)
+        self.assertEqual(fields["question_249017"].picklist_values, ["Email", "Search"])
+
+    @patch("connectors.crm_adapters.lasso_adapter.requests.get")
+    def test_get_schema_falls_back_when_project_questions_unavailable(self, get_mock):
+        get_mock.return_value = mock_response(403, {"message": "Project access denied"})
+
+        adapter = LassoAdapter({"api_key": "secret"})
+        schema = adapter.get_schema()
+
+        self.assertTrue(any(field.name == "email" for field in schema.fields))
+
     @patch("connectors.crm_adapters.lasso_adapter.requests.post")
     def test_create_lead_builds_lasso_registrant_payload(self, post_mock):
         post_mock.return_value = mock_response(201, {"registrantId": "lasso-456"})
@@ -189,6 +234,29 @@ class LassoAdapterTest(unittest.TestCase):
             "firstName": "Jane",
             "lastName": "Doe",
         })
+
+    @patch("connectors.crm_adapters.lasso_adapter.requests.post")
+    def test_create_lead_builds_lasso_question_answers(self, post_mock):
+        post_mock.return_value = mock_response(201, {"registrantId": "lasso-456"})
+
+        adapter = LassoAdapter({
+            "api_key": "secret",
+            "client_id": "920",
+            "project_id": "23969",
+        })
+        result = adapter.create_lead({
+            "first_name": "Jane",
+            "last_name": "Doe",
+            "question_249016": "2 Bedroom",
+        })
+
+        self.assertTrue(result.success)
+        _, kwargs = post_mock.call_args
+        payload = kwargs["json"]
+        self.assertEqual(payload["questions"], [{
+            "questionId": 249016,
+            "answers": [{"answer": "2 Bedroom"}],
+        }])
 
     @patch("connectors.crm_adapters.lasso_adapter.requests.post")
     def test_create_lead_surfaces_api_error(self, post_mock):

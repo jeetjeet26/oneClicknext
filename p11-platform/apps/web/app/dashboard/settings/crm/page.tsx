@@ -55,6 +55,44 @@ function hasMaskedCredentialCharacters(value: string): boolean {
   return /[•●*]{6,}/.test(value)
 }
 
+function buildMappingsFromFieldMapping(fieldMapping: Record<string, string>): FieldMapping[] {
+  return Object.entries(fieldMapping).map(([toursparkField, crmField]) => ({
+    tourspark_field: toursparkField,
+    crm_field: crmField,
+    confidence: 100,
+    reasoning: 'Loaded from the saved CRM field mapping.',
+    alternatives: [],
+  }))
+}
+
+function buildSchemaFromFieldMapping(
+  crmType: string,
+  fieldMapping: Record<string, string>
+): CRMSchema | null {
+  const fields = Array.from(new Set(Object.values(fieldMapping)))
+    .filter(Boolean)
+    .map((fieldName) => ({
+      name: fieldName,
+      label: fieldName,
+      type: 'string',
+      required: false,
+    }))
+
+  if (fields.length === 0) {
+    return null
+  }
+
+  return {
+    crm_type: crmType,
+    api_version: 'saved',
+    objects: [{
+      name: 'Registrant',
+      label: `${crmType} saved mapping`,
+      fields,
+    }],
+  }
+}
+
 async function readCRMResponse(response: Response) {
   const contentType = response.headers.get('content-type') || ''
   const payload = contentType.includes('application/json')
@@ -135,6 +173,15 @@ export default function CRMSettingsPage() {
         ...savedCredentials,
       })
       setEditedMappings(savedFieldMapping)
+      const savedMappings = buildMappingsFromFieldMapping(savedFieldMapping)
+      setMappings(savedMappings)
+      setSchema(buildSchemaFromFieldMapping(data.platform, savedFieldMapping))
+      setAgentReasoning(
+        savedMappings.length > 0
+          ? 'Loaded the saved field mapping for this connected CRM. Use Rediscover Fields to refresh suggestions from the CRM schema.'
+          : ''
+      )
+      setValidationResult(data.mapping_validated ? { valid: true, errors: [] } : null)
       
       if (data.mapping_validated) {
         setStep('validation')
@@ -572,10 +619,20 @@ export default function CRMSettingsPage() {
         {/* Step 4: Field Mapping Review */}
         {(step === 'mapping' || step === 'validation') && (
           <div className="bg-slate-800/50 rounded-2xl border border-slate-700 p-6 mb-6">
-            <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-              <span className="w-8 h-8 bg-teal-500/20 text-teal-400 rounded-lg flex items-center justify-center text-sm font-bold">4</span>
-              Field Mapping Review
-            </h2>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
+              <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                <span className="w-8 h-8 bg-teal-500/20 text-teal-400 rounded-lg flex items-center justify-center text-sm font-bold">4</span>
+                Field Mapping Review
+              </h2>
+              <button
+                onClick={discoverSchema}
+                disabled={loading || !credentialsReady}
+                className="px-3 py-2 bg-violet-600 text-white rounded-lg hover:bg-violet-500 transition-colors flex items-center gap-2 disabled:opacity-50 text-sm"
+              >
+                {loading ? <Loader2 className="animate-spin" size={16} /> : <Zap size={16} />}
+                Rediscover Fields
+              </button>
+            </div>
 
             {agentReasoning && (
               <div className="bg-violet-500/10 border border-violet-500/30 rounded-lg p-4 mb-4">
@@ -586,6 +643,13 @@ export default function CRMSettingsPage() {
             )}
 
             <div className="space-y-3">
+              {mappings.length === 0 && (
+                <div className="bg-slate-900/50 rounded-lg p-4 border border-slate-700">
+                  <p className="text-sm text-slate-300">
+                    No field mappings are loaded yet. Click Rediscover Fields to load Lasso's available registrant fields and mapping suggestions.
+                  </p>
+                </div>
+              )}
               {mappings.map((mapping) => (
                 <div key={mapping.tourspark_field} className="bg-slate-900/50 rounded-lg p-4 border border-slate-700">
                   <div className="flex items-center justify-between mb-2">
