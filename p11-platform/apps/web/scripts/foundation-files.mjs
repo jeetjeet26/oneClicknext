@@ -244,6 +244,7 @@ export const foundationFiles = [
   'utils/services/shared-executor.test.ts',
   'utils/services/tour-noshow.test.ts',
   'utils/services/tour-reminders.test.ts',
+  'utils/services/validation.test.ts',
   'utils/services/workflow-processor.test.ts',
   'utils/propertyaudit/public-site-audit.test.ts',
   'utils/propertyaudit/types.test.ts',

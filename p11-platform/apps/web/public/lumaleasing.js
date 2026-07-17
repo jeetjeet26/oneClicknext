@@ -1233,7 +1233,14 @@
       });
 
       if (!response.ok) {
-        throw new Error('Booking failed');
+        let serverMessage = '';
+        try {
+          const errorData = await response.json();
+          serverMessage = errorData.message || errorData.error || '';
+        } catch (parseError) {
+          // Non-JSON error response; fall through to generic message.
+        }
+        throw new Error(serverMessage || 'Booking failed');
       }
 
       const data = await response.json();
@@ -1514,7 +1521,10 @@
 
       // Success handled in bookTour function (returns to chat with message)
     } catch (error) {
-      alert('Failed to book tour. Please try again or call us.');
+      const detail = error && error.message && error.message !== 'Booking failed'
+        ? ' (' + error.message + ')'
+        : '';
+      alert('Failed to book tour. Please try again or call us.' + detail);
       if (button) {
         button.disabled = false;
         button.textContent = 'Confirm Tour';

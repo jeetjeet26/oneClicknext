@@ -10,7 +10,10 @@ import { z } from 'zod'
 // ─── Shared field validators ──────────────────────────────────────────────
 
 const emailField = z.string().email('Invalid email address').max(320, 'Email too long')
-const phoneField = z.string().regex(/^[+]?[\d\s()-]{7,20}$/, 'Invalid phone number').max(20)
+const phoneField = z.string().regex(/^[+]?[\d\s().-]{7,20}$/, 'Invalid phone number').max(20)
+// Widgets send `phone: ""` when the visitor leaves the optional field blank,
+// so optional phone inputs must accept the empty string.
+const optionalPhoneField = phoneField.or(z.literal(''))
 const uuidField = z.string().uuid('Invalid ID format')
 const safeString = (maxLen: number) => z.string().max(maxLen).trim()
 
@@ -29,7 +32,7 @@ export const chatRequestSchema = z.object({
     first_name: safeString(100).optional().nullable(),
     last_name: safeString(100).optional().nullable(),
     email: emailField.optional().nullable(),
-    phone: phoneField.optional().nullable(),
+    phone: optionalPhoneField.optional().nullable(),
   }).optional().nullable(),
   conversationId: safeString(100).optional().nullable(),
 })
@@ -48,7 +51,7 @@ export const tourBookingSchema = z.object({
     lastName: safeString(100).optional().default(''),
     last_name: safeString(100).optional().default(''),
     email: emailField,
-    phone: phoneField.optional().default(''),
+    phone: optionalPhoneField.optional().default(''),
     moveInDate: safeString(20).optional(),
     bedroomPreference: safeString(20).optional(),
     notes: safeString(1000).optional(),
@@ -80,7 +83,7 @@ export const leadCaptureSchema = z.object({
     last_name: safeString(100).optional(),
     lastName: safeString(100).optional(),
     email: emailField.optional(),
-    phone: phoneField.optional(),
+    phone: optionalPhoneField.optional(),
     moveInDate: safeString(20).optional(),
     bedroomPreference: safeString(20).optional(),
     notes: safeString(1000).optional(),
@@ -90,7 +93,7 @@ export const leadCaptureSchema = z.object({
   last_name: safeString(100).optional(),
   lastName: safeString(100).optional(),
   email: emailField.optional(),
-  phone: phoneField.optional(),
+  phone: optionalPhoneField.optional(),
   sessionId: safeString(100).optional().nullable(),
   conversationId: safeString(100).optional().nullable(),
 }).refine(
