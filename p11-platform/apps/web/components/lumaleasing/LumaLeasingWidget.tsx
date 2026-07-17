@@ -371,7 +371,7 @@ export function LumaLeasingWidget({
           >
             <div className="flex items-center gap-3">
               {config.logoUrl ? (
-                <img src={config.logoUrl} alt="" className="w-10 h-10 rounded-full bg-white/20" />
+                <img src={config.logoUrl} alt="" className="w-10 h-10 object-contain" />
               ) : (
                 <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
                   <Sparkles className="w-5 h-5" />

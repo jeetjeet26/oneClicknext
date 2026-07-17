@@ -1,4 +1,4 @@
-// schema_migration_version: 20260527161800
+// schema_migration_version: 20260618204100
 export type Json =
   | string
   | number

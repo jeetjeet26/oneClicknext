@@ -275,6 +275,10 @@
         align-items: center;
         justify-content: center;
       }
+      .ll-avatar.ll-avatar-logo {
+        background: transparent;
+        border-radius: 0;
+      }
       .ll-avatar svg {
         width: 20px;
         height: 20px;
@@ -783,9 +787,9 @@
       >
         <div class="ll-header" style="background: ${gradient}">
           <div class="ll-header-info">
-            <div class="ll-avatar">
+            <div class="ll-avatar${config.logoUrl ? ' ll-avatar-logo' : ''}">
               ${config.logoUrl
-                ? `<img src="${config.logoUrl}" alt="" style="width:100%;height:100%;border-radius:50%;object-fit:cover">`
+                ? `<img src="${config.logoUrl}" alt="" style="width:100%;height:100%;object-fit:contain">`
                 : '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>'}
             </div>
             <div>

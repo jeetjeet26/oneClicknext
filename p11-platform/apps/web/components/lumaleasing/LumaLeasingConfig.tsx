@@ -1,10 +1,10 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   Save, Copy, Check, RefreshCw, Eye, Palette, MessageSquare, 
   UserPlus, Calendar, Code, ExternalLink, Loader2,
-  Sparkles, CheckCircle, AlertCircle, Mail, XCircle, Wrench
+  Sparkles, CheckCircle, AlertCircle, Mail, XCircle, Wrench, Upload
 } from 'lucide-react';
 import { usePropertyContext } from '../layout/PropertyContext';
 
@@ -138,6 +138,9 @@ export function LumaLeasingConfig() {
   const [recoveryError, setRecoveryError] = useState<string | null>(null);
   const [creatingInvite, setCreatingInvite] = useState<string | null>(null);
   const [disconnectingIntegration, setDisconnectingIntegration] = useState<'calendar' | 'email' | null>(null);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [logoUploadError, setLogoUploadError] = useState<string | null>(null);
+  const logoFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const loadConfig = useCallback(async () => {
     setLoading(true);
@@ -454,6 +457,45 @@ export function LumaLeasingConfig() {
     setConfig({ ...config, [key]: value });
   };
 
+  const uploadLogo = async (file: File) => {
+    setLogoUploadError(null);
+
+    if (!file.type.startsWith('image/')) {
+      setLogoUploadError('Please choose an image file (PNG, JPG, GIF, WebP, or SVG).');
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      setLogoUploadError('Logo must be 2MB or smaller.');
+      return;
+    }
+
+    setUploadingLogo(true);
+    try {
+      const formData = new FormData();
+      formData.append('propertyId', currentProperty.id);
+      formData.append('file', file);
+
+      const res = await fetch('/api/lumaleasing/admin/logo', {
+        method: 'POST',
+        body: formData,
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok || !payload?.url) {
+        throw new Error(payload?.error || 'Failed to upload logo');
+      }
+
+      setConfig((prev) => (prev ? { ...prev, logo_url: payload.url } : prev));
+    } catch (error) {
+      console.error('Failed to upload logo:', error);
+      setLogoUploadError(error instanceof Error ? error.message : 'Failed to upload logo');
+    } finally {
+      setUploadingLogo(false);
+      if (logoFileInputRef.current) {
+        logoFileInputRef.current.value = '';
+      }
+    }
+  };
+
   const updateBusinessHours = (day: string, field: 'start' | 'end', value: string) => {
     if (!config) return;
     const hours = { ...config.business_hours };
@@ -616,14 +658,62 @@ export function LumaLeasingConfig() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">Logo URL</label>
-              <input
-                type="url"
-                value={config.logo_url || ''}
-                onChange={(e) => updateConfig('logo_url', e.target.value || null)}
-                placeholder="https://example.com/logo.png"
-                className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-              />
+              <label className="block text-sm font-medium text-slate-700 mb-2">Logo</label>
+              <div className="flex items-start gap-4">
+                <div
+                  className="w-16 h-16 flex-shrink-0 rounded-lg flex items-center justify-center overflow-hidden"
+                  style={{ background: `linear-gradient(135deg, ${config.primary_color}, ${config.secondary_color})` }}
+                >
+                  {config.logo_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={config.logo_url}
+                      alt="Widget logo preview"
+                      className="w-full h-full object-contain"
+                    />
+                  ) : (
+                    <Sparkles className="w-6 h-6 text-white" />
+                  )}
+                </div>
+                <div className="flex-1 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="url"
+                      value={config.logo_url || ''}
+                      onChange={(e) => updateConfig('logo_url', e.target.value || null)}
+                      placeholder="https://example.com/logo.png"
+                      className="flex-1 px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => logoFileInputRef.current?.click()}
+                      disabled={uploadingLogo}
+                      className="flex items-center gap-2 px-4 py-2 bg-white text-slate-700 rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-50 text-sm font-medium whitespace-nowrap"
+                    >
+                      {uploadingLogo ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+                      {uploadingLogo ? 'Uploading...' : 'Upload Image'}
+                    </button>
+                    <input
+                      ref={logoFileInputRef}
+                      type="file"
+                      accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) uploadLogo(file);
+                      }}
+                    />
+                  </div>
+                  {logoUploadError && (
+                    <p className="text-xs text-red-600">{logoUploadError}</p>
+                  )}
+                  <p className="text-xs text-slate-500">
+                    Paste an image URL or upload a file (PNG, JPG, GIF, WebP, or SVG, max 2MB).
+                    A square image with a transparent background works best — it is shown
+                    directly on the chat header colors. Remember to click Save Changes after uploading.
+                  </p>
+                </div>
+              </div>
             </div>
 
             <div className="flex items-center justify-between p-4 bg-slate-50 rounded-lg">
