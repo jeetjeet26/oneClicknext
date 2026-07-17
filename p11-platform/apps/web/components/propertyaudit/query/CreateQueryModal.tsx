@@ -1,19 +1,31 @@
 'use client'
 
-import { useState } from 'react'
-import { X, Plus } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { X, Plus, Edit2 } from 'lucide-react'
+
+type QueryType = 'branded' | 'category' | 'comparison' | 'local' | 'faq' | 'voice_search'
+
+type QueryFormValue = {
+  text: string
+  type: QueryType
+  weight: number
+  geo?: string
+}
+
+type EditableQuery = {
+  text: string
+  type: QueryType
+  weight: number
+  geo?: string | null
+}
 
 interface CreateQueryModalProps {
   isOpen: boolean
   onClose: () => void
-  onSubmit: (query: {
-    text: string
-    type: 'branded' | 'category' | 'comparison' | 'local' | 'faq' | 'voice_search'
-    weight: number
-    geo?: string
-  }) => Promise<void>
+  onSubmit: (query: QueryFormValue) => Promise<void>
   defaultGeo?: string
   propertyName?: string
+  initialQuery?: EditableQuery | null
 }
 
 export function CreateQueryModal({
@@ -21,13 +33,24 @@ export function CreateQueryModal({
   onClose,
   onSubmit,
   defaultGeo,
-  propertyName
+  propertyName,
+  initialQuery = null
 }: CreateQueryModalProps) {
   const [text, setText] = useState('')
-  const [type, setType] = useState<'branded' | 'category' | 'comparison' | 'local' | 'faq' | 'voice_search'>('branded')
+  const [type, setType] = useState<QueryType>('branded')
   const [weight, setWeight] = useState(1.0)
   const [geo, setGeo] = useState(defaultGeo || '')
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const isEditing = Boolean(initialQuery)
+
+  useEffect(() => {
+    if (!isOpen) return
+
+    setText(initialQuery?.text ?? '')
+    setType(initialQuery?.type ?? 'branded')
+    setWeight(initialQuery?.weight ?? 1.0)
+    setGeo(initialQuery?.geo ?? defaultGeo ?? '')
+  }, [defaultGeo, initialQuery, isOpen])
 
   if (!isOpen) return null
 
@@ -43,15 +66,16 @@ export function CreateQueryModal({
         weight,
         geo: geo.trim() || undefined
       })
-      // Reset form
-      setText('')
-      setType('branded')
-      setWeight(1.0)
-      setGeo(defaultGeo || '')
+      if (!isEditing) {
+        setText('')
+        setType('branded')
+        setWeight(1.0)
+        setGeo(defaultGeo || '')
+      }
       onClose()
     } catch (error) {
-      console.error('Error creating query:', error)
-      alert('Failed to create query. Please try again.')
+      console.error('Error saving query:', error)
+      alert('Failed to save query. Please try again.')
     } finally {
       setIsSubmitting(false)
     }
@@ -72,8 +96,12 @@ export function CreateQueryModal({
         {/* Header */}
         <div className="flex items-center justify-between border-b border-gray-200 dark:border-gray-700 p-4">
           <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
-            <Plus className="w-5 h-5 text-indigo-500" />
-            Add Custom Query
+            {isEditing ? (
+              <Edit2 className="w-5 h-5 text-indigo-500" />
+            ) : (
+              <Plus className="w-5 h-5 text-indigo-500" />
+            )}
+            {isEditing ? 'Edit Query' : 'Add Custom Query'}
           </h2>
           <button
             onClick={onClose}
@@ -187,12 +215,12 @@ export function CreateQueryModal({
               {isSubmitting ? (
                 <>
                   <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                  Creating...
+                  {isEditing ? 'Saving...' : 'Creating...'}
                 </>
               ) : (
                 <>
-                  <Plus className="w-4 h-4" />
-                  Add Query
+                  {isEditing ? <Edit2 className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                  {isEditing ? 'Save Query' : 'Add Query'}
                 </>
               )}
             </button>

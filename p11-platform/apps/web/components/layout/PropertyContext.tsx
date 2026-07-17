@@ -13,6 +13,9 @@ type PropertyContextValue = {
   properties: Property[];
   currentProperty: Property;
   loading: boolean;
+  isSwitchingProperty: boolean;
+  switchingFromProperty: Property | null;
+  switchingToProperty: Property | null;
   setProperty: (id: string) => void;
 };
 
@@ -29,6 +32,7 @@ const DEFAULT_PROPERTIES: Property[] = [
 ];
 
 const STORAGE_KEY = 'p11_selected_property_id';
+const PROPERTY_SWITCH_MIN_DURATION_MS = 700;
 
 // Helper to detect property ID from URL path
 function extractPropertyIdFromPath(pathname: string): string | null {
@@ -52,10 +56,15 @@ export function PropertyProvider({ children }: { children: React.ReactNode }) {
   const [properties, setProperties] = useState<Property[]>(DEFAULT_PROPERTIES);
   const [loading, setLoading] = useState<boolean>(true);
   const [selectedId, setSelectedIdState] = useState<string>(DEFAULT_PROPERTY_ID);
+  const [switchingProperties, setSwitchingProperties] = useState<{
+    from: Property | null;
+    to: Property | null;
+  } | null>(null);
   
   // Use ref to track initialization without causing re-renders
   const initializedRef = useRef(false);
   const lastPathnameRef = useRef<string | null>(null);
+  const switchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Wrapper to persist selection to localStorage
   const setSelectedId = useCallback((id: string) => {
@@ -67,6 +76,31 @@ export function PropertyProvider({ children }: { children: React.ReactNode }) {
       return id;
     });
   }, []);
+
+  const setProperty = useCallback((id: string) => {
+    if (selectedId === id) return;
+
+    const from = properties.find((property) => property.id === selectedId) || null;
+    const to = properties.find((property) => property.id === id) || null;
+
+    if (switchTimeoutRef.current) {
+      clearTimeout(switchTimeoutRef.current);
+    }
+
+    setSwitchingProperties({ from, to });
+    switchTimeoutRef.current = setTimeout(() => {
+      requestAnimationFrame(() => {
+        setSwitchingProperties(null);
+        switchTimeoutRef.current = null;
+      });
+    }, PROPERTY_SWITCH_MIN_DURATION_MS);
+
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(STORAGE_KEY, id);
+    }
+
+    setSelectedIdState(id);
+  }, [properties, selectedId]);
 
   // Fetch properties (only on mount)
   useEffect(() => {
@@ -94,6 +128,14 @@ export function PropertyProvider({ children }: { children: React.ReactNode }) {
     load();
     return () => {
       cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (switchTimeoutRef.current) {
+        clearTimeout(switchTimeoutRef.current);
+      }
     };
   }, []);
 
@@ -158,9 +200,12 @@ export function PropertyProvider({ children }: { children: React.ReactNode }) {
       properties,
       currentProperty: current,
       loading,
-      setProperty: setSelectedId,
+      isSwitchingProperty: switchingProperties !== null,
+      switchingFromProperty: switchingProperties?.from || null,
+      switchingToProperty: switchingProperties?.to || null,
+      setProperty,
     };
-  }, [properties, selectedId, loading, setSelectedId]);
+  }, [properties, selectedId, loading, switchingProperties, setProperty]);
 
   return <PropertyContext.Provider value={contextValue}>{children}</PropertyContext.Provider>;
 }

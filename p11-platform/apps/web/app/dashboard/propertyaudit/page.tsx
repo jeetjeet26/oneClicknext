@@ -162,6 +162,7 @@ export default function PropertyAuditPage() {
   const [runAuditError, setRunAuditError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<'overview' | 'queries' | 'recommendations' | 'insights' | 'history'>('overview')
   const [showCreateModal, setShowCreateModal] = useState(false)
+  const [editingQuery, setEditingQuery] = useState<QueryRow | null>(null)
   const [showSeedUploadModal, setShowSeedUploadModal] = useState(false)
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
   const [queryView, setQueryView] = useState<'table' | 'cards'>('table')
@@ -387,6 +388,26 @@ export default function PropertyAuditPage() {
     })
 
     if (res.ok) {
+      await fetchQueries()
+    }
+  }
+
+  const handleEditQuery = async (queryData: {
+    text: string
+    type: 'branded' | 'category' | 'comparison' | 'local' | 'faq' | 'voice_search'
+    weight: number
+    geo?: string
+  }) => {
+    if (!editingQuery) return
+
+    const res = await fetch(`/api/propertyaudit/queries/${editingQuery.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(queryData)
+    })
+
+    if (res.ok) {
+      setEditingQuery(null)
       await fetchQueries()
     }
   }
@@ -888,6 +909,10 @@ export default function PropertyAuditPage() {
                 <QueryFilters queries={queries} />
                 <QueryTable
                   queries={queries}
+                  onEdit={(query) => {
+                    setEditingQuery(query)
+                    setShowCreateModal(true)
+                  }}
                   onDelete={handleDeleteQuery}
                   onToggleActive={handleToggleActive}
                   onBulkDelete={handleBulkDelete}
@@ -1042,10 +1067,14 @@ export default function PropertyAuditPage() {
       {/* Modals/Drawers */}
       <CreateQueryModal
         isOpen={showCreateModal}
-        onClose={() => setShowCreateModal(false)}
-        onSubmit={handleCreateQuery}
+        onClose={() => {
+          setShowCreateModal(false)
+          setEditingQuery(null)
+        }}
+        onSubmit={editingQuery ? handleEditQuery : handleCreateQuery}
         defaultGeo={currentProperty?.city}
         propertyName={currentProperty?.name}
+        initialQuery={editingQuery}
       />
 
       <SeedKeywordUploadModal

@@ -7,6 +7,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
+const QUERY_TYPES = new Set(['branded', 'category', 'comparison', 'local', 'faq', 'voice_search'])
+
 // PATCH: Update a query
 export async function PATCH(
   req: NextRequest,
@@ -41,12 +43,44 @@ export async function PATCH(
 
     const updateData: Record<string, unknown> = { updated_at: new Date().toISOString() }
 
-    if (text !== undefined) updateData.text = text
-    if (type !== undefined) updateData.type = type
-    if (weight !== undefined) updateData.weight = weight
-    if (geo !== undefined) updateData.geo = geo
-    if (isActive !== undefined) updateData.is_active = isActive
-    if (runCount !== undefined) updateData.run_count = runCount
+    if (text !== undefined) {
+      if (typeof text !== 'string' || text.trim().length === 0) {
+        return NextResponse.json({ error: 'Query text required' }, { status: 400 })
+      }
+      updateData.text = text.trim()
+    }
+    if (type !== undefined) {
+      if (typeof type !== 'string' || !QUERY_TYPES.has(type)) {
+        return NextResponse.json({ error: 'Invalid query type' }, { status: 400 })
+      }
+      updateData.type = type
+    }
+    if (weight !== undefined) {
+      const normalizedWeight = Number(weight)
+      if (!Number.isFinite(normalizedWeight) || normalizedWeight < 0.5 || normalizedWeight > 2) {
+        return NextResponse.json({ error: 'Invalid query weight' }, { status: 400 })
+      }
+      updateData.weight = normalizedWeight
+    }
+    if (geo !== undefined) {
+      if (geo !== null && typeof geo !== 'string') {
+        return NextResponse.json({ error: 'Invalid geo value' }, { status: 400 })
+      }
+      updateData.geo = typeof geo === 'string' && geo.trim().length > 0 ? geo.trim() : null
+    }
+    if (isActive !== undefined) {
+      if (typeof isActive !== 'boolean') {
+        return NextResponse.json({ error: 'Invalid active state' }, { status: 400 })
+      }
+      updateData.is_active = isActive
+    }
+    if (runCount !== undefined) {
+      const normalizedRunCount = Number(runCount)
+      if (!Number.isInteger(normalizedRunCount) || normalizedRunCount < 1 || normalizedRunCount > 5) {
+        return NextResponse.json({ error: 'Invalid run count' }, { status: 400 })
+      }
+      updateData.run_count = normalizedRunCount
+    }
 
     const { data: query, error } = await supabase
       .from('geo_queries')

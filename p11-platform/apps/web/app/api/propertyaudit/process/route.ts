@@ -38,6 +38,8 @@ import {
   type WebSearchSource,
   type AnswerEntity,
 } from '@/utils/propertyaudit'
+import { enrichComparisonQueryText } from '@/utils/propertyaudit/query-text'
+import { getPropertyTypeConfig } from '@/utils/property-types'
 
 /**
  * Extract citations from web search sources by matching domains to entities
@@ -352,7 +354,7 @@ export async function POST(req: NextRequest) {
       // Get property for brand context with full location details
       const { data: property } = await supabase
         .from('properties')
-        .select('name, address, website_url')
+        .select('name, address, website_url, property_type')
         .eq('id', claimedRun.property_id)
         .single()
 
@@ -433,6 +435,7 @@ export async function POST(req: NextRequest) {
       const brandName = property.name
       const brandDomains = config?.domains || []
       const competitors = config?.competitor_domains || []
+      const pluralDisplayNoun = getPropertyTypeConfig(property.property_type).pluralDisplayNoun
 
       console.log(`[geo] Brand context: name="${brandName}", domains=[${brandDomains.join(', ')}]`)
       console.log(`[geo] Web search: ${enableWebSearch ? 'enabled' : 'disabled'}`)
@@ -463,7 +466,13 @@ export async function POST(req: NextRequest) {
           try {
             const context: ConnectorContext = {
               queryId: query.id,
-              queryText: query.text,
+              queryText: enrichComparisonQueryText({
+                queryText: query.text,
+                queryType: query.type,
+                propertyName: brandName,
+                cityState: [propertyLocation.city, propertyLocation.state].filter(Boolean).join(', '),
+                pluralDisplayNoun,
+              }),
               brandName,
               brandDomains,
               competitors,

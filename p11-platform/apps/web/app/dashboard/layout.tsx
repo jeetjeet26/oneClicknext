@@ -1,6 +1,7 @@
 import { Sidebar } from '@/components/layout/Sidebar';
 import { PropertySwitcher } from '@/components/layout/PropertySwitcher';
 import { PropertyProvider } from '@/components/layout/PropertyContext';
+import { PropertySwitchOverlay } from '@/components/layout/PropertySwitchOverlay';
 import { UserMenu } from '@/components/layout/UserMenu';
 import { GlobalSearch } from '@/components/layout/GlobalSearch';
 import { Bell } from 'lucide-react';
@@ -39,8 +40,9 @@ export default async function DashboardLayout({
               <UserMenu user={user} />
             </div>
           </header>
-          <main className="flex-1 overflow-auto p-6">
+          <main className="relative flex-1 overflow-auto p-6">
             {children}
+            <PropertySwitchOverlay />
           </main>
         </div>
       </div>

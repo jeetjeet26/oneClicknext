@@ -17,6 +17,7 @@ import {
   normalizeSeedKeywords,
   type PropertyAuditSeedKeyword,
 } from '@/utils/propertyaudit/seed-keywords'
+import { buildComparisonQueryText } from '@/utils/propertyaudit/query-text'
 import { getPropertyTypeConfig } from '@/utils/property-types'
 import { retrieveCompetitorKbContext } from '@/utils/services/competitor-kb'
 
@@ -429,7 +430,6 @@ async function generateQueryPanel(
     .select('id,name,is_active,brand_intel:competitor_brand_intelligence(confidence_score,last_analyzed_at)')
     .eq('property_id', propertyId)
     .eq('is_active', true)
-    .limit(10)
 
   // Fetch BrandForge data for USPs (optional)
   const { data: brandData } = await supabase
@@ -490,7 +490,7 @@ async function generateQueryPanel(
   const comparisonTargets = Array.from(new Set([
     ...structuredComparisonTargets,
     ...competitorKbContext.competitorNames,
-  ])).slice(0, 5)
+  ]))
   const seedPrompts = buildSeedKeywordPrompts({
     seeds: seedKeywords,
     propertyId,
@@ -579,7 +579,7 @@ async function generateQueryPanel(
     { property_id: propertyId, text: `${neighborhood} ${pluralDisplayNoun}`, type: 'local', geo: cityState, weight: 1.3, run_count: 1, is_active: true },
     { property_id: propertyId, text: isForSaleResidential ? `Moving to ${neighborhood} - new home recommendations` : `Moving to ${neighborhood} - apartment recommendations`, type: 'local', geo: cityState, weight: 1.2, run_count: 1, is_active: true },
 
-    // 3 comparison prompts
+    // Comparison prompts for all prioritized competitors in the panel.
     ...buildComparisonPrompts(propertyId, propertyName, comparisonTargets, cityState, neighborhood, pluralDisplayNoun, propertyType),
 
     // 2 decision-stage prompts
@@ -668,7 +668,7 @@ async function generateQueryPanel(
     deduped.set(generatedQuery.text.toLowerCase(), generatedQuery)
   }
 
-  return Array.from(deduped.values()).slice(0, 24)
+  return Array.from(deduped.values())
 }
 
 function buildSeedKeywordPrompts(args: {
@@ -731,9 +731,14 @@ function buildComparisonPrompts(
   pluralDisplayNoun: string,
   primarySearchTerm: string
 ): GeoQueryInsert[] {
-  const prompts = competitors.slice(0, 3).map((competitor) => ({
+  const prompts = competitors.map((competitor) => ({
     property_id: propertyId,
-    text: `${propertyName} vs ${competitor}`,
+    text: buildComparisonQueryText({
+      propertyName,
+      competitorName: competitor,
+      cityState,
+      pluralDisplayNoun,
+    }),
     type: 'comparison' as const,
     geo: cityState,
     weight: 1.3,
@@ -742,15 +747,20 @@ function buildComparisonPrompts(
   }))
 
   while (prompts.length < 3) {
-    const fallbackText =
+    const fallbackCompetitor =
       prompts.length === 0
-        ? `${propertyName} vs ${primarySearchTerm} in ${neighborhood}`
+        ? `${primarySearchTerm} in ${neighborhood}`
         : prompts.length === 1
-          ? `${propertyName} vs luxury ${primarySearchTerm} in ${cityState}`
-          : `${propertyName} vs nearby ${pluralDisplayNoun}`
+          ? `luxury ${primarySearchTerm} in ${cityState}`
+          : `nearby ${pluralDisplayNoun}`
     prompts.push({
       property_id: propertyId,
-      text: fallbackText,
+      text: buildComparisonQueryText({
+        propertyName,
+        competitorName: fallbackCompetitor,
+        cityState,
+        pluralDisplayNoun,
+      }),
       type: 'comparison',
       geo: cityState,
       weight: 1.2,

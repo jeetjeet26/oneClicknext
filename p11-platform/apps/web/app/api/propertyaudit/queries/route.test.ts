@@ -36,6 +36,15 @@ function makeNextRequest(url: string, init?: RequestInit): NextRequest {
   return request
 }
 
+function makeCompetitorQuery(data: Array<Record<string, unknown>>) {
+  const result = { data, error: null }
+  const builder: Record<string, unknown> = {}
+  builder.eq = vi.fn(() => builder)
+  builder.limit = vi.fn().mockResolvedValue(result)
+  builder.then = (resolve: (value: typeof result) => unknown) => Promise.resolve(resolve(result))
+  return builder
+}
+
 describe('propertyaudit queries route', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -256,12 +265,8 @@ describe('propertyaudit queries route', () => {
         }
       }
       if (table === 'competitors') {
-        const competitorQuery = {
-          eq: vi.fn(() => competitorQuery),
-          limit: vi.fn().mockResolvedValue({ data: [], error: null }),
-        }
         return {
-          select: vi.fn(() => competitorQuery),
+          select: vi.fn(() => makeCompetitorQuery([])),
         }
       }
       if (table === 'brand_books') {
@@ -354,27 +359,22 @@ describe('propertyaudit queries route', () => {
         }
       }
       if (table === 'competitors') {
-        const competitorQuery = {
-          eq: vi.fn(() => competitorQuery),
-          limit: vi.fn().mockResolvedValue({
-            data: [
-              {
-                id: 'competitor-low',
-                name: 'Low Confidence Homes',
-                is_active: true,
-                brand_intel: { confidence_score: 0.4, last_analyzed_at: '2026-03-16T00:00:00.000Z' },
-              },
-              {
-                id: 'competitor-high',
-                name: 'Enriched Homes',
-                is_active: true,
-                brand_intel: { confidence_score: 0.9, last_analyzed_at: '2026-03-17T00:00:00.000Z' },
-              },
-            ],
-            error: null,
-          }),
+        return {
+          select: vi.fn(() => makeCompetitorQuery([
+            {
+              id: 'competitor-low',
+              name: 'Low Confidence Homes',
+              is_active: true,
+              brand_intel: { confidence_score: 0.4, last_analyzed_at: '2026-03-16T00:00:00.000Z' },
+            },
+            {
+              id: 'competitor-high',
+              name: 'Enriched Homes',
+              is_active: true,
+              brand_intel: { confidence_score: 0.9, last_analyzed_at: '2026-03-17T00:00:00.000Z' },
+            },
+          ])),
         }
-        return { select: vi.fn(() => competitorQuery) }
       }
       if (table === 'brand_books') {
         return {
@@ -425,8 +425,107 @@ describe('propertyaudit queries route', () => {
 
     expect(response.status).toBe(200)
     const comparisonQueries = insertedQueries.filter(query => query.type === 'comparison')
-    expect(comparisonQueries[0].text).toBe('Acacia vs Enriched Homes')
-    expect(comparisonQueries.map(query => query.text)).toContain('Acacia vs Vector KB Villas')
+    expect(comparisonQueries[0].text).toBe('Compare Acacia with Enriched Homes for townhome communities in Palo Alto, CA')
+    expect(comparisonQueries.map(query => query.text)).toContain('Compare Acacia with Vector KB Villas for townhome communities in Palo Alto, CA')
+  })
+
+  it('POST generates comparison queries for every available competitor', async () => {
+    authGetUserMock.mockResolvedValue({
+      data: { user: { id: 'user-1' } },
+      error: null,
+    })
+    validatePropertyAccessMock.mockResolvedValue({
+      authorized: true,
+      orgId: 'org-1',
+    })
+
+    let insertedQueries: Array<Record<string, unknown>> = []
+    const serviceFromMock = vi.fn((table: string) => {
+      if (table === 'properties') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({
+                data: {
+                  id: 'property-1',
+                  name: 'Persimmon',
+                  address: { city: 'Pomona', state: 'CA', street: '675 E. Mission Blvd' },
+                  property_type: 'townhome',
+                  amenities: [],
+                  special_features: [],
+                },
+                error: null,
+              }),
+            })),
+          })),
+        }
+      }
+      if (table === 'competitors') {
+        return {
+          select: vi.fn(() => makeCompetitorQuery(
+            Array.from({ length: 12 }, (_, index) => ({
+              id: `competitor-${index + 1}`,
+              name: `Competitor ${index + 1}`,
+              is_active: true,
+              brand_intel: { confidence_score: 0.9 - index * 0.05, last_analyzed_at: `2026-03-${17 - index}T00:00:00.000Z` },
+            }))
+          )),
+        }
+      }
+      if (table === 'brand_books') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              order: vi.fn(() => ({
+                limit: vi.fn(() => ({
+                  single: vi.fn().mockResolvedValue({ data: null, error: null }),
+                })),
+              })),
+            })),
+          })),
+        }
+      }
+      if (table === 'geo_queries') {
+        return {
+          insert: vi.fn((queries: Array<Record<string, unknown>>) => {
+            insertedQueries = queries
+            return {
+              select: vi.fn().mockResolvedValue({
+                data: queries.map((query, index) => ({
+                  id: `query-${index}`,
+                  created_at: '2026-03-16T00:00:00.000Z',
+                  updated_at: '2026-03-16T00:00:00.000Z',
+                  ...query,
+                })),
+                error: null,
+              }),
+            }
+          }),
+        }
+      }
+      throw new Error(`Unexpected table ${table}`)
+    })
+
+    createServiceClientMock.mockReturnValue({
+      from: serviceFromMock,
+    })
+
+    const { POST } = await import('./route')
+    const response = await POST(
+      makeNextRequest('http://localhost/api/propertyaudit/queries', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ propertyId: 'property-1', generateFromProperty: true }),
+      })
+    )
+
+    expect(response.status).toBe(200)
+    const comparisonQueryTexts = insertedQueries
+      .filter(query => query.type === 'comparison')
+      .map(query => query.text)
+    expect(insertedQueries.length).toBeGreaterThan(24)
+    expect(comparisonQueryTexts).toHaveLength(12)
+    expect(comparisonQueryTexts).toContain('Compare Persimmon with Competitor 12 for townhome communities in Pomona, CA')
   })
 
   it('POST blends seed keywords into generated discovery prompts without replacing enriched comparisons', async () => {
@@ -466,21 +565,16 @@ describe('propertyaudit queries route', () => {
         }
       }
       if (table === 'competitors') {
-        const competitorQuery = {
-          eq: vi.fn(() => competitorQuery),
-          limit: vi.fn().mockResolvedValue({
-            data: [
-              {
-                id: 'competitor-high',
-                name: 'Enriched Homes',
-                is_active: true,
-                brand_intel: { confidence_score: 0.9, last_analyzed_at: '2026-03-17T00:00:00.000Z' },
-              },
-            ],
-            error: null,
-          }),
+        return {
+          select: vi.fn(() => makeCompetitorQuery([
+            {
+              id: 'competitor-high',
+              name: 'Enriched Homes',
+              is_active: true,
+              brand_intel: { confidence_score: 0.9, last_analyzed_at: '2026-03-17T00:00:00.000Z' },
+            },
+          ])),
         }
-        return { select: vi.fn(() => competitorQuery) }
       }
       if (table === 'brand_books') {
         return {
@@ -541,7 +635,7 @@ describe('propertyaudit queries route', () => {
     expect(insertedQueries).toHaveLength(24)
     expect(insertedQueries.map(query => query.text)).toContain('2 bedroom Townhomes near me')
     expect(insertedQueries.map(query => query.text)).toContain('new townhomes for sale Glendora')
-    expect(insertedQueries.filter(query => query.type === 'comparison').map(query => query.text)).toContain('Acacia vs Enriched Homes')
+    expect(insertedQueries.filter(query => query.type === 'comparison').map(query => query.text)).toContain('Compare Acacia with Enriched Homes for townhome communities in Glendora, CA')
     expect(insertedQueries.map(query => query.text)).not.toContain('Enriched Homes')
   })
 
@@ -577,11 +671,7 @@ describe('propertyaudit queries route', () => {
         }
       }
       if (table === 'competitors') {
-        const competitorQuery = {
-          eq: vi.fn(() => competitorQuery),
-          limit: vi.fn().mockResolvedValue({ data: [], error: null }),
-        }
-        return { select: vi.fn(() => competitorQuery) }
+        return { select: vi.fn(() => makeCompetitorQuery([])) }
       }
       if (table === 'brand_books') {
         return {
