@@ -1,0 +1,4 @@
+# Test-only dependencies (not installed on Render)
+-r requirements.txt
+pytest
+pytest-asyncio

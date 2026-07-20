@@ -1,4 +1,4 @@
-// schema_migration_version: 20260618204100
+// schema_migration_version: 20260720143500
 export type Json =
   | string
   | number
@@ -2824,9 +2824,117 @@ export type Database = {
           },
         ]
       }
+      geo_crawl_pages: {
+        Row: {
+          blocked_by_robots: boolean | null
+          blocked_resources: Json | null
+          canonical_url: string | null
+          content_type: string | null
+          crawl_depth: number | null
+          crawl_id: string
+          created_at: string | null
+          external_links: Json | null
+          fetch_error: string | null
+          final_url: string | null
+          h1s: Json | null
+          h2s: Json | null
+          html_bytes: number | null
+          id: string
+          images: Json | null
+          in_sitemap: boolean | null
+          inlink_count: number | null
+          internal_links: Json | null
+          meta_description: string | null
+          meta_robots: string | null
+          mixed_content: Json | null
+          page_type: string | null
+          redirect_chain: Json | null
+          response_headers: Json | null
+          status_code: number | null
+          structured_data: Json | null
+          text_html_ratio: number | null
+          title: string | null
+          url: string
+          word_count: number | null
+        }
+        Insert: {
+          blocked_by_robots?: boolean | null
+          blocked_resources?: Json | null
+          canonical_url?: string | null
+          content_type?: string | null
+          crawl_depth?: number | null
+          crawl_id: string
+          created_at?: string | null
+          external_links?: Json | null
+          fetch_error?: string | null
+          final_url?: string | null
+          h1s?: Json | null
+          h2s?: Json | null
+          html_bytes?: number | null
+          id?: string
+          images?: Json | null
+          in_sitemap?: boolean | null
+          inlink_count?: number | null
+          internal_links?: Json | null
+          meta_description?: string | null
+          meta_robots?: string | null
+          mixed_content?: Json | null
+          page_type?: string | null
+          redirect_chain?: Json | null
+          response_headers?: Json | null
+          status_code?: number | null
+          structured_data?: Json | null
+          text_html_ratio?: number | null
+          title?: string | null
+          url: string
+          word_count?: number | null
+        }
+        Update: {
+          blocked_by_robots?: boolean | null
+          blocked_resources?: Json | null
+          canonical_url?: string | null
+          content_type?: string | null
+          crawl_depth?: number | null
+          crawl_id?: string
+          created_at?: string | null
+          external_links?: Json | null
+          fetch_error?: string | null
+          final_url?: string | null
+          h1s?: Json | null
+          h2s?: Json | null
+          html_bytes?: number | null
+          id?: string
+          images?: Json | null
+          in_sitemap?: boolean | null
+          inlink_count?: number | null
+          internal_links?: Json | null
+          meta_description?: string | null
+          meta_robots?: string | null
+          mixed_content?: Json | null
+          page_type?: string | null
+          redirect_chain?: Json | null
+          response_headers?: Json | null
+          status_code?: number | null
+          structured_data?: Json | null
+          text_html_ratio?: number | null
+          title?: string | null
+          url?: string
+          word_count?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "geo_crawl_pages_crawl_id_fkey"
+            columns: ["crawl_id"]
+            isOneToOne: false
+            referencedRelation: "geo_site_crawls"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       geo_property_config: {
         Row: {
           competitor_domains: string[] | null
+          crawl_page_cap: number | null
           created_at: string | null
           domains: string[] | null
           id: string
@@ -2840,6 +2948,7 @@ export type Database = {
         }
         Insert: {
           competitor_domains?: string[] | null
+          crawl_page_cap?: number | null
           created_at?: string | null
           domains?: string[] | null
           id?: string
@@ -2853,6 +2962,7 @@ export type Database = {
         }
         Update: {
           competitor_domains?: string[] | null
+          crawl_page_cap?: number | null
           created_at?: string | null
           domains?: string[] | null
           id?: string
@@ -2942,6 +3052,95 @@ export type Database = {
           },
           {
             foreignKeyName: "geo_queries_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+        ]
+      }
+      geo_recommendations: {
+        Row: {
+          batch_id: string | null
+          crawl_id: string | null
+          created_at: string | null
+          generation_id: string
+          grounding: Json | null
+          id: string
+          is_current: boolean
+          model_used: string | null
+          narrative: string
+          owner: string | null
+          priority: string
+          property_id: string
+          proposed_changes: Json | null
+          status: Database["public"]["Enums"]["geo_finding_status_enum"]
+          title: string
+          type: string
+          updated_at: string | null
+        }
+        Insert: {
+          batch_id?: string | null
+          crawl_id?: string | null
+          created_at?: string | null
+          generation_id?: string
+          grounding?: Json | null
+          id?: string
+          is_current?: boolean
+          model_used?: string | null
+          narrative: string
+          owner?: string | null
+          priority?: string
+          property_id: string
+          proposed_changes?: Json | null
+          status?: Database["public"]["Enums"]["geo_finding_status_enum"]
+          title: string
+          type: string
+          updated_at?: string | null
+        }
+        Update: {
+          batch_id?: string | null
+          crawl_id?: string | null
+          created_at?: string | null
+          generation_id?: string
+          grounding?: Json | null
+          id?: string
+          is_current?: boolean
+          model_used?: string | null
+          narrative?: string
+          owner?: string | null
+          priority?: string
+          property_id?: string
+          proposed_changes?: Json | null
+          status?: Database["public"]["Enums"]["geo_finding_status_enum"]
+          title?: string
+          type?: string
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "geo_recommendations_crawl_id_fkey"
+            columns: ["crawl_id"]
+            isOneToOne: false
+            referencedRelation: "geo_site_crawls"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "geo_recommendations_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "geo_recommendations_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "geo_recommendations_property_id_fkey"
             columns: ["property_id"]
             isOneToOne: false
             referencedRelation: "vw_property_marketing_setup"
@@ -3092,6 +3291,189 @@ export type Database = {
             columns: ["run_id"]
             isOneToOne: false
             referencedRelation: "geo_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      geo_site_crawls: {
+        Row: {
+          batch_id: string | null
+          crawl_state: Json | null
+          created_at: string | null
+          error_message: string | null
+          finished_at: string | null
+          id: string
+          last_updated_at: string | null
+          llms_txt_summary: Json | null
+          page_cap: number
+          pages_crawled: number
+          pages_discovered: number
+          property_id: string
+          robots_summary: Json | null
+          seed_url: string
+          sitemap_summary: Json | null
+          started_at: string | null
+          status: Database["public"]["Enums"]["geo_crawl_status_enum"]
+        }
+        Insert: {
+          batch_id?: string | null
+          crawl_state?: Json | null
+          created_at?: string | null
+          error_message?: string | null
+          finished_at?: string | null
+          id?: string
+          last_updated_at?: string | null
+          llms_txt_summary?: Json | null
+          page_cap?: number
+          pages_crawled?: number
+          pages_discovered?: number
+          property_id: string
+          robots_summary?: Json | null
+          seed_url: string
+          sitemap_summary?: Json | null
+          started_at?: string | null
+          status?: Database["public"]["Enums"]["geo_crawl_status_enum"]
+        }
+        Update: {
+          batch_id?: string | null
+          crawl_state?: Json | null
+          created_at?: string | null
+          error_message?: string | null
+          finished_at?: string | null
+          id?: string
+          last_updated_at?: string | null
+          llms_txt_summary?: Json | null
+          page_cap?: number
+          pages_crawled?: number
+          pages_discovered?: number
+          property_id?: string
+          robots_summary?: Json | null
+          seed_url?: string
+          sitemap_summary?: Json | null
+          started_at?: string | null
+          status?: Database["public"]["Enums"]["geo_crawl_status_enum"]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "geo_site_crawls_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "geo_site_crawls_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "geo_site_crawls_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+        ]
+      }
+      geo_site_findings: {
+        Row: {
+          affected_url_count: number
+          affected_urls: Json | null
+          category: string
+          created_at: string | null
+          description: string
+          detector: string
+          evidence: Json | null
+          fingerprint: string
+          first_detected_at: string
+          fixed_at: string | null
+          id: string
+          last_seen_at: string
+          notes: string | null
+          occurrences: number
+          owner: string | null
+          property_id: string
+          severity: Database["public"]["Enums"]["geo_finding_severity_enum"]
+          source_crawl_id: string | null
+          status: Database["public"]["Enums"]["geo_finding_status_enum"]
+          title: string
+          updated_at: string | null
+        }
+        Insert: {
+          affected_url_count?: number
+          affected_urls?: Json | null
+          category: string
+          created_at?: string | null
+          description: string
+          detector: string
+          evidence?: Json | null
+          fingerprint: string
+          first_detected_at?: string
+          fixed_at?: string | null
+          id?: string
+          last_seen_at?: string
+          notes?: string | null
+          occurrences?: number
+          owner?: string | null
+          property_id: string
+          severity?: Database["public"]["Enums"]["geo_finding_severity_enum"]
+          source_crawl_id?: string | null
+          status?: Database["public"]["Enums"]["geo_finding_status_enum"]
+          title: string
+          updated_at?: string | null
+        }
+        Update: {
+          affected_url_count?: number
+          affected_urls?: Json | null
+          category?: string
+          created_at?: string | null
+          description?: string
+          detector?: string
+          evidence?: Json | null
+          fingerprint?: string
+          first_detected_at?: string
+          fixed_at?: string | null
+          id?: string
+          last_seen_at?: string
+          notes?: string | null
+          occurrences?: number
+          owner?: string | null
+          property_id?: string
+          severity?: Database["public"]["Enums"]["geo_finding_severity_enum"]
+          source_crawl_id?: string | null
+          status?: Database["public"]["Enums"]["geo_finding_status_enum"]
+          title?: string
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "geo_site_findings_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "geo_site_findings_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "geo_site_findings_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "geo_site_findings_source_crawl_id_fkey"
+            columns: ["source_crawl_id"]
+            isOneToOne: false
+            referencedRelation: "geo_site_crawls"
             referencedColumns: ["id"]
           },
         ]
@@ -7711,6 +8093,9 @@ export type Database = {
       }
     }
     Enums: {
+      geo_crawl_status_enum: "queued" | "running" | "completed" | "failed"
+      geo_finding_severity_enum: "critical" | "high" | "medium" | "low" | "info"
+      geo_finding_status_enum: "todo" | "in_progress" | "fixed" | "wont_fix"
       geo_query_type_enum:
         | "branded"
         | "category"
@@ -7853,6 +8238,9 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
+      geo_crawl_status_enum: ["queued", "running", "completed", "failed"],
+      geo_finding_severity_enum: ["critical", "high", "medium", "low", "info"],
+      geo_finding_status_enum: ["todo", "in_progress", "fixed", "wont_fix"],
       geo_query_type_enum: [
         "branded",
         "category",

@@ -14,7 +14,7 @@ import {
   RunDetails,
   RunStatusIndicator,
   CompetitorInsights,
-  ContentRecommendations,
+  AuditRoadmap,
   AlertBanner,
   useGeoAlerts,
   QueryTypeRings,
@@ -949,14 +949,14 @@ export default function PropertyAuditPage() {
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-                  Content Recommendations
+                  Audit Roadmap
                 </h3>
                 <p className="text-sm text-gray-500">
-                  Actionable suggestions based on your GEO performance
+                  Technical findings from the full-site crawl plus an evidence-grounded strategic roadmap
                 </p>
               </div>
             </div>
-            <ContentRecommendations propertyId={currentProperty.id} />
+            <AuditRoadmap propertyId={currentProperty.id} />
           </div>
         )}
 

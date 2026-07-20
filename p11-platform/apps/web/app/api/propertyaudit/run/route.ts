@@ -76,6 +76,104 @@ async function markDispatchFailed(
     .eq('id', runId)
 }
 
+/**
+ * Queue a full-site technical crawl alongside the GEO run batch and dispatch
+ * it to the data-engine. Fire-and-forget: crawl failures never block GEO runs.
+ */
+async function dispatchSiteCrawl(options: {
+  serviceClient: ReturnType<typeof createServiceClient>
+  propertyId: string
+  batchId: string
+}): Promise<string | null> {
+  const { serviceClient, propertyId, batchId } = options
+
+  if (process.env.SITEAUDIT_ENABLED === 'false') return null
+
+  const { data: property } = await serviceClient
+    .from('properties')
+    .select('website_url')
+    .eq('id', propertyId)
+    .single()
+  const websiteUrl = property?.website_url?.trim()
+  if (!websiteUrl) return null
+
+  const { data: config } = await serviceClient
+    .from('geo_property_config')
+    .select('crawl_page_cap')
+    .eq('property_id', propertyId)
+    .maybeSingle()
+  const pageCap = Math.max(1, Math.min(5000, Number(config?.crawl_page_cap) || 500))
+
+  // Skip if a crawl is already queued or running for this property.
+  const { data: activeCrawls } = await serviceClient
+    .from('geo_site_crawls')
+    .select('id, status')
+    .eq('property_id', propertyId)
+    .in('status', ['queued', 'running'])
+    .limit(1)
+  if (activeCrawls && activeCrawls.length > 0) {
+    console.log(`[SiteAudit] Crawl already active for property ${propertyId}; skipping dispatch`)
+    return activeCrawls[0].id
+  }
+
+  const { data: crawl, error: crawlError } = await serviceClient
+    .from('geo_site_crawls')
+    .insert({
+      property_id: propertyId,
+      batch_id: batchId,
+      status: 'queued',
+      seed_url: websiteUrl,
+      page_cap: pageCap,
+    })
+    .select('id')
+    .single()
+
+  if (crawlError || !crawl) {
+    console.error('[SiteAudit] Failed to create crawl row:', crawlError)
+    return null
+  }
+
+  const dataEngineUrl = getDataEngineUrl()
+  const apiKey = process.env.DATA_ENGINE_API_KEY
+
+  void (async () => {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), DATA_ENGINE_DISPATCH_TIMEOUT_MS)
+    try {
+      const response = await fetch(`${dataEngineUrl}/jobs/siteaudit/run`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': apiKey || '',
+          'X-Correlation-ID': crawl.id,
+        },
+        body: JSON.stringify({ crawl_id: crawl.id }),
+        signal: controller.signal,
+      })
+      if (!response.ok) {
+        throw new Error(await readResponseError(response))
+      }
+      console.log(`[SiteAudit] Crawl ${crawl.id} accepted by data-engine`)
+    } catch (error) {
+      const message = getErrorMessage(error)
+      console.error(`[SiteAudit] Crawl ${crawl.id} dispatch failed:`, message)
+      await serviceClient
+        .from('geo_site_crawls')
+        .update({
+          status: 'failed',
+          error_message: `Data-engine dispatch failed: ${message}`,
+          finished_at: new Date().toISOString(),
+        })
+        .eq('id', crawl.id)
+        .eq('status', 'queued')
+    } finally {
+      clearTimeout(timeoutId)
+    }
+  })()
+
+  return crawl.id
+}
+
 async function triggerTypeScriptProcessor(options: {
   baseUrl: string
   cronSecret?: string
@@ -352,9 +450,20 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Queue the full-site technical crawl alongside the GEO batch (fire-and-forget).
+    let siteCrawlId: string | null = null
+    if (!allowLocalFixture && useDataEngine) {
+      try {
+        siteCrawlId = await dispatchSiteCrawl({ serviceClient, propertyId, batchId })
+      } catch (error) {
+        console.error('[SiteAudit] Crawl dispatch error (non-blocking):', error)
+      }
+    }
+
     return NextResponse.json({
       success: true,
       runs,
+      siteCrawlId,
       processorMode: allowLocalFixture
         ? 'typescript_fixture'
         : runsForDataEngine.length > 0 && runsForTypeScript.length > 0

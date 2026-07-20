@@ -564,6 +564,152 @@ describe('propertyaudit run route', () => {
     expect(geoRunsUpdateEqEq).not.toHaveBeenCalled()
   })
 
+  it('POST queues and dispatches a full-site crawl alongside the GEO batch', async () => {
+    authGetUserMock.mockResolvedValue({
+      data: { user: { id: 'user-1' } },
+      error: null,
+    })
+    validatePropertyAccessMock.mockResolvedValue({
+      authorized: true,
+      orgId: 'org-1',
+    })
+    process.env.PROPERTYAUDIT_USE_DATA_ENGINE = 'true'
+    process.env.DATA_ENGINE_URL = 'http://data-engine.local'
+    process.env.DATA_ENGINE_API_KEY = 'data-engine-key'
+    delete process.env.SITEAUDIT_ENABLED
+
+    const geoRunsInsertSingle = vi.fn().mockResolvedValue({
+      data: {
+        id: 'run-1',
+        property_id: 'property-1',
+        surface: 'openai',
+        model_name: 'gpt-5.2',
+        status: 'queued',
+        query_count: 2,
+        started_at: '2026-03-16T18:00:00.000Z',
+        finished_at: null,
+        error_message: null,
+      },
+      error: null,
+    })
+    const crawlInsertMock = vi.fn(() => ({
+      select: vi.fn(() => ({
+        single: vi.fn().mockResolvedValue({ data: { id: 'crawl-1' }, error: null }),
+      })),
+    }))
+
+    createServiceClientMock.mockReturnValue({
+      from: vi.fn((table: string) => {
+        if (table === 'geo_queries') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                eq: vi.fn().mockResolvedValue({ count: 2 }),
+              })),
+            })),
+          }
+        }
+        if (table === 'geo_runs') {
+          return {
+            insert: vi.fn(() => ({
+              select: vi.fn(() => ({
+                single: geoRunsInsertSingle,
+              })),
+            })),
+            update: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                eq: vi.fn(() => Promise.resolve({ error: null })),
+              })),
+            })),
+          }
+        }
+        if (table === 'properties') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                single: vi.fn().mockResolvedValue({
+                  data: { website_url: 'https://somerset-cove.example.com' },
+                  error: null,
+                }),
+              })),
+            })),
+          }
+        }
+        if (table === 'geo_property_config') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                maybeSingle: vi.fn().mockResolvedValue({ data: { crawl_page_cap: 750 }, error: null }),
+              })),
+            })),
+          }
+        }
+        if (table === 'geo_site_crawls') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                in: vi.fn(() => ({
+                  limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+                })),
+              })),
+            })),
+            insert: crawlInsertMock,
+            update: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                eq: vi.fn(() => Promise.resolve({ error: null })),
+              })),
+            })),
+          }
+        }
+        throw new Error(`Unexpected table ${table}`)
+      }),
+    })
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.startsWith('http://data-engine.local/jobs/propertyaudit/run')) {
+        return new Response(JSON.stringify({ success: true }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      if (url.startsWith('http://data-engine.local/jobs/siteaudit/run')) {
+        return new Response(JSON.stringify({ success: true, accepted: true }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      throw new Error(`Unexpected fetch URL ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { POST } = await import('./route')
+    const request = new Request('http://localhost/api/propertyaudit/run', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ propertyId: 'property-1', surfaces: ['openai'] }),
+    }) as NextRequest
+
+    const response = await POST(request)
+    const body = await response.json()
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(response.status).toBe(200)
+    expect(body.siteCrawlId).toBe('crawl-1')
+    expect(crawlInsertMock).toHaveBeenCalledWith(expect.objectContaining({
+      property_id: 'property-1',
+      status: 'queued',
+      seed_url: 'https://somerset-cove.example.com',
+      page_cap: 750,
+    }))
+    const siteauditCall = fetchMock.mock.calls.find(call =>
+      String(call[0]).startsWith('http://data-engine.local/jobs/siteaudit/run')
+    )
+    expect(siteauditCall).toBeTruthy()
+  })
+
   it('POST can force deterministic local fixture processing', async () => {
     authGetUserMock.mockResolvedValue({
       data: { user: { id: 'user-1' } },

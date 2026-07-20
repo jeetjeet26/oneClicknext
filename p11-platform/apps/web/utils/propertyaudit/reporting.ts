@@ -116,6 +116,43 @@ export type ReportCompetitor = {
   ambiguityReason?: string
 }
 
+export type ReportSiteFinding = {
+  id: string
+  category: string
+  detector: string
+  severity: string
+  title: string
+  description: string
+  occurrences: number
+  affected_urls: string[]
+  affected_url_count: number
+  status: string
+  owner: string | null
+  notes: string | null
+  first_detected_at: string
+  fixed_at: string | null
+}
+
+export type ReportLlmRecommendation = {
+  id: string
+  type: string
+  priority: string
+  owner: string | null
+  title: string
+  narrative: string
+  proposed_changes: Array<{
+    url: string
+    field: string
+    current: string | null
+    proposed: string
+    rationale: string
+  }>
+  grounding: { finding_ids?: string[]; query_evidence?: string[] }
+  status: string
+  model_used: string | null
+  created_at: string
+}
+
 export type ReportData = {
   property: { name?: string | null; address?: any; website_url?: string | null } | null
   runs: ReportRun[]
@@ -147,6 +184,47 @@ export type ReportData = {
   glossary: ReportGlossaryEntry[]
   insights: ReportInsights
   narrative?: string | null
+  siteFindings: ReportSiteFinding[]
+  llmRoadmap: ReportLlmRecommendation[]
+}
+
+/**
+ * Loads the persisted site-audit deliverables: open technical findings and
+ * the current LLM-generated roadmap. Both are empty until the first full
+ * crawl completes; the report falls back to legacy sections in that case.
+ */
+async function fetchSiteAuditDeliverables(
+  supabase: SupabaseClient,
+  propertyId: string
+): Promise<{ siteFindings: ReportSiteFinding[]; llmRoadmap: ReportLlmRecommendation[] }> {
+  try {
+    const [{ data: findings }, { data: roadmap }] = await Promise.all([
+      supabase
+        .from('geo_site_findings')
+        .select('id, category, detector, severity, title, description, occurrences, affected_urls, affected_url_count, status, owner, notes, first_detected_at, fixed_at')
+        .eq('property_id', propertyId)
+        .order('category')
+        .order('first_detected_at', { ascending: false }),
+      supabase
+        .from('geo_recommendations')
+        .select('id, type, priority, owner, title, narrative, proposed_changes, grounding, status, model_used, created_at')
+        .eq('property_id', propertyId)
+        .eq('is_current', true),
+    ])
+
+    const priorityWeight: Record<string, number> = { high: 3, medium: 2, low: 1 }
+    const sortedRoadmap = ((roadmap || []) as ReportLlmRecommendation[]).sort(
+      (a, b) => (priorityWeight[b.priority] || 0) - (priorityWeight[a.priority] || 0)
+    )
+
+    return {
+      siteFindings: (findings || []) as ReportSiteFinding[],
+      llmRoadmap: sortedRoadmap,
+    }
+  } catch (error) {
+    console.error('[Reporting] Failed to load site audit deliverables:', error)
+    return { siteFindings: [], llmRoadmap: [] }
+  }
 }
 
 const DEFAULT_RUN_WINDOW = 6
@@ -243,6 +321,8 @@ export async function buildPropertyReportData(
     aiOverviewSummary
   })
 
+  const siteAuditDeliverables = await fetchSiteAuditDeliverables(supabase, propertyId)
+
   return {
     property: property || null,
     runs: runs || [],
@@ -261,7 +341,9 @@ export async function buildPropertyReportData(
     trends,
     glossary,
     insights: insightsBlock,
-    narrative
+    narrative,
+    siteFindings: siteAuditDeliverables.siteFindings,
+    llmRoadmap: siteAuditDeliverables.llmRoadmap
   }
 }
 
@@ -347,6 +429,8 @@ export async function buildRunReportData(
     aiOverviewSummary
   })
 
+  const siteAuditDeliverables = await fetchSiteAuditDeliverables(supabase, propertyId)
+
   return {
     property: run.properties || null,
     runs,
@@ -365,7 +449,9 @@ export async function buildRunReportData(
     trends,
     glossary,
     insights: insightsBlock,
-    narrative
+    narrative,
+    siteFindings: siteAuditDeliverables.siteFindings,
+    llmRoadmap: siteAuditDeliverables.llmRoadmap
   }
 }
 

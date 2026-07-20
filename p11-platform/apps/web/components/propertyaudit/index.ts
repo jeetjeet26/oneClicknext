@@ -17,7 +17,7 @@ export { RunDetails, RunStatusIndicator, RunAuditModal } from './run'
 export { CompetitorInsights } from './insights'
 
 // Recommendations
-export { ContentRecommendations } from './recommendations'
+export { ContentRecommendations, AuditRoadmap } from './recommendations'
 
 // Dashboard
 export { AlertBanner, useGeoAlerts, QueryTypeRings, ModelComparisonCard, InsightsPanel, useGeoInsights, AiOverviewCard, type Alert, type GeoInsight } from './dashboard'

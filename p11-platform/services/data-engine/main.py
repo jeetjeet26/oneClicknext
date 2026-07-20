@@ -19,7 +19,9 @@ from routers.competitor_intake import router as competitor_intake_router
 from routers.crm_integration import router as crm_integration_router
 from routers.propertyaudit_jobs import router as propertyaudit_jobs_router
 from routers.scraper import router as scraper_router
+from routers.siteaudit_jobs import router as siteaudit_jobs_router
 from jobs.propertyaudit import recover_stale_running_runs
+from siteaudit.executor import recover_stale_crawls
 from utils.supabase_client import get_supabase_client
 
 app = FastAPI(title="P11 Data Engine", version="1.0.0")
@@ -31,6 +33,7 @@ app.include_router(competitor_intake_router)
 app.include_router(crm_integration_router)
 app.include_router(propertyaudit_jobs_router)
 app.include_router(scraper_router)
+app.include_router(siteaudit_jobs_router)
 
 # CORS middleware
 app.add_middleware(
@@ -54,6 +57,12 @@ async def _propertyaudit_stale_run_sweeper():
                 logger.warning("[PropertyAudit] Recovered %s stale running run(s)", recovered)
         except Exception as error:
             logger.exception("[PropertyAudit] Stale run recovery failed: %s", error)
+        try:
+            recovered_crawls = recover_stale_crawls(get_supabase_client())
+            if recovered_crawls:
+                logger.warning("[SiteAudit] Recovered %s stale crawl(s)", recovered_crawls)
+        except Exception as error:
+            logger.exception("[SiteAudit] Stale crawl recovery failed: %s", error)
         await asyncio.sleep(max(10, interval_seconds))
 
 

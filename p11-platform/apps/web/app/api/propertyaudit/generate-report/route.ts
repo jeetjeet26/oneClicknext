@@ -186,7 +186,9 @@ function generateReportHTML(
     glossary,
     insights,
     narrative,
-    aiOverviewSummary
+    aiOverviewSummary,
+    siteFindings = [],
+    llmRoadmap = []
   } = data
 
   const latestScore = scores[0]
@@ -712,7 +714,48 @@ function generateReportHTML(
   </table>
   ` : ''}
 
-  ${hasSection('recommendations') ? `
+  ${hasSection('recommendations') && llmRoadmap.length > 0 ? `
+  <h2>Strategic Action Plan</h2>
+  <p style="color: #6b7280; margin-bottom: 1.5rem;">
+    ${llmRoadmap.length} evidence-grounded recommendations generated from the full-site crawl and AI visibility data.
+    Priorities: ${llmRoadmap.filter(r => r.priority === 'high').length} high,
+    ${llmRoadmap.filter(r => r.priority === 'medium').length} medium,
+    ${llmRoadmap.filter(r => r.priority === 'low').length} low.
+  </p>
+  ${llmRoadmap.map((rec, index) => `
+    <div class="recommendation-card">
+      <h3 style="margin-top: 0;">${index + 1}. ${escapeHtml(rec.title)}</h3>
+      <p><strong>Priority:</strong> ${escapeHtml(rec.priority)} | <strong>Type:</strong> ${escapeHtml(rec.type.replace(/_/g, ' '))} | <strong>Owner:</strong> ${escapeHtml(formatOwnerLabel(rec.owner))}</p>
+      <p>${formatNarrative(rec.narrative)}</p>
+      ${rec.proposed_changes?.length ? `
+        <p><strong>Proposed changes (${rec.proposed_changes.length}):</strong></p>
+        <table class="query-table">
+          <thead>
+            <tr><th style="width: 30%">Page</th><th style="width: 12%">Field</th><th>Current → Proposed</th></tr>
+          </thead>
+          <tbody>
+            ${rec.proposed_changes.slice(0, 15).map(change => `
+              <tr>
+                <td>${escapeHtml(change.url)}</td>
+                <td>${escapeHtml(change.field.replace(/_/g, ' '))}</td>
+                <td>
+                  ${change.current ? `<div style="color:#9ca3af; text-decoration: line-through;">${escapeHtml(change.current)}</div>` : ''}
+                  <div><strong>${escapeHtml(change.proposed)}</strong></div>
+                  ${change.rationale ? `<div style="color:#6b7280; font-size: 0.8rem; font-style: italic;">${escapeHtml(change.rationale)}</div>` : ''}
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      ` : ''}
+      ${rec.grounding?.query_evidence?.length ? `
+        <p><strong>Grounded in tracked prompts:</strong> ${rec.grounding.query_evidence.slice(0, 5).map(q => `"${escapeHtml(q)}"`).join(', ')}</p>
+      ` : ''}
+    </div>
+  `).join('')}
+  ` : ''}
+
+  ${hasSection('recommendations') && llmRoadmap.length === 0 ? `
   <h2>Strategic Action Plan</h2>
   <p style="color: #6b7280; margin-bottom: 1.5rem;">
     ${recommendationSummary.total} recommendations identified. Priorities: ${recommendationSummary.high} high, ${recommendationSummary.medium} medium, ${recommendationSummary.low} low.
@@ -781,6 +824,42 @@ function generateReportHTML(
     </div>
     `).join('')}
   `).join('')}
+  ` : ''}
+
+  ${siteFindings.length > 0 ? `
+  <h2>Technical Findings</h2>
+  <p style="color: #6b7280; margin-bottom: 1rem;">
+    Occurrence-counted issues from the full-site technical crawl. These are edits that should be made by your
+    web developer and content team. ${siteFindings.filter(f => f.status !== 'fixed' && f.status !== 'wont_fix').length} open,
+    ${siteFindings.filter(f => f.status === 'fixed').length} fixed.
+  </p>
+  <table class="query-table">
+    <thead>
+      <tr>
+        <th style="width: 13%">Type</th>
+        <th style="width: 20%">Issue</th>
+        <th>Description</th>
+        <th style="width: 9%">Occurrences</th>
+        <th style="width: 10%">Discovered</th>
+        <th style="width: 10%">Fixed</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${siteFindings.map(finding => `
+        <tr>
+          <td>${escapeHtml(formatFindingCategory(finding.category))}</td>
+          <td>
+            <strong>${escapeHtml(finding.title)}</strong>
+            <div><span class="badge ${finding.severity === 'critical' || finding.severity === 'high' ? 'badge-error' : finding.severity === 'medium' ? 'badge-warning' : 'badge-success'}">${escapeHtml(finding.severity)}</span></div>
+          </td>
+          <td>${escapeHtml(finding.description)}</td>
+          <td>${finding.occurrences.toLocaleString()}</td>
+          <td>${formatShortDate(finding.first_detected_at)}</td>
+          <td>${finding.fixed_at ? formatShortDate(finding.fixed_at) : '—'}</td>
+        </tr>
+      `).join('')}
+    </tbody>
+  </table>
   ` : ''}
 
   ${hasSection('competitors') && competitors.length > 0 ? `
@@ -958,6 +1037,33 @@ function generateReportHTML(
 </body>
 </html>
   `.trim()
+}
+
+function formatFindingCategory(category: string): string {
+  const labels: Record<string, string> = {
+    crawling_indexing: 'Crawling/Indexing',
+    canonicals: 'Canonicals',
+    titles: 'Titles',
+    descriptions: 'Descriptions',
+    h1s: 'H1s',
+    content: 'Content',
+    links: 'Links',
+    images: 'Images',
+    security: 'Security',
+    urls: 'URLs',
+    geo_signals: 'GEO Signals',
+  }
+  return labels[category] || category
+}
+
+function formatOwnerLabel(owner: string | null): string {
+  const labels: Record<string, string> = {
+    web_developer: 'Web Developer',
+    content: 'Content',
+    seo: 'SEO',
+    partnerships: 'Partnerships',
+  }
+  return owner ? labels[owner] || owner : 'Unassigned'
 }
 
 function getScoreBucket(score: number | undefined): string {
