@@ -1,55 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
 import { getLinkedInCredentials } from '@/utils/forgestudio/social-config'
-import { verifySignedForgeStudioOAuthState } from '@/utils/services/forgestudio-oauth-state'
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
+import {
+  clearNonceCookie,
+  connectionsRedirect,
+  getSiteUrl,
+  saveSocialConnection,
+  validateForgeStudioOAuthCallback,
+} from '@/utils/forgestudio/oauth-flow'
 
 // LinkedIn OAuth Callback
-// Exchanges the code for tokens and saves the connection
+// Exchanges the code for tokens and saves the connection.
 export async function GET(request: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url)
-    const code = searchParams.get('code')
-    const state = searchParams.get('state')
-    const error = searchParams.get('error')
-    const errorDescription = searchParams.get('error_description')
-
-    // Handle OAuth errors
-    if (error) {
-      console.error('LinkedIn OAuth error:', error, errorDescription)
-      return NextResponse.redirect(
-        `${process.env.NEXT_PUBLIC_SITE_URL}/dashboard/forgestudio?tab=connections&error=${encodeURIComponent(errorDescription || error)}`
-      )
+    const context = await validateForgeStudioOAuthCallback(request)
+    if (context instanceof NextResponse) {
+      return context
     }
+    const { propertyId, userId, code } = context
 
-    if (!code || !state) {
-      return NextResponse.redirect(
-        `${process.env.NEXT_PUBLIC_SITE_URL}/dashboard/forgestudio?tab=connections&error=missing_params`
-      )
-    }
-
-    // Verify signed state and extract property context
-    let propertyId: string
-    try {
-      const stateData = verifySignedForgeStudioOAuthState(state)
-      propertyId = stateData.propertyId
-    } catch {
-      return NextResponse.redirect(
-        `${process.env.NEXT_PUBLIC_SITE_URL}/dashboard/forgestudio?tab=connections&error=invalid_state`
-      )
-    }
-
-    // Get credentials from DB or environment
     const credentials = await getLinkedInCredentials(propertyId)
-    const redirectUri = `${process.env.NEXT_PUBLIC_SITE_URL}/api/forgestudio/social/callback/linkedin`
+    const redirectUri = `${getSiteUrl()}/api/forgestudio/social/callback/linkedin`
 
     if (!credentials) {
-      return NextResponse.redirect(
-        `${process.env.NEXT_PUBLIC_SITE_URL}/dashboard/forgestudio?tab=connections&error=missing_config&setup_required=linkedin`
+      return clearNonceCookie(
+        connectionsRedirect({ error: 'missing_config', setup_required: 'linkedin' })
       )
     }
 
@@ -62,74 +36,66 @@ export async function GET(request: NextRequest) {
         code,
         redirect_uri: redirectUri,
         client_id: credentials.appId,
-        client_secret: credentials.appSecret
-      })
+        client_secret: credentials.appSecret,
+      }),
     })
 
     const tokenData = await tokenRes.json()
 
     if (tokenData.error) {
       console.error('LinkedIn token exchange error:', tokenData)
-      return NextResponse.redirect(
-        `${process.env.NEXT_PUBLIC_SITE_URL}/dashboard/forgestudio?tab=connections&error=${encodeURIComponent(tokenData.error_description || tokenData.error)}`
+      return clearNonceCookie(
+        connectionsRedirect({ error: tokenData.error_description || tokenData.error })
       )
     }
 
     const accessToken = tokenData.access_token
+    const refreshToken = typeof tokenData.refresh_token === 'string' ? tokenData.refresh_token : null
     const expiresIn = tokenData.expires_in || 5184000 // 60 days default
 
     // Step 2: Get user profile
     const profileRes = await fetch('https://api.linkedin.com/v2/userinfo', {
-      headers: { 
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json'
-      }
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
     })
 
     if (!profileRes.ok) {
       console.error('LinkedIn profile fetch failed:', await profileRes.text())
-      return NextResponse.redirect(
-        `${process.env.NEXT_PUBLIC_SITE_URL}/dashboard/forgestudio?tab=connections&error=${encodeURIComponent('Failed to fetch LinkedIn profile')}`
+      return clearNonceCookie(
+        connectionsRedirect({ error: 'Failed to fetch LinkedIn profile' })
       )
     }
 
     const profile = await profileRes.json()
 
-    // Step 3: Save connection
-    const { error: saveError } = await supabase
-      .from('social_connections')
-      .upsert({
-        property_id: propertyId,
+    // Step 3: Save connection (tokens encrypted at rest)
+    try {
+      await saveSocialConnection({
+        propertyId,
+        userId,
         platform: 'linkedin',
-        account_id: profile.sub,
-        account_name: profile.name,
-        account_username: profile.email,
-        account_avatar_url: profile.picture,
-        access_token: accessToken,
-        token_expires_at: new Date(Date.now() + expiresIn * 1000).toISOString(),
+        accountId: profile.sub,
+        accountName: profile.name,
+        accountUsername: profile.email,
+        accountAvatarUrl: profile.picture,
+        accessToken,
+        refreshToken,
+        tokenExpiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
         scopes: ['openid', 'profile', 'w_member_social'],
-        is_active: true,
-        raw_profile: profile
-      }, {
-        onConflict: 'property_id,platform,account_id'
+        rawProfile: profile,
       })
-
-    if (saveError) {
+    } catch (saveError) {
       console.error('Error saving LinkedIn connection:', saveError)
-      return NextResponse.redirect(
-        `${process.env.NEXT_PUBLIC_SITE_URL}/dashboard/forgestudio?tab=connections&error=save_failed`
-      )
+      return clearNonceCookie(connectionsRedirect({ error: 'save_failed' }))
     }
 
-    // Success! Redirect back to ForgeStudio
-    return NextResponse.redirect(
-      `${process.env.NEXT_PUBLIC_SITE_URL}/dashboard/forgestudio?tab=connections&connected=linkedin&account=${encodeURIComponent(profile.name)}`
+    return clearNonceCookie(
+      connectionsRedirect({ connected: 'linkedin', account: profile.name || '' })
     )
-
   } catch (error) {
     console.error('LinkedIn callback error:', error)
-    return NextResponse.redirect(
-      `${process.env.NEXT_PUBLIC_SITE_URL}/dashboard/forgestudio?tab=connections&error=${encodeURIComponent('Connection failed')}`
-    )
+    return clearNonceCookie(connectionsRedirect({ error: 'Connection failed' }))
   }
 }

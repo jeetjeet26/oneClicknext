@@ -46,6 +46,8 @@ export function ResponseGenerator({
   const [selectedTone, setSelectedTone] = useState(defaultTone)
   const [loading, setLoading] = useState(false)
   const [generatedResponse, setGeneratedResponse] = useState<string | null>(null)
+  const [reusedDraft, setReusedDraft] = useState(false)
+  const [hasGeneratedOnce, setHasGeneratedOnce] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const handleGenerate = async () => {
@@ -58,7 +60,10 @@ export function ResponseGenerator({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           reviewId,
-          tone: selectedTone
+          tone: selectedTone,
+          // Generation is idempotent server-side; only ask for a fresh draft
+          // when the operator explicitly regenerates.
+          regenerate: hasGeneratedOnce
         })
       })
 
@@ -70,6 +75,8 @@ export function ResponseGenerator({
 
       // Store the generated response to display
       setGeneratedResponse(data.responseText)
+      setReusedDraft(data.reused === true)
+      setHasGeneratedOnce(true)
       setLoading(false)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong')
@@ -127,10 +134,12 @@ export function ResponseGenerator({
                 </div>
                 <div>
                   <h3 className="font-semibold text-slate-900 dark:text-white">
-                    Response Generated!
+                    {reusedDraft ? 'Existing Draft Found' : 'Response Generated!'}
                   </h3>
                   <p className="text-sm text-slate-500 dark:text-slate-400">
-                    {selectedTone.charAt(0).toUpperCase() + selectedTone.slice(1)} tone
+                    {reusedDraft
+                      ? 'Reusing the active draft — regenerate to replace it'
+                      : `${selectedTone.charAt(0).toUpperCase() + selectedTone.slice(1)} tone`}
                   </p>
                 </div>
               </div>

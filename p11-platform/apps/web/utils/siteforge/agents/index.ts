@@ -14,7 +14,12 @@ export { DesignAgent, type DesignSystem } from './design-agent'
 export { PhotoAgent, type PhotoStrategy, type PhotoManifest } from './photo-agent'
 export { ContentAgent, type GeneratedPage, type GeneratedSection } from './content-agent'
 export { QualityAgent, type QualityReport } from './quality-agent'
-export { SiteForgeOrchestrator, type SiteBlueprint, type GenerationProgress } from './orchestrator'
+export {
+  SiteForgeOrchestrator,
+  type SiteBlueprint,
+  type OrchestratorBlueprint,
+  type GenerationProgress,
+} from './orchestrator'
 
 
 

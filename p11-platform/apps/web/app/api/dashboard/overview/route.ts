@@ -18,6 +18,41 @@ type MetricTotals = {
   impressions: number
 }
 
+type ConversationMessage = {
+  conversation_id: string
+  role: string
+  created_at: string | null
+}
+
+/**
+ * Percentage of user messages that received an assistant reply within the
+ * same conversation. Messages must be sorted by created_at ascending.
+ * Returns null when there are no user messages to measure.
+ */
+function computeAiResponseRate(messages: ConversationMessage[]): number | null {
+  let userMessages = 0
+  let answered = 0
+  const pendingByConversation: Record<string, number> = {}
+
+  for (const msg of messages) {
+    if (msg.role === 'user') {
+      userMessages += 1
+      pendingByConversation[msg.conversation_id] =
+        (pendingByConversation[msg.conversation_id] || 0) + 1
+    } else if (msg.role === 'assistant') {
+      const pending = pendingByConversation[msg.conversation_id] || 0
+      if (pending > 0) {
+        // One assistant reply answers all user messages sent since the last reply.
+        answered += pending
+        pendingByConversation[msg.conversation_id] = 0
+      }
+    }
+  }
+
+  if (userMessages === 0) return null
+  return (answered / userMessages) * 100
+}
+
 export async function GET(request: NextRequest) {
   const ctx = createRequestContext(request, '/api/dashboard/overview')
   ctx.logStart()
@@ -87,16 +122,19 @@ export async function GET(request: NextRequest) {
       .gte('created_at', sixtyDaysAgo.toISOString())
       .lt('created_at', thirtyDaysAgo.toISOString())
 
-    // Get conversations/messages for AI response metrics
-    const { count: totalMessages } = await supabase
+    // Get this property's messages for the last 60 days (current + previous
+    // period) to compute the AI response rate, scoped via the conversation.
+    const { data: aiMessages } = await supabase
       .from('messages')
-      .select('*', { count: 'exact', head: true })
-      .eq('role', 'user')
-
-    const { count: aiResponses } = await supabase
-      .from('messages')
-      .select('*', { count: 'exact', head: true })
-      .eq('role', 'assistant')
+      .select(`
+        conversation_id,
+        role,
+        created_at,
+        conversation:conversations!inner(property_id)
+      `)
+      .eq('conversation.property_id', propertyId)
+      .gte('created_at', sixtyDaysAgo.toISOString())
+      .order('created_at', { ascending: true })
 
     // Get documents count
     const { count: documentsCount } = await supabase
@@ -152,21 +190,51 @@ export async function GET(request: NextRequest) {
 
     // Calculate metrics
     const totalLeads = currentLeads || 0
-    const costPerLead = totalLeads > 0 ? currentTotals.spend / totalLeads : 0
-    const previousCostPerLead = (previousLeads || 0) > 0 
-      ? previousTotals.spend / (previousLeads || 1) 
-      : 0
+
+    // Whether any ad-platform data exists for this property. When it does
+    // not, spend-based metrics are "not connected" rather than legitimately $0.
+    const hasMarketingData =
+      (currentPeriodData?.length || 0) + (previousPeriodData?.length || 0) > 0
+
+    // Cost per lead is only meaningful with connected spend data and at
+    // least one lead in the period; otherwise report null so the UI can
+    // show an honest empty state instead of $0.00.
+    const costPerLead =
+      hasMarketingData && totalLeads > 0 ? currentTotals.spend / totalLeads : null
+    const previousCostPerLead =
+      hasMarketingData && (previousLeads || 0) > 0
+        ? previousTotals.spend / (previousLeads || 1)
+        : null
 
     // Calculate percentage changes
     const leadsChange = previousLeads 
       ? ((totalLeads - previousLeads) / previousLeads) * 100 
       : 0
-    const cplChange = previousCostPerLead 
-      ? ((costPerLead - previousCostPerLead) / previousCostPerLead) * 100 
-      : 0
-    const aiResponseRate = totalMessages 
-      ? ((aiResponses || 0) / totalMessages) * 100 
-      : 100
+    const cplChange =
+      costPerLead !== null && previousCostPerLead
+        ? ((costPerLead - previousCostPerLead) / previousCostPerLead) * 100
+        : 0
+
+    // AI response rate: % of this property's user messages (last 30d) that
+    // received an assistant reply in the same conversation.
+    const thirtyDayCutoff = thirtyDaysAgo.toISOString()
+    const scopedMessages: ConversationMessage[] = (aiMessages || []).flatMap(msg =>
+      msg.conversation_id && msg.role
+        ? [{ conversation_id: msg.conversation_id, role: msg.role, created_at: msg.created_at }]
+        : []
+    )
+    const currentAiMessages = scopedMessages.filter(
+      msg => (msg.created_at || '') >= thirtyDayCutoff
+    )
+    const previousAiMessages = scopedMessages.filter(
+      msg => (msg.created_at || '') < thirtyDayCutoff
+    )
+    const aiResponseRate = computeAiResponseRate(currentAiMessages)
+    const previousAiResponseRate = computeAiResponseRate(previousAiMessages)
+    const aiResponseRateChange =
+      aiResponseRate !== null && previousAiResponseRate !== null
+        ? aiResponseRate - previousAiResponseRate
+        : 0
 
     // Format recent activity
     const recentActivity = [
@@ -211,7 +279,7 @@ export async function GET(request: NextRequest) {
           },
           aiResponseRate: {
             value: aiResponseRate,
-            change: 0, // Would need historical data
+            change: aiResponseRateChange,
             period: '30d',
           },
           totalSpend: {
@@ -237,6 +305,7 @@ export async function GET(request: NextRequest) {
           ctr: currentTotals.impressions > 0 
             ? (currentTotals.clicks / currentTotals.impressions) * 100 
             : 0,
+          hasMarketingData,
         },
       },
       { headers: ctx.responseHeaders }

@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
+import { SITEFORGE_CLAUDE_MODEL } from '@/utils/siteforge/models'
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY!
@@ -122,7 +123,7 @@ ${initialContext}`
     console.log('Last message role:', messages[messages.length - 1]?.role)
     
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: SITEFORGE_CLAUDE_MODEL,
       max_tokens: 4000,  // Increased for longer responses
       temperature: 1.0,
       system: systemPrompt,

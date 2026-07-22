@@ -160,6 +160,7 @@ export async function GET(request: NextRequest) {
           headers: {
             'Content-Type': 'application/json',
             authorization: `Bearer ${cronSecret}`,
+            'x-request-id': ctx.requestId,
           },
           body: JSON.stringify({
             propertyId: connection.property_id,
@@ -209,8 +210,21 @@ export async function GET(request: NextRequest) {
     const skipped = results.filter(r => r.status === 'skipped').length
     const totalImported = results.reduce((sum, r) => sum + (r.imported || 0), 0)
 
+    // Honest run status: child connection failures make the run 'partial',
+    // and a run with only failures is 'failed'.
+    const runStatus: 'success' | 'partial' | 'failed' =
+      failed === 0 ? 'success' : synced > 0 ? 'partial' : 'failed'
+
     await finishCronJobRun(run, {
-      status: 'success',
+      status: runStatus,
+      error:
+        failed > 0
+          ? `${failed} connection sync(s) failed: ${results
+              .filter(r => r.status === 'failed')
+              .map(r => `${r.platform}:${r.connectionId.slice(0, 8)} ${r.error || 'unknown'}`)
+              .join('; ')
+              .slice(0, 900)}`
+          : null,
       summary: {
         synced,
         failed,
@@ -219,10 +233,11 @@ export async function GET(request: NextRequest) {
       },
     })
 
-    ctx.logSuccess(200, { synced, failed, skipped, totalImported })
+    ctx.logSuccess(200, { synced, failed, skipped, totalImported, runStatus })
     return NextResponse.json(
       {
-        success: true,
+        success: failed === 0,
+        status: runStatus,
         synced,
         failed,
         skipped,

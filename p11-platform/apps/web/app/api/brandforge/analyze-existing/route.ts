@@ -50,7 +50,7 @@ export async function POST(req: NextRequest) {
       .substring(0, 30000) // Limit to ~30k chars
 
     // Use Gemini to extract brand insights
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' })
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' })
     
     const analysisPrompt = `
 Analyze these property documents and extract brand insights:

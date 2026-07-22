@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
-import { getDataEngineUrl } from '@/utils/services/runtime-config'
+import { getDataEngineHeaders, getDataEngineUrl } from '@/utils/services/runtime-config'
 
 // Data engine service URL (Python FastAPI)
 const DATA_ENGINE_URL = getDataEngineUrl()
@@ -92,7 +92,7 @@ export async function GET(req: NextRequest) {
       `${DATA_ENGINE_URL}/scraper/brand-intelligence/property/${propertyId}?include_raw=${includeRaw}`,
       {
         method: 'GET',
-        headers: { 'Content-Type': 'application/json' }
+        headers: getDataEngineHeaders()
       }
     )
 
@@ -162,7 +162,7 @@ export async function POST(req: NextRequest) {
     // Call data-engine to trigger extraction
     const response = await fetch(`${DATA_ENGINE_URL}/scraper/brand-intelligence`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getDataEngineHeaders(),
       body: JSON.stringify({
         property_id: propertyId,
         competitor_ids: competitorIds || null,
@@ -180,11 +180,22 @@ export async function POST(req: NextRequest) {
     }
 
     const result = await response.json()
+    const jobId = result.data?.job_id ?? null
+
+    // The data engine returns a null job id when there is nothing to process.
+    if (!jobId) {
+      return NextResponse.json({
+        success: true,
+        message: result.message || 'No competitors to process',
+        jobId: null,
+        status: 'skipped'
+      }, { status: 200 })
+    }
 
     return NextResponse.json({
       success: true,
       message: 'Brand intelligence extraction started',
-      jobId: result.data?.job_id,
+      jobId,
       status: 'processing'
     }, { status: 202 })
   } catch (error) {

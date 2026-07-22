@@ -47,10 +47,33 @@ interface Connection {
   last_error: string | null
   limitation_note: string | null
   created_at: string
+  capabilities?: {
+    ingest: boolean
+    deepLink: boolean
+    reply: boolean
+    verifyReply: boolean
+    deleteReply: boolean
+    limitation?: string | null
+  }
+  deep_link?: string | null
 }
 
 interface ReviewFlowConfigProps {
   propertyId: string
+}
+
+function CapabilityChip({ label, enabled }: { label: string; enabled: boolean }) {
+  return (
+    <span
+      className={`text-[11px] px-1.5 py-0.5 rounded ${
+        enabled
+          ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400'
+          : 'bg-slate-100 text-slate-400 dark:bg-slate-700 dark:text-slate-500 line-through'
+      }`}
+    >
+      {label}
+    </span>
+  )
 }
 
 export function ReviewFlowConfig({ propertyId }: ReviewFlowConfigProps) {
@@ -301,10 +324,26 @@ export function ReviewFlowConfig({ propertyId }: ReviewFlowConfigProps) {
                         </>
                       )}
                     </div>
-                    {connection.limitation_note && (
+                    {connection.capabilities && (
+                      <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                        <CapabilityChip label="Ingest" enabled={connection.capabilities.ingest} />
+                        <CapabilityChip label="Direct reply" enabled={connection.capabilities.reply} />
+                        <CapabilityChip label="Verify" enabled={connection.capabilities.verifyReply} />
+                        {!connection.capabilities.reply && (
+                          <span className="text-xs text-slate-400">manual posting only</span>
+                        )}
+                      </div>
+                    )}
+                    {(connection.capabilities?.limitation || connection.limitation_note) && (
                       <p className="text-xs text-amber-600 dark:text-amber-400 mt-1 flex items-center gap-1">
                         <AlertCircle className="w-3 h-3" />
-                        {connection.limitation_note}
+                        {connection.capabilities?.limitation || connection.limitation_note}
+                      </p>
+                    )}
+                    {connection.last_error && connection.error_count > 0 && (
+                      <p className="text-xs text-red-600 dark:text-red-400 mt-1 flex items-center gap-1">
+                        <AlertCircle className="w-3 h-3" />
+                        Last error: {connection.last_error}
                       </p>
                     )}
                   </div>
@@ -336,17 +375,20 @@ export function ReviewFlowConfig({ propertyId }: ReviewFlowConfigProps) {
         )}
       </div>
 
-      {/* Auto-Response Settings */}
+      {/* Auto-Draft Settings */}
       <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6">
         <h3 className="font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
           <Zap className="w-5 h-5 text-amber-500" />
-          Auto-Response Settings
+          Auto-Draft Settings
         </h3>
         <div className="space-y-4">
           <label className="flex items-center justify-between">
             <div>
-              <span className="font-medium text-slate-700 dark:text-slate-300">Auto-respond to positive reviews</span>
-              <p className="text-sm text-slate-500">Automatically post responses to highly-rated reviews</p>
+              <span className="font-medium text-slate-700 dark:text-slate-300">Auto-draft replies to positive reviews</span>
+              <p className="text-sm text-slate-500">
+                Automatically prepare draft replies for your approval. Nothing is
+                posted publicly without a human decision.
+              </p>
             </div>
             <input
               type="checkbox"
@@ -357,36 +399,20 @@ export function ReviewFlowConfig({ propertyId }: ReviewFlowConfigProps) {
           </label>
 
           {config.auto_respond_positive && (
-            <>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                  Minimum rating for auto-response
-                </label>
-                <select
-                  value={config.auto_respond_threshold}
-                  onChange={(e) => updateConfig({ auto_respond_threshold: parseInt(e.target.value) })}
-                  className="w-full px-4 py-2 border border-slate-200 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700"
-                >
-                  <option value={5}>5 stars only</option>
-                  <option value={4}>4+ stars</option>
-                  <option value={3}>3+ stars</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                  Delay before posting (minutes)
-                </label>
-                <input
-                  type="number"
-                  min="0"
-                  max="1440"
-                  value={config.response_delay_minutes}
-                  onChange={(e) => updateConfig({ response_delay_minutes: parseInt(e.target.value) })}
-                  className="w-full px-4 py-2 border border-slate-200 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700"
-                />
-              </div>
-            </>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                Minimum rating for auto-draft
+              </label>
+              <select
+                value={config.auto_respond_threshold}
+                onChange={(e) => updateConfig({ auto_respond_threshold: parseInt(e.target.value) })}
+                className="w-full px-4 py-2 border border-slate-200 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700"
+              >
+                <option value={5}>5 stars only</option>
+                <option value={4}>4+ stars</option>
+                <option value={3}>3+ stars</option>
+              </select>
+            </div>
           )}
         </div>
       </div>

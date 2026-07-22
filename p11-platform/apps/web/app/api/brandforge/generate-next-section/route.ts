@@ -537,7 +537,7 @@ export async function POST(req: NextRequest) {
         throw new Error('Gemini is not configured for BrandForge section generation.')
       } else {
         try {
-          const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' })
+          const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' })
           const result = await model.generateContent(prompt)
           const responseText = result.response.text()
           const jsonMatch = responseText.match(/\{[\s\S]*\}/)

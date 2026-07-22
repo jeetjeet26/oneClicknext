@@ -36,25 +36,37 @@ type FilterOption = {
   status?: string
 }
 
+const PAGE_SIZE = 25
+
 export function ReviewList({ propertyId, onSelectReview, onGenerateResponse }: ReviewListProps) {
   const [reviews, setReviews] = useState<Review[]>([])
+  const [total, setTotal] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [filters, setFilters] = useState<FilterOption>({})
   const [showFilters, setShowFilters] = useState(false)
 
+  const buildParams = (offset: number) => {
+    const params = new URLSearchParams({
+      propertyId,
+      limit: String(PAGE_SIZE),
+      offset: String(offset),
+    })
+    if (filters.platform) params.append('platform', filters.platform)
+    if (filters.sentiment) params.append('sentiment', filters.sentiment)
+    if (filters.status) params.append('status', filters.status)
+    return params
+  }
+
   const fetchReviews = async () => {
     setLoading(true)
     try {
-      const params = new URLSearchParams({ propertyId })
-      if (filters.platform) params.append('platform', filters.platform)
-      if (filters.sentiment) params.append('sentiment', filters.sentiment)
-      if (filters.status) params.append('status', filters.status)
-
-      const res = await fetch(`/api/reviewflow/reviews?${params}`)
+      const res = await fetch(`/api/reviewflow/reviews?${buildParams(0)}`)
       if (res.ok) {
         const data = await res.json()
         setReviews(data.reviews || [])
+        setTotal(typeof data.total === 'number' ? data.total : null)
       }
     } catch (error) {
       console.error('Error fetching reviews:', error)
@@ -62,6 +74,24 @@ export function ReviewList({ propertyId, onSelectReview, onGenerateResponse }: R
       setLoading(false)
     }
   }
+
+  const loadMore = async () => {
+    setLoadingMore(true)
+    try {
+      const res = await fetch(`/api/reviewflow/reviews?${buildParams(reviews.length)}`)
+      if (res.ok) {
+        const data = await res.json()
+        setReviews(prev => [...prev, ...(data.reviews || [])])
+        setTotal(typeof data.total === 'number' ? data.total : null)
+      }
+    } catch (error) {
+      console.error('Error fetching more reviews:', error)
+    } finally {
+      setLoadingMore(false)
+    }
+  }
+
+  const hasMore = total !== null && reviews.length < total
 
   useEffect(() => {
     fetchReviews()
@@ -238,16 +268,30 @@ export function ReviewList({ propertyId, onSelectReview, onGenerateResponse }: R
           </p>
         </div>
       ) : (
-        <div className="grid gap-4">
-          {filteredReviews.map(review => (
-            <ReviewCard
-              key={review.id}
-              review={review}
-              onClick={() => onSelectReview?.(review)}
-              onGenerateResponse={() => onGenerateResponse?.(review.id)}
-            />
-          ))}
-        </div>
+        <>
+          <div className="grid gap-4">
+            {filteredReviews.map(review => (
+              <ReviewCard
+                key={review.id}
+                review={review}
+                onClick={() => onSelectReview?.(review)}
+                onGenerateResponse={() => onGenerateResponse?.(review.id)}
+              />
+            ))}
+          </div>
+          {hasMore && !searchQuery && (
+            <div className="flex justify-center pt-2">
+              <button
+                onClick={loadMore}
+                disabled={loadingMore}
+                className="flex items-center gap-2 px-4 py-2 border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
+              >
+                {loadingMore && <Loader2 className="w-4 h-4 animate-spin" />}
+                Load more ({reviews.length} of {total})
+              </button>
+            </div>
+          )}
+        </>
       )}
     </div>
   )

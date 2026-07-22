@@ -41,9 +41,61 @@ export interface BrandIntelligence {
   analysisVersion: string | null
 }
 
+/**
+ * Canonical job states shared across MarketVision surfaces.
+ * `partial` is never a stored state — it is derived from a succeeded job
+ * with a mix of processed and failed items (see deriveJobResult).
+ */
+export type CanonicalJobStatus =
+  | 'queued'
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+  | 'retrying'
+  | 'cancelled'
+
+export type JobResult = 'success' | 'partial' | 'failure' | null
+
+const RAW_TO_CANONICAL_STATUS: Record<string, CanonicalJobStatus> = {
+  pending: 'queued',
+  queued: 'queued',
+  processing: 'running',
+  running: 'running',
+  completed: 'succeeded',
+  succeeded: 'succeeded',
+  failed: 'failed',
+  retrying: 'retrying',
+  cancelled: 'cancelled',
+}
+
+export function toCanonicalJobStatus(rawStatus: string | null | undefined): CanonicalJobStatus {
+  return RAW_TO_CANONICAL_STATUS[(rawStatus || '').toLowerCase()] ?? 'queued'
+}
+
+export function isTerminalJobStatus(status: CanonicalJobStatus): boolean {
+  return status === 'succeeded' || status === 'failed' || status === 'cancelled'
+}
+
+/** Derive an explicit result state for terminal jobs, including partial success. */
+export function deriveJobResult(
+  status: CanonicalJobStatus,
+  processedCount: number,
+  failedCount: number
+): JobResult {
+  if (status === 'succeeded') {
+    if (failedCount > 0 && processedCount > 0) return 'partial'
+    if (failedCount > 0 && processedCount === 0) return 'failure'
+    return 'success'
+  }
+  if (status === 'failed' || status === 'cancelled') return 'failure'
+  return null
+}
+
 export interface BrandIntelligenceJob {
   jobId: string
-  status: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled'
+  status: CanonicalJobStatus
+  rawStatus: string
+  result: JobResult
   totalCompetitors: number
   processedCount: number
   failedCount: number

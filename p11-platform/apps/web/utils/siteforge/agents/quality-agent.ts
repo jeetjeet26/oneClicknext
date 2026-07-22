@@ -369,8 +369,8 @@ Return JSON only:
     // Check all blocks are available
     for (const page of pages) {
       for (const section of page.sections) {
-        if (!wpCapabilities.availableBlocks.includes(section.block)) {
-          issues.push(`${page.slug}/${section.id}: Block not available: ${section.block}`)
+        if (!wpCapabilities.availableBlocks.includes(section.acfBlock)) {
+          issues.push(`${page.slug}/${section.id}: Block not available: ${section.acfBlock}`)
           suggestions.push(`Use alternative block or install required plugin`)
         }
       }

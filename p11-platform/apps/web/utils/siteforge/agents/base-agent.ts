@@ -5,6 +5,7 @@
 
 import Anthropic from '@anthropic-ai/sdk'
 import { createServiceClient } from '@/utils/supabase/admin'
+import { SITEFORGE_CLAUDE_MODEL, SITEFORGE_EMBEDDING_MODEL } from '@/utils/siteforge/models'
 import type { Json } from '@/types/supabase'
 
 export interface VectorSearchResult {
@@ -140,7 +141,7 @@ export abstract class BaseAgent {
         'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'text-embedding-3-small',
+        model: SITEFORGE_EMBEDDING_MODEL,
         input: text
       })
     })
@@ -178,7 +179,7 @@ export abstract class BaseAgent {
     }
     
     const message = await this.anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514', // Latest Sonnet 4
+      model: SITEFORGE_CLAUDE_MODEL,
       max_tokens: options.maxTokens || 30000,
       temperature: effectiveTemp,
       system: options.systemPrompt || '',

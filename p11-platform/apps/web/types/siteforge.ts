@@ -1,5 +1,10 @@
 // SiteForge Type Definitions
 // Created: December 11, 2025
+// The blueprint core (blueprint -> pages -> sections) is defined as Zod
+// schemas so LLM structured outputs and route payloads validate against the
+// exact same contract that preview and deploy consume.
+
+import { z } from 'zod'
 
 export type GenerationStatus = 
   | 'queued'
@@ -146,43 +151,54 @@ export interface SiteContext {
   kbContext?: string
 }
 
-// ACF Block types from Collection theme
-export type ACFBlockType =
-  | 'acf/menu'
-  | 'acf/top-slides'
-  | 'acf/text-section'
-  | 'acf/feature-section'
-  | 'acf/image'
-  | 'acf/links'
-  | 'acf/content-grid'
-  | 'acf/form'
-  | 'acf/map'
-  | 'acf/html-section'
-  | 'acf/gallery'
-  | 'acf/accordion-section'
-  | 'acf/plans-availability'
-  | 'acf/poi'
+// ACF Block types from the oneclick-siteforge (Collection) theme
+export const ACF_BLOCK_TYPES = [
+  'acf/menu',
+  'acf/top-slides',
+  'acf/text-section',
+  'acf/feature-section',
+  'acf/image',
+  'acf/links',
+  'acf/content-grid',
+  'acf/form',
+  'acf/map',
+  'acf/html-section',
+  'acf/gallery',
+  'acf/accordion-section',
+  'acf/plans-availability',
+  'acf/poi',
+] as const
 
-// Section in a page
-export interface PageSection {
-  id?: string // stable identifier for click-to-edit in dashboard
-  type: string // semantic type like 'hero', 'value_proposition', etc.
-  acfBlock: ACFBlockType
-  content: Record<string, unknown> // ACF field data structure
-  reasoning: string // Why this section here (for debugging/refinement)
-  order: number
-  label?: string // user-facing label (optional)
-  variant?: string // library variant key (optional)
-  cssClasses?: string[] // custom CSS classes (optional)
-}
+export const acfBlockTypeSchema = z.enum(ACF_BLOCK_TYPES)
+export type ACFBlockType = z.infer<typeof acfBlockTypeSchema>
+
+// Section in a page (canonical: generation, preview, edit, and deploy all
+// consume this shape; `acfBlock` is the single source of block identity)
+export const pageSectionSchema = z.object({
+  id: z.string().optional(), // stable identifier for click-to-edit in dashboard
+  type: z.string(), // semantic type like 'hero', 'value_proposition', etc.
+  acfBlock: acfBlockTypeSchema,
+  content: z.record(z.string(), z.unknown()), // ACF field data structure
+  reasoning: z.string(), // Why this section is here (for debugging/refinement)
+  order: z.number(),
+  label: z.string().optional(), // user-facing label
+  variant: z.string().optional(), // library variant key
+  cssClasses: z.array(z.string()).optional(),
+  purpose: z.string().optional(), // section goal from architecture planning
+  fields: z.record(z.string(), z.unknown()).optional(), // structured ACF field hints
+  photoRequirement: z.unknown().optional(), // photo needs from architecture planning
+})
+export type PageSection = z.infer<typeof pageSectionSchema>
 
 // Generated page structure
-export interface GeneratedPage {
-  slug: string
-  title: string
-  purpose: string // What this page aims to achieve
-  sections: PageSection[]
-}
+export const generatedPageSchema = z.object({
+  slug: z.string(),
+  title: z.string(),
+  purpose: z.string(), // What this page aims to achieve
+  sections: z.array(pageSectionSchema),
+  priority: z.string().optional(),
+})
+export type GeneratedPage = z.infer<typeof generatedPageSchema>
 
 // Site navigation structure
 export interface SiteNavigation {
@@ -282,13 +298,26 @@ export interface PropertyWebsite {
   updatedAt: string
 }
 
-// Canonical representation for preview/edit/deploy
-export interface SiteBlueprint {
-  version: number
-  pages: GeneratedPage[]
-  updatedAt?: string
-  brandContext?: any // Optional brand context from BrandAgent
-}
+// Canonical blueprint: the single deployable artifact for preview/edit/deploy.
+// The agentic metadata fields are optional and loosely typed here; the
+// orchestrator narrows them (see OrchestratorBlueprint in agents/orchestrator.ts).
+export const siteBlueprintSchema = z.object({
+  version: z.number(),
+  pages: z.array(generatedPageSchema),
+  updatedAt: z.string().optional(),
+  propertyId: z.string().optional(),
+  // Agent outputs (metadata carried alongside the deployable pages)
+  brandContext: z.unknown().optional(),
+  architecture: z.unknown().optional(),
+  designSystem: z.unknown().optional(),
+  photoManifest: z.unknown().optional(),
+  qualityReport: z.unknown().optional(),
+  generationTime: z.number().optional(),
+  agentLogs: z
+    .array(z.object({ agent: z.string(), action: z.string(), timestamp: z.string() }))
+    .optional(),
+})
+export type SiteBlueprint = z.infer<typeof siteBlueprintSchema>
 
 // LLM-driven editing API
 export interface EditBlueprintRequest {
@@ -431,17 +460,6 @@ export type BlueprintPatchOperation =
   | { op: 'remove_section'; sectionId: string }
   | { op: 'move_section'; sectionId: string; toOrder: number }
 
-// Extended SiteBlueprint with agentic outputs
-export interface SiteBlueprintAgentic extends SiteBlueprint {
-  propertyId?: string
-  brandContext?: any
-  architecture?: any
-  designSystem?: any
-  photoManifest?: any
-  qualityReport?: any
-  generationTime?: number
-  agentLogs?: Array<{ agent: string; action: string; timestamp: string }>
-}
 
 
 

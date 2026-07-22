@@ -3,6 +3,7 @@ import {
   CloudwaysClient,
   WordPressAPIClient,
   deployToExistingWordPress,
+  flattenAcfRepeaterFields,
 } from './wordpress-client'
 import type { GeneratedPage, WebsiteAsset } from '@/types/siteforge'
 
@@ -133,11 +134,16 @@ describe('wordpress-client', () => {
       purpose: 'Convert visitors',
       sections: [
         {
+          id: 'section-hero-1',
           type: 'hero',
           acfBlock: 'acf/top-slides',
           content: {
             headline: 'Welcome Home',
             heroImageUrl: 'https://cdn.example.com/logo.png',
+            slides: [
+              { headline: 'Slide One', subheadline: 'First' },
+              { headline: 'Slide Two', subheadline: 'Second' },
+            ],
           },
           reasoning: 'Lead with the hero',
           order: 1,
@@ -172,7 +178,8 @@ describe('wordpress-client', () => {
       .mockResolvedValueOnce(jsonResponse({ id: 15 }))
       .mockResolvedValueOnce(jsonResponse({ id: 9001 }))
       .mockResolvedValueOnce(jsonResponse({}))
-      .mockResolvedValueOnce(jsonResponse({}))
+      .mockResolvedValueOnce(jsonResponse({ id: 44 }))
+      .mockResolvedValueOnce(jsonResponse({ id: 501 }))
       .mockResolvedValueOnce(jsonResponse({ namespaces: ['wp/v2'] }))
       .mockResolvedValueOnce(
         jsonResponse([{ id: 9001, slug: 'home', status: 'publish' }])
@@ -218,6 +225,135 @@ describe('wordpress-client', () => {
     expect(createPageBody.content).toContain('acf/top-slides')
     expect(createPageBody.content).toContain('heroImageId')
     expect(createPageBody.content).toContain('15')
+
+    // ACF attrs shape and repeater flattening in serialized block data
+    const blockAttrsMatch = String(createPageBody.content).match(
+      /<!-- wp:acf\/top-slides (\{[\s\S]*?\}) \/-->/
+    )
+    expect(blockAttrsMatch).not.toBeNull()
+    const blockAttrs = JSON.parse(blockAttrsMatch![1])
+    expect(blockAttrs.name).toBe('acf/top-slides')
+    expect(blockAttrs.mode).toBe('preview')
+    expect(blockAttrs.id).toMatch(/^block_/)
+    expect(blockAttrs.data.slides).toBe(2)
+    expect(blockAttrs.data.slides_0_headline).toBe('Slide One')
+    expect(blockAttrs.data.slides_1_subheadline).toBe('Second')
+
+    // Classic menu created and assigned to the primary location
+    const menuCall = fetchMock.mock.calls[6]
+    expect(menuCall[0]).toBe('https://site.example.com/wp-json/wp/v2/menus')
+    expect(JSON.parse(String(menuCall[1]?.body))).toEqual({
+      name: 'Primary Navigation',
+      locations: ['primary'],
+    })
+
+    const menuItemCall = fetchMock.mock.calls[7]
+    expect(menuItemCall[0]).toBe('https://site.example.com/wp-json/wp/v2/menu-items')
+    expect(JSON.parse(String(menuItemCall[1]?.body))).toEqual({
+      title: 'Home',
+      menus: 44,
+      menu_order: 1,
+      status: 'publish',
+      type: 'post_type',
+      object: 'page',
+      object_id: 9001,
+    })
+  })
+
+  it('falls back to block-theme navigation when classic menus are unavailable', async () => {
+    const client = new WordPressAPIClient('https://example.com', {
+      username: 'admin',
+      password: 'app-password',
+    })
+
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ message: 'rest_no_route' }, 404))
+      .mockResolvedValueOnce(jsonResponse({ id: 900 }))
+
+    await client.createNavigation(
+      {
+        navigation: {
+          structure: 'primary',
+          items: [{ label: 'Home', slug: 'home', priority: 'high' }],
+          cta: { text: 'Tour', style: 'primary' },
+        },
+        pages: [
+          { slug: 'home', title: 'Home', purpose: 'Convert', sections: [] },
+        ],
+        designDecisions: {
+          colorStrategy: '',
+          imageStrategy: '',
+          contentDensity: 'balanced',
+          conversionOptimization: [],
+        },
+      },
+      new Map([['home', 9001]])
+    )
+
+    expect(fetchMock.mock.calls[0][0]).toBe('https://example.com/wp-json/wp/v2/menus')
+    expect(fetchMock.mock.calls[1][0]).toBe('https://example.com/wp-json/wp/v2/navigation')
+  })
+
+  it('aliases generic pipeline copy keys onto theme field names per block', async () => {
+    const { applyBlockFieldAliases } = await import('./wordpress-client')
+
+    expect(
+      applyBlockFieldAliases('acf/form', {
+        headline: 'Schedule a Tour',
+        subheadline: 'We reply fast',
+        form_type: 'tour',
+      })
+    ).toEqual({
+      heading: 'Schedule a Tour',
+      subheading: 'We reply fast',
+      form_type: 'tour',
+    })
+
+    // Explicit template-named keys win over generic aliases
+    expect(
+      applyBlockFieldAliases('acf/text-section', {
+        subheadline: 'generic',
+        subheading: 'explicit',
+      })
+    ).toEqual({ subheadline: 'generic', subheading: 'explicit' })
+
+    // Blocks without aliases pass through untouched
+    expect(applyBlockFieldAliases('acf/gallery', { images: [1, 2] })).toEqual({
+      images: [1, 2],
+    })
+  })
+
+  it('flattens repeater arrays into ACF indexed key format', () => {
+    expect(
+      flattenAcfRepeaterFields({
+        headline: 'Welcome',
+        slides: [
+          { headline: 'One', cta: { text: 'Go' } },
+          { headline: 'Two' },
+        ],
+        tags: ['a', 'b'],
+        empty: [],
+      })
+    ).toEqual({
+      headline: 'Welcome',
+      slides: 2,
+      slides_0_headline: 'One',
+      slides_0_cta: { text: 'Go' },
+      slides_1_headline: 'Two',
+      tags: ['a', 'b'],
+      empty: [],
+    })
+
+    // Nested repeaters flatten recursively
+    expect(
+      flattenAcfRepeaterFields({
+        plans: [{ units: [{ name: 'A1' }] }],
+      })
+    ).toEqual({
+      plans: 1,
+      plans_0_units: 1,
+      plans_0_units_0_name: 'A1',
+    })
   })
 
   it('fails readiness checks when required namespaces are missing', async () => {

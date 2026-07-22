@@ -78,6 +78,13 @@ export function BrandIntelligenceDashboard({
         throw new Error(data.error || 'Failed to start extraction')
       }
 
+      if (!data.jobId) {
+        // Nothing to process (e.g. no competitors with websites)
+        setIsExtracting(false)
+        setError(data.message || 'No competitors available for extraction')
+        return
+      }
+
       setExtractionJobId(data.jobId)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start extraction')

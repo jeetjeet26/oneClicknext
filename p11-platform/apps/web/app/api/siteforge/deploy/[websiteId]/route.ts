@@ -19,6 +19,7 @@ import {
   unauthorized,
 } from '@/utils/services/api-helpers'
 import { createRequestContext } from '@/utils/services/request-context'
+import { normalizeLegacyPages } from '@/utils/siteforge/blueprint'
 import type { GeneratedPage, SiteArchitecture, WebsiteAsset } from '@/types/siteforge'
 import type { Json } from '@/types/supabase'
 
@@ -89,7 +90,7 @@ function resolveDeploySource(
       website.blueprint?.updatedAt ??
       null
     return {
-      pages: blueprintPages,
+      pages: normalizeLegacyPages(blueprintPages),
       source: {
         field: 'blueprint',
         blueprintVersion: normalizedVersion,
@@ -100,7 +101,7 @@ function resolveDeploySource(
 
   const legacyPages = Array.isArray(website.pages_generated) ? website.pages_generated : []
   return {
-    pages: legacyPages,
+    pages: normalizeLegacyPages(legacyPages),
     source: {
       field: 'pages_generated',
       blueprintVersion: null,

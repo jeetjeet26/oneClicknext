@@ -218,5 +218,82 @@ describe('runSharedExecutorJob', () => {
       })
     )
   })
+
+  it('raises a duplicate error and does not execute when the dedupe key collides', async () => {
+    sharedJobsInsertMock.mockReturnValue({
+      select: vi.fn(() => ({
+        single: vi.fn().mockResolvedValue({
+          data: null,
+          error: { code: '23505', message: 'duplicate key value violates unique constraint' },
+        }),
+      })),
+    })
+
+    const existingLookup = {
+      select: vi.fn(() => existingLookup),
+      eq: vi.fn(() => existingLookup),
+      maybeSingle: vi.fn().mockResolvedValue({
+        data: { id: 'existing-job-1', lifecycle_status: 'running' },
+        error: null,
+      }),
+    }
+    fromMock.mockImplementation((table: string) => {
+      if (table === 'shared_jobs') {
+        return {
+          insert: sharedJobsInsertMock,
+          update: sharedJobsUpdateMock,
+          select: existingLookup.select,
+        }
+      }
+      if (table === 'shared_context_snapshots') {
+        return { insert: sharedContextInsertMock }
+      }
+      return { insert: sharedActionInsertMock, update: sharedActionUpdateMock }
+    })
+
+    const execute = vi.fn().mockResolvedValue({ published: true })
+    const { runSharedExecutorJob, SharedExecutorDuplicateJobError } = await import('./shared-executor')
+
+    await expect(
+      runSharedExecutorJob({
+        orgId: 'org-1',
+        propertyId: 'property-1',
+        domain: 'forgestudio.publish',
+        subjectType: 'content_draft',
+        subjectId: 'draft-1',
+        dedupeKey: 'draft-1:conn-1',
+        execute,
+      })
+    ).rejects.toBeInstanceOf(SharedExecutorDuplicateJobError)
+
+    expect(execute).not.toHaveBeenCalled()
+  })
+
+  it('fails closed and does not execute when the ledger insert fails', async () => {
+    sharedJobsInsertMock.mockReturnValue({
+      select: vi.fn(() => ({
+        single: vi.fn().mockResolvedValue({
+          data: null,
+          error: { code: '500', message: 'connection refused' },
+        }),
+      })),
+    })
+
+    const execute = vi.fn().mockResolvedValue({ published: true })
+    const { runSharedExecutorJob, SharedExecutorLedgerError } = await import('./shared-executor')
+
+    await expect(
+      runSharedExecutorJob({
+        orgId: 'org-1',
+        propertyId: 'property-1',
+        domain: 'forgestudio.publish',
+        subjectType: 'content_draft',
+        subjectId: 'draft-1',
+        execute,
+      })
+    ).rejects.toBeInstanceOf(SharedExecutorLedgerError)
+
+    expect(execute).not.toHaveBeenCalled()
+  })
 })
 

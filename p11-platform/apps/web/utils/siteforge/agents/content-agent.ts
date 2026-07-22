@@ -7,28 +7,11 @@ import { BaseAgent, type VectorSearchResult } from './base-agent'
 import type { BrandContext } from './brand-agent'
 import type { ArchitectureProposal } from './architecture-agent'
 import type { Photo } from './photo-agent'
+import type { ACFBlockType, GeneratedPage, PageSection } from '@/types/siteforge'
 
-export interface GeneratedPage {
-  slug: string
-  title: string
-  purpose: string
-  priority: string
-  sections: GeneratedSection[]
-}
-
-export interface GeneratedSection {
-  id: string
-  type: string
-  purpose: string
-  block: string
-  variant?: string
-  fields: Record<string, unknown>
-  cssClasses?: string[]
-  photoRequirement?: any
-  content: Record<string, unknown>
-  reasoning: string
-  order: number
-}
+// Canonical shapes come from types/siteforge.ts; re-exported for existing importers
+export type { GeneratedPage }
+export type GeneratedSection = PageSection
 
 /**
  * Content Agent - Generates all website copy
@@ -196,10 +179,14 @@ Match this level of clarity and polish without copying the example phrasing.
       content.content = `Content for the ${section.type.replace(/-/g, ' ')} section. Click to edit and customize.`
     }
     
+    // Normalize block identity: architecture planning emits `block`, the
+    // canonical section contract uses `acfBlock`
+    const { block: legacyBlock, ...rest } = section
     return {
-      ...section,
+      ...rest,
+      acfBlock: (section.acfBlock || legacyBlock) as ACFBlockType,
       content,
-      reasoning: content.reasoning || section.reasoning
+      reasoning: (typeof content.reasoning === 'string' && content.reasoning) || section.reasoning
     }
   }
   

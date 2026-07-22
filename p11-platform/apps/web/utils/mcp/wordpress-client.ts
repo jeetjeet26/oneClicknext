@@ -86,21 +86,9 @@ export class WordPressMcpClient {
       if (cached) return cached
     }
     
-    // Call MCP server for fresh data
-    const [abilities, schemas, tokens] = await Promise.all([
-      this.callMcp('get_wordpress_abilities', { instance_id: instanceId }),
-      this.callMcp('get_acf_block_schemas', { instance_id: instanceId }),
-      this.callMcp('get_theme_design_tokens', { instance_id: instanceId })
-    ])
-    
-    const capabilities: WordPressCapabilities = {
-      availableBlocks: abilities.available_blocks,
-      blockSchemas: schemas,
-      designTokens: tokens,
-      theme: abilities.theme,
-      plugins: abilities.plugins,
-      capabilities: abilities.capabilities
-    }
+    const capabilities = await this.callMcp('get_wordpress_capabilities', {
+      instance_id: instanceId,
+    }) as WordPressCapabilities
     
     // Cache result
     this.saveToCache(instanceId, capabilities)
@@ -109,48 +97,28 @@ export class WordPressMcpClient {
   }
   
   /**
-   * Analyze an existing WordPress site for structure and design patterns
+   * Analyze an existing WordPress site for structure and design patterns.
+   * Not currently backed by an implementation; callers treat failure as
+   * "no reference analysis available" and proceed.
    */
   async analyzeExistingSite(url: string): Promise<SiteAnalysis> {
-    return this.callMcp('analyze_existing_site', { url })
+    throw new Error(
+      `Reference site analysis is not available (requested for ${url})`
+    )
   }
   
   /**
-   * Discover variants for specific block
+   * Call discovery (direct HTTP server-side, API bridge from the browser)
    */
-  async discoverBlockVariants(
-    instanceId: string,
-    blockName: string
-  ): Promise<Record<string, BlockVariant>> {
-    return this.callMcp('discover_block_variants', { instance_id: instanceId, block_name: blockName })
-  }
-  
-  /**
-   * Deploy blueprint to WordPress
-   */
-  async deployBlueprint(
-    instanceId: string,
-    blueprint: unknown
-  ): Promise<DeploymentResult> {
-    return this.callMcp('deploy_siteforge_blueprint', { instance_id: instanceId, blueprint })
-  }
-  
-  /**
-   * Create new WordPress instance
-   */
-  async createInstance(
-    propertyName: string,
-    propertyId: string
-  ): Promise<WordPressInstance> {
-    return this.callMcp('create_wordpress_instance', { property_name: propertyName, property_id: propertyId })
-  }
-  
-  /**
-   * Call MCP server (abstraction for future MCP protocol integration)
-   */
-  private async callMcp(tool: string, args: Record<string, unknown>): Promise<any> {
+  private async callMcp(tool: string, args: Record<string, unknown>): Promise<unknown> {
     if (typeof window === 'undefined') {
-      return this.callMcpServer(tool, args)
+      if (tool !== 'get_wordpress_capabilities') {
+        throw new Error(`Unsupported WordPress discovery tool: ${tool}`)
+      }
+      const { discoverWordPressCapabilities } = await import(
+        '@/utils/siteforge/wordpress-discovery'
+      )
+      return discoverWordPressCapabilities()
     }
     
     try {
@@ -162,58 +130,14 @@ export class WordPressMcpClient {
       
       if (!response.ok) {
         const errorBody = await response.text()
-        throw new Error(`WordPress MCP call failed: ${response.status} ${response.statusText} ${errorBody}`.trim())
+        throw new Error(`WordPress discovery call failed: ${response.status} ${response.statusText} ${errorBody}`.trim())
       }
       
       const data = await response.json()
       return data.result
     } catch (error) {
       throw new Error(
-        `WordPress MCP fetch failed: ${error instanceof Error ? error.message : 'Unknown error'}`
-      )
-    }
-  }
-
-  private async callMcpServer(tool: string, args: Record<string, unknown>): Promise<any> {
-    const [{ exec }, { promisify }, pathModule] = await Promise.all([
-      import('child_process'),
-      import('util'),
-      import('path'),
-    ])
-    const execAsync = promisify(exec)
-    const mcpServerPath = pathModule.join(process.cwd(), '..', 'services', 'mcp-servers', 'wordpress')
-    const input = {
-      jsonrpc: '2.0',
-      method: 'tools/call',
-      params: {
-        name: tool,
-        arguments: args,
-      },
-      id: 1,
-    }
-    const command = `cd "${mcpServerPath}" && python -m wordpress.server --call "${JSON.stringify(input).replace(/"/g, '\\"')}"`
-
-    try {
-      const { stdout, stderr } = await execAsync(command, {
-        env: {
-          ...process.env,
-          PYTHONPATH: pathModule.join(process.cwd(), '..', 'services', 'mcp-servers'),
-        },
-      })
-
-      if (stderr) {
-        console.error('WordPress MCP stderr:', stderr)
-      }
-
-      const response = JSON.parse(stdout)
-      if (response.error) {
-        throw new Error(response.error.message)
-      }
-
-      return response.result
-    } catch (error) {
-      throw new Error(
-        `WordPress MCP server call failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+        `WordPress discovery fetch failed: ${error instanceof Error ? error.message : 'Unknown error'}`
       )
     }
   }
@@ -267,23 +191,6 @@ export interface SiteAnalysis {
   insightsForAgents: Record<string, string>
 }
 
-export interface DeploymentResult {
-  success: boolean
-  instanceId: string
-  url: string
-  adminUrl: string
-  pagesCreated: number
-}
-
-export interface WordPressInstance {
-  instanceId: string
-  url: string
-  adminUrl: string
-  credentials: {
-    username: string
-    password: string
-  }
-}
 
 
 

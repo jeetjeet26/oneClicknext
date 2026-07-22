@@ -1,71 +1,49 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/utils/supabase/server'
-import { validatePropertyAccess } from '@/utils/services/auth-guard'
-import { createSignedForgeStudioOAuthState } from '@/utils/services/forgestudio-oauth-state'
 import { getMetaCredentials } from '@/utils/forgestudio/social-config'
+import {
+  beginForgeStudioOAuthConnect,
+  connectionsRedirect,
+  getSiteUrl,
+  redirectToProvider,
+} from '@/utils/forgestudio/oauth-flow'
 
-// Facebook OAuth - Start the connection flow
-// This redirects to Meta's OAuth page (same app as Instagram)
+// Facebook OAuth - Start the connection flow (manager/admin only).
+// Uses the same Meta app as Instagram.
 export async function GET(request: NextRequest) {
   try {
-    const supabaseAuth = await createClient()
-    const { data: { user }, error: authError } = await supabaseAuth.auth.getUser()
-    if (authError || !user) {
-      return NextResponse.redirect(
-        `${process.env.NEXT_PUBLIC_SITE_URL}/dashboard/forgestudio?tab=connections&error=${encodeURIComponent('Unauthorized')}`
-      )
+    const context = await beginForgeStudioOAuthConnect(request)
+    if (context instanceof NextResponse) {
+      return context
     }
 
-    const { searchParams } = new URL(request.url)
-    const propertyId = searchParams.get('propertyId')
-
-    if (!propertyId) {
-      return NextResponse.redirect(
-        `${process.env.NEXT_PUBLIC_SITE_URL}/dashboard/forgestudio?tab=connections&error=${encodeURIComponent('Property ID required')}`
-      )
-    }
-
-    const access = await validatePropertyAccess(user.id, propertyId)
-    if (!access.authorized) {
-      return NextResponse.redirect(
-        `${process.env.NEXT_PUBLIC_SITE_URL}/dashboard/forgestudio?tab=connections&error=${encodeURIComponent('Forbidden')}`
-      )
-    }
-
-    // Get Meta credentials (shared with Instagram - same app)
-    const credentials = await getMetaCredentials(propertyId)
-    
+    const credentials = await getMetaCredentials(context.propertyId)
     if (!credentials) {
-      return NextResponse.redirect(
-        `${process.env.NEXT_PUBLIC_SITE_URL}/dashboard/forgestudio?tab=connections&setup_required=facebook&propertyId=${propertyId}`
-      )
+      return connectionsRedirect({
+        setup_required: 'facebook',
+        propertyId: context.propertyId,
+      })
     }
 
-    const redirectUri = `${process.env.NEXT_PUBLIC_SITE_URL}/api/forgestudio/social/callback/facebook`
-    
-    const state = createSignedForgeStudioOAuthState({ propertyId })
+    const redirectUri = `${getSiteUrl()}/api/forgestudio/social/callback/facebook`
 
     // Facebook requires pages_manage_posts for posting
     const scopes = [
       'pages_show_list',
       'pages_read_engagement',
-      'pages_manage_posts', // Required for posting
-      'business_management'
+      'pages_manage_posts',
+      'business_management',
     ].join(',')
 
-    const authUrl = new URL('https://www.facebook.com/v18.0/dialog/oauth')
+    const authUrl = new URL('https://www.facebook.com/v21.0/dialog/oauth')
     authUrl.searchParams.set('client_id', credentials.appId)
     authUrl.searchParams.set('redirect_uri', redirectUri)
     authUrl.searchParams.set('scope', scopes)
-    authUrl.searchParams.set('state', state)
+    authUrl.searchParams.set('state', context.state)
     authUrl.searchParams.set('response_type', 'code')
 
-    return NextResponse.redirect(authUrl.toString())
-
+    return redirectToProvider(authUrl.toString(), context.nonce)
   } catch (error) {
     console.error('Facebook OAuth error:', error)
-    return NextResponse.redirect(
-      `${process.env.NEXT_PUBLIC_SITE_URL}/dashboard/forgestudio?tab=connections&error=${encodeURIComponent('Failed to start Facebook connection')}`
-    )
+    return connectionsRedirect({ error: 'Failed to start Facebook connection' })
   }
 }

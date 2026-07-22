@@ -18,6 +18,7 @@ from routers.brand_intelligence import router as brand_intelligence_router
 from routers.competitor_intake import router as competitor_intake_router
 from routers.crm_integration import router as crm_integration_router
 from routers.propertyaudit_jobs import router as propertyaudit_jobs_router
+from routers.reviews import router as reviews_router
 from routers.scraper import router as scraper_router
 from routers.siteaudit_jobs import router as siteaudit_jobs_router
 from jobs.propertyaudit import recover_stale_running_runs
@@ -32,6 +33,7 @@ app.include_router(brand_intelligence_router)
 app.include_router(competitor_intake_router)
 app.include_router(crm_integration_router)
 app.include_router(propertyaudit_jobs_router)
+app.include_router(reviews_router)
 app.include_router(scraper_router)
 app.include_router(siteaudit_jobs_router)
 

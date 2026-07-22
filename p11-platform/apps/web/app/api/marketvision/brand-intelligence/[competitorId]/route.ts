@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
-import { getDataEngineUrl } from '@/utils/services/runtime-config'
+import { getDataEngineHeaders, getDataEngineUrl } from '@/utils/services/runtime-config'
 
 // Data engine service URL (Python FastAPI)
 const DATA_ENGINE_URL = getDataEngineUrl()
@@ -45,12 +45,12 @@ export async function GET(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
-    // Call data-engine to get competitor intelligence
+    // Call data-engine to get competitor intelligence (property re-checked service-side)
     const response = await fetch(
-      `${DATA_ENGINE_URL}/scraper/brand-intelligence/competitor/${competitorId}`,
+      `${DATA_ENGINE_URL}/scraper/brand-intelligence/competitor/${competitorId}?property_id=${encodeURIComponent(competitor.property_id)}`,
       {
         method: 'GET',
-        headers: { 'Content-Type': 'application/json' }
+        headers: getDataEngineHeaders()
       }
     )
 

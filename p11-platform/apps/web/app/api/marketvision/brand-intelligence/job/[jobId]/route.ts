@@ -6,7 +6,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
-import { getDataEngineUrl } from '@/utils/services/runtime-config'
+import { getDataEngineHeaders, getDataEngineUrl } from '@/utils/services/runtime-config'
+import { deriveJobResult, toCanonicalJobStatus } from '@/components/marketvision/types'
 
 // Data engine service URL (Python FastAPI)
 const DATA_ENGINE_URL = getDataEngineUrl()
@@ -49,12 +50,12 @@ export async function GET(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
-    // Call data-engine to get job status
+    // Call data-engine to get job status (property_id re-checked service-side)
     const response = await fetch(
-      `${DATA_ENGINE_URL}/scraper/brand-intelligence/job/${jobId}`,
+      `${DATA_ENGINE_URL}/scraper/brand-intelligence/job/${jobId}?property_id=${encodeURIComponent(job.property_id)}`,
       {
         method: 'GET',
-        headers: { 'Content-Type': 'application/json' }
+        headers: getDataEngineHeaders()
       }
     )
 
@@ -67,22 +68,37 @@ export async function GET(
       }, { status: 502 })
     }
 
+    // Data engine wraps the job payload as { success, data: {...} }
     const result = await response.json()
+    const payload = result?.data
+
+    if (!payload || typeof payload !== 'object') {
+      console.error('Data engine returned malformed job payload:', result)
+      return NextResponse.json({
+        error: 'Data engine returned a malformed job payload'
+      }, { status: 502 })
+    }
+
+    const processedCount = payload.processed_count ?? 0
+    const failedCount = payload.failed_count ?? 0
+    const status = toCanonicalJobStatus(payload.status)
 
     return NextResponse.json({
       success: true,
       job: {
-        jobId: result.job_id,
-        status: result.status,
-        totalCompetitors: result.total_competitors,
-        processedCount: result.processed_count,
-        failedCount: result.failed_count,
-        currentBatch: result.current_batch,
-        totalBatches: result.total_batches,
-        progressPercent: result.progress_percent || 0,
-        startedAt: result.started_at,
-        completedAt: result.completed_at,
-        errorMessage: result.error_message
+        jobId: payload.job_id,
+        status,
+        rawStatus: payload.status ?? 'unknown',
+        result: deriveJobResult(status, processedCount, failedCount),
+        totalCompetitors: payload.total_competitors ?? 0,
+        processedCount,
+        failedCount,
+        currentBatch: payload.current_batch ?? 0,
+        totalBatches: payload.total_batches ?? 0,
+        progressPercent: payload.progress_percent || 0,
+        startedAt: payload.started_at ?? null,
+        completedAt: payload.completed_at ?? null,
+        errorMessage: payload.error_message ?? null
       }
     })
   } catch (error) {

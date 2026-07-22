@@ -14,7 +14,7 @@ function transformWebsite(website: Record<string, unknown>) {
     wpUrl: website.wp_url,
     wpAdminUrl: website.wp_admin_url,
     wpInstanceId: website.wp_instance_id,
-    wpCredentials: website.wp_credentials,
+    // wp_credentials intentionally omitted: admin secrets must never leave the server
     generationStatus: website.generation_status,
     generationProgress: website.generation_progress,
     currentStep: website.current_step,

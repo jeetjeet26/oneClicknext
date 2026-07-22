@@ -3,7 +3,7 @@ import type { NextRequest } from 'next/server'
 
 const authGetUserMock = vi.fn()
 const createServerClientMock = vi.fn()
-const validatePropertyAccessMock = vi.fn()
+const validatePropertyManagerAccessMock = vi.fn()
 const getMetaCredentialsMock = vi.fn()
 
 vi.mock('@/utils/supabase/server', () => ({
@@ -11,7 +11,7 @@ vi.mock('@/utils/supabase/server', () => ({
 }))
 
 vi.mock('@/utils/services/auth-guard', () => ({
-  validatePropertyAccess: validatePropertyAccessMock,
+  validatePropertyManagerAccess: validatePropertyManagerAccessMock,
 }))
 
 vi.mock('@/utils/forgestudio/social-config', () => ({
@@ -58,7 +58,7 @@ describe('forgestudio social connect facebook route', () => {
       data: { user: { id: 'user-1' } },
       error: null,
     })
-    validatePropertyAccessMock.mockResolvedValue({ authorized: false })
+    validatePropertyManagerAccessMock.mockResolvedValue({ authorized: false })
 
     const { GET } = await import('./route')
     const response = await GET(

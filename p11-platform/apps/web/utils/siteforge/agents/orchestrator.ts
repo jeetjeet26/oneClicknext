@@ -6,30 +6,29 @@
 import { BrandAgent, type BrandContext } from './brand-agent'
 import { ArchitectureAgent, type ArchitectureProposal } from './architecture-agent'
 import { DesignAgent, type DesignSystem } from './design-agent'
-import { PhotoAgent, type PhotoStrategy, type PhotoManifest } from './photo-agent'
-import { ContentAgent, type GeneratedPage } from './content-agent'
+import { PhotoAgent, type PhotoManifest } from './photo-agent'
+import { ContentAgent } from './content-agent'
 import { QualityAgent, type QualityReport } from './quality-agent'
 import { WordPressMcpClient } from '@/utils/mcp/wordpress-client'
 import { createServiceClient } from '@/utils/supabase/admin'
+import type { SiteBlueprint } from '@/types/siteforge'
 import type { Json } from '@/types/supabase'
 
-export interface SiteBlueprint {
-  version: number
+// Typed narrowing of the canonical SiteBlueprint: generation always produces
+// the full agent metadata alongside the deployable pages.
+export type OrchestratorBlueprint = SiteBlueprint & {
   propertyId: string
   updatedAt: string
-  
-  // Agent outputs
   brandContext: BrandContext
   architecture: ArchitectureProposal
   designSystem: DesignSystem
   photoManifest: PhotoManifest
-  pages: GeneratedPage[]
-  
-  // Metadata
   qualityReport: QualityReport
   generationTime: number
   agentLogs: Array<{ agent: string; action: string; timestamp: string }>
 }
+
+export type { SiteBlueprint }
 
 export interface GenerationProgress {
   status: 'queued' | 'analyzing_brand' | 'planning_architecture' | 'creating_design' | 
@@ -88,7 +87,7 @@ export class SiteForgeOrchestrator {
   async generate(
     userPreferences?: Record<string, unknown>,
     preAnalyzedBrandContext?: BrandContext
-  ): Promise<SiteBlueprint> {
+  ): Promise<OrchestratorBlueprint> {
     
     this.startTime = Date.now()
     const agentLogs: Array<{ agent: string; action: string; timestamp: string }> = []
@@ -187,7 +186,7 @@ export class SiteForgeOrchestrator {
       
       const generationTime = Date.now() - this.startTime
       
-      const blueprint: SiteBlueprint = {
+      const blueprint: OrchestratorBlueprint = {
         version: 1,
         propertyId: this.propertyId,
         updatedAt: new Date().toISOString(),
@@ -235,7 +234,7 @@ export class SiteForgeOrchestrator {
   /**
    * Save blueprint to database
    */
-  private async saveBlueprint(blueprint: SiteBlueprint): Promise<void> {
+  private async saveBlueprint(blueprint: OrchestratorBlueprint): Promise<void> {
     
     await this.supabase
       .from('property_websites')

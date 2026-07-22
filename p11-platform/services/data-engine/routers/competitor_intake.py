@@ -14,17 +14,24 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from openai import OpenAI
 from pydantic import BaseModel
 
 from scrapers.brand_intelligence import BrandIntelligenceExtractor, SemanticSearchService
 from scrapers.google_places import GooglePlacesScraper
+from utils.auth import verify_api_key
 from utils.supabase_client import get_supabase_client
+from utils.url_safety import is_safe_public_url
+from utils.evidence import content_hash_for, record_source_capture
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/competitor-intake", tags=["Competitor Intake"])
+router = APIRouter(
+    prefix="/competitor-intake",
+    tags=["Competitor Intake"],
+    dependencies=[Depends(verify_api_key)],
+)
 
 
 class EnrichIntakeRequest(BaseModel):
@@ -236,6 +243,11 @@ def _find_online_evidence(candidate: Dict[str, Any]) -> Dict[str, Any]:
     seed_url = candidate.get("seed_url")
 
     if seed_url:
+        if not is_safe_public_url(seed_url):
+            return {
+                "source": "seed_url_rejected",
+                "error": "Client-provided URL is not a safe public http(s) address",
+            }
         return {
             "name": seed_name,
             "website_url": seed_url,
@@ -246,7 +258,14 @@ def _find_online_evidence(candidate: Dict[str, Any]) -> Dict[str, Any]:
 
     ai_evidence = _resolve_with_ai_web_search(candidate)
     if ai_evidence.get("website_url"):
-        return ai_evidence
+        if not is_safe_public_url(ai_evidence.get("website_url")):
+            ai_evidence = {
+                **ai_evidence,
+                "website_url": None,
+                "error": "AI-resolved URL is not a safe public http(s) address",
+            }
+        else:
+            return ai_evidence
 
     if not os.environ.get("GOOGLE_MAPS_API_KEY"):
         return {
@@ -494,6 +513,12 @@ async def _process_candidate(supabase, property_id: str, batch_id: str, candidat
     }).eq("id", candidate_id).execute()
 
     evidence = _find_online_evidence(candidate)
+    if evidence.get("website_url") and not is_safe_public_url(evidence.get("website_url")):
+        evidence = {
+            **evidence,
+            "website_url": None,
+            "error": "Resolved URL is not a safe public http(s) address",
+        }
     if not evidence.get("website_url"):
         supabase.table("competitor_intake_candidates").update({
             "enrichment_status": "failed",
@@ -516,7 +541,18 @@ async def _process_candidate(supabase, property_id: str, batch_id: str, candidat
         if not brand_intel:
             raise RuntimeError("No brand intelligence extracted from online evidence")
 
-        stored = extractor.store_brand_intelligence(brand_intel, chunks, floor_plans)
+        capture_id = record_source_capture(
+            supabase,
+            property_id=property_id,
+            competitor_id=competitor_id,
+            source_type="website",
+            source_url=evidence["website_url"],
+            content_hash=content_hash_for([c.get("content_hash") for c in chunks]),
+        )
+
+        stored = extractor.store_brand_intelligence(
+            brand_intel, chunks, floor_plans, capture_id=capture_id
+        )
         if not stored:
             raise RuntimeError("Failed to store brand intelligence")
 

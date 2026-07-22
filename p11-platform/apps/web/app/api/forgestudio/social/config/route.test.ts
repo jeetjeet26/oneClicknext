@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NextRequest } from 'next/server'
 
+const PROPERTY_ID = '33333333-3333-4333-8333-333333333333'
+
 const authGetUserMock = vi.fn()
 const createServerClientMock = vi.fn()
-const validatePropertyAccessMock = vi.fn()
+const validatePropertyManagerAccessMock = vi.fn()
 const mockFrom = vi.fn()
 
 vi.mock('@/utils/supabase/server', () => ({
@@ -11,11 +13,11 @@ vi.mock('@/utils/supabase/server', () => ({
 }))
 
 vi.mock('@/utils/services/auth-guard', () => ({
-  validatePropertyAccess: validatePropertyAccessMock,
+  validatePropertyManagerAccess: validatePropertyManagerAccessMock,
 }))
 
-vi.mock('@supabase/supabase-js', () => ({
-  createClient: vi.fn(() => ({
+vi.mock('@/utils/supabase/admin', () => ({
+  createServiceClient: vi.fn(() => ({
     from: mockFrom,
   })),
 }))
@@ -42,7 +44,7 @@ describe('forgestudio social config route', () => {
     const { GET } = await import('./route')
     const response = await GET(
       new Request(
-        'http://localhost/api/forgestudio/social/config?propertyId=property-1'
+        `http://localhost/api/forgestudio/social/config?propertyId=${PROPERTY_ID}`
       ) as NextRequest
     )
 
@@ -51,12 +53,15 @@ describe('forgestudio social config route', () => {
     expect(mockFrom).not.toHaveBeenCalled()
   })
 
-  it('POST returns 403 when property access is denied', async () => {
+  it('POST returns 403 when the user is not a manager or admin', async () => {
     authGetUserMock.mockResolvedValue({
       data: { user: { id: 'user-1' } },
       error: null,
     })
-    validatePropertyAccessMock.mockResolvedValue({ authorized: false })
+    validatePropertyManagerAccessMock.mockResolvedValue({
+      authorized: false,
+      error: 'Requires admin or manager role',
+    })
 
     const { POST } = await import('./route')
     const response = await POST(
@@ -64,7 +69,7 @@ describe('forgestudio social config route', () => {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          propertyId: 'property-1',
+          propertyId: PROPERTY_ID,
           platform: 'meta',
           appId: 'app-id',
           appSecret: 'app-secret',
@@ -73,7 +78,35 @@ describe('forgestudio social config route', () => {
     )
 
     expect(response.status).toBe(403)
-    await expect(response.json()).resolves.toEqual({ error: 'Forbidden' })
+    await expect(response.json()).resolves.toEqual({
+      error: 'Requires admin or manager role',
+    })
+    expect(mockFrom).not.toHaveBeenCalled()
+  })
+
+  it('POST returns 400 for invalid payloads', async () => {
+    authGetUserMock.mockResolvedValue({
+      data: { user: { id: 'user-1' } },
+      error: null,
+    })
+
+    const { POST } = await import('./route')
+    const response = await POST(
+      new Request('http://localhost/api/forgestudio/social/config', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          propertyId: 'not-a-uuid',
+          platform: 'myspace',
+          appId: '',
+          appSecret: '',
+        }),
+      }) as NextRequest
+    )
+
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toMatchObject({ error: 'Invalid request' })
+    expect(validatePropertyManagerAccessMock).not.toHaveBeenCalled()
     expect(mockFrom).not.toHaveBeenCalled()
   })
 
@@ -82,12 +115,12 @@ describe('forgestudio social config route', () => {
       data: { user: { id: 'user-1' } },
       error: null,
     })
-    validatePropertyAccessMock.mockResolvedValue({ authorized: false })
+    validatePropertyManagerAccessMock.mockResolvedValue({ authorized: false })
 
     const { DELETE } = await import('./route')
     const response = await DELETE(
       new Request(
-        'http://localhost/api/forgestudio/social/config?propertyId=property-1&platform=meta'
+        `http://localhost/api/forgestudio/social/config?propertyId=${PROPERTY_ID}&platform=meta`
       ) as NextRequest
     )
 

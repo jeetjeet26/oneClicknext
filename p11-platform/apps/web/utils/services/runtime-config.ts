@@ -59,3 +59,16 @@ export function getDataEngineUrl(): string {
 
   return DEFAULT_DATA_ENGINE_URL
 }
+
+/**
+ * Standard headers for server-to-server calls into the Python data-engine.
+ * Includes the shared API key (X-API-Key) required by protected routers.
+ */
+export function getDataEngineHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  const apiKey = firstNonEmpty(process.env.DATA_ENGINE_API_KEY)
+  if (apiKey) {
+    headers['X-API-Key'] = apiKey
+  }
+  return headers
+}

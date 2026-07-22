@@ -622,9 +622,18 @@ export class WordPressAPIClient {
   }
   
   /**
-   * Create navigation menu
+   * Create navigation menu.
+   *
+   * Primary path targets classic-theme menus (the oneclick-siteforge theme
+   * registers a `primary` location via register_nav_menus): create a menu via
+   * the core `/wp/v2/menus` endpoint (WP 5.9+), attach page items through
+   * `/wp/v2/menu-items`, and assign the `primary` location. Falls back to the
+   * block-theme `/navigation` endpoint only when classic menus are unavailable.
    */
-  async createNavigation(architecture: SiteArchitecture): Promise<void> {
+  async createNavigation(
+    architecture: SiteArchitecture,
+    pageIdsBySlug?: Map<string, number>
+  ): Promise<void> {
     const navigationItems =
       architecture.navigation?.items && architecture.navigation.items.length > 0
         ? architecture.navigation.items
@@ -642,6 +651,18 @@ export class WordPressAPIClient {
     if (missingSlugs.length > 0) {
       throw new Error(
         `Navigation references missing page slugs: ${Array.from(new Set(missingSlugs)).join(', ')}`
+      )
+    }
+
+    try {
+      await this.createClassicMenu(navigationItems, pageIdsBySlug)
+      return
+    } catch (error) {
+      if (!isMissingEndpointError(error)) {
+        throw error
+      }
+      console.warn(
+        'WordPress /menus endpoint is unavailable; attempting block-theme navigation'
       )
     }
 
@@ -667,6 +688,46 @@ export class WordPressAPIClient {
         return
       }
       throw error
+    }
+  }
+
+  private async createClassicMenu(
+    items: Array<{ label: string; slug: string }>,
+    pageIdsBySlug?: Map<string, number>
+  ): Promise<void> {
+    const menuLocation = process.env.SITEFORGE_WP_MENU_LOCATION || 'primary'
+
+    const menuResponse = await this.post('/menus', {
+      name: 'Primary Navigation',
+      locations: [menuLocation],
+    })
+    const menuId = typeof menuResponse.id === 'number' ? menuResponse.id : undefined
+    if (!menuId) {
+      throw new Error('WordPress API did not return a menu id')
+    }
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]
+      const normalizedSlug = normalizePageSlug(item.slug)
+      const pageId = pageIdsBySlug?.get(normalizedSlug)
+
+      const payload: Record<string, unknown> = {
+        title: item.label,
+        menus: menuId,
+        menu_order: i + 1,
+        status: 'publish',
+      }
+
+      if (pageId) {
+        payload.type = 'post_type'
+        payload.object = 'page'
+        payload.object_id = pageId
+      } else {
+        payload.type = 'custom'
+        payload.url = normalizedSlug === 'home' ? '/' : `/${normalizedSlug}/`
+      }
+
+      await this.post('/menu-items', payload)
     }
   }
   
@@ -834,18 +895,109 @@ type GutenbergBlock = {
 }
 
 function convertToGutenbergBlock(
-  section: { acfBlock: string; content: Record<string, unknown> },
+  section: { id?: string; acfBlock: string; content: Record<string, unknown>; order?: number },
   mediaIds: Map<string, number>
 ): GutenbergBlock {
-  // For ACF blocks, the Collection theme reads $block['attrs']['data'].
-  // Keep original content but opportunistically add *_id fields when we
-  // can map known image URLs to uploaded WordPress media IDs.
+  // ACF blocks hydrate from $block['attrs']['data'] using registered field
+  // definitions. Two requirements for that to work:
+  //   1. attrs must carry ACF's `id`/`name`/`data`/`mode` shape
+  //   2. repeater rows must be flattened to ACF's indexed key format
+  //      (slides_0_headline, slides = row count) — nested arrays never hydrate
+  const withMediaIds = injectWordPressMediaIds(section.content, mediaIds)
+  const data = flattenAcfRepeaterFields(
+    applyBlockFieldAliases(
+      section.acfBlock,
+      (withMediaIds && typeof withMediaIds === 'object' && !Array.isArray(withMediaIds)
+        ? (withMediaIds as Record<string, unknown>)
+        : {})
+    )
+  )
+
+  const blockIdSource = section.id || `order-${section.order ?? 0}`
+  const blockId = `block_${blockIdSource.replace(/[^a-zA-Z0-9]/g, '').substring(0, 12)}`
+
   return {
     blockName: section.acfBlock,
     attrs: {
-      data: injectWordPressMediaIds(section.content, mediaIds)
+      id: blockId,
+      name: section.acfBlock,
+      data,
+      mode: 'preview',
     }
   }
+}
+
+/**
+ * The generation pipeline emits generic copy keys (headline, subheadline,
+ * html), but a few theme blocks read differently-named fields. Alias the
+ * generic key onto the template's field name when the target is absent so
+ * generated copy hydrates instead of being silently dropped.
+ */
+const BLOCK_FIELD_ALIASES: Record<string, Record<string, string>> = {
+  'acf/text-section': { subheadline: 'subheading' },
+  'acf/form': { headline: 'heading', subheadline: 'subheading' },
+  'acf/html-section': { html: 'html_content' },
+}
+
+export function applyBlockFieldAliases(
+  acfBlock: string,
+  data: Record<string, unknown>
+): Record<string, unknown> {
+  const aliases = BLOCK_FIELD_ALIASES[acfBlock]
+  if (!aliases) {
+    return data
+  }
+
+  const output: Record<string, unknown> = { ...data }
+  for (const [sourceKey, targetKey] of Object.entries(aliases)) {
+    if (output[sourceKey] !== undefined && output[targetKey] === undefined) {
+      output[targetKey] = output[sourceKey]
+      delete output[sourceKey]
+    }
+  }
+  return output
+}
+
+/**
+ * Flatten repeater arrays into ACF's indexed key format.
+ *
+ * ACF stores repeater rows as:
+ *   fieldname_0_subfield = "value"
+ *   fieldname_1_subfield = "value"
+ *   fieldname = 2                   (row count)
+ *
+ * Blueprint JSON stores them as plain arrays of objects:
+ *   { fieldname: [{ subfield: "value" }, { subfield: "value" }] }
+ *
+ * Nested repeaters are flattened recursively (parent_0_child_0_sub).
+ */
+export function flattenAcfRepeaterFields(
+  data: Record<string, unknown>
+): Record<string, unknown> {
+  const flat: Record<string, unknown> = {}
+
+  for (const [key, value] of Object.entries(data)) {
+    if (
+      Array.isArray(value) &&
+      value.length > 0 &&
+      value.every(entry => entry && typeof entry === 'object' && !Array.isArray(entry))
+    ) {
+      // Repeater field: emit row count plus indexed sub-keys
+      flat[key] = value.length
+
+      for (let i = 0; i < value.length; i++) {
+        const row = flattenAcfRepeaterFields(value[i] as Record<string, unknown>)
+        for (const [subKey, subVal] of Object.entries(row)) {
+          flat[`${key}_${i}_${subKey}`] = subVal
+        }
+      }
+    } else {
+      // Scalar, simple array, null, or non-repeater object — pass through
+      flat[key] = value
+    }
+  }
+
+  return flat
 }
 
 /**
@@ -898,6 +1050,7 @@ export async function deployToWordPress(
   // 4. Create pages
   await reportProgress(onProgress, 'Publishing generated pages to WordPress...')
   const createdPages: Array<{ id: number; title: string; purpose: string }> = []
+  const pageIdsBySlug = new Map<string, number>()
   for (const page of architecture.pages) {
     const pageId = await wpClient.createPage(page, mediaIds)
     createdPages.push({
@@ -905,6 +1058,7 @@ export async function deployToWordPress(
       title: page.title,
       purpose: page.purpose,
     })
+    pageIdsBySlug.set(normalizePageSlug(page.slug), pageId)
   }
   
   // 5. Configure site settings
@@ -917,7 +1071,7 @@ export async function deployToWordPress(
   
   // 6. Create navigation
   await reportProgress(onProgress, 'Configuring navigation...')
-  await wpClient.createNavigation(architecture)
+  await wpClient.createNavigation(architecture, pageIdsBySlug)
   
   // 7. Configure SEO
   await reportProgress(onProgress, 'Applying SEO metadata...')
@@ -960,6 +1114,7 @@ export async function deployToExistingWordPress(args: {
 
   await reportProgress(onProgress, 'Publishing generated pages to existing WordPress...')
   const createdPages: Array<{ id: number; title: string; purpose: string }> = []
+  const pageIdsBySlug = new Map<string, number>()
   for (const page of pages) {
     const pageId = await wpClient.createPage(page, mediaIds)
     createdPages.push({
@@ -967,6 +1122,7 @@ export async function deployToExistingWordPress(args: {
       title: page.title,
       purpose: page.purpose,
     })
+    pageIdsBySlug.set(normalizePageSlug(page.slug), pageId)
   }
 
   await reportProgress(onProgress, 'Applying site settings...')
@@ -997,7 +1153,7 @@ export async function deployToExistingWordPress(args: {
       contentDensity: 'balanced',
       conversionOptimization: [],
     },
-  })
+  }, pageIdsBySlug)
 
   await reportProgress(onProgress, 'Applying SEO metadata...')
   await wpClient.configureYoastSEO(propertyContext, createdPages)

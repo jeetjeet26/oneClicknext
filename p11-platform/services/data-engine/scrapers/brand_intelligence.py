@@ -23,6 +23,8 @@ from scrapers.website_intelligence import (
     FloorPlanUnit
 )
 from utils.supabase_client import get_supabase_client
+from utils.url_safety import is_safe_public_url
+from utils.evidence import content_hash_for, record_source_capture
 
 logger = logging.getLogger(__name__)
 
@@ -185,6 +187,12 @@ class BrandIntelligenceExtractor:
         """
         if not website_url:
             logger.warning(f"No website URL for competitor {competitor_id}")
+            return None, [], []
+        
+        if not is_safe_public_url(website_url):
+            logger.warning(
+                f"Rejected unsafe website URL for competitor {competitor_id}: {website_url}"
+            )
             return None, [], []
         
         # Check if we have recent analysis (within 7 days)
@@ -371,7 +379,8 @@ class BrandIntelligenceExtractor:
         self,
         brand_intel: BrandIntelligence,
         content_chunks: List[Dict[str, Any]],
-        floor_plans: Optional[List[FloorPlanUnit]] = None
+        floor_plans: Optional[List[FloorPlanUnit]] = None,
+        capture_id: Optional[str] = None
     ) -> bool:
         """
         Store brand intelligence, content chunks, and floor plans in database
@@ -380,14 +389,19 @@ class BrandIntelligenceExtractor:
             brand_intel: Extracted brand intelligence
             content_chunks: Content chunks for semantic search
             floor_plans: Optional floor plans with pricing data
+            capture_id: Optional market_source_captures id linking the stored
+                facts to the fetch they came from
             
         Returns:
             True if successful
         """
         try:
             # Upsert brand intelligence
+            brand_row = brand_intel.to_db_dict()
+            if capture_id:
+                brand_row['capture_id'] = capture_id
             self.supabase.table('competitor_brand_intelligence').upsert(
-                brand_intel.to_db_dict(),
+                brand_row,
                 on_conflict='competitor_id'
             ).execute()
             
@@ -407,6 +421,8 @@ class BrandIntelligenceExtractor:
                     continue
                 if content_hash:
                     seen_hashes.add(content_hash)
+                if capture_id:
+                    chunk = {**chunk, 'capture_id': capture_id}
                 deduped_chunks.append(chunk)
 
             for i in range(0, len(deduped_chunks), 50):
@@ -610,6 +626,7 @@ class CompetitorBatchProcessor:
         
         job = job_result.data
         competitor_ids = job.get('competitor_ids', [])
+        property_id = job.get('property_id')
         
         logger.info(f"[Job {job_id}] Found {len(competitor_ids)} competitor IDs")
         
@@ -653,7 +670,8 @@ class CompetitorBatchProcessor:
                 async with self._semaphore:
                     success = await self._process_single_competitor(
                         competitor,
-                        force_refresh
+                        force_refresh,
+                        property_id=property_id
                     )
                 
                 if success:
@@ -696,7 +714,8 @@ class CompetitorBatchProcessor:
     async def _process_single_competitor(
         self,
         competitor: Dict[str, Any],
-        force_refresh: bool = False
+        force_refresh: bool = False,
+        property_id: Optional[str] = None
     ) -> bool:
         """Process a single competitor"""
         try:
@@ -707,10 +726,49 @@ class CompetitorBatchProcessor:
                 force_refresh=force_refresh
             )
             
-            if brand_intel:
-                return self.extractor.store_brand_intelligence(brand_intel, chunks, floor_plans)
+            if not brand_intel:
+                return True  # Skipped due to recent analysis
             
-            return True  # Skipped due to recent analysis
+            # Record evidence capture so stored brand claims cite their source
+            capture_id = None
+            if property_id:
+                capture_id = record_source_capture(
+                    self.supabase,
+                    property_id=property_id,
+                    competitor_id=competitor['id'],
+                    source_type='website',
+                    source_url=competitor['website_url'],
+                    content_hash=content_hash_for(
+                        [c.get('content_hash') for c in chunks]
+                    ),
+                )
+            
+            stored = self.extractor.store_brand_intelligence(
+                brand_intel, chunks, floor_plans, capture_id=capture_id
+            )
+            if not stored:
+                return False
+            
+            # Generate embeddings immediately so semantic search is not
+            # silently left empty after a successful extraction. Chunks are
+            # stored with null embeddings first, so a failure here is
+            # recoverable: re-running embedding generation picks up exactly
+            # the chunks that are still missing embeddings.
+            try:
+                search_service = SemanticSearchService()
+                embedded = await search_service.generate_embeddings_for_competitor(
+                    competitor['id']
+                )
+                logger.info(
+                    f"Embedded {embedded} chunks for {competitor.get('name')}"
+                )
+            except Exception as embed_error:
+                logger.warning(
+                    f"Embedding generation failed for {competitor.get('name')} "
+                    f"(chunks stored, embeddings recoverable): {embed_error}"
+                )
+            
+            return True
             
         except Exception as e:
             logger.error(f"Failed to process {competitor.get('name')}: {e}")

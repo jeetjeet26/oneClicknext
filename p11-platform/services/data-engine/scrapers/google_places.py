@@ -602,10 +602,16 @@ class GooglePlacesScraper:
         }
         """
         try:
-            # Generate unique ID from place_id + author + timestamp
+            # Deterministic stable ID from place_id + author + timestamp + text.
+            # (Python's built-in hash() is salted per process and unstable.)
+            import hashlib as _hashlib
             timestamp = review.get('time', 0)
             author = review.get('author_name', 'Anonymous')
-            review_id = f"google-{place_id}-{timestamp}-{hash(author) % 10000}"
+            text_sample = (review.get('text') or '')[:80]
+            digest = _hashlib.sha256(
+                f"{place_id}|{author}|{timestamp}|{text_sample}".encode('utf-8')
+            ).hexdigest()[:16]
+            review_id = f"google-{place_id}-{digest}"
             
             # Convert Unix timestamp to ISO date
             review_date = datetime.utcfromtimestamp(timestamp).isoformat() if timestamp else datetime.utcnow().isoformat()

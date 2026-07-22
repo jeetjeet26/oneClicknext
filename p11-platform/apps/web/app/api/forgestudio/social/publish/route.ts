@@ -1,12 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createClient } from '@supabase/supabase-js'
 import { createClient as createServerClient } from '@/utils/supabase/server'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { hasValidCronAuth } from '@/utils/services/api-helpers'
 import { evaluateForgeStudioDraftReadiness } from '@/utils/services/forgestudio-draft-readiness'
+import { decryptSecret } from '@/utils/forgestudio/crypto'
+import { assertSafeMediaUrl, UnsafeMediaUrlError } from '@/utils/forgestudio/safe-media-fetch'
 import {
   runSharedExecutorJob,
   SharedExecutorApprovalRequiredError,
+  SharedExecutorDuplicateJobError,
 } from '@/utils/services/shared-executor'
 
 const supabase = createClient(
@@ -21,6 +25,41 @@ class PublishProviderError extends Error {
     super(message)
     this.name = 'PublishProviderError'
     this.retryable = retryable
+  }
+}
+
+type PublishConnectionResult = {
+  connectionId: string
+  platform: string
+  success: boolean
+  retryable?: boolean
+  skipped?: boolean
+  postId?: string
+  postUrl?: string
+  error?: string
+}
+
+type PublishRunResult = {
+  success: boolean
+  retryableFailureCount: number
+  permanentFailureCount: number
+  results: PublishConnectionResult[]
+}
+
+/**
+ * Thrown from inside the shared-executor execute() when at least one
+ * connection failed, so the shared job is recorded as failed/retryable
+ * instead of silently succeeding on partial failure.
+ */
+class ForgeStudioPublishFailureError extends Error {
+  result: PublishRunResult
+
+  constructor(result: PublishRunResult) {
+    super(
+      `Publishing failed for ${result.retryableFailureCount + result.permanentFailureCount} of ${result.results.length} connections`
+    )
+    this.name = 'ForgeStudioPublishFailureError'
+    this.result = result
   }
 }
 
@@ -47,6 +86,10 @@ function toPublishProviderError(error: unknown, fallback: string): PublishProvid
     return error
   }
 
+  if (error instanceof UnsafeMediaUrlError) {
+    return new PublishProviderError(error.message, false)
+  }
+
   if (error instanceof Error) {
     return new PublishProviderError(error.message, inferRetryableError(error.message))
   }
@@ -58,13 +101,24 @@ function buildProviderError(status: number, message: string): PublishProviderErr
   return new PublishProviderError(message, isRetryableProviderStatus(status))
 }
 
-type PublishRequestBody = {
-  draftId?: string
-  connectionIds?: string[]
-  requireApproval?: boolean
-  sharedJobId?: string | null
-  sharedActionAttemptId?: string | null
+function isUniqueViolation(error: unknown): boolean {
+  return Boolean(
+    error &&
+    typeof error === 'object' &&
+    'code' in error &&
+    (error as { code?: string }).code === '23505'
+  )
 }
+
+const publishRequestSchema = z.object({
+  draftId: z.string().uuid(),
+  connectionIds: z.array(z.string().uuid()).min(1).max(20),
+  requireApproval: z.boolean().optional(),
+  sharedJobId: z.string().uuid().nullish(),
+  sharedActionAttemptId: z.string().uuid().nullish(),
+})
+
+const PUBLISHABLE_DRAFT_STATUSES = ['approved', 'scheduled', 'publishing']
 
 // POST - Publish content to connected social accounts
 export async function POST(request: NextRequest) {
@@ -86,18 +140,17 @@ export async function POST(request: NextRequest) {
       userId = user.id
     }
 
-    const body = (await request.json()) as PublishRequestBody
-    const { draftId, connectionIds } = body
-    const uniqueConnectionIds = Array.isArray(connectionIds)
-      ? [...new Set(connectionIds.filter((value): value is string => typeof value === 'string' && value.length > 0))]
-      : []
-
-    if (!draftId || uniqueConnectionIds.length === 0) {
+    const rawBody = await request.json().catch(() => null)
+    const parsedBody = publishRequestSchema.safeParse(rawBody)
+    if (!parsedBody.success) {
       return NextResponse.json(
-        { error: 'Draft ID and connection IDs required' },
+        { error: 'Invalid publish request', details: parsedBody.error.issues },
         { status: 400 }
       )
     }
+    const body = parsedBody.data
+    const { draftId } = body
+    const uniqueConnectionIds = [...new Set(body.connectionIds)]
 
     // Get the draft
     const { data: draft, error: draftError } = await supabase
@@ -128,7 +181,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (!body.sharedJobId) {
-      if (draft.status !== 'approved' && draft.status !== 'scheduled') {
+      if (!PUBLISHABLE_DRAFT_STATUSES.includes(draft.status || '')) {
         return NextResponse.json(
           { error: 'Only approved or scheduled drafts can be published' },
           { status: 409 }
@@ -187,17 +240,33 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Draft property is missing organization context' }, { status: 409 })
     }
 
-    const executePublish = () =>
-      runForgeStudioPublish({
+    const executePublish = async () => {
+      const result = await runForgeStudioPublish({
         draftId,
         connectionIds: uniqueConnectionIds,
         isCronRequest,
         userId,
         requestId,
       })
+      if (!result.success) {
+        // Partial or total failure is a job failure, not a success.
+        throw new ForgeStudioPublishFailureError(result)
+      }
+      return result
+    }
+
+    const toFailureResponse = (result: PublishRunResult) =>
+      NextResponse.json(result, { status: 502 })
 
     if (body.sharedJobId) {
-      return NextResponse.json(await executePublish())
+      try {
+        return NextResponse.json(await executePublish())
+      } catch (error) {
+        if (error instanceof ForgeStudioPublishFailureError) {
+          return toFailureResponse(error.result)
+        }
+        throw error
+      }
     }
 
     try {
@@ -246,6 +315,21 @@ export async function POST(request: NextRequest) {
           { status: 202 }
         )
       }
+      if (error instanceof SharedExecutorDuplicateJobError) {
+        return NextResponse.json(
+          {
+            success: false,
+            duplicate: true,
+            sharedJobId: error.sharedJobId,
+            lifecycleStatus: error.lifecycleStatus,
+            error: 'A publish job for this draft and destination set already exists',
+          },
+          { status: 409 }
+        )
+      }
+      if (error instanceof ForgeStudioPublishFailureError) {
+        return toFailureResponse(error.result)
+      }
       throw error
     }
 
@@ -258,13 +342,30 @@ export async function POST(request: NextRequest) {
   }
 }
 
+type ConnectionRow = {
+  id: string
+  platform: string
+  account_id: string
+  access_token: string | null
+  page_id: string | null
+  page_access_token: string | null
+  error_count: number | null
+}
+
+type DraftContent = {
+  caption: string
+  hashtags: string[]
+  media_urls: string[]
+  media_type: string
+}
+
 async function runForgeStudioPublish(input: {
   draftId: string
   connectionIds: string[]
   isCronRequest: boolean
   userId: string | null
   requestId: string | null
-}) {
+}): Promise<PublishRunResult> {
   const { draftId, connectionIds, isCronRequest, userId, requestId } = input
   const { data: draft, error: draftError } = await supabase
     .from('content_drafts')
@@ -280,7 +381,7 @@ async function runForgeStudioPublish(input: {
     throw new Error('Draft is missing property association')
   }
 
-  if (draft.status !== 'approved' && draft.status !== 'scheduled') {
+  if (!PUBLISHABLE_DRAFT_STATUSES.includes(draft.status || '')) {
     throw new PublishProviderError('Only approved or scheduled drafts can be published', false)
   }
 
@@ -305,6 +406,11 @@ async function runForgeStudioPublish(input: {
     }
   }
 
+  // Every attached media URL must be a public https URL before we hand it to a provider.
+  for (const mediaUrl of draft.media_urls || []) {
+    assertSafeMediaUrl(mediaUrl)
+  }
+
   const { data: connections, error: connError } = await supabase
     .from('social_connections')
     .select('*')
@@ -319,94 +425,115 @@ async function runForgeStudioPublish(input: {
     )
   }
 
-  const results: Array<{
-    connectionId: string
-    platform: string
-    success: boolean
-    retryable?: boolean
-    skipped?: boolean
-    postId?: string
-    postUrl?: string
-    error?: string
-  }> = []
+  const results: PublishConnectionResult[] = []
   const initiatedVia = isCronRequest ? 'cron' : 'operator'
 
-  for (const connection of connections) {
+  for (const connection of connections as ConnectionRow[]) {
     const actionTimestamp = new Date().toISOString()
-    try {
-      const { data: existingPublished } = await supabase
-        .from('published_posts')
-        .select('platform_post_id, platform_post_url')
-        .eq('content_draft_id', draftId)
-        .eq('social_connection_id', connection.id)
-        .eq('status', 'published')
-        .limit(1)
-        .maybeSingle()
+    const auditContext = {
+      action: 'publish',
+      initiated_via: initiatedVia,
+      initiated_by: userId,
+      request_id: requestId,
+      attempted_at: actionTimestamp,
+    }
 
-      if (existingPublished) {
-        await supabase
+    // Reserve the (draft, connection) pair before calling the provider.
+    // The partial unique index on active statuses makes double publishes
+    // impossible even under concurrent workers.
+    const { data: reservation, error: reservationError } = await supabase
+      .from('published_posts')
+      .insert({
+        content_draft_id: draftId,
+        social_connection_id: connection.id,
+        status: 'publishing',
+        engagement_metrics: { ...auditContext, result: 'publishing' },
+      })
+      .select('id')
+      .single()
+
+    if (reservationError || !reservation?.id) {
+      if (isUniqueViolation(reservationError)) {
+        const { data: existing } = await supabase
           .from('published_posts')
-          .insert({
-            content_draft_id: draftId,
-            social_connection_id: connection.id,
-            platform_post_id: existingPublished.platform_post_id,
-            platform_post_url: existingPublished.platform_post_url,
-            status: 'skipped',
-            engagement_metrics: {
-              action: 'publish',
-              result: 'skipped_existing_post',
-              initiated_via: initiatedVia,
-              initiated_by: userId,
-              request_id: requestId,
-              attempted_at: actionTimestamp,
-            },
-          })
+          .select('status, platform_post_id, platform_post_url')
+          .eq('content_draft_id', draftId)
+          .eq('social_connection_id', connection.id)
+          .in('status', ['publishing', 'reconciling', 'published'])
+          .limit(1)
+          .maybeSingle()
 
         results.push({
           connectionId: connection.id,
           platform: connection.platform,
           success: true,
           skipped: true,
-          postId: existingPublished.platform_post_id || undefined,
-          postUrl: existingPublished.platform_post_url || undefined,
+          postId: existing?.platform_post_id || undefined,
+          postUrl: existing?.platform_post_url || undefined,
         })
         continue
+      }
+
+      // Ledger write failed: do NOT call the provider without a reservation.
+      results.push({
+        connectionId: connection.id,
+        platform: connection.platform,
+        success: false,
+        retryable: true,
+        error: `Failed to record publish reservation: ${reservationError?.message || 'unknown error'}`,
+      })
+      continue
+    }
+
+    try {
+      const draftContent: DraftContent = {
+        caption: draft.caption || '',
+        hashtags: draft.hashtags || [],
+        media_urls: draft.media_urls || [],
+        media_type: draft.media_type || 'none',
       }
 
       let result: { postId: string; postUrl: string }
 
       switch (connection.platform) {
         case 'instagram':
-          result = await publishToInstagram(connection, draft)
+          result = await publishToInstagram(connection, draftContent)
           break
         case 'facebook':
-          result = await publishToFacebook(connection, draft)
+          result = await publishToFacebook(connection, draftContent)
           break
         case 'linkedin':
-          result = await publishToLinkedIn(connection, draft)
+          result = await publishToLinkedIn(connection, draftContent)
           break
         default:
           throw new PublishProviderError(`Unsupported platform: ${connection.platform}`, false)
       }
 
-      await supabase
+      const { error: successUpdateError } = await supabase
         .from('published_posts')
-        .insert({
-          content_draft_id: draftId,
-          social_connection_id: connection.id,
+        .update({
           platform_post_id: result.postId,
           platform_post_url: result.postUrl,
           status: 'published',
           published_at: actionTimestamp,
-          engagement_metrics: {
-            action: 'publish',
-            result: 'published',
-            initiated_via: initiatedVia,
-            initiated_by: userId,
-            request_id: requestId,
-            attempted_at: actionTimestamp,
-          },
+          engagement_metrics: { ...auditContext, result: 'published' },
         })
+        .eq('id', reservation.id)
+
+      if (successUpdateError) {
+        // The provider accepted the post but our ledger update failed.
+        // Keep the reservation row (still blocks duplicates) and surface it.
+        console.error('[forgestudio.publish] provider succeeded but ledger update failed', {
+          draftId,
+          connectionId: connection.id,
+          reservationId: reservation.id,
+          error: successUpdateError,
+        })
+        await supabase
+          .from('published_posts')
+          .update({ status: 'reconciling', error_message: 'Ledger update failed after provider success' })
+          .eq('id', reservation.id)
+      }
 
       await supabase
         .from('social_connections')
@@ -432,23 +559,27 @@ async function runForgeStudioPublish(input: {
         })
         .eq('id', connection.id)
 
-      await supabase
+      const { error: failureUpdateError } = await supabase
         .from('published_posts')
-        .insert({
-          content_draft_id: draftId,
-          social_connection_id: connection.id,
+        .update({
           status: 'failed',
           error_message: errorMessage,
           engagement_metrics: {
-            action: 'publish',
+            ...auditContext,
             result: 'failed',
             retryable: publishError.retryable,
-            initiated_via: initiatedVia,
-            initiated_by: userId,
-            request_id: requestId,
-            attempted_at: actionTimestamp,
           },
         })
+        .eq('id', reservation.id)
+
+      if (failureUpdateError) {
+        console.error('[forgestudio.publish] failed to record publish failure', {
+          draftId,
+          connectionId: connection.id,
+          reservationId: reservation.id,
+          error: failureUpdateError,
+        })
+      }
 
       results.push({
         connectionId: connection.id,
@@ -464,13 +595,19 @@ async function runForgeStudioPublish(input: {
   const retryableFailures = results.filter(result => !result.success && result.retryable)
   const permanentFailures = results.filter(result => !result.success && !result.retryable)
   if (allSuccess) {
-    await supabase
+    const { error: draftUpdateError } = await supabase
       .from('content_drafts')
       .update({
         status: 'published',
         published_at: new Date().toISOString(),
       })
       .eq('id', draftId)
+    if (draftUpdateError) {
+      console.error('[forgestudio.publish] failed to mark draft published', {
+        draftId,
+        error: draftUpdateError,
+      })
+    }
   }
 
   return {
@@ -481,49 +618,51 @@ async function runForgeStudioPublish(input: {
   }
 }
 
+function requireDecryptedToken(token: string | null, label: string): string {
+  if (!token) {
+    throw new PublishProviderError(`${label} is missing`, false)
+  }
+  return decryptSecret(token)
+}
+
 // Publish to Instagram via Facebook Graph API
 async function publishToInstagram(
-  connection: {
-    account_id: string
-    page_access_token: string
-  },
-  draft: {
-    caption: string
-    hashtags: string[]
-    media_urls: string[]
-    media_type: string
-  }
+  connection: ConnectionRow,
+  draft: DraftContent
 ): Promise<{ postId: string; postUrl: string }> {
-  const { account_id, page_access_token } = connection
-  if (!account_id || !page_access_token) {
+  const accountId = connection.account_id
+  if (!accountId || !connection.page_access_token) {
     throw new PublishProviderError('Instagram connection is missing required credentials', false)
   }
+  const pageAccessToken = requireDecryptedToken(
+    connection.page_access_token,
+    'Instagram page access token'
+  )
   const fullCaption = `${draft.caption}\n\n${draft.hashtags.map(h => `#${h}`).join(' ')}`
 
   // Instagram requires media to be hosted at a public URL
-  // For now, we'll handle image posts only
   if (!draft.media_urls?.length) {
-    throw new Error('Instagram requires an image or video')
+    throw new PublishProviderError('Instagram requires an image or video', false)
   }
 
   const mediaUrl = draft.media_urls[0]
 
   // Step 1: Create media container
   const containerRes = await fetch(
-    `https://graph.facebook.com/v18.0/${account_id}/media`,
+    `https://graph.facebook.com/v21.0/${accountId}/media`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         image_url: mediaUrl,
         caption: fullCaption,
-        access_token: page_access_token
+        access_token: pageAccessToken
       })
     }
   )
-  
+
   const containerData = await containerRes.json()
-  
+
   if (!containerRes.ok || containerData.error) {
     throw buildProviderError(
       containerRes.status,
@@ -535,13 +674,13 @@ async function publishToInstagram(
 
   // Step 2: Publish the container
   const publishRes = await fetch(
-    `https://graph.facebook.com/v18.0/${account_id}/media_publish`,
+    `https://graph.facebook.com/v21.0/${accountId}/media_publish`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         creation_id: containerId,
-        access_token: page_access_token
+        access_token: pageAccessToken
       })
     }
   )
@@ -563,32 +702,28 @@ async function publishToInstagram(
 
 // Publish to Facebook Page
 async function publishToFacebook(
-  connection: {
-    page_id: string
-    page_access_token: string
-  },
-  draft: {
-    caption: string
-    hashtags: string[]
-    media_urls: string[]
-    media_type: string
-  }
+  connection: ConnectionRow,
+  draft: DraftContent
 ): Promise<{ postId: string; postUrl: string }> {
-  const { page_id, page_access_token } = connection
-  if (!page_id || !page_access_token) {
+  const pageId = connection.page_id
+  if (!pageId || !connection.page_access_token) {
     throw new PublishProviderError('Facebook connection is missing required credentials', false)
   }
+  const pageAccessToken = requireDecryptedToken(
+    connection.page_access_token,
+    'Facebook page access token'
+  )
   const message = `${draft.caption}\n\n${draft.hashtags.map(h => `#${h}`).join(' ')}`
 
-  let endpoint = `https://graph.facebook.com/v18.0/${page_id}/feed`
+  let endpoint = `https://graph.facebook.com/v21.0/${pageId}/feed`
   const body: Record<string, string> = {
     message,
-    access_token: page_access_token
+    access_token: pageAccessToken
   }
 
   // If there's an image, post as photo
   if (draft.media_urls?.length && draft.media_type === 'image') {
-    endpoint = `https://graph.facebook.com/v18.0/${page_id}/photos`
+    endpoint = `https://graph.facebook.com/v21.0/${pageId}/photos`
     body.url = draft.media_urls[0]
   }
 
@@ -615,21 +750,14 @@ async function publishToFacebook(
 
 // Publish to LinkedIn
 async function publishToLinkedIn(
-  connection: {
-    account_id: string
-    access_token: string
-  },
-  draft: {
-    caption: string
-    hashtags: string[]
-    media_urls: string[]
-    media_type: string
-  }
+  connection: ConnectionRow,
+  draft: DraftContent
 ): Promise<{ postId: string; postUrl: string }> {
-  const { account_id, access_token } = connection
-  if (!account_id || !access_token) {
+  const accountId = connection.account_id
+  if (!accountId || !connection.access_token) {
     throw new PublishProviderError('LinkedIn connection is missing required credentials', false)
   }
+  const accessToken = requireDecryptedToken(connection.access_token, 'LinkedIn access token')
   const text = `${draft.caption}\n\n${draft.hashtags.map(h => `#${h}`).join(' ')}`
 
   type LinkedInPostData = {
@@ -649,7 +777,7 @@ async function publishToLinkedIn(
 
   // LinkedIn v2 API - UGC Posts
   const postData: LinkedInPostData = {
-    author: `urn:li:person:${account_id}`,
+    author: `urn:li:person:${accountId}`,
     lifecycleState: 'PUBLISHED',
     specificContent: {
       'com.linkedin.ugc.ShareContent': {
@@ -664,8 +792,6 @@ async function publishToLinkedIn(
     }
   }
 
-  // If there's an image, add it (LinkedIn requires image to be uploaded first for proper support)
-  // For MVP, we'll use external image URL (works for most cases)
   if (draft.media_urls?.length && draft.media_type === 'image') {
     postData.specificContent['com.linkedin.ugc.ShareContent'].media = [{
       status: 'READY',
@@ -676,7 +802,7 @@ async function publishToLinkedIn(
   const res = await fetch('https://api.linkedin.com/v2/ugcPosts', {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${access_token}`,
+      'Authorization': `Bearer ${accessToken}`,
       'Content-Type': 'application/json',
       'X-Restli-Protocol-Version': '2.0.0'
     },
@@ -698,4 +824,3 @@ async function publishToLinkedIn(
     postUrl: `https://www.linkedin.com/feed/update/${postId}/`
   }
 }
-

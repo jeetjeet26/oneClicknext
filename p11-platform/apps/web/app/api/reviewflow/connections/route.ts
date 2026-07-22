@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
+import { isManagerRole, loadProfileRole } from '@/utils/reviewflow/access'
+import { redactConnection } from '@/utils/reviewflow/connections'
+import { getProviderCapabilities, getProviderDeepLink } from '@/utils/reviewflow/providers'
 
 async function getAuthenticatedUser() {
   const supabase = await createClient()
@@ -8,7 +11,30 @@ async function getAuthenticatedUser() {
   return { supabase, user, error }
 }
 
-// GET - List platform connections for a property
+// Only sources with a real ingestion path can be connected. Others surface as
+// unsupported instead of pretending to work.
+const SUPPORTED_PLATFORMS = ['google', 'yelp'] as const
+
+function withCapabilities(connection: Record<string, unknown>) {
+  const redacted = redactConnection(connection)
+  const forCapabilities = {
+    platform: String(connection.platform || ''),
+    place_id: (connection.place_id as string | null) ?? null,
+    google_maps_url: (connection.google_maps_url as string | null) ?? null,
+    yelp_business_url: (connection.yelp_business_url as string | null) ?? null,
+    yelp_business_id: (connection.yelp_business_id as string | null) ?? null,
+    access_token: (connection.access_token as string | null) ?? null,
+    account_id: (connection.account_id as string | null) ?? null,
+    is_active: (connection.is_active as boolean | null) ?? null,
+  }
+  return {
+    ...redacted,
+    capabilities: getProviderCapabilities(forCapabilities),
+    deep_link: getProviderDeepLink(forCapabilities.platform, forCapabilities),
+  }
+}
+
+// GET - List platform connections for a property (credentials redacted)
 export async function GET(request: NextRequest) {
   try {
     const { supabase, user, error: authError } = await getAuthenticatedUser()
@@ -42,7 +68,9 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
 
-    return NextResponse.json({ connections: data })
+    return NextResponse.json({
+      connections: (data || []).map((row) => withCapabilities(row as Record<string, unknown>)),
+    })
 
   } catch (error) {
     console.error('Error:', error)
@@ -53,16 +81,16 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST - Create a new platform connection
+// POST - Create or update a platform connection (manager/admin only)
 export async function POST(request: NextRequest) {
   try {
     const { supabase, user, error: authError } = await getAuthenticatedUser()
     const body = await request.json()
-    const { 
-      propertyId, 
-      platform, 
+    const {
+      propertyId,
+      platform,
       // Google fields
-      placeId, 
+      placeId,
       googleMapsUrl,
       apiKey,
       // Yelp fields
@@ -87,16 +115,25 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
+    // Tenant safety first, then role.
     const access = await validatePropertyAccess(user.id, propertyId)
     if (!access.authorized) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
-    // Validate platform
-    const validPlatforms = ['google', 'yelp', 'apartments_com', 'facebook']
-    if (!validPlatforms.includes(platform)) {
+    const role = await loadProfileRole(user.id)
+    if (!isManagerRole(role)) {
       return NextResponse.json(
-        { error: `Invalid platform. Must be one of: ${validPlatforms.join(', ')}` },
+        { error: 'Manager or admin role is required to manage connections' },
+        { status: 403 }
+      )
+    }
+
+    if (!SUPPORTED_PLATFORMS.includes(platform)) {
+      return NextResponse.json(
+        {
+          error: `Platform '${platform}' is not supported for automated ingestion. Supported: ${SUPPORTED_PLATFORMS.join(', ')}. Use CSV/manual import for other sources.`,
+        },
         { status: 400 }
       )
     }
@@ -166,7 +203,10 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: error.message }, { status: 500 })
       }
 
-      return NextResponse.json({ connection: data, updated: true })
+      return NextResponse.json({
+        connection: withCapabilities(data as Record<string, unknown>),
+        updated: true,
+      })
     }
 
     // Create new connection
@@ -185,7 +225,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
 
-    return NextResponse.json({ connection: data })
+    return NextResponse.json({ connection: withCapabilities(data as Record<string, unknown>) })
 
   } catch (error) {
     console.error('Error:', error)
@@ -196,12 +236,12 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// PATCH - Update a platform connection
+// PATCH - Update a platform connection (manager/admin only)
 export async function PATCH(request: NextRequest) {
   try {
     const { supabase, user, error: authError } = await getAuthenticatedUser()
     const body = await request.json()
-    const { 
+    const {
       connectionId,
       placeId,
       googleMapsUrl,
@@ -239,9 +279,18 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: 'Connection not found' }, { status: 404 })
     }
 
+    // Tenant safety first, then role.
     const access = await validatePropertyAccess(user.id, existingConnection.property_id)
     if (!access.authorized) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
+    const role = await loadProfileRole(user.id)
+    if (!isManagerRole(role)) {
+      return NextResponse.json(
+        { error: 'Manager or admin role is required to manage connections' },
+        { status: 403 }
+      )
     }
 
     const updateData: Record<string, unknown> = {
@@ -271,7 +320,7 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
 
-    return NextResponse.json({ connection: data })
+    return NextResponse.json({ connection: withCapabilities(data as Record<string, unknown>) })
 
   } catch (error) {
     console.error('Error:', error)
@@ -282,7 +331,7 @@ export async function PATCH(request: NextRequest) {
   }
 }
 
-// DELETE - Remove a platform connection
+// DELETE - Remove a platform connection (manager/admin only)
 export async function DELETE(request: NextRequest) {
   try {
     const { supabase, user, error: authError } = await getAuthenticatedUser()
@@ -314,9 +363,18 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: 'Connection not found' }, { status: 404 })
     }
 
+    // Tenant safety first, then role.
     const access = await validatePropertyAccess(user.id, existingConnection.property_id)
     if (!access.authorized) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
+    const role = await loadProfileRole(user.id)
+    if (!isManagerRole(role)) {
+      return NextResponse.json(
+        { error: 'Manager or admin role is required to manage connections' },
+        { status: 403 }
+      )
     }
 
     const { error } = await supabase

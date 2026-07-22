@@ -261,8 +261,15 @@ class YelpFusionClient:
             except:
                 review_date = datetime.utcnow().isoformat()
             
+            import hashlib as _hashlib
+            fallback_id = "yelp-{}-{}".format(
+                business_id,
+                _hashlib.sha256(
+                    f"{business_id}|{time_created}|{(review.get('text') or '')[:80]}".encode('utf-8')
+                ).hexdigest()[:16],
+            )
             return YelpReview(
-                platform_review_id=review.get('id', f"yelp-{business_id}-{hash(time_created)}"),
+                platform_review_id=review.get('id') or fallback_id,
                 reviewer_name=user.get('name', 'Anonymous'),
                 reviewer_avatar_url=user.get('image_url'),
                 rating=review.get('rating', 0),

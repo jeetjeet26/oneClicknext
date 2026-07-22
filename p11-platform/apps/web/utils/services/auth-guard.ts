@@ -73,6 +73,58 @@ export async function validatePropertyAccess(
   return { authorized: true, orgId: profile.org_id }
 }
 
+const CONNECTION_MANAGER_ROLES = ['admin', 'manager']
+
+/**
+ * Validate property access AND require an elevated role (admin/manager).
+ * Used for surfaces that manage credentials, connections, and configuration.
+ */
+export async function validatePropertyManagerAccess(
+  userId: string,
+  propertyId: string
+): Promise<AccessResult> {
+  if (!userId || !propertyId) {
+    return { authorized: false, error: 'Missing userId or propertyId' }
+  }
+
+  let supabase: ReturnType<typeof createServiceClient> | Awaited<ReturnType<typeof createClient>>
+  try {
+    supabase = createServiceClient()
+  } catch {
+    supabase = await createClient()
+  }
+
+  const { data: profile, error: profileError } = await supabase
+    .from('profiles')
+    .select('org_id, role')
+    .eq('id', userId)
+    .single()
+
+  if (profileError || !profile?.org_id) {
+    return { authorized: false, error: 'User profile not found or missing org' }
+  }
+
+  if (!CONNECTION_MANAGER_ROLES.includes(profile.role || '')) {
+    return { authorized: false, error: 'Requires admin or manager role' }
+  }
+
+  const { data: property, error: propertyError } = await supabase
+    .from('properties')
+    .select('org_id')
+    .eq('id', propertyId)
+    .single()
+
+  if (propertyError || !property) {
+    return { authorized: false, error: 'Property not found' }
+  }
+
+  if (profile.org_id !== property.org_id) {
+    return { authorized: false, error: 'Forbidden' }
+  }
+
+  return { authorized: true, orgId: profile.org_id }
+}
+
 /**
  * Helper: get the authenticated user + validate property access in one call.
  * Returns user info and access result, or an error response.

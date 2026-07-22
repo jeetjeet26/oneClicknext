@@ -1,4 +1,4 @@
-// schema_migration_version: 20260720143500
+// schema_migration_version: 20260721200000
 export type Json =
   | string
   | number
@@ -588,8 +588,9 @@ export type Database = {
           brand_personality: string | null
           brand_voice: string | null
           call_to_action_patterns: string[] | null
+          capture_id: string | null
           community_events: string[] | null
-          competitor_id: string | null
+          competitor_id: string
           confidence_score: number | null
           created_at: string | null
           highlighted_amenities: string[] | null
@@ -615,8 +616,9 @@ export type Database = {
           brand_personality?: string | null
           brand_voice?: string | null
           call_to_action_patterns?: string[] | null
+          capture_id?: string | null
           community_events?: string[] | null
-          competitor_id?: string | null
+          competitor_id: string
           confidence_score?: number | null
           created_at?: string | null
           highlighted_amenities?: string[] | null
@@ -642,8 +644,9 @@ export type Database = {
           brand_personality?: string | null
           brand_voice?: string | null
           call_to_action_patterns?: string[] | null
+          capture_id?: string | null
           community_events?: string[] | null
-          competitor_id?: string | null
+          competitor_id?: string
           confidence_score?: number | null
           created_at?: string | null
           highlighted_amenities?: string[] | null
@@ -665,6 +668,13 @@ export type Database = {
         }
         Relationships: [
           {
+            foreignKeyName: "competitor_brand_intelligence_capture_id_fkey"
+            columns: ["capture_id"]
+            isOneToOne: false
+            referencedRelation: "market_source_captures"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "competitor_brand_intelligence_competitor_id_fkey"
             columns: ["competitor_id"]
             isOneToOne: true
@@ -675,8 +685,9 @@ export type Database = {
       }
       competitor_content_chunks: {
         Row: {
+          capture_id: string | null
           chunk_index: number | null
-          competitor_id: string | null
+          competitor_id: string
           content: string
           content_hash: string | null
           embedding: string | null
@@ -686,8 +697,9 @@ export type Database = {
           scraped_at: string | null
         }
         Insert: {
+          capture_id?: string | null
           chunk_index?: number | null
-          competitor_id?: string | null
+          competitor_id: string
           content: string
           content_hash?: string | null
           embedding?: string | null
@@ -697,8 +709,9 @@ export type Database = {
           scraped_at?: string | null
         }
         Update: {
+          capture_id?: string | null
           chunk_index?: number | null
-          competitor_id?: string | null
+          competitor_id?: string
           content?: string
           content_hash?: string | null
           embedding?: string | null
@@ -708,6 +721,13 @@ export type Database = {
           scraped_at?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "competitor_content_chunks_capture_id_fkey"
+            columns: ["capture_id"]
+            isOneToOne: false
+            referencedRelation: "market_source_captures"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "competitor_content_chunks_competitor_id_fkey"
             columns: ["competitor_id"]
@@ -872,7 +892,8 @@ export type Database = {
       competitor_price_history: {
         Row: {
           available_count: number | null
-          competitor_unit_id: string | null
+          capture_id: string | null
+          competitor_unit_id: string
           id: string
           recorded_at: string | null
           rent_max: number | null
@@ -881,7 +902,8 @@ export type Database = {
         }
         Insert: {
           available_count?: number | null
-          competitor_unit_id?: string | null
+          capture_id?: string | null
+          competitor_unit_id: string
           id?: string
           recorded_at?: string | null
           rent_max?: number | null
@@ -890,7 +912,8 @@ export type Database = {
         }
         Update: {
           available_count?: number | null
-          competitor_unit_id?: string | null
+          capture_id?: string | null
+          competitor_unit_id?: string
           id?: string
           recorded_at?: string | null
           rent_max?: number | null
@@ -898,6 +921,13 @@ export type Database = {
           source?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "competitor_price_history_capture_id_fkey"
+            columns: ["capture_id"]
+            isOneToOne: false
+            referencedRelation: "market_source_captures"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "competitor_price_history_competitor_unit_id_fkey"
             columns: ["competitor_unit_id"]
@@ -923,7 +953,7 @@ export type Database = {
           job_type: string | null
           processed_competitor_ids: string[] | null
           processed_count: number | null
-          property_id: string | null
+          property_id: string
           started_at: string | null
           status: string | null
           total_batches: number | null
@@ -945,7 +975,7 @@ export type Database = {
           job_type?: string | null
           processed_competitor_ids?: string[] | null
           processed_count?: number | null
-          property_id?: string | null
+          property_id: string
           started_at?: string | null
           status?: string | null
           total_batches?: number | null
@@ -967,7 +997,7 @@ export type Database = {
           job_type?: string | null
           processed_competitor_ids?: string[] | null
           processed_count?: number | null
-          property_id?: string | null
+          property_id?: string
           started_at?: string | null
           status?: string | null
           total_batches?: number | null
@@ -1065,7 +1095,8 @@ export type Database = {
           available_count: number | null
           bathrooms: number | null
           bedrooms: number
-          competitor_id: string | null
+          capture_id: string | null
+          competitor_id: string
           created_at: string | null
           deposit: number | null
           id: string
@@ -1081,7 +1112,8 @@ export type Database = {
           available_count?: number | null
           bathrooms?: number | null
           bedrooms?: number
-          competitor_id?: string | null
+          capture_id?: string | null
+          competitor_id: string
           created_at?: string | null
           deposit?: number | null
           id?: string
@@ -1097,7 +1129,8 @@ export type Database = {
           available_count?: number | null
           bathrooms?: number | null
           bedrooms?: number
-          competitor_id?: string | null
+          capture_id?: string | null
+          competitor_id?: string
           created_at?: string | null
           deposit?: number | null
           id?: string
@@ -1110,6 +1143,13 @@ export type Database = {
           unit_type?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "competitor_units_capture_id_fkey"
+            columns: ["capture_id"]
+            isOneToOne: false
+            referencedRelation: "market_source_captures"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "competitor_units_competitor_id_fkey"
             columns: ["competitor_id"]
@@ -1133,7 +1173,7 @@ export type Database = {
           notes: string | null
           phone: string | null
           photos: Json | null
-          property_id: string | null
+          property_id: string
           property_type: string | null
           units_count: number | null
           updated_at: string | null
@@ -1153,7 +1193,7 @@ export type Database = {
           notes?: string | null
           phone?: string | null
           photos?: Json | null
-          property_id?: string | null
+          property_id: string
           property_type?: string | null
           units_count?: number | null
           updated_at?: string | null
@@ -1173,7 +1213,7 @@ export type Database = {
           notes?: string | null
           phone?: string | null
           photos?: Json | null
-          property_id?: string | null
+          property_id?: string
           property_type?: string | null
           units_count?: number | null
           updated_at?: string | null
@@ -4258,7 +4298,7 @@ export type Database = {
           id: string
           is_dismissed: boolean | null
           is_read: boolean | null
-          property_id: string | null
+          property_id: string
           read_at: string | null
           severity: string | null
           title: string
@@ -4272,7 +4312,7 @@ export type Database = {
           id?: string
           is_dismissed?: boolean | null
           is_read?: boolean | null
-          property_id?: string | null
+          property_id: string
           read_at?: string | null
           severity?: string | null
           title: string
@@ -4286,7 +4326,7 @@ export type Database = {
           id?: string
           is_dismissed?: boolean | null
           is_read?: boolean | null
-          property_id?: string | null
+          property_id?: string
           read_at?: string | null
           severity?: string | null
           title?: string
@@ -4324,6 +4364,7 @@ export type Database = {
       }
       market_insights: {
         Row: {
+          created_at: string | null
           data: Json
           expires_at: string | null
           generated_at: string | null
@@ -4331,9 +4372,11 @@ export type Database = {
           insight_type: string
           period_end: string | null
           period_start: string | null
-          property_id: string | null
+          property_id: string
+          updated_at: string | null
         }
         Insert: {
+          created_at?: string | null
           data: Json
           expires_at?: string | null
           generated_at?: string | null
@@ -4341,9 +4384,11 @@ export type Database = {
           insight_type: string
           period_end?: string | null
           period_start?: string | null
-          property_id?: string | null
+          property_id: string
+          updated_at?: string | null
         }
         Update: {
+          created_at?: string | null
           data?: Json
           expires_at?: string | null
           generated_at?: string | null
@@ -4351,7 +4396,8 @@ export type Database = {
           insight_type?: string
           period_end?: string | null
           period_start?: string | null
-          property_id?: string | null
+          property_id?: string
+          updated_at?: string | null
         }
         Relationships: [
           {
@@ -4370,6 +4416,165 @@ export type Database = {
           },
           {
             foreignKeyName: "market_insights_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+        ]
+      }
+      market_observations: {
+        Row: {
+          capture_id: string | null
+          competitor_id: string | null
+          confidence: number | null
+          created_at: string | null
+          entity_key: string | null
+          id: string
+          observation_type: string
+          observed_at: string
+          property_id: string
+          superseded_by: string | null
+          value: Json
+        }
+        Insert: {
+          capture_id?: string | null
+          competitor_id?: string | null
+          confidence?: number | null
+          created_at?: string | null
+          entity_key?: string | null
+          id?: string
+          observation_type: string
+          observed_at?: string
+          property_id: string
+          superseded_by?: string | null
+          value?: Json
+        }
+        Update: {
+          capture_id?: string | null
+          competitor_id?: string | null
+          confidence?: number | null
+          created_at?: string | null
+          entity_key?: string | null
+          id?: string
+          observation_type?: string
+          observed_at?: string
+          property_id?: string
+          superseded_by?: string | null
+          value?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "market_observations_capture_id_fkey"
+            columns: ["capture_id"]
+            isOneToOne: false
+            referencedRelation: "market_source_captures"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "market_observations_competitor_id_fkey"
+            columns: ["competitor_id"]
+            isOneToOne: false
+            referencedRelation: "competitors"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "market_observations_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "market_observations_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "market_observations_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "market_observations_superseded_by_fkey"
+            columns: ["superseded_by"]
+            isOneToOne: false
+            referencedRelation: "market_observations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      market_source_captures: {
+        Row: {
+          captured_at: string
+          competitor_id: string | null
+          content_hash: string | null
+          created_at: string | null
+          effective_at: string | null
+          error_message: string | null
+          id: string
+          property_id: string
+          raw_ref: string | null
+          source_type: string
+          source_url: string | null
+          status: string
+        }
+        Insert: {
+          captured_at?: string
+          competitor_id?: string | null
+          content_hash?: string | null
+          created_at?: string | null
+          effective_at?: string | null
+          error_message?: string | null
+          id?: string
+          property_id: string
+          raw_ref?: string | null
+          source_type: string
+          source_url?: string | null
+          status?: string
+        }
+        Update: {
+          captured_at?: string
+          competitor_id?: string | null
+          content_hash?: string | null
+          created_at?: string | null
+          effective_at?: string | null
+          error_message?: string | null
+          id?: string
+          property_id?: string
+          raw_ref?: string | null
+          source_type?: string
+          source_url?: string | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "market_source_captures_competitor_id_fkey"
+            columns: ["competitor_id"]
+            isOneToOne: false
+            referencedRelation: "competitors"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "market_source_captures_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "market_source_captures_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "market_source_captures_property_id_fkey"
             columns: ["property_id"]
             isOneToOne: false
             referencedRelation: "vw_property_marketing_setup"
@@ -5516,6 +5721,7 @@ export type Database = {
           comments_count: number | null
           content_draft_id: string | null
           created_at: string | null
+          engagement_metrics: Json | null
           error_message: string | null
           id: string
           impressions: number | null
@@ -5533,6 +5739,7 @@ export type Database = {
           comments_count?: number | null
           content_draft_id?: string | null
           created_at?: string | null
+          engagement_metrics?: Json | null
           error_message?: string | null
           id?: string
           impressions?: number | null
@@ -5550,6 +5757,7 @@ export type Database = {
           comments_count?: number | null
           content_draft_id?: string | null
           created_at?: string | null
+          engagement_metrics?: Json | null
           error_message?: string | null
           id?: string
           impressions?: number | null
@@ -5623,6 +5831,300 @@ export type Database = {
             columns: ["scheduled_report_id"]
             isOneToOne: false
             referencedRelation: "scheduled_reports"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      reputation_case_events: {
+        Row: {
+          actor_label: string | null
+          actor_profile_id: string | null
+          case_id: string
+          created_at: string
+          event_type: string
+          id: string
+          payload: Json
+          property_id: string | null
+        }
+        Insert: {
+          actor_label?: string | null
+          actor_profile_id?: string | null
+          case_id: string
+          created_at?: string
+          event_type: string
+          id?: string
+          payload?: Json
+          property_id?: string | null
+        }
+        Update: {
+          actor_label?: string | null
+          actor_profile_id?: string | null
+          case_id?: string
+          created_at?: string
+          event_type?: string
+          id?: string
+          payload?: Json
+          property_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reputation_case_events_actor_profile_id_fkey"
+            columns: ["actor_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reputation_case_events_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "reputation_cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reputation_case_events_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reputation_case_events_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "reputation_case_events_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+        ]
+      }
+      reputation_cases: {
+        Row: {
+          created_at: string
+          id: string
+          issue_domains: Json
+          journey_stage: string | null
+          last_activity_at: string
+          owner_profile_id: string | null
+          policy_class: string | null
+          priority: string
+          property_id: string
+          remediation_state: string
+          reopened_count: number
+          resolution_notes: string | null
+          resolved_at: string | null
+          review_id: string
+          risk_class: string | null
+          root_cause: string | null
+          sla_due_at: string | null
+          source_ticket_id: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          issue_domains?: Json
+          journey_stage?: string | null
+          last_activity_at?: string
+          owner_profile_id?: string | null
+          policy_class?: string | null
+          priority?: string
+          property_id: string
+          remediation_state?: string
+          reopened_count?: number
+          resolution_notes?: string | null
+          resolved_at?: string | null
+          review_id: string
+          risk_class?: string | null
+          root_cause?: string | null
+          sla_due_at?: string | null
+          source_ticket_id?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          issue_domains?: Json
+          journey_stage?: string | null
+          last_activity_at?: string
+          owner_profile_id?: string | null
+          policy_class?: string | null
+          priority?: string
+          property_id?: string
+          remediation_state?: string
+          reopened_count?: number
+          resolution_notes?: string | null
+          resolved_at?: string | null
+          review_id?: string
+          risk_class?: string | null
+          root_cause?: string | null
+          sla_due_at?: string | null
+          source_ticket_id?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reputation_cases_owner_profile_id_fkey"
+            columns: ["owner_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reputation_cases_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reputation_cases_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "reputation_cases_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "reputation_cases_review_id_fkey"
+            columns: ["review_id"]
+            isOneToOne: true
+            referencedRelation: "reviews"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reputation_cases_source_ticket_id_fkey"
+            columns: ["source_ticket_id"]
+            isOneToOne: false
+            referencedRelation: "review_tickets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      review_analyses: {
+        Row: {
+          analysis_version: number
+          confidence: number | null
+          created_at: string
+          error_message: string | null
+          evidence: Json
+          id: string
+          is_urgent: boolean
+          issue_domains: Json
+          journey_stage: string | null
+          model: string
+          policy_class: string | null
+          policy_flags: Json
+          prompt_version: string
+          property_id: string | null
+          recommended_action: string | null
+          review_id: string
+          risk_class: string | null
+          sentiment: string | null
+          sentiment_score: number | null
+          severity: string | null
+          status: string
+          summary: string | null
+          taxonomy_version: string
+          topics: Json
+          usage: Json | null
+        }
+        Insert: {
+          analysis_version?: number
+          confidence?: number | null
+          created_at?: string
+          error_message?: string | null
+          evidence?: Json
+          id?: string
+          is_urgent?: boolean
+          issue_domains?: Json
+          journey_stage?: string | null
+          model: string
+          policy_class?: string | null
+          policy_flags?: Json
+          prompt_version: string
+          property_id?: string | null
+          recommended_action?: string | null
+          review_id: string
+          risk_class?: string | null
+          sentiment?: string | null
+          sentiment_score?: number | null
+          severity?: string | null
+          status?: string
+          summary?: string | null
+          taxonomy_version: string
+          topics?: Json
+          usage?: Json | null
+        }
+        Update: {
+          analysis_version?: number
+          confidence?: number | null
+          created_at?: string
+          error_message?: string | null
+          evidence?: Json
+          id?: string
+          is_urgent?: boolean
+          issue_domains?: Json
+          journey_stage?: string | null
+          model?: string
+          policy_class?: string | null
+          policy_flags?: Json
+          prompt_version?: string
+          property_id?: string | null
+          recommended_action?: string | null
+          review_id?: string
+          risk_class?: string | null
+          sentiment?: string | null
+          sentiment_score?: number | null
+          severity?: string | null
+          status?: string
+          summary?: string | null
+          taxonomy_version?: string
+          topics?: Json
+          usage?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "review_analyses_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "review_analyses_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "review_analyses_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "review_analyses_review_id_fkey"
+            columns: ["review_id"]
+            isOneToOne: false
+            referencedRelation: "reviews"
             referencedColumns: ["id"]
           },
         ]
@@ -5740,15 +6242,22 @@ export type Database = {
           approved_by: string | null
           created_at: string | null
           created_by: string | null
+          decision_reason: string | null
           generation_prompt: string | null
           id: string
           platform_response_id: string | null
           posted_at: string | null
+          posted_by: string | null
+          posting_mode: string | null
+          provider_notes: string | null
+          provider_post_url: string | null
           rejected_reason: string | null
           response_text: string
           response_type: string | null
           review_id: string | null
+          shared_action_attempt_id: string | null
           status: string | null
+          superseded_at: string | null
           tone: string | null
           updated_at: string | null
         }
@@ -5758,15 +6267,22 @@ export type Database = {
           approved_by?: string | null
           created_at?: string | null
           created_by?: string | null
+          decision_reason?: string | null
           generation_prompt?: string | null
           id?: string
           platform_response_id?: string | null
           posted_at?: string | null
+          posted_by?: string | null
+          posting_mode?: string | null
+          provider_notes?: string | null
+          provider_post_url?: string | null
           rejected_reason?: string | null
           response_text: string
           response_type?: string | null
           review_id?: string | null
+          shared_action_attempt_id?: string | null
           status?: string | null
+          superseded_at?: string | null
           tone?: string | null
           updated_at?: string | null
         }
@@ -5776,15 +6292,22 @@ export type Database = {
           approved_by?: string | null
           created_at?: string | null
           created_by?: string | null
+          decision_reason?: string | null
           generation_prompt?: string | null
           id?: string
           platform_response_id?: string | null
           posted_at?: string | null
+          posted_by?: string | null
+          posting_mode?: string | null
+          provider_notes?: string | null
+          provider_post_url?: string | null
           rejected_reason?: string | null
           response_text?: string
           response_type?: string | null
           review_id?: string | null
+          shared_action_attempt_id?: string | null
           status?: string | null
+          superseded_at?: string | null
           tone?: string | null
           updated_at?: string | null
         }
@@ -5804,10 +6327,24 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "review_responses_posted_by_fkey"
+            columns: ["posted_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "review_responses_review_id_fkey"
             columns: ["review_id"]
             isOneToOne: false
             referencedRelation: "reviews"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "review_responses_shared_action_attempt_id_fkey"
+            columns: ["shared_action_attempt_id"]
+            isOneToOne: false
+            referencedRelation: "shared_action_attempts"
             referencedColumns: ["id"]
           },
         ]
@@ -5916,6 +6453,9 @@ export type Database = {
         Row: {
           apartments_com_connected: boolean | null
           apartments_com_property_url: string | null
+          auto_analyze_reviews: boolean | null
+          auto_generate_responses: boolean | null
+          auto_respond_min_rating: number | null
           auto_respond_positive: boolean | null
           auto_respond_threshold: number | null
           created_at: string | null
@@ -5944,6 +6484,9 @@ export type Database = {
         Insert: {
           apartments_com_connected?: boolean | null
           apartments_com_property_url?: string | null
+          auto_analyze_reviews?: boolean | null
+          auto_generate_responses?: boolean | null
+          auto_respond_min_rating?: number | null
           auto_respond_positive?: boolean | null
           auto_respond_threshold?: number | null
           created_at?: string | null
@@ -5972,6 +6515,9 @@ export type Database = {
         Update: {
           apartments_com_connected?: boolean | null
           apartments_com_property_url?: string | null
+          auto_analyze_reviews?: boolean | null
+          auto_generate_responses?: boolean | null
+          auto_respond_min_rating?: number | null
           auto_respond_positive?: boolean | null
           auto_respond_threshold?: number | null
           created_at?: string | null
@@ -6024,61 +6570,73 @@ export type Database = {
       reviews: {
         Row: {
           auto_respond_eligible: boolean | null
+          content_fingerprint: string | null
           created_at: string | null
           id: string
           is_urgent: boolean | null
+          last_observed_at: string | null
           platform: string
           platform_review_id: string | null
           property_id: string | null
           rating: number | null
           raw_data: Json | null
           response_status: string | null
+          retrieval_method: string | null
           review_date: string | null
           review_text: string | null
           reviewer_avatar_url: string | null
           reviewer_name: string | null
           sentiment: string | null
           sentiment_score: number | null
+          source_completeness: string | null
           topics: Json | null
           updated_at: string | null
         }
         Insert: {
           auto_respond_eligible?: boolean | null
+          content_fingerprint?: string | null
           created_at?: string | null
           id?: string
           is_urgent?: boolean | null
+          last_observed_at?: string | null
           platform: string
           platform_review_id?: string | null
           property_id?: string | null
           rating?: number | null
           raw_data?: Json | null
           response_status?: string | null
+          retrieval_method?: string | null
           review_date?: string | null
           review_text?: string | null
           reviewer_avatar_url?: string | null
           reviewer_name?: string | null
           sentiment?: string | null
           sentiment_score?: number | null
+          source_completeness?: string | null
           topics?: Json | null
           updated_at?: string | null
         }
         Update: {
           auto_respond_eligible?: boolean | null
+          content_fingerprint?: string | null
           created_at?: string | null
           id?: string
           is_urgent?: boolean | null
+          last_observed_at?: string | null
           platform?: string
           platform_review_id?: string | null
           property_id?: string | null
           rating?: number | null
           raw_data?: Json | null
           response_status?: string | null
+          retrieval_method?: string | null
           review_date?: string | null
           review_text?: string | null
           reviewer_avatar_url?: string | null
           reviewer_name?: string | null
           sentiment?: string | null
           sentiment_score?: number | null
+          source_completeness?: string | null
           topics?: Json | null
           updated_at?: string | null
         }
@@ -6286,43 +6844,52 @@ export type Database = {
       }
       scrape_config: {
         Row: {
+          auto_add: boolean | null
           created_at: string | null
           error_count: number | null
           id: string
           is_enabled: boolean | null
           last_error: string | null
           last_run_at: string | null
+          max_competitors: number | null
           next_run_at: string | null
-          property_id: string | null
+          property_id: string
           proxy_enabled: boolean | null
+          radius_miles: number | null
           scrape_frequency: string | null
           sources: Json | null
           updated_at: string | null
         }
         Insert: {
+          auto_add?: boolean | null
           created_at?: string | null
           error_count?: number | null
           id?: string
           is_enabled?: boolean | null
           last_error?: string | null
           last_run_at?: string | null
+          max_competitors?: number | null
           next_run_at?: string | null
-          property_id?: string | null
+          property_id: string
           proxy_enabled?: boolean | null
+          radius_miles?: number | null
           scrape_frequency?: string | null
           sources?: Json | null
           updated_at?: string | null
         }
         Update: {
+          auto_add?: boolean | null
           created_at?: string | null
           error_count?: number | null
           id?: string
           is_enabled?: boolean | null
           last_error?: string | null
           last_run_at?: string | null
+          max_competitors?: number | null
           next_run_at?: string | null
-          property_id?: string | null
+          property_id?: string
           proxy_enabled?: boolean | null
+          radius_miles?: number | null
           scrape_frequency?: string | null
           sources?: Json | null
           updated_at?: string | null
@@ -6726,13 +7293,17 @@ export type Database = {
       shared_jobs: {
         Row: {
           attempt_count: number
+          available_at: string
           context_snapshot_id: string | null
           created_at: string
           dedupe_key: string | null
           domain: string
           error_message: string | null
           finished_at: string | null
+          heartbeat_at: string | null
           id: string
+          lease_expires_at: string | null
+          lease_owner: string | null
           lifecycle_status: string
           max_attempts: number
           org_id: string
@@ -6747,13 +7318,17 @@ export type Database = {
         }
         Insert: {
           attempt_count?: number
+          available_at?: string
           context_snapshot_id?: string | null
           created_at?: string
           dedupe_key?: string | null
           domain: string
           error_message?: string | null
           finished_at?: string | null
+          heartbeat_at?: string | null
           id?: string
+          lease_expires_at?: string | null
+          lease_owner?: string | null
           lifecycle_status?: string
           max_attempts?: number
           org_id: string
@@ -6768,13 +7343,17 @@ export type Database = {
         }
         Update: {
           attempt_count?: number
+          available_at?: string
           context_snapshot_id?: string | null
           created_at?: string
           dedupe_key?: string | null
           domain?: string
           error_message?: string | null
           finished_at?: string | null
+          heartbeat_at?: string | null
           id?: string
+          lease_expires_at?: string | null
+          lease_owner?: string | null
           lifecycle_status?: string
           max_attempts?: number
           org_id?: string
@@ -7015,64 +7594,6 @@ export type Database = {
           },
         ]
       }
-      social_app_credentials: {
-        Row: {
-          app_id: string
-          app_secret: string
-          created_at: string | null
-          id: string
-          is_active: boolean
-          metadata: Json | null
-          platform: string
-          property_id: string
-          updated_at: string | null
-        }
-        Insert: {
-          app_id: string
-          app_secret: string
-          created_at?: string | null
-          id?: string
-          is_active?: boolean
-          metadata?: Json | null
-          platform: string
-          property_id: string
-          updated_at?: string | null
-        }
-        Update: {
-          app_id?: string
-          app_secret?: string
-          created_at?: string | null
-          id?: string
-          is_active?: boolean
-          metadata?: Json | null
-          platform?: string
-          property_id?: string
-          updated_at?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "social_app_credentials_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "properties"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "social_app_credentials_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "vw_import_status"
-            referencedColumns: ["property_id"]
-          },
-          {
-            foreignKeyName: "social_app_credentials_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "vw_property_marketing_setup"
-            referencedColumns: ["property_id"]
-          },
-        ]
-      }
       social_auth_configs: {
         Row: {
           additional_config: Json | null
@@ -7235,6 +7756,640 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "vw_property_marketing_setup"
             referencedColumns: ["property_id"]
+          },
+        ]
+      }
+      social_content_briefs: {
+        Row: {
+          asset_ids: string[]
+          audience: string | null
+          channels: string[]
+          connection_ids: string[]
+          constraints: Json
+          created_at: string
+          created_by: string | null
+          id: string
+          objective: string
+          org_id: string
+          property_id: string
+          scheduling_window: Json
+          source_facts: Json
+          status: string
+          title: string
+          topic: string | null
+          updated_at: string
+        }
+        Insert: {
+          asset_ids?: string[]
+          audience?: string | null
+          channels?: string[]
+          connection_ids?: string[]
+          constraints?: Json
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          objective: string
+          org_id: string
+          property_id: string
+          scheduling_window?: Json
+          source_facts?: Json
+          status?: string
+          title: string
+          topic?: string | null
+          updated_at?: string
+        }
+        Update: {
+          asset_ids?: string[]
+          audience?: string | null
+          channels?: string[]
+          connection_ids?: string[]
+          constraints?: Json
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          objective?: string
+          org_id?: string
+          property_id?: string
+          scheduling_window?: Json
+          source_facts?: Json
+          status?: string
+          title?: string
+          topic?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "social_content_briefs_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "social_content_briefs_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "social_content_briefs_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "social_content_briefs_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "social_content_briefs_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+        ]
+      }
+      social_content_packages: {
+        Row: {
+          brief_id: string | null
+          concept_summary: string | null
+          created_at: string
+          created_by: string | null
+          current_revision_id: string | null
+          id: string
+          org_id: string
+          property_id: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          brief_id?: string | null
+          concept_summary?: string | null
+          created_at?: string
+          created_by?: string | null
+          current_revision_id?: string | null
+          id?: string
+          org_id: string
+          property_id: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          brief_id?: string | null
+          concept_summary?: string | null
+          created_at?: string
+          created_by?: string | null
+          current_revision_id?: string | null
+          id?: string
+          org_id?: string
+          property_id?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "social_content_packages_brief_id_fkey"
+            columns: ["brief_id"]
+            isOneToOne: false
+            referencedRelation: "social_content_briefs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "social_content_packages_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "social_content_packages_current_revision_fkey"
+            columns: ["current_revision_id"]
+            isOneToOne: false
+            referencedRelation: "social_content_revisions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "social_content_packages_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "social_content_packages_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "social_content_packages_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "social_content_packages_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+        ]
+      }
+      social_content_revisions: {
+        Row: {
+          approval_note: string | null
+          approval_status: string
+          approved_at: string | null
+          approved_by: string | null
+          authored_by: string | null
+          authored_by_kind: string
+          claims: Json
+          content: Json
+          content_hash: string | null
+          context_snapshot_id: string | null
+          created_at: string
+          generation_metadata: Json
+          id: string
+          org_id: string
+          package_id: string
+          property_id: string
+          revision_number: number
+        }
+        Insert: {
+          approval_note?: string | null
+          approval_status?: string
+          approved_at?: string | null
+          approved_by?: string | null
+          authored_by?: string | null
+          authored_by_kind?: string
+          claims?: Json
+          content?: Json
+          content_hash?: string | null
+          context_snapshot_id?: string | null
+          created_at?: string
+          generation_metadata?: Json
+          id?: string
+          org_id: string
+          package_id: string
+          property_id: string
+          revision_number: number
+        }
+        Update: {
+          approval_note?: string | null
+          approval_status?: string
+          approved_at?: string | null
+          approved_by?: string | null
+          authored_by?: string | null
+          authored_by_kind?: string
+          claims?: Json
+          content?: Json
+          content_hash?: string | null
+          context_snapshot_id?: string | null
+          created_at?: string
+          generation_metadata?: Json
+          id?: string
+          org_id?: string
+          package_id?: string
+          property_id?: string
+          revision_number?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "social_content_revisions_approved_by_fkey"
+            columns: ["approved_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "social_content_revisions_authored_by_fkey"
+            columns: ["authored_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "social_content_revisions_context_snapshot_id_fkey"
+            columns: ["context_snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "shared_context_snapshots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "social_content_revisions_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "social_content_revisions_package_id_fkey"
+            columns: ["package_id"]
+            isOneToOne: false
+            referencedRelation: "social_content_packages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "social_content_revisions_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "social_content_revisions_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "social_content_revisions_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+        ]
+      }
+      social_content_variants: {
+        Row: {
+          alt_text: string | null
+          asset_ids: string[]
+          call_to_action: string | null
+          caption: string
+          content_format: string
+          created_at: string
+          hashtags: string[]
+          id: string
+          link_url: string | null
+          media_urls: string[]
+          org_id: string
+          platform: string
+          platform_options: Json
+          property_id: string
+          revision_id: string
+          validation: Json
+        }
+        Insert: {
+          alt_text?: string | null
+          asset_ids?: string[]
+          call_to_action?: string | null
+          caption?: string
+          content_format?: string
+          created_at?: string
+          hashtags?: string[]
+          id?: string
+          link_url?: string | null
+          media_urls?: string[]
+          org_id: string
+          platform: string
+          platform_options?: Json
+          property_id: string
+          revision_id: string
+          validation?: Json
+        }
+        Update: {
+          alt_text?: string | null
+          asset_ids?: string[]
+          call_to_action?: string | null
+          caption?: string
+          content_format?: string
+          created_at?: string
+          hashtags?: string[]
+          id?: string
+          link_url?: string | null
+          media_urls?: string[]
+          org_id?: string
+          platform?: string
+          platform_options?: Json
+          property_id?: string
+          revision_id?: string
+          validation?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "social_content_variants_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "social_content_variants_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "social_content_variants_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "social_content_variants_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "social_content_variants_revision_id_fkey"
+            columns: ["revision_id"]
+            isOneToOne: false
+            referencedRelation: "social_content_revisions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      social_publication_attempts: {
+        Row: {
+          attempt_number: number
+          error_classification: string | null
+          error_message: string | null
+          finished_at: string | null
+          id: string
+          idempotency_key: string
+          org_id: string
+          property_id: string
+          provider_post_id: string | null
+          provider_post_url: string | null
+          publication_id: string
+          request_summary: Json
+          response_summary: Json
+          started_at: string
+          status: string
+        }
+        Insert: {
+          attempt_number: number
+          error_classification?: string | null
+          error_message?: string | null
+          finished_at?: string | null
+          id?: string
+          idempotency_key: string
+          org_id: string
+          property_id: string
+          provider_post_id?: string | null
+          provider_post_url?: string | null
+          publication_id: string
+          request_summary?: Json
+          response_summary?: Json
+          started_at?: string
+          status?: string
+        }
+        Update: {
+          attempt_number?: number
+          error_classification?: string | null
+          error_message?: string | null
+          finished_at?: string | null
+          id?: string
+          idempotency_key?: string
+          org_id?: string
+          property_id?: string
+          provider_post_id?: string | null
+          provider_post_url?: string | null
+          publication_id?: string
+          request_summary?: Json
+          response_summary?: Json
+          started_at?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "social_publication_attempts_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "social_publication_attempts_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "social_publication_attempts_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "social_publication_attempts_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "social_publication_attempts_publication_id_fkey"
+            columns: ["publication_id"]
+            isOneToOne: false
+            referencedRelation: "social_publications"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      social_publications: {
+        Row: {
+          attempt_count: number
+          cancelled_at: string | null
+          connection_id: string
+          created_at: string
+          created_by: string | null
+          error_classification: string | null
+          id: string
+          last_error: string | null
+          max_attempts: number
+          org_id: string
+          package_id: string
+          platform: string
+          property_id: string
+          published_at: string | null
+          remote_post_id: string | null
+          remote_post_url: string | null
+          revision_id: string
+          scheduled_for: string
+          shared_job_id: string | null
+          status: string
+          timezone: string
+          updated_at: string
+          variant_id: string
+        }
+        Insert: {
+          attempt_count?: number
+          cancelled_at?: string | null
+          connection_id: string
+          created_at?: string
+          created_by?: string | null
+          error_classification?: string | null
+          id?: string
+          last_error?: string | null
+          max_attempts?: number
+          org_id: string
+          package_id: string
+          platform: string
+          property_id: string
+          published_at?: string | null
+          remote_post_id?: string | null
+          remote_post_url?: string | null
+          revision_id: string
+          scheduled_for: string
+          shared_job_id?: string | null
+          status?: string
+          timezone?: string
+          updated_at?: string
+          variant_id: string
+        }
+        Update: {
+          attempt_count?: number
+          cancelled_at?: string | null
+          connection_id?: string
+          created_at?: string
+          created_by?: string | null
+          error_classification?: string | null
+          id?: string
+          last_error?: string | null
+          max_attempts?: number
+          org_id?: string
+          package_id?: string
+          platform?: string
+          property_id?: string
+          published_at?: string | null
+          remote_post_id?: string | null
+          remote_post_url?: string | null
+          revision_id?: string
+          scheduled_for?: string
+          shared_job_id?: string | null
+          status?: string
+          timezone?: string
+          updated_at?: string
+          variant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "social_publications_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "social_connections"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "social_publications_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "social_publications_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "social_publications_package_id_fkey"
+            columns: ["package_id"]
+            isOneToOne: false
+            referencedRelation: "social_content_packages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "social_publications_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "social_publications_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "social_publications_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "social_publications_revision_id_fkey"
+            columns: ["revision_id"]
+            isOneToOne: false
+            referencedRelation: "social_content_revisions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "social_publications_shared_job_id_fkey"
+            columns: ["shared_job_id"]
+            isOneToOne: false
+            referencedRelation: "shared_jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "social_publications_variant_id_fkey"
+            columns: ["variant_id"]
+            isOneToOne: false
+            referencedRelation: "social_content_variants"
+            referencedColumns: ["id"]
           },
         ]
       }
@@ -7992,6 +9147,45 @@ export type Database = {
         }
         Returns: string
       }
+      claim_shared_jobs: {
+        Args: {
+          p_domain: string
+          p_lease_seconds?: number
+          p_limit?: number
+          p_worker: string
+        }
+        Returns: {
+          attempt_count: number
+          available_at: string
+          context_snapshot_id: string | null
+          created_at: string
+          dedupe_key: string | null
+          domain: string
+          error_message: string | null
+          finished_at: string | null
+          heartbeat_at: string | null
+          id: string
+          lease_expires_at: string | null
+          lease_owner: string | null
+          lifecycle_status: string
+          max_attempts: number
+          org_id: string
+          payload: Json
+          property_id: string | null
+          queued_at: string
+          started_at: string | null
+          status_reason: string | null
+          subject_id: string | null
+          subject_type: string
+          updated_at: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "shared_jobs"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       create_default_onboarding_tasks: {
         Args: { p_property_id: string }
         Returns: undefined
@@ -8026,6 +9220,10 @@ export type Database = {
         }[]
       }
       get_user_org_id: { Args: { user_id: string }; Returns: string }
+      heartbeat_shared_job: {
+        Args: { p_job_id: string; p_lease_seconds?: number; p_worker: string }
+        Returns: boolean
+      }
       link_property_to_google_ads: {
         Args: {
           p_google_customer_id: string

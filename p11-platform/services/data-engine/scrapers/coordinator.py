@@ -49,8 +49,28 @@ from scrapers.apify_apartments import (
     get_apify_scraper
 )
 from utils.supabase_client import get_supabase_client
+from utils.url_safety import is_apartments_com_url, is_safe_public_url
+from utils.evidence import content_hash_for, record_source_capture
 
 logger = logging.getLogger(__name__)
+
+
+def price_change_alert_fields(change: float, change_pct: float) -> Dict[str, str]:
+    """
+    Canonical alert vocabulary for price change alerts.
+
+    Returns alert_type in {'price_drop', 'price_increase'} and severity in
+    {'info', 'warning', 'critical'} — the vocabulary the web API and UI expect.
+    """
+    severity = 'info'
+    if abs(change_pct) >= 10:
+        severity = 'critical'
+    elif abs(change_pct) >= 5:
+        severity = 'warning'
+    return {
+        'alert_type': 'price_increase' if change > 0 else 'price_drop',
+        'severity': severity,
+    }
 
 
 class ScrapingCoordinator:
@@ -329,6 +349,15 @@ class ScrapingCoordinator:
         if not website_url:
             return {'success': False, 'error': 'No website URL for this competitor'}
         
+        if not is_safe_public_url(website_url):
+            return {
+                'success': False,
+                'competitor_id': competitor_id,
+                'scraped': False,
+                'source': 'website',
+                'error': 'Website URL is not a safe public http(s) address'
+            }
+        
         logger.info(f"Refreshing {competitor_name} pricing from website: {website_url}")
         
         try:
@@ -350,10 +379,19 @@ class ScrapingCoordinator:
                     'message': 'Website scraped but no pricing data found'
                 }
             
+            # Record evidence capture so stored prices can cite their source
+            capture_id = self._record_competitor_capture(
+                competitor_id=competitor_id,
+                source_type='website',
+                source_url=website_url,
+                content=knowledge.floor_plans,
+            )
+            
             # Update units with extracted pricing
             units_updated = self._update_units_from_floor_plans(
                 competitor_id, 
-                knowledge.floor_plans
+                knowledge.floor_plans,
+                capture_id=capture_id
             )
             
             # Update competitor last_scraped_at
@@ -382,15 +420,50 @@ class ScrapingCoordinator:
                 'error': str(e)
             }
     
+    def _record_competitor_capture(
+        self,
+        competitor_id: str,
+        source_type: str,
+        source_url: Optional[str],
+        content: Any = None,
+    ) -> Optional[str]:
+        """
+        Record a market_source_captures row for a competitor fetch.
+        Returns the capture id, or None if the competitor/property could not
+        be resolved or the insert failed (ingestion continues either way).
+        """
+        try:
+            competitor_result = self.supabase.table('competitors').select(
+                'property_id'
+            ).eq('id', competitor_id).single().execute()
+            property_id = (competitor_result.data or {}).get('property_id')
+        except Exception:
+            property_id = None
+        
+        if not property_id:
+            return None
+        
+        return record_source_capture(
+            self.supabase,
+            property_id=property_id,
+            competitor_id=competitor_id,
+            source_type=source_type,
+            source_url=source_url,
+            content_hash=content_hash_for(content),
+        )
+    
     def _update_units_from_floor_plans(
         self,
         competitor_id: str,
-        floor_plans: List[FloorPlanUnit]
+        floor_plans: List[FloorPlanUnit],
+        capture_id: Optional[str] = None
     ) -> int:
         """
         Update competitor units from extracted floor plan data.
         
         Creates price change alerts if prices have changed.
+        Stamps `capture_id` onto price history rows and unit updates so
+        stored facts cite the source capture they came from.
         
         Returns:
             Number of units updated/created
@@ -436,6 +509,7 @@ class ScrapingCoordinator:
                     'deposit': fp.deposit,
                     'available_count': fp.available_count,
                     'move_in_specials': fp.move_in_specials,
+                    'capture_id': capture_id,
                     'last_updated_at': datetime.now(timezone.utc).isoformat()
                 }).eq('id', existing['id']).execute()
                 
@@ -446,7 +520,8 @@ class ScrapingCoordinator:
                         'rent_min': fp.rent_min,
                         'rent_max': fp.rent_max,
                         'available_count': fp.available_count,
-                        'source': 'website_scrape'
+                        'source': 'website_scrape',
+                        'capture_id': capture_id
                     }).execute()
                 
                 # Create price alert if significant change
@@ -454,25 +529,19 @@ class ScrapingCoordinator:
                     change = fp.rent_min - old_rent
                     change_pct = (change / old_rent) * 100
                     
-                    severity = 'info'
-                    if abs(change_pct) >= 10:
-                        severity = 'high'
-                    elif abs(change_pct) >= 5:
-                        severity = 'medium'
-                    
-                    alert_type = 'price_increase' if change > 0 else 'price_decrease'
+                    alert_fields = price_change_alert_fields(change, change_pct)
                     
                     self.supabase.table('market_alerts').insert({
                         'property_id': property_id,
                         'competitor_id': competitor_id,
-                        'alert_type': alert_type,
-                        'severity': severity,
+                        'alert_type': alert_fields['alert_type'],
+                        'severity': alert_fields['severity'],
                         'title': f"{competitor_name} {fp.unit_type} price {'increased' if change > 0 else 'decreased'}",
                         'description': f"${old_rent} → ${fp.rent_min} ({change_pct:+.1f}%)",
                         'data': {
                             'unit_type': fp.unit_type,
-                            'old_rent': old_rent,
-                            'new_rent': fp.rent_min,
+                            'old_price': old_rent,
+                            'new_price': fp.rent_min,
                             'change': change,
                             'change_percent': round(change_pct, 1),
                             'source': 'website_scrape'
@@ -494,7 +563,8 @@ class ScrapingCoordinator:
                     'rent_max': fp.rent_max,
                     'deposit': fp.deposit,
                     'available_count': fp.available_count,
-                    'move_in_specials': fp.move_in_specials
+                    'move_in_specials': fp.move_in_specials,
+                    'capture_id': capture_id
                 }
                 
                 result = self.supabase.table('competitor_units').insert(
@@ -508,7 +578,8 @@ class ScrapingCoordinator:
                         'rent_min': fp.rent_min,
                         'rent_max': fp.rent_max,
                         'available_count': fp.available_count,
-                        'source': 'website_scrape'
+                        'source': 'website_scrape',
+                        'capture_id': capture_id
                     }).execute()
                 
                 units_updated += 1
@@ -778,7 +849,7 @@ class ScrapingCoordinator:
         
         return added
     
-    def _add_units(self, competitor_id: str, units: List) -> None:
+    def _add_units(self, competitor_id: str, units: List, capture_id: Optional[str] = None) -> None:
         """Add units and initial price history"""
         for unit in units:
             try:
@@ -793,7 +864,8 @@ class ScrapingCoordinator:
                     'rent_max': unit.rent_max,
                     'deposit': unit.deposit,
                     'available_count': unit.available_count,
-                    'move_in_specials': unit.move_in_specials
+                    'move_in_specials': unit.move_in_specials,
+                    'capture_id': capture_id
                 }
                 
                 result = self.supabase.table('competitor_units').insert(
@@ -807,7 +879,8 @@ class ScrapingCoordinator:
                         'rent_min': unit.rent_min,
                         'rent_max': unit.rent_max,
                         'available_count': unit.available_count,
-                        'source': 'scraper'
+                        'source': 'scraper',
+                        'capture_id': capture_id
                     }).execute()
                     
             except Exception as e:
@@ -816,7 +889,8 @@ class ScrapingCoordinator:
     def _update_competitor(
         self, 
         competitor_id: str, 
-        refreshed: ScrapedProperty
+        refreshed: ScrapedProperty,
+        capture_id: Optional[str] = None
     ) -> None:
         """Update competitor with refreshed data"""
         try:
@@ -854,6 +928,7 @@ class ScrapingCoordinator:
                         'sqft_max': unit.sqft_max,
                         'available_count': unit.available_count,
                         'move_in_specials': unit.move_in_specials,
+                        'capture_id': capture_id,
                         'last_updated_at': datetime.now(timezone.utc).isoformat()
                     }).eq('id', existing['id']).execute()
                     
@@ -864,11 +939,12 @@ class ScrapingCoordinator:
                             'rent_min': unit.rent_min,
                             'rent_max': unit.rent_max,
                             'available_count': unit.available_count,
-                            'source': 'scraper'
+                            'source': 'scraper',
+                            'capture_id': capture_id
                         }).execute()
                 else:
                     # Add new unit
-                    self._add_units(competitor_id, [unit])
+                    self._add_units(competitor_id, [unit], capture_id=capture_id)
                     
         except Exception as e:
             logger.error(f"Error updating competitor {competitor_id}: {e}")
@@ -1166,6 +1242,15 @@ class ScrapingCoordinator:
         if not url:
             return {'success': False, 'error': 'No apartments.com URL for this competitor'}
         
+        if not is_apartments_com_url(url):
+            return {
+                'success': False,
+                'competitor_id': competitor_id,
+                'scraped': False,
+                'source_url': url,
+                'error': 'URL must be an apartments.com listing (hostname apartments.com)'
+            }
+        
         logger.info(f"Refreshing {competitor['name']} from apartments.com via Apify: {url}")
         
         # Check if Apify is configured
@@ -1189,8 +1274,16 @@ class ScrapingCoordinator:
                     'message': 'Apify scrape returned no data. Check the URL and try again.'
                 }
             
+            # Record evidence capture so stored prices can cite their source
+            capture_id = self._record_competitor_capture(
+                competitor_id=competitor_id,
+                source_type='apartments_com',
+                source_url=url,
+                content=property_data.to_dict() if hasattr(property_data, 'to_dict') else property_data,
+            )
+            
             # Update competitor with scraped data
-            self._update_competitor(competitor_id, property_data)
+            self._update_competitor(competitor_id, property_data, capture_id=capture_id)
             
             # Create price change alerts if applicable
             self._check_and_create_price_alerts(competitor_id, property_data)
@@ -1422,6 +1515,12 @@ class ScrapingCoordinator:
         Returns:
             Dict with results
         """
+        if not is_apartments_com_url(apartments_com_url):
+            return {
+                'success': False,
+                'error': 'URL must be an apartments.com listing (hostname apartments.com)'
+            }
+        
         # Verify competitor exists
         competitor_result = self.supabase.table('competitors').select(
             'id, name, ils_listings'
@@ -2019,27 +2118,19 @@ class ScrapingCoordinator:
                         change = unit.rent_min - old_rent
                         change_pct = (change / old_rent) * 100
                         
-                        # Determine severity
-                        severity = 'info'
-                        if abs(change_pct) >= 10:
-                            severity = 'high'
-                        elif abs(change_pct) >= 5:
-                            severity = 'medium'
-                        
-                        # Create alert
-                        alert_type = 'price_increase' if change > 0 else 'price_decrease'
+                        alert_fields = price_change_alert_fields(change, change_pct)
                         
                         self.supabase.table('market_alerts').insert({
                             'property_id': competitor['property_id'],
                             'competitor_id': competitor_id,
-                            'alert_type': alert_type,
-                            'severity': severity,
+                            'alert_type': alert_fields['alert_type'],
+                            'severity': alert_fields['severity'],
                             'title': f"{competitor['name']} {unit.unit_type} price {'increased' if change > 0 else 'decreased'}",
                             'description': f"${old_rent} → ${unit.rent_min} ({change_pct:+.1f}%)",
                             'data': {
                                 'unit_type': unit.unit_type,
-                                'old_rent': old_rent,
-                                'new_rent': unit.rent_min,
+                                'old_price': old_rent,
+                                'new_price': unit.rent_min,
                                 'change': change,
                                 'change_percent': round(change_pct, 1),
                                 'source': 'apartments_com'

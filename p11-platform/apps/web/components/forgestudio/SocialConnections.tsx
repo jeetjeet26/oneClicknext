@@ -15,9 +15,11 @@ import {
   ExternalLink,
   Loader2,
   Clock,
-  Settings
+  Settings,
+  Music2
 } from 'lucide-react'
 import { InstagramSetupModal } from './InstagramSetupModal'
+import { PlatformSetupModal } from './PlatformSetupModal'
 
 interface SocialConnection {
   id: string
@@ -79,17 +81,30 @@ const PLATFORMS = [
     configPlatform: 'linkedin'
   },
   {
-    id: 'twitter',
-    name: 'Twitter/X',
+    id: 'tiktok',
+    name: 'TikTok',
+    icon: Music2,
+    color: 'from-slate-900 to-rose-600',
+    bgColor: 'bg-slate-900',
+    textColor: 'text-slate-900',
+    description: 'Post videos and photo carousels to TikTok',
+    available: true,
+    configPlatform: 'tiktok'
+  },
+  {
+    id: 'x',
+    name: 'X (Twitter)',
     icon: Twitter,
     color: 'from-slate-700 to-slate-900',
     bgColor: 'bg-slate-800',
     textColor: 'text-slate-700',
-    description: 'Tweet to your audience',
-    available: false, // Coming soon
-    configPlatform: 'twitter'
+    description: 'Post to your X audience',
+    available: true,
+    configPlatform: 'x'
   }
 ]
+
+const CONFIG_PLATFORMS = ['meta', 'linkedin', 'tiktok', 'x'] as const
 
 export function SocialConnections({ propertyId }: SocialConnectionsProps) {
   const searchParams = useSearchParams()
@@ -106,8 +121,8 @@ export function SocialConnections({ propertyId }: SocialConnectionsProps) {
     const setupRequired = searchParams.get('setup_required')
     const urlError = searchParams.get('error')
     
-    if (setupRequired === 'instagram') {
-      setShowSetupModal('instagram')
+    if (setupRequired && PLATFORMS.some(p => p.id === setupRequired)) {
+      setShowSetupModal(setupRequired)
     }
     if (urlError) {
       setError(decodeURIComponent(urlError))
@@ -134,17 +149,22 @@ export function SocialConnections({ propertyId }: SocialConnectionsProps) {
   }
 
   const checkPlatformConfigs = async () => {
-    // Check Meta config (used by both Instagram and Facebook)
-    try {
-      const res = await fetch(`/api/forgestudio/social/config?propertyId=${propertyId}&platform=meta`)
-      const data = await res.json()
-      setPlatformConfigs(prev => ({
-        ...prev,
-        meta: { hasConfig: data.hasConfig, configSource: data.configSource }
-      }))
-    } catch (error) {
-      console.error('Error checking platform config:', error)
-    }
+    await Promise.all(
+      CONFIG_PLATFORMS.map(async (configPlatform) => {
+        try {
+          const res = await fetch(
+            `/api/forgestudio/social/config?propertyId=${propertyId}&platform=${configPlatform}`
+          )
+          const data = await res.json()
+          setPlatformConfigs(prev => ({
+            ...prev,
+            [configPlatform]: { hasConfig: data.hasConfig, configSource: data.configSource }
+          }))
+        } catch (error) {
+          console.error(`Error checking ${configPlatform} config:`, error)
+        }
+      })
+    )
   }
 
   const handleConnect = async (platformId: string) => {
@@ -209,10 +229,18 @@ export function SocialConnections({ propertyId }: SocialConnectionsProps) {
 
   return (
     <div className="space-y-6">
-      {/* Setup Modal */}
-      {showSetupModal === 'instagram' && (
+      {/* Setup Modals */}
+      {(showSetupModal === 'instagram' || showSetupModal === 'facebook') && (
         <InstagramSetupModal
           propertyId={propertyId}
+          onClose={() => setShowSetupModal(null)}
+          onConfigured={handleSetupComplete}
+        />
+      )}
+      {(showSetupModal === 'linkedin' || showSetupModal === 'tiktok' || showSetupModal === 'x') && (
+        <PlatformSetupModal
+          propertyId={propertyId}
+          platformId={showSetupModal}
           onClose={() => setShowSetupModal(null)}
           onConfigured={handleSetupComplete}
         />

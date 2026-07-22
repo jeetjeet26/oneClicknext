@@ -1,4 +1,6 @@
 export { ReviewList } from './ReviewList'
+export { TodayQueue } from './TodayQueue'
+export { InsightsPanel } from './InsightsPanel'
 export { ReviewCard } from './ReviewCard'
 export { ReviewDetailDrawer } from './ReviewDetailDrawer'
 export { SentimentBadge } from './SentimentBadge'

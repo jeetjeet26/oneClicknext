@@ -73,7 +73,7 @@ export async function POST(req: NextRequest) {
     const currentData = draftSection.data
 
     // Build regeneration prompt
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' })
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' })
     
     const regenerationPrompt = `
 You previously generated this ${draftSection.name} section:

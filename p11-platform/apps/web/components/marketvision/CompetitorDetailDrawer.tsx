@@ -294,6 +294,7 @@ export function CompetitorDetailDrawer({
   }
 
   const handleExtractPreview = async () => {
+    if (!competitor) return
     if (!pastedContent.trim()) {
       setExtractionStatus({
         loading: false,
@@ -316,6 +317,7 @@ export function CompetitorDetailDrawer({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           content: pastedContent,
+          competitorId: competitor.id,
           action: 'preview'
         })
       })

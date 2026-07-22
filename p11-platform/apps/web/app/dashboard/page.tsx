@@ -24,6 +24,12 @@ type Metric = {
   period: string
 }
 
+type NullableMetric = {
+  value: number | null
+  change: number
+  period: string
+}
+
 type ActivityItem = {
   id: string
   type: 'lead' | 'message_in' | 'message_out'
@@ -35,8 +41,8 @@ type ActivityItem = {
 type OverviewData = {
   metrics: {
     totalLeads: Metric
-    costPerLead: Metric
-    aiResponseRate: Metric
+    costPerLead: NullableMetric
+    aiResponseRate: NullableMetric
     totalSpend: Metric
     conversions: Metric
     documentsCount: number
@@ -46,6 +52,7 @@ type OverviewData = {
     impressions: number
     clicks: number
     ctr: number
+    hasMarketingData: boolean
   }
 }
 
@@ -92,6 +99,8 @@ export default function DashboardPage() {
   useEffect(() => {
     fetchData()
   }, [fetchData])
+
+  const hasMarketingData = data?.summary.hasMarketingData ?? false
 
   const getActivityIcon = (type: ActivityItem['type']) => {
     switch (type) {
@@ -147,28 +156,53 @@ export default function DashboardPage() {
         />
         <MetricCard
           title="Cost Per Lead"
-          value={data?.metrics.costPerLead.value?.toFixed(2) ?? '0.00'}
-          prefix="$"
-          change={data?.metrics.costPerLead.change ? -data.metrics.costPerLead.change : undefined}
+          value={
+            typeof data?.metrics.costPerLead.value === 'number'
+              ? data.metrics.costPerLead.value.toFixed(2)
+              : '—'
+          }
+          prefix={typeof data?.metrics.costPerLead.value === 'number' ? '$' : ''}
+          change={
+            typeof data?.metrics.costPerLead.value === 'number'
+              ? -data.metrics.costPerLead.change
+              : undefined
+          }
           changeLabel="vs previous 30d"
+          subtitle={
+            hasMarketingData
+              ? 'No leads this period'
+              : 'No ad platform data connected'
+          }
           icon={<DollarSign size={20} />}
           loading={loading}
         />
         <MetricCard
           title="Total Spend (30d)"
-          value={data?.metrics.totalSpend.value?.toFixed(0) ?? '0'}
-          prefix="$"
-          change={data?.metrics.totalSpend.change}
+          value={
+            hasMarketingData ? data?.metrics.totalSpend.value?.toFixed(0) ?? '0' : '—'
+          }
+          prefix={hasMarketingData ? '$' : ''}
+          change={hasMarketingData ? data?.metrics.totalSpend.change : undefined}
           changeLabel="vs previous 30d"
+          subtitle="No ad platform data connected"
           icon={<TrendingUp size={20} />}
           loading={loading}
         />
         <MetricCard
-          title="AI Response Rate"
-          value={data?.metrics.aiResponseRate.value?.toFixed(1) ?? '100.0'}
-          suffix="%"
-          change={data?.metrics.aiResponseRate.change}
-          changeLabel="vs previous 30d"
+          title="AI Response Rate (30d)"
+          value={
+            typeof data?.metrics.aiResponseRate.value === 'number'
+              ? data.metrics.aiResponseRate.value.toFixed(1)
+              : '—'
+          }
+          suffix={typeof data?.metrics.aiResponseRate.value === 'number' ? '%' : ''}
+          change={
+            typeof data?.metrics.aiResponseRate.value === 'number'
+              ? data.metrics.aiResponseRate.change
+              : undefined
+          }
+          changeLabel="pts vs previous 30d"
+          subtitle="No visitor messages this period"
           icon={<Bot size={20} />}
           loading={loading}
         />
@@ -244,6 +278,11 @@ export default function DashboardPage() {
           {/* Performance Summary */}
           <div className="bg-white rounded-xl border border-slate-200 p-6">
             <h3 className="text-lg font-semibold text-slate-900 mb-4">Performance</h3>
+            {!loading && !hasMarketingData && (
+              <p className="text-xs text-slate-400 mb-4">
+                Connect an ad platform to see impressions, clicks, and CTR for this community.
+              </p>
+            )}
             <div className="space-y-4">
               <div>
                 <div className="flex justify-between text-sm mb-1.5">
@@ -255,7 +294,7 @@ export default function DashboardPage() {
                 <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
                   <div 
                     className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full transition-all duration-500"
-                    style={{ width: loading ? '0%' : '100%' }}
+                    style={{ width: loading || !data?.summary.impressions ? '0%' : '100%' }}
                   />
                 </div>
               </div>

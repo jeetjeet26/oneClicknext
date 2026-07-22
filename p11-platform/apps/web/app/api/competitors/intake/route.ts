@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { createClient } from '@/utils/supabase/server'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
-import { getDataEngineUrl } from '@/utils/services/runtime-config'
+import { getDataEngineHeaders, getDataEngineUrl } from '@/utils/services/runtime-config'
 import {
   parseCompetitorIntakeText,
   type ParsedCompetitorSeed,
@@ -53,11 +53,14 @@ async function triggerEnrichment(args: {
   try {
     const response = await fetch(`${getDataEngineUrl()}/competitor-intake/enrich`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getDataEngineHeaders(),
       body: JSON.stringify({
         batch_id: args.batchId,
         property_id: args.propertyId,
       }),
+      // The dispatch call should return fast; the enrichment itself runs in the
+      // background. Bound the wait so a hung data engine cannot stall intake.
+      signal: AbortSignal.timeout(15_000),
     })
 
     if (!response.ok) {
@@ -70,6 +73,12 @@ async function triggerEnrichment(args: {
 
     return { started: true }
   } catch (error) {
+    if (error instanceof DOMException && error.name === 'TimeoutError') {
+      return {
+        started: false,
+        warning: 'Data engine did not respond within 15s; enrichment was not confirmed',
+      }
+    }
     return {
       started: false,
       warning: error instanceof Error ? error.message : 'Data engine is not reachable',

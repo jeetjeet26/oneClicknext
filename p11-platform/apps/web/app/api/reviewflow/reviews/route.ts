@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { createServiceClient } from '@/utils/supabase/admin'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
+import { reviewContentFingerprint } from '@/utils/reviewflow/ingestion'
+import { ensureCaseForReview } from '@/utils/reviewflow/cases'
 
 export async function GET(request: NextRequest) {
   try {
@@ -8,6 +11,7 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url)
     
     const propertyId = searchParams.get('propertyId')
+    const reviewId = searchParams.get('reviewId')
     const platform = searchParams.get('platform')
     const sentiment = searchParams.get('sentiment')
     const status = searchParams.get('status')
@@ -37,6 +41,11 @@ export async function GET(request: NextRequest) {
           response_type,
           status,
           tone,
+          decision_reason,
+          superseded_at,
+          posting_mode,
+          platform_response_id,
+          provider_post_url,
           approved_at,
           posted_at,
           created_at
@@ -49,12 +58,27 @@ export async function GET(request: NextRequest) {
           resolution_notes,
           resolved_at,
           created_at
+        ),
+        reputation_cases (
+          id,
+          status,
+          priority,
+          risk_class,
+          policy_class,
+          journey_stage,
+          owner_profile_id,
+          sla_due_at,
+          remediation_state
         )
-      `)
+      `, { count: 'exact' })
       .eq('property_id', propertyId)
       .order('created_at', { ascending: false })
+      .order('created_at', { referencedTable: 'review_responses', ascending: false })
       .range(offset, offset + limit - 1)
 
+    if (reviewId) {
+      query = query.eq('id', reviewId)
+    }
     if (platform) {
       query = query.eq('platform', platform)
     }
@@ -62,7 +86,11 @@ export async function GET(request: NextRequest) {
       query = query.eq('sentiment', sentiment)
     }
     if (status) {
-      query = query.eq('response_status', status)
+      // Supports comma-separated status lists (e.g. "pending,draft_ready").
+      const statuses = status.split(',').map((value) => value.trim()).filter(Boolean)
+      query = statuses.length > 1
+        ? query.in('response_status', statuses)
+        : query.eq('response_status', statuses[0] || status)
     }
 
     const { data, error, count } = await query
@@ -112,12 +140,59 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
+    const nowIso = new Date().toISOString()
+    const fingerprint = reviewContentFingerprint({
+      platform,
+      reviewerName: reviewerName || null,
+      reviewDate: reviewDate || null,
+      reviewText,
+      rating: typeof rating === 'number' ? rating : null,
+    })
+    const stableId = platformReviewId || `fp-${fingerprint.slice(0, 24)}`
+
+    // Manual create is replay-safe: existing reviews are content-updated
+    // without regressing their workflow state.
+    const { data: existing } = await supabase
+      .from('reviews')
+      .select('id')
+      .eq('property_id', propertyId)
+      .eq('platform', platform)
+      .eq('platform_review_id', stableId)
+      .maybeSingle()
+
+    if (existing) {
+      const { data, error } = await supabase
+        .from('reviews')
+        .update({
+          reviewer_name: reviewerName,
+          reviewer_avatar_url: reviewerAvatarUrl,
+          rating,
+          review_text: reviewText,
+          review_date: reviewDate,
+          raw_data: rawData,
+          content_fingerprint: fingerprint,
+          last_observed_at: nowIso,
+          updated_at: nowIso
+          // response_status intentionally untouched.
+        })
+        .eq('id', existing.id)
+        .select()
+        .single()
+
+      if (error) {
+        console.error('Error updating review:', error)
+        return NextResponse.json({ error: error.message }, { status: 500 })
+      }
+
+      return NextResponse.json({ review: data, updated: true })
+    }
+
     const { data, error } = await supabase
       .from('reviews')
-      .upsert({
+      .insert({
         property_id: propertyId,
         platform,
-        platform_review_id: platformReviewId,
+        platform_review_id: stableId,
         reviewer_name: reviewerName,
         reviewer_avatar_url: reviewerAvatarUrl,
         rating,
@@ -125,9 +200,10 @@ export async function POST(request: NextRequest) {
         review_date: reviewDate,
         raw_data: rawData,
         response_status: 'pending',
-        updated_at: new Date().toISOString()
-      }, {
-        onConflict: 'property_id,platform,platform_review_id'
+        retrieval_method: 'manual',
+        content_fingerprint: fingerprint,
+        last_observed_at: nowIso,
+        updated_at: nowIso
       })
       .select()
       .single()
@@ -135,6 +211,13 @@ export async function POST(request: NextRequest) {
     if (error) {
       console.error('Error creating review:', error)
       return NextResponse.json({ error: error.message }, { status: 500 })
+    }
+
+    if (data) {
+      await ensureCaseForReview(createServiceClient(), {
+        id: data.id,
+        property_id: data.property_id,
+      })
     }
 
     return NextResponse.json({ review: data })

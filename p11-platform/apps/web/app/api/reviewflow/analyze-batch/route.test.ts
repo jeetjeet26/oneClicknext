@@ -6,6 +6,8 @@ const createClientMock = vi.fn()
 const createServiceClientMock = vi.fn()
 const validatePropertyAccessMock = vi.fn()
 const openAiCreateMock = vi.fn()
+const runBatchAnalysisMock = vi.fn()
+const runSharedExecutorJobMock = vi.fn()
 
 vi.mock('@/utils/supabase/server', () => ({
   createClient: createClientMock,
@@ -19,6 +21,14 @@ vi.mock('@/utils/services/auth-guard', () => ({
   validatePropertyAccess: validatePropertyAccessMock,
 }))
 
+vi.mock('@/utils/reviewflow/analysis-pipeline', () => ({
+  runBatchAnalysis: runBatchAnalysisMock,
+}))
+
+vi.mock('@/utils/services/shared-executor', () => ({
+  runSharedExecutorJob: runSharedExecutorJobMock,
+}))
+
 vi.mock('openai', () => ({
   default: class {
     chat = {
@@ -28,6 +38,34 @@ vi.mock('openai', () => ({
     }
   },
 }))
+
+function serviceClientFor(reviews: unknown[]) {
+  return {
+    from: vi.fn((table: string) => {
+      if (table === 'properties') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({ data: { org_id: 'org-1' }, error: null }),
+            })),
+          })),
+        }
+      }
+      if (table === 'reviews') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              is: vi.fn(() => ({
+                limit: vi.fn().mockResolvedValue({ data: reviews, error: null }),
+              })),
+            })),
+          })),
+        }
+      }
+      throw new Error(`Unexpected table ${table}`)
+    }),
+  }
+}
 
 describe('POST /api/reviewflow/analyze-batch', () => {
   beforeEach(() => {
@@ -96,26 +134,7 @@ describe('POST /api/reviewflow/analyze-batch', () => {
       authorized: true,
       orgId: 'org-1',
     })
-    createServiceClientMock.mockReturnValue({
-      from: vi.fn((table: string) => {
-        if (table === 'reviews') {
-          return {
-            select: vi.fn(() => ({
-              eq: vi.fn(() => ({
-                is: vi.fn(() => ({
-                  limit: vi.fn().mockResolvedValue({
-                    data: [],
-                    error: null,
-                  }),
-                })),
-              })),
-            })),
-          }
-        }
-
-        throw new Error(`Unexpected table ${table}`)
-      }),
-    })
+    createServiceClientMock.mockReturnValue(serviceClientFor([]))
 
     const { POST } = await import('./route')
     const response = await POST(buildRequest())
@@ -126,6 +145,56 @@ describe('POST /api/reviewflow/analyze-batch', () => {
       analyzed: 0,
       message: 'No unanalyzed reviews found',
     })
+    // No durable job is created for a no-op.
+    expect(runSharedExecutorJobMock).not.toHaveBeenCalled()
+  })
+
+  it('runs analysis inside a durable shared job', async () => {
+    authGetUserMock.mockResolvedValue({
+      data: { user: { id: 'user-1' } },
+      error: null,
+    })
+    validatePropertyAccessMock.mockResolvedValue({
+      authorized: true,
+      orgId: 'org-1',
+    })
+    createServiceClientMock.mockReturnValue(
+      serviceClientFor([
+        {
+          id: 'review-1',
+          review_text: 'Great place',
+          rating: 5,
+          property_id: 'property-1',
+          reviewer_name: 'Alex',
+          platform: 'google',
+        },
+      ])
+    )
+    runBatchAnalysisMock.mockResolvedValue({
+      analyzed: 1,
+      skipped: 0,
+      manualReviewRequired: 0,
+      results: [{ reviewId: 'review-1', status: 'completed' }],
+    })
+    runSharedExecutorJobMock.mockImplementation(async ({ execute }: { execute: () => Promise<unknown> }) => execute())
+
+    const { POST } = await import('./route')
+    const response = await POST(buildRequest())
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      success: true,
+      analyzed: 1,
+      total: 1,
+    })
+    expect(runSharedExecutorJobMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orgId: 'org-1',
+        propertyId: 'property-1',
+        domain: 'reviewflow.analyze',
+        requestedBy: 'user-1',
+      })
+    )
   })
 
   it('returns 503 when all review analysis attempts require manual review', async () => {
@@ -137,38 +206,25 @@ describe('POST /api/reviewflow/analyze-batch', () => {
       authorized: true,
       orgId: 'org-1',
     })
-    openAiCreateMock.mockRejectedValue(new Error('provider down'))
-
-    const reviewLimitMock = vi.fn().mockResolvedValue({
-      data: [
+    createServiceClientMock.mockReturnValue(
+      serviceClientFor([
         {
           id: 'review-1',
           review_text: 'Great place',
           rating: 5,
           property_id: 'property-1',
           reviewer_name: 'Alex',
+          platform: 'google',
         },
-      ],
-      error: null,
+      ])
+    )
+    runBatchAnalysisMock.mockResolvedValue({
+      analyzed: 0,
+      skipped: 0,
+      manualReviewRequired: 1,
+      results: [{ reviewId: 'review-1', status: 'manual_review_required' }],
     })
-
-    createServiceClientMock.mockReturnValue({
-      from: vi.fn((table: string) => {
-        if (table === 'reviews') {
-          return {
-            select: vi.fn(() => ({
-              eq: vi.fn(() => ({
-                is: vi.fn(() => ({
-                  limit: reviewLimitMock,
-                })),
-              })),
-            })),
-          }
-        }
-
-        throw new Error(`Unexpected table ${table}`)
-      }),
-    })
+    runSharedExecutorJobMock.mockImplementation(async ({ execute }: { execute: () => Promise<unknown> }) => execute())
 
     const { POST } = await import('./route')
     const response = await POST(buildRequest())

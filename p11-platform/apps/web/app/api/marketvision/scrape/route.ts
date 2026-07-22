@@ -7,10 +7,55 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
-import { getDataEngineUrl } from '@/utils/services/runtime-config'
+import { getDataEngineHeaders, getDataEngineUrl } from '@/utils/services/runtime-config'
+import { isSafePublicHttpUrl, isApartmentsComUrl } from '@/utils/services/url-safety'
+import {
+  MarketVisionActiveRunError,
+  MarketVisionRunFailedError,
+  runMarketVisionIngestionJob,
+  type MarketVisionRunType,
+} from '@/utils/services/marketvision-jobs'
 
 // Data engine service URL (Python FastAPI)
 const DATA_ENGINE_URL = getDataEngineUrl()
+
+// Batch ingestion actions run under the shared durable-job ledger.
+const DURABLE_ACTIONS: Record<string, MarketVisionRunType> = {
+  discover: 'discovery',
+  'discover-apartments': 'discovery',
+  refresh: 'observation_refresh',
+  'refresh-website': 'observation_refresh',
+  'refresh-apartments': 'observation_refresh',
+}
+
+/** Derive per-source success/failure counts from data-engine batch results. */
+function deriveRunCounts(result: Record<string, unknown>): {
+  total: number
+  succeeded: number
+  failed: number
+} {
+  const num = (value: unknown): number => (typeof value === 'number' ? value : 0)
+
+  if ('refreshed' in result || 'failed' in result) {
+    const succeeded = num(result.refreshed)
+    const failed = num(result.failed)
+    return { total: succeeded + failed, succeeded, failed }
+  }
+  if ('updated_count' in result || 'error_count' in result) {
+    const succeeded = num(result.updated_count)
+    const failed = num(result.error_count)
+    return { total: num(result.total_competitors) || succeeded + failed, succeeded, failed }
+  }
+  // Discovery-style results have no per-source counts.
+  return { total: 0, succeeded: 0, failed: 0 }
+}
+
+class DataEngineResponseError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'DataEngineResponseError'
+  }
+}
 
 // POST: Trigger scraping action
 export async function POST(req: NextRequest) {
@@ -45,6 +90,20 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Property not found' }, { status: 404 })
     }
 
+    // Competitor-scoped actions must reference a competitor in this property
+    if (competitorId) {
+      const { data: competitor } = await supabase
+        .from('competitors')
+        .select('id, property_id')
+        .eq('id', competitorId)
+        .eq('property_id', propertyId)
+        .maybeSingle()
+
+      if (!competitor) {
+        return NextResponse.json({ error: 'Competitor not found for this property' }, { status: 404 })
+      }
+    }
+
     let endpoint: string
     let requestBody: Record<string, unknown>
 
@@ -62,7 +121,7 @@ export async function POST(req: NextRequest) {
       case 'refresh':
         // Refresh pricing - PRIORITIZES competitor websites over apartments.com
         // This is the main "Refresh Pricing" action
-        endpoint = '/scrape/refresh-pricing'
+        endpoint = '/scraper/refresh-pricing'
         requestBody = {
           property_id: propertyId,
           prefer_website: true  // Prefer website over apartments.com
@@ -71,7 +130,7 @@ export async function POST(req: NextRequest) {
 
       case 'refresh-website':
         // Refresh pricing from competitor websites ONLY (no apartments.com fallback)
-        endpoint = '/scrape/website/batch'
+        endpoint = '/scraper/website/batch'
         requestBody = {
           property_id: propertyId,
           competitor_ids: competitorId ? [competitorId] : undefined
@@ -83,8 +142,12 @@ export async function POST(req: NextRequest) {
         if (!competitorId) {
           return NextResponse.json({ error: 'competitorId required for single refresh' }, { status: 400 })
         }
-        endpoint = '/scrape/website/refresh'
+        if (url && !isSafePublicHttpUrl(url)) {
+          return NextResponse.json({ error: 'url must be a public http(s) address' }, { status: 400 })
+        }
+        endpoint = '/scraper/website/refresh'
         requestBody = {
+          property_id: propertyId,
           competitor_id: competitorId,
           url: url || undefined  // Uses competitor's website_url if not provided
         }
@@ -92,7 +155,7 @@ export async function POST(req: NextRequest) {
 
       case 'refresh-apartments':
         // Dedicated apartments.com refresh only (fallback option)
-        endpoint = '/scrape/apartments-com/batch'
+        endpoint = '/scraper/apartments-com/batch'
         requestBody = {
           property_id: propertyId,
           competitor_ids: competitorId ? [competitorId] : undefined
@@ -104,8 +167,12 @@ export async function POST(req: NextRequest) {
         if (!competitorId) {
           return NextResponse.json({ error: 'competitorId required for single refresh' }, { status: 400 })
         }
-        endpoint = '/scrape/apartments-com/refresh'
+        if (url && !isApartmentsComUrl(url)) {
+          return NextResponse.json({ error: 'url must be an apartments.com listing' }, { status: 400 })
+        }
+        endpoint = '/scraper/apartments-com/refresh'
         requestBody = {
+          property_id: propertyId,
           competitor_id: competitorId,
           url: url || undefined
         }
@@ -123,7 +190,7 @@ export async function POST(req: NextRequest) {
           }, { status: 400 })
         }
         
-        endpoint = '/scrape/apartments-com/discover'
+        endpoint = '/scraper/apartments-com/discover'
         requestBody = {
           property_id: propertyId,
           city,
@@ -141,28 +208,98 @@ export async function POST(req: NextRequest) {
 
     // Call data-engine service with extended timeout for scraping operations
     // Scraping multiple competitors can take several minutes
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 10 * 60 * 1000) // 10 minutes
-    
-    const response = await fetch(`${DATA_ENGINE_URL}${endpoint}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody),
-      signal: controller.signal
-    })
-    
-    clearTimeout(timeoutId)
+    const callDataEngine = async (): Promise<Record<string, unknown>> => {
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 10 * 60 * 1000) // 10 minutes
 
-    if (!response.ok) {
-      const errorText = await response.text()
-      console.error('Data engine error:', errorText)
-      return NextResponse.json({ 
-        error: 'Scraping service error',
-        details: errorText
-      }, { status: 502 })
+      try {
+        const response = await fetch(`${DATA_ENGINE_URL}${endpoint}`, {
+          method: 'POST',
+          headers: getDataEngineHeaders(),
+          body: JSON.stringify(requestBody),
+          signal: controller.signal
+        })
+
+        if (!response.ok) {
+          const errorText = await response.text()
+          console.error('Data engine error:', errorText)
+          throw new DataEngineResponseError(errorText)
+        }
+
+        return await response.json()
+      } finally {
+        clearTimeout(timeoutId)
+      }
     }
 
-    const result = await response.json()
+    const durableRunType = DURABLE_ACTIONS[action]
+    let result: Record<string, unknown>
+    let sharedJobId: string | null = null
+    let runResult: 'succeeded' | 'partial' | null = null
+
+    if (durableRunType && !property.org_id) {
+      return NextResponse.json({ error: 'Property is missing org context' }, { status: 409 })
+    }
+
+    if (durableRunType && property.org_id) {
+      // Batch ingestion runs are ledgered as durable shared jobs with
+      // dedup against concurrent runs and visible partial outcomes.
+      try {
+        const run = await runMarketVisionIngestionJob<Record<string, unknown>>({
+          orgId: property.org_id,
+          propertyId,
+          runType: durableRunType,
+          payload: { action, request: requestBody },
+          requestedBy: user.id,
+          execute: async () => {
+            const data = await callDataEngine()
+            const counts = deriveRunCounts(data)
+            return { ...counts, data }
+          },
+        })
+        result = run.outcome.data
+        sharedJobId = run.sharedJobId
+        runResult = run.result
+      } catch (error) {
+        if (error instanceof MarketVisionActiveRunError) {
+          return NextResponse.json({
+            error: error.message,
+            sharedJobId: error.sharedJobId,
+            status: error.lifecycleStatus
+          }, { status: 409 })
+        }
+        if (error instanceof MarketVisionRunFailedError) {
+          return NextResponse.json({
+            error: error.message,
+            result: error.outcome.data,
+            counts: {
+              total: error.outcome.total,
+              succeeded: error.outcome.succeeded,
+              failed: error.outcome.failed
+            }
+          }, { status: 502 })
+        }
+        if (error instanceof DataEngineResponseError) {
+          return NextResponse.json({
+            error: 'Scraping service error',
+            details: error.message
+          }, { status: 502 })
+        }
+        throw error
+      }
+    } else {
+      try {
+        result = await callDataEngine()
+      } catch (error) {
+        if (error instanceof DataEngineResponseError) {
+          return NextResponse.json({
+            error: 'Scraping service error',
+            details: error.message
+          }, { status: 502 })
+        }
+        throw error
+      }
+    }
 
     // Update scrape config with last run time
     if (['discover', 'refresh', 'refresh-apartments', 'discover-apartments'].includes(action)) {
@@ -179,7 +316,9 @@ export async function POST(req: NextRequest) {
       success: true,
       action,
       propertyId,
-      result
+      result,
+      ...(sharedJobId ? { sharedJobId } : {}),
+      ...(runResult ? { runResult } : {})
     })
   } catch (error) {
     console.error('MarketVision Scrape Error:', error)
@@ -221,7 +360,7 @@ export async function GET(req: NextRequest) {
     try {
       const response = await fetch(`${DATA_ENGINE_URL}/scraper/status`, {
         method: 'GET',
-        headers: { 'Content-Type': 'application/json' }
+        headers: getDataEngineHeaders()
       })
       if (response.ok) {
         serviceStatus = await response.json()

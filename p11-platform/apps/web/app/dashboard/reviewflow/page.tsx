@@ -8,7 +8,9 @@ import {
   TicketList, 
   ReviewFlowConfig,
   ReviewDetailDrawer,
-  ImportReviewsModal
+  ImportReviewsModal,
+  TodayQueue,
+  InsightsPanel
 } from '@/components/reviewflow'
 import {
   MessageSquare,
@@ -19,7 +21,8 @@ import {
   RefreshCw,
   Loader2,
   Star,
-  Plus
+  Plus,
+  Lightbulb
 } from 'lucide-react'
 
 interface Review {
@@ -52,7 +55,7 @@ interface Review {
   }>
 }
 
-type TabId = 'overview' | 'reviews' | 'tickets' | 'settings'
+type TabId = 'overview' | 'reviews' | 'insights' | 'tickets' | 'settings'
 
 export default function ReviewFlowPage() {
   const { currentProperty } = usePropertyContext()
@@ -92,8 +95,9 @@ export default function ReviewFlowPage() {
   }
 
   const tabs = [
-    { id: 'overview' as TabId, label: 'Overview', icon: TrendingUp },
+    { id: 'overview' as TabId, label: 'Today', icon: TrendingUp },
     { id: 'reviews' as TabId, label: 'Reviews', icon: MessageSquare },
+    { id: 'insights' as TabId, label: 'Insights', icon: Lightbulb },
     { id: 'tickets' as TabId, label: 'Tickets', icon: AlertTriangle },
     { id: 'settings' as TabId, label: 'Settings', icon: Settings }
   ]
@@ -162,58 +166,19 @@ export default function ReviewFlowPage() {
       {/* Tab Content */}
       {activeTab === 'overview' && (
         <div className="space-y-6">
+          {/* Priority-first Today queue */}
+          <TodayQueue
+            propertyId={currentProperty.id}
+            refreshKey={refreshKey}
+            onSelectReview={(review) => setSelectedReview(review as unknown as Review)}
+            onGenerateResponse={handleGenerateResponse}
+          />
+
           {/* Stats */}
           <ReviewStats 
             key={`stats-${refreshKey}`}
             propertyId={currentProperty.id} 
           />
-
-          {/* Quick Actions Grid */}
-          <div className="grid grid-cols-2 gap-6">
-            {/* Pending Responses */}
-            <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="font-semibold text-slate-900 dark:text-white flex items-center gap-2">
-                  <Sparkles className="w-5 h-5 text-amber-500" />
-                  Pending Responses
-                </h3>
-                <button
-                  onClick={() => setActiveTab('reviews')}
-                  className="text-sm text-rose-600 hover:text-rose-700"
-                >
-                  View all →
-                </button>
-              </div>
-              <ReviewList
-                key={`pending-${refreshKey}`}
-                propertyId={currentProperty.id}
-                onSelectReview={(review) => setSelectedReview(review as Review)}
-                onGenerateResponse={handleGenerateResponse}
-              />
-            </div>
-
-            {/* Open Tickets */}
-            <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="font-semibold text-slate-900 dark:text-white flex items-center gap-2">
-                  <AlertTriangle className="w-5 h-5 text-red-500" />
-                  Open Tickets
-                </h3>
-                <button
-                  onClick={() => setActiveTab('tickets')}
-                  className="text-sm text-rose-600 hover:text-rose-700"
-                >
-                  View all →
-                </button>
-              </div>
-              <TicketList
-                key={`tickets-compact-${refreshKey}`}
-                propertyId={currentProperty.id}
-                compact
-                limit={5}
-              />
-            </div>
-          </div>
         </div>
       )}
 
@@ -223,6 +188,13 @@ export default function ReviewFlowPage() {
           propertyId={currentProperty.id}
           onSelectReview={(review) => setSelectedReview(review as Review)}
           onGenerateResponse={handleGenerateResponse}
+        />
+      )}
+
+      {activeTab === 'insights' && (
+        <InsightsPanel
+          propertyId={currentProperty.id}
+          refreshKey={refreshKey}
         />
       )}
 

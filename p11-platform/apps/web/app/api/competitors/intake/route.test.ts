@@ -27,6 +27,10 @@ vi.mock('@/utils/services/auth-guard', () => ({
 
 vi.mock('@/utils/services/runtime-config', () => ({
   getDataEngineUrl: () => 'http://data-engine.test',
+  getDataEngineHeaders: () => ({
+    'Content-Type': 'application/json',
+    'X-API-Key': 'engine-key',
+  }),
 }))
 
 describe('competitor intake route', () => {
@@ -149,7 +153,12 @@ describe('competitor intake route', () => {
         canonical_truth: false,
       },
     })
-    expect(global.fetch).toHaveBeenCalledWith('http://data-engine.test/competitor-intake/enrich', expect.any(Object))
+    expect(global.fetch).toHaveBeenCalledWith(
+      'http://data-engine.test/competitor-intake/enrich',
+      expect.objectContaining({
+        headers: expect.objectContaining({ 'X-API-Key': 'engine-key' }),
+      })
+    )
   })
 
   it('GET returns 403 when property access is denied', async () => {

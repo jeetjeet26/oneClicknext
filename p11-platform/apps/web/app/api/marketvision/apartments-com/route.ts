@@ -6,7 +6,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
-import { getDataEngineUrl } from '@/utils/services/runtime-config'
+import { getDataEngineHeaders, getDataEngineUrl } from '@/utils/services/runtime-config'
+import { isApartmentsComUrl } from '@/utils/services/url-safety'
 
 const DATA_ENGINE_URL = getDataEngineUrl()
 
@@ -51,6 +52,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    let competitorPropertyId: string | null = null
     if (competitorScopedActions.has(action)) {
       if (!competitorId) {
         return NextResponse.json({ error: 'competitorId required' }, { status: 400 })
@@ -69,12 +71,14 @@ export async function POST(req: NextRequest) {
       if (!access.authorized) {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
       }
+
+      competitorPropertyId = competitor.property_id
     }
 
     // Route to appropriate action
     switch (action) {
       case 'refresh_single':
-        return await refreshSingleCompetitor(supabase, competitorId, url)
+        return await refreshSingleCompetitor(supabase, competitorId, competitorPropertyId as string, url)
       
       case 'refresh_batch':
         return await refreshBatchCompetitors(supabase, propertyId)
@@ -83,7 +87,7 @@ export async function POST(req: NextRequest) {
         return await discoverCompetitors(supabase, propertyId, city, state, maxResults)
       
       case 'add_listing':
-        return await addListing(supabase, competitorId, url)
+        return await addListing(supabase, competitorId, competitorPropertyId as string, url)
       
       case 'find_listings':
         return await findListingsForCompetitors(supabase, propertyId, body.autoScrape, body.city, body.state)
@@ -206,6 +210,7 @@ export async function GET(req: NextRequest) {
 async function refreshSingleCompetitor(
   supabase: Awaited<ReturnType<typeof createClient>>,
   competitorId: string,
+  propertyId: string,
   url?: string
 ) {
   if (!competitorId) {
@@ -231,12 +236,19 @@ async function refreshSingleCompetitor(
     }, { status: 400 })
   }
 
+  if (!isApartmentsComUrl(apartmentsComUrl)) {
+    return NextResponse.json({ 
+      error: 'URL must be an apartments.com listing' 
+    }, { status: 400 })
+  }
+
   // Call data engine to scrape
   try {
-    const response = await fetch(`${DATA_ENGINE_URL}/scrape/apartments-com/refresh`, {
+    const response = await fetch(`${DATA_ENGINE_URL}/scraper/apartments-com/refresh`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getDataEngineHeaders(),
       body: JSON.stringify({
+        property_id: propertyId,
         competitor_id: competitorId,
         url: apartmentsComUrl
       })
@@ -250,51 +262,26 @@ async function refreshSingleCompetitor(
         competitorName: competitor.name,
         ...result
       })
-    } else {
-      // Fallback: Update last_scraped_at and return info
-      // (Data engine might not be running)
-      console.warn('Data engine not available, marking as attempted')
-      
-      await supabase
-        .from('competitors')
-        .update({ 
-          last_scraped_at: new Date().toISOString(),
-          ils_listings: { 
-            ...(asRecord(competitor.ils_listings) ?? {}), 
-            apartments_com: apartmentsComUrl 
-          }
-        })
-        .eq('id', competitorId)
-
-      return NextResponse.json({
-        success: true,
-        competitorId,
-        competitorName: competitor.name,
-        message: 'URL saved. Run data engine to scrape.',
-        apartmentsComUrl
-      })
-    }
-  } catch {
-    // Data engine not available - save URL anyway
-    if (url) {
-      await supabase
-        .from('competitors')
-        .update({ 
-          ils_listings: { 
-            ...(asRecord(competitor.ils_listings) ?? {}), 
-            apartments_com: url 
-          }
-        })
-        .eq('id', competitorId)
     }
 
+    const errorText = await response.text()
+    console.error('Data engine apartments.com refresh error:', errorText)
     return NextResponse.json({
-      success: true,
+      success: false,
       competitorId,
       competitorName: competitor.name,
-      message: 'URL saved. Data engine not available for scraping.',
+      error: 'Data engine refresh failed',
+      details: errorText
+    }, { status: 502 })
+  } catch {
+    // Data engine unreachable. Do NOT stamp last_scraped_at — nothing was scraped.
+    return NextResponse.json({
+      success: false,
+      competitorId,
+      competitorName: competitor.name,
+      error: 'Data engine not available for scraping',
       apartmentsComUrl
-    })
+    }, { status: 503 })
   }
 }
 
@@ -329,9 +316,9 @@ async function refreshBatchCompetitors(
 
   // Call data engine for batch refresh
   try {
-    const response = await fetch(`${DATA_ENGINE_URL}/scrape/apartments-com/batch`, {
+    const response = await fetch(`${DATA_ENGINE_URL}/scraper/apartments-com/batch`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getDataEngineHeaders(),
       body: JSON.stringify({
         property_id: propertyId,
         competitor_ids: competitorsWithUrls.map(c => c.id)
@@ -378,9 +365,9 @@ async function discoverCompetitors(
 
   // Call data engine for discovery
   try {
-    const response = await fetch(`${DATA_ENGINE_URL}/scrape/apartments-com/discover`, {
+    const response = await fetch(`${DATA_ENGINE_URL}/scraper/apartments-com/discover`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getDataEngineHeaders(),
       body: JSON.stringify({
         property_id: propertyId,
         city,
@@ -415,6 +402,7 @@ async function discoverCompetitors(
 async function addListing(
   supabase: Awaited<ReturnType<typeof createClient>>,
   competitorId: string,
+  propertyId: string,
   url: string
 ) {
   if (!competitorId || !url) {
@@ -423,10 +411,10 @@ async function addListing(
     }, { status: 400 })
   }
 
-  // Validate URL
-  if (!url.includes('apartments.com')) {
+  // Strict hostname validation (rejects evil.com/apartments.com tricks)
+  if (!isApartmentsComUrl(url)) {
     return NextResponse.json({ 
-      error: 'URL must be from apartments.com' 
+      error: 'URL must be an apartments.com listing' 
     }, { status: 400 })
   }
 
@@ -458,10 +446,11 @@ async function addListing(
 
   // Try to trigger scrape
   try {
-    const response = await fetch(`${DATA_ENGINE_URL}/scrape/apartments-com/refresh`, {
+    const response = await fetch(`${DATA_ENGINE_URL}/scraper/apartments-com/refresh`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getDataEngineHeaders(),
       body: JSON.stringify({
+        property_id: propertyId,
         competitor_id: competitorId,
         url
       })
@@ -505,9 +494,9 @@ async function findListingsForCompetitors(
 
   // Call data engine to find listings
   try {
-    const response = await fetch(`${DATA_ENGINE_URL}/scrape/apartments-com/find-listings`, {
+    const response = await fetch(`${DATA_ENGINE_URL}/scraper/apartments-com/find-listings`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getDataEngineHeaders(),
       body: JSON.stringify({
         property_id: propertyId,
         auto_scrape: autoScrape,

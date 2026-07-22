@@ -17,6 +17,32 @@ vi.mock('@/utils/services/cron-job-runs', () => ({
 
 vi.stubGlobal('fetch', vi.fn())
 
+/** Mock for the due-drafts fetch: select → lte → or → order → limit */
+function buildFetchChain(result: { data: unknown; error: unknown }) {
+  return vi.fn(() => ({
+    lte: vi.fn(() => ({
+      or: vi.fn(() => ({
+        order: vi.fn(() => ({
+          limit: vi.fn().mockResolvedValue(result),
+        })),
+      })),
+    })),
+  }))
+}
+
+/**
+ * Mock for the atomic claim: update({status:'publishing'}) → eq → lte → eq →
+ * select → maybeSingle. The chain object returns itself for filter calls.
+ */
+function buildClaimChain(maybeSingleMock: ReturnType<typeof vi.fn>) {
+  const chain: Record<string, ReturnType<typeof vi.fn>> = {}
+  chain.eq = vi.fn(() => chain)
+  chain.lte = vi.fn(() => chain)
+  chain.lt = vi.fn(() => chain)
+  chain.select = vi.fn(() => ({ maybeSingle: maybeSingleMock }))
+  return chain
+}
+
 describe('GET /api/cron/publish-scheduled', () => {
   const originalEnv = { ...process.env }
 
@@ -55,17 +81,7 @@ describe('GET /api/cron/publish-scheduled', () => {
     process.env.CRON_SECRET = 'expected-secret'
 
     mockFrom.mockReturnValue({
-      select: vi.fn(() => ({
-        eq: vi.fn(() => ({
-          lte: vi.fn(() => ({
-            or: vi.fn(() => ({
-              order: vi.fn(() => ({
-                limit: vi.fn().mockResolvedValue({ data: [], error: null }),
-              })),
-            })),
-          })),
-        })),
-      })),
+      select: buildFetchChain({ data: [], error: null }),
     })
 
     const { GET } = await import('./route')
@@ -89,37 +105,23 @@ describe('GET /api/cron/publish-scheduled', () => {
     process.env.CRON_SECRET = 'expected-secret'
 
     const claimMaybeSingleMock = vi.fn().mockResolvedValue({ data: null, error: null })
-    const claimSelectMock = vi.fn(() => ({ maybeSingle: claimMaybeSingleMock }))
-    const claimOrMock = vi.fn(() => ({ select: claimSelectMock }))
-    const claimLteMock = vi.fn(() => ({ or: claimOrMock }))
-    const claimEqStatusMock = vi.fn(() => ({ lte: claimLteMock }))
-    const claimEqIdMock = vi.fn(() => ({ eq: claimEqStatusMock }))
-    const claimUpdateMock = vi.fn(() => ({ eq: claimEqIdMock }))
+    const claimChain = buildClaimChain(claimMaybeSingleMock)
 
     mockFrom.mockImplementation((table: string) => {
       if (table === 'content_drafts') {
         return {
-          select: vi.fn(() => ({
-            eq: vi.fn(() => ({
-              lte: vi.fn(() => ({
-                or: vi.fn(() => ({
-                  order: vi.fn(() => ({
-                    limit: vi.fn().mockResolvedValue({
-                      data: [
-                        {
-                          id: 'draft-1',
-                          property_id: 'property-1',
-                          platform: 'facebook',
-                        },
-                      ],
-                      error: null,
-                    }),
-                  })),
-                })),
-              })),
-            })),
-          })),
-          update: claimUpdateMock,
+          select: buildFetchChain({
+            data: [
+              {
+                id: 'draft-1',
+                status: 'scheduled',
+                property_id: 'property-1',
+                platform: 'facebook',
+              },
+            ],
+            error: null,
+          }),
+          update: vi.fn(() => claimChain),
         }
       }
       if (table === 'social_connections') {
@@ -180,50 +182,33 @@ describe('GET /api/cron/publish-scheduled', () => {
     expect(mockFrom).not.toHaveBeenCalled()
   })
 
-  it('keeps scheduled drafts retryable when the publish route reports only retryable failures', async () => {
+  it('releases the claim for retry when the publish route reports only retryable failures', async () => {
     process.env.CRON_SECRET = 'expected-secret'
 
     const draftUpdateEqMock = vi.fn().mockResolvedValue({ error: null })
     const claimMaybeSingleMock = vi.fn().mockResolvedValue({ data: { id: 'draft-1' }, error: null })
+    const claimChain = buildClaimChain(claimMaybeSingleMock)
+    const releaseUpdatePayloads: Array<Record<string, unknown>> = []
+
     mockFrom.mockImplementation((table: string) => {
       if (table === 'content_drafts') {
-        const claimChain = {
-          eq: vi.fn(() => claimChain),
-          lte: vi.fn(() => claimChain),
-          or: vi.fn(() => ({
-            select: vi.fn(() => ({
-              maybeSingle: claimMaybeSingleMock,
-            })),
-          })),
-        }
         return {
-          select: vi.fn(() => ({
-            eq: vi.fn(() => ({
-              lte: vi.fn(() => ({
-                or: vi.fn(() => ({
-                  order: vi.fn(() => ({
-                    limit: vi.fn().mockResolvedValue({
-                      data: [
-                        {
-                          id: 'draft-1',
-                          property_id: 'property-1',
-                          platform: 'facebook',
-                        },
-                      ],
-                      error: null,
-                    }),
-                  })),
-                })),
-              })),
-            })),
-          })),
+          select: buildFetchChain({
+            data: [
+              {
+                id: 'draft-1',
+                status: 'scheduled',
+                property_id: 'property-1',
+                platform: 'facebook',
+              },
+            ],
+            error: null,
+          }),
           update: vi.fn((payload: Record<string, unknown>) => {
-            if (
-              Object.keys(payload).length === 1 &&
-              Object.prototype.hasOwnProperty.call(payload, 'updated_at')
-            ) {
+            if (payload.status === 'publishing') {
               return claimChain
             }
+            releaseUpdatePayloads.push(payload)
             return {
               eq: draftUpdateEqMock,
             }
@@ -292,5 +277,7 @@ describe('GET /api/cron/publish-scheduled', () => {
       ],
     })
     expect(draftUpdateEqMock).toHaveBeenCalledWith('id', 'draft-1')
+    // The retryable path must release the claim back to `scheduled`.
+    expect(releaseUpdatePayloads[0]).toMatchObject({ status: 'scheduled' })
   })
 })

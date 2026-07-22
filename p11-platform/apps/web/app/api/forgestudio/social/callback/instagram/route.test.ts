@@ -1,8 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { NextRequest } from 'next/server'
+import { NextRequest } from 'next/server'
 
-vi.mock('@supabase/supabase-js', () => ({
-  createClient: vi.fn(() => ({
+const authGetUserMock = vi.fn()
+const createServerClientMock = vi.fn()
+
+vi.mock('@/utils/supabase/server', () => ({
+  createClient: createServerClientMock,
+}))
+
+vi.mock('@/utils/forgestudio/social-config', () => ({
+  getMetaCredentials: vi.fn(),
+  getLinkedInCredentials: vi.fn(),
+}))
+
+vi.mock('@/utils/supabase/admin', () => ({
+  createServiceClient: vi.fn(() => ({
     from: vi.fn(),
   })),
 }))
@@ -18,6 +30,9 @@ describe('forgestudio social callback instagram route', () => {
       NEXT_PUBLIC_SITE_URL: 'http://localhost:3000',
       SUPABASE_SERVICE_ROLE_KEY: 'test-secret',
     }
+    createServerClientMock.mockResolvedValue({
+      auth: { getUser: authGetUserMock },
+    })
   })
 
   afterEach(() => {
@@ -25,12 +40,28 @@ describe('forgestudio social callback instagram route', () => {
     vi.restoreAllMocks()
   })
 
-  it('redirects with invalid_state when signed state is invalid', async () => {
+  it('redirects with unauthorized error when the session is missing', async () => {
+    authGetUserMock.mockResolvedValue({ data: { user: null }, error: null })
+
     const { GET } = await import('./route')
     const response = await GET(
-      new Request(
+      new NextRequest(
+        'http://localhost/api/forgestudio/social/callback/instagram?code=abc&state=some-state'
+      )
+    )
+
+    expect(response.status).toBe(307)
+    expect(response.headers.get('location')).toContain('error=Unauthorized')
+  })
+
+  it('redirects with invalid_state when signed state is invalid', async () => {
+    authGetUserMock.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
+
+    const { GET } = await import('./route')
+    const response = await GET(
+      new NextRequest(
         'http://localhost/api/forgestudio/social/callback/instagram?code=abc&state=invalid-state'
-      ) as NextRequest
+      )
     )
 
     expect(response.status).toBe(307)

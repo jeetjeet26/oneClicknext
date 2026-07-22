@@ -7,9 +7,30 @@ export function ensureSectionIds(pages: GeneratedPage[]): GeneratedPage[] {
   return pages.map(page => ({
     ...page,
     sections: (page.sections || []).map(section => ({
-      ...section,
+      ...normalizeLegacySection(section),
       id: section.id || globalThis.crypto?.randomUUID?.() || fallbackId(),
     })),
+  }))
+}
+
+/**
+ * Older generations stored the block identity as `block` instead of the
+ * canonical `acfBlock`. Normalize on read so preview and deploy always see
+ * `acfBlock`.
+ */
+export function normalizeLegacySection(section: PageSection): PageSection {
+  const legacy = section as PageSection & { block?: string }
+  if (legacy.acfBlock || !legacy.block) {
+    return section
+  }
+  const { block, ...rest } = legacy
+  return { ...rest, acfBlock: block as ACFBlockType }
+}
+
+export function normalizeLegacyPages(pages: GeneratedPage[]): GeneratedPage[] {
+  return pages.map(page => ({
+    ...page,
+    sections: (page.sections || []).map(normalizeLegacySection),
   }))
 }
 

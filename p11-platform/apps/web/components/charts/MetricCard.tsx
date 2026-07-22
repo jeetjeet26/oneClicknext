@@ -7,6 +7,8 @@ type MetricCardProps = {
   value: string | number
   change?: number
   changeLabel?: string
+  /** Shown in place of the change row when no change is available. */
+  subtitle?: string
   prefix?: string
   suffix?: string
   icon?: React.ReactNode
@@ -20,6 +22,7 @@ export function MetricCard({
   value, 
   change, 
   changeLabel = 'vs last period',
+  subtitle,
   prefix = '',
   suffix = '',
   icon,
@@ -81,6 +84,9 @@ export function MetricCard({
           )}
           <span className="text-xs text-slate-400">{changeLabel}</span>
         </div>
+      )}
+      {change === undefined && subtitle && (
+        <p className="text-xs text-slate-400">{subtitle}</p>
       )}
     </div>
   )

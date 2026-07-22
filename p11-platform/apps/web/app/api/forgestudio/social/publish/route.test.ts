@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NextRequest } from 'next/server'
 
+const DRAFT_ID = '11111111-1111-4111-8111-111111111111'
+const CONNECTION_ID = '22222222-2222-4222-8222-222222222222'
+
 const authGetUserMock = vi.fn()
 const createServerClientMock = vi.fn()
 const validatePropertyAccessMock = vi.fn()
@@ -47,7 +50,7 @@ describe('forgestudio social publish route', () => {
     const request = new Request('http://localhost/api/forgestudio/social/publish', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ draftId: 'draft-1', connectionIds: ['conn-1'] }),
+      body: JSON.stringify({ draftId: DRAFT_ID, connectionIds: [CONNECTION_ID] }),
     }) as NextRequest
 
     const response = await POST(request)
@@ -73,7 +76,7 @@ describe('forgestudio social publish route', () => {
         select: vi.fn(() => ({
           eq: vi.fn(() => ({
             single: vi.fn().mockResolvedValue({
-              data: { id: 'draft-1', property_id: 'property-1' },
+              data: { id: DRAFT_ID, property_id: 'property-1' },
               error: null,
             }),
           })),
@@ -85,7 +88,7 @@ describe('forgestudio social publish route', () => {
     const request = new Request('http://localhost/api/forgestudio/social/publish', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ draftId: 'draft-1', connectionIds: ['conn-1'] }),
+      body: JSON.stringify({ draftId: DRAFT_ID, connectionIds: [CONNECTION_ID] }),
     }) as NextRequest
 
     const response = await POST(request)
@@ -109,10 +112,32 @@ describe('forgestudio social publish route', () => {
     const response = await POST(request)
 
     expect(response.status).toBe(400)
-    await expect(response.json()).resolves.toEqual({
-      error: 'Draft ID and connection IDs required',
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'Invalid publish request',
     })
     expect(authGetUserMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects non-uuid draft and connection ids', async () => {
+    authGetUserMock.mockResolvedValue({
+      data: { user: { id: 'user-1' } },
+      error: null,
+    })
+
+    const { POST } = await import('./route')
+    const request = new Request('http://localhost/api/forgestudio/social/publish', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ draftId: 'draft-1', connectionIds: ['conn-1'] }),
+    }) as NextRequest
+
+    const response = await POST(request)
+
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'Invalid publish request',
+    })
+    expect(serviceFromMock).not.toHaveBeenCalled()
   })
 
   it('returns 409 when the draft is not approved or scheduled', async () => {
@@ -130,7 +155,7 @@ describe('forgestudio social publish route', () => {
         select: vi.fn(() => ({
           eq: vi.fn(() => ({
             single: vi.fn().mockResolvedValue({
-              data: { id: 'draft-1', property_id: 'property-1', status: 'draft' },
+              data: { id: DRAFT_ID, property_id: 'property-1', status: 'draft' },
               error: null,
             }),
           })),
@@ -142,7 +167,7 @@ describe('forgestudio social publish route', () => {
     const request = new Request('http://localhost/api/forgestudio/social/publish', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ draftId: 'draft-1', connectionIds: ['conn-1'] }),
+      body: JSON.stringify({ draftId: DRAFT_ID, connectionIds: [CONNECTION_ID] }),
     }) as NextRequest
 
     const response = await POST(request)
@@ -169,7 +194,7 @@ describe('forgestudio social publish route', () => {
           eq: vi.fn(() => ({
             single: vi.fn().mockResolvedValue({
               data: {
-                id: 'draft-1',
+                id: DRAFT_ID,
                 property_id: 'property-1',
                 status: 'approved',
                 caption: 'Now leasing with limited specials',
@@ -189,7 +214,7 @@ describe('forgestudio social publish route', () => {
     const request = new Request('http://localhost/api/forgestudio/social/publish', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ draftId: 'draft-1', connectionIds: ['conn-1'] }),
+      body: JSON.stringify({ draftId: DRAFT_ID, connectionIds: [CONNECTION_ID] }),
     }) as NextRequest
 
     const response = await POST(request)

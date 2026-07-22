@@ -1,4 +1,4 @@
-import { beforeEach, describe, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   createMockServerClient,
   expectJsonError,
@@ -39,5 +39,53 @@ describe('marketvision alerts route auth', () => {
     const { GET } = await import('./route')
     const response = await GET(makeNextRequest('http://localhost/api/marketvision/alerts?propertyId=property-1'))
     await expectJsonError(response, 403, 'Forbidden')
+  })
+})
+
+describe('marketvision alerts route PUT scope', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('PUT rejects requests without propertyId', async () => {
+    createClientMock.mockResolvedValue(createMockServerClient(authGetUserMock))
+    mockAuthenticatedUser(authGetUserMock)
+    const { PUT } = await import('./route')
+    const response = await PUT(
+      makeNextRequest('http://localhost/api/marketvision/alerts', {
+        method: 'PUT',
+        body: JSON.stringify({ alertIds: ['alert-1'], action: 'read' }),
+      }),
+    )
+    await expectJsonError(response, 400, 'propertyId required')
+  })
+
+  it('PUT scopes individual alert updates to the property', async () => {
+    mockAuthenticatedUser(authGetUserMock)
+    validatePropertyAccessMock.mockResolvedValue({ authorized: true })
+
+    const propertyEqMock = vi.fn().mockResolvedValue({ error: null })
+    const inMock = vi.fn().mockReturnValue({ eq: propertyEqMock })
+    const updateMock = vi.fn().mockReturnValue({ in: inMock })
+    createClientMock.mockResolvedValue({
+      auth: { getUser: authGetUserMock },
+      from: vi.fn(() => ({ update: updateMock })),
+    })
+
+    const { PUT } = await import('./route')
+    const response = await PUT(
+      makeNextRequest('http://localhost/api/marketvision/alerts', {
+        method: 'PUT',
+        body: JSON.stringify({
+          alertIds: ['alert-1', 'alert-2'],
+          action: 'read',
+          propertyId: 'property-1',
+        }),
+      }),
+    )
+
+    expect(response.status).toBe(200)
+    expect(inMock).toHaveBeenCalledWith('id', ['alert-1', 'alert-2'])
+    expect(propertyEqMock).toHaveBeenCalledWith('property_id', 'property-1')
   })
 })

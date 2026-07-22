@@ -6,7 +6,7 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react'
-import { BrandIntelligenceJob } from './types'
+import { BrandIntelligenceJob, isTerminalJobStatus } from './types'
 
 interface BrandIntelligenceJobProgressProps {
   jobId: string
@@ -33,8 +33,8 @@ export function BrandIntelligenceJobProgress({
 
       setJob(data.job)
 
-      // Check if job is complete
-      if (data.job.status === 'completed' || data.job.status === 'failed') {
+      // Check if job reached a terminal state
+      if (isTerminalJobStatus(data.job.status)) {
         onComplete?.()
       }
     } catch (err) {
@@ -46,32 +46,36 @@ export function BrandIntelligenceJobProgress({
     // Initial fetch
     fetchJobStatus()
 
-    // Poll every 3 seconds while processing
+    // Poll every 3 seconds while the job has not reached a terminal state
     const interval = setInterval(() => {
-      if (job?.status === 'pending' || job?.status === 'processing') {
+      if (!job || !isTerminalJobStatus(job.status)) {
         fetchJobStatus()
       }
     }, 3000)
 
     return () => clearInterval(interval)
-  }, [fetchJobStatus, job?.status])
+  }, [fetchJobStatus, job, job?.status])
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'completed': return 'text-green-600 bg-green-50'
+      case 'succeeded': return 'text-green-600 bg-green-50'
       case 'failed': return 'text-red-600 bg-red-50'
-      case 'processing': return 'text-blue-600 bg-blue-50'
-      case 'pending': return 'text-yellow-600 bg-yellow-50'
+      case 'cancelled': return 'text-gray-600 bg-gray-100'
+      case 'running': return 'text-blue-600 bg-blue-50'
+      case 'retrying': return 'text-amber-600 bg-amber-50'
+      case 'queued': return 'text-yellow-600 bg-yellow-50'
       default: return 'text-gray-600 bg-gray-50'
     }
   }
 
   const getStatusIcon = (status: string) => {
     switch (status) {
-      case 'completed': return '✓'
+      case 'succeeded': return '✓'
       case 'failed': return '✕'
-      case 'processing': return '⟳'
-      case 'pending': return '◷'
+      case 'cancelled': return '⊘'
+      case 'running': return '⟳'
+      case 'retrying': return '↻'
+      case 'queued': return '◷'
       default: return '?'
     }
   }
@@ -111,17 +115,20 @@ export function BrandIntelligenceJobProgress({
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
           <div className={`w-8 h-8 rounded-full flex items-center justify-center ${getStatusColor(job.status)}`}>
-            <span className={job.status === 'processing' ? 'animate-spin' : ''}>
+            <span className={job.status === 'running' ? 'animate-spin' : ''}>
               {getStatusIcon(job.status)}
             </span>
           </div>
           <div>
             <h4 className="font-medium text-gray-900">Brand Intelligence Extraction</h4>
-            <p className="text-sm text-gray-500 capitalize">{job.status}</p>
+            <p className="text-sm text-gray-500 capitalize">
+              {job.status}
+              {job.result === 'partial' ? ' (partial)' : ''}
+            </p>
           </div>
         </div>
         
-        {onClose && (job.status === 'completed' || job.status === 'failed') && (
+        {onClose && isTerminalJobStatus(job.status) && (
           <button
             onClick={onClose}
             className="text-gray-400 hover:text-gray-600"
@@ -142,7 +149,8 @@ export function BrandIntelligenceJobProgress({
         <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
           <div 
             className={`h-full transition-all duration-500 ${
-              job.status === 'completed' ? 'bg-green-500' :
+              job.result === 'partial' ? 'bg-amber-500' :
+              job.status === 'succeeded' ? 'bg-green-500' :
               job.status === 'failed' ? 'bg-red-500' :
               'bg-blue-500'
             }`}
@@ -184,7 +192,12 @@ export function BrandIntelligenceJobProgress({
       )}
 
       {/* Completion Message */}
-      {job.status === 'completed' && (
+      {job.status === 'succeeded' && job.result === 'partial' && (
+        <div className="mt-4 p-3 bg-amber-50 border border-amber-100 rounded text-sm text-amber-700">
+          Partial result: analyzed {job.processedCount} competitors, {job.failedCount} failed.
+        </div>
+      )}
+      {job.status === 'succeeded' && job.result === 'success' && (
         <div className="mt-4 p-3 bg-green-50 border border-green-100 rounded text-sm text-green-700">
           ✓ Brand intelligence extraction complete! Analyzed {job.processedCount} competitors.
         </div>

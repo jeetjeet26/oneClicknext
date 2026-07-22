@@ -5,6 +5,7 @@
 // Created: December 16, 2025
 
 import { BaseAgent, type VectorSearchResult } from './base-agent'
+import { SITEFORGE_CLAUDE_MODEL } from '@/utils/siteforge/models'
 import type { BrandContext } from './brand-agent'
 import type { ArchitectureProposal } from './architecture-agent'
 import Anthropic from '@anthropic-ai/sdk'
@@ -284,7 +285,7 @@ export class PhotoAgent extends BaseAgent {
     
     try {
       const message = await this.anthropic.messages.create({
-        model: 'claude-sonnet-4-20250514',
+        model: SITEFORGE_CLAUDE_MODEL,
         max_tokens: 1024,
         messages: [
           {

@@ -57,6 +57,12 @@ export async function GET(request: NextRequest) {
       .select('status')
       .eq('property_id', propertyId)
 
+    // Reputation case counts (primary workflow object)
+    const { data: cases } = await supabase
+      .from('reputation_cases')
+      .select('status, priority, sla_due_at')
+      .eq('property_id', propertyId)
+
     // Calculate stats
     const totalReviews = scopedReviews.length
     const avgRating = scopedReviews.length 
@@ -89,9 +95,11 @@ export async function GET(request: NextRequest) {
       closed: tickets?.filter(t => t.status === 'closed').length || 0
     }
 
-    // Response rate
-    const reviewsNeedingResponse = scopedReviews.filter(r => 
-      r.response_status !== 'skipped' && r.response_status !== 'pending'
+    // Response coverage: posted responses over all reviews eligible for a
+    // response (everything not explicitly skipped). Excluding 'pending' from
+    // the denominator previously inflated coverage.
+    const reviewsNeedingResponse = scopedReviews.filter(r =>
+      r.response_status !== 'skipped'
     ).length || 0
     const respondedReviews = scopedReviews.filter(r => r.response_status === 'posted').length || 0
     const responseRate = reviewsNeedingResponse > 0 
@@ -134,6 +142,22 @@ export async function GET(request: NextRequest) {
         created_at: r.created_at
       }))
 
+    const nowIso = new Date().toISOString()
+    const caseRows = cases || []
+    const openStatuses = new Set(['open', 'triaged', 'awaiting_approval', 'ready_to_post', 'remediation'])
+    const caseCounts = {
+      open: caseRows.filter(c => c.status === 'open').length,
+      triaged: caseRows.filter(c => c.status === 'triaged').length,
+      awaiting_approval: caseRows.filter(c => c.status === 'awaiting_approval').length,
+      ready_to_post: caseRows.filter(c => c.status === 'ready_to_post').length,
+      remediation: caseRows.filter(c => c.status === 'remediation').length,
+      resolved: caseRows.filter(c => c.status === 'resolved').length,
+      dismissed: caseRows.filter(c => c.status === 'dismissed').length,
+      slaBreached: caseRows.filter(
+        c => openStatuses.has(c.status) && c.sla_due_at !== null && c.sla_due_at < nowIso
+      ).length,
+    }
+
     return NextResponse.json({
       stats: {
         totalReviews,
@@ -143,6 +167,7 @@ export async function GET(request: NextRequest) {
         responseCounts,
         platformCounts,
         ticketCounts,
+        caseCounts,
         topTopics,
         ratingDistribution,
         recentReviews,

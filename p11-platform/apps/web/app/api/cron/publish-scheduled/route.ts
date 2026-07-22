@@ -34,22 +34,34 @@ async function fetchWithRetry(
   throw lastError instanceof Error ? lastError : new Error('Fetch failed')
 }
 
+/**
+ * Atomically claim a due draft by flipping it to `publishing`. The conditional
+ * UPDATE means exactly one worker wins; `updated_at` doubles as the lease
+ * heartbeat so stale `publishing` drafts (crashed worker) can be reclaimed
+ * after the lease window.
+ */
 async function claimScheduledDraft(
-  draft: { id: string },
+  draft: { id: string; status: string | null },
   nowIso: string,
   leaseCutoffIso: string
 ): Promise<boolean> {
-  const { data, error } = await supabase
+  let query = supabase
     .from('content_drafts')
     .update({
+      status: 'publishing',
       updated_at: nowIso,
     })
     .eq('id', draft.id)
-    .eq('status', 'scheduled')
     .lte('scheduled_for', nowIso)
-    .or(`updated_at.is.null,updated_at.lt.${leaseCutoffIso}`)
-    .select('id')
-    .maybeSingle()
+
+  if (draft.status === 'publishing') {
+    // Reclaim only if the previous worker's lease has expired.
+    query = query.eq('status', 'publishing').lt('updated_at', leaseCutoffIso)
+  } else {
+    query = query.eq('status', 'scheduled')
+  }
+
+  const { data, error } = await query.select('id').maybeSingle()
 
   if (error) {
     throw error
@@ -114,9 +126,8 @@ export async function GET(request: NextRequest) {
           )
         )
       `)
-      .eq('status', 'scheduled')
       .lte('scheduled_for', now)
-      .or(`updated_at.is.null,updated_at.lt.${leaseCutoffIso}`)
+      .or(`status.eq.scheduled,and(status.eq.publishing,updated_at.lt.${leaseCutoffIso})`)
       .order('scheduled_for', { ascending: true })
       .limit(50)
 
@@ -240,9 +251,11 @@ export async function GET(request: NextRequest) {
               error: errorMessage
             })
           } else if (retryableFailureCount > 0) {
+            // Release the claim so the next cron run retries this draft.
             await supabase
               .from('content_drafts')
               .update({
+                status: 'scheduled',
                 rejection_reason: errorMessage,
                 updated_at: new Date().toISOString()
               })

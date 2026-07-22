@@ -101,12 +101,19 @@ export function MarketAlertsList({
   }
 
   const markAsRead = async (alertIds: string[]) => {
+    if (!propertyId) return
+
     try {
-      await fetch('/api/marketvision/alerts', {
+      const res = await fetch('/api/marketvision/alerts', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ alertIds, action: 'read' })
+        body: JSON.stringify({ alertIds, action: 'read', propertyId })
       })
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error || 'Failed to mark alerts as read')
+      }
 
       setAlerts(alerts.map(a => 
         alertIds.includes(a.id) ? { ...a, isRead: true } : a
@@ -118,12 +125,19 @@ export function MarketAlertsList({
   }
 
   const dismissAlert = async (alertId: string) => {
+    if (!propertyId) return
+
     try {
-      await fetch('/api/marketvision/alerts', {
+      const res = await fetch('/api/marketvision/alerts', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ alertIds: [alertId], action: 'dismiss' })
+        body: JSON.stringify({ alertIds: [alertId], action: 'dismiss', propertyId })
       })
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error || 'Failed to dismiss alert')
+      }
 
       setAlerts(alerts.filter(a => a.id !== alertId))
       if (!alerts.find(a => a.id === alertId)?.isRead) {
@@ -138,11 +152,16 @@ export function MarketAlertsList({
     if (!propertyId) return
 
     try {
-      await fetch('/api/marketvision/alerts', {
+      const res = await fetch('/api/marketvision/alerts', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ propertyId, action: 'read_all' })
       })
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error || 'Failed to mark all alerts as read')
+      }
 
       setAlerts(alerts.map(a => ({ ...a, isRead: true })))
       setUnreadCount(0)

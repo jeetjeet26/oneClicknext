@@ -1,18 +1,51 @@
 """
 Brand Intelligence API Router
 Exposes brand intelligence scraper functionality via REST API
+
+All endpoints require the shared data-engine API key (X-API-Key header) and
+re-validate property/competitor membership inside the service-role boundary.
 """
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from typing import Optional, List
 import logging
 
+from utils.auth import verify_api_key
 from utils.supabase_client import get_supabase_client
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/scraper/brand-intelligence", tags=["Brand Intelligence"])
+router = APIRouter(
+    prefix="/scraper/brand-intelligence",
+    tags=["Brand Intelligence"],
+    dependencies=[Depends(verify_api_key)],
+)
+
+
+def verify_competitors_in_property(supabase, competitor_ids: List[str], property_id: str) -> None:
+    """
+    Ensure every competitor id belongs to the given property.
+
+    Raises HTTPException(404) if any id is missing or belongs to another
+    property. This re-validates tenancy inside the service-role boundary.
+    """
+    if not competitor_ids:
+        return
+    result = (
+        supabase.table('competitors')
+        .select('id')
+        .eq('property_id', property_id)
+        .in_('id', competitor_ids)
+        .execute()
+    )
+    found_ids = {row['id'] for row in (result.data or [])}
+    missing = [cid for cid in competitor_ids if cid not in found_ids]
+    if missing:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Competitors not found for this property: {', '.join(missing[:5])}",
+        )
 
 
 # ============================================
@@ -36,7 +69,7 @@ class BatchRequest(BaseModel):
 class SearchRequest(BaseModel):
     """Request for semantic search across competitor content"""
     query: str
-    property_id: Optional[str] = None
+    property_id: str
     competitor_ids: Optional[List[str]] = None
     limit: int = 10
     threshold: float = 0.7
@@ -136,6 +169,7 @@ async def trigger_brand_intelligence_extraction(
         
         # Get competitors to process
         if request.competitor_ids:
+            verify_competitors_in_property(supabase, request.competitor_ids, request.property_id)
             competitor_ids = request.competitor_ids
         else:
             # Get all competitors for the property
@@ -181,6 +215,7 @@ async def trigger_brand_intelligence_extraction(
 @router.get("/competitor/{competitor_id}")
 async def get_competitor_brand_intelligence(
     competitor_id: str,
+    property_id: str,
     include_raw: bool = False
 ):
     """
@@ -188,6 +223,7 @@ async def get_competitor_brand_intelligence(
     
     Args:
         competitor_id: Competitor UUID
+        property_id: Property UUID the competitor must belong to
         include_raw: Include raw extraction data
         
     Returns:
@@ -196,15 +232,15 @@ async def get_competitor_brand_intelligence(
     try:
         supabase = get_supabase_client()
         
-        # Get competitor info
+        # Get competitor info scoped to the property (tenancy re-check)
         competitor_result = supabase.table('competitors').select(
             'id, name, website_url'
-        ).eq('id', competitor_id).single().execute()
+        ).eq('id', competitor_id).eq('property_id', property_id).execute()
         
         if not competitor_result.data:
-            raise HTTPException(status_code=404, detail="Competitor not found")
+            raise HTTPException(status_code=404, detail="Competitor not found for this property")
         
-        competitor = competitor_result.data
+        competitor = competitor_result.data[0]
         
         # Get brand intelligence
         select_fields = '*' if include_raw else (
@@ -217,7 +253,7 @@ async def get_competitor_brand_intelligence(
         
         intel_result = supabase.table('competitor_brand_intelligence').select(
             select_fields
-        ).eq('competitor_id', competitor_id).single().execute()
+        ).eq('competitor_id', competitor_id).limit(1).execute()
         
         if not intel_result.data:
             return {
@@ -229,7 +265,7 @@ async def get_competitor_brand_intelligence(
         return {
             "success": True,
             "data": {
-                **intel_result.data,
+                **intel_result.data[0],
                 'competitor_name': competitor.get('name'),
                 'website_url': competitor.get('website_url')
             }
@@ -243,18 +279,31 @@ async def get_competitor_brand_intelligence(
 
 
 @router.get("/job/{job_id}")
-async def get_job_status(job_id: str):
+async def get_job_status(job_id: str, property_id: Optional[str] = None):
     """
     Get the status of a brand intelligence extraction job.
     
     Args:
         job_id: Job UUID
+        property_id: Optional property UUID; when provided, the job must belong to it
         
     Returns:
         Job status and progress
     """
     try:
         from scrapers.brand_intelligence import CompetitorBatchProcessor
+        
+        if property_id:
+            supabase = get_supabase_client()
+            job_check = (
+                supabase.table('competitor_scrape_jobs')
+                .select('id')
+                .eq('id', job_id)
+                .eq('property_id', property_id)
+                .execute()
+            )
+            if not job_check.data:
+                raise HTTPException(status_code=404, detail="Job not found for this property")
         
         processor = CompetitorBatchProcessor()
         status = processor.get_job_status(job_id)
@@ -298,6 +347,10 @@ async def batch_extract_brand_intelligence(
                 "data": {"job_id": None}
             }
         
+        verify_competitors_in_property(
+            get_supabase_client(), request.competitor_ids, request.property_id
+        )
+        
         # Create processor and job
         processor = CompetitorBatchProcessor()
         job_id = processor.create_job(request.property_id, request.competitor_ids)
@@ -338,6 +391,11 @@ async def search_competitor_content(request: SearchRequest):
     """
     try:
         from scrapers.brand_intelligence import SemanticSearchService
+        
+        if request.competitor_ids:
+            verify_competitors_in_property(
+                get_supabase_client(), request.competitor_ids, request.property_id
+            )
         
         search_service = SemanticSearchService()
         

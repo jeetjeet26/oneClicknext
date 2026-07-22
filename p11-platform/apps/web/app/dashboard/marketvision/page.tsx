@@ -12,6 +12,9 @@ import {
   CompetitorDetailDrawer
 } from '@/components/marketvision'
 import { BrandIntelligenceDashboard } from '@/components/marketvision/BrandIntelligenceDashboard'
+import { MarketBriefView } from '@/components/marketvision/MarketBriefView'
+import { MonitoringPanel } from '@/components/marketvision/MonitoringPanel'
+import { SemanticSearchPanel } from '@/components/marketvision/SemanticSearchPanel'
 import {
   Eye,
   TrendingUp,
@@ -25,7 +28,10 @@ import {
   CheckCircle,
   Sparkles,
   Search,
-  Link2
+  Link2,
+  FileText,
+  MessageSquare,
+  Activity
 } from 'lucide-react'
 
 interface Competitor {
@@ -70,23 +76,17 @@ type CompetitorFormData = {
   units: CompetitorUnitInput[]
 }
 
-type TabId = 'overview' | 'competitors' | 'brand-intel' | 'alerts'
+type TabId = 'brief' | 'overview' | 'competitors' | 'brand-intel' | 'ask' | 'alerts' | 'monitoring'
 
 interface ScrapeStatus {
   isLoading: boolean
   message: string | null
   type: 'info' | 'success' | 'error' | null
-  progress?: {
-    current: number
-    total: number
-    stage: 'starting' | 'scraping' | 'processing' | 'complete'
-    details?: string
-  }
 }
 
 export default function MarketVisionPage() {
   const { currentProperty } = usePropertyContext()
-  const [activeTab, setActiveTab] = useState<TabId>('overview')
+  const [activeTab, setActiveTab] = useState<TabId>('brief')
   const [showAddForm, setShowAddForm] = useState(false)
   const [editingCompetitor, setEditingCompetitor] = useState<Competitor | null>(null)
   const [viewingCompetitor, setViewingCompetitor] = useState<Competitor | null>(null)
@@ -187,50 +187,16 @@ export default function MarketVisionPage() {
   const handleRefreshPrices = async () => {
     if (!currentProperty?.id) return
 
-    // Start with progress indication
-    setScrapeStatus({ 
-      isLoading: true, 
-      message: 'Starting price refresh...', 
-      type: 'info',
-      progress: {
-        current: 0,
-        total: 100,
-        stage: 'starting',
-        details: 'Connecting to competitor websites'
-      }
+    // Honest indeterminate state — no fabricated progress percentages.
+    // Real per-source progress requires the durable job system (Phase 2).
+    setScrapeStatus({
+      isLoading: true,
+      message: 'Refreshing competitor prices... This can take several minutes.',
+      type: 'info'
     })
 
-    // Simulate progress while waiting for backend
-    let progressInterval: NodeJS.Timeout | null = null
-    let currentProgress = 0
-    
-    const updateProgress = (stage: 'starting' | 'scraping' | 'processing' | 'complete', details: string, targetProgress: number) => {
-      setScrapeStatus(prev => ({
-        ...prev,
-        message: `Refreshing competitor prices...`,
-        progress: {
-          current: targetProgress,
-          total: 100,
-          stage,
-          details
-        }
-      }))
-    }
-
-    // Start progress animation
-    progressInterval = setInterval(() => {
-      currentProgress += Math.random() * 5
-      if (currentProgress < 30) {
-        updateProgress('starting', 'Connecting to competitor websites...', Math.min(currentProgress, 25))
-      } else if (currentProgress < 70) {
-        updateProgress('scraping', 'Scraping pricing data from websites...', Math.min(currentProgress, 65))
-      } else if (currentProgress < 90) {
-        updateProgress('processing', 'Processing and comparing prices...', Math.min(currentProgress, 85))
-      }
-    }, 500)
-
     try {
-      // The API now runs synchronously and waits for completion
+      // The API runs synchronously and waits for completion
       // Set a 10 minute timeout since scraping multiple competitors takes time
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), 10 * 60 * 1000) // 10 minutes
@@ -249,19 +215,15 @@ export default function MarketVisionPage() {
 
       const data = await res.json()
 
-      // Clear the progress interval since we got a response
-      if (progressInterval) {
-        clearInterval(progressInterval)
-        progressInterval = null
-      }
-
       if (!res.ok) {
         throw new Error(data.error || 'Refresh failed')
       }
 
-      // Build detailed status message from actual results (data now contains full result)
-      const result = data
+      // The scrape API returns { success, action, propertyId, result }
+      // where `result` is the data-engine refresh summary.
+      const result = data.result
       let statusMessage = 'Price refresh complete'
+      let statusType: 'success' | 'info' = 'success'
       
       if (result) {
         const websiteUpdated = result.website_updated || 0
@@ -271,7 +233,10 @@ export default function MarketVisionPage() {
         const errorCount = result.error_count || 0
         
         if (totalUpdated > 0) {
-          if (websiteUpdated > 0 && ilsUpdated > 0) {
+          if (errorCount > 0) {
+            statusMessage = `Updated ${totalUpdated} of ${totalCompetitors} competitors — ${errorCount} source${errorCount === 1 ? '' : 's'} failed`
+            statusType = 'info'
+          } else if (websiteUpdated > 0 && ilsUpdated > 0) {
             statusMessage = `Updated ${totalUpdated} competitors (${websiteUpdated} from websites, ${ilsUpdated} from listings)`
           } else if (websiteUpdated > 0) {
             statusMessage = `Updated ${websiteUpdated} competitors from websites`
@@ -283,25 +248,20 @@ export default function MarketVisionPage() {
         } else if (totalCompetitors > 0) {
           if (errorCount > 0 && errorCount === totalCompetitors) {
             statusMessage = `Checked ${totalCompetitors} competitors - websites unavailable`
+            statusType = 'info'
           } else if (errorCount > 0) {
             statusMessage = `Checked ${totalCompetitors} competitors - some sites unavailable`
+            statusType = 'info'
           } else {
             statusMessage = `Checked ${totalCompetitors} competitors - no price changes`
           }
         }
       }
 
-      // Show success immediately since scraping is complete
       setScrapeStatus({
         isLoading: false,
         message: statusMessage,
-        type: 'success',
-        progress: {
-          current: 100,
-          total: 100,
-          stage: 'complete',
-          details: 'Price refresh complete!'
-        }
+        type: statusType
       })
 
       // Refresh the competitor data
@@ -313,11 +273,6 @@ export default function MarketVisionPage() {
       }, 5000)
 
     } catch (err) {
-      // Clear the progress interval
-      if (progressInterval) {
-        clearInterval(progressInterval)
-      }
-      
       console.error('Refresh error:', err)
       setScrapeStatus({
         isLoading: false,
@@ -457,10 +412,13 @@ export default function MarketVisionPage() {
   }
 
   const tabs = [
+    { id: 'brief' as TabId, label: 'Market Brief', icon: FileText },
     { id: 'overview' as TabId, label: 'Overview', icon: Eye },
     { id: 'competitors' as TabId, label: 'Competitors', icon: Building2 },
     { id: 'brand-intel' as TabId, label: 'Brand Intelligence', icon: Sparkles },
-    { id: 'alerts' as TabId, label: 'Alerts', icon: Bell }
+    { id: 'ask' as TabId, label: 'Ask MarketVision', icon: MessageSquare },
+    { id: 'alerts' as TabId, label: 'Alerts', icon: Bell },
+    { id: 'monitoring' as TabId, label: 'Monitoring', icon: Activity }
   ]
 
   return (
@@ -510,7 +468,11 @@ export default function MarketVisionPage() {
             )}
             Refresh Prices
           </button>
-          <button className="p-2 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg">
+          <button
+            onClick={() => setActiveTab('monitoring')}
+            className="p-2 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"
+            title="Monitoring settings"
+          >
             <Settings className="w-5 h-5" />
           </button>
         </div>
@@ -525,30 +487,6 @@ export default function MarketVisionPage() {
               ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800' 
               : 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
         }`}>
-          {/* Progress Bar */}
-          {scrapeStatus.progress && scrapeStatus.isLoading && (
-            <div className="h-1.5 bg-black/5 dark:bg-white/5 relative overflow-hidden">
-              <div 
-                className={`h-full transition-all duration-500 ease-out ${
-                  scrapeStatus.type === 'success' 
-                    ? 'bg-emerald-500' 
-                    : scrapeStatus.type === 'error'
-                      ? 'bg-red-500'
-                      : 'bg-blue-500'
-                }`}
-                style={{ width: `${scrapeStatus.progress.current}%` }}
-              />
-              {/* Animated shimmer effect */}
-              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent animate-shimmer" 
-                   style={{ backgroundSize: '200% 100%' }} />
-            </div>
-          )}
-          
-          {/* Completed Progress Bar */}
-          {scrapeStatus.progress && !scrapeStatus.isLoading && scrapeStatus.type === 'success' && (
-            <div className="h-1.5 bg-emerald-500" />
-          )}
-          
           {/* Status Content */}
           <div className="px-4 py-3">
             <div className="flex items-center gap-3">
@@ -575,28 +513,6 @@ export default function MarketVisionPage() {
                 }`}>
                   {scrapeStatus.message}
                 </div>
-                
-                {/* Progress Details */}
-                {scrapeStatus.progress && (
-                  <div className="flex items-center gap-2 mt-1">
-                    <span className={`text-sm ${
-                      scrapeStatus.type === 'success' ? 'text-emerald-600/70 dark:text-emerald-400/70' :
-                      scrapeStatus.type === 'error' ? 'text-red-600/70 dark:text-red-400/70' :
-                      'text-blue-600/70 dark:text-blue-400/70'
-                    }`}>
-                      {scrapeStatus.progress.details}
-                    </span>
-                    {scrapeStatus.isLoading && (
-                      <span className={`text-sm font-mono ${
-                        scrapeStatus.type === 'success' ? 'text-emerald-600 dark:text-emerald-400' :
-                        scrapeStatus.type === 'error' ? 'text-red-600 dark:text-red-400' :
-                        'text-blue-600 dark:text-blue-400'
-                      }`}>
-                        {Math.round(scrapeStatus.progress.current)}%
-                      </span>
-                    )}
-                  </div>
-                )}
               </div>
               
               {!scrapeStatus.isLoading && (
@@ -614,37 +530,6 @@ export default function MarketVisionPage() {
                 </button>
               )}
             </div>
-            
-            {/* Stage Indicator */}
-            {scrapeStatus.progress && scrapeStatus.isLoading && (
-              <div className="flex items-center gap-2 mt-3 pt-3 border-t border-black/5 dark:border-white/5">
-                {(['starting', 'scraping', 'processing', 'complete'] as const).map((stage, idx) => (
-                  <div key={stage} className="flex items-center gap-1">
-                    <div className={`w-2 h-2 rounded-full transition-colors ${
-                      scrapeStatus.progress?.stage === stage 
-                        ? 'bg-blue-500 animate-pulse' 
-                        : (['starting', 'scraping', 'processing', 'complete'].indexOf(scrapeStatus.progress?.stage || 'starting') > idx)
-                          ? 'bg-emerald-500'
-                          : 'bg-gray-300 dark:bg-gray-600'
-                    }`} />
-                    <span className={`text-xs capitalize ${
-                      scrapeStatus.progress?.stage === stage 
-                        ? 'text-blue-600 dark:text-blue-400 font-medium' 
-                        : 'text-gray-500'
-                    }`}>
-                      {stage}
-                    </span>
-                    {idx < 3 && (
-                      <div className={`w-6 h-0.5 mx-1 ${
-                        (['starting', 'scraping', 'processing', 'complete'].indexOf(scrapeStatus.progress?.stage || 'starting') > idx)
-                          ? 'bg-emerald-400'
-                          : 'bg-gray-300 dark:bg-gray-600'
-                      }`} />
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         </div>
       )}
@@ -673,6 +558,13 @@ export default function MarketVisionPage() {
       </div>
 
       {/* Tab Content */}
+      {activeTab === 'brief' && currentProperty?.id && (
+        <MarketBriefView
+          key={`brief-${refreshKey}`}
+          propertyId={currentProperty.id}
+        />
+      )}
+
       {activeTab === 'overview' && (
         <div className="space-y-6">
           {/* Market Summary */}
@@ -738,11 +630,34 @@ export default function MarketVisionPage() {
         />
       )}
 
+      {activeTab === 'ask' && currentProperty?.id && (
+        <div className="space-y-4">
+          <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2 mb-1">
+              <MessageSquare className="w-5 h-5 text-indigo-500" />
+              Ask MarketVision
+            </h2>
+            <p className="text-sm text-gray-500 mb-4">
+              Search competitor positioning, amenities, specials, and messaging in natural
+              language. Results cite the underlying competitor content.
+            </p>
+            <SemanticSearchPanel propertyId={currentProperty.id} />
+          </div>
+        </div>
+      )}
+
       {activeTab === 'alerts' && (
         <MarketAlertsList
           key={`alerts-full-${refreshKey}`}
           propertyId={currentProperty?.id}
           limit={50}
+        />
+      )}
+
+      {activeTab === 'monitoring' && currentProperty?.id && (
+        <MonitoringPanel
+          key={`monitoring-${refreshKey}`}
+          propertyId={currentProperty.id}
         />
       )}
 

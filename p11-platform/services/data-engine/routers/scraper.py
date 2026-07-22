@@ -1,18 +1,51 @@
 """
 Scraper Router
 Exposes competitor discovery and scraping endpoints
+
+All endpoints require the shared data-engine API key (X-API-Key header) and
+re-validate property/competitor membership inside the service-role boundary.
 """
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List
 import logging
 
 from scrapers.coordinator import ScrapingCoordinator
+from utils.auth import verify_api_key
+from utils.supabase_client import get_supabase_client
+from utils.url_safety import is_apartments_com_url, is_safe_public_url
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/scraper", tags=["scraper"])
+router = APIRouter(
+    prefix="/scraper",
+    tags=["scraper"],
+    dependencies=[Depends(verify_api_key)],
+)
+
+
+def verify_competitor_in_property(supabase, competitor_id: str, property_id: str) -> dict:
+    """
+    Ensure the competitor exists and belongs to the given property.
+
+    Raises HTTPException(404) when the competitor does not exist or is not
+    part of the property. Returns the competitor row on success.
+    """
+    result = (
+        supabase.table('competitors')
+        .select('id, name, property_id, website_url, ils_listings')
+        .eq('id', competitor_id)
+        .eq('property_id', property_id)
+        .execute()
+    )
+    rows = result.data or []
+    if not rows:
+        raise HTTPException(
+            status_code=404,
+            detail="Competitor not found for this property",
+        )
+    return rows[0]
 
 
 # ============================================
@@ -37,6 +70,7 @@ class WebsiteBatchRequest(BaseModel):
 
 
 class WebsiteRefreshRequest(BaseModel):
+    property_id: str
     competitor_id: str
     url: Optional[str] = None
 
@@ -47,6 +81,7 @@ class ApartmentsBatchRequest(BaseModel):
 
 
 class ApartmentsRefreshRequest(BaseModel):
+    property_id: str
     competitor_id: str
     url: Optional[str] = None
 
@@ -73,15 +108,15 @@ class ApartmentsFindListingsRequest(BaseModel):
 # ============================================
 
 @router.post("/discover")
-async def discover_competitors(request: DiscoverRequest, background_tasks: BackgroundTasks):
+async def discover_competitors(request: DiscoverRequest):
     """
     Discover competitors near a property using Google Places and/or Apartments.com.
-    
+
     Uses intelligent filtering based on property_type to find relevant competitors.
     """
     try:
         coordinator = ScrapingCoordinator()
-        
+
         # Run discovery (can take time with Google Places API)
         result = coordinator.discover_competitors_for_property(
             property_id=request.property_id,
@@ -89,15 +124,15 @@ async def discover_competitors(request: DiscoverRequest, background_tasks: Backg
             max_competitors=request.max_competitors,
             auto_add=request.auto_add
         )
-        
+
         if not result.get('success'):
             raise HTTPException(status_code=400, detail=result.get('error', 'Discovery failed'))
-        
+
         return {
             'success': True,
             'data': result
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -113,19 +148,19 @@ async def discover_competitors(request: DiscoverRequest, background_tasks: Backg
 async def refresh_pricing(request: RefreshPricingRequest):
     """
     Refresh pricing data for all competitors.
-    
+
     Prioritizes competitor websites over ILS listings (apartments.com).
     """
     try:
         coordinator = ScrapingCoordinator()
-        
+
         result = coordinator.refresh_all_competitors(
             property_id=request.property_id,
             prefer_website=request.prefer_website
         )
-        
+
         return result
-        
+
     except Exception as e:
         logger.error(f"Refresh pricing error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -139,19 +174,19 @@ async def refresh_pricing(request: RefreshPricingRequest):
 async def refresh_websites_batch(request: WebsiteBatchRequest):
     """
     Batch refresh pricing from competitor websites.
-    
+
     Scrapes floor plans and pricing directly from competitor websites.
     """
     try:
         coordinator = ScrapingCoordinator()
-        
+
         result = coordinator.batch_refresh_from_website(
             property_id=request.property_id,
             competitor_ids=request.competitor_ids
         )
-        
+
         return result
-        
+
     except Exception as e:
         logger.error(f"Website batch refresh error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -163,18 +198,24 @@ async def refresh_website_single(request: WebsiteRefreshRequest):
     Refresh a single competitor from their website.
     """
     try:
+        supabase = get_supabase_client()
+        verify_competitor_in_property(supabase, request.competitor_id, request.property_id)
+
+        if request.url is not None and not is_safe_public_url(request.url):
+            raise HTTPException(status_code=400, detail="URL must be a public http(s) address")
+
         coordinator = ScrapingCoordinator()
-        
+
         result = coordinator.refresh_competitor_from_website(
             competitor_id=request.competitor_id,
             website_url=request.url
         )
-        
+
         if not result.get('success'):
             raise HTTPException(status_code=400, detail=result.get('error', 'Refresh failed'))
-        
+
         return result
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -190,22 +231,22 @@ async def refresh_website_single(request: WebsiteRefreshRequest):
 async def refresh_apartments_batch(request: ApartmentsBatchRequest):
     """
     Batch refresh pricing from apartments.com.
-    
+
     Uses Apify for reliable scraping.
     """
     try:
         coordinator = ScrapingCoordinator()
-        
+
         result = coordinator.batch_refresh_from_apartments_com(
             property_id=request.property_id,
             competitor_ids=request.competitor_ids
         )
-        
+
         if not result.get('success'):
             raise HTTPException(status_code=400, detail=result.get('error', 'Batch refresh failed'))
-        
+
         return result
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -219,18 +260,27 @@ async def refresh_apartments_single(request: ApartmentsRefreshRequest):
     Refresh a single competitor from apartments.com.
     """
     try:
+        supabase = get_supabase_client()
+        verify_competitor_in_property(supabase, request.competitor_id, request.property_id)
+
+        if request.url is not None and not is_apartments_com_url(request.url):
+            raise HTTPException(
+                status_code=400,
+                detail="URL must be an apartments.com listing (hostname apartments.com)",
+            )
+
         coordinator = ScrapingCoordinator()
-        
+
         result = coordinator.refresh_competitor_from_apartments_com(
             competitor_id=request.competitor_id,
             apartments_com_url=request.url
         )
-        
+
         if not result.get('success'):
             raise HTTPException(status_code=400, detail=result.get('error', 'Refresh failed'))
-        
+
         return result
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -242,12 +292,12 @@ async def refresh_apartments_single(request: ApartmentsRefreshRequest):
 async def discover_apartments(request: ApartmentsDiscoverRequest):
     """
     Discover competitors from apartments.com search.
-    
+
     Searches apartments.com by city/state and adds found properties.
     """
     try:
         coordinator = ScrapingCoordinator()
-        
+
         result = coordinator.discover_and_scrape_apartments_com(
             property_id=request.property_id,
             city=request.city,
@@ -255,12 +305,12 @@ async def discover_apartments(request: ApartmentsDiscoverRequest):
             max_results=request.max_results,
             auto_add=request.auto_add
         )
-        
+
         if not result.get('success'):
             raise HTTPException(status_code=400, detail=result.get('error', 'Discovery failed'))
-        
+
         return result
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -272,12 +322,12 @@ async def discover_apartments(request: ApartmentsDiscoverRequest):
 async def find_apartments_listings(request: ApartmentsFindListingsRequest):
     """
     Find apartments.com listings for existing competitors.
-    
+
     Searches apartments.com to match existing competitors with their listings.
     """
     try:
         coordinator = ScrapingCoordinator()
-        
+
         result = await coordinator.find_apartments_com_listings(
             property_id=request.property_id,
             competitor_ids=request.competitor_ids,
@@ -286,12 +336,12 @@ async def find_apartments_listings(request: ApartmentsFindListingsRequest):
             state_override=request.state,
             search_strategy=request.search_strategy
         )
-        
+
         if not result.get('success'):
             raise HTTPException(status_code=400, detail=result.get('error', 'Find listings failed'))
-        
+
         return result
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -309,7 +359,6 @@ async def get_scraper_status():
     Get scraper service status.
     """
     try:
-        # TODO: Add more detailed status (queue size, active jobs, etc.)
         return {
             'status': 'healthy',
             'service': 'scraper',

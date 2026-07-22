@@ -463,3 +463,8 @@ require_once ONECLICK_SITEFORGE_DIR . '/inc/template-tags.php';
  * Block Utilities
  */
 require_once ONECLICK_SITEFORGE_DIR . '/inc/block-utilities.php';
+
+/**
+ * SiteForge REST API (capability discovery for the generation pipeline)
+ */
+require_once ONECLICK_SITEFORGE_DIR . '/inc/rest-api.php';

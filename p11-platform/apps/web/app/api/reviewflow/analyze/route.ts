@@ -1,67 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { createServiceClient } from '@/utils/supabase/admin'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
-import OpenAI from 'openai'
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-})
-
-interface SentimentAnalysis {
-  sentiment: 'positive' | 'neutral' | 'negative'
-  sentimentScore: number // -1 to 1
-  topics: string[]
-  isUrgent: boolean
-  summary: string
-}
-
-async function analyzeReview(reviewText: string, rating: number | null): Promise<SentimentAnalysis> {
-  const systemPrompt = `You are a sentiment analysis expert for property reviews. Analyze the review and provide:
-1. Sentiment: positive, neutral, or negative
-2. Sentiment score: -1 (very negative) to 1 (very positive)
-3. Topics: Array of key topics mentioned (e.g., "maintenance", "noise", "management", "amenities", "cleanliness", "parking", "staff")
-4. Is Urgent: true if the review mentions safety concerns, legal issues, discrimination, or severe problems requiring immediate attention
-5. Summary: A brief 1-sentence summary of the review
-
-Respond ONLY with valid JSON in this format:
-{
-  "sentiment": "positive|neutral|negative",
-  "sentimentScore": 0.0,
-  "topics": ["topic1", "topic2"],
-  "isUrgent": false,
-  "summary": "Brief summary"
-}`
-
-  try {
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: `Review (Rating: ${rating || 'N/A'}/5):\n${reviewText}` }
-      ],
-      temperature: 0.3,
-      max_tokens: 500
-    })
-
-    const responseText = completion.choices[0].message.content || '{}'
-    const analysis = JSON.parse(responseText)
-    
-    return {
-      sentiment: analysis.sentiment || 'neutral',
-      sentimentScore: analysis.sentimentScore || 0,
-      topics: analysis.topics || [],
-      isUrgent: analysis.isUrgent || false,
-      summary: analysis.summary || ''
-    }
-  } catch (error) {
-    console.error('Error analyzing review:', error)
-    throw new Error(
-      `Review sentiment analysis provider is unavailable: ${
-        error instanceof Error ? error.message : 'Unknown error'
-      }`
-    )
-  }
-}
+import { ReviewAiError, analyzeReview } from '@/utils/reviewflow/ai'
+import { runReviewAnalysis } from '@/utils/reviewflow/analysis-pipeline'
 
 export async function POST(request: NextRequest) {
   const supabase = await createClient()
@@ -75,23 +17,23 @@ export async function POST(request: NextRequest) {
 
   const { reviewId, reviewText, rating, propertyId } = body
 
-  let textToAnalyze: string = typeof reviewText === 'string' ? reviewText : ''
-  let reviewRating: number | null = typeof rating === 'number' ? rating : null
-  let reviewPropertyId: string | null = typeof propertyId === 'string' ? propertyId : null
-  let reviewerName: string | null = null
+  const adHocText: string = typeof reviewText === 'string' ? reviewText : ''
+  const adHocRating: number | null = typeof rating === 'number' ? rating : null
+  const adHocPropertyId: string | null = typeof propertyId === 'string' ? propertyId : null
 
-  if (!reviewId && (!textToAnalyze || !reviewPropertyId)) {
+  if (!reviewId && (!adHocText || !adHocPropertyId)) {
     return NextResponse.json(
       { error: 'reviewId or (reviewText and propertyId) is required' },
       { status: 400 }
     )
   }
 
-  // If reviewId is provided, fetch the review
+  // Persisted-review path: full pipeline (versioned analysis, case update,
+  // escalation surface) via the shared analysis pipeline.
   if (reviewId) {
     const { data: review, error } = await supabase
       .from('reviews')
-      .select('review_text, rating, property_id, reviewer_name')
+      .select('id, review_text, rating, property_id, reviewer_name, platform')
       .eq('id', reviewId)
       .single()
 
@@ -108,73 +50,99 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
-    textToAnalyze = review.review_text || ''
-    reviewRating = review.rating
-    reviewPropertyId = review.property_id
-    reviewerName = review.reviewer_name
-  } else {
-    if (typeof reviewPropertyId !== 'string') {
-      return NextResponse.json({ error: 'propertyId is required' }, { status: 400 })
+    if (!review.review_text) {
+      return NextResponse.json({ error: 'Review text is required' }, { status: 400 })
     }
-    const access = await validatePropertyAccess(user.id, reviewPropertyId)
-    if (!access.authorized) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+
+    const service = createServiceClient()
+    const outcome = await runReviewAnalysis(service, review)
+
+    if (outcome.status === 'manual_review_required') {
+      return NextResponse.json(
+        {
+          error: 'Review analysis unavailable',
+          details: outcome.error,
+          manualReviewRequired: true,
+        },
+        { status: 503 }
+      )
     }
+
+    if (outcome.status === 'skipped') {
+      return NextResponse.json(
+        { error: `Review cannot be analyzed: ${outcome.reason}` },
+        { status: 400 }
+      )
+    }
+
+    const { analysis } = outcome
+    return NextResponse.json({
+      analysis: {
+        sentiment: analysis.sentiment,
+        sentimentScore: analysis.sentimentScore,
+        topics: analysis.topics,
+        isUrgent: analysis.isUrgent,
+        summary: analysis.summary,
+        journeyStage: analysis.journeyStage,
+        issueDomains: analysis.issueDomains,
+        severity: analysis.severity,
+        riskClass: analysis.riskClass,
+        policyClass: analysis.policyClass,
+        confidence: analysis.confidence,
+        recommendedAction: analysis.recommendedAction,
+        evidence: analysis.evidence,
+        requiresHumanReview: analysis.policy.requiresHumanReview,
+      },
+      provenance: analysis.provenance,
+      analysisId: outcome.analysisId,
+    })
   }
 
-  if (!textToAnalyze) {
+  // Ad-hoc path: classify text without persisting anything.
+  const access = await validatePropertyAccess(user.id, adHocPropertyId as string)
+  if (!access.authorized) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+
+  if (!adHocText) {
     return NextResponse.json({ error: 'Review text is required' }, { status: 400 })
   }
 
-  let analysis: SentimentAnalysis
   try {
-    analysis = await analyzeReview(textToAnalyze, reviewRating)
+    const analysis = await analyzeReview({ reviewText: adHocText, rating: adHocRating })
+    return NextResponse.json({
+      analysis: {
+        sentiment: analysis.sentiment,
+        sentimentScore: analysis.sentimentScore,
+        topics: analysis.topics,
+        isUrgent: analysis.isUrgent,
+        summary: analysis.summary,
+        journeyStage: analysis.journeyStage,
+        issueDomains: analysis.issueDomains,
+        severity: analysis.severity,
+        riskClass: analysis.riskClass,
+        policyClass: analysis.policyClass,
+        confidence: analysis.confidence,
+        recommendedAction: analysis.recommendedAction,
+        evidence: analysis.evidence,
+        requiresHumanReview: analysis.policy.requiresHumanReview,
+      },
+      provenance: analysis.provenance,
+    })
   } catch (error) {
+    const details =
+      error instanceof ReviewAiError
+        ? error.message
+        : error instanceof Error
+          ? error.message
+          : 'Unknown error'
     return NextResponse.json(
       {
         error: 'Review analysis unavailable',
-        details: error instanceof Error ? error.message : 'Unknown error',
+        details,
         manualReviewRequired: true,
       },
       { status: 503 }
     )
   }
-
-  // If reviewId provided, update the review with analysis results
-  if (reviewId) {
-    const { error: updateError } = await supabase
-      .from('reviews')
-      .update({
-        sentiment: analysis.sentiment,
-        sentiment_score: analysis.sentimentScore,
-        topics: analysis.topics,
-        is_urgent: analysis.isUrgent,
-        auto_respond_eligible: analysis.sentiment === 'positive' && (reviewRating || 0) >= 4,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', reviewId)
-
-    if (updateError) {
-      console.error('Error updating review with analysis:', updateError)
-    }
-
-    // If negative/urgent, create a ticket
-    if ((analysis.sentiment === 'negative' || analysis.isUrgent) && reviewPropertyId) {
-      await supabase.from('review_tickets').upsert({
-        review_id: reviewId,
-        property_id: reviewPropertyId,
-        title: analysis.isUrgent
-          ? `🚨 URGENT: Review from ${reviewerName || 'Anonymous'}`
-          : `Negative review from ${reviewerName || 'Anonymous'}`,
-        description: analysis.summary,
-        priority: analysis.isUrgent ? 'urgent' : (analysis.sentimentScore < -0.5 ? 'high' : 'medium'),
-        status: 'open'
-      }, {
-        onConflict: 'review_id'
-      })
-    }
-  }
-
-  return NextResponse.json({ analysis })
 }
-

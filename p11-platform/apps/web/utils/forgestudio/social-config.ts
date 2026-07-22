@@ -1,83 +1,110 @@
-import { createClient } from '@supabase/supabase-js'
+/**
+ * ForgeStudio social app credential resolution — single source of truth.
+ *
+ * Credentials live in `social_auth_configs` (app secret encrypted with
+ * ENCRYPTION_KEY via utils/forgestudio/crypto). Environment variables remain
+ * a deployment-level fallback. The legacy plaintext `social_app_credentials`
+ * table has been dropped.
+ */
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
+import { createServiceClient } from '@/utils/supabase/admin'
+import { decryptSecret } from '@/utils/forgestudio/crypto'
 
-interface SocialCredentials {
+export type SocialConfigPlatform = 'meta' | 'linkedin' | 'tiktok' | 'x'
+
+export interface SocialCredentials {
   appId: string
   appSecret: string
+  redirectUri: string | null
+  source: 'database' | 'environment'
+}
+
+const ENV_FALLBACKS: Record<SocialConfigPlatform, { id: string[]; secret: string[] }> = {
+  meta: {
+    id: ['META_APP_ID', 'FACEBOOK_APP_ID'],
+    secret: ['META_APP_SECRET', 'FACEBOOK_APP_SECRET'],
+  },
+  linkedin: {
+    id: ['LINKEDIN_CLIENT_ID', 'LINKEDIN_APP_ID'],
+    secret: ['LINKEDIN_CLIENT_SECRET', 'LINKEDIN_APP_SECRET'],
+  },
+  tiktok: {
+    id: ['TIKTOK_CLIENT_KEY'],
+    secret: ['TIKTOK_CLIENT_SECRET'],
+  },
+  x: {
+    id: ['X_CLIENT_ID', 'TWITTER_CLIENT_ID'],
+    secret: ['X_CLIENT_SECRET', 'TWITTER_CLIENT_SECRET'],
+  },
+}
+
+function readEnv(names: string[]): string | null {
+  for (const name of names) {
+    const value = process.env[name]
+    if (value && value.trim().length > 0) return value
+  }
+  return null
 }
 
 /**
- * Get Meta (Facebook/Instagram) credentials for a property
- * First checks the property's social_app_credentials table, then falls back to env vars
+ * Resolve app credentials for a property + platform.
+ * Database rows win over environment variables.
  */
+export async function getSocialAppCredentials(
+  propertyId: string,
+  platform: SocialConfigPlatform
+): Promise<SocialCredentials | null> {
+  try {
+    const supabase = createServiceClient()
+    const { data, error } = await supabase
+      .from('social_auth_configs')
+      .select('app_id, app_secret_encrypted, redirect_uri')
+      .eq('property_id', propertyId)
+      .eq('platform', platform)
+      .maybeSingle()
+
+    if (error) {
+      console.error('[social-config] failed to load social_auth_configs row', {
+        propertyId,
+        platform,
+        error,
+      })
+    } else if (data) {
+      return {
+        appId: data.app_id,
+        appSecret: decryptSecret(data.app_secret_encrypted),
+        redirectUri: data.redirect_uri,
+        source: 'database',
+      }
+    }
+  } catch (error) {
+    console.error('[social-config] credential lookup failed', { propertyId, platform, error })
+  }
+
+  const fallback = ENV_FALLBACKS[platform]
+  const appId = readEnv(fallback.id)
+  const appSecret = readEnv(fallback.secret)
+  if (appId && appSecret) {
+    return { appId, appSecret, redirectUri: null, source: 'environment' }
+  }
+
+  return null
+}
+
 export async function getMetaCredentials(propertyId: string): Promise<SocialCredentials | null> {
-  try {
-    // Try to get property-specific credentials from DB
-    const { data, error } = await supabase
-      .from('social_app_credentials')
-      .select('app_id, app_secret')
-      .eq('property_id', propertyId)
-      .eq('platform', 'meta')
-      .eq('is_active', true)
-      .single()
-
-    if (!error && data) {
-      return {
-        appId: data.app_id,
-        appSecret: data.app_secret
-      }
-    }
-  } catch (error) {
-    console.error('Error fetching Meta credentials from DB:', error)
-  }
-
-  // Fallback to environment variables
-  const appId = process.env.META_APP_ID || process.env.FACEBOOK_APP_ID
-  const appSecret = process.env.META_APP_SECRET || process.env.FACEBOOK_APP_SECRET
-
-  if (appId && appSecret) {
-    return { appId, appSecret }
-  }
-
-  return null
+  return getSocialAppCredentials(propertyId, 'meta')
 }
 
-/**
- * Get LinkedIn credentials for a property
- * First checks the property's social_app_credentials table, then falls back to env vars
- */
-export async function getLinkedInCredentials(propertyId: string): Promise<SocialCredentials | null> {
-  try {
-    // Try to get property-specific credentials from DB
-    const { data, error } = await supabase
-      .from('social_app_credentials')
-      .select('app_id, app_secret')
-      .eq('property_id', propertyId)
-      .eq('platform', 'linkedin')
-      .eq('is_active', true)
-      .single()
+export async function getLinkedInCredentials(
+  propertyId: string
+): Promise<SocialCredentials | null> {
+  return getSocialAppCredentials(propertyId, 'linkedin')
+}
 
-    if (!error && data) {
-      return {
-        appId: data.app_id,
-        appSecret: data.app_secret
-      }
-    }
-  } catch (error) {
-    console.error('Error fetching LinkedIn credentials from DB:', error)
-  }
+export async function getTikTokCredentials(propertyId: string): Promise<SocialCredentials | null> {
+  return getSocialAppCredentials(propertyId, 'tiktok')
+}
 
-  // Fallback to environment variables
-  const appId = process.env.LINKEDIN_APP_ID || process.env.LINKEDIN_CLIENT_ID
-  const appSecret = process.env.LINKEDIN_APP_SECRET || process.env.LINKEDIN_CLIENT_SECRET
-
-  if (appId && appSecret) {
-    return { appId, appSecret }
-  }
-
-  return null
+export async function getXCredentials(propertyId: string): Promise<SocialCredentials | null> {
+  return getSocialAppCredentials(propertyId, 'x')
 }

@@ -10,4 +10,8 @@ export { ContentCalendar } from './ContentCalendar'
 export { TemplateSelector } from './TemplateSelector'
 export { SocialConnections } from './SocialConnections'
 export { InstagramSetupModal } from './InstagramSetupModal'
+export { CampaignWorkspace } from './CampaignWorkspace'
+export { BriefBuilder } from './BriefBuilder'
+export { ReviewStudio } from './ReviewStudio'
+export { PublicationCalendar } from './PublicationCalendar'
 

@@ -20,6 +20,10 @@ export { SemanticSearchPanel } from './SemanticSearchPanel'
 export { BrandIntelligenceJobProgress } from './BrandIntelligenceJobProgress'
 export { CompetitorIntakePanel } from './CompetitorIntakePanel'
 
+// Decision-engine surfaces
+export { MarketBriefView } from './MarketBriefView'
+export { MonitoringPanel } from './MonitoringPanel'
+
 // Types
 export type {
   BrandIntelligence,

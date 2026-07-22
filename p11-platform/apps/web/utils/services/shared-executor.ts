@@ -26,6 +26,42 @@ export class SharedExecutorApprovalRequiredError extends Error {
   }
 }
 
+/**
+ * Raised when a job with the same (org, domain, dedupe key) already exists and
+ * is not in a terminal-failed state. The side effect is NOT executed.
+ */
+export class SharedExecutorDuplicateJobError extends Error {
+  sharedJobId: string
+  lifecycleStatus: string
+
+  constructor(message: string, sharedJobId: string, lifecycleStatus: string) {
+    super(message)
+    this.name = 'SharedExecutorDuplicateJobError'
+    this.sharedJobId = sharedJobId
+    this.lifecycleStatus = lifecycleStatus
+  }
+}
+
+/**
+ * Raised when the shared job ledger row cannot be created. Execution fails
+ * closed: no side effect runs without a durable ledger entry.
+ */
+export class SharedExecutorLedgerError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'SharedExecutorLedgerError'
+  }
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  return Boolean(
+    error &&
+    typeof error === 'object' &&
+    'code' in error &&
+    (error as { code?: string }).code === '23505'
+  )
+}
+
 export type SharedExecutorInput<T> = {
   orgId: string
   propertyId?: string | null
@@ -178,16 +214,39 @@ async function startSharedExecutorJob(
 
   let sharedJobId: string | null = null
   let sharedActionAttemptId: string | null = null
-  try {
+  {
     const supabase = createServiceClient()
     const { data, error } = await supabase.from('shared_jobs').insert(insert).select('id').single()
     if (error) {
+      if (isUniqueViolation(error) && input.dedupeKey) {
+        // A job with this dedupe key already exists. Reuse it instead of
+        // executing an unledgered side effect.
+        const { data: existing } = await supabase
+          .from('shared_jobs')
+          .select('id, lifecycle_status')
+          .eq('org_id', input.orgId)
+          .eq('domain', input.domain)
+          .eq('dedupe_key', input.dedupeKey)
+          .maybeSingle()
+
+        if (existing?.id) {
+          throw new SharedExecutorDuplicateJobError(
+            `A shared job already exists for dedupe key "${input.dedupeKey}" (status: ${existing.lifecycle_status}).`,
+            existing.id,
+            existing.lifecycle_status
+          )
+        }
+      }
+
       console.error('[shared_executor] failed to start shared job', {
         domain: input.domain,
         subjectType: input.subjectType,
         subjectId: input.subjectId,
         error,
       })
+      throw new SharedExecutorLedgerError(
+        `Failed to create shared job ledger entry: ${error.message}`
+      )
     } else {
       sharedJobId = data.id
       if (input.action) {
@@ -219,13 +278,13 @@ async function startSharedExecutorJob(
             subjectId: input.subjectId,
             error: actionError,
           })
-        } else {
-          sharedActionAttemptId = actionData.id
+          throw new SharedExecutorLedgerError(
+            `Failed to create shared action attempt ledger entry: ${actionError.message}`
+          )
         }
+        sharedActionAttemptId = actionData.id
       }
     }
-  } catch (error) {
-    console.error('[shared_executor] unexpected start failure', { error })
   }
 
   return { sharedJobId, sharedActionAttemptId, requiresApproval }
@@ -319,7 +378,9 @@ export async function runSharedExecutorJob<T>(input: SharedExecutorInput<T>): Pr
   }
 
   if (!sharedJobId) {
-    return input.execute()
+    // startSharedExecutorJob throws on ledger failure, so this is unreachable,
+    // but never execute a side effect without a ledger entry.
+    throw new SharedExecutorLedgerError('Shared job ledger entry was not created')
   }
 
   return executeExistingSharedJob({

@@ -36,6 +36,16 @@ interface Stats {
     resolved: number
     closed: number
   }
+  caseCounts?: {
+    open: number
+    triaged: number
+    awaiting_approval: number
+    ready_to_post: number
+    remediation: number
+    resolved: number
+    dismissed: number
+    slaBreached: number
+  }
   topTopics: Array<{ topic: string; count: number }>
   ratingDistribution: Array<{ rating: number; count: number }>
   recentReviews: Array<{
@@ -121,9 +131,22 @@ export function ReviewStats({ propertyId, days = 0 }: ReviewStatsProps) {
           icon={AlertTriangle}
           iconColor="text-red-500"
           iconBg="bg-red-50 dark:bg-red-900/20"
-          label="Open Tickets"
-          value={stats.ticketCounts.open}
-          urgent={stats.ticketCounts.open > 0}
+          label="Open Cases"
+          value={
+            stats.caseCounts
+              ? stats.caseCounts.open +
+                stats.caseCounts.triaged +
+                stats.caseCounts.awaiting_approval +
+                stats.caseCounts.ready_to_post +
+                stats.caseCounts.remediation
+              : stats.ticketCounts.open
+          }
+          sublabel={
+            stats.caseCounts && stats.caseCounts.slaBreached > 0
+              ? `${stats.caseCounts.slaBreached} past SLA`
+              : undefined
+          }
+          urgent={(stats.caseCounts?.slaBreached ?? stats.ticketCounts.open) > 0}
         />
       </div>
 

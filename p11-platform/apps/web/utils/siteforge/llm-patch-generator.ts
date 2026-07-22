@@ -5,6 +5,7 @@
 
 import Anthropic from '@anthropic-ai/sdk'
 import { WordPressMcpClient } from '@/utils/mcp/wordpress-client'
+import { SITEFORGE_CLAUDE_MODEL } from '@/utils/siteforge/models'
 import type { SiteBlueprint, BlueprintPatchOperation } from '@/types/siteforge'
 
 const anthropic = new Anthropic({
@@ -133,7 +134,7 @@ Generate patches now.
 `
   
   const message = await anthropic.messages.create({
-    model: 'claude-sonnet-4-20250514',
+    model: SITEFORGE_CLAUDE_MODEL,
     max_tokens: 4000,
     temperature: 1.0,
     system: systemPrompt,

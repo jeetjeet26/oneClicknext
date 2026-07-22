@@ -25,7 +25,7 @@ type StartCronJobRunInput = {
 }
 
 type FinishCronJobRunInput = {
-  status: 'success' | 'failed'
+  status: 'success' | 'partial' | 'failed'
   summary?: CronRunSummary
   error?: string | null
 }

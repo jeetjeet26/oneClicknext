@@ -2,6 +2,16 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
+import { persistObservedReviews, type ObservedReview } from '@/utils/reviewflow/ingestion'
+import { ensureCaseForReview } from '@/utils/reviewflow/cases'
+import { runBatchAnalysis } from '@/utils/reviewflow/analysis-pipeline'
+import { runSharedExecutorJob } from '@/utils/services/shared-executor'
+
+// Cap on synchronous classification per import; the remainder stays 'pending'
+// and is drained by analyze-batch.
+const IMPORT_ANALYSIS_CAP = Number(process.env.REVIEWFLOW_IMPORT_ANALYSIS_CAP || 10)
+
+const IMPORTABLE_PLATFORMS = new Set(['google', 'yelp', 'apartments_com', 'facebook', 'other'])
 
 export async function POST(request: NextRequest) {
   try {
@@ -56,20 +66,11 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Parse rows
-    const reviews: Array<{
-      property_id: string
-      platform: string
-      reviewer_name: string | null
-      rating: number | null
-      review_text: string
-      review_date: string | null
-      response_status: string
-    }> = []
-
+    // Parse rows grouped by platform (stable identity is per platform).
+    const reviewsByPlatform = new Map<string, ObservedReview[]>()
     for (let i = 1; i < lines.length; i++) {
       const values = parseCSVLine(lines[i])
-      
+
       if (values.length !== headers.length) continue
 
       const row: Record<string, string> = {}
@@ -77,49 +78,106 @@ export async function POST(request: NextRequest) {
         row[header] = values[index]?.replace(/^"|"$/g, '').trim() || ''
       })
 
-      if (!row.review_text) continue
+      const reviewText = row.review_text || row.reviewtext
+      if (!reviewText) continue
 
-      reviews.push({
-        property_id: propertyId,
-        platform: row.platform || 'other',
-        reviewer_name: row.reviewer_name || row.reviewername || null,
-        rating: row.rating ? parseInt(row.rating) : null,
-        review_text: row.review_text || row.reviewtext,
-        review_date: row.review_date || row.reviewdate || null,
-        response_status: 'pending'
+      const rawPlatform = (row.platform || 'other').toLowerCase()
+      const platform = IMPORTABLE_PLATFORMS.has(rawPlatform) ? rawPlatform : 'other'
+      const parsedRating = row.rating ? parseInt(row.rating) : NaN
+
+      const list = reviewsByPlatform.get(platform) || []
+      list.push({
+        platformReviewId: row.platform_review_id || row.platformreviewid || null,
+        reviewerName: row.reviewer_name || row.reviewername || 'Anonymous',
+        reviewerAvatarUrl: null,
+        rating: Number.isFinite(parsedRating) && parsedRating >= 1 && parsedRating <= 5 ? parsedRating : null,
+        reviewText,
+        reviewDate: row.review_date || row.reviewdate || null,
       })
+      reviewsByPlatform.set(platform, list)
     }
 
-    if (reviews.length === 0) {
+    const totalParsed = Array.from(reviewsByPlatform.values()).reduce(
+      (sum, list) => sum + list.length,
+      0
+    )
+    if (totalParsed === 0) {
       return NextResponse.json(
         { error: 'No valid reviews found in CSV' },
         { status: 400 }
       )
     }
 
-    // Insert reviews
-    const { data, error } = await supabase
-      .from('reviews')
-      .insert(reviews)
-      .select()
+    const { data: property } = await supabase
+      .from('properties')
+      .select('org_id')
+      .eq('id', propertyId)
+      .single()
 
-    if (error) {
-      console.error('Error inserting reviews:', error)
-      return NextResponse.json(
-        { error: error.message },
-        { status: 500 }
-      )
+    if (!property?.org_id) {
+      return NextResponse.json({ error: 'Property is missing org context' }, { status: 409 })
     }
 
-    // Analyze imported reviews in the background
-    if (data && data.length > 0) {
-      // Don't await - let it process in background
-      analyzeReviewsBatch(data.map(r => r.id))
-    }
+    // Durable import job: replay-safe persistence + awaited bounded analysis.
+    const result = await runSharedExecutorJob({
+      orgId: property.org_id,
+      propertyId,
+      domain: 'reviewflow.import',
+      subjectType: 'csv_import',
+      requestedBy: user.id,
+      payload: { fileName: file.name, rowCount: totalParsed },
+      execute: async () => {
+        let inserted = 0
+        let updated = 0
+        let unchanged = 0
+        const insertedReviews: Array<{
+          id: string
+          property_id: string | null
+          review_text: string | null
+          rating: number | null
+          reviewer_name: string | null
+          platform: string
+        }> = []
+
+        for (const [platform, reviews] of reviewsByPlatform) {
+          const persisted = await persistObservedReviews(supabase, {
+            propertyId,
+            platform,
+            reviews,
+            retrievalMethod: 'csv_import',
+            completeness: 'unknown',
+          })
+          inserted += persisted.inserted
+          updated += persisted.updated
+          unchanged += persisted.unchanged
+          insertedReviews.push(...persisted.insertedReviews)
+        }
+
+        for (const review of insertedReviews) {
+          await ensureCaseForReview(supabase, review)
+        }
+
+        const toAnalyze = insertedReviews.slice(0, IMPORT_ANALYSIS_CAP)
+        const analysisSummary =
+          toAnalyze.length > 0
+            ? await runBatchAnalysis(supabase, toAnalyze)
+            : { analyzed: 0, manualReviewRequired: 0, skipped: 0, results: [] }
+
+        return {
+          inserted,
+          updated,
+          unchanged,
+          analyzed: analysisSummary.analyzed,
+          manualReviewRequired: analysisSummary.manualReviewRequired,
+          pendingAnalysis: Math.max(inserted - toAnalyze.length, 0),
+        }
+      },
+    })
 
     return NextResponse.json({
       success: true,
-      imported: data?.length || 0
+      imported: result.inserted,
+      ...result,
     })
 
   } catch (error) {
@@ -152,20 +210,5 @@ function parseCSVLine(line: string): string[] {
   
   result.push(current)
   return result
-}
-
-// Analyze reviews in background
-async function analyzeReviewsBatch(reviewIds: string[]) {
-  for (const reviewId of reviewIds) {
-    try {
-      await fetch(`${process.env.NEXT_PUBLIC_SITE_URL}/api/reviewflow/analyze`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reviewId })
-      })
-    } catch (error) {
-      console.error(`Error analyzing review ${reviewId}:`, error)
-    }
-  }
 }
 

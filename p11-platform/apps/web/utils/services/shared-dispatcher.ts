@@ -21,6 +21,61 @@ function toRecord(value: unknown): Record<string, unknown> {
   return {}
 }
 
+/**
+ * MarketVision messaging-brief handoff: creates a *draft* ForgeStudio content
+ * brief. Never publishes — the brief goes through ForgeStudio's own review
+ * and publish approval flow.
+ */
+async function dispatchMarketVisionMessagingBrief(input: {
+  actionAttemptId: string
+  orgId: string
+  propertyId: string | null
+  executionPayload: Record<string, unknown>
+  requestPayload: Record<string, unknown>
+}) {
+  if (!input.propertyId) {
+    throw new SharedDispatchError('Messaging brief handoff requires a property', 400)
+  }
+
+  const title =
+    typeof input.executionPayload.title === 'string' && input.executionPayload.title.trim()
+      ? input.executionPayload.title.trim()
+      : 'MarketVision messaging brief'
+  const rationale =
+    typeof input.executionPayload.rationale === 'string' ? input.executionPayload.rationale : ''
+  const citations = Array.isArray(input.executionPayload.citations)
+    ? input.executionPayload.citations
+    : []
+
+  const supabase = createServiceClient()
+  const { data, error } = await supabase
+    .from('social_content_briefs')
+    .insert({
+      org_id: input.orgId,
+      property_id: input.propertyId,
+      title,
+      objective: rationale || title,
+      topic: 'marketvision_competitive_response',
+      status: 'draft',
+      source_facts: {
+        source: 'marketvision_proposal',
+        actionAttemptId: input.actionAttemptId,
+        citations,
+      },
+    })
+    .select('id')
+    .single()
+
+  if (error || !data) {
+    throw new SharedDispatchError(
+      `Failed to create ForgeStudio content brief: ${error?.message || 'unknown error'}`,
+      500
+    )
+  }
+
+  return { contentBriefId: data.id, status: 'draft' }
+}
+
 async function dispatchForgeStudioPublishAction(input: {
   actionAttemptId: string
   sharedJobId: string
@@ -78,12 +133,14 @@ export async function resumeSharedActionAttempt(
       `
         id,
         job_id,
+        org_id,
         property_id,
         action_type,
         proposal_decision_status,
         lifecycle_status,
         execution_status,
         execution_payload,
+        request_payload,
         shared_jobs!inner (
           id,
           domain
@@ -123,6 +180,14 @@ export async function resumeSharedActionAttempt(
           actionAttemptId: data.id,
           sharedJobId,
           executionPayload: toRecord(data.execution_payload),
+        })
+      case 'marketvision.proposal:forgestudio_messaging_brief':
+        return dispatchMarketVisionMessagingBrief({
+          actionAttemptId: data.id,
+          orgId: data.org_id,
+          propertyId: data.property_id,
+          executionPayload: toRecord(data.execution_payload),
+          requestPayload: toRecord(data.request_payload),
         })
       default:
         throw new SharedDispatchError(

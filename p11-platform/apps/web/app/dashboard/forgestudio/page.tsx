@@ -7,8 +7,9 @@ import {
   DraftList,
   AssetGallery,
   ForgeStudioConfig,
-  ContentCalendar,
-  SocialConnections
+  SocialConnections,
+  CampaignWorkspace,
+  PublicationCalendar
 } from '@/components/forgestudio'
 import {
   Sparkles,
@@ -18,15 +19,16 @@ import {
   Settings,
   Wand2,
   RefreshCw,
-  Zap,
-  Link2
+  ShieldCheck,
+  Link2,
+  Megaphone
 } from 'lucide-react'
 
-type TabId = 'create' | 'drafts' | 'assets' | 'calendar' | 'connections' | 'settings'
+type TabId = 'campaigns' | 'create' | 'drafts' | 'assets' | 'schedule' | 'connections' | 'settings'
 
 export default function ForgeStudioPage() {
   const { currentProperty } = usePropertyContext()
-  const [activeTab, setActiveTab] = useState<TabId>('create')
+  const [activeTab, setActiveTab] = useState<TabId>('campaigns')
   const [refreshKey, setRefreshKey] = useState(0)
 
   const handleContentGenerated = useCallback(() => {
@@ -34,10 +36,11 @@ export default function ForgeStudioPage() {
   }, [])
 
   const tabs = [
-    { id: 'create' as TabId, label: 'Create', icon: Wand2 },
+    { id: 'campaigns' as TabId, label: 'Campaigns', icon: Megaphone },
+    { id: 'create' as TabId, label: 'Quick Create', icon: Wand2 },
     { id: 'drafts' as TabId, label: 'Drafts', icon: FileText },
     { id: 'assets' as TabId, label: 'Assets', icon: ImageIcon },
-    { id: 'calendar' as TabId, label: 'Calendar', icon: Calendar },
+    { id: 'schedule' as TabId, label: 'Schedule', icon: Calendar },
     { id: 'connections' as TabId, label: 'Connections', icon: Link2 },
     { id: 'settings' as TabId, label: 'Settings', icon: Settings }
   ]
@@ -51,14 +54,11 @@ export default function ForgeStudioPage() {
             <Sparkles className="w-7 h-7" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+            <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">
               <span className="text-slate-900 dark:text-slate-900">ForgeStudio AI</span>
-              <span className="text-xs px-2 py-0.5 bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white rounded-full">
-                NEW
-              </span>
             </h1>
             <p className="text-slate-700 dark:text-slate-300">
-              AI-powered content creation for {currentProperty.name}
+              Content operating system for {currentProperty.name}
             </p>
           </div>
         </div>
@@ -80,48 +80,48 @@ export default function ForgeStudioPage() {
             <div className="p-2 bg-white/20 rounded-lg">
               <Sparkles className="w-5 h-5" />
             </div>
-            <h3 className="font-semibold">AI Copy Generation</h3>
+            <h3 className="font-semibold">Grounded AI Drafts</h3>
           </div>
           <p className="text-sm text-white/80">
-            Generate engaging social posts, ad copy, and emails with GPT-4
+            Channel-specific copy generated only from your property facts, brand system, and assets
           </p>
         </div>
-        
+
         <div className="bg-gradient-to-br from-amber-500 to-orange-600 rounded-xl p-5 text-white">
           <div className="flex items-center gap-3 mb-3">
             <div className="p-2 bg-white/20 rounded-lg">
-              <Wand2 className="w-5 h-5" />
+              <ShieldCheck className="w-5 h-5" />
             </div>
-            <h3 className="font-semibold">Google Gemini AI</h3>
+            <h3 className="font-semibold">You Approve Everything</h3>
           </div>
           <p className="text-sm text-white/80">
-            Generate stunning images with Imagen & videos with Veo
+            Nothing is scheduled or posted until you approve the exact revision
           </p>
         </div>
-        
+
         <div className="bg-gradient-to-br from-emerald-500 to-teal-600 rounded-xl p-5 text-white">
           <div className="flex items-center gap-3 mb-3">
             <div className="p-2 bg-white/20 rounded-lg">
-              <Zap className="w-5 h-5" />
+              <Calendar className="w-5 h-5" />
             </div>
-            <h3 className="font-semibold">Smart Scheduling</h3>
+            <h3 className="font-semibold">Reliable Publishing</h3>
           </div>
           <p className="text-sm text-white/80">
-            Plan and schedule content across all your social channels
+            Scheduled posts publish once, with full attempt history and retry visibility
           </p>
         </div>
       </div>
 
       {/* Tabs */}
       <div className="border-b border-slate-200 dark:border-slate-700">
-        <nav className="flex gap-6">
+        <nav className="flex gap-6 overflow-x-auto">
           {tabs.map((tab) => {
             const Icon = tab.icon
             return (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-2 pb-3 text-sm font-medium border-b-2 transition-colors ${
+                className={`flex items-center gap-2 pb-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
                   activeTab === tab.id
                     ? 'border-violet-500 text-violet-600 dark:text-violet-400'
                     : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
@@ -136,6 +136,10 @@ export default function ForgeStudioPage() {
       </div>
 
       {/* Tab Content */}
+      {activeTab === 'campaigns' && (
+        <CampaignWorkspace propertyId={currentProperty.id} />
+      )}
+
       {activeTab === 'create' && (
         <ContentGenerator
           propertyId={currentProperty.id}
@@ -154,8 +158,8 @@ export default function ForgeStudioPage() {
         <AssetGallery propertyId={currentProperty.id} />
       )}
 
-      {activeTab === 'calendar' && (
-        <ContentCalendar propertyId={currentProperty.id} />
+      {activeTab === 'schedule' && (
+        <PublicationCalendar propertyId={currentProperty.id} refreshTrigger={refreshKey} />
       )}
 
       {activeTab === 'connections' && (
@@ -168,4 +172,3 @@ export default function ForgeStudioPage() {
     </div>
   )
 }
-

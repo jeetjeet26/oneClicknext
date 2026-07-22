@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
-import { getDataEngineUrl } from '@/utils/services/runtime-config'
+import { getDataEngineHeaders, getDataEngineUrl } from '@/utils/services/runtime-config'
 
 // Data engine service URL (Python FastAPI)
 const DATA_ENGINE_URL = getDataEngineUrl()
@@ -50,10 +50,10 @@ export async function POST(req: NextRequest) {
     // Call data-engine for semantic search
     const response = await fetch(`${DATA_ENGINE_URL}/scraper/brand-intelligence/search`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getDataEngineHeaders(),
       body: JSON.stringify({
         query,
-        property_id: propertyId || null,
+        property_id: propertyId,
         competitor_ids: competitorIds || null,
         limit
       })

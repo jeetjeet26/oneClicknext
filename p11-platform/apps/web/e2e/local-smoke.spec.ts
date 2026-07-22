@@ -1297,6 +1297,133 @@ test.describe('local smoke flows', () => {
     expect(finalDraft?.status).toBe('approved')
   })
 
+  test('forgestudio real-provider publish smoke per channel (opt-in)', async ({ page, request }) => {
+    // A channel is launch-ready only after this passes against a real account:
+    // OAuth connection, generation, approval, scheduling, worker publish, and
+    // a canonical remote post URL. Gated per channel:
+    //   FORGESTUDIO_REAL_SMOKE=1 FORGESTUDIO_REAL_SMOKE_PLATFORM=facebook
+    test.setTimeout(300_000)
+    test.skip(
+      process.env.FORGESTUDIO_REAL_SMOKE !== '1',
+      'Set FORGESTUDIO_REAL_SMOKE=1 to run the real-provider ForgeStudio publish smoke.'
+    )
+    const platform = process.env.FORGESTUDIO_REAL_SMOKE_PLATFORM
+    test.skip(
+      !platform || !['instagram', 'facebook', 'linkedin', 'tiktok', 'x'].includes(platform),
+      'Set FORGESTUDIO_REAL_SMOKE_PLATFORM to one of instagram|facebook|linkedin|tiktok|x.'
+    )
+    const cronSecret = process.env.CRON_SECRET
+    test.skip(!cronSecret, 'Set CRON_SECRET so the smoke can trigger the publication worker.')
+
+    await login(page)
+    const propertyId = await resolvePropertyIdForSmoke(page)
+
+    // The channel must already be connected through its real OAuth flow.
+    const connectionsResponse = await callAuthedApi(
+      page,
+      `/api/forgestudio/social/connections?propertyId=${propertyId}`
+    )
+    expect(connectionsResponse.ok).toBeTruthy()
+    const connections = (connectionsResponse.data as {
+      connections?: Array<{ id: string; platform: string; is_active: boolean }>
+    }).connections
+    const connection = (connections || []).find(
+      (candidate) =>
+        (candidate.platform === platform || (platform === 'x' && candidate.platform === 'twitter')) &&
+        candidate.is_active
+    )
+    test.skip(!connection, `No active ${platform} connection for this property; connect it first.`)
+
+    // Brief → generate → approve → schedule for "now".
+    const suffix = Date.now().toString(36)
+    const briefResponse = await callAuthedApi(page, '/api/forgestudio/briefs', {
+      method: 'POST',
+      body: {
+        propertyId,
+        title: `Real-provider smoke ${suffix}`,
+        objective: 'Verify the end-to-end publish path against a real provider account.',
+        topic: `ForgeStudio launch check ${suffix}`,
+        channels: [platform],
+        connectionIds: [connection!.id],
+      },
+    })
+    expect(briefResponse.ok, `Brief creation failed: ${JSON.stringify(briefResponse)}`).toBeTruthy()
+    const briefId = (briefResponse.data as { brief?: { id?: string } }).brief?.id
+    expect(typeof briefId).toBe('string')
+
+    const generateResponse = await callAuthedApi(
+      page,
+      `/api/forgestudio/briefs/${briefId}/generate`,
+      { method: 'POST', body: {} }
+    )
+    expect(
+      generateResponse.ok,
+      `Generation failed (OPENAI/AI Gateway key required): ${JSON.stringify(generateResponse)}`
+    ).toBeTruthy()
+    const revisionId = (generateResponse.data as { revision?: { id?: string } }).revision?.id
+    expect(typeof revisionId).toBe('string')
+
+    const approveResponse = await callAuthedApi(
+      page,
+      `/api/forgestudio/revisions/${revisionId}/approval`,
+      { method: 'POST', body: { decision: 'approved' } }
+    )
+    expect(approveResponse.ok, `Approval failed: ${JSON.stringify(approveResponse)}`).toBeTruthy()
+
+    const scheduleResponse = await callAuthedApi(page, '/api/forgestudio/publications', {
+      method: 'POST',
+      body: {
+        revisionId,
+        destinations: [
+          { connectionId: connection!.id, scheduledFor: new Date().toISOString(), timezone: 'UTC' },
+        ],
+      },
+    })
+    expect(scheduleResponse.ok, `Scheduling failed: ${JSON.stringify(scheduleResponse)}`).toBeTruthy()
+    const publicationId = (scheduleResponse.data as {
+      publications?: Array<{ id?: string }>
+    }).publications?.[0]?.id
+    expect(typeof publicationId).toBe('string')
+
+    // Duplicate scheduling must be refused before we ever hit the provider.
+    const duplicateResponse = await callAuthedApi(page, '/api/forgestudio/publications', {
+      method: 'POST',
+      body: {
+        revisionId,
+        destinations: [
+          { connectionId: connection!.id, scheduledFor: new Date().toISOString(), timezone: 'UTC' },
+        ],
+      },
+    })
+    expect(duplicateResponse.ok, 'Duplicate scheduling should be rejected').toBeFalsy()
+
+    // Wake the worker (same path hosted cron uses) and poll for the outcome.
+    let finalStatus: string | undefined
+    let remoteUrl: string | null | undefined
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const workerResponse = await request.get('/api/cron/process-publications', {
+        headers: { Authorization: `Bearer ${cronSecret}` },
+      })
+      expect(workerResponse.ok()).toBeTruthy()
+
+      const statusResponse = await callAuthedApi(
+        page,
+        `/api/forgestudio/publications/${publicationId}`
+      )
+      expect(statusResponse.ok).toBeTruthy()
+      const publication = (statusResponse.data as {
+        publication?: { status?: string; remote_post_url?: string | null }
+      }).publication
+      finalStatus = publication?.status
+      remoteUrl = publication?.remote_post_url
+      if (finalStatus === 'published' || finalStatus === 'failed') break
+      await page.waitForTimeout(10_000)
+    }
+
+    expect(finalStatus, `Publication did not publish (status: ${finalStatus})`).toBe('published')
+    expect(remoteUrl, 'Published post should expose a canonical remote URL').toBeTruthy()
+  })
+
   test('brandforge analyze to generate edit export and embed flow stays deterministic locally', async ({
     page,
   }) => {
