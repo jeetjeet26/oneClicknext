@@ -375,7 +375,9 @@ export async function persistMarketBrief(brief: MarketBrief): Promise<string | n
 
   if (error) {
     console.error('[marketvision] failed to persist market brief', error)
-    return null
+    // Surface the real database error so the run ledger records the cause
+    // instead of a generic persistence failure.
+    throw new Error(`Failed to persist market brief: ${error.message}`)
   }
   return data?.id ?? null
 }

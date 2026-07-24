@@ -15,6 +15,7 @@ import {
 import { createRequestContext } from '@/utils/services/request-context'
 import { getAppBaseUrl } from '@/utils/services/runtime-config'
 import { getCalendarConfig, ensureCalendarWatch } from '@/utils/services/google-calendar'
+import { normalizeTimezoneToIana } from '@/utils/services/timezone'
 
 type ProviderTokenResponse = {
   access_token?: string
@@ -115,7 +116,9 @@ async function fetchGoogleAccount(
     )
     if (timezoneResponse.ok) {
       const timezoneData = await timezoneResponse.json()
-      timezone = typeof timezoneData?.value === 'string' ? timezoneData.value : null
+      timezone = normalizeTimezoneToIana(
+        typeof timezoneData?.value === 'string' ? timezoneData.value : null
+      )
     }
   }
 
@@ -153,7 +156,16 @@ async function fetchMicrosoftAccount(accessToken: string): Promise<ProviderAccou
   })
   if (settingsResponse.ok) {
     const settings = await settingsResponse.json()
-    timezone = typeof settings?.timeZone === 'string' ? settings.timeZone : null
+    // Graph returns Windows timezone names (e.g. "Pacific Standard Time");
+    // normalize to IANA so slot generation can use it.
+    timezone = normalizeTimezoneToIana(
+      typeof settings?.timeZone === 'string' ? settings.timeZone : null
+    )
+  } else {
+    console.error(
+      '[IntegrationOAuth] mailboxSettings fetch failed; falling back to default timezone:',
+      settingsResponse.status
+    )
   }
 
   return {

@@ -5,6 +5,7 @@
 import { createAdminClient } from '@/utils/supabase/admin'
 import OpenAI from 'openai'
 import { editPropertyChatbotContext } from '@/utils/services/chatbot-context-editor'
+import { isForSaleResidentialType } from '@/utils/property-types'
 
 function formatEmbeddingForPgVector(embedding: number[]): string {
   return `[${embedding.join(',')}]`
@@ -25,6 +26,13 @@ export async function syncPropertyUnitsToKnowledgeBase(propertyId: string): Prom
     if (unitsError || !units || units.length === 0) {
       return { success: false, error: 'No units found' }
     }
+
+    const { data: property } = await adminClient
+      .from('properties')
+      .select('property_type')
+      .eq('id', propertyId)
+      .single()
+    const isForSale = isForSaleResidentialType(property?.property_type)
 
     // Format units into clean, natural language content
     const formatCurrency = (amount: any) => {
@@ -62,12 +70,14 @@ export async function syncPropertyUnitsToKnowledgeBase(propertyId: string): Prom
           formattedContent += `, ${sqft}`
         }
         
-        const rentMin = formatCurrency(unit.rent_min)
-        const rentMax = formatCurrency(unit.rent_max)
-        if (rentMin && rentMax && rentMin !== rentMax) {
-          formattedContent += `, Rent: ${rentMin} to ${rentMax} per month`
-        } else if (rentMin) {
-          formattedContent += `, Rent: ${rentMin} per month`
+        const priceMin = formatCurrency(unit.rent_min)
+        const priceMax = formatCurrency(unit.rent_max)
+        const priceLabel = isForSale ? 'Price' : 'Rent'
+        const priceSuffix = isForSale ? '' : ' per month'
+        if (priceMin && priceMax && priceMin !== priceMax) {
+          formattedContent += `, ${priceLabel}: ${priceMin} to ${priceMax}${priceSuffix}`
+        } else if (priceMin) {
+          formattedContent += `, ${priceLabel}: ${priceMin}${priceSuffix}`
         }
         
         if (unit.available_count > 0) {
@@ -75,7 +85,9 @@ export async function syncPropertyUnitsToKnowledgeBase(propertyId: string): Prom
         }
         
         if (unit.move_in_specials) {
-          formattedContent += `\nMove-in Special: ${unit.move_in_specials}`
+          formattedContent += isForSale
+            ? `\nDetails: ${unit.move_in_specials}`
+            : `\nMove-in Special: ${unit.move_in_specials}`
         }
         
         formattedContent += '\n\n'

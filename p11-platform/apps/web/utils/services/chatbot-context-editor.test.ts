@@ -184,6 +184,54 @@ describe('chatbot context editor', () => {
     expect(db.revisions).toHaveLength(1)
   })
 
+  it('renders sale pricing (not rent) for for-sale residential properties', async () => {
+    const { db, supabase } = createMockSupabase({
+      property: {
+        id: 'property-1',
+        name: 'Acacia',
+        address: null,
+        property_type: 'master_planned',
+        website_url: 'https://acacia.example',
+        unit_count: null,
+        year_built: null,
+        amenities: [],
+        pet_policy: null,
+        parking_info: null,
+        special_features: [],
+        brand_voice: null,
+        target_audience: null,
+        office_hours: null,
+      },
+      units: [{
+        id: 'unit-plan4',
+        property_id: 'property-1',
+        unit_type: 'Plan 4 (Homesite 1)',
+        bedrooms: 3,
+        bathrooms: 2.5,
+        sqft_min: 2040,
+        sqft_max: 2040,
+        rent_min: 2595000,
+        rent_max: null,
+        deposit: null,
+        available_count: 1,
+        move_in_specials: 'Estimated move-in May 2026.',
+        last_updated_at: '2026-07-23T00:00:00.000Z',
+        created_at: '2026-07-23T00:00:00.000Z',
+        source: 'manual',
+        source_url: null,
+      }],
+    })
+
+    const result = await editPropertyChatbotContext(supabase as never, 'property-1', {
+      changeSummary: 'Added Plan 4 homesite.',
+    })
+
+    expect(result.success).toBe(true)
+    expect(db.context?.context_markdown).toContain('price $2,595,000')
+    expect(db.context?.context_markdown).not.toContain('rent $2,595,000')
+    expect(db.context?.context_markdown).toContain('Details: Estimated move-in May 2026.')
+  })
+
   it('updates an existing price from current structured units', async () => {
     const { db, supabase } = createMockSupabase({
       context: {

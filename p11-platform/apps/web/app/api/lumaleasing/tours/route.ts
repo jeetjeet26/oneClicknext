@@ -28,6 +28,7 @@ import {
 } from '@/utils/services/api-helpers';
 import { auditLog, getRequestIp } from '@/utils/services/audit-logger';
 import { createRequestContext } from '@/utils/services/request-context';
+import { formatPropertyAddress } from '@/utils/services/property-address';
 import { tourBookingSchema, validateBody } from '@/utils/services/validation';
 import { endOfDay, parseISO, startOfDay } from 'date-fns';
 
@@ -291,11 +292,11 @@ export async function POST(req: NextRequest) {
     const property: { 
       id: string
       name: string
-      address?: { street?: string; full?: string }
+      address?: unknown
       website_url?: string 
     } | null = propertyData || null;
     const propertyName = property?.name || 'Property Tour';
-    const propertyAddress = property?.address?.street || property?.address?.full || undefined;
+    const propertyAddress = formatPropertyAddress(property?.address);
 
     // Get slot info (if slot-based booking) or use direct date/time
     let slot: TourSlotRow | null = null;
@@ -851,7 +852,7 @@ The ${propertyName} Team`;
     <!-- Footer -->
     <div style="text-align: center; padding: 24px;">
       <p style="margin: 0; font-size: 12px; color: #9ca3af;">
-        Powered by LumaLeasing
+        Powered by P11 Concierge
       </p>
     </div>
   </div>

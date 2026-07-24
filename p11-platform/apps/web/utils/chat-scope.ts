@@ -50,8 +50,39 @@ function mentionsPropertyName(text: string, propertyName?: string | null): boole
     .some(word => new RegExp(`\\b${escapeRegExp(word)}\\b`, 'i').test(text))
 }
 
+export function containsContactInfo(message: string): boolean {
+  const text = message.trim().toLowerCase()
+  if (!text) return false
+  return CONTACT_INFO_PATTERNS.some(pattern => pattern.test(text))
+}
+
 export function buildPropertyOnlyResponse(propertyName: string): string {
   return `I can only help with questions about ${propertyName}, like availability, pricing, amenities, tours, policies, and neighborhood details. What would you like to know about the property?`
+}
+
+const TOUR_KEYWORD_PATTERN = /\b(tours?|showings?|visit|appointment|schedule|book|booking|come\s*by|stop\s*by|check\s*out|look\s*at|view|see)\b/i
+
+const TOUR_FOLLOW_UP_AFFIRMATION_PATTERN = /\b(yes|yeah|yep|sure|absolutely|definitely|sounds\s+good|ok(?:ay)?|please|let'?s\s+do\s+(?:it|that)|i(?:'d|\s+would)\s+love\s+to|that\s+works|why\s+not)\b/i
+
+const TOUR_FOLLOW_UP_TIMING_PATTERN = /\b(availability|available|openings?|slots?|times?|when|today|tomorrow|tonight|(?:next|this)\s+(?:week|month|weekend)|weekends?|weekdays?|monday|tuesday|wednesday|thursday|friday|saturday|sunday|mornings?|afternoons?|evenings?)\b/i
+
+/**
+ * Detects tour intent from the latest visitor message. Direct keywords always
+ * count. Affirmations ("I would love to") or scheduling questions ("is there
+ * availability next week?") only count as tour intent when the assistant's
+ * previous message brought up a tour, so plain availability questions about
+ * homes don't open the booking calendar.
+ */
+export function detectTourIntent(message: string, previousAssistantMessage?: string | null): boolean {
+  const text = message.trim().toLowerCase()
+  if (!text) return false
+
+  if (TOUR_KEYWORD_PATTERN.test(text)) return true
+
+  const previous = previousAssistantMessage?.trim().toLowerCase()
+  if (!previous || !TOUR_KEYWORD_PATTERN.test(previous)) return false
+
+  return TOUR_FOLLOW_UP_AFFIRMATION_PATTERN.test(text) || TOUR_FOLLOW_UP_TIMING_PATTERN.test(text)
 }
 
 export function isPropertyChatInScope(message: string, propertyName?: string | null): boolean {

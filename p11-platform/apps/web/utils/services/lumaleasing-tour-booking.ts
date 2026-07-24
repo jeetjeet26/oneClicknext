@@ -171,7 +171,7 @@ The ${propertyName} Team`
       </div>
     </div>
     <div style="text-align:center;padding:24px;">
-      <p style="margin:0;font-size:12px;color:#9ca3af;">Powered by LumaLeasing</p>
+      <p style="margin:0;font-size:12px;color:#9ca3af;">Powered by P11 Concierge</p>
     </div>
   </div>
 </body>

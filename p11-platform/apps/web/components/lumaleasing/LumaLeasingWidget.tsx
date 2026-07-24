@@ -80,7 +80,6 @@ export function LumaLeasingWidget({
 }: LumaLeasingWidgetProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [config, setConfig] = useState<WidgetConfig | null>(null);
-  const [isOnline, setIsOnline] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   
@@ -137,7 +136,6 @@ export function LumaLeasingWidget({
       
       const data = await res.json();
       setConfig(data.config);
-      setIsOnline(data.isOnline);
       
       // Set welcome message
       setMessages([{
@@ -352,9 +350,6 @@ export function LumaLeasingWidget({
           style={{ backgroundColor: config.primaryColor }}
         >
           <MessageCircle className="w-6 h-6 text-white" />
-          {!isOnline && (
-            <span className="absolute -top-1 -right-1 w-3 h-3 bg-amber-400 rounded-full border-2 border-white" />
-          )}
         </button>
       )}
 
@@ -379,10 +374,6 @@ export function LumaLeasingWidget({
               )}
               <div>
                 <h3 className="font-semibold">{config.widgetName}</h3>
-                <p className="text-xs text-white/80 flex items-center gap-1">
-                  <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-400' : 'bg-amber-400'}`} />
-                  {isOnline ? 'Online' : 'Away'}
-                </p>
               </div>
             </div>
             <button
@@ -473,7 +464,7 @@ export function LumaLeasingWidget({
                   </button>
                 </div>
                 <p className="text-[10px] text-gray-400 text-center mt-2">
-                  Powered by LumaLeasing
+                  Powered by P11 Concierge
                 </p>
               </div>
             </>

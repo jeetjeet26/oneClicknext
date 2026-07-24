@@ -34,6 +34,13 @@
   let leadInfo = { firstName: '', lastName: '', email: '', phone: '' };
   let isTyping = false;
   let visitorId = getVisitorId();
+  let isHumanMode = false;
+  let historyPollTimer = null;
+  let serverMessageCount = 0;
+
+  // Cap on how much history is re-sent to the chat API (server schema max is 50).
+  const MAX_CHAT_CONTEXT_MESSAGES = 30;
+  const HISTORY_POLL_INTERVAL_MS = 6000;
   
   // Calendar state
   let widgetMode = 'chat'; // 'chat' | 'calendar' | 'confirmation'
@@ -121,7 +128,6 @@
       const data = await response.json();
       config = data.config;
       config.apiKey = apiKey;
-      config.isOnline = data.isOnline;
       config.position = options.position || 'bottom-right';
 
       // Add welcome message
@@ -137,6 +143,10 @@
 
       // Render widget
       renderWidget();
+
+      // Restore the transcript for a returning visitor (fire-and-forget so
+      // the launcher renders immediately; re-renders once history arrives).
+      restoreSession();
 
       // Global Esc-to-close keyboard handler.
       attachGlobalKeyHandler();
@@ -230,18 +240,6 @@
         height: 24px;
         fill: white;
       }
-      .ll-button .ll-status {
-        position: absolute;
-        top: -2px;
-        right: -2px;
-        width: 12px;
-        height: 12px;
-        border-radius: 50%;
-        border: 2px solid white;
-      }
-      .ll-button .ll-status.online { background: #10b981; }
-      .ll-button .ll-status.offline { background: #f59e0b; }
-      
       .ll-window {
         width: 380px;
         height: 600px;
@@ -295,13 +293,6 @@
         align-items: center;
         gap: 4px;
       }
-      .ll-status-dot {
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-      }
-      .ll-status-dot.online { background: #10b981; }
-      .ll-status-dot.offline { background: #f59e0b; }
       .ll-close {
         background: rgba(255,255,255,0.2);
         border: none;
@@ -726,7 +717,6 @@
         aria-haspopup="dialog"
       >
         <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3c5.5 0 10 3.58 10 8s-4.5 8-10 8c-1.24 0-2.43-.18-3.53-.5C5.55 21 2 21 2 21c2.33-2.33 2.7-3.9 2.75-4.5C3.05 15.07 2 13.13 2 11c0-4.42 4.5-8 10-8z"/></svg>
-        <span class="ll-status ${config.isOnline ? 'online' : 'offline'}" aria-hidden="true"></span>
       </button>
     `;
   }
@@ -783,7 +773,6 @@
         role="dialog"
         aria-modal="false"
         aria-labelledby="ll-dialog-title"
-        aria-describedby="ll-dialog-status"
       >
         <div class="ll-header" style="background: ${gradient}">
           <div class="ll-header-info">
@@ -794,10 +783,6 @@
             </div>
             <div>
               <div class="ll-name" id="ll-dialog-title">${escapeHtml(config.widgetName)}</div>
-              <div class="ll-status-text" id="ll-dialog-status">
-                <span class="ll-status-dot ${config.isOnline ? 'online' : 'offline'}" aria-hidden="true"></span>
-                ${config.isOnline ? 'Online' : 'Away'}
-              </div>
             </div>
           </div>
           <button class="ll-close" onclick="lumaleasing('close')" aria-label="Close chat">
@@ -818,7 +803,7 @@
               <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
             </button>
           </div>
-          <div class="ll-powered">Powered by LumaLeasing</div>
+          <div class="ll-powered">Powered by P11 Concierge</div>
         </div>
       </div>
     `;
@@ -1176,14 +1161,32 @@
     return null;
   }
 
-  // Detect tour intent in message
-  function detectTourIntent(text) {
-    const tourKeywords = [
-      'tour', 'visit', 'see', 'showing', 'appointment', 'schedule', 
-      'book', 'come by', 'stop by', 'check out', 'look at', 'view'
-    ];
-    const lowerText = text.toLowerCase();
-    return tourKeywords.some(keyword => lowerText.includes(keyword));
+  // Detect tour intent in message. Direct keywords always count. Affirmative
+  // or scheduling follow-ups ("I would love to", "is there availability next
+  // week?") only count when the assistant's previous message brought up a tour.
+  var TOUR_KEYWORD_PATTERN = /\b(tours?|showings?|visit|appointment|schedule|book|booking|come\s*by|stop\s*by|check\s*out|look\s*at|view|see)\b/i;
+  var TOUR_FOLLOW_UP_AFFIRMATION_PATTERN = /\b(yes|yeah|yep|sure|absolutely|definitely|sounds\s+good|ok(?:ay)?|please|let'?s\s+do\s+(?:it|that)|i(?:'d|\s+would)\s+love\s+to|that\s+works|why\s+not)\b/i;
+  var TOUR_FOLLOW_UP_TIMING_PATTERN = /\b(availability|available|openings?|slots?|times?|when|today|tomorrow|tonight|(?:next|this)\s+(?:week|month|weekend)|weekends?|weekdays?|monday|tuesday|wednesday|thursday|friday|saturday|sunday|mornings?|afternoons?|evenings?)\b/i;
+
+  function detectTourIntent(text, previousAssistantText) {
+    const trimmed = (text || '').trim();
+    if (!trimmed) return false;
+
+    if (TOUR_KEYWORD_PATTERN.test(trimmed)) return true;
+
+    const previous = (previousAssistantText || '').trim();
+    if (!previous || !TOUR_KEYWORD_PATTERN.test(previous)) return false;
+
+    return TOUR_FOLLOW_UP_AFFIRMATION_PATTERN.test(trimmed) || TOUR_FOLLOW_UP_TIMING_PATTERN.test(trimmed);
+  }
+
+  function getPreviousAssistantMessageContent() {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i] && (messages[i].role === 'assistant' || messages[i].role === 'system')) {
+        return messages[i].content || '';
+      }
+    }
+    return '';
   }
 
   // Fetch tour availability from Google Calendar
@@ -1265,6 +1268,124 @@
     }
   }
 
+  // ─── Session restore & human-mode polling ────────────────────────────────
+
+  async function fetchSessionHistory() {
+    const response = await fetch(
+      getApiBase() + '/api/lumaleasing/session/history?sessionId=' + encodeURIComponent(sessionId),
+      {
+        headers: {
+          'X-API-Key': config.apiKey,
+          'X-Visitor-ID': visitorId
+        }
+      }
+    );
+
+    if (!response.ok) {
+      return { ok: false, status: response.status };
+    }
+
+    const data = await response.json();
+    return { ok: true, data: data };
+  }
+
+  // Rebuild the visible transcript from the server copy (source of truth).
+  function applyServerHistory(data) {
+    conversationId = data.conversationId || conversationId;
+    isHumanMode = !!data.isHumanMode;
+    if (data.leadCaptured) leadCaptured = true;
+
+    const serverMessages = Array.isArray(data.messages) ? data.messages : [];
+    serverMessageCount = serverMessages.length;
+
+    if (serverMessages.length > 0) {
+      const welcome = messages.find(function (m) { return m.id === 'welcome'; });
+      messages = (welcome ? [welcome] : []).concat(serverMessages.map(function (m) {
+        return {
+          id: m.id,
+          role: m.role || 'assistant',
+          content: m.content,
+          timestamp: new Date(m.createdAt || Date.now())
+        };
+      }));
+
+      // If the visitor is waiting on a human agent, keep the waiting notice.
+      const lastMessage = serverMessages[serverMessages.length - 1];
+      if (isHumanMode && lastMessage && lastMessage.role === 'user') {
+        messages.push({
+          id: 'waiting-for-human',
+          role: 'system',
+          content: 'A team member will respond shortly. Thanks for your patience!',
+          timestamp: new Date()
+        });
+      }
+
+      // Preserve any draft the visitor is typing across the re-render.
+      const inputEl = document.getElementById('ll-input');
+      const draft = inputEl ? inputEl.value : '';
+      renderWidget();
+      const restoredInput = document.getElementById('ll-input');
+      if (restoredInput && draft) restoredInput.value = draft;
+    }
+
+    if (isHumanMode) startHistoryPolling();
+    else stopHistoryPolling();
+  }
+
+  // Restore a returning visitor's transcript from the server on page load.
+  async function restoreSession() {
+    if (!sessionId || !config) return;
+
+    try {
+      const result = await fetchSessionHistory();
+      if (!result.ok) {
+        // Unknown or expired session — clear it and start fresh.
+        setStoredSessionId(null);
+        conversationId = null;
+        return;
+      }
+      applyServerHistory(result.data);
+    } catch (error) {
+      // Network hiccup: keep the stored session; the server still threads
+      // the conversation by sessionId on the next message.
+    }
+  }
+
+  // While a human agent has taken over, poll for their replies.
+  function startHistoryPolling() {
+    if (historyPollTimer) return;
+    historyPollTimer = setInterval(pollHistory, HISTORY_POLL_INTERVAL_MS);
+  }
+
+  function stopHistoryPolling() {
+    if (historyPollTimer) {
+      clearInterval(historyPollTimer);
+      historyPollTimer = null;
+    }
+  }
+
+  async function pollHistory() {
+    if (!sessionId || !config || !isOpen || isTyping) return;
+
+    try {
+      const result = await fetchSessionHistory();
+      if (!result.ok) {
+        stopHistoryPolling();
+        return;
+      }
+
+      const serverMessages = Array.isArray(result.data.messages) ? result.data.messages : [];
+      if (serverMessages.length > serverMessageCount) {
+        applyServerHistory(result.data);
+      } else if (!result.data.isHumanMode) {
+        isHumanMode = false;
+        stopHistoryPolling();
+      }
+    } catch (error) {
+      // Transient failure — keep polling.
+    }
+  }
+
   // Send message
   async function sendMessage() {
     const input = document.getElementById('ll-input');
@@ -1289,7 +1410,7 @@
     }
 
     // Check for tour intent FIRST
-    if (detectTourIntent(text) && widgetMode === 'chat') {
+    if (detectTourIntent(text, getPreviousAssistantMessageContent()) && widgetMode === 'chat') {
       // Add user message
       messages.push({
         id: Date.now().toString(),
@@ -1362,10 +1483,15 @@
           'X-Visitor-ID': visitorId
         },
         body: JSON.stringify({
-          messages: messages.filter(m => m.id !== 'welcome').map(m => ({
-            role: m.role,
-            content: m.content
-          })),
+          // Cap context so long restored transcripts stay within the API's
+          // 50-message limit.
+          messages: messages
+            .filter(m => m.id !== 'welcome' && m.id !== 'waiting-for-human')
+            .slice(-MAX_CHAT_CONTEXT_MESSAGES)
+            .map(m => ({
+              role: m.role,
+              content: m.content
+            })),
           sessionId: sessionId,
           leadInfo: leadCaptured ? leadInfo : (extractedInfo || undefined)
         })
@@ -1395,6 +1521,8 @@
           content: 'A team member will respond shortly. Thanks for your patience!',
           timestamp: new Date()
         });
+        isHumanMode = true;
+        startHistoryPolling();
       }
 
       if (data.shouldPromptLeadCapture && data.leadCapturePrompt && !leadCaptured) {
@@ -1428,6 +1556,8 @@
     }
     isOpen = true;
     renderWidget();
+    // Resume agent-reply polling if a human takeover is in progress.
+    if (isHumanMode) startHistoryPolling();
   }
 
   // Close widget
@@ -1438,6 +1568,7 @@
 
   // Destroy widget
   function destroyWidget() {
+    stopHistoryPolling();
     const widget = document.getElementById('lumaleasing-widget');
     if (widget) widget.remove();
     const styles = document.getElementById('lumaleasing-styles');

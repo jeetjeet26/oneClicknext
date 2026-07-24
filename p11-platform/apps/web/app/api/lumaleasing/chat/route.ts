@@ -10,7 +10,8 @@ import { createRequestContext } from '@/utils/services/request-context';
 import { bookLumaLeasingTour } from '@/utils/services/lumaleasing-tour-booking';
 import { trackEngagementEvent } from '@/utils/services/engagement-tracker';
 import { getPropertyTypeConfig } from '@/utils/property-types';
-import { buildPropertyOnlyResponse, isPropertyChatInScope } from '@/utils/chat-scope';
+import { buildPropertyOnlyResponse, containsContactInfo, detectTourIntent, isPropertyChatInScope } from '@/utils/chat-scope';
+import { formatPropertyAddress } from '@/utils/services/property-address';
 import { loadPropertyChatbotContext } from '@/utils/services/chatbot-context-editor';
 import OpenAI from 'openai';
 
@@ -216,7 +217,7 @@ async function extractAndProcessConversation(
   conversationId: string | null,
   existingLeadId: string | null,
   config: {
-    properties?: { name?: string; address?: { street?: string; full?: string } } | null
+    properties?: { name?: string; address?: unknown } | null
     widget_name?: string | null
   }
 ): Promise<void> {
@@ -483,8 +484,7 @@ Write a professional CRM note (no bullet points, just flowing text):`;
     if (tourData?.requested && tourData.date && leadId && leadData?.email) {
       const requestedTourTime = tourData.time || '10:00';
       const propertyName = config.properties?.name || 'our community';
-      const propertyAddress =
-        config.properties?.address?.street || config.properties?.address?.full;
+      const propertyAddress = formatPropertyAddress(config.properties?.address);
 
       const bookingResult = await bookLumaLeasingTour({
         supabase,
@@ -905,9 +905,18 @@ export async function POST(req: NextRequest) {
       }, { headers: responseHeaders });
     }
 
-    // 6. Detect intent for tour booking
-    const tourKeywords = ['tour', 'visit', 'see', 'showing', 'appointment', 'schedule', 'book', 'come by', 'stop by', 'check out'];
-    const wantsTour = tourKeywords.some(kw => lastMessage.toLowerCase().includes(kw));
+    // 6. Detect intent for tour booking. Affirmative or scheduling follow-ups
+    // ("I would love to", "is there availability next week?") count when the
+    // assistant's previous message brought up a tour.
+    const previousAssistantMessage = [...messages]
+      .slice(0, -1)
+      .reverse()
+      .find((m: { role: string; content: string }) => m.role === 'assistant')?.content ?? null;
+    const wantsTour = detectTourIntent(lastMessage, previousAssistantMessage);
+
+    // Detect contact info in the latest message so the model acknowledges it
+    // instead of claiming it cannot accept personal details.
+    const sharedContactInfo = containsContactInfo(lastMessage);
 
     // 7. Build system prompt
     const systemPrompt = `You are ${config.widget_name || 'Luma'}, a friendly AI assistant for ${propertyName}.
@@ -949,6 +958,11 @@ CONCIERGE RESPONSE STYLE:
 - Lead with the most useful summary first, then offer to narrow the options.
 - Keep the customer experience warm, polished, and easy to act on.
 
+CONTACT INFO HANDLING (CRITICAL):
+- The leasing platform automatically and securely saves any contact details (name, email, phone) a visitor shares in this chat, and the ${propertyName} team follows up with them.
+- When a visitor shares their name, email, or phone number, warmly thank them, confirm the team will follow up, and continue helping with their questions.
+- NEVER say you cannot collect, store, accept, or process contact information. The platform handles that for you, so refusing is incorrect and confuses visitors.
+
 RESPONSE GUIDELINES:
 1. Answer questions based ONLY on the knowledge base above
 2. Pricing, rents, deposits, availability, bedroom counts, floor plans, home plans, and unit types are high-risk facts. Only state them when they appear in the knowledge base for ${propertyName}.
@@ -967,9 +981,17 @@ The user seems interested in scheduling a tour! Be enthusiastic and ask:
 Let them know you can help them book a tour.
 ` : ''}
 
-${leadId ? '' : `
+${sharedContactInfo ? `
+CONTACT INFO JUST SHARED:
+The visitor's most recent message includes their contact details. Those details are already saved and the ${propertyName} team will follow up. Thank them warmly (by name if they gave one), confirm the team will be in touch, and offer a helpful next step such as scheduling a tour.
+` : ''}
+
+${leadId ? `
+LEAD STATUS:
+This visitor's contact info is already saved and the team can follow up. Do not ask for their contact details again.
+` : `
 LEAD CAPTURE:
-If this conversation is going well (3+ exchanges) and you haven't captured their info yet, naturally ask for their name and email/phone so the team can follow up with more details.
+The platform automatically shows a contact-info request at the right moment and saves anything the visitor shares, so do not proactively ask for their name, email, or phone yourself. If the visitor wants follow-up from the team, invite them to share their contact details right here in the chat.
 `}
 
 Remember: You represent ${propertyName}. Provide exceptional customer service with clean, human-friendly responses!`;
@@ -1010,7 +1032,12 @@ Remember: You represent ${propertyName}. Provide exceptional customer service wi
     let extractionRan = false;
     let extractionError = null;
     const priorCount = widgetSession?.message_count || 0;
-    const extractionDue = Boolean(leadInfo?.email || leadInfo?.phone) || ((priorCount + 1) % 3 === 0);
+    // Run extraction when the widget pre-extracted contact info, when the
+    // latest message itself contains contact details, or every 3rd message.
+    const extractionDue =
+      Boolean(leadInfo?.email || leadInfo?.phone) ||
+      sharedContactInfo ||
+      ((priorCount + 1) % 3 === 0);
     try {
       if (extractionDue) {
         await extractAndProcessConversation(
@@ -1029,15 +1056,7 @@ Remember: You represent ${propertyName}. Provide exceptional customer service wi
               !Array.isArray(config.properties)
                 ? {
                     name: config.properties.name,
-                    address:
-                      config.properties.address &&
-                      typeof config.properties.address === 'object' &&
-                      !Array.isArray(config.properties.address)
-                        ? {
-                            street: (config.properties.address as { street?: string }).street,
-                            full: (config.properties.address as { full?: string }).full,
-                          }
-                        : undefined,
+                    address: config.properties.address,
                   }
                 : null,
           }

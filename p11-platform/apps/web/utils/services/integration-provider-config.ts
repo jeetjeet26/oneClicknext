@@ -27,7 +27,9 @@ const GOOGLE_EMAIL_SCOPES = [
 ]
 
 const MICROSOFT_BASE_SCOPES = ['openid', 'email', 'profile', 'offline_access', 'User.Read']
-const MICROSOFT_CALENDAR_SCOPES = ['Calendars.ReadWrite']
+// MailboxSettings.Read lets the connect flow read the mailbox timezone so
+// tour slots are generated in the property's real timezone.
+const MICROSOFT_CALENDAR_SCOPES = ['Calendars.ReadWrite', 'MailboxSettings.Read']
 const MICROSOFT_EMAIL_SCOPES = ['Mail.Send', 'Mail.Read']
 const MICROSOFT_DEFAULT_TENANT = 'organizations'
 

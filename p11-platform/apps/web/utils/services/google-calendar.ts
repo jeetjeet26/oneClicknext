@@ -514,12 +514,29 @@ export async function fetchBusyTimes(
 
     const data = await response.json()
     const schedule = Array.isArray(data?.value) ? data.value[0] : null
+
+    // A per-mailbox error means we could not read the schedule; treating it
+    // as "fully free" would let visitors double-book, so fail loudly instead.
+    if (schedule?.error) {
+      const message = schedule.error?.message || JSON.stringify(schedule.error)
+      console.error('[MicrosoftCalendar] getSchedule mailbox error:', message)
+      throw new Error(`Microsoft Calendar schedule error: ${message}`)
+    }
+
+    // Graph returns dateTime strings without a timezone designator (we request
+    // UTC), e.g. "2026-07-24T17:30:00.0000000". Append "Z" so parsing does not
+    // depend on the server's local timezone.
+    const toUtcIso = (value: string | undefined): string => {
+      if (!value) return ''
+      return /(z|[+-]\d{2}:?\d{2})$/i.test(value) ? value : `${value}Z`
+    }
+
     const items = Array.isArray(schedule?.scheduleItems) ? schedule.scheduleItems : []
     return items
       .filter((item: { status?: string }) => item.status !== 'free')
       .map((item: { start?: { dateTime?: string }, end?: { dateTime?: string } }) => ({
-        start: item.start?.dateTime || '',
-        end: item.end?.dateTime || '',
+        start: toUtcIso(item.start?.dateTime),
+        end: toUtcIso(item.end?.dateTime),
       }))
       .filter((item: BusyTime) => item.start && item.end)
   }

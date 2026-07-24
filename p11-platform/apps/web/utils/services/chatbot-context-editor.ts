@@ -321,19 +321,23 @@ function renderContextMarkdown(context: ContextJson): string {
     lines.push(`- Website: ${context.property_profile.website_url}`)
   }
 
+  const isForSale = context.property_profile.category === 'for-sale residential'
+  const priceLabel = isForSale ? 'price' : 'rent'
+  const specialsLabel = isForSale ? 'Details' : 'Special'
+
   lines.push('', 'FLOORPLANS / PRICING / AVAILABILITY')
   if (context.floorplans_pricing.length === 0) {
     lines.push('- No verified floorplan, pricing, or availability facts are currently available.')
   } else {
     for (const item of context.floorplans_pricing) {
       if (!isRecord(item)) continue
-      const rentMin = renderCurrency(item.rent_min)
-      const rentMax = renderCurrency(item.rent_max)
-      const rent = rentMin && rentMax && rentMin !== rentMax
-        ? `${rentMin} to ${rentMax}`
-        : rentMin ?? 'pricing not listed'
-      lines.push(`- ${item.floorplan ?? 'Floorplan'}: ${item.bedrooms ?? '?'} bed, ${item.bathrooms ?? '?'} bath, rent ${rent}, available ${item.available_count ?? 'unknown'}.`)
-      if (item.move_in_specials) lines.push(`  Special: ${item.move_in_specials}`)
+      const priceMin = renderCurrency(item.rent_min)
+      const priceMax = renderCurrency(item.rent_max)
+      const price = priceMin && priceMax && priceMin !== priceMax
+        ? `${priceMin} to ${priceMax}`
+        : priceMin ?? 'pricing not listed'
+      lines.push(`- ${item.floorplan ?? 'Floorplan'}: ${item.bedrooms ?? '?'} bed, ${item.bathrooms ?? '?'} bath, ${priceLabel} ${price}, available ${item.available_count ?? 'unknown'}.`)
+      if (item.move_in_specials) lines.push(`  ${specialsLabel}: ${item.move_in_specials}`)
     }
   }
 
