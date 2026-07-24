@@ -172,9 +172,11 @@ class LassoAdapterTest(unittest.TestCase):
 
         self.assertTrue(any(field.name == "email" for field in schema.fields))
 
+    @patch("connectors.crm_adapters.lasso_adapter.requests.put")
     @patch("connectors.crm_adapters.lasso_adapter.requests.post")
-    def test_create_lead_builds_lasso_registrant_payload(self, post_mock):
+    def test_create_lead_builds_lasso_registrant_payload(self, post_mock, put_mock):
         post_mock.return_value = mock_response(201, {"registrantId": "lasso-456"})
+        put_mock.return_value = mock_response(200, {})
 
         adapter = LassoAdapter({"api_key": "secret", "project_id": "project-1"})
         result = adapter.create_lead(
@@ -208,6 +210,76 @@ class LassoAdapterTest(unittest.TestCase):
             "Desired move-in date: 2026-06-01",
             payload["history"][0]["body"],
         )
+
+    @patch("connectors.crm_adapters.lasso_adapter.requests.put")
+    @patch("connectors.crm_adapters.lasso_adapter.requests.post")
+    def test_create_lead_sets_source_type_so_lasso_does_not_show_api(self, post_mock, put_mock):
+        post_mock.return_value = mock_response(201, {"registrantId": "lasso-456"})
+        put_mock.return_value = mock_response(200, {})
+
+        adapter = LassoAdapter({"api_key": "secret"})
+        result = adapter.create_lead({
+            "first_name": "Jane",
+            "email": "jane@example.com",
+            "source": "LumaLeasing Widget",
+        })
+
+        self.assertTrue(result.success)
+        put_mock.assert_called_once()
+        self.assertEqual(
+            put_mock.call_args.args[0],
+            "https://api.lassocrm.com/v1/registrants/lasso-456/source-type",
+        )
+        self.assertEqual(
+            put_mock.call_args.kwargs["json"],
+            {"sourceType": "LumaLeasing Widget"},
+        )
+
+    @patch("connectors.crm_adapters.lasso_adapter.requests.put")
+    @patch("connectors.crm_adapters.lasso_adapter.requests.post")
+    def test_create_lead_succeeds_even_if_source_type_put_fails(self, post_mock, put_mock):
+        post_mock.return_value = mock_response(201, {"registrantId": "lasso-456"})
+        put_mock.side_effect = Exception("source-type endpoint unavailable")
+
+        adapter = LassoAdapter({"api_key": "secret"})
+        result = adapter.create_lead({
+            "email": "jane@example.com",
+            "source": "LumaLeasing Widget",
+        })
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.external_id, "lasso-456")
+
+    @patch("connectors.crm_adapters.lasso_adapter.requests.post")
+    def test_add_note_posts_registrant_note(self, post_mock):
+        post_mock.return_value = mock_response(201, {"noteId": "note-9"})
+
+        adapter = LassoAdapter({"api_key": "secret"})
+        result = adapter.add_note("lasso-456", "Tour booked for Friday at 10:00 AM via TourSpark.")
+
+        self.assertTrue(result.success)
+        self.assertEqual(
+            post_mock.call_args.args[0],
+            "https://api.lassocrm.com/v1/registrants/lasso-456/notes",
+        )
+        self.assertEqual(
+            post_mock.call_args.kwargs["json"],
+            {"note": "Tour booked for Friday at 10:00 AM via TourSpark."},
+        )
+
+    @patch("connectors.crm_adapters.lasso_adapter.requests.post")
+    def test_add_note_surfaces_api_error(self, post_mock):
+        post_mock.return_value = mock_response(
+            403,
+            {"message": "insufficient permissions"},
+            text='{"message":"insufficient permissions"}',
+        )
+
+        adapter = LassoAdapter({"api_key": "secret"})
+        result = adapter.add_note("lasso-456", "note body")
+
+        self.assertFalse(result.success)
+        self.assertIn("insufficient permissions", result.error)
 
     @patch("connectors.crm_adapters.lasso_adapter.requests.post")
     def test_create_lead_builds_public_registration_payload(self, post_mock):

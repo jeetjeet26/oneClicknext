@@ -18,6 +18,7 @@ import {
 } from '@/utils/services/google-calendar';
 import { startWorkflow } from '@/utils/services/workflow-processor';
 import { trackEngagementEvent } from '@/utils/services/engagement-tracker';
+import { recordLeadNoteAndSyncToCRM } from '@/utils/services/crm-sync';
 import { tourLimiter, getRateLimitKey, rateLimitHeaders } from '@/utils/services/rate-limiter';
 import {
   badRequest,
@@ -605,6 +606,21 @@ export async function POST(req: NextRequest) {
       eventType: 'tour_scheduled',
       metadata: { booking_id: booking.id, source: 'lumaleasing_tour_widget' },
     }).catch(e => console.error('[LumaLeasing Tours] Engagement tracking failed (non-blocking):', e))
+
+    // Record the tour in the connected CRM: syncs leads created via this
+    // endpoint that never reached the CRM, and attaches a tour note to leads
+    // that are already there. Non-blocking.
+    recordLeadNoteAndSyncToCRM(
+      propertyId,
+      leadId,
+      `Tour booked for ${formatDate(bookingDate)} at ${formatTime(bookingTime)} via TourSpark.${effectiveSpecialRequests ? ` Special requests: ${effectiveSpecialRequests}` : ''}`
+    )
+      .then((crmResult) => {
+        if (!crmResult.success) {
+          console.error('[LumaLeasing Tours] CRM tour note failed (non-blocking):', crmResult.error)
+        }
+      })
+      .catch(e => console.error('[LumaLeasing Tours] CRM tour note error (non-blocking):', e))
 
     // Generate calendar response (Calendly-style)
     const durationMinutes = booking.duration_minutes || 30;

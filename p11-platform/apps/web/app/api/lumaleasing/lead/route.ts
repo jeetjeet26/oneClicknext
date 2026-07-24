@@ -231,6 +231,11 @@ export async function POST(req: NextRequest) {
       // discovered during a chat exchange. Failure must not block the API
       // response; we already have the lead in our system of record.
       try {
+        const crmNoteParts = [];
+        if (moveInDate) crmNoteParts.push(`Desired move-in: ${moveInDate}`);
+        if (bedroomPreference) crmNoteParts.push(`Bedroom preference: ${bedroomPreference}`);
+        if (notes) crmNoteParts.push(notes);
+
         const crmResult = await syncLeadToCRM(propertyId, leadId, {
           first_name: firstName || undefined,
           last_name: lastName || undefined,
@@ -238,6 +243,9 @@ export async function POST(req: NextRequest) {
           phone: phone || undefined,
           source: 'LumaLeasing Widget',
           status: 'new',
+          move_in_date: moveInDate || undefined,
+          bedrooms: bedroomPreference || undefined,
+          notes: crmNoteParts.length > 0 ? crmNoteParts.join('. ') : undefined,
         });
         if (!crmResult.success) {
           console.warn(

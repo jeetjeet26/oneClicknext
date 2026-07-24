@@ -172,6 +172,19 @@ class BaseCRMAdapter(ABC):
         """
         pass
     
+    def add_note(self, external_id: str, note: str) -> CreateResult:
+        """
+        Attach a note to an existing lead in the CRM.
+
+        Adapters that support post-creation notes (e.g. Lasso registrant
+        notes) override this. The default reports the capability as
+        unsupported so callers can skip gracefully.
+        """
+        return CreateResult(
+            success=False,
+            error="Adding notes is not supported for this CRM type",
+        )
+
     def apply_mapping(self, tourspark_data: Dict[str, Any], mapping: Dict[str, str]) -> Dict[str, Any]:
         """
         Apply field mapping to convert TourSpark data to CRM format.

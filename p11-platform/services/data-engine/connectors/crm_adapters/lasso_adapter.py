@@ -419,6 +419,8 @@ class LassoAdapter(BaseCRMAdapter):
         """Create a new Lasso registrant."""
         logger.info("[Lasso] Creating registrant")
 
+        source_value = mapped_data.get("source")
+
         try:
             payload = self._build_registrant_payload(mapped_data)
             response = requests.post(
@@ -431,6 +433,8 @@ class LassoAdapter(BaseCRMAdapter):
             if response.status_code in (200, 201, 202):
                 data = response.json()
                 external_id = self._extract_external_id(data)
+                if external_id and source_value:
+                    self._set_source_type(external_id, str(source_value))
                 return CreateResult(
                     success=True,
                     external_id=external_id,
@@ -441,6 +445,56 @@ class LassoAdapter(BaseCRMAdapter):
 
         except Exception as e:
             logger.error("[Lasso] Registrant creation failed: %s", e)
+            return CreateResult(success=False, error=str(e))
+
+    def _set_source_type(self, external_id: str, source_type: str) -> None:
+        """Set the registrant's source type so Lasso doesn't display "API".
+
+        Lasso ignores source on POST /registrants; it must be set via a
+        follow-up PUT. Lasso creates the source type if it doesn't exist.
+        Best-effort: failures are logged but never fail the lead creation.
+        """
+        try:
+            response = requests.put(
+                f"{self.api_endpoint}/registrants/{external_id}/source-type",
+                headers=self._get_headers(),
+                json={"sourceType": source_type},
+                timeout=self.timeout,
+            )
+            if response.status_code not in (200, 201, 204):
+                logger.warning(
+                    "[Lasso] Failed to set source type for %s: %s",
+                    external_id,
+                    self._error_from_response(response),
+                )
+        except Exception as e:
+            logger.warning(
+                "[Lasso] Failed to set source type for %s: %s", external_id, e
+            )
+
+    def add_note(self, external_id: str, note: str) -> CreateResult:
+        """Attach a note to an existing Lasso registrant."""
+        logger.info("[Lasso] Adding note to registrant %s", external_id)
+
+        try:
+            response = requests.post(
+                f"{self.api_endpoint}/registrants/{external_id}/notes",
+                headers=self._get_headers(),
+                json={"note": note},
+                timeout=self.timeout,
+            )
+
+            if response.status_code in (200, 201, 202):
+                data = response.json() if response.text else {}
+                note_id = (
+                    self._extract_external_id(data) if isinstance(data, dict) else None
+                )
+                return CreateResult(success=True, external_id=note_id, raw_response=data if isinstance(data, dict) else None)
+
+            return CreateResult(success=False, error=self._error_from_response(response))
+
+        except Exception as e:
+            logger.error("[Lasso] Note creation failed: %s", e)
             return CreateResult(success=False, error=str(e))
 
     def _build_registrant_payload(self, mapped_data: Dict[str, Any]) -> Dict[str, Any]:

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/utils/supabase/admin';
-import { syncLeadToCRM } from '@/utils/services/crm-sync';
+import { recordLeadNoteAndSyncToCRM, syncLeadToCRM } from '@/utils/services/crm-sync';
 import { startWorkflow } from '@/utils/services/workflow-processor';
 import { chatLimiter, getRateLimitKey, rateLimitHeaders } from '@/utils/services/rate-limiter';
 import { buildCorsHeaders, corsPreflightResponse, serverError, rateLimited, badRequest } from '@/utils/services/api-helpers';
@@ -352,6 +352,26 @@ Write a professional CRM note (no bullet points, just flowing text):`;
             leadId,
             updatedFields: Object.keys(updates),
           });
+
+          // Mirror the update into the connected CRM: attach the new
+          // conversation summary as a note when the lead is already in the
+          // CRM, or trigger the initial sync for a lead that just gained
+          // contact info. Non-blocking for the chat flow.
+          const hasNewSummary = Boolean(updates.notes && conversationSummary)
+          const gainedContactInfo = Boolean(updates.email || updates.phone)
+          if (hasNewSummary || gainedContactInfo) {
+            try {
+              const crmResult = await recordLeadNoteAndSyncToCRM(
+                propertyId,
+                leadId,
+                hasNewSummary ? conversationSummary : null,
+                { persistNote: false }
+              );
+              console.log('[LumaLeasing] CRM lead update result:', crmResult.action);
+            } catch (crmError) {
+              console.error('[LumaLeasing] CRM lead update failed (non-blocking):', crmError);
+            }
+          }
         }
       } else {
         // Create new lead

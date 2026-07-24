@@ -14,6 +14,7 @@ import { endOfDay, parseISO, startOfDay } from 'date-fns'
 import type { createServiceClient } from '@/utils/supabase/admin'
 import { sendEmail, type EmailAttachment } from '@/utils/services/messaging'
 import { trackEngagementEvent } from '@/utils/services/engagement-tracker'
+import { recordLeadNoteAndSyncToCRM } from '@/utils/services/crm-sync'
 import {
   type CalendarConfig,
   createCalendarEvent,
@@ -396,6 +397,29 @@ export async function bookLumaLeasingTour(
       .from('leads')
       .update({ status: 'tour_booked' })
       .eq('id', leadId)
+
+    // Record the tour in the connected CRM: attaches a note to an existing
+    // CRM record, or triggers the initial sync for leads that were created
+    // through the tours endpoint and never pushed. Non-blocking.
+    recordLeadNoteAndSyncToCRM(
+      propertyId,
+      leadId,
+      `Tour booked for ${formatDate(bookingDate)} at ${formatTime(bookingTime)} via TourSpark.${specialRequests ? ` Special requests: ${specialRequests}` : ''}`
+    )
+      .then((crmResult) => {
+        if (!crmResult.success) {
+          console.error(
+            '[LumaLeasingTourBooking] CRM tour note failed (non-blocking):',
+            crmResult.error
+          )
+        }
+      })
+      .catch((crmError) =>
+        console.error(
+          '[LumaLeasingTourBooking] CRM tour note error (non-blocking):',
+          crmError
+        )
+      )
 
     // Re-score the lead now that a tour is booked. Failure must not block
     // confirmation; the next scheduled scoring run will catch this lead.

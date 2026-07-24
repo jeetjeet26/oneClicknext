@@ -344,6 +344,20 @@ export async function pushLeadToCRM(
       return { success: true, action: 'skipped' }
     }
 
+    // A lead with no contact info can't be searched or meaningfully created
+    // in the CRM. Keep it pending (not dead-lettered) so it syncs as soon as
+    // an email or phone is captured later in the conversation.
+    if (!leadData.email && !leadData.phone) {
+      await updateLeadCRMSyncState(leadId, {
+        crm_sync_status: 'pending',
+        crm_sync_error: 'Awaiting contact info (email or phone) before CRM sync',
+        crm_sync_retry_count: attempt,
+        crm_sync_next_retry_at: new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString(),
+        crm_dead_lettered_at: null,
+      })
+      return { success: true, action: 'skipped' }
+    }
+
     // Check if lead already exists
     const searchResult = await searchLeadInCRM(
       propertyId,
@@ -448,6 +462,181 @@ export async function syncLeadToCRM(
   }
   
   return result
+}
+
+export interface CRMNoteResult {
+  success: boolean
+  action: 'note_added' | 'skipped' | 'unsupported' | 'failed'
+  error?: string
+}
+
+/**
+ * Attach a note (conversation summary, tour booking, etc.) to a lead that has
+ * already been pushed to the CRM. Leads not yet synced are skipped — their
+ * accumulated `leads.notes` go over with the initial registrant creation.
+ * Best-effort by design: callers must not block user-facing flows on this.
+ */
+export async function pushLeadNoteToCRM(
+  propertyId: string,
+  leadId: string,
+  note: string
+): Promise<CRMNoteResult> {
+  const trimmedNote = note.trim()
+  if (!trimmedNote) {
+    return { success: true, action: 'skipped' }
+  }
+
+  try {
+    const integration = await getCRMIntegration(propertyId)
+    if (!integration || !integration.validated) {
+      return { success: true, action: 'skipped' }
+    }
+
+    const supabase = createServiceClient()
+    const { data: lead } = await supabase
+      .from('leads')
+      .select('external_crm_id')
+      .eq('id', leadId)
+      .maybeSingle()
+
+    if (!lead?.external_crm_id) {
+      // Not in the CRM yet; the note lives in leads.notes and is included
+      // when the lead is first created in the CRM.
+      return { success: true, action: 'skipped' }
+    }
+
+    const response = await fetch(`${DATA_ENGINE_URL}/crm/add-lead-note`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': DATA_ENGINE_API_KEY,
+      },
+      body: JSON.stringify({
+        property_id: propertyId,
+        lead_id: leadId,
+        crm_type: integration.crmType,
+        credentials: integration.credentials,
+        external_id: lead.external_crm_id,
+        note: trimmedNote,
+      }),
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      console.error('[CRM Sync] Note push failed:', errorText)
+      return {
+        success: false,
+        action: 'failed',
+        error: normalizeCRMError(errorText, `CRM note push failed (${response.status})`),
+      }
+    }
+
+    const result = await response.json()
+    if (result.success) {
+      return { success: true, action: 'note_added' }
+    }
+    if (result.action === 'unsupported') {
+      return { success: true, action: 'unsupported' }
+    }
+    return {
+      success: false,
+      action: 'failed',
+      error: normalizeCRMError(result.error, 'CRM note push failed'),
+    }
+  } catch (error) {
+    console.error('[CRM Sync] Note push error:', error)
+    return {
+      success: false,
+      action: 'failed',
+      error: error instanceof Error ? error.message : 'Unknown CRM note error',
+    }
+  }
+}
+
+/**
+ * Record a lead event (tour booking, conversation summary) in the CRM.
+ *
+ * - If the lead is already in the CRM, the note is attached to the existing
+ *   record (Lasso registrant note).
+ * - If the lead has never synced but now has contact info, a full sync is
+ *   triggered; the accumulated `leads.notes` (including this note) go over
+ *   with the creation payload.
+ *
+ * When `persistNote` is true the note is first appended to `leads.notes`
+ * with a timestamp. Callers that already persisted the note themselves
+ * (e.g. chat extraction) pass false to avoid double-writing.
+ */
+export async function recordLeadNoteAndSyncToCRM(
+  propertyId: string,
+  leadId: string,
+  note: string | null,
+  options?: { persistNote?: boolean }
+): Promise<CRMNoteResult | CRMSyncResult> {
+  const trimmedNote = note?.trim() || null
+  const persistNote = trimmedNote !== null && options?.persistNote !== false
+
+  try {
+    const supabase = createServiceClient()
+    const { data: lead } = await supabase
+      .from('leads')
+      .select(`
+        id,
+        property_id,
+        first_name,
+        last_name,
+        email,
+        phone,
+        source,
+        status,
+        move_in_date,
+        bedrooms,
+        notes,
+        external_crm_id,
+        crm_sync_status,
+        crm_sync_retry_count,
+        crm_sync_next_retry_at
+      `)
+      .eq('id', leadId)
+      .maybeSingle()
+
+    if (!lead) {
+      return { success: false, action: 'failed', error: 'Lead not found' }
+    }
+
+    let notes = lead.notes || ''
+    if (persistNote && trimmedNote) {
+      const timestamp = new Date().toLocaleString('en-US', {
+        month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+      })
+      notes = notes ? `${notes}\n\n[${timestamp}] ${trimmedNote}` : `[${timestamp}] ${trimmedNote}`
+      await supabase.from('leads').update({ notes }).eq('id', leadId)
+    }
+
+    if (lead.external_crm_id) {
+      if (!trimmedNote) {
+        return { success: true, action: 'skipped' }
+      }
+      return pushLeadNoteToCRM(propertyId, leadId, trimmedNote)
+    }
+
+    // Never synced. Trigger the initial sync now if the lead is reachable
+    // and no cron worker currently holds the processing lease.
+    if ((lead.email || lead.phone) && lead.crm_sync_status !== 'processing') {
+      return syncLeadToCRM(propertyId, leadId, {
+        ...buildLeadDataFromRow(lead as LeadCRMSyncRow),
+        notes: notes || undefined,
+      })
+    }
+
+    return { success: true, action: 'skipped' }
+  } catch (error) {
+    console.error('[CRM Sync] recordLeadNoteAndSyncToCRM error:', error)
+    return {
+      success: false,
+      action: 'failed',
+      error: error instanceof Error ? error.message : 'Unknown CRM note error',
+    }
+  }
 }
 
 export async function processPendingCRMSyncs(limit: number = 50): Promise<ProcessPendingCRMSyncsResult> {

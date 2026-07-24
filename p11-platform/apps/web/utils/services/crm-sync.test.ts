@@ -12,6 +12,7 @@ function buildSupabaseMock(options?: {
   updateError?: unknown
   queuedLeads?: Array<Record<string, unknown>>
   claimLeaseFailures?: Record<string, string>
+  leadRow?: Record<string, unknown> | null
 }) {
   const leadUpdatePayloads: Array<Record<string, unknown>> = []
 
@@ -36,16 +37,21 @@ function buildSupabaseMock(options?: {
 
       if (table === 'leads') {
         return {
-          select: vi.fn(() => ({
-            in: vi.fn(() => ({
-              or: vi.fn(() => ({
-                limit: vi.fn().mockResolvedValue({
-                  data: options?.queuedLeads ?? [],
-                  error: null,
-                }),
-              })),
-            })),
-          })),
+          select: vi.fn(() => {
+            const chain: Record<string, unknown> = {}
+            chain.in = vi.fn(() => chain)
+            chain.or = vi.fn(() => chain)
+            chain.eq = vi.fn(() => chain)
+            chain.limit = vi.fn().mockResolvedValue({
+              data: options?.queuedLeads ?? [],
+              error: null,
+            })
+            chain.maybeSingle = vi.fn().mockResolvedValue({
+              data: options?.leadRow ?? null,
+              error: null,
+            })
+            return chain
+          }),
           update: vi.fn((payload: Record<string, unknown>) => {
             leadUpdatePayloads.push(payload)
             const chain = {
@@ -384,6 +390,166 @@ describe('crm sync service', () => {
         crm_sync_status: 'retrying',
         crm_sync_retry_count: 2,
         crm_sync_next_retry_at: expect.any(String),
+      })
+    )
+  })
+
+  it('keeps a lead with no contact info pending instead of dead-lettering it', async () => {
+    const mock = buildSupabaseMock({
+      integration: {
+        platform: 'lasso',
+        credentials: { api_key: 'lasso-secret' },
+        field_mapping: { email: 'email' },
+        mapping_validated: true,
+      },
+    })
+    createServiceClientMock.mockReturnValue(mock.supabase)
+    vi.stubEnv('DATA_ENGINE_API_KEY', 'engine-key')
+
+    const { syncLeadToCRM } = await import('./crm-sync')
+    const result = await syncLeadToCRM('property-1', 'lead-1', {
+      first_name: 'Jane',
+    })
+
+    expect(result).toEqual({
+      success: true,
+      action: 'skipped',
+    })
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(mock.leadUpdatePayloads).toContainEqual(
+      expect.objectContaining({
+        crm_sync_status: 'pending',
+        crm_sync_error: 'Awaiting contact info (email or phone) before CRM sync',
+        crm_sync_next_retry_at: expect.any(String),
+        crm_dead_lettered_at: null,
+      })
+    )
+  })
+
+  it('pushes a note to the CRM for a lead that already has an external CRM id', async () => {
+    const mock = buildSupabaseMock({
+      integration: {
+        platform: 'lasso',
+        credentials: { api_key: 'lasso-secret' },
+        field_mapping: { notes: 'notes' },
+        mapping_validated: true,
+      },
+      leadRow: { external_crm_id: 'lasso-99' },
+    })
+    createServiceClientMock.mockReturnValue(mock.supabase)
+    vi.stubEnv('DATA_ENGINE_API_KEY', 'engine-key')
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({
+        success: true,
+        action: 'note_added',
+        note_id: 'note-1',
+      }),
+    })
+
+    const { pushLeadNoteToCRM } = await import('./crm-sync')
+    const result = await pushLeadNoteToCRM(
+      'property-1',
+      'lead-1',
+      'Prospect asked about Plan 4 pricing.'
+    )
+
+    expect(result).toEqual({ success: true, action: 'note_added' })
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/crm/add-lead-note'),
+      expect.objectContaining({
+        method: 'POST',
+        body: expect.stringContaining('"external_id":"lasso-99"'),
+      })
+    )
+  })
+
+  it('skips the note push when the lead has not been synced to the CRM yet', async () => {
+    const mock = buildSupabaseMock({
+      integration: {
+        platform: 'lasso',
+        credentials: { api_key: 'lasso-secret' },
+        field_mapping: { notes: 'notes' },
+        mapping_validated: true,
+      },
+      leadRow: { external_crm_id: null },
+    })
+    createServiceClientMock.mockReturnValue(mock.supabase)
+    vi.stubEnv('DATA_ENGINE_API_KEY', 'engine-key')
+
+    const { pushLeadNoteToCRM } = await import('./crm-sync')
+    const result = await pushLeadNoteToCRM('property-1', 'lead-1', 'Tour booked')
+
+    expect(result).toEqual({ success: true, action: 'skipped' })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('records a note and triggers the initial CRM sync for an unsynced lead with contact info', async () => {
+    const mock = buildSupabaseMock({
+      integration: {
+        platform: 'lasso',
+        credentials: { api_key: 'lasso-secret' },
+        field_mapping: { email: 'email', notes: 'notes' },
+        mapping_validated: true,
+      },
+      leadRow: {
+        id: 'lead-1',
+        property_id: 'property-1',
+        first_name: 'Jane',
+        last_name: 'Doe',
+        email: 'jane@example.com',
+        phone: null,
+        source: 'LumaLeasing Tour Booking',
+        status: 'tour_booked',
+        move_in_date: null,
+        bedrooms: null,
+        notes: null,
+        external_crm_id: null,
+        crm_sync_status: 'pending',
+        crm_sync_retry_count: 0,
+        crm_sync_next_retry_at: null,
+      },
+    })
+    createServiceClientMock.mockReturnValue(mock.supabase)
+    vi.stubEnv('DATA_ENGINE_API_KEY', 'engine-key')
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue({ found: false }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          success: true,
+          action: 'created',
+          external_id: 'lasso-777',
+        }),
+      })
+
+    const { recordLeadNoteAndSyncToCRM } = await import('./crm-sync')
+    const result = await recordLeadNoteAndSyncToCRM(
+      'property-1',
+      'lead-1',
+      'Tour booked for Friday at 10:00 AM via TourSpark.'
+    )
+
+    expect(result).toEqual({
+      success: true,
+      action: 'created',
+      externalId: 'lasso-777',
+    })
+    // The note is persisted to leads.notes before syncing so it rides along
+    // with the CRM creation payload.
+    expect(mock.leadUpdatePayloads).toContainEqual(
+      expect.objectContaining({
+        notes: expect.stringContaining('Tour booked for Friday at 10:00 AM via TourSpark.'),
+      })
+    )
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      expect.stringContaining('/crm/push-lead'),
+      expect.objectContaining({
+        method: 'POST',
+        body: expect.stringContaining('Tour booked for Friday at 10:00 AM via TourSpark.'),
       })
     )
   })

@@ -59,6 +59,16 @@ class PushLeadRequest(BaseModel):
     field_mapping: Dict[str, str] = Field(..., description="Field mapping {tourspark: crm}")
 
 
+class AddLeadNoteRequest(BaseModel):
+    """Request to attach a note to an existing CRM lead"""
+    property_id: str = Field(..., description="Property UUID")
+    lead_id: str = Field(..., description="TourSpark lead UUID")
+    crm_type: str = Field(..., description="CRM type")
+    credentials: Dict[str, Any] = Field(..., description="CRM API credentials")
+    external_id: str = Field(..., description="CRM's ID for the lead")
+    note: str = Field(..., min_length=1, description="Note body to attach")
+
+
 class SaveMappingRequest(BaseModel):
     """Request to save validated field mapping"""
     property_id: str = Field(..., description="Property UUID")
@@ -356,6 +366,50 @@ async def push_lead(
         raise
     except Exception as e:
         logger.error(f"[CRM] Lead push failed: {e}", exc_info=True)
+        return {
+            "success": False,
+            "action": "failed",
+            "error": str(e)
+        }
+
+
+@router.post("/add-lead-note")
+async def add_lead_note(
+    request: AddLeadNoteRequest,
+    api_key: str = Depends(verify_api_key)
+):
+    """
+    Attach a note (e.g. conversation summary, tour booking) to an existing
+    CRM lead. Supported per-adapter; unsupported CRMs return
+    success=False with action "unsupported" so callers can skip gracefully.
+    """
+    logger.info(
+        f"[CRM] Adding note to lead {request.lead_id} "
+        f"({request.crm_type} external id {request.external_id})"
+    )
+
+    try:
+        adapter = get_crm_adapter(request.crm_type, request.credentials)
+        result = adapter.add_note(request.external_id, request.note)
+
+        if result.success:
+            return {
+                "success": True,
+                "action": "note_added",
+                "note_id": result.external_id,
+            }
+
+        unsupported = "not supported" in (result.error or "").lower()
+        return {
+            "success": False,
+            "action": "unsupported" if unsupported else "failed",
+            "error": result.error,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[CRM] Note push failed: {e}", exc_info=True)
         return {
             "success": False,
             "action": "failed",
