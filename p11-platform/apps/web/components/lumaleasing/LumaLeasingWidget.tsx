@@ -36,6 +36,7 @@ interface WidgetConfig {
   leadCapturePrompt: string;
   toursEnabled: boolean;
   propertyName: string;
+  agentAvatarUrl?: string | null;
 }
 
 interface TourSlot {
@@ -94,6 +95,7 @@ export function LumaLeasingWidget({
   const [showLeadCapture, setShowLeadCapture] = useState(false);
   const [leadInfo, setLeadInfo] = useState<LeadInfo>({ firstName: '', lastName: '', email: '', phone: '' });
   const [leadCaptured, setLeadCaptured] = useState(false);
+  const [leadPromptShown, setLeadPromptShown] = useState(false);
   
   // Tour booking state
   const [showTourBooking, setShowTourBooking] = useState(false);
@@ -213,16 +215,19 @@ export function LumaLeasingWidget({
         setMessages(prev => [...prev, aiMsg]);
       }
 
-      // Check if should prompt lead capture
-      if (data.shouldPromptLeadCapture && !leadCaptured) {
+      // Check if should prompt lead capture (once per session so visitors
+      // are not re-asked after every message)
+      if (data.shouldPromptLeadCapture && !leadCaptured && !leadPromptShown) {
+        setLeadPromptShown(true);
         setTimeout(() => setShowLeadCapture(true), 1000);
       }
 
-      // Check if tour interest detected
-      if (data.wantsTour && config.toursEnabled && !showTourBooking) {
-        // Add tour prompt after a delay
+      // Check if tour interest detected (visitor intent or the assistant
+      // suggesting a tour). Shows a message with a pressable schedule button.
+      if ((data.tourCta || data.wantsTour) && config.toursEnabled && !showTourBooking) {
+        // Add tour prompt after a delay; keep at most one prompt in the chat.
         setTimeout(() => {
-          setMessages(prev => [...prev, {
+          setMessages(prev => [...prev.filter(m => m.id !== 'tour-prompt'), {
             id: 'tour-prompt',
             role: 'system',
             content: '📅 Would you like to schedule a tour?',
@@ -493,8 +498,7 @@ function MessageBubble({
           {message.id === 'tour-prompt' && onScheduleTour && (
             <button
               onClick={onScheduleTour}
-              className="ml-2 px-3 py-1 rounded-full text-white text-xs font-medium"
-              style={{ backgroundColor: config.primaryColor }}
+              className="ml-2 px-3 py-1 rounded-full bg-gray-800 text-white text-xs font-medium"
             >
               Schedule Tour
             </button>
@@ -510,29 +514,64 @@ function MessageBubble({
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
       <div className={`flex items-end gap-2 max-w-[85%] ${isUser ? 'flex-row-reverse' : ''}`}>
         <div
-          className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
+          className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 overflow-hidden ${
             isUser ? 'bg-gray-200' : 'text-white'
           }`}
-          style={!isUser ? { backgroundColor: config.primaryColor } : {}}
+          style={!isUser && !config.agentAvatarUrl ? { backgroundColor: config.primaryColor } : {}}
         >
-          {isUser ? <User className="w-4 h-4 text-gray-600" /> : <Bot className="w-4 h-4" />}
+          {isUser ? (
+            <User className="w-4 h-4 text-gray-600" />
+          ) : config.agentAvatarUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={config.agentAvatarUrl} alt="" className="w-full h-full object-cover" />
+          ) : (
+            <Bot className="w-4 h-4" />
+          )}
         </div>
+        {/* Muted, WCAG-compliant assistant bubble. Brand colors stay in the
+            header; dark text on light gray keeps replies readable. */}
         <div
-          className={`p-3 rounded-2xl text-sm ${
+          className={`p-3 rounded-2xl text-sm shadow-sm ${
             isUser
-              ? 'bg-white rounded-br-md shadow-sm text-gray-800'
-              : 'text-white rounded-bl-md'
+              ? 'bg-white rounded-br-md text-gray-800'
+              : 'bg-gray-100 rounded-bl-md text-gray-800'
           }`}
-          style={!isUser ? { background: `linear-gradient(135deg, ${config.primaryColor}, ${config.secondaryColor})` } : {}}
         >
-          <p className="whitespace-pre-wrap">{message.content}</p>
-          <p className={`text-[10px] mt-1 ${isUser ? 'text-gray-400' : 'text-white/70'}`}>
+          <p className="whitespace-pre-wrap">{linkifyContent(message.content)}</p>
+          <p className={`text-[10px] mt-1 ${isUser ? 'text-gray-400' : 'text-gray-500'}`}>
             {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
           </p>
         </div>
       </div>
     </div>
   );
+}
+
+// Turn bare URLs in message text into clickable links so the assistant can
+// share pages like floor plans and availability.
+function linkifyContent(content: string): React.ReactNode {
+  const parts = content.split(/(https?:\/\/[^\s]+)/g);
+  if (parts.length === 1) return content;
+
+  return parts.map((part, index) => {
+    if (!/^https?:\/\//.test(part)) return part;
+    // Keep trailing punctuation out of the link target.
+    const cleaned = part.replace(/[.,!?;:)'"]+$/, '');
+    const trailing = part.slice(cleaned.length);
+    return (
+      <span key={index}>
+        <a
+          href={cleaned}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="underline font-semibold break-all"
+        >
+          {cleaned}
+        </a>
+        {trailing}
+      </span>
+    );
+  });
 }
 
 // Lead Capture Form

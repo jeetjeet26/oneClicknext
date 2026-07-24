@@ -1,7 +1,8 @@
 const PROPERTY_TOPIC_PATTERNS = [
   /\b(apartment|apartments|unit|units|home|homes|townhome|townhomes|condo|condos|community|property|building|residence|residences)\b/,
   /\b(rent|rental|lease|leasing|availability|available|vacancy|vacancies|move[\s-]?in|deposit|fee|fees|pricing|price|prices|cost|special|specials|concession|floor\s*plan|floorplan|bed|beds|br|brs|bd|bds|bedroom|bedrooms|bath|baths|bathroom|bathrooms|studio|sq\s*ft|square\s*feet)\b/,
-  /\b(amenity|amenities|pool|gym|fitness|parking|garage|pet|pets|dog|dogs|cat|cats|laundry|washer|dryer|balcony|patio|rooftop|ev|solar|storage)\b/,
+  /\b(amenity|amenities|pool|gym|fitness|parking|garage|pet|pets|dog|dogs|cat|cats|laundry|washers?|dryers?|balcony|patio|rooftop|ev|solar|storage)\b/,
+  /\b(kitchen|appliances?|ranges?|stove|oven|fridge|refrigerator|freezer|dishwasher|microwave|countertops?|cabinets?|flooring|carpet|hardwood|air\s*conditioning|a\/c|hvac|heating|heater|furnace|wi-?fi|internet|cable|thermostat|smart\s*home)\b/,
   /\b(tour|tours|showing|showings|visit|appointment|schedule|calendar|book|booking|stop\s*by|come\s*by|open\s*house)\b/,
   /\b(location|located|address|directions|neighborhood|neighbourhood|nearby|school|schools|transit|commute|walk|drive|office\s*hours|hours|contact|phone|email|call|text)\b/,
   /\b(application|apply|applying|qualify|qualification|income|credit|guarantor|cosigner|co-signer|policy|policies|utilities|maintenance|resident|residents)\b/,
@@ -19,18 +20,21 @@ const CONTACT_INFO_PATTERNS = [
   /\b(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)?\d{3}[-.\s]?\d{4}\b/,
 ]
 
+/**
+ * High-precision blocklist for clearly unrelated requests. Ambiguous words
+ * that collide with legitimate property questions (e.g. "game" for game
+ * rooms, "cooking" for cooking gas, "investment" for for-sale homes) are
+ * intentionally excluded — the grounded LLM prompt is the backstop for
+ * anything this list misses.
+ */
 const OFF_TOPIC_PATTERNS = [
   /\b(math|algebra|geometry|calculus|trigonometry|equation|equations|derivative|integral|homework)\b/,
   /\b(code|coding|programming|javascript|typescript|python|java|sql|debug|algorithm|regex)\b/,
-  /\b(recipe|cook|cooking|bake|baking|meal|calories|workout|exercise|diet)\b/,
-  /\b(history|trivia|politics|religion|horoscope|astrology|sports|movie|movies|song|songs|game|games|joke|jokes)\b/,
-  /\b(medical|doctor|diagnose|diagnosis|legal|lawyer|lawsuit|stock|stocks|crypto|investment|investing)\b/,
-  /\b(write|draft)\s+(an?\s+)?(essay|poem|story|song|resume|cover\s+letter)\b/,
-  /\b(translate|summarize|solve|teach\s+me|explain)\b/,
+  /\b(recipe|recipes|calories|diet)\b/,
+  /\b(trivia|politics|religion|horoscope|astrology|joke|jokes)\b/,
+  /\b(medical|doctor|diagnose|diagnosis|legal|lawyer|lawsuit|stock|stocks|crypto)\b/,
+  /\b(write|draft|compose)\s+((me|us)\s+)?(an?\s+)?(essay|poem|story|song|resume|cover\s+letter)\b/,
 ]
-
-const QUESTION_START_PATTERN = /^(what|who|when|where|why|how|can|could|should|would|is|are|do|does|did)\b/i
-const BROAD_PROPERTY_INTENT_PATTERN = /\b(tell|show|describe|overview|summary)\b.*\b(me|us|about|this|it)\b/i
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -85,6 +89,24 @@ export function detectTourIntent(message: string, previousAssistantMessage?: str
   return TOUR_FOLLOW_UP_AFFIRMATION_PATTERN.test(text) || TOUR_FOLLOW_UP_TIMING_PATTERN.test(text)
 }
 
+/**
+ * Cheap pre-filter in front of the LLM. Default-allow: only messages that
+ * match the explicit off-topic blocklist (and none of the property/topic
+ * allow patterns) are deflected before reaching the model. The grounded
+ * system prompt handles nuanced scoping; this gate only exists to short-
+ * circuit obvious abuse (homework, code, etc.) without an LLM call.
+ */
+const TOUR_OFFER_PATTERN = /\b(tours?|showings?|open\s+house)\b/i
+
+/**
+ * Detects when an assistant reply brings up touring (e.g. "I recommend
+ * scheduling a tour") so the widget can render a pressable schedule-a-tour
+ * button under the message.
+ */
+export function detectTourOffer(assistantReply: string): boolean {
+  return TOUR_OFFER_PATTERN.test(assistantReply)
+}
+
 export function isPropertyChatInScope(message: string, propertyName?: string | null): boolean {
   const text = message.trim().toLowerCase()
   if (!text) return true
@@ -105,18 +127,5 @@ export function isPropertyChatInScope(message: string, propertyName?: string | n
     return true
   }
 
-  if (OFF_TOPIC_PATTERNS.some(pattern => pattern.test(text))) {
-    return false
-  }
-
-  if (BROAD_PROPERTY_INTENT_PATTERN.test(text)) {
-    return true
-  }
-
-  const words = text.match(/[a-z0-9]+/g) || []
-  if (QUESTION_START_PATTERN.test(text) && words.length > 3) {
-    return false
-  }
-
-  return words.length <= 3
+  return !OFF_TOPIC_PATTERNS.some(pattern => pattern.test(text))
 }

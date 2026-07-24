@@ -10,7 +10,7 @@ import { createRequestContext } from '@/utils/services/request-context';
 import { bookLumaLeasingTour } from '@/utils/services/lumaleasing-tour-booking';
 import { trackEngagementEvent } from '@/utils/services/engagement-tracker';
 import { getPropertyTypeConfig } from '@/utils/property-types';
-import { buildPropertyOnlyResponse, containsContactInfo, detectTourIntent, isPropertyChatInScope } from '@/utils/chat-scope';
+import { buildPropertyOnlyResponse, containsContactInfo, detectTourIntent, detectTourOffer, isPropertyChatInScope } from '@/utils/chat-scope';
 import { formatPropertyAddress } from '@/utils/services/property-address';
 import { loadPropertyChatbotContext } from '@/utils/services/chatbot-context-editor';
 import OpenAI from 'openai';
@@ -978,6 +978,16 @@ CONCIERGE RESPONSE STYLE:
 - Lead with the most useful summary first, then offer to narrow the options.
 - Keep the customer experience warm, polished, and easy to act on.
 
+${config.floor_plans_url || config.availability_url ? `
+PROPERTY LINKS:
+${config.floor_plans_url ? `- Floor plans page: ${config.floor_plans_url}` : ''}
+${config.availability_url ? `- Availability page: ${config.availability_url}` : ''}
+- When the visitor asks about floor plans, layouts, or a specific plan, include the floor plans page link in your reply so they can explore the plans.
+- When the visitor asks about availability, available homes, homesites, current pricing, or move-in dates, include the availability page link in your reply.
+- Share links as plain URLs in a natural sentence, for example "You can browse all the floor plans here: <link>". Never use markdown link syntax.
+- Only share these exact links. Never invent or guess other URLs.
+` : ''}
+
 CONTACT INFO HANDLING (CRITICAL):
 - The leasing platform automatically and securely saves any contact details (name, email, phone) a visitor shares in this chat, and the ${propertyName} team follows up with them.
 - When a visitor shares their name, email, or phone number, warmly thank them, confirm the team will follow up, and continue helping with their questions.
@@ -1105,11 +1115,17 @@ Remember: You represent ${propertyName}. Provide exceptional customer service wi
       config.collect_email && 
       updatedMessageCount >= 3;
 
+    // 15. Offer a schedule-a-tour button when the visitor showed tour intent
+    // or the assistant's reply itself suggests touring. The widget renders a
+    // pressable CTA instead of auto-opening the booking calendar.
+    const tourCta = Boolean(config.tours_enabled) && (wantsTour || detectTourOffer(reply));
+
     ctx.logSuccess(200, {
       conversationId,
       sessionId: activeSessionId,
       hasLeadId: !!leadId,
       wantsTour,
+      tourCta,
       promptedLeadCapture: shouldPromptLeadCapture,
     })
     return NextResponse.json({
@@ -1119,6 +1135,7 @@ Remember: You represent ${propertyName}. Provide exceptional customer service wi
       shouldPromptLeadCapture,
       leadCapturePrompt: shouldPromptLeadCapture ? config.lead_capture_prompt : null,
       wantsTour,
+      tourCta,
       // Debug info only in development
       ...(process.env.NODE_ENV !== 'production' ? {
         _debug: {

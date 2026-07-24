@@ -687,6 +687,250 @@ describe('LumaLeasing chat route', () => {
     expect(openAiEmbeddingsCreateMock).not.toHaveBeenCalled()
   })
 
+  it('injects configured floor plans and availability links into the system prompt', async () => {
+    validateBodyMock.mockReturnValue({
+      success: true,
+      data: {
+        messages: [{ role: 'user', content: 'what floor plans do you offer?' }],
+        sessionId: null,
+        leadInfo: null,
+      },
+    })
+    openAiChatCreateMock.mockResolvedValue({
+      choices: [{ message: { content: 'We offer Plans 2, 4, and 4X.' } }],
+    })
+
+    createServiceClientMock.mockReturnValue({
+      from: vi.fn((table: string) => {
+        if (table === 'lumaleasing_config') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                eq: vi.fn(() => ({
+                  single: vi.fn().mockResolvedValue({
+                    data: {
+                      property_id: 'property-1',
+                      widget_name: 'Luma',
+                      collect_email: true,
+                      lead_capture_prompt: 'share your email',
+                      floor_plans_url: 'https://www.dividendhomes.com/communities/acacia/floor-plans/',
+                      availability_url: 'https://www.dividendhomes.com/communities/acacia/site-plan/',
+                      properties: { name: 'Acacia', property_type: 'master_planned' },
+                    },
+                    error: null,
+                  }),
+                })),
+              })),
+            })),
+          }
+        }
+        throw new Error(`Unexpected table ${table}`)
+      }),
+    })
+
+    const { POST } = await import('./route')
+    const request = new Request('http://localhost/api/lumaleasing/chat', {
+      method: 'POST',
+      headers: {
+        origin: 'http://localhost:3000',
+        'content-type': 'application/json',
+        'x-api-key': 'test-key',
+      },
+      body: JSON.stringify({
+        messages: [{ role: 'user', content: 'what floor plans do you offer?' }],
+      }),
+    }) as NextRequest
+
+    const response = await POST(request)
+    expect(response.status).toBe(200)
+    const firstCompletionArgs = openAiChatCreateMock.mock.calls[0][0]
+    const systemPrompt = firstCompletionArgs.messages[0].content
+    expect(systemPrompt).toContain('PROPERTY LINKS')
+    expect(systemPrompt).toContain('https://www.dividendhomes.com/communities/acacia/floor-plans/')
+    expect(systemPrompt).toContain('https://www.dividendhomes.com/communities/acacia/site-plan/')
+  })
+
+  it('omits the property links section when no links are configured', async () => {
+    validateBodyMock.mockReturnValue({
+      success: true,
+      data: {
+        messages: [{ role: 'user', content: 'what floor plans do you offer?' }],
+        sessionId: null,
+        leadInfo: null,
+      },
+    })
+    openAiChatCreateMock.mockResolvedValue({
+      choices: [{ message: { content: 'We offer Plans 2, 4, and 4X.' } }],
+    })
+
+    createServiceClientMock.mockReturnValue({
+      from: vi.fn((table: string) => {
+        if (table === 'lumaleasing_config') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                eq: vi.fn(() => ({
+                  single: vi.fn().mockResolvedValue({
+                    data: {
+                      property_id: 'property-1',
+                      widget_name: 'Luma',
+                      collect_email: true,
+                      lead_capture_prompt: 'share your email',
+                      properties: { name: 'Acacia', property_type: 'master_planned' },
+                    },
+                    error: null,
+                  }),
+                })),
+              })),
+            })),
+          }
+        }
+        throw new Error(`Unexpected table ${table}`)
+      }),
+    })
+
+    const { POST } = await import('./route')
+    const request = new Request('http://localhost/api/lumaleasing/chat', {
+      method: 'POST',
+      headers: {
+        origin: 'http://localhost:3000',
+        'content-type': 'application/json',
+        'x-api-key': 'test-key',
+      },
+      body: JSON.stringify({
+        messages: [{ role: 'user', content: 'what floor plans do you offer?' }],
+      }),
+    }) as NextRequest
+
+    const response = await POST(request)
+    expect(response.status).toBe(200)
+    const firstCompletionArgs = openAiChatCreateMock.mock.calls[0][0]
+    const systemPrompt = firstCompletionArgs.messages[0].content
+    expect(systemPrompt).not.toContain('PROPERTY LINKS')
+  })
+
+  it('returns tourCta when the assistant reply suggests a tour and tours are enabled', async () => {
+    validateBodyMock.mockReturnValue({
+      success: true,
+      data: {
+        messages: [{ role: 'user', content: "I'm interested, how do I get started?" }],
+        sessionId: null,
+        leadInfo: null,
+      },
+    })
+    openAiChatCreateMock.mockResolvedValue({
+      choices: [{ message: { content: 'That is great to hear! I recommend scheduling a tour of Acacia to explore the community.' } }],
+    })
+
+    createServiceClientMock.mockReturnValue({
+      from: vi.fn((table: string) => {
+        if (table === 'lumaleasing_config') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                eq: vi.fn(() => ({
+                  single: vi.fn().mockResolvedValue({
+                    data: {
+                      property_id: 'property-1',
+                      widget_name: 'Luma',
+                      collect_email: true,
+                      tours_enabled: true,
+                      lead_capture_prompt: 'share your email',
+                      properties: { name: 'Acacia', property_type: 'master_planned' },
+                    },
+                    error: null,
+                  }),
+                })),
+              })),
+            })),
+          }
+        }
+        throw new Error(`Unexpected table ${table}`)
+      }),
+    })
+
+    const { POST } = await import('./route')
+    const request = new Request('http://localhost/api/lumaleasing/chat', {
+      method: 'POST',
+      headers: {
+        origin: 'http://localhost:3000',
+        'content-type': 'application/json',
+        'x-api-key': 'test-key',
+      },
+      body: JSON.stringify({
+        messages: [{ role: 'user', content: "I'm interested, how do I get started?" }],
+      }),
+    }) as NextRequest
+
+    const response = await POST(request)
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      wantsTour: false,
+      tourCta: true,
+    })
+  })
+
+  it('suppresses tourCta when tours are not enabled for the property', async () => {
+    validateBodyMock.mockReturnValue({
+      success: true,
+      data: {
+        messages: [{ role: 'user', content: 'I want to schedule a tour' }],
+        sessionId: null,
+        leadInfo: null,
+      },
+    })
+    openAiChatCreateMock.mockResolvedValue({
+      choices: [{ message: { content: 'I would love to arrange a tour for you!' } }],
+    })
+
+    createServiceClientMock.mockReturnValue({
+      from: vi.fn((table: string) => {
+        if (table === 'lumaleasing_config') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                eq: vi.fn(() => ({
+                  single: vi.fn().mockResolvedValue({
+                    data: {
+                      property_id: 'property-1',
+                      widget_name: 'Luma',
+                      collect_email: true,
+                      tours_enabled: false,
+                      lead_capture_prompt: 'share your email',
+                      properties: { name: 'Acacia', property_type: 'master_planned' },
+                    },
+                    error: null,
+                  }),
+                })),
+              })),
+            })),
+          }
+        }
+        throw new Error(`Unexpected table ${table}`)
+      }),
+    })
+
+    const { POST } = await import('./route')
+    const request = new Request('http://localhost/api/lumaleasing/chat', {
+      method: 'POST',
+      headers: {
+        origin: 'http://localhost:3000',
+        'content-type': 'application/json',
+        'x-api-key': 'test-key',
+      },
+      body: JSON.stringify({
+        messages: [{ role: 'user', content: 'I want to schedule a tour' }],
+      }),
+    }) as NextRequest
+
+    const response = await POST(request)
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      wantsTour: true,
+      tourCta: false,
+    })
+  })
+
   it('returns a property-only reply for off-topic questions without calling the LLM', async () => {
     validateBodyMock.mockReturnValue({
       success: true,

@@ -15,6 +15,7 @@ interface WidgetConfig {
   primary_color: string;
   secondary_color: string;
   logo_url: string | null;
+  agent_avatar_url: string | null;
   welcome_message: string;
   offline_message: string;
   auto_popup_delay_seconds: number;
@@ -23,6 +24,8 @@ interface WidgetConfig {
   collect_email: boolean;
   collect_phone: boolean;
   lead_capture_prompt: string;
+  floor_plans_url: string | null;
+  availability_url: string | null;
   tours_enabled: boolean;
   tour_duration_minutes: number;
   tour_buffer_minutes: number;
@@ -716,6 +719,38 @@ export function LumaLeasingConfig() {
               </div>
             </div>
 
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Agent Photo</label>
+              <div className="flex items-start gap-4">
+                <div className="w-16 h-16 flex-shrink-0 rounded-full bg-slate-100 flex items-center justify-center overflow-hidden">
+                  {config.agent_avatar_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={config.agent_avatar_url}
+                      alt="Agent photo preview"
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <Sparkles className="w-6 h-6 text-slate-400" />
+                  )}
+                </div>
+                <div className="flex-1 space-y-2">
+                  <input
+                    type="url"
+                    value={config.agent_avatar_url || ''}
+                    onChange={(e) => updateConfig('agent_avatar_url', e.target.value || null)}
+                    placeholder="https://example.com/agent-photo.jpg"
+                    className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                  />
+                  <p className="text-xs text-slate-500">
+                    Shown as the assistant&apos;s avatar next to chat replies and on the teaser
+                    bubble, giving the widget a human face. Square headshots work best. Leave
+                    blank to use the default bot icon.
+                  </p>
+                </div>
+              </div>
+            </div>
+
             <div className="flex items-center justify-between p-4 bg-slate-50 rounded-lg">
               <div>
                 <p className="font-medium text-slate-900">Widget Status</p>
@@ -759,7 +794,31 @@ export function LumaLeasingConfig() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">Auto-popup Delay (seconds)</label>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Floor Plans Page URL</label>
+              <input
+                type="url"
+                value={config.floor_plans_url || ''}
+                onChange={(e) => updateConfig('floor_plans_url', e.target.value || null)}
+                placeholder="https://example.com/communities/floor-plans/"
+                className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+              />
+              <p className="text-xs text-slate-500 mt-1">The chatbot shares this link when visitors ask about floor plans</p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Availability Page URL</label>
+              <input
+                type="url"
+                value={config.availability_url || ''}
+                onChange={(e) => updateConfig('availability_url', e.target.value || null)}
+                placeholder="https://example.com/communities/site-plan/"
+                className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+              />
+              <p className="text-xs text-slate-500 mt-1">The chatbot shares this link when visitors ask about availability</p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Teaser Message Delay (seconds)</label>
               <input
                 type="number"
                 value={config.auto_popup_delay_seconds}
@@ -767,7 +826,7 @@ export function LumaLeasingConfig() {
                 min={0}
                 className="w-32 px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
               />
-              <p className="text-xs text-slate-500 mt-1">Set to 0 to disable auto-popup</p>
+              <p className="text-xs text-slate-500 mt-1">After this delay, a small message bubble invites the visitor to chat (instead of auto-opening the window). Set to 0 to disable.</p>
             </div>
 
             <div>

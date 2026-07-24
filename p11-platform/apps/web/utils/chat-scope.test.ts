@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { containsContactInfo, detectTourIntent, isPropertyChatInScope } from './chat-scope'
+import { containsContactInfo, detectTourIntent, detectTourOffer, isPropertyChatInScope } from './chat-scope'
 
 describe('isPropertyChatInScope', () => {
   it('keeps broad selected-property prompts in scope', () => {
@@ -12,9 +12,30 @@ describe('isPropertyChatInScope', () => {
     expect(isPropertyChatInScope('call me at 5551112222', 'Acacia')).toBe(true)
   })
 
+  it('keeps property questions outside the keyword allowlist in scope', () => {
+    expect(isPropertyChatInScope('Are the kitchen ranges gas or electric?', 'Acacia')).toBe(true)
+    expect(isPropertyChatInScope('Is there central air conditioning?', 'Acacia')).toBe(true)
+    expect(isPropertyChatInScope('What appliances are included?', 'Acacia')).toBe(true)
+    expect(isPropertyChatInScope('Are washers and dryers included?', 'Acacia')).toBe(true)
+    expect(isPropertyChatInScope('Is smoking allowed on the premises?', 'Acacia')).toBe(true)
+  })
+
+  it('defaults to in-scope for questions the blocklist does not match', () => {
+    expect(isPropertyChatInScope('What direction do the windows face?', 'Acacia')).toBe(true)
+    expect(isPropertyChatInScope('How tall are the ceilings?', 'Acacia')).toBe(true)
+  })
+
   it('still blocks explicit off-topic prompts', () => {
     expect(isPropertyChatInScope('teach me math', 'Acacia')).toBe(false)
     expect(isPropertyChatInScope('tell me about math', 'Acacia')).toBe(false)
+    expect(isPropertyChatInScope('help me debug my javascript function', 'Acacia')).toBe(false)
+    expect(isPropertyChatInScope('write me a poem about the ocean', 'Acacia')).toBe(false)
+    expect(isPropertyChatInScope('what do you think about politics today?', 'Acacia')).toBe(false)
+  })
+
+  it('lets property topic words override the blocklist', () => {
+    expect(isPropertyChatInScope('is cooking gas included in the unit utilities?', 'Acacia')).toBe(true)
+    expect(isPropertyChatInScope('does the community have a game room?', 'Acacia')).toBe(true)
   })
 })
 
@@ -49,6 +70,19 @@ describe('detectTourIntent', () => {
     const tourOffer = 'Would you like to schedule a tour?'
     expect(detectTourIntent('what is the HOA fee?', tourOffer)).toBe(false)
     expect(detectTourIntent('how much is plan 2?', tourOffer)).toBe(false)
+  })
+})
+
+describe('detectTourOffer', () => {
+  it('detects assistant replies that bring up touring', () => {
+    expect(detectTourOffer('I recommend scheduling a tour of Acacia to explore the community.')).toBe(true)
+    expect(detectTourOffer('We have showings available this weekend!')).toBe(true)
+    expect(detectTourOffer('Join us for the open house on Saturday.')).toBe(true)
+  })
+
+  it('ignores replies that do not mention touring', () => {
+    expect(detectTourOffer('Homes at Acacia start at $2,595,000 with solar included.')).toBe(false)
+    expect(detectTourOffer('The kitchen ranges are electric.')).toBe(false)
   })
 })
 

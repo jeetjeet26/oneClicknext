@@ -1,4 +1,4 @@
-// schema_migration_version: 20260722180000
+// schema_migration_version: 20260724202306
 export type Json =
   | string
   | number
@@ -4177,8 +4177,10 @@ export type Database = {
       }
       lumaleasing_config: {
         Row: {
+          agent_avatar_url: string | null
           api_key: string | null
           auto_popup_delay_seconds: number | null
+          availability_url: string | null
           business_hours: Json | null
           collect_email: boolean | null
           collect_name: boolean | null
@@ -4186,6 +4188,7 @@ export type Database = {
           created_at: string | null
           email_configuration_id: string | null
           email_enabled: boolean | null
+          floor_plans_url: string | null
           id: string
           is_active: boolean | null
           lead_capture_prompt: string | null
@@ -4204,8 +4207,10 @@ export type Database = {
           widget_name: string | null
         }
         Insert: {
+          agent_avatar_url?: string | null
           api_key?: string | null
           auto_popup_delay_seconds?: number | null
+          availability_url?: string | null
           business_hours?: Json | null
           collect_email?: boolean | null
           collect_name?: boolean | null
@@ -4213,6 +4218,7 @@ export type Database = {
           created_at?: string | null
           email_configuration_id?: string | null
           email_enabled?: boolean | null
+          floor_plans_url?: string | null
           id?: string
           is_active?: boolean | null
           lead_capture_prompt?: string | null
@@ -4231,8 +4237,10 @@ export type Database = {
           widget_name?: string | null
         }
         Update: {
+          agent_avatar_url?: string | null
           api_key?: string | null
           auto_popup_delay_seconds?: number | null
+          availability_url?: string | null
           business_hours?: Json | null
           collect_email?: boolean | null
           collect_name?: boolean | null
@@ -4240,6 +4248,7 @@ export type Database = {
           created_at?: string | null
           email_configuration_id?: string | null
           email_enabled?: boolean | null
+          floor_plans_url?: string | null
           id?: string
           is_active?: boolean | null
           lead_capture_prompt?: string | null

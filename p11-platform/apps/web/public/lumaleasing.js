@@ -31,6 +31,35 @@
   let sessionId = getStoredSessionId();
   let conversationId = null;
   let leadCaptured = false;
+  let leadPromptShown = false;
+  let tourBooked = false;
+  let teaserVisible = false;
+
+  // Teaser dismissal is remembered for the browser session so the bubble
+  // doesn't nag on every page view.
+  const TEASER_DISMISSED_KEY = 'lumaleasing_teaser_dismissed';
+  function isTeaserDismissed() {
+    try { return sessionStorage.getItem(TEASER_DISMISSED_KEY) === '1'; } catch (e) { return false; }
+  }
+  function markTeaserDismissed() {
+    try { sessionStorage.setItem(TEASER_DISMISSED_KEY, '1'); } catch (e) { /* storage unavailable */ }
+  }
+
+  // Remember whether the chat window is open so it stays open when the
+  // visitor navigates between pages during the session.
+  const CHAT_OPEN_KEY = 'lumaleasing_chat_open';
+  function isChatOpenStored() {
+    try { return sessionStorage.getItem(CHAT_OPEN_KEY) === '1'; } catch (e) { return false; }
+  }
+  function storeChatOpen(open) {
+    try {
+      if (open) {
+        sessionStorage.setItem(CHAT_OPEN_KEY, '1');
+      } else {
+        sessionStorage.removeItem(CHAT_OPEN_KEY);
+      }
+    } catch (e) { /* storage unavailable */ }
+  }
   let leadInfo = { firstName: '', lastName: '', email: '', phone: '' };
   let isTyping = false;
   let visitorId = getVisitorId();
@@ -148,13 +177,23 @@
       // the launcher renders immediately; re-renders once history arrives).
       restoreSession();
 
+      // Reopen the chat window if the visitor navigated here mid-chat.
+      if (isChatOpenStored()) {
+        openWidget();
+      }
+
       // Global Esc-to-close keyboard handler.
       attachGlobalKeyHandler();
 
-      // Auto-popup
+      // After the configured delay, show a small teaser bubble next to the
+      // launcher inviting the visitor to chat, instead of auto-opening the
+      // full chat window.
       if (config.autoPopupDelay > 0) {
         setTimeout(function() {
-          openWidget();
+          if (!isOpen && !isTeaserDismissed()) {
+            teaserVisible = true;
+            renderWidget();
+          }
         }, config.autoPopupDelay * 1000);
       }
 
@@ -215,9 +254,93 @@
       .ll-widget {
         position: fixed;
         z-index: 999999;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
       }
-      .ll-widget.bottom-right { right: 16px; bottom: 16px; }
-      .ll-widget.bottom-left { left: 16px; bottom: 16px; }
+      .ll-widget.bottom-right { right: 16px; bottom: 16px; align-items: flex-end; }
+      .ll-widget.bottom-left { left: 16px; bottom: 16px; align-items: flex-start; }
+
+      .ll-teaser {
+        position: relative;
+        max-width: 300px;
+        animation: ll-teaser-in 0.25s ease-out;
+      }
+      @keyframes ll-teaser-in {
+        from { opacity: 0; transform: translateY(8px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      .ll-teaser-body {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        background: white;
+        border-radius: 16px;
+        padding: 14px 18px;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+        cursor: pointer;
+      }
+      .ll-teaser-body:hover {
+        box-shadow: 0 6px 20px rgba(0,0,0,0.2);
+      }
+      /* Tail pointing toward the launcher */
+      .ll-widget.bottom-right .ll-teaser-body::after,
+      .ll-widget.bottom-left .ll-teaser-body::after {
+        content: '';
+        position: absolute;
+        bottom: -7px;
+        width: 14px;
+        height: 14px;
+        background: white;
+        transform: rotate(45deg);
+      }
+      .ll-widget.bottom-right .ll-teaser-body::after { right: 22px; }
+      .ll-widget.bottom-left .ll-teaser-body::after { left: 22px; }
+      .ll-teaser-avatar {
+        width: 44px;
+        height: 44px;
+        border-radius: 50%;
+        object-fit: cover;
+        flex-shrink: 0;
+      }
+      .ll-teaser-avatar-icon {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .ll-teaser-avatar-icon svg {
+        width: 22px;
+        height: 22px;
+      }
+      .ll-teaser-text {
+        font-size: 14px;
+        line-height: 1.4;
+        color: #1f2937;
+      }
+      .ll-teaser-close {
+        position: absolute;
+        top: -8px;
+        right: -8px;
+        width: 22px;
+        height: 22px;
+        border: none;
+        border-radius: 50%;
+        background: #4b5563;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+        z-index: 1;
+      }
+      .ll-teaser-close svg {
+        width: 12px;
+        height: 12px;
+        fill: white;
+      }
+      .ll-teaser-close:hover {
+        background: #1f2937;
+      }
       
       .ll-button {
         width: 56px;
@@ -348,6 +471,12 @@
         width: 16px;
         height: 16px;
       }
+      .ll-avatar-photo {
+        width: 100%;
+        height: 100%;
+        border-radius: 50%;
+        object-fit: cover;
+      }
       .ll-message-bubble {
         max-width: 80%;
         padding: 12px 16px;
@@ -361,9 +490,13 @@
         border-bottom-right-radius: 4px;
         box-shadow: 0 1px 2px rgba(0,0,0,0.05);
       }
+      /* Muted, WCAG-compliant assistant bubble. Brand colors stay in the
+         header; dark text on light gray keeps replies readable (>12:1). */
       .ll-message.assistant .ll-message-bubble {
-        color: white;
+        background: #eef1f4;
+        color: #1f2937;
         border-bottom-left-radius: 4px;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
       }
       .ll-message-time {
         font-size: 10px;
@@ -457,6 +590,30 @@
         font-size: 12px;
         color: #6b7280;
         box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .ll-tour-cta {
+        border: none;
+        background: #1f2937;
+        color: white;
+        font-size: 12px;
+        font-weight: 600;
+        padding: 6px 12px;
+        border-radius: 16px;
+        cursor: pointer;
+        white-space: nowrap;
+        transition: opacity 0.15s ease;
+      }
+      .ll-tour-cta:hover {
+        opacity: 0.85;
+      }
+      .ll-message-bubble .ll-link {
+        color: inherit;
+        font-weight: 600;
+        text-decoration: underline;
+        word-break: break-all;
       }
       
       /* Calendar Styles */
@@ -705,10 +862,41 @@
     attachEventListeners();
   }
 
+  // Render the teaser bubble shown next to the launcher after the configured
+  // delay. Clicking it opens the chat; the X dismisses it for the session.
+  function renderTeaser() {
+    const teaserPhoto = config.agentAvatarUrl || config.logoUrl;
+    const avatar = teaserPhoto
+      ? `<img src="${teaserPhoto}" alt="" class="ll-teaser-avatar">`
+      : `<div class="ll-teaser-avatar ll-teaser-avatar-icon" style="background: ${config.primaryColor}">
+           <svg viewBox="0 0 24 24" fill="white" aria-hidden="true" focusable="false"><path d="M12 2a2 2 0 012 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 017 7h1a1 1 0 011 1v3a1 1 0 01-1 1h-1v1a2 2 0 01-2 2H5a2 2 0 01-2-2v-1H2a1 1 0 01-1-1v-3a1 1 0 011-1h1a7 7 0 017-7h1V5.73c-.6-.34-1-.99-1-1.73a2 2 0 012-2M7.5 13A2.5 2.5 0 005 15.5 2.5 2.5 0 007.5 18a2.5 2.5 0 002.5-2.5A2.5 2.5 0 007.5 13m9 0a2.5 2.5 0 00-2.5 2.5 2.5 2.5 0 002.5 2.5 2.5 2.5 0 002.5-2.5 2.5 2.5 0 00-2.5-2.5z"/></svg>
+         </div>`;
+    const teaserText = config.welcomeMessage || 'Hi there, have a question? Chat with us here.';
+    return `
+      <div class="ll-teaser">
+        <button class="ll-teaser-close" onclick="lumaleasing_dismissTeaser(event)" aria-label="Dismiss chat invitation">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+        <div
+          class="ll-teaser-body"
+          role="button"
+          tabindex="0"
+          aria-label="Open ${escapeHtml(config.widgetName || 'leasing')} chat"
+          onclick="lumaleasing('open')"
+          onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();lumaleasing('open');}"
+        >
+          ${avatar}
+          <div class="ll-teaser-text">${escapeHtml(teaserText)}</div>
+        </div>
+      </div>
+    `;
+  }
+
   // Render button
   function renderButton() {
     const label = `Open ${config.widgetName || 'leasing'} chat`;
     return `
+      ${teaserVisible ? renderTeaser() : ''}
       <button
         class="ll-button"
         style="background: ${config.primaryColor}"
@@ -727,25 +915,32 @@
     
     let messagesHtml = messages.map(function(msg) {
       if (msg.role === 'system') {
+        const ctaButton = msg.tourCta
+          ? `<button class="ll-tour-cta" onclick="lumaleasing_scheduleTour()">📅 Schedule a tour</button>`
+          : '';
         return `
           <div class="ll-system">
-            <div class="ll-system-bubble">${escapeHtml(msg.content)}</div>
+            <div class="ll-system-bubble">${escapeHtml(msg.content)}${ctaButton}</div>
           </div>
         `;
       }
       
       const time = new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      const avatarBg = msg.role === 'assistant' ? `background: ${config.primaryColor}` : '';
-      const bubbleBg = msg.role === 'assistant' ? `background: ${gradient}` : '';
-      const icon = msg.role === 'assistant' 
-        ? '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a2 2 0 012 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 017 7h1a1 1 0 011 1v3a1 1 0 01-1 1h-1v1a2 2 0 01-2 2H5a2 2 0 01-2-2v-1H2a1 1 0 01-1-1v-3a1 1 0 011-1h1a7 7 0 017-7h1V5.73c-.6-.34-1-.99-1-1.73a2 2 0 012-2M7.5 13A2.5 2.5 0 005 15.5 2.5 2.5 0 007.5 18a2.5 2.5 0 002.5-2.5A2.5 2.5 0 007.5 13m9 0a2.5 2.5 0 00-2.5 2.5 2.5 2.5 0 002.5 2.5 2.5 2.5 0 002.5-2.5 2.5 2.5 0 00-2.5-2.5z"/></svg>'
-        : '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 4a4 4 0 014 4 4 4 0 01-4 4 4 4 0 01-4-4 4 4 0 014-4m0 10c4.42 0 8 1.79 8 4v2H4v-2c0-2.21 3.58-4 8-4z"/></svg>';
+      // Assistant avatar: real photo when configured, otherwise bot icon on
+      // the brand color.
+      const usePhoto = msg.role === 'assistant' && config.agentAvatarUrl;
+      const avatarBg = msg.role === 'assistant' && !usePhoto ? `background: ${config.primaryColor}` : '';
+      const icon = usePhoto
+        ? `<img src="${config.agentAvatarUrl}" alt="" class="ll-avatar-photo">`
+        : msg.role === 'assistant'
+          ? '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a2 2 0 012 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 017 7h1a1 1 0 011 1v3a1 1 0 01-1 1h-1v1a2 2 0 01-2 2H5a2 2 0 01-2-2v-1H2a1 1 0 01-1-1v-3a1 1 0 011-1h1a7 7 0 017-7h1V5.73c-.6-.34-1-.99-1-1.73a2 2 0 012-2M7.5 13A2.5 2.5 0 005 15.5 2.5 2.5 0 007.5 18a2.5 2.5 0 002.5-2.5A2.5 2.5 0 007.5 13m9 0a2.5 2.5 0 00-2.5 2.5 2.5 2.5 0 002.5 2.5 2.5 2.5 0 002.5-2.5 2.5 2.5 0 00-2.5-2.5z"/></svg>'
+          : '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 4a4 4 0 014 4 4 4 0 01-4 4 4 4 0 01-4-4 4 4 0 014-4m0 10c4.42 0 8 1.79 8 4v2H4v-2c0-2.21 3.58-4 8-4z"/></svg>';
       
       return `
         <div class="ll-message ${msg.role}">
           <div class="ll-message-avatar" style="${avatarBg}">${icon}</div>
-          <div class="ll-message-bubble" style="${bubbleBg}">
-            ${escapeHtml(msg.content)}
+          <div class="ll-message-bubble">
+            ${renderMessageContent(msg.content)}
             <div class="ll-message-time">${time}</div>
           </div>
         </div>
@@ -755,8 +950,10 @@
     if (isTyping) {
       messagesHtml += `
         <div class="ll-message assistant">
-          <div class="ll-message-avatar" style="background: ${config.primaryColor}">
-            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a2 2 0 012 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 017 7h1a1 1 0 011 1v3a1 1 0 01-1 1h-1v1a2 2 0 01-2 2H5a2 2 0 01-2-2v-1H2a1 1 0 01-1-1v-3a1 1 0 011-1h1a7 7 0 017-7h1V5.73c-.6-.34-1-.99-1-1.73a2 2 0 012-2M7.5 13A2.5 2.5 0 005 15.5 2.5 2.5 0 007.5 18a2.5 2.5 0 002.5-2.5A2.5 2.5 0 007.5 13m9 0a2.5 2.5 0 00-2.5 2.5 2.5 2.5 0 002.5 2.5 2.5 2.5 0 002.5-2.5 2.5 2.5 0 00-2.5-2.5z"/></svg>
+          <div class="ll-message-avatar" style="${config.agentAvatarUrl ? '' : `background: ${config.primaryColor}`}">
+            ${config.agentAvatarUrl
+              ? `<img src="${config.agentAvatarUrl}" alt="" class="ll-avatar-photo">`
+              : '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a2 2 0 012 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 017 7h1a1 1 0 011 1v3a1 1 0 01-1 1h-1v1a2 2 0 01-2 2H5a2 2 0 01-2-2v-1H2a1 1 0 01-1-1v-3a1 1 0 011-1h1a7 7 0 017-7h1V5.73c-.6-.34-1-.99-1-1.73a2 2 0 012-2M7.5 13A2.5 2.5 0 005 15.5 2.5 2.5 0 007.5 18a2.5 2.5 0 002.5-2.5A2.5 2.5 0 007.5 13m9 0a2.5 2.5 0 00-2.5 2.5 2.5 2.5 0 002.5 2.5 2.5 2.5 0 002.5-2.5 2.5 2.5 0 00-2.5-2.5z"/></svg>'}
           </div>
           <div class="ll-typing">
             <div class="ll-typing-dot"></div>
@@ -814,6 +1011,18 @@
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+  }
+
+  // Escape HTML, then turn bare URLs into safe clickable links so the
+  // assistant can share pages like floor plans and availability.
+  function renderMessageContent(text) {
+    const escaped = escapeHtml(text || '');
+    return escaped.replace(/https?:\/\/[^\s<]+/g, function (url) {
+      // Keep trailing punctuation out of the link target.
+      const cleaned = url.replace(/[.,!?;:)'"]+$/, '');
+      const trailing = url.slice(cleaned.length);
+      return '<a href="' + cleaned + '" target="_blank" rel="noopener noreferrer" class="ll-link">' + cleaned + '</a>' + trailing;
+    });
   }
 
   // Render calendar picker
@@ -1161,32 +1370,38 @@
     return null;
   }
 
-  // Detect tour intent in message. Direct keywords always count. Affirmative
-  // or scheduling follow-ups ("I would love to", "is there availability next
-  // week?") only count when the assistant's previous message brought up a tour.
-  var TOUR_KEYWORD_PATTERN = /\b(tours?|showings?|visit|appointment|schedule|book|booking|come\s*by|stop\s*by|check\s*out|look\s*at|view|see)\b/i;
-  var TOUR_FOLLOW_UP_AFFIRMATION_PATTERN = /\b(yes|yeah|yep|sure|absolutely|definitely|sounds\s+good|ok(?:ay)?|please|let'?s\s+do\s+(?:it|that)|i(?:'d|\s+would)\s+love\s+to|that\s+works|why\s+not)\b/i;
-  var TOUR_FOLLOW_UP_TIMING_PATTERN = /\b(availability|available|openings?|slots?|times?|when|today|tomorrow|tonight|(?:next|this)\s+(?:week|month|weekend)|weekends?|weekdays?|monday|tuesday|wednesday|thursday|friday|saturday|sunday|mornings?|afternoons?|evenings?)\b/i;
+  // Start the tour scheduling flow: confirm in chat, fetch availability, and
+  // switch to calendar mode (or surface an error message in chat). Triggered
+  // by the visitor pressing the "Schedule a tour" button.
+  async function startTourScheduling() {
+    // Remove any pending tour CTA bubbles; the flow is starting.
+    messages = messages.filter(function (m) { return !m.tourCta; });
 
-  function detectTourIntent(text, previousAssistantText) {
-    const trimmed = (text || '').trim();
-    if (!trimmed) return false;
+    messages.push({
+      id: Date.now().toString(),
+      role: 'assistant',
+      content: 'Great! I can help you schedule a tour. Let me show you our available times...',
+      timestamp: new Date()
+    });
+    renderWidget();
 
-    if (TOUR_KEYWORD_PATTERN.test(trimmed)) return true;
+    const availability = await fetchTourAvailability();
 
-    const previous = (previousAssistantText || '').trim();
-    if (!previous || !TOUR_KEYWORD_PATTERN.test(previous)) return false;
-
-    return TOUR_FOLLOW_UP_AFFIRMATION_PATTERN.test(trimmed) || TOUR_FOLLOW_UP_TIMING_PATTERN.test(trimmed);
-  }
-
-  function getPreviousAssistantMessageContent() {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i] && (messages[i].role === 'assistant' || messages[i].role === 'system')) {
-        return messages[i].content || '';
-      }
+    if (availability.error) {
+      messages.push({
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: availability.error,
+        timestamp: new Date()
+      });
+      renderWidget();
+      return;
     }
-    return '';
+
+    calendarData = availability;
+    widgetMode = 'calendar';
+    calendarViewDate = new Date();
+    renderWidget();
   }
 
   // Fetch tour availability from Google Calendar
@@ -1248,8 +1463,9 @@
 
       const data = await response.json();
       leadCaptured = true;
+      tourBooked = true;
       leadInfo = { ...leadInfo, ...contactInfo };
-      
+
       // Return to chat mode with success message
       widgetMode = 'chat';
       messages.push({
@@ -1409,49 +1625,6 @@
       }
     }
 
-    // Check for tour intent FIRST
-    if (detectTourIntent(text, getPreviousAssistantMessageContent()) && widgetMode === 'chat') {
-      // Add user message
-      messages.push({
-        id: Date.now().toString(),
-        role: 'user',
-        content: text,
-        timestamp: new Date()
-      });
-
-      // Add assistant response suggesting calendar
-      messages.push({
-        id: (Date.now() + 1).toString(),
-        role: 'assistant',
-        content: 'Great! I can help you schedule a tour. Let me show you our available times...',
-        timestamp: new Date()
-      });
-
-      renderWidget();
-
-      // Fetch availability and switch to calendar mode
-      const availability = await fetchTourAvailability();
-      
-      if (availability.error) {
-        // Show error in chat
-        messages.push({
-          id: (Date.now() + 2).toString(),
-          role: 'assistant',
-          content: availability.error,
-          timestamp: new Date()
-        });
-        renderWidget();
-        return;
-      }
-
-      // Switch to calendar mode
-      calendarData = availability;
-      widgetMode = 'calendar';
-      calendarViewDate = new Date();
-      renderWidget();
-      return;
-    }
-
     // Try to extract contact info from the message
     const extractedInfo = extractContactInfo(text);
     if (extractedInfo && !leadCaptured) {
@@ -1486,7 +1659,7 @@
           // Cap context so long restored transcripts stay within the API's
           // 50-message limit.
           messages: messages
-            .filter(m => m.id !== 'welcome' && m.id !== 'waiting-for-human')
+            .filter(m => m.id !== 'welcome' && m.id !== 'waiting-for-human' && !m.tourCta)
             .slice(-MAX_CHAT_CONTEXT_MESSAGES)
             .map(m => ({
               role: m.role,
@@ -1525,7 +1698,24 @@
         startHistoryPolling();
       }
 
-      if (data.shouldPromptLeadCapture && data.leadCapturePrompt && !leadCaptured) {
+      // Offer a pressable "Schedule a tour" button when the server detects
+      // tour interest (visitor intent or the assistant suggesting a tour).
+      // Keep at most one button, always beneath the latest message.
+      if (data.tourCta && !tourBooked && widgetMode === 'chat') {
+        messages = messages.filter(function (m) { return !m.tourCta; });
+        messages.push({
+          id: (Date.now() + 4).toString(),
+          role: 'system',
+          tourCta: true,
+          content: 'Want to see it in person?',
+          timestamp: new Date()
+        });
+      }
+
+      // Only nudge for contact info once per widget session so visitors are
+      // not re-asked after every message.
+      if (data.shouldPromptLeadCapture && data.leadCapturePrompt && !leadCaptured && !leadPromptShown) {
+        leadPromptShown = true;
         messages.push({
           id: (Date.now() + 3).toString(),
           role: 'assistant',
@@ -1555,6 +1745,10 @@
       return;
     }
     isOpen = true;
+    storeChatOpen(true);
+    // Once the visitor engages, retire the teaser for this session.
+    teaserVisible = false;
+    markTeaserDismissed();
     renderWidget();
     // Resume agent-reply polling if a human takeover is in progress.
     if (isHumanMode) startHistoryPolling();
@@ -1563,6 +1757,7 @@
   // Close widget
   function closeWidget() {
     isOpen = false;
+    storeChatOpen(false);
     renderWidget();
   }
 
@@ -1577,7 +1772,19 @@
     messages = [];
   }
 
+  // Teaser dismiss handler (exposed globally for onclick handlers)
+  window.lumaleasing_dismissTeaser = function(event) {
+    if (event) event.stopPropagation();
+    teaserVisible = false;
+    markTeaserDismissed();
+    renderWidget();
+  };
+
   // Calendar widget handlers (exposed globally for onclick handlers)
+  window.lumaleasing_scheduleTour = function() {
+    startTourScheduling();
+  };
+
   window.lumaleasing_selectDate = function(dateStr) {
     selectedDate = dateStr;
     selectedTime = null;
