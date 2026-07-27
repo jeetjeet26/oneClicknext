@@ -1,9 +1,12 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, after } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { createAdminClient } from '@/utils/supabase/admin'
 import { normalizePublicWebsiteUrl } from '@/utils/services/public-url'
 import { assertValidPropertyType } from '@/utils/property-types'
 import { getAppBaseUrl } from '@/utils/services/runtime-config'
+
+// Website scraping runs via after() and can take a while on large sites
+export const maxDuration = 300
 
 /**
  * Add another property to an existing organization
@@ -227,14 +230,21 @@ export async function POST(request: NextRequest) {
     }
 
     if (body.websiteUrl) {
-      const scrapeResult = await scrapeWebsiteForProperty(
-        property.id,
-        body.websiteUrl,
-        request.headers.get('cookie')
-      )
-      if (!scrapeResult.success) {
-        console.error('Website scrape failed after property add:', scrapeResult.error)
-      }
+      // Run the scrape in the background so the client gets an immediate
+      // response. A synchronous scrape here previously blocked this route for
+      // minutes, making the add-property wizard appear frozen.
+      const websiteUrl = body.websiteUrl
+      const forwardedCookie = request.headers.get('cookie')
+      after(async () => {
+        const scrapeResult = await scrapeWebsiteForProperty(
+          property.id,
+          websiteUrl,
+          forwardedCookie
+        )
+        if (!scrapeResult.success) {
+          console.error('Website scrape failed after property add:', scrapeResult.error)
+        }
+      })
     }
 
     return NextResponse.json({

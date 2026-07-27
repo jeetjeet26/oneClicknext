@@ -14,13 +14,14 @@ interface ScrapeStatus {
 
 export function CommunityStep() {
   const router = useRouter()
-  const { formData, updateCommunity, setWebsiteScrapeResult, error, setError, canProceed, goToNextStep, editMode, createdPropertyId, setCreatedPropertyId, setIsLoading } = useAddProperty()
+  const { formData, updateCommunity, setWebsiteScrapeResult, error, setError, canProceed, goToNextStep, editMode, createdPropertyId, setCreatedPropertyId, isLoading, setIsLoading } = useAddProperty()
   const { community } = formData
   const [showAmenities, setShowAmenities] = useState(false)
   const [scrapeStatus, setScrapeStatus] = useState<ScrapeStatus>({ status: 'idle' })
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (isLoading) return // Prevent duplicate submissions while creating
     if (!community.name.trim()) {
       setError('Community name is required')
       return
@@ -556,11 +557,20 @@ export function CommunityStep() {
             </button>
             <button
               type="submit"
-              disabled={!canProceed()}
+              disabled={!canProceed() || isLoading}
               className="flex-1 flex items-center justify-center gap-2 px-6 py-3.5 bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-semibold rounded-xl shadow-lg shadow-cyan-500/25 hover:shadow-cyan-500/40 hover:from-cyan-600 hover:to-blue-700 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Continue
-              <ArrowRight size={18} />
+              {isLoading ? (
+                <>
+                  <Loader2 size={18} className="animate-spin" />
+                  Creating property...
+                </>
+              ) : (
+                <>
+                  Continue
+                  <ArrowRight size={18} />
+                </>
+              )}
             </button>
           </div>
         </form>
