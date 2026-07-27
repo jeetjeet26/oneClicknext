@@ -5,8 +5,10 @@ services:
     env: python
     region: oregon
     plan: starter
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn main:app --workers 2 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT
+    # playwright install is required for browser-based scraping (bot-protected sites)
+    buildCommand: pip install -r requirements.txt && playwright install chromium
+    # 1 worker: the 512MB starter instance OOMs with 2 workers once Chromium launches
+    startCommand: gunicorn main:app --workers 1 --timeout 1800 --graceful-timeout 60 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT
     
     envVars:
       # Supabase
