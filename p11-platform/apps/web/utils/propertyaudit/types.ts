@@ -121,7 +121,7 @@ export function getSurfaceModelName(surface: Surface): string {
     case 'openai':
       return process.env.GEO_OPENAI_MODEL || 'gpt-5.2'
     case 'claude':
-      return process.env.GEO_CLAUDE_MODEL || 'claude-sonnet-4-20250514'
+      return process.env.GEO_CLAUDE_MODEL || 'claude-sonnet-5'
     case 'chatgpt':
       return process.env.GEO_CHATGPT_MODEL || process.env.GEO_OPENAI_MODEL || 'gpt-5.2'
     case 'gemini':
@@ -337,7 +337,7 @@ export function getGeoConfig(): GeoConfig {
     geminiApiKey: process.env.GOOGLE_GEMINI_API_KEY || '',
     perplexityApiKey: process.env.PERPLEXITY_API_KEY || '',
     openaiModel: process.env.GEO_OPENAI_MODEL || 'gpt-5.2',
-    claudeModel: process.env.GEO_CLAUDE_MODEL || 'claude-sonnet-4-20250514',
+    claudeModel: process.env.GEO_CLAUDE_MODEL || 'claude-sonnet-5',
     geminiModel: process.env.GEO_GEMINI_MODEL || 'gemini-2.5-pro',
     perplexityModel: process.env.GEO_PERPLEXITY_MODEL || 'sonar-pro',
     googleProxyModel: process.env.GEO_GOOGLE_PROXY_MODEL || process.env.GEO_GEMINI_MODEL || 'google-serp-proxy',

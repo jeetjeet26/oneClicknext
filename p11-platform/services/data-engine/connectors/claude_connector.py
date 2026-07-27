@@ -144,7 +144,7 @@ class ClaudeConnector:
             raise ValueError("ANTHROPIC_API_KEY not set")
         
         self.client = anthropic.Anthropic(api_key=self.api_key)
-        self.model = os.environ.get('GEO_CLAUDE_MODEL', 'claude-sonnet-4-20250514')
+        self.model = os.environ.get('GEO_CLAUDE_MODEL', 'claude-sonnet-5')
     
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     async def invoke(self, context: Dict[str, Any]) -> Dict[str, Any]:

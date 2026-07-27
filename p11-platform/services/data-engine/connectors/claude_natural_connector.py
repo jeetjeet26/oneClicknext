@@ -22,7 +22,7 @@ class ClaudeNaturalConnector:
             raise ValueError("ANTHROPIC_API_KEY not set")
         
         self.client = anthropic.Anthropic(api_key=self.api_key)
-        self.model = os.environ.get('GEO_CLAUDE_MODEL', 'claude-sonnet-4-20250514')
+        self.model = os.environ.get('GEO_CLAUDE_MODEL', 'claude-sonnet-5')
         self.enable_web_search = os.environ.get('GEO_ENABLE_WEB_SEARCH', 'false').lower() == 'true'
         
         logger.info(f"[ClaudeNatural] Model: {self.model}, Web search: {self.enable_web_search}")

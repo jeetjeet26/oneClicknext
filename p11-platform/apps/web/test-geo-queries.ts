@@ -103,7 +103,7 @@ async function testClaudeQuery(query: string) {
   
   try {
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-5',
       max_tokens: 2000,
       temperature: 0,
       system: systemPrompt,

@@ -48,7 +48,7 @@ class SiteAuditAnalyst:
         self.openai_api_key = os.environ.get("OPENAI_API_KEY")
         self.anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY")
         self.openai_model = os.environ.get("SITEAUDIT_ANALYST_OPENAI_MODEL") or os.environ.get("GEO_OPENAI_MODEL") or "gpt-4o"
-        self.claude_model = os.environ.get("SITEAUDIT_ANALYST_CLAUDE_MODEL") or os.environ.get("GEO_CLAUDE_MODEL") or "claude-sonnet-4-20250514"
+        self.claude_model = os.environ.get("SITEAUDIT_ANALYST_CLAUDE_MODEL") or os.environ.get("GEO_CLAUDE_MODEL") or "claude-sonnet-5"
 
     # ------------------------------------------------------------------
     # Context assembly

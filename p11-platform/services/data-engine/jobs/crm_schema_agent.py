@@ -60,7 +60,7 @@ class CRMSchemaAgent:
             raise ValueError("ANTHROPIC_API_KEY environment variable not set")
         
         self.client = anthropic.Anthropic(api_key=api_key)
-        self.model = os.environ.get('CRM_AGENT_MODEL', 'claude-sonnet-4-20250514')
+        self.model = os.environ.get('CRM_AGENT_MODEL', 'claude-sonnet-5')
     
     def discover_and_map(
         self, 

@@ -434,7 +434,7 @@ Claude Score: {context['score_comparison'].get('claude_overall', 'N/A')}
 Return JSON with: summary, key_insights (array), action_items (array with priority/effort/impact)."""
 
         response = client.messages.create(
-            model='claude-sonnet-4-20250514',
+            model='claude-sonnet-5',
             max_tokens=2000,
             messages=[{'role': 'user', 'content': prompt}]
         )
