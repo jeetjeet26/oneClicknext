@@ -1651,31 +1651,43 @@
     renderWidget();
 
     try {
-      const response = await fetch(getApiBase() + '/api/lumaleasing/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-API-Key': config.apiKey,
-          'X-Visitor-ID': visitorId
-        },
-        body: JSON.stringify({
-          // Cap context so long restored transcripts stay within the API's
-          // 50-message limit.
-          messages: messages
-            .filter(m => m.id !== 'welcome' && m.id !== 'waiting-for-human' && !m.tourCta)
-            .slice(-MAX_CHAT_CONTEXT_MESSAGES)
-            .map(m => ({
-              role: m.role,
-              content: m.content
-            })),
-          sessionId: sessionId,
-          leadInfo: leadCaptured ? leadInfo : (extractedInfo || undefined)
-        })
+      // Cap context so long restored transcripts stay within the API's
+      // 50-message limit.
+      const chatMessages = messages
+        .filter(m => m.id !== 'welcome' && m.id !== 'waiting-for-human' && !m.tourCta)
+        .slice(-MAX_CHAT_CONTEXT_MESSAGES)
+        .map(m => ({
+          role: m.role,
+          content: m.content
+        }));
+
+      let result = await postChat({
+        messages: chatMessages,
+        sessionId: sessionId,
+        leadInfo: leadCaptured ? leadInfo : (extractedInfo || undefined)
       });
 
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || 'Chat request failed');
+      // Self-heal: a 400 means something in our stored state (a stale
+      // session ID or malformed lead info) is poisoning requests, and we
+      // would resend it with every message, wedging the chat for the rest
+      // of the visit. Drop that state and retry once with a clean request.
+      if (!result.ok && result.status === 400) {
+        console.warn('LumaLeasing: retrying with a fresh session after 400:', result.data && result.data.error);
+        setStoredSessionId(null);
+        conversationId = null;
+        result = await postChat({ messages: chatMessages });
+        if (result.ok) {
+          // The old lead state was part of the poisoned payload; the server
+          // already has the lead and re-extracts contact info from the
+          // transcript, so it is safe to drop it here.
+          leadCaptured = false;
+          leadInfo = { firstName: '', lastName: '', email: '', phone: '' };
+        }
+      }
+
+      const data = result.data;
+      if (!result.ok) {
+        throw new Error((data && data.error) || 'Chat request failed');
       }
 
       if (data.sessionId) setStoredSessionId(data.sessionId);
@@ -1739,6 +1751,21 @@
       isTyping = false;
       renderWidget();
     }
+  }
+
+  // POST one chat request. Extracted so sendMessage can retry cleanly.
+  async function postChat(body) {
+    const response = await fetch(getApiBase() + '/api/lumaleasing/chat', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': config.apiKey,
+        'X-Visitor-ID': visitorId
+      },
+      body: JSON.stringify(body)
+    });
+    const data = await response.json().catch(function () { return {}; });
+    return { ok: response.ok, status: response.status, data: data };
   }
 
   // Open widget
