@@ -100,4 +100,57 @@ describe('chatRequestSchema', () => {
 
     expect(result.success).toBe(true)
   })
+
+  it('drops an invalid extracted email instead of failing the chat request', () => {
+    const result = validateBody(
+      {
+        messages: [{ role: 'user', content: 'my email is billy@bob' }],
+        leadInfo: {
+          first_name: 'Billy',
+          email: 'billy@bob',
+        },
+      },
+      chatRequestSchema
+    )
+
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.leadInfo?.email).toBeNull()
+      expect(result.data.leadInfo?.first_name).toBe('Billy')
+    }
+  })
+
+  it('drops an invalid extracted phone instead of failing the chat request', () => {
+    const result = validateBody(
+      {
+        messages: [{ role: 'user', content: 'call me' }],
+        leadInfo: {
+          email: 'jane@example.com',
+          phone: 'not-a-phone!!!',
+        },
+      },
+      chatRequestSchema
+    )
+
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.leadInfo?.phone).toBeNull()
+      expect(result.data.leadInfo?.email).toBe('jane@example.com')
+    }
+  })
+
+  it('drops a malformed leadInfo payload entirely instead of failing the chat request', () => {
+    const result = validateBody(
+      {
+        messages: [{ role: 'user', content: 'Hi' }],
+        leadInfo: 'garbage',
+      },
+      chatRequestSchema
+    )
+
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.leadInfo).toBeNull()
+    }
+  })
 })

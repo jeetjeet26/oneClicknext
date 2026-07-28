@@ -27,13 +27,19 @@ export const chatMessageSchema = z.object({
 export const chatRequestSchema = z.object({
   messages: z.array(chatMessageSchema).min(1, 'At least one message required').max(50, 'Too many messages'),
   sessionId: safeString(100).optional().nullable(),
+  // leadInfo rides along with chat messages from the widget's client-side
+  // contact extraction, which is looser than our validators. A malformed
+  // extracted email/phone must never fail the whole chat request (the widget
+  // resends it with every message, bricking the conversation) — drop the bad
+  // field instead and let the server-side extraction re-derive contact info
+  // from the transcript.
   leadInfo: z.object({
     leadId: safeString(100).optional().nullable(),
     first_name: safeString(100).optional().nullable(),
     last_name: safeString(100).optional().nullable(),
-    email: emailField.optional().nullable(),
-    phone: optionalPhoneField.optional().nullable(),
-  }).optional().nullable(),
+    email: emailField.optional().nullable().catch(null),
+    phone: optionalPhoneField.optional().nullable().catch(null),
+  }).optional().nullable().catch(null),
   conversationId: safeString(100).optional().nullable(),
 })
 
