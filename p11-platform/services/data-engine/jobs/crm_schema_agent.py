@@ -88,7 +88,6 @@ class CRMSchemaAgent:
             response = self.client.messages.create(
                 model=self.model,
                 max_tokens=4000,
-                temperature=0.1,  # Low temperature for consistent mappings
                 messages=[{
                     "role": "user",
                     "content": prompt

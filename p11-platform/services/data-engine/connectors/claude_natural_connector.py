@@ -54,7 +54,6 @@ class ClaudeNaturalConnector:
             response = self.client.messages.create(
                 model=self.model,
                 max_tokens=2000,
-                temperature=0,
                 system=system_prompt,
                 messages=[
                     {"role": "user", "content": query_text}
@@ -148,7 +147,6 @@ Output ONLY valid JSON, no markdown."""
             response = self.client.messages.create(
                 model=self.model,
                 max_tokens=4000,  # Increased to avoid truncation in detailed analysis
-                temperature=0,  # Zero temp for precise extraction (matches TypeScript)
                 system='You are a precise GEO extraction system. Output ONLY valid JSON without markdown or extra text.',
                 messages=[
                     {"role": "user", "content": analysis_prompt}
