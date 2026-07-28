@@ -1021,7 +1021,7 @@
       // Keep trailing punctuation out of the link target.
       const cleaned = url.replace(/[.,!?;:)'"]+$/, '');
       const trailing = url.slice(cleaned.length);
-      return '<a href="' + cleaned + '" target="_blank" rel="noopener noreferrer" class="ll-link">' + cleaned + '</a>' + trailing;
+      return '<a href="' + cleaned + '" class="ll-link">' + cleaned + '</a>' + trailing;
     });
   }
 

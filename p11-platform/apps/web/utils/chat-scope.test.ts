@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { containsContactInfo, detectTourIntent, detectTourOffer, isPropertyChatInScope } from './chat-scope'
+import { containsContactInfo, detectTourIntent, detectTourOffer, isPropertyChatInScope, stripMarkdownFormatting } from './chat-scope'
 
 describe('isPropertyChatInScope', () => {
   it('keeps broad selected-property prompts in scope', () => {
@@ -96,5 +96,44 @@ describe('containsContactInfo', () => {
   it('ignores messages without contact details', () => {
     expect(containsContactInfo('what bedcounts do you offer?')).toBe(false)
     expect(containsContactInfo('')).toBe(false)
+  })
+})
+
+describe('stripMarkdownFormatting', () => {
+  it('strips bold markers the model emits despite formatting rules', () => {
+    expect(
+      stripMarkdownFormatting('We have **Plan 2R (Homesite 5)**: 3 beds, 2.5 baths, priced at **$2,675,000**.')
+    ).toBe('We have Plan 2R (Homesite 5): 3 beds, 2.5 baths, priced at $2,675,000.')
+    expect(stripMarkdownFormatting('__Move-in ready__ homes available')).toBe('Move-in ready homes available')
+  })
+
+  it('strips italic pairs without touching multiplication or lone asterisks', () => {
+    expect(stripMarkdownFormatting('This one is *move-in ready* today')).toBe('This one is move-in ready today')
+    expect(stripMarkdownFormatting('approx. 1,751 sq. ft. * 2 floors')).toBe('approx. 1,751 sq. ft. * 2 floors')
+  })
+
+  it('strips headers and list bullets at line starts', () => {
+    expect(
+      stripMarkdownFormatting('## Available Plans\n- Plan 4: 3 beds\n- Plan 4X: 3 beds\n* Plan 2R: 3 beds')
+    ).toBe('Available Plans\nPlan 4: 3 beds\nPlan 4X: 3 beds\nPlan 2R: 3 beds')
+  })
+
+  it('converts markdown links to plain label and URL', () => {
+    expect(
+      stripMarkdownFormatting('See [our floor plans](https://www.dividendhomes.com/communities/acacia/floor-plans/) for details.')
+    ).toBe('See our floor plans: https://www.dividendhomes.com/communities/acacia/floor-plans/ for details.')
+  })
+
+  it('leaves bare URLs untouched so widgets can linkify them', () => {
+    const text = 'You can check availability here: https://www.dividendhomes.com/communities/acacia/site-plan/'
+    expect(stripMarkdownFormatting(text)).toBe(text)
+  })
+
+  it('strips inline code markers', () => {
+    expect(stripMarkdownFormatting('The gate code is `1234` for tours')).toBe('The gate code is 1234 for tours')
+  })
+
+  it('handles hyphens inside sentences without mangling them', () => {
+    expect(stripMarkdownFormatting('We offer move-in ready homes - and more.')).toBe('We offer move-in ready homes - and more.')
   })
 })

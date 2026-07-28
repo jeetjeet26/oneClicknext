@@ -562,8 +562,6 @@ function linkifyContent(content: string): React.ReactNode {
       <span key={index}>
         <a
           href={cleaned}
-          target="_blank"
-          rel="noopener noreferrer"
           className="underline font-semibold break-all"
         >
           {cleaned}

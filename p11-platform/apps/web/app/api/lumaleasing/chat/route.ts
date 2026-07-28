@@ -10,7 +10,7 @@ import { createRequestContext } from '@/utils/services/request-context';
 import { bookLumaLeasingTour } from '@/utils/services/lumaleasing-tour-booking';
 import { trackEngagementEvent } from '@/utils/services/engagement-tracker';
 import { getPropertyTypeConfig } from '@/utils/property-types';
-import { buildPropertyOnlyResponse, containsContactInfo, detectTourIntent, detectTourOffer, isPropertyChatInScope } from '@/utils/chat-scope';
+import { buildPropertyOnlyResponse, containsContactInfo, detectTourIntent, detectTourOffer, isPropertyChatInScope, stripMarkdownFormatting } from '@/utils/chat-scope';
 import { formatPropertyAddress } from '@/utils/services/property-address';
 import { loadPropertyChatbotContext } from '@/utils/services/chatbot-context-editor';
 import OpenAI from 'openai';
@@ -1046,7 +1046,11 @@ Remember: You represent ${propertyName}. Provide exceptional customer service wi
       max_tokens: 400,
     });
 
-    const reply = completion.choices[0].message.content || "I'm sorry, I couldn't generate a response. Please try again!";
+    // Deterministic backstop: the model sometimes ignores the prompt's
+    // no-markdown rule, and the widget renders plain text.
+    const reply = stripMarkdownFormatting(
+      completion.choices[0].message.content || "I'm sorry, I couldn't generate a response. Please try again!"
+    );
 
     // 11. Save AI response
     if (conversationId) {

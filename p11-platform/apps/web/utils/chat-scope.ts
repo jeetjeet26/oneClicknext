@@ -107,6 +107,32 @@ export function detectTourOffer(assistantReply: string): boolean {
   return TOUR_OFFER_PATTERN.test(assistantReply)
 }
 
+/**
+ * Removes markdown artifacts from LLM replies. The chat widgets render plain
+ * text (HTML-escaped, URLs linkified), so any markdown the model emits
+ * despite the prompt's formatting rules shows up literally (e.g. "**Plan
+ * 2R**"). This is a deterministic backstop: strip bold/italic markers,
+ * headers, list bullets, inline code, and markdown links while leaving bare
+ * URLs untouched so the widgets can still linkify them.
+ */
+export function stripMarkdownFormatting(text: string): string {
+  return text
+    // Markdown links: [label](url) -> "label: url"
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '$1: $2')
+    // Bold: **text** / __text__
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/__([^_]+)__/g, '$1')
+    // Italic: *text* pairs on a single line, bounded by space/punctuation
+    .replace(/(^|[\s(])\*([^*\n]+)\*(?=$|[\s.,!?;:)])/gm, '$1$2')
+    // Headers at line start
+    .replace(/^#{1,6}\s+/gm, '')
+    // Bullet markers at line start
+    .replace(/^[ \t]*[-*•]\s+/gm, '')
+    // Inline code
+    .replace(/`+([^`\n]+)`+/g, '$1')
+    .trim()
+}
+
 export function isPropertyChatInScope(message: string, propertyName?: string | null): boolean {
   const text = message.trim().toLowerCase()
   if (!text) return true

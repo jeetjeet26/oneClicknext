@@ -4,7 +4,7 @@ import { createClient } from '@/utils/supabase/server';
 import OpenAI from 'openai';
 import { validatePropertyAccess } from '@/utils/services/auth-guard';
 import { getPropertyTypeConfig } from '@/utils/property-types';
-import { buildPropertyOnlyResponse, isPropertyChatInScope } from '@/utils/chat-scope';
+import { buildPropertyOnlyResponse, isPropertyChatInScope, stripMarkdownFormatting } from '@/utils/chat-scope';
 import { loadPropertyChatbotContext } from '@/utils/services/chatbot-context-editor';
 
 export async function POST(req: NextRequest) {
@@ -223,7 +223,11 @@ PROPERTY CONTEXT:
       max_tokens: 500,
     });
 
-    const reply = completion.choices[0].message.content || "I'm sorry, I couldn't generate a response.";
+    // Deterministic backstop: the model sometimes ignores the prompt's
+    // no-markdown rule, and the chat UI renders plain text.
+    const reply = stripMarkdownFormatting(
+      completion.choices[0].message.content || "I'm sorry, I couldn't generate a response."
+    );
 
     // 8. Save assistant message to database
     if (activeConversationId) {
