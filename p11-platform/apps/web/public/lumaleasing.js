@@ -133,6 +133,9 @@
       case 'destroy':
         destroyWidget();
         break;
+      case 'reset':
+        resetChat();
+        break;
     }
   }
 
@@ -1758,6 +1761,32 @@
   function closeWidget() {
     isOpen = false;
     storeChatOpen(false);
+    renderWidget();
+  }
+
+  // Reset the conversation: drop the stored server session and start fresh.
+  // Programmatic only (no UI) — run `lumaleasing('reset')` from the console
+  // or host page to un-wedge a stuck session without clearing site storage.
+  function resetChat() {
+    stopHistoryPolling();
+    isHumanMode = false;
+    setStoredSessionId(null);
+    conversationId = null;
+    serverMessageCount = 0;
+    leadCaptured = false;
+    leadPromptShown = false;
+    tourBooked = false;
+    leadInfo = { firstName: '', lastName: '', email: '', phone: '' };
+    widgetMode = 'chat';
+
+    if (!config) return;
+
+    messages = [{
+      id: 'welcome',
+      role: 'assistant',
+      content: config.welcomeMessage,
+      timestamp: new Date()
+    }];
     renderWidget();
   }
 
