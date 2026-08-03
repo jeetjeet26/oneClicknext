@@ -9,8 +9,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-$items = get_field( 'items' ) ?: array();
-$columns = get_field( 'columns' ) ?: 3;
+$items = oneclick_get_block_field( 'items', $block, array() );
+$columns = oneclick_get_block_field( 'columns', $block, 3 );
 
 if ( empty( $items ) ) {
 	return;
@@ -36,14 +36,14 @@ $col_class = oneclick_get_column_class( $columns );
 							?>
 							<div class="item-image">
 								<?php
-								if ( is_array( $image ) && isset( $image['ID'] ) ) {
-									echo wp_get_attachment_image(
-										$image['ID'],
-										'medium',
-										false,
-										array( 'class' => 'card-image' )
-									);
-								}
+								echo oneclick_get_image_html(
+									$image,
+									'large',
+									array(
+										'class' => 'card-image',
+										'alt'   => $headline,
+									)
+								);
 								?>
 							</div>
 							<?php

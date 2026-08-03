@@ -1,21 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return null
-  }
-  return value as Record<string, unknown>
-}
-
-function asString(value: unknown): string | null {
-  return typeof value === 'string' ? value : null
-}
-
-function asArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : []
-}
+import {
+  hashBrandForgeContract,
+  normalizeBrandAssetRow,
+} from '@/utils/brandforge/normalize'
 
 /**
  * Get brand assets for a property
@@ -68,94 +57,63 @@ export async function GET(request: NextRequest) {
       })
     }
 
-    const conversationSummary = asRecord(brand.conversation_summary)
-    const section1 = asRecord(brand.section_1_introduction)
-    const section2 = asRecord(brand.section_2_positioning)
-    const section3 = asRecord(brand.section_3_target_audience)
-    const section5 = asRecord(brand.section_5_name_story)
-    const section6 = asRecord(brand.section_6_logo)
-    const section7 = asRecord(brand.section_7_typography)
-    const section8 = asRecord(brand.section_8_colors)
-    const section9 = asRecord(brand.section_9_design_elements)
-    const section10 = asRecord(brand.section_10_photo_yep)
-    const primaryFont = asRecord(section7?.primaryFont)
-    const secondaryFont = asRecord(section7?.secondaryFont)
+    const contract = normalizeBrandAssetRow(brand as unknown as Record<string, unknown>)
+    const contractHash = brand.contract_hash || hashBrandForgeContract(contract)
+    const primaryLogo = contract.logos.variants.find(variant => variant.role === 'primary')
+      || contract.logos.variants[0]
+    const primaryFont = contract.typography.roles.find(role => role.role === 'headline')
+    const secondaryFont = contract.typography.roles.find(role => role.role === 'body')
+    const primaryColors = contract.colors.roles.filter(color => color.role === 'primary')
+    const secondaryColors = contract.colors.roles.filter(color => color.role === 'secondary')
 
-    const mapColorList = (value: unknown) =>
-      asArray(value).map(entry => {
-        const color = asRecord(entry)
-        return {
-          name: asString(color?.name),
-          hex: asString(color?.hex),
-          usage: asString(color?.usage),
-        }
-      })
-
-    // Extract the most commonly needed assets for other products
     const assets = {
       exists: true,
       propertyId,
       brandAssetId: brand.id,
       generationStatus: brand.generation_status,
+      approvalStatus: brand.approval_status,
+      origin: contract.origin,
+      contractVersion: contract.contractVersion,
+      contractHash,
       
-      // Core brand identity
-      brandName: asString(conversationSummary?.brandName) || asString(section5?.name),
-      tagline: asString(conversationSummary?.tagline) || asString(section1?.tagline),
+      brandName: contract.identity.name,
+      tagline: contract.identity.tagline,
       
-      // Logo
       logo: {
-        url: asString(section6?.logoUrl),
-        concept: asString(section6?.concept),
-        style: asString(section6?.style),
-        hasGenerated: !!asString(section6?.logoUrl)
+        url: primaryLogo?.url || null,
+        assetId: primaryLogo?.assetId || null,
+        alt: primaryLogo?.alt || contract.identity.name,
+        hasGenerated: contract.origin === 'generated' && Boolean(primaryLogo),
       },
       
-      // Colors - ready for CSS/design use
       colors: {
-        primary: mapColorList(section8?.primary),
-        secondary: mapColorList(section8?.secondary),
-        palette: section8?.palette ?? null
+        primary: primaryColors,
+        secondary: secondaryColors,
+        palette: contract.colors.roles,
       },
       
-      // Typography - ready for CSS/design use
       typography: {
-        primaryFont: asString(primaryFont?.name),
-        secondaryFont: asString(secondaryFont?.name),
-        primaryUsage: asString(primaryFont?.usage),
-        secondaryUsage: asString(secondaryFont?.usage)
+        primaryFont: primaryFont?.family || null,
+        secondaryFont: secondaryFont?.family || null,
+        primaryUsage: primaryFont?.usage || null,
+        secondaryUsage: secondaryFont?.usage || null,
+        roles: contract.typography.roles,
       },
       
-      // Brand voice for content generation
       voice: {
-        personality: asString(conversationSummary?.brandPersonality),
-        positioning: asString(section2?.statement),
-        targetAudience: asString(section3?.primary)
+        personality: contract.positioning.voice.join(', '),
+        positioning: contract.positioning.statement,
+        targetAudience: contract.audience.primary,
       },
       
-      // Visual assets
       visuals: {
-        moodboardUrls: asArray(section9?.moodboardUrls),
-        photoExamples: asArray(section10?.generatedPhotos),
-        visionBoardUrl: brand.vision_board_url
+        designElements: contract.designElements.elements,
+        photoExampleAssetIds: contract.photographyYes.exampleAssetIds,
+        visionBoardUrl: brand.vision_board_url,
       },
       
-      // Full sections (if needed)
-      sections: {
-        introduction: brand.section_1_introduction,
-        positioning: brand.section_2_positioning,
-        targetAudience: brand.section_3_target_audience,
-        personas: brand.section_4_personas,
-        nameStory: brand.section_5_name_story,
-        logo: brand.section_6_logo,
-        typography: brand.section_7_typography,
-        colors: brand.section_8_colors,
-        designElements: brand.section_9_design_elements,
-        photoYep: brand.section_10_photo_yep,
-        photoNope: brand.section_11_photo_nope,
-        implementation: brand.section_12_implementation
-      },
+      contract,
       
-      // Metadata
       createdAt: brand.created_at,
       updatedAt: brand.updated_at
     }

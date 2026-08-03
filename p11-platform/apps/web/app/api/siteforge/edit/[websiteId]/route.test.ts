@@ -43,7 +43,12 @@ describe('siteforge edit route auth', () => {
     const response = await POST(
       makeNextRequest('http://localhost/api/siteforge/edit/website-1', {
         method: 'POST',
-        body: JSON.stringify({ sectionId: 'hero', userIntent: 'Make it warmer' }),
+        body: JSON.stringify({
+          sectionId: 'hero',
+          userIntent: 'Make it warmer',
+          expectedArtifactId: '11111111-1111-4111-8111-111111111111',
+          expectedContentHash: 'a'.repeat(64),
+        }),
       }),
       { params: Promise.resolve({ websiteId: 'website-1' }) },
     )
@@ -57,7 +62,13 @@ describe('siteforge edit route auth', () => {
     validatePropertyAccessMock.mockResolvedValue({ authorized: false })
 
     const singleMock = vi.fn().mockResolvedValue({
-      data: { blueprint: { pages: [] }, version: 1, property_id: 'property-1' },
+      data: {
+        blueprint: { pages: [] },
+        version: 1,
+        property_id: 'property-1',
+        current_artifact_version_id:
+          '11111111-1111-4111-8111-111111111111',
+      },
       error: null,
     })
     const eqMock = vi.fn().mockReturnValue({ single: singleMock })
@@ -68,7 +79,12 @@ describe('siteforge edit route auth', () => {
     const response = await POST(
       makeNextRequest('http://localhost/api/siteforge/edit/website-1', {
         method: 'POST',
-        body: JSON.stringify({ sectionId: 'hero', userIntent: 'Make it warmer' }),
+        body: JSON.stringify({
+          sectionId: 'hero',
+          userIntent: 'Make it warmer',
+          expectedArtifactId: '11111111-1111-4111-8111-111111111111',
+          expectedContentHash: 'a'.repeat(64),
+        }),
       }),
       { params: Promise.resolve({ websiteId: 'website-1' }) },
     )

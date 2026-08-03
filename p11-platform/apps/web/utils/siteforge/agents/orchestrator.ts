@@ -81,51 +81,20 @@ export class SiteForgeOrchestrator {
    * Agents work in optimal order with parallel execution where possible
    * 
    * @param userPreferences - User preferences from conversation
-   * @param preAnalyzedBrandContext - Pre-analyzed brand context from /api/siteforge/analyze
-   *                                   If provided, skips running Brand Agent again
    */
   async generate(
-    userPreferences?: Record<string, unknown>,
-    preAnalyzedBrandContext?: BrandContext
+    userPreferences?: Record<string, unknown>
   ): Promise<OrchestratorBlueprint> {
     
     this.startTime = Date.now()
     const agentLogs: Array<{ agent: string; action: string; timestamp: string }> = []
     
     try {
-      // Phase 1: Brand Agent (foundation - must be first)
-      // SKIP if we already have pre-analyzed brand context from the analyze endpoint
+      // Phase 1: Brand Agent (foundation - must be first).
+      // Always re-read trusted property and brand sources on the server.
       await this.updateProgress('analyzing_brand', 10, 'Analyzing brand intelligence...')
-      
-      let brandContext: BrandContext
-      
-      // More robust check for valid pre-analyzed brand context
-      // Must have brandPersonality.primary to be considered valid
-      const hasValidPreAnalyzedContext = preAnalyzedBrandContext && 
-        preAnalyzedBrandContext.source &&
-        preAnalyzedBrandContext.brandPersonality?.primary
-      
-      if (hasValidPreAnalyzedContext) {
-        // Use pre-analyzed brand context - don't re-run Brand Agent
-        console.log('✅ Using pre-analyzed brand context:', {
-          source: preAnalyzedBrandContext.source,
-          confidence: preAnalyzedBrandContext.confidence,
-          personality: preAnalyzedBrandContext.brandPersonality?.primary,
-          hasColorPalette: !!preAnalyzedBrandContext.colorPalette,
-          hasLogoAssets: !!preAnalyzedBrandContext.logoAssets
-        })
-        brandContext = preAnalyzedBrandContext
-        agentLogs.push({ agent: 'brand', action: 'reused_preanalyzed', timestamp: new Date().toISOString() })
-      } else {
-        // No valid pre-analyzed context - run Brand Agent
-        console.log('🔍 Running Brand Agent (pre-analyzed context missing or invalid)', {
-          hasPreAnalyzed: !!preAnalyzedBrandContext,
-          hasSource: !!preAnalyzedBrandContext?.source,
-          hasPersonality: !!preAnalyzedBrandContext?.brandPersonality?.primary
-        })
-        brandContext = await this.agents.brand.analyze()
-        agentLogs.push({ agent: 'brand', action: 'analyze', timestamp: new Date().toISOString() })
-      }
+      const brandContext = await this.agents.brand.analyze()
+      agentLogs.push({ agent: 'brand', action: 'analyze', timestamp: new Date().toISOString() })
       
       // Phase 2: Parallel planning (architecture + design can work simultaneously)
       await this.updateProgress('planning_architecture', 30, 'Planning site architecture...')
@@ -172,18 +141,6 @@ export class SiteForgeOrchestrator {
       })
       agentLogs.push({ agent: 'quality', action: 'validate', timestamp: new Date().toISOString() })
       
-      // Phase 7: If quality too low, iterate
-      if (!qualityReport.passed) {
-        console.warn('Quality check failed, score:', qualityReport.score)
-        console.warn('Issues:', qualityReport.checks)
-        
-        // Could implement auto-refinement here
-        // For now, continue but mark for human review
-      }
-      
-      // Complete!
-      await this.updateProgress('ready_for_preview', 100, 'Generation complete!')
-      
       const generationTime = Date.now() - this.startTime
       
       const blueprint: OrchestratorBlueprint = {
@@ -200,13 +157,29 @@ export class SiteForgeOrchestrator {
         agentLogs
       }
       
-      // Save to database
+      // Persist the complete artifact before publishing readiness. This prevents
+      // status polling from redirecting to an empty or partially saved preview.
       await this.saveBlueprint(blueprint)
+
+      if (!qualityReport.passed) {
+        console.warn('⚠️ SiteForge AI quality score is advisory', {
+          websiteId: this.websiteId,
+          score: Math.round(qualityReport.score),
+          improvements: qualityReport.improvements,
+        })
+      }
+
+      await this.updateProgress('ready_for_preview', 100, 'Generation complete!')
       
       return blueprint
       
     } catch (error) {
-      await this.updateProgress('failed', 0, `Error: ${error instanceof Error ? error.message : 'Unknown error'}`)
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      try {
+        await this.updateProgress('failed', 0, `Error: ${errorMessage}`, errorMessage)
+      } catch (statusError) {
+        console.error('Failed to persist SiteForge failure status:', statusError)
+      }
       throw error
     }
   }
@@ -217,18 +190,24 @@ export class SiteForgeOrchestrator {
   private async updateProgress(
     status: GenerationProgress['status'],
     progress: number,
-    currentStep: string
+    currentStep: string,
+    errorMessage?: string
   ): Promise<void> {
     
-    await this.supabase
+    const { error } = await this.supabase
       .from('property_websites')
       .update({
         generation_status: status,
         generation_progress: progress,
         current_step: currentStep,
+        ...(errorMessage ? { error_message: errorMessage } : {}),
         updated_at: new Date().toISOString()
       })
       .eq('id', this.websiteId)
+
+    if (error) {
+      throw new Error(`Failed to persist generation progress: ${error.message}`)
+    }
   }
   
   /**
@@ -236,7 +215,7 @@ export class SiteForgeOrchestrator {
    */
   private async saveBlueprint(blueprint: OrchestratorBlueprint): Promise<void> {
     
-    await this.supabase
+    const { error } = await this.supabase
       .from('property_websites')
       .update({
         blueprint: blueprint as unknown as Json,
@@ -249,6 +228,10 @@ export class SiteForgeOrchestrator {
         generation_duration_seconds: Math.floor(blueprint.generationTime / 1000)
       })
       .eq('id', this.websiteId)
+
+    if (error) {
+      throw new Error(`Failed to persist generated blueprint: ${error.message}`)
+    }
   }
 }
 

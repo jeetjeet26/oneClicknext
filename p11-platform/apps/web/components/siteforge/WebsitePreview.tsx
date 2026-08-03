@@ -18,7 +18,14 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { ACFBlockRenderer, type DesignSystem } from './ACFBlockRenderer'
-import type { GeneratedPage, WebsiteStatusResponse } from '@/types/siteforge'
+import type { GeneratedPage, SiteConfiguration, WebsiteStatusResponse } from '@/types/siteforge'
+import {
+  classifyWebsiteStatus,
+  isExactArtifactPreview,
+  regenerationPlanUrl,
+  responseErrorMessage,
+  siteForgeStatusEndpoint,
+} from './orchestration'
 
 type WebsitePreviewData = {
   websiteId: string
@@ -38,8 +45,32 @@ type WebsitePreviewData = {
     designSystem?: DesignSystem
   } | null
   designSystem?: DesignSystem
+  siteBlueprint?: {
+    siteConfiguration?: SiteConfiguration
+  } | null
   pagesGenerated?: GeneratedPage[]
   assets?: unknown[]
+  artifact?: {
+    currentId?: string | null
+    canonicalPreviewUrl?: string | null
+    canonicalPreviewArtifactId?: string | null
+    canonicalPreviewContentHash?: string | null
+    deployedArtifactId?: string | null
+    deployedContentHash?: string | null
+    history: Array<{
+      id: string
+      version: number
+      content_hash: string
+      parent_version_id?: string | null
+      change_type: string
+      changes_summary?: string | null
+      quality_score?: number | null
+      quality_report?: unknown
+      created_at: string
+      deployment_decision?: string | null
+      deployment_approved_at?: string | null
+    }>
+  }
   deploymentDiagnostics?: WebsiteStatusResponse['deploymentDiagnostics']
   wpUrl?: string
   wpAdminUrl?: string
@@ -49,14 +80,54 @@ type WebsitePreviewData = {
 
 interface WebsitePreviewProps {
   websiteId: string
+  readOnly?: boolean
 }
 
 type RollbackPreview = {
   canRollback: boolean
-  currentVersion: number
+  currentArtifact?: {
+    id: string
+    version: number
+    content_hash: string
+  } | null
   rollbackToVersion?: number
-  rollbackToWebsiteId?: string
+  rollbackToArtifactId?: string
+  rollbackToContentHash?: string
   message?: string
+}
+
+function getDeterministicQualityChecks(value: unknown): Array<{
+  id: string
+  passed: boolean
+  message: string
+}> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return []
+  const deterministic = (value as Record<string, unknown>).deterministic
+  if (
+    !deterministic ||
+    typeof deterministic !== 'object' ||
+    Array.isArray(deterministic)
+  ) {
+    return []
+  }
+  const checks = (deterministic as Record<string, unknown>).checks
+  if (!Array.isArray(checks)) return []
+  return checks.flatMap((check) =>
+    check &&
+    typeof check === 'object' &&
+    !Array.isArray(check) &&
+    typeof check.id === 'string' &&
+    typeof check.passed === 'boolean' &&
+    typeof check.message === 'string'
+      ? [
+          {
+            id: check.id,
+            passed: check.passed,
+            message: check.message,
+          },
+        ]
+      : []
+  )
 }
 
 function getDeploymentRemediationTips(
@@ -101,10 +172,11 @@ function getDeploymentRemediationTips(
   ]
 }
 
-export function WebsitePreview({ websiteId }: WebsitePreviewProps) {
+export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewProps) {
   const [website, setWebsite] = useState<WebsitePreviewData | null>(null)
   const [selectedPage, setSelectedPage] = useState<string>('')
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [deploying, setDeploying] = useState(false)
   const [regenerating, setRegenerating] = useState(false)
@@ -121,20 +193,39 @@ export function WebsitePreview({ websiteId }: WebsitePreviewProps) {
   const [editing, setEditing] = useState(false)
   const [editError, setEditError] = useState<string | null>(null)
   const [editSummary, setEditSummary] = useState<string | null>(null)
+  const [previewingCanonical, setPreviewingCanonical] = useState(false)
+  const [approvingArtifact, setApprovingArtifact] = useState(false)
+  const [artifactActionError, setArtifactActionError] = useState<string | null>(
+    null
+  )
+  const [previewViewport, setPreviewViewport] = useState<
+    'mobile' | 'tablet' | 'desktop'
+  >('desktop')
 
   const loadWebsite = useCallback(async () => {
+    setLoadError(null)
     try {
       const response = await fetch(`/api/siteforge/preview/${websiteId}`)
-      const data = (await response.json()) as WebsitePreviewData
-      setWebsite(data)
-      setDeploymentDiagnostics(data.deploymentDiagnostics)
-      // Set initial page to first page
-      if ((data.pagesGenerated?.length || 0) > 0 && !selectedPage) {
-        setSelectedPage(data.pagesGenerated?.[0]?.slug || '')
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(
+          responseErrorMessage(response.status, data, 'loading the website preview')
+        )
       }
-      setLoading(false)
+      const preview = data as WebsitePreviewData
+      setWebsite(preview)
+      setDeploymentDiagnostics(preview.deploymentDiagnostics)
+      // Set initial page to first page
+      if ((preview.pagesGenerated?.length || 0) > 0 && !selectedPage) {
+        setSelectedPage(preview.pagesGenerated?.[0]?.slug || '')
+      }
     } catch (error) {
       console.error('Error loading website:', error)
+      setWebsite(null)
+      setLoadError(
+        error instanceof Error ? error.message : 'Failed to load the website preview'
+      )
+    } finally {
       setLoading(false)
     }
   }, [websiteId, selectedPage])
@@ -175,43 +266,17 @@ export function WebsitePreview({ websiteId }: WebsitePreviewProps) {
       return
     }
 
-    if (!confirm('Generate a fresh website version for this property?')) {
+    if (
+      !confirm(
+        'Regeneration requires a new reviewed plan. Return to the planning flow for this property?'
+      )
+    ) {
       return
     }
 
     setRegenerating(true)
     setDeployError(null)
-
-    void (async () => {
-      try {
-        const response = await fetch('/api/siteforge/generate', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            propertyId,
-          }),
-        })
-        const data = await response.json()
-        if (!response.ok) {
-          alert(data.error || 'Failed to start regeneration')
-          return
-        }
-
-        if (typeof data.websiteId !== 'string' || data.websiteId.length === 0) {
-          alert('Regeneration started but no website id was returned.')
-          return
-        }
-
-        window.location.href = `/dashboard/siteforge/${data.websiteId}`
-      } catch (error) {
-        console.error('Regenerate error:', error)
-        alert('Failed to start regeneration')
-      } finally {
-        setRegenerating(false)
-      }
-    })()
+    window.location.href = regenerationPlanUrl(propertyId, websiteId)
   }
 
   const handleEdit = () => {
@@ -229,6 +294,13 @@ export function WebsitePreview({ websiteId }: WebsitePreviewProps) {
       setEditError('Type what you want changed.')
       return
     }
+    const expectedArtifact = website?.artifact?.history.find(
+      (artifact) => artifact.id === website.artifact?.currentId
+    )
+    if (!expectedArtifact) {
+      setEditError('No immutable artifact is available. Reload and try again.')
+      return
+    }
 
     setEditing(true)
     setEditError(null)
@@ -240,7 +312,9 @@ export function WebsitePreview({ websiteId }: WebsitePreviewProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           sectionId: selectedSectionId,
-          userIntent: instruction
+          userIntent: instruction,
+          expectedArtifactId: expectedArtifact.id,
+          expectedContentHash: expectedArtifact.content_hash,
         })
       })
 
@@ -262,8 +336,122 @@ export function WebsitePreview({ websiteId }: WebsitePreviewProps) {
     }
   }
 
+  const handleCanonicalPreview = async () => {
+    const currentArtifact = website?.artifact?.history.find(
+      (artifact) => artifact.id === website.artifact?.currentId
+    )
+    if (!currentArtifact) {
+      setArtifactActionError('No current immutable artifact is available.')
+      return
+    }
+    setPreviewingCanonical(true)
+    setArtifactActionError(null)
+    try {
+      const startResponse = await fetch(
+        `/api/siteforge/canonical-preview/${websiteId}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            artifactId: currentArtifact.id,
+            contentHash: currentArtifact.content_hash,
+            retry: true,
+          }),
+        }
+      )
+      const startResult = await startResponse.json()
+      if (!startResponse.ok && startResponse.status !== 202) {
+        throw new Error(startResult.error || 'Canonical preview failed')
+      }
+      if (startResult.status === 'ready') {
+        await loadWebsite()
+        return
+      }
+      if (!startResult.jobId) {
+        throw new Error('Canonical preview did not return a job identity')
+      }
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const response = await fetch(
+          `/api/siteforge/canonical-preview/${websiteId}?jobId=${encodeURIComponent(startResult.jobId)}`,
+          { cache: 'no-store' }
+        )
+        const result = await response.json()
+        if (!response.ok) {
+          throw new Error(result.error || 'Checking canonical preview failed')
+        }
+        if (result.status === 'succeeded') {
+          await loadWebsite()
+          return
+        }
+        if (['failed', 'cancelled'].includes(result.status)) {
+          throw new Error(result.error || 'Canonical preview failed')
+        }
+        await new Promise((resolve) => setTimeout(resolve, 3_000))
+      }
+      throw new Error('Canonical preview timed out; check the preview job status.')
+    } catch (error) {
+      setArtifactActionError(
+        error instanceof Error ? error.message : 'Canonical preview failed'
+      )
+    } finally {
+      setPreviewingCanonical(false)
+    }
+  }
+
+  const handleArtifactApproval = async (
+    decisionStatus: 'approved' | 'denied'
+  ) => {
+    const currentArtifact = website?.artifact?.history.find(
+      (artifact) => artifact.id === website.artifact?.currentId
+    )
+    const propertyId =
+      website?.property && typeof website.property.id === 'string'
+        ? website.property.id
+        : null
+    if (!currentArtifact || !propertyId) return
+    const decisionReason = window.prompt(
+      decisionStatus === 'approved'
+        ? 'Record why this exact WordPress preview is approved for deployment:'
+        : 'Record why deployment is denied:'
+    )
+    if (!decisionReason?.trim()) return
+
+    setApprovingArtifact(true)
+    setArtifactActionError(null)
+    try {
+      const response = await fetch(
+        `/api/siteforge/artifacts/${currentArtifact.id}/decision`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            propertyId,
+            contentHash: currentArtifact.content_hash,
+            decisionStatus,
+            decisionReason,
+          }),
+        }
+      )
+      const result = await response.json()
+      if (!response.ok) {
+        throw new Error(result.error || 'Artifact decision failed')
+      }
+      await loadWebsite()
+    } catch (error) {
+      setArtifactActionError(
+        error instanceof Error ? error.message : 'Artifact decision failed'
+      )
+    } finally {
+      setApprovingArtifact(false)
+    }
+  }
+
   const handleDeploy = async () => {
-    if (!confirm('Deploy this website to WordPress? This will create a live site.')) return
+    if (
+      !confirm(
+        'Deploy this exact artifact to linked Cloudways staging? Production promotion remains exclusively in Cloudways.'
+      )
+    ) return
     
     setDeploying(true)
     setDeployError(null)
@@ -278,7 +466,7 @@ export function WebsitePreview({ websiteId }: WebsitePreviewProps) {
       
       if (!response.ok) {
         if (data.requiresConfig) {
-          setDeployError('WordPress deployment requires Cloudways API credentials. Please contact your administrator to configure CLOUDWAYS_API_KEY and CLOUDWAYS_EMAIL.')
+          setDeployError('Cloudways staging requires a linked parent application and Cloudways API credentials.')
         } else {
           setDeployError(data.error || 'Deployment failed')
         }
@@ -286,47 +474,48 @@ export function WebsitePreview({ websiteId }: WebsitePreviewProps) {
         return
       }
       
-      // Start polling for deployment status
-      let finished = false
-      const pollDeployment = setInterval(async () => {
-        const statusResponse = await fetch(`/api/siteforge/status/${websiteId}`)
-        const statusData = (await statusResponse.json()) as WebsiteStatusResponse
+      const startedAt = Date.now()
+      while (Date.now() - startedAt < 300_000) {
+        await new Promise((resolve) => setTimeout(resolve, 2_000))
+        const statusResponse = await fetch(siteForgeStatusEndpoint(websiteId), {
+          cache: 'no-store',
+        })
+        const statusPayload = await statusResponse.json().catch(() => ({}))
+        if (!statusResponse.ok) {
+          throw new Error(
+            responseErrorMessage(
+              statusResponse.status,
+              statusPayload,
+              'checking deployment progress'
+            )
+          )
+        }
+        const statusData = statusPayload as WebsiteStatusResponse
         if (statusData.deploymentDiagnostics) {
           setDeploymentDiagnostics(statusData.deploymentDiagnostics)
         }
-        
-        if (statusData.status === 'complete') {
-          finished = true
-          clearInterval(pollDeployment)
-          clearTimeout(deploymentTimeout)
+
+        const outcome = classifyWebsiteStatus(statusData, 'deployment')
+        if (outcome.terminal && outcome.succeeded) {
           setDeploying(false)
-          loadWebsite() // Refresh to show WP URL
-        } else if (statusData.status === 'deploy_failed') {
-          finished = true
-          clearInterval(pollDeployment)
-          clearTimeout(deploymentTimeout)
-          setDeploying(false)
-          setDeployError(
-            statusData.deploymentDiagnostics?.error?.message ||
-              statusData.errorMessage ||
-              'Deployment failed'
-          )
-        }
-      }, 2000)
-      
-      // Timeout after 5 minutes
-      const deploymentTimeout = setTimeout(() => {
-        if (finished) {
+          await loadWebsite()
           return
         }
-        clearInterval(pollDeployment)
-        setDeploying(false)
-        setDeployError('Deployment timed out. Please check the status and try again.')
-      }, 300000)
-      
+        if (outcome.terminal && !outcome.succeeded) {
+          setDeploying(false)
+          setDeployError(outcome.message)
+          return
+        }
+      }
+      setDeployError(
+        'Deployment is still not complete after 5 minutes. Check deployment diagnostics and server logs before retrying.'
+      )
+      setDeploying(false)
     } catch (error) {
       console.error('Deploy error:', error)
-      setDeployError('Failed to start deployment')
+      setDeployError(
+        error instanceof Error ? error.message : 'Failed to start deployment'
+      )
       setDeploying(false)
     }
   }
@@ -355,14 +544,30 @@ export function WebsitePreview({ websiteId }: WebsitePreviewProps) {
   }
 
   const handleConfirmRollback = async () => {
-    if (!rollbackPreview?.canRollback) {
+    if (
+      !rollbackPreview?.canRollback ||
+      !rollbackPreview.currentArtifact ||
+      !rollbackPreview.rollbackToArtifactId ||
+      !rollbackPreview.rollbackToContentHash
+    ) {
       return
     }
+    const decisionReason = window.prompt(
+      'Record why this verified rollback is required:'
+    )
+    if (!decisionReason || decisionReason.trim().length < 10) return
     setRollingBack(true)
     setDeployError(null)
     try {
       const response = await fetch(`/api/siteforge/rollback/${websiteId}`, {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          expectedCurrentArtifactId: rollbackPreview.currentArtifact.id,
+          targetArtifactId: rollbackPreview.rollbackToArtifactId,
+          targetContentHash: rollbackPreview.rollbackToContentHash,
+          decisionReason,
+        }),
       })
       const data = await response.json()
 
@@ -392,8 +597,14 @@ export function WebsitePreview({ websiteId }: WebsitePreviewProps) {
 
   if (!website) {
     return (
-      <div className="text-center py-12">
-        <p className="text-gray-500">Website not found</p>
+      <div role="alert" className="py-12 text-center">
+        <p className="font-medium text-red-700">Website preview unavailable</p>
+        <p className="mt-2 text-sm text-gray-600">
+          {loadError || 'Website not found'}
+        </p>
+        <Button className="mt-4" variant="outline" onClick={() => void loadWebsite()}>
+          Retry preview
+        </Button>
       </div>
     )
   }
@@ -403,12 +614,39 @@ export function WebsitePreview({ websiteId }: WebsitePreviewProps) {
   const remediationTips = getDeploymentRemediationTips(diagnostics)
   const brandReadiness = website.brandReadiness
   const deploymentReadiness = website.deploymentReadiness
+  const currentArtifact = website.artifact?.history.find(
+    (artifact) => artifact.id === website.artifact?.currentId
+  )
+  const canonicalPreviewMatches = isExactArtifactPreview({
+    currentArtifactId: currentArtifact?.id,
+    currentContentHash: currentArtifact?.content_hash,
+    previewArtifactId: website.artifact?.canonicalPreviewArtifactId,
+    previewContentHash: website.artifact?.canonicalPreviewContentHash,
+  })
+  const deploymentApproved =
+    currentArtifact?.deployment_decision === 'approved' &&
+    canonicalPreviewMatches
+  const liveArtifactMatches =
+    Boolean(currentArtifact) &&
+    website.artifact?.deployedArtifactId === currentArtifact?.id &&
+    website.artifact?.deployedContentHash === currentArtifact?.content_hash
+  const deterministicQualityChecks = getDeterministicQualityChecks(
+    currentArtifact?.quality_report
+  )
   
   // Get design system from website data (can be at top level or in siteArchitecture)
-  const designSystem: DesignSystem | undefined = 
-    website.designSystem || 
-    website.siteArchitecture?.designSystem || 
-    undefined
+  const siteConfiguration = website.siteBlueprint?.siteConfiguration
+  const designSystem: DesignSystem | undefined =
+    siteConfiguration
+      ? {
+          colorSystem: siteConfiguration.design.colors,
+          colors: siteConfiguration.design.colors,
+          typography: siteConfiguration.design.typography,
+          spacing: siteConfiguration.design.spacing,
+        }
+      : website.designSystem ||
+        website.siteArchitecture?.designSystem ||
+        undefined
 
   return (
     <div className="space-y-6">
@@ -432,7 +670,9 @@ export function WebsitePreview({ websiteId }: WebsitePreviewProps) {
                 website.generationStatus === 'failed' || website.generationStatus === 'deploy_failed' ? 'destructive' :
                 'secondary'
               }>
-                {website.generationStatus === 'ready_for_preview' ? 'Ready to Deploy' : website.generationStatus}
+                {website.generationStatus === 'ready_for_preview'
+                  ? 'Ready for Artifact Review'
+                  : website.generationStatus}
               </Badge>
               {website.brandSource && (
                 <Badge variant="outline">
@@ -487,6 +727,135 @@ export function WebsitePreview({ websiteId }: WebsitePreviewProps) {
         </Card>
       </div>
 
+      <Card>
+        <CardHeader>
+          <CardTitle>Immutable Artifact & WordPress Preview</CardTitle>
+          <CardDescription>
+            Deployment is locked to the exact artifact hash rendered in the
+            canonical WordPress preview.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {currentArtifact ? (
+            <>
+              <div className="grid gap-2 text-sm md:grid-cols-3">
+                <p>
+                  <span className="font-medium">Version:</span>{' '}
+                  {currentArtifact.version}
+                </p>
+                <p className="truncate" title={currentArtifact.content_hash}>
+                  <span className="font-medium">Hash:</span>{' '}
+                  {currentArtifact.content_hash.slice(0, 12)}…
+                </p>
+                <p>
+                  <span className="font-medium">Decision:</span>{' '}
+                  {currentArtifact.deployment_decision || 'not reviewed'}
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  onClick={handleCanonicalPreview}
+                  disabled={previewingCanonical || approvingArtifact}
+                >
+                  {previewingCanonical
+                    ? 'Rendering WordPress Preview…'
+                    : canonicalPreviewMatches
+                      ? 'Refresh Canonical Preview'
+                      : 'Render Canonical Preview'}
+                </Button>
+                {website.artifact?.canonicalPreviewUrl &&
+                canonicalPreviewMatches ? (
+                  <Button asChild variant="outline">
+                    <a
+                      href={website.artifact.canonicalPreviewUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Open Exact Preview
+                    </a>
+                  </Button>
+                ) : null}
+                <Button
+                  onClick={() => handleArtifactApproval('approved')}
+                  disabled={
+                    !canonicalPreviewMatches ||
+                    approvingArtifact ||
+                    deploymentApproved
+                  }
+                >
+                  {approvingArtifact
+                    ? 'Recording Decision…'
+                    : deploymentApproved
+                      ? 'Approved for Deployment'
+                      : 'Approve Exact Artifact'}
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={() => handleArtifactApproval('denied')}
+                  disabled={!canonicalPreviewMatches || approvingArtifact}
+                >
+                  Deny
+                </Button>
+              </div>
+              {artifactActionError ? (
+                <p role="alert" className="text-sm text-red-600">
+                  {artifactActionError}
+                </p>
+              ) : null}
+              <details>
+                <summary className="cursor-pointer text-sm font-medium">
+                  Artifact history ({website.artifact?.history.length || 0})
+                </summary>
+                <ul className="mt-2 space-y-2 text-sm">
+                  {website.artifact?.history.map((artifact) => (
+                    <li key={artifact.id} className="rounded border p-2">
+                      v{artifact.version} · {artifact.change_type} ·{' '}
+                      {artifact.content_hash.slice(0, 12)}… ·{' '}
+                      {new Date(artifact.created_at).toLocaleString()}
+                      {artifact.changes_summary
+                        ? ` — ${artifact.changes_summary}`
+                        : ''}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+              <details open>
+                <summary className="cursor-pointer text-sm font-medium">
+                  Readiness and policy checks (
+                  {
+                    deterministicQualityChecks.filter((check) => check.passed)
+                      .length
+                  }
+                  /{deterministicQualityChecks.length} passed)
+                </summary>
+                <ul className="mt-2 grid gap-2 text-sm md:grid-cols-2">
+                  {deterministicQualityChecks.map((check) => (
+                    <li
+                      key={check.id}
+                      className={`rounded border p-2 ${
+                        check.passed
+                          ? 'border-green-200 bg-green-50 text-green-900'
+                          : 'border-red-200 bg-red-50 text-red-900'
+                      }`}
+                    >
+                      <span className="font-medium">
+                        {check.passed ? 'Passed' : 'Blocked'} · {check.id}
+                      </span>
+                      <p className="mt-1 text-xs">{check.message}</p>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            </>
+          ) : (
+            <p className="text-sm text-amber-700">
+              No immutable artifact has been published yet.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
       {(brandReadiness?.degraded || deploymentReadiness?.ready === false) && (
         <Card className="border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20">
           <CardHeader>
@@ -523,6 +892,51 @@ export function WebsitePreview({ websiteId }: WebsitePreviewProps) {
           </CardContent>
         </Card>
       )}
+
+      {canonicalPreviewMatches && website.artifact?.canonicalPreviewUrl ? (
+        <Card>
+          <CardHeader>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <CardTitle>Exact WordPress Render</CardTitle>
+                <CardDescription>
+                  The same Gutenberg serializer and theme used for deployment.
+                </CardDescription>
+              </div>
+              <div className="flex gap-2" aria-label="Preview viewport">
+                {(['mobile', 'tablet', 'desktop'] as const).map((viewport) => (
+                  <Button
+                    key={viewport}
+                    size="sm"
+                    variant={
+                      previewViewport === viewport ? 'default' : 'outline'
+                    }
+                    onClick={() => setPreviewViewport(viewport)}
+                  >
+                    {viewport[0].toUpperCase() + viewport.slice(1)}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="overflow-auto bg-muted p-4">
+            <iframe
+              title="Canonical WordPress preview"
+              src={website.artifact.canonicalPreviewUrl}
+              sandbox="allow-scripts allow-same-origin"
+              className="mx-auto block min-h-[720px] border bg-white transition-[width]"
+              style={{
+                width:
+                  previewViewport === 'mobile'
+                    ? 390
+                    : previewViewport === 'tablet'
+                      ? 768
+                      : '100%',
+              }}
+            />
+          </CardContent>
+        </Card>
+      ) : null}
 
       {/* Page Preview */}
       <Card>
@@ -566,6 +980,55 @@ export function WebsitePreview({ websiteId }: WebsitePreviewProps) {
                 value={page.slug}
                 className="space-y-4"
               >
+                {siteConfiguration && (
+                  <div
+                    className="overflow-hidden rounded-lg border bg-white text-gray-900"
+                    data-motion-level={siteConfiguration.motion.level}
+                    style={{
+                      fontFamily: siteConfiguration.design.typography.bodyFont,
+                      color: siteConfiguration.design.colors.text,
+                      background: siteConfiguration.design.colors.background,
+                    }}
+                  >
+                    {siteConfiguration.header.announcement.enabled && (
+                      <div
+                        className="px-4 py-2 text-center text-xs font-semibold uppercase tracking-widest"
+                        style={{
+                          color: siteConfiguration.design.colors.background,
+                          background: siteConfiguration.design.colors.primary,
+                        }}
+                      >
+                        {siteConfiguration.header.announcement.text}
+                      </div>
+                    )}
+                    <div className="flex items-center justify-between gap-4 px-5 py-4">
+                      <span
+                        className="text-lg font-semibold"
+                        style={{ fontFamily: siteConfiguration.design.typography.headingFont }}
+                      >
+                        {website.property?.name || 'Property Website'}
+                      </span>
+                      <nav className="flex flex-wrap items-center gap-4 text-sm" aria-label="Preview navigation">
+                        {siteConfiguration.navigation.items.map(item => (
+                          <a key={item.id} href={item.href} onClick={event => event.preventDefault()}>
+                            {item.label}
+                          </a>
+                        ))}
+                      </nav>
+                      {siteConfiguration.header.cta.enabled && (
+                        <span
+                          className="rounded px-3 py-2 text-xs font-semibold"
+                          style={{
+                            color: siteConfiguration.design.colors.background,
+                            background: siteConfiguration.design.colors.primary,
+                          }}
+                        >
+                          {siteConfiguration.header.cta.label}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
                 <div className="bg-gray-100 dark:bg-gray-800 rounded-lg p-4 space-y-2">
                   <h3 className="font-semibold text-gray-900 dark:text-white">{page.title}</h3>
                   <p className="text-sm text-gray-600 dark:text-gray-400">{page.purpose}</p>
@@ -576,12 +1039,15 @@ export function WebsitePreview({ websiteId }: WebsitePreviewProps) {
                     {page.sections.map((section, idx) => (
                       <div
                         key={section.id || idx}
-                        className={`border rounded-lg overflow-hidden cursor-pointer transition ${
+                        className={`border rounded-lg overflow-hidden transition ${
+                          readOnly ? 'cursor-default' : 'cursor-pointer'
+                        } ${
                           selectedSectionId === section.id
                             ? 'border-indigo-500 ring-2 ring-indigo-200 dark:ring-indigo-900/30'
                             : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
                         }`}
                         onClick={() => {
+                          if (readOnly) return
                           if (section.id) setSelectedSectionId(section.id)
                           setEditError(null)
                           setEditSummary(null)
@@ -599,6 +1065,15 @@ export function WebsitePreview({ websiteId }: WebsitePreviewProps) {
                             <span className="text-xs text-gray-500">
                               ({section.acfBlock})
                             </span>
+                            <span
+                              className="text-xs text-gray-500"
+                              title={section.evidenceIds?.join(', ') || undefined}
+                            >
+                              {section.evidenceIds?.length || 0} evidence source
+                              {(section.evidenceIds?.length || 0) === 1
+                                ? ''
+                                : 's'}
+                            </span>
                           </div>
                           <div className="text-xs text-gray-500">
                             {selectedSectionId === section.id ? 'Selected' : 'Click to edit'}
@@ -606,7 +1081,7 @@ export function WebsitePreview({ websiteId }: WebsitePreviewProps) {
                         </div>
 
                         {/* Inline Edit UI */}
-                        {selectedSectionId === section.id && (
+                        {!readOnly && selectedSectionId === section.id && (
                           <div className="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 p-4 space-y-3">
                             <div className="text-sm font-medium text-gray-900 dark:text-white">
                               Ask AI to change this section
@@ -665,6 +1140,23 @@ export function WebsitePreview({ websiteId }: WebsitePreviewProps) {
                         </div>
                       </div>
                     ))}
+                  </div>
+                )}
+                {siteConfiguration && (
+                  <div
+                    className="rounded-lg px-6 py-8"
+                    data-layout={siteConfiguration.footer.layout}
+                    style={{
+                      color: siteConfiguration.design.colors.background,
+                      background: siteConfiguration.design.colors.primary,
+                    }}
+                  >
+                    <p style={{ fontFamily: siteConfiguration.design.typography.headingFont }}>
+                      {website.property?.name || 'Property Website'}
+                    </p>
+                    {siteConfiguration.footer.tagline && (
+                      <p className="mt-2 text-sm opacity-80">{siteConfiguration.footer.tagline}</p>
+                    )}
                   </div>
                 )}
               </TabsContent>
@@ -796,7 +1288,7 @@ export function WebsitePreview({ websiteId }: WebsitePreviewProps) {
       )}
 
       {/* Actions */}
-      <div className="flex justify-between">
+      {!readOnly ? <div className="flex justify-between">
         <Button 
           variant="destructive" 
           onClick={handleDelete}
@@ -808,9 +1300,11 @@ export function WebsitePreview({ websiteId }: WebsitePreviewProps) {
           <Button variant="outline" onClick={handleRegenerate} disabled={deploying || regenerating || rollingBack}>
             {regenerating ? 'Regenerating...' : 'Regenerate Site'}
           </Button>
-          <Button variant="outline" onClick={handleEdit} disabled={deploying || regenerating || rollingBack}>
-            Edit Content
-          </Button>
+          {!readOnly ? (
+            <Button variant="outline" onClick={handleEdit} disabled={deploying || regenerating || rollingBack}>
+              Edit Content
+            </Button>
+          ) : null}
           <Button
             variant="outline"
             onClick={handleOpenRollbackDialog}
@@ -820,7 +1314,7 @@ export function WebsitePreview({ websiteId }: WebsitePreviewProps) {
           </Button>
           
           {/* Show different button based on status */}
-          {website.wpUrl ? (
+          {website.wpUrl && liveArtifactMatches ? (
             <Button asChild>
               <a href={website.wpUrl} target="_blank" rel="noopener noreferrer">
                 View Live Site →
@@ -836,12 +1330,14 @@ export function WebsitePreview({ websiteId }: WebsitePreviewProps) {
                   : 'Deploying...'}
             </Button>
           ) : (
-            <Button onClick={handleDeploy}>
-              Deploy to WordPress
+            <Button onClick={handleDeploy} disabled={!deploymentApproved}>
+              {deploymentApproved
+                ? 'Deploy to Cloudways Staging'
+                : 'Approve Exact Preview for Staging'}
             </Button>
           )}
         </div>
-      </div>
+      </div> : null}
 
       <Dialog open={rollbackDialogOpen} onOpenChange={setRollbackDialogOpen}>
         <DialogContent>
@@ -859,12 +1355,14 @@ export function WebsitePreview({ websiteId }: WebsitePreviewProps) {
               <>
                 <p>
                   You are about to roll back from version{' '}
-                  <strong>{rollbackPreview.currentVersion}</strong> to version{' '}
+                  <strong>{rollbackPreview.currentArtifact?.version}</strong> to
+                  verified version{' '}
                   <strong>{rollbackPreview.rollbackToVersion}</strong>.
                 </p>
-                {rollbackPreview.rollbackToWebsiteId && (
+                {rollbackPreview.rollbackToArtifactId && (
                   <p className="text-xs text-gray-500 dark:text-gray-400">
-                    Source website snapshot: {rollbackPreview.rollbackToWebsiteId}
+                    Source immutable artifact:{' '}
+                    {rollbackPreview.rollbackToArtifactId}
                   </p>
                 )}
               </>

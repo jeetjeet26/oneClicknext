@@ -91,12 +91,19 @@ export default function SiteForgePage() {
     fetchWebsites()
   }, [fetchWebsites, refreshKey])
 
+  useEffect(() => {
+    if (propertyLoading || !currentProperty?.id) return
+    const requestedPropertyId = new URLSearchParams(window.location.search).get(
+      'regeneratePropertyId'
+    )
+    if (requestedPropertyId === currentProperty.id) {
+      setShowGenerationWizard(true)
+      router.replace('/dashboard/siteforge', { scroll: false })
+    }
+  }, [currentProperty?.id, propertyLoading, router])
+
   const handleRefresh = () => {
     setRefreshKey(prev => prev + 1)
-  }
-
-  const handleGenerationComplete = (websiteId: string) => {
-    router.push(`/dashboard/siteforge/${websiteId}`)
   }
 
   const getStatusIcon = (status: string) => {
@@ -104,7 +111,10 @@ export default function SiteForgePage() {
       case 'complete':
         return <CheckCircle className="w-5 h-5 text-emerald-500" />
       case 'failed':
+      case 'deploy_failed':
         return <AlertCircle className="w-5 h-5 text-red-500" />
+      case 'ready_for_preview':
+        return <Eye className="w-5 h-5 text-indigo-500" />
       case 'queued':
       case 'analyzing_brand':
       case 'planning_architecture':
@@ -124,8 +134,10 @@ export default function SiteForgePage() {
       planning_architecture: 'Planning Architecture',
       generating_content: 'Generating Content',
       preparing_assets: 'Preparing Assets',
+      ready_for_preview: 'Ready for Preview',
       deploying: 'Deploying',
       complete: 'Complete',
+      deploy_failed: 'Deployment Failed',
       failed: 'Failed'
     }
     return labels[status] || status
@@ -136,7 +148,10 @@ export default function SiteForgePage() {
       case 'complete':
         return 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800'
       case 'failed':
+      case 'deploy_failed':
         return 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 border-red-200 dark:border-red-800'
+      case 'ready_for_preview':
+        return 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 border-indigo-200 dark:border-indigo-800'
       case 'queued':
       case 'analyzing_brand':
       case 'planning_architecture':
@@ -274,7 +289,8 @@ export default function SiteForgePage() {
               className={`bg-white dark:bg-gray-800 rounded-xl border hover:shadow-lg transition-all group ${
                 website.generationStatus === 'complete' 
                   ? 'border-emerald-200 dark:border-emerald-800' 
-                  : website.generationStatus === 'failed'
+                  : website.generationStatus === 'failed' ||
+                      website.generationStatus === 'deploy_failed'
                   ? 'border-red-200 dark:border-red-800'
                   : 'border-gray-200 dark:border-gray-700 hover:border-indigo-300 dark:hover:border-indigo-600'
               }`}
@@ -299,7 +315,9 @@ export default function SiteForgePage() {
                 </div>
 
                 {/* Progress Bar (for generating) */}
-                {website.generationStatus !== 'complete' && website.generationStatus !== 'failed' && (
+                {!['complete', 'failed', 'deploy_failed', 'ready_for_preview'].includes(
+                  website.generationStatus
+                ) && (
                   <div className="mb-4">
                     <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
                       <span>{website.currentStep ? getStatusLabel(website.currentStep) : 'Processing...'}</span>
@@ -315,10 +333,17 @@ export default function SiteForgePage() {
                 )}
 
                 {/* Error Message for Failed */}
-                {website.generationStatus === 'failed' && website.errorMessage && (
+                {(website.generationStatus === 'failed' ||
+                  website.generationStatus === 'deploy_failed') && (
                   <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 rounded-lg border border-red-100 dark:border-red-800">
                     <p className="text-xs text-red-600 dark:text-red-400">
-                      <strong>Error:</strong> {website.errorMessage}
+                      <strong>
+                        {website.generationStatus === 'deploy_failed'
+                          ? 'Deployment error:'
+                          : 'Generation error:'}
+                      </strong>{' '}
+                      {website.errorMessage ||
+                        'Review SiteForge details and server diagnostics before retrying.'}
                     </p>
                   </div>
                 )}
@@ -329,6 +354,15 @@ export default function SiteForgePage() {
                     <p className="text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5">
                       <CheckCircle size={14} />
                       Website generated successfully
+                    </p>
+                  </div>
+                )}
+
+                {website.generationStatus === 'ready_for_preview' && (
+                  <div className="mb-4 rounded-lg border border-indigo-100 bg-indigo-50 p-3 dark:border-indigo-800 dark:bg-indigo-900/20">
+                    <p className="flex items-center gap-1.5 text-xs text-indigo-700 dark:text-indigo-300">
+                      <Eye size={14} />
+                      Generation is complete and ready for immutable artifact review.
                     </p>
                   </div>
                 )}

@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { editPropertyChatbotContext, loadPropertyChatbotContext, saveManualPropertyChatbotContext } from './chatbot-context-editor'
+import {
+  editPropertyChatbotContext,
+  getChatbotContextServingMode,
+  loadPropertyChatbotContext,
+  saveManualPropertyChatbotContext,
+} from './chatbot-context-editor'
 
 class QueryBuilder {
   private filters: Record<string, unknown> = {}
@@ -378,6 +383,46 @@ describe('chatbot context editor', () => {
 
     expect(context?.contextMarkdown).toBe('CLIENT PROPERTY CONTEXT')
     expect(context?.status).toBe('current')
+    expect(context?.servingMode).toBe('full')
+  })
+
+  it.each(['stale', 'failed', 'pending', 'generating'] as const)(
+    'blocks %s context from chat runtime',
+    async (status) => {
+      const { supabase } = createMockSupabase({
+        context: {
+          id: 'context-1',
+          property_id: 'property-1',
+          status,
+          context_markdown: 'STALE PRICE: $9,999',
+          context_json: { floorplans_pricing: [{ rent_min: 9999 }] },
+          requires_review: false,
+        },
+      })
+
+      await expect(loadPropertyChatbotContext(supabase as never, 'property-1')).resolves.toBeNull()
+      expect(getChatbotContextServingMode(status, false)).toBe('blocked')
+    }
+  )
+
+  it('degrades review-required context without serving its facts', async () => {
+    const { supabase } = createMockSupabase({
+      context: {
+        id: 'context-1',
+        property_id: 'property-1',
+        status: 'needs_review',
+        context_markdown: 'UNREVIEWED PRICE: $9,999',
+        context_json: { floorplans_pricing: [{ rent_min: 9999 }] },
+        requires_review: true,
+      },
+    })
+
+    const context = await loadPropertyChatbotContext(supabase as never, 'property-1')
+
+    expect(context?.servingMode).toBe('degraded')
+    expect(context?.contextMarkdown).toContain('WITHHELD')
+    expect(context?.contextMarkdown).not.toContain('$9,999')
+    expect(context?.contextJson).toEqual({})
   })
 
   it('saves manual markdown edits without regenerating source facts', async () => {

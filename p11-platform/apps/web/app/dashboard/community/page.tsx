@@ -12,6 +12,8 @@ import {
   ChatbotContextStatusCard
 } from '@/components/community'
 import { BrandIdentitySection } from '@/components/community/BrandIdentitySection'
+import { SiteForgeReadinessCard } from '@/components/community/SiteForgeReadinessCard'
+import { OnboardingTruthEditor } from '@/components/community/OnboardingTruthEditor'
 import { DocumentUploader } from '@/components/luma/DocumentUploader'
 import {
   Building2,
@@ -337,11 +339,15 @@ export default function PropertyDashboardPage() {
 
           {/* Onboarding Checklist Tab */}
           {activeTab === 'checklist' && (
-            <OnboardingChecklist
-              tasks={tasksData.tasks}
-              stats={tasksData.stats}
-              onRefresh={() => fetchData()}
-            />
+            <div className="space-y-6">
+              <OnboardingTruthEditor propertyId={currentProperty?.id || ''} />
+              <SiteForgeReadinessCard propertyId={currentProperty?.id || ''} />
+              <OnboardingChecklist
+                tasks={tasksData.tasks}
+                stats={tasksData.stats}
+                onRefresh={() => fetchData()}
+              />
+            </div>
           )}
         </>
       )}

@@ -10,8 +10,12 @@ export type GenerationStatus =
   | 'queued'
   | 'analyzing_brand'
   | 'planning_architecture'
+  | 'creating_design'
+  | 'planning_photos'
   | 'generating_content'
   | 'preparing_assets'
+  | 'executing_photos'
+  | 'validating_quality'
   | 'ready_for_preview'
   | 'deploying'
   | 'complete'
@@ -133,6 +137,10 @@ export interface GenerationPreferences {
   style?: 'modern' | 'luxury' | 'cozy' | 'vibrant' | 'professional'
   emphasis?: 'amenities' | 'location' | 'lifestyle' | 'value' | 'community'
   ctaPriority?: 'tours' | 'applications' | 'contact' | 'calls'
+  referenceSiteUrl?: string
+  contentDensity?: 'minimal' | 'balanced' | 'rich'
+  motion?: 'none' | 'subtle' | 'expressive'
+  enabledCapabilities?: Array<'crm' | 'tours' | 'chatbot' | 'analytics'>
 }
 
 // Full context for site generation
@@ -187,6 +195,7 @@ export const pageSectionSchema = z.object({
   purpose: z.string().optional(), // section goal from architecture planning
   fields: z.record(z.string(), z.unknown()).optional(), // structured ACF field hints
   photoRequirement: z.unknown().optional(), // photo needs from architecture planning
+  evidenceIds: z.array(z.string()).optional(), // trusted source records supporting factual copy
 })
 export type PageSection = z.infer<typeof pageSectionSchema>
 
@@ -197,8 +206,99 @@ export const generatedPageSchema = z.object({
   purpose: z.string(), // What this page aims to achieve
   sections: z.array(pageSectionSchema),
   priority: z.string().optional(),
+  seo: z
+    .object({
+      title: z.string(),
+      description: z.string(),
+      canonicalPath: z.string(),
+      noIndex: z.boolean(),
+      structuredData: z.array(z.string()),
+    })
+    .optional(),
 })
 export type GeneratedPage = z.infer<typeof generatedPageSchema>
+
+const urlOrPathSchema = z.string().min(1).refine(
+  value => value.startsWith('/') || /^https?:\/\//i.test(value),
+  'Expected an absolute URL or root-relative path'
+)
+
+export const navigationItemSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  href: urlOrPathSchema,
+  parentId: z.string().min(1).optional(),
+  external: z.boolean().optional(),
+}).strict()
+
+export const siteConfigurationSchema = z.object({
+  design: z.object({
+    colors: z.object({
+      primary: z.string().min(1),
+      secondary: z.string().min(1),
+      accent: z.string().min(1),
+      background: z.string().min(1),
+      text: z.string().min(1),
+    }).strict(),
+    typography: z.object({
+      headingFont: z.string().min(1),
+      bodyFont: z.string().min(1),
+      headingWeight: z.number().int().min(100).max(900),
+    }).strict(),
+    spacing: z.object({
+      containerMaxWidth: z.string().min(1),
+      sectionPadding: z.string().min(1),
+    }).strict(),
+  }).strict(),
+  header: z.object({
+    layout: z.enum(['logo-left', 'logo-center', 'split']),
+    position: z.enum(['static', 'sticky', 'overlay']),
+    announcement: z.object({
+      enabled: z.boolean(),
+      text: z.string(),
+      link: urlOrPathSchema.optional(),
+    }).strict(),
+    cta: z.object({
+      enabled: z.boolean(),
+      label: z.string().min(1),
+      href: urlOrPathSchema,
+    }).strict(),
+  }).strict(),
+  navigation: z.object({
+    style: z.enum(['horizontal', 'mega', 'drawer']),
+    items: z.array(navigationItemSchema),
+  }).strict(),
+  footer: z.object({
+    layout: z.enum(['compact', 'columns', 'editorial']),
+    showNavigation: z.boolean(),
+    showContact: z.boolean(),
+    showSocial: z.boolean(),
+    tagline: z.string().optional(),
+  }).strict(),
+  media: z.object({
+    logoAssetId: z.string().uuid().optional(),
+    logoUrl: urlOrPathSchema.optional(),
+    logoAlt: z.string().optional(),
+    faviconAssetId: z.string().uuid().optional(),
+    faviconUrl: urlOrPathSchema.optional(),
+    defaultImageUrl: urlOrPathSchema.optional(),
+    imageTreatment: z.enum(['natural', 'rounded', 'editorial', 'full-bleed']),
+  }).strict(),
+  motion: z.object({
+    level: z.enum(['none', 'subtle', 'prominent']),
+    reducedMotion: z.enum(['respect', 'disable']),
+    reveal: z.enum(['none', 'fade', 'slide', 'scale']),
+    durationMs: z.number().int().min(0).max(5000),
+    easing: z.enum(['linear', 'ease', 'ease-in', 'ease-out', 'ease-in-out']),
+  }).strict(),
+  behavior: z.object({
+    smoothScroll: z.boolean(),
+    externalLinksNewTab: z.boolean(),
+    backToTop: z.boolean(),
+    cookieConsent: z.enum(['disabled', 'informational', 'required']),
+  }).strict(),
+}).strict()
+export type SiteConfiguration = z.infer<typeof siteConfigurationSchema>
 
 // Site navigation structure
 export interface SiteNavigation {
@@ -252,10 +352,14 @@ export interface WebsiteAsset {
 export interface PropertyWebsite {
   id: string
   propertyId: string
+  orgId: string
   
   wpUrl?: string
   wpAdminUrl?: string
   wpInstanceId?: string
+  wordpressCredentialRef?: string
+  currentArtifactVersionId?: string
+  /** @deprecated Credentials must remain server-side and referenced by ID. */
   wpCredentials?: {
     username: string
     password: string
@@ -312,6 +416,7 @@ export const siteBlueprintSchema = z.object({
   designSystem: z.unknown().optional(),
   photoManifest: z.unknown().optional(),
   qualityReport: z.unknown().optional(),
+  siteConfiguration: siteConfigurationSchema.optional(),
   generationTime: z.number().optional(),
   agentLogs: z
     .array(z.object({ agent: z.string(), action: z.string(), timestamp: z.string() }))
@@ -353,12 +458,15 @@ export interface SiteForgeJob {
 }
 
 // API request/response types
-export interface GenerateWebsiteRequest {
-  propertyId: string
-  preferences?: GenerationPreferences
-  prompt?: string // conversation-start: user describes desired site; KB-driven
-  brandContext?: any // Pre-analyzed brand context from /api/siteforge/analyze - avoids re-running Brand Agent
+export interface CreateGenerationRequest {
+  planId: string
+  confirmedRevision: number
+  contentHash: string
+  idempotencyKey: string
 }
+
+/** @deprecated Use CreateGenerationRequest. Generation requires an approved plan identity. */
+export type GenerateWebsiteRequest = CreateGenerationRequest
 
 export interface GenerateWebsiteResponse {
   jobId: string
@@ -369,6 +477,13 @@ export interface GenerateWebsiteResponse {
 
 export interface WebsiteStatusResponse {
   websiteId: string
+  jobId?: string
+  workflowRunId?: string
+  lifecycleStatus?: 'queued' | 'running' | 'succeeded' | 'failed' | 'retrying' | 'cancelled'
+  retryAt?: string
+  cancelRequested?: boolean
+  attemptCount?: number
+  maxAttempts?: number
   status: GenerationStatus
   progress: number
   currentStep?: string
@@ -418,9 +533,10 @@ export interface WebsiteStatusResponse {
 }
 
 export interface RegenerateRequest {
-  websiteId: string
-  pages?: string[] // If empty, regenerate entire site
-  reason?: string
+  planId: string
+  confirmedRevision: number
+  contentHash: string
+  idempotencyKey: string
 }
 
 export interface RefineRequest {
@@ -434,31 +550,136 @@ export interface RefineRequest {
 
 // === AGENTIC SYSTEM TYPES (Added December 16, 2025) ===
 
-// Blueprint patch operations for conversational editing
-export type BlueprintPatchOperation =
-  | {
-      op: 'update_section'
-      sectionId: string
-      content?: Record<string, unknown>
-      variant?: string
-      cssClasses?: string[]
-      reasoning?: string
-    }
-  | {
-      op: 'add_section'
-      pageSlug: string
-      afterSectionId?: string
-      section: {
-        type: string
-        acfBlock: ACFBlockType
-        content: Record<string, unknown>
-        reasoning: string
-        label?: string
-        variant?: string
-      }
-    }
-  | { op: 'remove_section'; sectionId: string }
-  | { op: 'move_section'; sectionId: string; toOrder: number }
+// Versioned semantic operations are shared by LLM output, P11 preview, and
+// WordPress publication. Partial objects are intentional update payloads.
+const semanticOperationBase = { version: z.literal(2), reasoning: z.string().optional() }
+const sectionInputSchema = pageSectionSchema.omit({ id: true, order: true })
+const designUpdateSchema = z.object({
+  colors: siteConfigurationSchema.shape.design.shape.colors.partial().optional(),
+  typography: siteConfigurationSchema.shape.design.shape.typography.partial().optional(),
+  spacing: siteConfigurationSchema.shape.design.shape.spacing.partial().optional(),
+}).strict()
+const headerUpdateSchema = z.object({
+  layout: siteConfigurationSchema.shape.header.shape.layout.optional(),
+  position: siteConfigurationSchema.shape.header.shape.position.optional(),
+  announcement: siteConfigurationSchema.shape.header.shape.announcement.partial().optional(),
+  cta: siteConfigurationSchema.shape.header.shape.cta.partial().optional(),
+}).strict()
+
+export const semanticBlueprintPatchOperationSchema = z.discriminatedUnion('op', [
+  z.object({
+    ...semanticOperationBase,
+    op: z.literal('page.upsert'),
+    page: generatedPageSchema,
+  }).strict(),
+  z.object({
+    ...semanticOperationBase,
+    op: z.literal('page.remove'),
+    pageSlug: z.string().min(1),
+  }).strict(),
+  z.object({
+    ...semanticOperationBase,
+    op: z.literal('section.upsert'),
+    pageSlug: z.string().min(1),
+    sectionId: z.string().min(1).optional(),
+    afterSectionId: z.string().min(1).optional(),
+    section: sectionInputSchema,
+  }).strict(),
+  z.object({
+    ...semanticOperationBase,
+    op: z.literal('section.update'),
+    sectionId: z.string().min(1),
+    value: z.object({
+      type: z.string().optional(),
+      acfBlock: acfBlockTypeSchema.optional(),
+      content: z.record(z.string(), z.unknown()).optional(),
+      label: z.string().optional(),
+      variant: z.string().optional(),
+      cssClasses: z.array(z.string()).optional(),
+      purpose: z.string().optional(),
+      fields: z.record(z.string(), z.unknown()).optional(),
+      evidenceIds: z.array(z.string()).optional(),
+    }).strict(),
+  }).strict(),
+  z.object({
+    ...semanticOperationBase,
+    op: z.literal('section.remove'),
+    sectionId: z.string().min(1),
+  }).strict(),
+  z.object({
+    ...semanticOperationBase,
+    op: z.literal('section.move'),
+    sectionId: z.string().min(1),
+    pageSlug: z.string().min(1).optional(),
+    toOrder: z.number().int().min(1),
+  }).strict(),
+  z.object({
+    ...semanticOperationBase,
+    op: z.literal('design.update'),
+    value: designUpdateSchema,
+  }).strict(),
+  z.object({
+    ...semanticOperationBase,
+    op: z.literal('header.update'),
+    value: headerUpdateSchema,
+  }).strict(),
+  z.object({
+    ...semanticOperationBase,
+    op: z.literal('navigation.update'),
+    value: siteConfigurationSchema.shape.navigation.partial(),
+  }).strict(),
+  z.object({
+    ...semanticOperationBase,
+    op: z.literal('footer.update'),
+    value: siteConfigurationSchema.shape.footer.partial(),
+  }).strict(),
+  z.object({
+    ...semanticOperationBase,
+    op: z.literal('media.update'),
+    value: siteConfigurationSchema.shape.media.partial(),
+  }).strict(),
+  z.object({
+    ...semanticOperationBase,
+    op: z.literal('motion.update'),
+    value: siteConfigurationSchema.shape.motion.partial(),
+  }).strict(),
+  z.object({
+    ...semanticOperationBase,
+    op: z.literal('behavior.update'),
+    value: siteConfigurationSchema.shape.behavior.partial(),
+  }).strict(),
+])
+
+const legacyBlueprintPatchOperationSchema = z.discriminatedUnion('op', [
+  z.object({
+    op: z.literal('update_section'),
+    sectionId: z.string().min(1),
+    content: z.record(z.string(), z.unknown()).optional(),
+    variant: z.string().optional(),
+    cssClasses: z.array(z.string()).optional(),
+    reasoning: z.string().optional(),
+  }).strict(),
+  z.object({
+    op: z.literal('add_section'),
+    pageSlug: z.string().min(1),
+    afterSectionId: z.string().min(1).optional(),
+    section: sectionInputSchema,
+  }).strict(),
+  z.object({ op: z.literal('remove_section'), sectionId: z.string().min(1) }).strict(),
+  z.object({
+    op: z.literal('move_section'),
+    sectionId: z.string().min(1),
+    toOrder: z.number().int().min(1),
+  }).strict(),
+])
+
+export const blueprintPatchOperationSchema = z.union([
+  semanticBlueprintPatchOperationSchema,
+  legacyBlueprintPatchOperationSchema,
+])
+export const blueprintPatchOperationsSchema = z.array(blueprintPatchOperationSchema).min(1)
+export type SemanticBlueprintPatchOperation = z.infer<typeof semanticBlueprintPatchOperationSchema>
+export type BlueprintPatchOperation = z.infer<typeof blueprintPatchOperationSchema>
 
 
 

@@ -19,6 +19,14 @@ function oneclick_get_block_wrapper_attributes( $extra_attrs = array() ) {
 
 	if ( isset( $GLOBALS['block'] ) ) {
 		$block = $GLOBALS['block'];
+		$block_name = isset( $block['name'] ) ? $block['name'] : '';
+		$variant = function_exists( 'get_field' ) ? get_field( 'variant' ) : '';
+		$catalog = oneclick_siteforge_variant_catalog();
+		if ( isset( $catalog[ $block_name ] ) ) {
+			$allowed = $catalog[ $block_name ];
+			$variant = in_array( $variant, $allowed, true ) ? $variant : $allowed[0];
+			$attrs['class'] .= ' variant-' . sanitize_html_class( $variant );
+		}
 		if ( isset( $block['align'] ) && in_array( $block['align'], array( 'full', 'wide' ), true ) ) {
 			$attrs['class'] .= ' align' . $block['align'];
 		}
@@ -27,6 +35,10 @@ function oneclick_get_block_wrapper_attributes( $extra_attrs = array() ) {
 		}
 	}
 
+	if ( isset( $extra_attrs['class'] ) ) {
+		$attrs['class'] = trim( $attrs['class'] . ' ' . $extra_attrs['class'] );
+		unset( $extra_attrs['class'] );
+	}
 	$attrs = array_merge( $attrs, $extra_attrs );
 
 	$output = '';
@@ -39,6 +51,64 @@ function oneclick_get_block_wrapper_attributes( $extra_attrs = array() ) {
 	}
 
 	return $output;
+}
+
+/**
+ * Read an ACF block field while supporting SiteForge's deterministic flattened
+ * repeater representation when WordPress has not persisted ACF field-key
+ * references alongside the block data.
+ */
+function oneclick_get_block_field( $field_name, $block, $fallback = '' ) {
+	$value = function_exists( 'get_field' ) ? get_field( $field_name ) : null;
+	$data  = isset( $block['data'] ) && is_array( $block['data'] ) ? $block['data'] : array();
+
+	if ( ! array_key_exists( $field_name, $data ) ) {
+		return false !== $value && null !== $value ? $value : $fallback;
+	}
+
+	$raw_value = $data[ $field_name ];
+	if ( is_numeric( $raw_value ) && absint( $raw_value ) > 0 ) {
+		$rows = array();
+		for ( $index = 0; $index < absint( $raw_value ); $index++ ) {
+			$prefix = $field_name . '_' . $index . '_';
+			$row    = array();
+			foreach ( $data as $key => $item_value ) {
+				if ( 0 === strpos( $key, $prefix ) ) {
+					$row[ substr( $key, strlen( $prefix ) ) ] = $item_value;
+				}
+			}
+			if ( ! empty( $row ) ) {
+				$rows[] = $row;
+			}
+		}
+		if ( ! empty( $rows ) ) {
+			return $rows;
+		}
+	}
+
+	return false !== $value && null !== $value ? $value : $raw_value;
+}
+
+/**
+ * Finite component variants shared by generated artifacts and live rendering.
+ */
+function oneclick_siteforge_variant_catalog() {
+	return array(
+		'acf/top-slides'         => array( 'cinematic', 'editorial', 'split' ),
+		'acf/text-section'       => array( 'editorial', 'contained', 'lead' ),
+		'acf/feature-section'    => array( 'alternating', 'bleed', 'framed' ),
+		'acf/image'              => array( 'full-bleed', 'contained' ),
+		'acf/links'              => array( 'inline', 'banner', 'sticky' ),
+		'acf/content-grid'       => array( 'amenity-grid', 'tabs', 'editorial' ),
+		'acf/form'               => array( 'card', 'split', 'minimal' ),
+		'acf/map'                => array( 'standard', 'immersive' ),
+		'acf/html-section'       => array( 'contained', 'full-width' ),
+		'acf/gallery'            => array( 'categorized', 'masonry', 'lightbox' ),
+		'acf/accordion-section'  => array( 'bordered', 'minimal' ),
+		'acf/plans-availability' => array( 'cards', 'details', 'preleasing' ),
+		'acf/poi'                => array( 'narrative', 'map-list', 'editorial' ),
+		'acf/menu'               => array( 'standard', 'sticky-cta' ),
+	);
 }
 
 /**
@@ -61,13 +131,56 @@ function oneclick_render_button( $text, $url = '#', $style = 'primary', $target 
  * Get responsive image HTML
  */
 function oneclick_get_image_html( $image, $size = 'large', $attr = array() ) {
-	if ( is_array( $image ) && isset( $image['ID'] ) ) {
-		return wp_get_attachment_image( $image['ID'], $size, false, $attr );
+	$image_id = 0;
+	if ( is_array( $image ) ) {
+		$image_id = absint( $image['ID'] ?? $image['id'] ?? 0 );
 	} elseif ( is_numeric( $image ) ) {
-		return wp_get_attachment_image( $image, $size, false, $attr );
+		$image_id = absint( $image );
+	}
+
+	if ( $image_id ) {
+		return wp_get_attachment_image( $image_id, $size, false, $attr );
+	}
+
+	$image_url = is_array( $image ) ? ( $image['url'] ?? '' ) : '';
+	if ( is_string( $image_url ) && wp_http_validate_url( $image_url ) ) {
+		$class = isset( $attr['class'] ) ? $attr['class'] : 'responsive-image';
+		$alt   = isset( $attr['alt'] ) ? $attr['alt'] : ( $image['alt'] ?? '' );
+		return sprintf(
+			'<img src="%s" class="%s" alt="%s" loading="lazy" decoding="async">',
+			esc_url( $image_url ),
+			esc_attr( $class ),
+			esc_attr( $alt )
+		);
 	}
 
 	return '';
+}
+
+/**
+ * Identify deterministic SiteForge placeholder media after WordPress has
+ * converted an asset reference into an attachment ID.
+ */
+function oneclick_is_placeholder_image( $image ) {
+	$image_id  = 0;
+	$image_url = '';
+	$image_alt = '';
+
+	if ( is_array( $image ) ) {
+		$image_id  = absint( $image['ID'] ?? $image['id'] ?? 0 );
+		$image_url = (string) ( $image['url'] ?? '' );
+		$image_alt = (string) ( $image['alt'] ?? '' );
+	} elseif ( is_numeric( $image ) ) {
+		$image_id = absint( $image );
+	}
+
+	if ( $image_id ) {
+		$image_url = (string) wp_get_attachment_url( $image_id );
+		$image_alt = (string) get_post_meta( $image_id, '_wp_attachment_image_alt', true );
+	}
+
+	return false !== stripos( $image_url, 'property-placeholder' ) ||
+		false !== stripos( $image_alt, 'placeholder' );
 }
 
 /**

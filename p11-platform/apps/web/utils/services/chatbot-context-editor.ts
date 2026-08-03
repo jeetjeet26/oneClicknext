@@ -10,6 +10,7 @@ const MAX_EXCERPT_CHARS = 1600
 type ServiceClient = SupabaseClient<Database>
 
 type ChatbotContextStatus = 'pending' | 'generating' | 'current' | 'stale' | 'failed' | 'needs_review'
+export type ChatbotContextServingMode = 'full' | 'degraded' | 'blocked'
 
 type PropertyRow = Pick<
   Database['public']['Tables']['properties']['Row'],
@@ -479,17 +480,47 @@ async function loadCurrentContext(supabase: ServiceClient, propertyId: string): 
   return data
 }
 
+export function getChatbotContextServingMode(
+  status: ChatbotContextStatus,
+  requiresReview: boolean
+): ChatbotContextServingMode {
+  if (status === 'current' && !requiresReview) return 'full'
+  if (status === 'needs_review' || requiresReview) return 'degraded'
+  return 'blocked'
+}
+
 export async function loadPropertyChatbotContext(
   supabase: ServiceClient,
   propertyId: string
-): Promise<{ contextMarkdown: string; contextJson: Json; status: ChatbotContextStatus; requiresReview: boolean } | null> {
+): Promise<{
+  contextMarkdown: string
+  contextJson: Json
+  status: ChatbotContextStatus
+  requiresReview: boolean
+  servingMode: Exclude<ChatbotContextServingMode, 'blocked'>
+} | null> {
   const row = await loadCurrentContext(supabase, propertyId)
   if (!row || !row.context_markdown.trim()) return null
+  const servingMode = getChatbotContextServingMode(
+    row.status as ChatbotContextStatus,
+    row.requires_review
+  )
+  if (servingMode === 'blocked') return null
+  if (servingMode === 'degraded') {
+    return {
+      contextMarkdown: 'PROPERTY FACTS ARE TEMPORARILY WITHHELD PENDING OPERATOR REVIEW.',
+      contextJson: {},
+      status: row.status as ChatbotContextStatus,
+      requiresReview: row.requires_review,
+      servingMode,
+    }
+  }
   return {
     contextMarkdown: row.context_markdown,
     contextJson: row.context_json,
     status: row.status as ChatbotContextStatus,
     requiresReview: row.requires_review,
+    servingMode,
   }
 }
 
@@ -498,7 +529,6 @@ export async function saveManualPropertyChatbotContext(
   propertyId: string,
   input: ManualChatbotContextEditInput
 ): Promise<{ success: boolean; status: ChatbotContextStatus; error?: string }> {
-  const now = new Date().toISOString()
   const currentRow = await loadCurrentContext(supabase, propertyId)
   if (!currentRow) {
     return { success: false, status: 'failed', error: 'Chatbot context not found' }

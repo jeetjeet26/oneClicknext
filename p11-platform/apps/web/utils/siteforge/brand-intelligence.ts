@@ -8,7 +8,7 @@ import type { BrandIntelligence, PropertyContext, BrandSource } from '@/types/si
 // Use service client since this runs in background context (no HTTP request)
 const getSupabase = () => createServiceClient()
 
-type JsonRecord = Record<string, any>
+type JsonRecord = Record<string, unknown>
 
 function asRecord(value: unknown): JsonRecord {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -199,7 +199,9 @@ async function semanticSearchBrand(propertyId: string): Promise<string | null> {
       })
       
       if (!error && data) {
-        results.push(...data.map((d: any) => d.content))
+        results.push(
+          ...data.flatMap(d => (typeof d.content === 'string' ? [d.content] : []))
+        )
       }
     }
     
@@ -213,7 +215,7 @@ async function semanticSearchBrand(propertyId: string): Promise<string | null> {
 /**
  * Analyze brand documents (PDFs, images) with Gemini Vision
  */
-async function analyzeBrandDocuments(docs: any[]): Promise<any> {
+async function analyzeBrandDocuments(docs: unknown[]): Promise<unknown> {
   throw new Error(
     `Knowledge-base brand document analysis is not implemented yet. Cannot analyze ${docs.length} brand documents.`
   )
@@ -222,7 +224,9 @@ async function analyzeBrandDocuments(docs: any[]): Promise<any> {
 /**
  * Synthesize brand data from multiple sources using Gemini 3
  */
-async function synthesizeBrandData(sources: any): Promise<any> {
+async function synthesizeBrandData(
+  sources: unknown
+): Promise<BrandIntelligence['data']> {
   void sources
   throw new Error('Knowledge-base brand synthesis is not implemented yet.')
 }
@@ -287,10 +291,10 @@ export async function getPropertyContext(propertyId: string): Promise<PropertyCo
     address: getPropertyAddress(property.address, property.settings),
     amenities: property.amenities || [],
     floorplans: [], // TODO: Get from floorplans table if needed
-    photos: (photos || []).map((p: any) => ({
+    photos: (photos || []).map(p => ({
       url: p.url,
       alt: p.alt_text || property.name,
-      category: p.category
+      category: p.category ?? undefined
     })),
     policies: {
       pets: property.pet_policy,

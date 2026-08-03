@@ -8,6 +8,10 @@ import type { BrandContext } from './brand-agent'
 import type { ArchitectureProposal } from './architecture-agent'
 import type { Photo } from './photo-agent'
 import type { ACFBlockType, GeneratedPage, PageSection } from '@/types/siteforge'
+import {
+  createEvidenceSafePlaceholder,
+  SITEFORGE_PLACEHOLDER_EVIDENCE_ID,
+} from '@/utils/siteforge/generation/evidence-safe-content'
 
 // Canonical shapes come from types/siteforge.ts; re-exported for existing importers
 export type { GeneratedPage }
@@ -50,14 +54,14 @@ export class ContentAgent extends BaseAgent {
    * Generate content for one page
    */
   private async generatePage(
-    page: any,
+    page: ArchitectureProposal['pages'][number],
     brandContext: BrandContext,
-    conversionStrategy: any
+    conversionStrategy: ArchitectureProposal['conversionStrategy']
   ): Promise<GeneratedPage> {
     
     // Generate all sections in parallel
     const sections = await Promise.all(
-      page.sections.map((section: any) => 
+      page.sections.map(section =>
         this.generateSection(section, brandContext, page.purpose, conversionStrategy)
       )
     )
@@ -75,16 +79,20 @@ export class ContentAgent extends BaseAgent {
    * Generate content for one section
    */
   private async generateSection(
-    section: any,
+    section: ArchitectureProposal['pages'][number]['sections'][number],
     brandContext: BrandContext,
     pagePurpose: string,
-    conversionStrategy: any
+    conversionStrategy: ArchitectureProposal['conversionStrategy']
   ): Promise<GeneratedSection> {
     
     // Get relevant facts via vector search
-    const relevantFacts = await this.vectorSearch(
+    const vectorFacts = await this.vectorSearch(
       `Facts and details for ${section.type} section about ${section.purpose}. ${pagePurpose}`
     )
+    const relevantFacts =
+      vectorFacts.length > 0
+        ? vectorFacts
+        : this.getTrustedBrandFacts(brandContext)
     
     // Claude generates content
     const systemPrompt = `You are a real estate copywriter. You write compelling, on-brand copy that:
@@ -170,7 +178,19 @@ Match this level of clarity and polish without copying the example phrasing.
     })
     
     // Use shared robust JSON parser
-    const content = this.parseJSON<Record<string, unknown>>(response, 'ContentAgent')
+    let content = this.parseJSON<Record<string, unknown>>(response, 'ContentAgent')
+    const block = (section.acfBlock || section.block) as ACFBlockType
+    const evidenceSafePlaceholder =
+      relevantFacts.length === 0
+        ? createEvidenceSafePlaceholder(
+            block,
+            section.label || this.formatSectionType(section.type),
+            section.id
+          )
+        : null
+    if (evidenceSafePlaceholder) {
+      content = evidenceSafePlaceholder
+    }
     
     // Ensure minimum content exists - never return empty sections
     if (!content.headline && !content.content && !content.items && !content.slides) {
@@ -184,8 +204,11 @@ Match this level of clarity and polish without copying the example phrasing.
     const { block: legacyBlock, ...rest } = section
     return {
       ...rest,
-      acfBlock: (section.acfBlock || legacyBlock) as ACFBlockType,
+      acfBlock: block || (legacyBlock as ACFBlockType),
       content,
+      evidenceIds: evidenceSafePlaceholder
+        ? [SITEFORGE_PLACEHOLDER_EVIDENCE_ID]
+        : relevantFacts.map(fact => fact.id),
       reasoning: (typeof content.reasoning === 'string' && content.reasoning) || section.reasoning
     }
   }
@@ -199,22 +222,55 @@ Match this level of clarity and polish without copying the example phrasing.
       .map(word => word.charAt(0).toUpperCase() + word.slice(1))
       .join(' ')
   }
+
+  private getTrustedBrandFacts(
+    brandContext: BrandContext
+  ): VectorSearchResult[] {
+    if (
+      !['brandforge', 'hybrid'].includes(brandContext.source) ||
+      brandContext.confidence < 0.7
+    ) {
+      return []
+    }
+
+    const facts = [
+      ...brandContext.positioning.differentiators,
+      ...brandContext.positioning.messagingPillars,
+      brandContext.positioning.competitiveAdvantage,
+    ].filter(
+      (fact, index, values) =>
+        typeof fact === 'string' &&
+        fact.trim().length > 0 &&
+        values.indexOf(fact) === index
+    )
+
+    return facts.map((content, index) => ({
+      id: `brand-context:${this.propertyId}:${index}`,
+      content,
+      metadata: {
+        source: brandContext.source,
+        confidence: brandContext.confidence,
+      },
+      similarity: brandContext.confidence,
+    }))
+  }
   
   /**
    * Assign photos to sections based on manifest
    */
   private async assignPhotosToSections(
     allPhotos: Photo[],
-    pages: any[]
+    pages: ArchitectureProposal['pages']
   ): Promise<Map<string, string>> {
     
     const assignments = new Map<string, string>()
     
     for (const page of pages) {
       for (const section of page.sections || []) {
-        if (section.photoRequirement) {
+        const photoRequirement = section.photoRequirement
+        if (photoRequirement) {
           const matches = allPhotos.filter(p => 
-            p.category === section.photoRequirement.category
+            p.category === photoRequirement.category
           )
           
           if (matches.length > 0) {

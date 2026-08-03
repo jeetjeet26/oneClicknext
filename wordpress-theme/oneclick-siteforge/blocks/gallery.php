@@ -9,8 +9,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-$images = get_field( 'images' ) ?: array();
-$layout = get_field( 'layout' ) ?: 'grid';
+$images = oneclick_get_block_field( 'images', $block, array() );
+$layout = oneclick_get_block_field( 'layout', $block, 'grid' );
 
 if ( empty( $images ) ) {
 	return;
@@ -61,6 +61,21 @@ $layout_class = 'masonry' === $layout ? 'layout-masonry' : 'layout-grid';
 							)
 						);
 						?>
+					</a>
+					<?php
+				} elseif ( is_array( $image ) && ! empty( $image['url'] ) ) {
+					$full_url = esc_url( $image['url'] );
+					$alt_text = sanitize_text_field( $image['alt'] ?? '' );
+					?>
+					<a class="gallery-item" href="<?php echo $full_url; ?>" data-gallery="true" aria-label="<?php echo esc_attr( $alt_text ); ?>">
+						<img class="gallery-image" src="<?php echo $full_url; ?>" alt="<?php echo esc_attr( $alt_text ); ?>" loading="lazy" decoding="async">
+					</a>
+					<?php
+				} elseif ( is_string( $image ) && filter_var( $image, FILTER_VALIDATE_URL ) ) {
+					$full_url = esc_url( $image );
+					?>
+					<a class="gallery-item" href="<?php echo $full_url; ?>" data-gallery="true">
+						<img class="gallery-image" src="<?php echo $full_url; ?>" alt="" loading="lazy" decoding="async">
 					</a>
 					<?php
 				}

@@ -1,0 +1,21 @@
+{
+  "contractVersion": 2,
+  "siteId": "site-fixture-1",
+  "artifactId": "22222222-2222-4222-8222-222222222222",
+  "artifactContentHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "assetManifestHash": "7225e38a4455531581e2a06fa955b3b65c39c4d8aeb80c9c5eec52cdfa4b993c",
+  "idempotencyKey": "6463c60933fbdabdc4169e0fa789ab47d610d3085ef9213f0ee492862707cfd3",
+  "assets": [
+    {
+      "assetId": "11111111-1111-4111-8111-111111111111",
+      "sourceUrl": "https://assets.example.com/logo.png",
+      "byteHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "bytes": 1234,
+      "mimeType": "image/png",
+      "filename": "logo.png",
+      "role": "logo",
+      "altText": "Community logo",
+      "caption": null
+    }
+  ]
+}

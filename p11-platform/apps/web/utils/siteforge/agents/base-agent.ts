@@ -7,6 +7,10 @@ import Anthropic from '@anthropic-ai/sdk'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { SITEFORGE_CLAUDE_MODEL, SITEFORGE_EMBEDDING_MODEL } from '@/utils/siteforge/models'
 import type { Json } from '@/types/supabase'
+import {
+  brandContractToStorageSections,
+  normalizeBrandAssetRow,
+} from '@/utils/brandforge/normalize'
 
 export interface VectorSearchResult {
   id: string
@@ -151,37 +155,26 @@ export abstract class BaseAgent {
   }
   
   /**
-   * Call Claude Sonnet 4 (latest model)
-   * For JSON mode: Uses low temperature (0.3) and prefill for reliable output
+   * Call the configured Claude model.
+   * JSON mode relies on prompt instructions and robust response parsing.
    */
   protected async callClaude(
     prompt: string,
     options: {
       systemPrompt?: string
-      temperature?: number
       maxTokens?: number
       jsonMode?: boolean
     } = {}
   ): Promise<string> {
-    
-    // For JSON mode, use low temperature for reliable structure
-    // Creativity is driven by prompts, not temperature randomness
-    const effectiveTemp = options.jsonMode ? 0.3 : (options.temperature ?? 0.7)
-    
-    // Build messages array - add prefill for JSON mode to enforce structure
+
+    // Newer Claude models require the conversation to end with a user message.
     const messages: Array<{ role: 'user' | 'assistant'; content: string }> = [
       { role: 'user', content: prompt }
     ]
-    
-    // Prefill with '{' to force JSON start and bypass any preamble
-    if (options.jsonMode) {
-      messages.push({ role: 'assistant', content: '{' })
-    }
-    
+
     const message = await this.anthropic.messages.create({
       model: SITEFORGE_CLAUDE_MODEL,
       max_tokens: options.maxTokens || 30000,
-      temperature: effectiveTemp,
       system: options.systemPrompt || '',
       messages
     })
@@ -192,11 +185,6 @@ export abstract class BaseAgent {
     }
     
     let responseText = textContent.text
-    
-    // For JSON mode with prefill, prepend the '{' since Claude continues from there
-    if (options.jsonMode) {
-      responseText = '{' + responseText
-    }
     
     // Extract JSON from XML wrapper if present (e.g., <json>...</json>)
     if (options.jsonMode) {
@@ -220,14 +208,14 @@ export abstract class BaseAgent {
         }
       }
       
-      // Clean up common JSON issues from Claude
+      // Clean up common JSON issues from Claude. Newer reasoning models can
+      // emit literal control characters inside otherwise valid JSON strings.
+      responseText = escapeControlCharactersInJsonStrings(responseText)
+
       // Remove trailing commas before closing brackets/braces (multiple passes)
       for (let i = 0; i < 5; i++) {
         responseText = responseText.replace(/,(\s*[}\]])/g, '$1')
       }
-      // Remove comments (Claude sometimes adds them)
-      responseText = responseText.replace(/\/\/.*$/gm, '')
-      responseText = responseText.replace(/\/\*[\s\S]*?\*\//g, '')
       // Remove any remaining problematic trailing commas in arrays
       responseText = responseText.replace(/,(\s*\])/g, '$1')
       responseText = responseText.replace(/,(\s*\})/g, '$1')
@@ -242,7 +230,7 @@ export abstract class BaseAgent {
    */
   protected parseJSON<T>(response: string, agentName: string): T {
     // Pre-clean common Claude issues BEFORE any parsing
-    let cleaned = response
+    let cleaned = escapeControlCharactersInJsonStrings(response)
     
     // Remove unquoted annotations after strings like: "value" (annotation)
     // This is a common Claude habit - it adds comments in parentheses
@@ -277,10 +265,6 @@ export abstract class BaseAgent {
         // Remove unquoted annotations again (in case they're nested)
         extracted = extracted.replace(/"([^"]*?)"\s*\(([^)]+)\)/g, '"$1 ($2)"')
         
-        // Remove JavaScript comments
-        extracted = extracted.replace(/\/\/[^\n]*\n/g, '\n')
-        extracted = extracted.replace(/\/\*[\s\S]*?\*\//g, '')
-        
         // Fix unquoted keys (common Claude issue)
         extracted = extracted.replace(/(\s*)(\w+)(\s*):/g, '$1"$2"$3:')
         // But don't double-quote already quoted keys
@@ -296,7 +280,7 @@ export abstract class BaseAgent {
     
     // Strategy 3: Line-by-line cleanup for stubborn cases
     try {
-      let lines = response.split('\n')
+      let lines = cleaned.split('\n')
       
       // Find start and end of JSON
       const startIdx = lines.findIndex(l => l.trim().startsWith('{') || l.trim().startsWith('['))
@@ -310,9 +294,7 @@ export abstract class BaseAgent {
       
       if (startIdx >= 0) {
         lines = lines.slice(startIdx, endIdx + 1)
-        let cleaned = lines
-          .map(l => l.replace(/\/\/.*$/, ''))  // Remove line comments
-          .join('\n')
+        let cleaned = lines.join('\n')
         
         // Final cleanup pass
         cleaned = cleaned.replace(/,(\s*[}\]])/g, '$1')
@@ -401,10 +383,10 @@ export abstract class BaseAgent {
             return null
           }
           
-          if (data.generation_status !== 'complete') {
-            console.warn('⚠️ [getBrandForgeData] Brand book not complete:', {
+          if (data.approval_status !== 'approved' && data.generation_status !== 'complete') {
+            console.warn('⚠️ [getBrandForgeData] Brand contract not approved:', {
               propertyId: this.propertyId,
-              status: data.generation_status,
+              status: data.approval_status,
               hasData: {
                 introduction: !!data.section_1_introduction,
                 positioning: !!data.section_2_positioning,
@@ -416,8 +398,13 @@ export abstract class BaseAgent {
             return null
           }
           
-          console.log('✅ [getBrandForgeData] Found complete brand book for property:', this.propertyId)
-          return data as BrandForgeData
+          const contract = normalizeBrandAssetRow(data as unknown as Record<string, unknown>)
+          console.log('✅ [getBrandForgeData] Found approved brand contract for property:', this.propertyId)
+          return {
+            ...data,
+            ...brandContractToStorageSections(contract),
+            contract,
+          } as BrandForgeData
         },
         {
           maxAttempts: 3,
@@ -451,6 +438,64 @@ export abstract class BaseAgent {
   }
 }
 
+function escapeControlCharactersInJsonStrings(input: string): string {
+  let output = ''
+  let inString = false
+  let escaped = false
+
+  for (const character of input) {
+    if (!inString) {
+      output += character
+      if (character === '"') {
+        inString = true
+      }
+      continue
+    }
+
+    if (escaped) {
+      output += character
+      escaped = false
+      continue
+    }
+
+    if (character === '\\') {
+      output += character
+      escaped = true
+      continue
+    }
+
+    if (character === '"') {
+      output += character
+      inString = false
+      continue
+    }
+
+    switch (character) {
+      case '\b':
+        output += '\\b'
+        break
+      case '\f':
+        output += '\\f'
+        break
+      case '\n':
+        output += '\\n'
+        break
+      case '\r':
+        output += '\\r'
+        break
+      case '\t':
+        output += '\\t'
+        break
+      default:
+        output += character.charCodeAt(0) < 0x20
+          ? `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`
+          : character
+    }
+  }
+
+  return output
+}
+
 // Type definitions
 interface PropertyInfo {
   id: string
@@ -466,6 +511,8 @@ interface PropertyInfo {
 interface BrandForgeData {
   property_id: string
   generation_status: string
+  approval_status?: string
+  contract?: import('@/utils/brandforge/contracts').BrandForgeContractV1
   section_1_introduction?: unknown
   section_2_positioning?: unknown
   section_3_target_audience?: unknown

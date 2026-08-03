@@ -44,6 +44,22 @@
     {
       "path": "/api/cron/scrape-competitors",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/cron/crm-sync",
+      "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/cron/siteforge-production-health",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/siteforge-outbox",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/siteforge-analytics",
+      "schedule": "5 * * * *"
     }
   ]
 }

@@ -7,6 +7,13 @@
 import React from 'react'
 
 export interface DesignSystem {
+  colorSystem?: {
+    primary?: string
+    secondary?: string
+    accent?: string
+    background?: string
+    text?: string
+  }
   colors?: {
     primary?: string
     secondary?: string
@@ -18,13 +25,66 @@ export interface DesignSystem {
     headingFont?: string
     bodyFont?: string
   }
+  spacing?: {
+    containerMaxWidth?: string
+    sectionPadding?: string
+  }
 }
 
 interface BlockRendererProps {
   blockType: string
-  content: any
+  content: unknown
   className?: string
   designSystem?: DesignSystem
+}
+
+type BlockContent = Record<string, unknown>
+type BlockComponentProps = {
+  content: BlockContent
+  designSystem?: DesignSystem
+}
+
+function asRecord(value: unknown): BlockContent {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as BlockContent)
+    : {}
+}
+
+function getString(content: BlockContent, key: string, fallback = ''): string {
+  return typeof content[key] === 'string' ? content[key] : fallback
+}
+
+function getNumber(content: BlockContent, key: string, fallback = 0): number {
+  return typeof content[key] === 'number' ? content[key] : fallback
+}
+
+function getRecordArray(content: BlockContent, key: string): BlockContent[] {
+  return Array.isArray(content[key]) ? content[key].map(asRecord) : []
+}
+
+function getStringArray(content: BlockContent, key: string): string[] {
+  return Array.isArray(content[key])
+    ? content[key].filter((value): value is string => typeof value === 'string')
+    : []
+}
+
+function getNumberArray(content: BlockContent, key: string): number[] {
+  return Array.isArray(content[key])
+    ? content[key].filter((value): value is number => typeof value === 'number')
+    : []
+}
+
+function getImage(
+  content: BlockContent,
+  key = 'image'
+): { url: string; alt: string } | null {
+  const image = asRecord(content[key])
+  const url = getString(image, 'url')
+  if (!url) return null
+  return {
+    url,
+    alt: getString(image, 'alt', 'Property photography'),
+  }
 }
 
 type CriticalPreviewState = {
@@ -97,7 +157,7 @@ export function getCriticalPreviewState(
 function getDesignSystemStyles(designSystem?: DesignSystem): React.CSSProperties {
   if (!designSystem) return {}
   
-  const colors = designSystem.colors || {}
+  const colors = designSystem.colorSystem || designSystem.colors || {}
   const typography = designSystem.typography || {}
   
   return {
@@ -108,6 +168,8 @@ function getDesignSystemStyles(designSystem?: DesignSystem): React.CSSProperties
     '--brand-text': colors.text || '#1F2937',
     '--font-heading': typography.headingFont ? `'${typography.headingFont}', serif` : "'Playfair Display', serif",
     '--font-body': typography.bodyFont ? `'${typography.bodyFont}', sans-serif` : "'Inter', sans-serif",
+    '--container-max-width': designSystem.spacing?.containerMaxWidth || '1400px',
+    '--section-padding': designSystem.spacing?.sectionPadding || '6rem',
   } as React.CSSProperties
 }
 
@@ -115,7 +177,8 @@ function getDesignSystemStyles(designSystem?: DesignSystem): React.CSSProperties
  * Main renderer that delegates to specific block renderers
  */
 export function ACFBlockRenderer({ blockType, content, className = '', designSystem }: BlockRendererProps) {
-  if (!content || Object.keys(content).length === 0) {
+  const blockContent = asRecord(content)
+  if (Object.keys(blockContent).length === 0) {
     return (
       <div className={`p-6 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg ${className}`}>
         <div className="flex items-start gap-3">
@@ -125,7 +188,7 @@ export function ACFBlockRenderer({ blockType, content, className = '', designSys
               Content not generated for this section
             </p>
             <p className="text-yellow-700 dark:text-yellow-300 text-sm mt-1">
-              Click this section and describe what content you'd like to add.
+              Click this section and describe what content you&apos;d like to add.
             </p>
             <p className="text-yellow-600 dark:text-yellow-400 text-xs mt-2">
               Block type: {blockType}
@@ -136,7 +199,7 @@ export function ACFBlockRenderer({ blockType, content, className = '', designSys
     )
   }
 
-  const renderers: Record<string, React.FC<{ content: any; designSystem?: DesignSystem }>> = {
+  const renderers: Record<string, React.FC<BlockComponentProps>> = {
     'acf/top-slides': HeroSlides,
     'acf/text-section': TextSection,
     'acf/content-grid': ContentGrid,
@@ -169,7 +232,7 @@ export function ACFBlockRenderer({ blockType, content, className = '', designSys
     return (
       <div className={`p-4 bg-yellow-50 dark:bg-yellow-900/20 rounded border border-yellow-200 dark:border-yellow-800 ${className}`}>
         <p className="text-yellow-700 dark:text-yellow-300 text-sm">Unknown block type: {blockType}</p>
-        <pre className="text-xs mt-2 text-gray-600">{JSON.stringify(content, null, 2)}</pre>
+        <pre className="text-xs mt-2 text-gray-600">{JSON.stringify(blockContent, null, 2)}</pre>
       </div>
     )
   }
@@ -179,7 +242,7 @@ export function ACFBlockRenderer({ blockType, content, className = '', designSys
 
   return (
     <div className={className} style={brandStyles}>
-      <Renderer content={content} designSystem={designSystem} />
+      <Renderer content={blockContent} designSystem={designSystem} />
     </div>
   )
 }
@@ -187,8 +250,8 @@ export function ACFBlockRenderer({ blockType, content, className = '', designSys
 /**
  * Hero Slides - Top carousel with CTAs
  */
-function HeroSlides({ content, designSystem }: { content: any; designSystem?: DesignSystem }) {
-  const slides = content.slides || []
+function HeroSlides({ content, designSystem }: BlockComponentProps) {
+  const slides = getRecordArray(content, 'slides')
   const colors = designSystem?.colors || {}
   const typography = designSystem?.typography || {}
   
@@ -222,39 +285,49 @@ function HeroSlides({ content, designSystem }: { content: any; designSystem?: De
           : 'linear-gradient(135deg, #1F2937 0%, #111827 100%)'
       }}
     >
-      {slides.map((slide: any, idx: number) => (
-        <div key={idx} className="p-8 md:p-12 text-white">
-          <div className="max-w-2xl">
+      {slides.map((slide, idx) => {
+        const image = getImage(slide)
+        return (
+        <div key={idx} className="relative min-h-[420px] overflow-hidden p-8 text-white md:p-12">
+          {image && (
+            // SiteForge previews render approved remote asset URLs.
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={image.url}
+              alt={image.alt}
+              className="absolute inset-0 h-full w-full object-cover"
+              loading={idx === 0 ? 'eager' : 'lazy'}
+              decoding="async"
+            />
+          )}
+          <div className="absolute inset-0 bg-gradient-to-r from-black/75 via-black/45 to-black/15" />
+          <div className="relative z-10 max-w-2xl">
             <h2 
               className="text-3xl md:text-4xl font-bold mb-3"
               style={{ fontFamily: typography.headingFont ? `'${typography.headingFont}', serif` : undefined }}
             >
-              {slide.headline}
+              {getString(slide, 'headline')}
             </h2>
             <p 
               className="text-lg text-gray-200 mb-6"
               style={{ fontFamily: typography.bodyFont ? `'${typography.bodyFont}', sans-serif` : undefined }}
             >
-              {slide.subheadline}
+              {getString(slide, 'subheadline')}
             </p>
             <a 
-              href={slide.cta_link} 
+              href={getString(slide, 'cta_link', '#')}
               className="inline-block text-white font-semibold px-6 py-3 rounded-lg transition hover:opacity-90"
               style={{ 
                 backgroundColor: colors.accent || colors.primary || '#4F46E5',
                 fontFamily: typography.bodyFont ? `'${typography.bodyFont}', sans-serif` : undefined
               }}
             >
-              {slide.cta_text}
+              {getString(slide, 'cta_text')}
             </a>
           </div>
-          {slide.image_index !== null && (
-            <div className="absolute top-2 right-2 bg-black/50 text-white text-xs px-2 py-1 rounded">
-              📷 Image #{slide.image_index}
-            </div>
-          )}
         </div>
-      ))}
+        )
+      })}
     </div>
   )
 }
@@ -262,7 +335,7 @@ function HeroSlides({ content, designSystem }: { content: any; designSystem?: De
 /**
  * Text Section - Headline + content block
  */
-function TextSection({ content, designSystem }: { content: any; designSystem?: DesignSystem }) {
+function TextSection({ content, designSystem }: BlockComponentProps) {
   const typography = designSystem?.typography || {}
   
   const bgClasses: Record<string, string> = {
@@ -286,12 +359,12 @@ function TextSection({ content, designSystem }: { content: any; designSystem?: D
           className="text-2xl font-bold mb-4 text-gray-900 dark:text-white"
           style={{ fontFamily: typography.headingFont ? `'${typography.headingFont}', serif` : undefined }}
         >
-          {content.headline}
+          {getString(content, 'headline')}
         </h3>
         <div 
           className="prose dark:prose-invert max-w-none text-gray-600 dark:text-gray-300"
           style={{ fontFamily: typography.bodyFont ? `'${typography.bodyFont}', sans-serif` : undefined }}
-          dangerouslySetInnerHTML={{ __html: content.content }}
+          dangerouslySetInnerHTML={{ __html: getString(content, 'content') }}
         />
       </div>
     </div>
@@ -301,8 +374,8 @@ function TextSection({ content, designSystem }: { content: any; designSystem?: D
 /**
  * Content Grid - Grid of items with icons
  */
-function ContentGrid({ content, designSystem }: { content: any; designSystem?: DesignSystem }) {
-  const items = content.items || []
+function ContentGrid({ content, designSystem }: BlockComponentProps) {
+  const items = getRecordArray(content, 'items')
   const cols = content.columns || 3
   const colors = designSystem?.colors || {}
   const typography = designSystem?.typography || {}
@@ -319,9 +392,9 @@ function ContentGrid({ content, designSystem }: { content: any; designSystem?: D
 
   return (
     <div className={`grid grid-cols-1 ${colsClass} gap-6 p-4`}>
-      {items.map((item: any, idx: number) => (
+      {items.map((item, idx) => (
         <div key={idx} className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-sm border border-gray-100 dark:border-gray-700">
-          {item.icon && (
+          {getString(item, 'icon') && (
             <div 
               className="w-12 h-12 rounded-lg flex items-center justify-center mb-4"
               style={{ 
@@ -330,7 +403,7 @@ function ContentGrid({ content, designSystem }: { content: any; designSystem?: D
               }}
             >
               <span className="text-xl">
-                {getIconEmoji(item.icon)}
+                {getIconEmoji(getString(item, 'icon'))}
               </span>
             </div>
           )}
@@ -338,13 +411,13 @@ function ContentGrid({ content, designSystem }: { content: any; designSystem?: D
             className="font-semibold text-gray-900 dark:text-white mb-2"
             style={{ fontFamily: typography.headingFont ? `'${typography.headingFont}', serif` : undefined }}
           >
-            {item.headline}
+            {getString(item, 'headline')}
           </h4>
           <p 
             className="text-sm text-gray-600 dark:text-gray-400"
             style={{ fontFamily: typography.bodyFont ? `'${typography.bodyFont}', sans-serif` : undefined }}
           >
-            {item.description}
+            {getString(item, 'description')}
           </p>
         </div>
       ))}
@@ -355,39 +428,50 @@ function ContentGrid({ content, designSystem }: { content: any; designSystem?: D
 /**
  * Feature Section - Image + text side by side
  */
-function FeatureSection({ content, designSystem }: { content: any; designSystem?: DesignSystem }) {
+function FeatureSection({ content, designSystem }: BlockComponentProps) {
   const isImageLeft = content.layout === 'image-left'
   const colors = designSystem?.colors || {}
   const typography = designSystem?.typography || {}
+  const image = getImage(content)
   
   return (
     <div className={`flex flex-col ${isImageLeft ? 'md:flex-row' : 'md:flex-row-reverse'} gap-8 p-4 items-center`}>
       <div className="w-full md:w-1/2">
-        <div className="bg-gray-200 dark:bg-gray-700 rounded-lg aspect-video flex items-center justify-center">
-          <span className="text-gray-500 dark:text-gray-400">
-            📷 Image #{content.image_index ?? 0}
-          </span>
-        </div>
+        {image ? (
+          // SiteForge previews render approved remote asset URLs.
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={image.url}
+            alt={image.alt}
+            className="aspect-video w-full rounded-lg object-cover"
+            loading="lazy"
+            decoding="async"
+          />
+        ) : (
+          <div className="flex aspect-video items-center justify-center rounded-lg bg-gray-200 dark:bg-gray-700">
+            <span className="text-gray-500 dark:text-gray-400">Image unavailable</span>
+          </div>
+        )}
       </div>
       <div className="w-full md:w-1/2">
         <h3 
           className="text-2xl font-bold mb-4 text-gray-900 dark:text-white"
           style={{ fontFamily: typography.headingFont ? `'${typography.headingFont}', serif` : undefined }}
         >
-          {content.headline}
+          {getString(content, 'headline')}
         </h3>
         <div 
           className="prose dark:prose-invert max-w-none text-gray-600 dark:text-gray-300 mb-6"
           style={{ fontFamily: typography.bodyFont ? `'${typography.bodyFont}', sans-serif` : undefined }}
-          dangerouslySetInnerHTML={{ __html: content.content }}
+          dangerouslySetInnerHTML={{ __html: getString(content, 'content') }}
         />
-        {content.cta_text && (
+        {getString(content, 'cta_text') && (
           <a 
-            href={content.cta_link} 
+            href={getString(content, 'cta_link', '#')}
             className="inline-block text-white font-medium px-5 py-2 rounded-lg transition hover:opacity-90"
             style={{ backgroundColor: colors.primary || '#4F46E5' }}
           >
-            {content.cta_text}
+            {getString(content, 'cta_text')}
           </a>
         )}
       </div>
@@ -398,18 +482,39 @@ function FeatureSection({ content, designSystem }: { content: any; designSystem?
 /**
  * Gallery - Image grid
  */
-function Gallery({ content, designSystem }: { content: any; designSystem?: DesignSystem }) {
-  const indices = content.image_indices || []
+function Gallery({ content }: BlockComponentProps) {
+  const indices = getNumberArray(content, 'image_indices')
+  const images = getRecordArray(content, 'images')
+    .map((image) => {
+      const url = getString(image, 'url')
+      return url
+        ? { url, alt: getString(image, 'alt', 'Property gallery image') }
+        : null
+    })
+    .filter((image): image is { url: string; alt: string } => image !== null)
   const layout = content.layout || 'grid'
   
   return (
     <div className="p-4">
       <div className={`grid ${layout === 'grid' ? 'grid-cols-2 md:grid-cols-3' : 'grid-cols-1'} gap-4`}>
-        {indices.map((idx: number) => (
-          <div key={idx} className="bg-gray-200 dark:bg-gray-700 rounded-lg aspect-square flex items-center justify-center">
-            <span className="text-gray-500 dark:text-gray-400">📷 #{idx}</span>
-          </div>
-        ))}
+        {images.length > 0
+          ? images.map((image) => (
+              // SiteForge previews render approved remote asset URLs.
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                key={image.url}
+                src={image.url}
+                alt={image.alt}
+                className="aspect-square w-full rounded-lg object-cover"
+                loading="lazy"
+                decoding="async"
+              />
+            ))
+          : indices.map((idx: number) => (
+              <div key={idx} className="flex aspect-square items-center justify-center rounded-lg bg-gray-200 dark:bg-gray-700">
+                <span className="text-gray-500 dark:text-gray-400">Image unavailable</span>
+              </div>
+            ))}
       </div>
     </div>
   )
@@ -418,7 +523,7 @@ function Gallery({ content, designSystem }: { content: any; designSystem?: Desig
 /**
  * Form Section - Contact/inquiry form
  */
-function FormSection({ content, designSystem }: { content: any; designSystem?: DesignSystem }) {
+function FormSection({ content, designSystem }: BlockComponentProps) {
   const colors = designSystem?.colors || {}
   const typography = designSystem?.typography || {}
   
@@ -428,13 +533,13 @@ function FormSection({ content, designSystem }: { content: any; designSystem?: D
         className="text-2xl font-bold mb-2 text-gray-900 dark:text-white text-center"
         style={{ fontFamily: typography.headingFont ? `'${typography.headingFont}', serif` : undefined }}
       >
-        {content.heading}
+        {getString(content, 'heading')}
       </h3>
       <p 
         className="text-gray-600 dark:text-gray-400 mb-6 text-center"
         style={{ fontFamily: typography.bodyFont ? `'${typography.bodyFont}', sans-serif` : undefined }}
       >
-        {content.subheading}
+        {getString(content, 'subheading')}
       </p>
       <div className="space-y-4">
         <input 
@@ -475,10 +580,12 @@ function FormSection({ content, designSystem }: { content: any; designSystem?: D
 /**
  * Map Section - explicit degraded state, no fake live map rendering
  */
-function MapSection({ content, designSystem }: { content: any; designSystem?: DesignSystem }) {
+function MapSection({ content }: BlockComponentProps) {
   const address = typeof content.address === 'string' ? content.address : ''
+  const latitude = typeof content.latitude === 'number' ? content.latitude : null
+  const longitude = typeof content.longitude === 'number' ? content.longitude : null
   const hasCoordinates =
-    typeof content.latitude === 'number' && typeof content.longitude === 'number'
+    latitude !== null && longitude !== null
   const hasLocation = address.trim().length > 0 || hasCoordinates
 
   if (!hasLocation) {
@@ -502,11 +609,11 @@ function MapSection({ content, designSystem }: { content: any; designSystem?: De
         {address && <p>Address: {address}</p>}
         {hasCoordinates && (
           <p>
-            Coordinates: {content.latitude}, {content.longitude}
+            Coordinates: {latitude}, {longitude}
           </p>
         )}
-        <p>Zoom: {content.zoom_level || 15}</p>
-        {content.show_directions && (
+        <p>Zoom: {typeof content.zoom_level === 'number' ? content.zoom_level : 15}</p>
+        {content.show_directions === true && (
           <p className="text-xs text-gray-500 dark:text-gray-400">Directions enabled</p>
         )}
         <div className="pt-1 text-xs text-gray-500 dark:text-gray-400">
@@ -520,24 +627,24 @@ function MapSection({ content, designSystem }: { content: any; designSystem?: De
 /**
  * Links Section - CTA buttons
  */
-function LinksSection({ content, designSystem }: { content: any; designSystem?: DesignSystem }) {
-  const links = content.links || []
+function LinksSection({ content, designSystem }: BlockComponentProps) {
+  const links = getRecordArray(content, 'links')
   const colors = designSystem?.colors || {}
   
   return (
     <div className="flex flex-wrap gap-4 justify-center p-4">
-      {links.map((link: any, idx: number) => (
+      {links.map((link, idx) => (
         <a
           key={idx}
-          href={link.url}
+          href={getString(link, 'url', '#')}
           className={`px-6 py-3 rounded-lg font-medium transition hover:opacity-90 ${
-            link.style !== 'primary'
+            getString(link, 'style') !== 'primary'
               ? 'bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-900 dark:text-white'
               : 'text-white'
           }`}
-          style={link.style === 'primary' ? { backgroundColor: colors.primary || '#4F46E5' } : undefined}
+          style={getString(link, 'style') === 'primary' ? { backgroundColor: colors.primary || '#4F46E5' } : undefined}
         >
-          {link.text}
+          {getString(link, 'text')}
         </a>
       ))}
     </div>
@@ -547,25 +654,25 @@ function LinksSection({ content, designSystem }: { content: any; designSystem?: 
 /**
  * Accordion Section - FAQ style
  */
-function AccordionSection({ content, designSystem }: { content: any; designSystem?: DesignSystem }) {
-  const items = content.items || []
+function AccordionSection({ content, designSystem }: BlockComponentProps) {
+  const items = getRecordArray(content, 'items')
   const typography = designSystem?.typography || {}
   
   return (
     <div className="space-y-3 p-4">
-      {items.map((item: any, idx: number) => (
+      {items.map((item, idx) => (
         <div key={idx} className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
           <div 
             className="bg-gray-50 dark:bg-gray-800 px-4 py-3 font-medium text-gray-900 dark:text-white flex justify-between items-center"
             style={{ fontFamily: typography.headingFont ? `'${typography.headingFont}', serif` : undefined }}
           >
-            {item.title}
+            {getString(item, 'title')}
             <span className="text-gray-400">▼</span>
           </div>
           <div 
             className="px-4 py-3 text-gray-600 dark:text-gray-300 prose dark:prose-invert max-w-none"
             style={{ fontFamily: typography.bodyFont ? `'${typography.bodyFont}', sans-serif` : undefined }}
-            dangerouslySetInnerHTML={{ __html: item.content }}
+            dangerouslySetInnerHTML={{ __html: getString(item, 'content') }}
           />
         </div>
       ))}
@@ -576,8 +683,9 @@ function AccordionSection({ content, designSystem }: { content: any; designSyste
 /**
  * Image Section - Single image
  */
-function ImageSection({ content, designSystem }: { content: any; designSystem?: DesignSystem }) {
+function ImageSection({ content, designSystem }: BlockComponentProps) {
   const typography = designSystem?.typography || {}
+  const image = getImage(content)
   const sizeClasses: Record<string, string> = {
     full: 'w-full',
     large: 'max-w-4xl mx-auto',
@@ -587,15 +695,27 @@ function ImageSection({ content, designSystem }: { content: any; designSystem?: 
 
   return (
     <div className={`p-4 ${sizeClass}`}>
-      <div className="bg-gray-200 dark:bg-gray-700 rounded-lg aspect-video flex items-center justify-center">
-        <span className="text-gray-500 dark:text-gray-400">📷 Image #{content.image_index ?? 0}</span>
-      </div>
-      {content.caption && (
+      {image ? (
+        // SiteForge previews render approved remote asset URLs.
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={image.url}
+          alt={image.alt}
+          className="aspect-video w-full rounded-lg object-cover"
+          loading="lazy"
+          decoding="async"
+        />
+      ) : (
+        <div className="flex aspect-video items-center justify-center rounded-lg bg-gray-200 dark:bg-gray-700">
+          <span className="text-gray-500 dark:text-gray-400">Image unavailable</span>
+        </div>
+      )}
+      {getString(content, 'caption') && (
         <p 
           className="text-center text-sm text-gray-500 dark:text-gray-400 mt-2 italic"
           style={{ fontFamily: typography.bodyFont ? `'${typography.bodyFont}', sans-serif` : undefined }}
         >
-          {content.caption}
+          {getString(content, 'caption')}
         </p>
       )}
     </div>
@@ -605,11 +725,11 @@ function ImageSection({ content, designSystem }: { content: any; designSystem?: 
 /**
  * HTML Section - Custom HTML
  */
-function HtmlSection({ content, designSystem }: { content: any; designSystem?: DesignSystem }) {
+function HtmlSection({ content }: BlockComponentProps) {
   return (
     <div 
       className="p-4"
-      dangerouslySetInnerHTML={{ __html: content.html_content }}
+      dangerouslySetInnerHTML={{ __html: getString(content, 'html_content') }}
     />
   )
 }
@@ -617,32 +737,56 @@ function HtmlSection({ content, designSystem }: { content: any; designSystem?: D
 /**
  * Menu Section - Navigation links
  */
-function MenuSection({ content, designSystem }: { content: any; designSystem?: DesignSystem }) {
-  const items = content.menu_items || []
+function MenuSection({ content, designSystem }: BlockComponentProps) {
+  const items = Array.isArray(content.menu_items) ? content.menu_items : []
   const typography = designSystem?.typography || {}
   
   return (
     <div className="flex flex-wrap gap-2 justify-center p-4 bg-gray-100 dark:bg-gray-800 rounded-lg">
-      {items.map((item: string, idx: number) => (
-        <span 
-          key={idx}
+      {items.map((item: unknown, idx: number) => {
+        const menuItem =
+          item && typeof item === 'object' && !Array.isArray(item)
+            ? (item as Record<string, unknown>)
+            : null
+        const label =
+          typeof item === 'string'
+            ? item
+            : typeof menuItem?.label === 'string'
+              ? menuItem.label
+              : 'Explore'
+        const link =
+          typeof menuItem?.link === 'string' ? menuItem.link : undefined
+
+        return (
+        <a
+          key={`${label}-${idx}`}
+          href={link}
           className="px-4 py-2 bg-white dark:bg-gray-700 rounded-full text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600 cursor-pointer transition"
           style={{ fontFamily: typography.bodyFont ? `'${typography.bodyFont}', sans-serif` : undefined }}
         >
-          {item}
-        </span>
-      ))}
+          {label}
+        </a>
+        )
+      })}
     </div>
   )
 }
 
+const FLOOR_PLAN_PLACEHOLDER_SLOTS = [
+  'Floor plan placeholder 1',
+  'Floor plan placeholder 2',
+  'Floor plan placeholder 3',
+]
+
 /**
- * Plans Availability - explicit readiness view, no fake inventory placeholders
+ * Plans Availability - explicit placeholders without invented inventory facts
  */
-function PlansAvailability({ content, designSystem }: { content: any; designSystem?: DesignSystem }) {
+function PlansAvailability({ content, designSystem }: BlockComponentProps) {
   const colors = designSystem?.colors || {}
   const typography = designSystem?.typography || {}
-  const floorPlans = Array.isArray(content.floor_plans) ? content.floor_plans : []
+  const floorPlans = getRecordArray(content, 'floor_plans')
+  const showPricing = content.show_pricing !== false
+  const showAvailability = content.show_availability !== false
   
   // Generate gradient from brand colors
   const gradientFrom = colors.primary ? `${colors.primary}10` : 'rgb(238 242 255)'
@@ -658,42 +802,113 @@ function PlansAvailability({ content, designSystem }: { content: any; designSyst
           className="text-lg font-semibold text-gray-900 dark:text-white mb-2"
           style={{ fontFamily: typography.headingFont ? `'${typography.headingFont}', serif` : undefined }}
         >
-          Floor plan inventory unavailable
+          Floor plans coming soon
         </h4>
         <p
-          className="text-sm text-gray-700 dark:text-gray-300"
+          className="text-sm text-gray-700 dark:text-gray-300 mb-5"
           style={{ fontFamily: typography.bodyFont ? `'${typography.bodyFont}', sans-serif` : undefined }}
         >
-          This block depends on real PMS floor-plan data. Preview omits synthetic plans so deploy
-          readiness is explicit.
+          These placeholders reserve the final layout without inventing pricing, availability, or
+          unit details. Add reviewed floor plans whenever they are ready.
         </p>
-        <p className="text-xs text-gray-500 mt-2">
-          Data source: {content.data_source || 'yardi'}
-        </p>
+        <div className="grid gap-3 sm:grid-cols-3" aria-label="Future floor plan placeholders">
+          {FLOOR_PLAN_PLACEHOLDER_SLOTS.map((label) => (
+            <div
+              key={label}
+              className="rounded-lg border border-dashed border-gray-300 bg-white/60 p-4 dark:border-gray-600 dark:bg-gray-900/40"
+            >
+              <div className="mb-3 aspect-[4/3] rounded-md bg-gray-200/80 dark:bg-gray-700/80" />
+              <div className="mb-2 h-3 w-2/3 rounded bg-gray-300 dark:bg-gray-600" />
+              <div className="h-3 w-1/2 rounded bg-gray-200 dark:bg-gray-700" />
+              <span className="sr-only">{label}; details to be added</span>
+            </div>
+          ))}
+        </div>
       </div>
     )
   }
   
   return (
-    <div 
-      className="rounded-lg p-8 text-center"
+    <div
+      className="rounded-lg p-8"
       style={{ background: `linear-gradient(135deg, ${gradientFrom} 0%, ${gradientTo} 100%)` }}
     >
-      <h4 
-        className="text-lg font-semibold text-gray-900 dark:text-white mb-2"
+      <h4
+        className="mb-2 text-center text-lg font-semibold text-gray-900 dark:text-white"
         style={{ fontFamily: typography.headingFont ? `'${typography.headingFont}', serif` : undefined }}
       >
         Floor Plans Available
       </h4>
-      <p className="text-sm text-gray-700 dark:text-gray-300">
-        {floorPlans.length} plan{floorPlans.length === 1 ? '' : 's'} in preview data
-      </p>
-      <p 
-        className="text-gray-600 dark:text-gray-400 text-sm"
+      <p
+        className="mb-6 text-center text-sm text-gray-600 dark:text-gray-400"
         style={{ fontFamily: typography.bodyFont ? `'${typography.bodyFont}', sans-serif` : undefined }}
       >
-        Data source: {content.data_source || 'yardi'}
+        {floorPlans.length} reviewed plan{floorPlans.length === 1 ? '' : 's'}
       </p>
+      <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+        {floorPlans.map((plan, index) => {
+          const name = getString(plan, 'name', `Floor plan ${index + 1}`)
+          const imageUrl = getString(plan, 'image_url')
+          const bedrooms = getNumber(plan, 'bedrooms')
+          const bathrooms = getNumber(plan, 'bathrooms', -1)
+          const sqftMin = getNumber(plan, 'sqft_min', -1)
+          const sqftMax = getNumber(plan, 'sqft_max', -1)
+          const rentMin = getNumber(plan, 'rent_min', -1)
+          const rentMax = getNumber(plan, 'rent_max', -1)
+          const availableCount = getNumber(plan, 'available_count', -1)
+          const sqft =
+            sqftMin >= 0
+              ? sqftMax >= 0 && sqftMax !== sqftMin
+                ? `${sqftMin.toLocaleString()}–${sqftMax.toLocaleString()} sq ft`
+                : `${sqftMin.toLocaleString()} sq ft`
+              : null
+          const rent =
+            rentMin >= 0
+              ? rentMax >= 0 && rentMax !== rentMin
+                ? `$${rentMin.toLocaleString()}–$${rentMax.toLocaleString()}`
+                : `From $${rentMin.toLocaleString()}`
+              : null
+
+          return (
+            <article
+              key={getString(plan, 'id', `${name}-${index}`)}
+              className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-900"
+            >
+              {imageUrl && (
+                // The preview supports user-managed Supabase and provider URLs.
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={imageUrl}
+                  alt={getString(plan, 'image_alt', `${name} floor plan`)}
+                  className="aspect-[4/3] w-full bg-white object-contain p-3"
+                  loading="lazy"
+                  decoding="async"
+                />
+              )}
+              <div className="space-y-2 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <h5 className="font-semibold text-gray-900 dark:text-white">{name}</h5>
+                  {showPricing && rent && (
+                    <span className="shrink-0 text-sm font-semibold text-gray-900 dark:text-white">
+                      {rent}
+                    </span>
+                  )}
+                </div>
+                <p className="text-sm text-gray-700 dark:text-gray-300">
+                  {bedrooms === 0 ? 'Studio' : `${bedrooms} bedroom${bedrooms === 1 ? '' : 's'}`}
+                  {bathrooms >= 0 ? ` · ${bathrooms} bath${bathrooms === 1 ? '' : 's'}` : ''}
+                  {sqft ? ` · ${sqft}` : ''}
+                </p>
+                {showAvailability && availableCount >= 0 && (
+                  <p className="text-sm text-gray-600 dark:text-gray-400">
+                    {availableCount} available
+                  </p>
+                )}
+              </div>
+            </article>
+          )
+        })}
+      </div>
     </div>
   )
 }
@@ -701,8 +916,8 @@ function PlansAvailability({ content, designSystem }: { content: any; designSyst
 /**
  * Points of Interest - Neighborhood map
  */
-function PointsOfInterest({ content, designSystem }: { content: any; designSystem?: DesignSystem }) {
-  const categories = content.categories || []
+function PointsOfInterest({ content, designSystem }: BlockComponentProps) {
+  const categories = getStringArray(content, 'categories')
   const colors = designSystem?.colors || {}
   const typography = designSystem?.typography || {}
   
@@ -716,18 +931,18 @@ function PointsOfInterest({ content, designSystem }: { content: any; designSyste
         className="text-lg font-medium text-gray-900 dark:text-white mb-4"
         style={{ fontFamily: typography.headingFont ? `'${typography.headingFont}', serif` : undefined }}
       >
-        {content.intro_text}
+        {getString(content, 'intro_text')}
       </p>
       <div className="bg-gray-200 dark:bg-gray-700 rounded-lg aspect-video flex items-center justify-center mb-4">
         <div className="text-center">
           <span className="text-4xl mb-2 block">📍</span>
           <span className="text-gray-500 dark:text-gray-400">
-            Points of Interest Map ({content.radius_miles || 2} mile radius)
+            Points of Interest Map ({typeof content.radius_miles === 'number' ? content.radius_miles : 2} mile radius)
           </span>
         </div>
       </div>
       <div className="flex flex-wrap gap-2 justify-center">
-        {categories.map((cat: string, idx: number) => (
+        {categories.map((cat, idx) => (
           <span 
             key={idx}
             className="px-3 py-1 rounded-full text-sm capitalize"

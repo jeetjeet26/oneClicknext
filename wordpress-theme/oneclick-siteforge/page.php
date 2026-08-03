@@ -17,12 +17,8 @@ get_header();
 	while ( have_posts() ) {
 		the_post();
 		?>
-		<article id="post-<?php the_ID(); ?>" <?php post_class(); ?>>
-			<header class="page-header">
-				<?php the_title( '<h1 class="page-title">', '</h1>' ); ?>
-			</header>
-
-			<div class="page-content">
+		<article id="post-<?php the_ID(); ?>" <?php post_class( 'siteforge-page' ); ?>>
+			<div class="page-content siteforge-page-content">
 				<?php the_content(); ?>
 			</div>
 

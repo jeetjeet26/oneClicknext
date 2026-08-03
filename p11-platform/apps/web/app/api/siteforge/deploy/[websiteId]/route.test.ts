@@ -1,330 +1,181 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NextRequest } from 'next/server'
 
-const authGetUserMock = vi.fn()
-const createClientMock = vi.fn()
-const createServiceClientMock = vi.fn()
-const validatePropertyAccessMock = vi.fn()
-const deployToWordPressMock = vi.fn()
-const deployToExistingWordPressMock = vi.fn()
-const getPropertyContextMock = vi.fn()
-const fromMock = vi.fn()
-const serviceFromMock = vi.fn()
-
-vi.mock('@/utils/supabase/server', () => ({
-  createClient: createClientMock,
+const {
+  authGetUser,
+  createClient,
+  createServiceClient,
+  validatePropertyAccess,
+  from,
+  start,
+} = vi.hoisted(() => ({
+  authGetUser: vi.fn(),
+  createClient: vi.fn(),
+  createServiceClient: vi.fn(),
+  validatePropertyAccess: vi.fn(),
+  from: vi.fn(),
+  start: vi.fn(),
 }))
 
-vi.mock('@/utils/supabase/admin', () => ({
-  createServiceClient: createServiceClientMock,
+vi.mock('@/utils/supabase/server', () => ({ createClient }))
+vi.mock('@/utils/supabase/admin', () => ({ createServiceClient }))
+vi.mock('@/utils/services/auth-guard', () => ({ validatePropertyAccess }))
+vi.mock('workflow/api', () => ({ start }))
+vi.mock('@/utils/siteforge/wordpress/credential-vault', () => ({
+  getWordPressCredentialReference: vi.fn(),
+}))
+vi.mock('@/workflows/siteforge-staging-deployment', () => ({
+  siteForgeStagingDeploymentWorkflow: vi.fn(),
 }))
 
-vi.mock('@/utils/services/auth-guard', () => ({
-  validatePropertyAccess: validatePropertyAccessMock,
-}))
-
-vi.mock('@/utils/siteforge/wordpress-client', () => ({
-  deployToWordPress: deployToWordPressMock,
-  deployToExistingWordPress: deployToExistingWordPressMock,
-}))
-
-vi.mock('@/utils/siteforge/brand-intelligence', () => ({
-  getPropertyContext: getPropertyContextMock,
-}))
-
-function makeNextRequest(url: string, init?: RequestInit): NextRequest {
-  return new Request(url, init) as NextRequest
+const ids = {
+  website: '11111111-1111-4111-8111-111111111111',
+  org: '22222222-2222-4222-8222-222222222222',
+  property: '33333333-3333-4333-8333-333333333333',
+  artifact: '44444444-4444-4444-8444-444444444444',
+  approval: '55555555-5555-4555-8555-555555555555',
+  target: '66666666-6666-4666-8666-666666666666',
+  job: '77777777-7777-4777-8777-777777777777',
+  deployment: '88888888-8888-4888-8888-888888888888',
 }
 
-describe('siteforge deploy route auth', () => {
+function request(path: string): NextRequest {
+  const url = `http://localhost${path}`
+  const value = new Request(url, { method: 'POST' }) as NextRequest
+  Object.defineProperty(value, 'nextUrl', { value: new URL(url) })
+  return value
+}
+
+function builder(result: unknown) {
+  const value: Record<string, unknown> = {}
+  for (const method of ['select', 'eq', 'in', 'contains', 'neq', 'limit', 'insert', 'update']) {
+    value[method] = vi.fn(() => value)
+  }
+  value.single = vi.fn().mockResolvedValue(result)
+  value.maybeSingle = vi.fn().mockResolvedValue(result)
+  return value
+}
+
+describe('Cloudways staging deployment route', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    fromMock.mockReset()
-    serviceFromMock.mockReset()
-    createClientMock.mockResolvedValue({
-      auth: { getUser: authGetUserMock },
-      from: fromMock,
-    })
-    createServiceClientMock.mockReturnValue({
-      from: serviceFromMock,
-    })
+    vi.stubEnv('NODE_ENV', 'test')
+    createClient.mockResolvedValue({ auth: { getUser: authGetUser } })
+    createServiceClient.mockReturnValue({ from })
   })
 
-  it('POST returns 401 when unauthenticated', async () => {
-    authGetUserMock.mockResolvedValue({ data: { user: null }, error: null })
-
+  it('requires authentication', async () => {
+    authGetUser.mockResolvedValue({ data: { user: null } })
     const { POST } = await import('./route')
-    const response = await POST(
-      makeNextRequest('http://localhost/api/siteforge/deploy/website-1', { method: 'POST' }),
-      { params: Promise.resolve({ websiteId: 'website-1' }) },
-    )
-
+    const response = await POST(request(`/api/siteforge/deploy/${ids.website}`), {
+      params: Promise.resolve({ websiteId: ids.website }),
+    })
     expect(response.status).toBe(401)
-    await expect(response.json()).resolves.toEqual({ error: 'Unauthorized' })
   })
 
-  it('POST returns 403 when property access is denied', async () => {
-    authGetUserMock.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
-    validatePropertyAccessMock.mockResolvedValue({ authorized: false })
-
-    const singleMock = vi.fn().mockResolvedValue({
-      data: { id: 'website-1', property_id: 'property-1' },
-      error: null,
+  it('preserves tenant-safe property authorization', async () => {
+    authGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } })
+    validatePropertyAccess.mockResolvedValue({ authorized: false })
+    from.mockReturnValueOnce(
+      builder({
+        data: {
+          id: ids.website,
+          org_id: ids.org,
+          property_id: ids.property,
+          current_artifact_version_id: ids.artifact,
+        },
+        error: null,
+      })
+    )
+    const { POST } = await import('./route')
+    const response = await POST(request(`/api/siteforge/deploy/${ids.website}`), {
+      params: Promise.resolve({ websiteId: ids.website }),
     })
-    const eqMock = vi.fn().mockReturnValue({ single: singleMock })
-    const selectMock = vi.fn().mockReturnValue({ eq: eqMock })
-    serviceFromMock.mockReturnValue({ select: selectMock })
+    expect(response.status).toBe(403)
+  })
+
+  it('queues an exact staging release without writing a legacy job', async () => {
+    authGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } })
+    validatePropertyAccess.mockResolvedValue({ authorized: true })
+    start.mockResolvedValue({ runId: 'staging-run-1', cancel: vi.fn() })
+
+    const queues: Record<string, ReturnType<typeof builder>[]> = {
+      property_websites: [
+        builder({
+          data: {
+            id: ids.website,
+            org_id: ids.org,
+            property_id: ids.property,
+            current_artifact_version_id: ids.artifact,
+            canonical_preview_artifact_id: ids.artifact,
+            canonical_preview_content_hash: 'a'.repeat(64),
+            wordpress_credential_ref: null,
+            staging_artifact_id: null,
+            staging_content_hash: null,
+            staging_url: null,
+          },
+          error: null,
+        }),
+        builder({ data: { id: ids.website }, error: null }),
+      ],
+      siteforge_blueprint_versions: [
+        builder({
+          data: {
+            id: ids.artifact,
+            content_hash: 'a'.repeat(64),
+            asset_manifest_hash: 'b'.repeat(64),
+            base_theme_package_sha256: 'c'.repeat(64),
+            overlay_package_sha256: null,
+            deployment_decision: 'approved',
+            deployment_approved_at: '2026-07-30T20:00:00.000Z',
+            confirmed_approval_id: ids.approval,
+          },
+          error: null,
+        }),
+      ],
+      siteforge_wordpress_targets: [
+        builder({ data: null, error: null }),
+        builder({ data: { id: ids.target }, error: null }),
+      ],
+      shared_jobs: [
+        builder({ data: null, error: null }),
+        builder({ data: { id: ids.job }, error: null }),
+        builder({ data: { id: ids.job }, error: null }),
+      ],
+      siteforge_artifact_deployments: [
+        builder({ data: null, error: null }),
+        builder({ data: { id: ids.deployment }, error: null }),
+        builder({ data: { id: ids.deployment }, error: null }),
+      ],
+    }
+    from.mockImplementation((table: string) => {
+      const next = queues[table]?.shift()
+      if (!next) throw new Error(`Unexpected ${table} query`)
+      return next
+    })
 
     const { POST } = await import('./route')
     const response = await POST(
-      makeNextRequest('http://localhost/api/siteforge/deploy/website-1', { method: 'POST' }),
-      { params: Promise.resolve({ websiteId: 'website-1' }) },
+      request(`/api/siteforge/deploy/${ids.website}?simulate=1`),
+      { params: Promise.resolve({ websiteId: ids.website }) }
     )
-
-    expect(response.status).toBe(403)
-    await expect(response.json()).resolves.toEqual({ error: 'Forbidden' })
-  })
-})
-
-describe('siteforge deploy background diagnostics', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    vi.unstubAllEnvs()
-  })
-
-  it('persists success deployment diagnostics after cloudways deployment', async () => {
-    vi.stubEnv('CLOUDWAYS_API_KEY', 'cw-key')
-    vi.stubEnv('CLOUDWAYS_EMAIL', 'jesse@p11.com')
-    vi.stubEnv('SITEFORGE_WP_URL', '')
-    vi.stubEnv('SITEFORGE_WP_USERNAME', '')
-    vi.stubEnv('SITEFORGE_WP_APP_PASSWORD', '')
-
-    const page = {
-      slug: 'home',
-      title: 'Home',
-      purpose: 'Convert visitors',
-      sections: [],
-    }
-
-    const updateEqMock = vi.fn().mockResolvedValue({ error: null })
-    const updateMock = vi.fn().mockReturnValue({ eq: updateEqMock })
-    const serviceFromMock = vi.fn((table: string) => {
-      if (table === 'website_assets') {
-        return {
-          select: vi.fn().mockReturnValue({
-            eq: vi.fn().mockResolvedValue({
-              data: [{ id: 'logo-asset', website_id: 'website-1' }],
-              error: null,
-            }),
-          }),
-        }
-      }
-      if (table === 'property_websites') {
-        return {
-          update: updateMock,
-        }
-      }
-      throw new Error(`Unexpected table: ${table}`)
-    })
-
-    createServiceClientMock.mockReturnValue({
-      from: serviceFromMock,
-    })
-    getPropertyContextMock.mockResolvedValue({
-      name: 'Sunset Apartments',
-      tagline: 'Tour today',
-    })
-    deployToWordPressMock.mockResolvedValue({
-      instanceId: '50710',
-      url: 'https://sunset-50710.cloudwaysapps.com',
-      adminUrl: 'https://sunset-50710.cloudwaysapps.com/wp-admin',
-      credentials: { username: 'admin', password: 'wp-secret' },
-    })
-
-    const { deployToWordPressAsync } = await import('./route')
-    await deployToWordPressAsync('website-1', {
-      property_id: 'property-1',
-      blueprint: { pages: [page], version: 7, updatedAt: '2026-03-16T00:00:00.000Z' },
-      site_blueprint_version: 7,
-      generation_input: { prompt: 'Use a luxury tone' },
-    })
-
-    expect(updateMock).toHaveBeenCalled()
-    expect(updateMock.mock.calls.at(-1)?.[0]).toEqual(
+    expect(response.status).toBe(202)
+    await expect(response.json()).resolves.toEqual(
       expect.objectContaining({
-        generation_status: 'complete',
-        error_message: null,
-        current_step: 'Deployment complete (verified 1 pages, 1 assets).',
-        generation_input: expect.objectContaining({
-          prompt: 'Use a luxury tone',
-          deploymentDiagnostics: expect.objectContaining({
-            status: 'success',
-            provider: 'cloudways',
-            pagesAttempted: 1,
-            assetsAttempted: 1,
-            verification: expect.objectContaining({
-              enabled: true,
-              status: 'passed',
-            }),
-            target: expect.objectContaining({
-              url: 'https://sunset-50710.cloudwaysapps.com',
-            }),
-            deploySource: {
-              field: 'blueprint',
-              blueprintVersion: 7,
-              blueprintUpdatedAt: '2026-03-16T00:00:00.000Z',
-            },
-          }),
-        }),
+        jobId: ids.job,
+        deploymentId: ids.deployment,
+        targetId: ids.target,
+        promotionPolicy: 'Push to Live is available only in Cloudways.',
       })
     )
-    expect(updateEqMock).toHaveBeenCalledWith('id', 'website-1')
-  })
-
-  it('persists verification failure diagnostics when deployment verification fails', async () => {
-    vi.stubEnv('CLOUDWAYS_API_KEY', '')
-    vi.stubEnv('CLOUDWAYS_EMAIL', '')
-    vi.stubEnv('SITEFORGE_WP_URL', 'https://site.example.com')
-    vi.stubEnv('SITEFORGE_WP_USERNAME', 'admin')
-    vi.stubEnv('SITEFORGE_WP_APP_PASSWORD', 'app-password')
-
-    const updateEqMock = vi.fn().mockResolvedValue({ error: null })
-    const updateMock = vi.fn().mockReturnValue({ eq: updateEqMock })
-    const serviceFromMock = vi.fn((table: string) => {
-      if (table === 'website_assets') {
-        return {
-          select: vi.fn().mockReturnValue({
-            eq: vi.fn().mockResolvedValue({
-              data: [{ id: 'logo-asset', website_id: 'website-1' }],
-              error: null,
-            }),
-          }),
-        }
-      }
-      if (table === 'property_websites') {
-        return {
-          update: updateMock,
-        }
-      }
-      throw new Error(`Unexpected table: ${table}`)
-    })
-
-    createServiceClientMock.mockReturnValue({
-      from: serviceFromMock,
-    })
-    getPropertyContextMock.mockResolvedValue({
-      name: 'Sunset Apartments',
-      tagline: 'Tour today',
-    })
-    deployToExistingWordPressMock.mockRejectedValue(
-      new Error('Deployment verification failed: missing published pages for slugs: home')
-    )
-
-    const { deployToWordPressAsync } = await import('./route')
-    await deployToWordPressAsync('website-1', {
-      property_id: 'property-1',
-      pages_generated: [{ slug: 'home', title: 'Home', purpose: 'Convert', sections: [] }],
-      generation_input: { prompt: 'Use a luxury tone' },
-    })
-
-    expect(updateMock).toHaveBeenCalled()
-    expect(updateMock.mock.calls.at(-1)?.[0]).toEqual(
+    expect(start).toHaveBeenCalledWith(expect.any(Function), [
       expect.objectContaining({
-        generation_status: 'deploy_failed',
-        current_step: 'Deployment failed during verification',
-        error_message: 'Deployment verification failed: missing published pages for slugs: home',
-        generation_input: expect.objectContaining({
-          prompt: 'Use a luxury tone',
-          deploymentDiagnostics: expect.objectContaining({
-            status: 'failed',
-            provider: 'existing_wordpress',
-            pagesAttempted: 1,
-            assetsAttempted: 1,
-            verification: expect.objectContaining({
-              status: 'failed',
-            }),
-            error: expect.objectContaining({
-              category: 'verification',
-            }),
-            deploySource: {
-              field: 'pages_generated',
-              blueprintVersion: null,
-              blueprintUpdatedAt: null,
-            },
-          }),
-        }),
-      })
-    )
-    expect(updateEqMock).toHaveBeenCalledWith('id', 'website-1')
-  })
-
-  it('persists deterministic local simulation diagnostics when enabled', async () => {
-    vi.stubEnv('CLOUDWAYS_API_KEY', '')
-    vi.stubEnv('CLOUDWAYS_EMAIL', '')
-    vi.stubEnv('SITEFORGE_WP_URL', '')
-    vi.stubEnv('SITEFORGE_WP_USERNAME', '')
-    vi.stubEnv('SITEFORGE_WP_APP_PASSWORD', '')
-    vi.stubEnv('NEXT_PUBLIC_BASE_URL', 'http://127.0.0.1:3000')
-
-    const updateEqMock = vi.fn().mockResolvedValue({ error: null })
-    const updateMock = vi.fn().mockReturnValue({ eq: updateEqMock })
-    const localServiceFromMock = vi.fn((table: string) => {
-      if (table === 'website_assets') {
-        return {
-          select: vi.fn().mockReturnValue({
-            eq: vi.fn().mockResolvedValue({
-              data: [],
-              error: null,
-            }),
-          }),
-        }
-      }
-      if (table === 'property_websites') {
-        return {
-          update: updateMock,
-        }
-      }
-      throw new Error(`Unexpected table: ${table}`)
-    })
-
-    createServiceClientMock.mockReturnValue({
-      from: localServiceFromMock,
-    })
-
-    const { deployToWordPressAsync } = await import('./route')
-    await deployToWordPressAsync(
-      'website-1',
-      {
-        property_id: 'property-1',
-        pages_generated: [{ slug: 'home', title: 'Home', purpose: 'Convert', sections: [] }],
-        generation_input: { prompt: 'Use a luxury tone' },
-      },
-      { localSimulation: true }
-    )
-
-    expect(getPropertyContextMock).not.toHaveBeenCalled()
-    expect(updateMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        generation_status: 'complete',
-        wp_url: 'http://127.0.0.1:3000/siteforge/preview/website-1',
-        wp_admin_url: 'http://127.0.0.1:3000/siteforge/preview/website-1',
-        generation_input: expect.objectContaining({
-          deploymentDiagnostics: expect.objectContaining({
-            status: 'success',
-            provider: 'local_simulation',
-            deploySource: {
-              field: 'pages_generated',
-              blueprintVersion: null,
-              blueprintUpdatedAt: null,
-            },
-            verification: expect.objectContaining({
-              status: 'passed',
-              message: 'Deployment verified in deterministic local simulation mode.',
-            }),
-          }),
-        }),
-      })
-    )
-    expect(updateEqMock).toHaveBeenCalledWith('id', 'website-1')
+        artifactId: ids.artifact,
+        deploymentId: ids.deployment,
+        targetId: ids.target,
+        localSimulation: true,
+      }),
+    ])
+    expect(from).not.toHaveBeenCalledWith('siteforge_jobs')
   })
 })

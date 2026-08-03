@@ -5,6 +5,7 @@ import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { upsertManagedKnowledgeSource } from '@/utils/services/knowledge-sources'
 import type { Json } from '@/types/supabase'
 import OpenAI from 'openai'
+import { normalizeBrandAssetRow } from '@/utils/brandforge/normalize'
 
 const supabase = createServiceClient()
 
@@ -131,9 +132,29 @@ export async function POST(request: NextRequest) {
     if (brand.property_id !== propertyId) {
       return NextResponse.json({ error: 'Property mismatch for brand asset' }, { status: 400 })
     }
+    if (
+      brand.approval_status !== 'approved'
+      && brand.generation_status !== 'complete'
+    ) {
+      return NextResponse.json(
+        { error: 'Brand contract must be approved before embedding' },
+        { status: 409 },
+      )
+    }
+    const contract = normalizeBrandAssetRow(
+      brand as unknown as Record<string, unknown>,
+    )
 
     // Build content chunks from brand book sections
-    const chunks: Chunk[] = []
+    const chunks: Chunk[] = [{
+      content: `Approved BrandForge V1 contract: ${JSON.stringify(contract)}`,
+      metadata: {
+        section: 'canonical_contract',
+        type: 'brand_book',
+        contract_version: contract.contractVersion,
+        brand_origin: contract.origin,
+      },
+    }]
 
     // Section 1: Introduction
     const intro = asRecord(brand.section_1_introduction)
@@ -324,7 +345,7 @@ export async function POST(request: NextRequest) {
             content: chunk.content,
             metadata: {
               ...chunk.metadata,
-              brand_origin: 'generated_brandforge',
+              brand_origin: contract.origin,
               brand_asset_id: brandAssetId,
               embedded_at: new Date().toISOString()
             },
@@ -341,7 +362,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const summaryBrandName = asString(summary?.brandName)
+    const summaryBrandName = contract.identity.name || asString(summary?.brandName)
     const sourceName = summaryBrandName
       ? `Brand Book: ${summaryBrandName}`
       : `Brand Book: ${brandAssetId}`
@@ -353,7 +374,7 @@ export async function POST(request: NextRequest) {
       status: 'completed',
       documentsCreated: embeddedCount,
       extractedData: {
-        brand_origin: 'generated_brandforge',
+        brand_origin: contract.origin,
         embedding_type: 'brand_book',
         brand_asset_id: brandAssetId,
         total_chunks: chunks.length,

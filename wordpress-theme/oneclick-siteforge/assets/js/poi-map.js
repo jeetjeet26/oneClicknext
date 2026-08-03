@@ -61,7 +61,7 @@ document.addEventListener('DOMContentLoaded', function() {
       position: location,
       map: map,
       title: 'Property Location',
-      icon: 'http://maps.google.com/mapfiles/ms/icons/blue-dot.png'
+      icon: 'https://maps.google.com/mapfiles/ms/icons/blue-dot.png'
     });
 
     // Search for nearby places
@@ -99,7 +99,7 @@ document.addEventListener('DOMContentLoaded', function() {
               position: place.geometry.location,
               map: map,
               title: place.name,
-              icon: 'http://maps.google.com/mapfiles/ms/icons/' + color + '-dot.png'
+              icon: 'https://maps.google.com/mapfiles/ms/icons/' + color + '-dot.png'
             });
           });
         }

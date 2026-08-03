@@ -3,6 +3,7 @@ import { createClient } from '@/utils/supabase/server'
 import { createAdminClient } from '@/utils/supabase/admin'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { jsPDF } from 'jspdf'
+import { normalizeBrandAssetRow } from '@/utils/brandforge/normalize'
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -146,75 +147,47 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
-    // Verify all 12 sections are approved
-    const requiredSections = [
-      'section_1_introduction',
-      'section_2_positioning',
-      'section_3_target_audience',
-      'section_4_personas',
-      'section_5_name_story',
-      'section_6_logo',
-      'section_7_typography',
-      'section_8_colors',
-      'section_9_design_elements',
-      'section_10_photo_yep',
-      'section_11_photo_nope',
-      'section_12_implementation'
-    ] as const
-
-    const sectionValues = [
-      brand.section_1_introduction,
-      brand.section_2_positioning,
-      brand.section_3_target_audience,
-      brand.section_4_personas,
-      brand.section_5_name_story,
-      brand.section_6_logo,
-      brand.section_7_typography,
-      brand.section_8_colors,
-      brand.section_9_design_elements,
-      brand.section_10_photo_yep,
-      brand.section_11_photo_nope,
-      brand.section_12_implementation,
-    ]
-    const missingIndex = sectionValues.findIndex(section => !section)
-    const missingSection = missingIndex >= 0 ? requiredSections[missingIndex] : null
-    if (missingSection) {
-      return NextResponse.json({ 
-        error: 'Not all sections approved', 
-        missingSection 
-      }, { status: 400 })
+    if (
+      brand.approval_status !== 'approved'
+      && brand.generation_status !== 'complete'
+    ) {
+      return NextResponse.json({
+        error: 'Brand contract must be approved before export',
+      }, { status: 409 })
     }
 
-    const section5 = asRecord(brand.section_5_name_story)
-    const section6 = asRecord(brand.section_6_logo)
+    const contract = normalizeBrandAssetRow(
+      brand as unknown as Record<string, unknown>,
+    )
+    const primaryLogo = contract.logos.variants.find(logo => logo.role === 'primary')
 
     const brandBook = {
       metadata: {
-        brandName: asString(section5?.name),
+        brandName: contract.identity.name,
         generatedAt: new Date().toISOString(),
         generatedBy: user.id,
         propertyId: brand.property_id
       },
       sections: {
         cover: {
-          brandName: asString(section5?.name),
-          tagline: asString(section5?.tagline),
-          logo: asString(section6?.primary_url)
+          brandName: contract.identity.name,
+          tagline: contract.identity.tagline,
+          logo: primaryLogo?.url,
         },
-        introduction: brand.section_1_introduction,
-        positioning: brand.section_2_positioning,
-        targetAudience: brand.section_3_target_audience,
-        personas: brand.section_4_personas,
-        nameStory: brand.section_5_name_story,
-        logo: brand.section_6_logo,
-        typography: brand.section_7_typography,
-        colors: brand.section_8_colors,
-        designElements: brand.section_9_design_elements,
+        introduction: contract.introduction,
+        positioning: contract.positioning,
+        targetAudience: contract.audience,
+        personas: contract.personas,
+        nameStory: contract.identity,
+        logo: contract.logos,
+        typography: contract.typography,
+        colors: contract.colors,
+        designElements: contract.designElements,
         photoGuidelines: {
-          yep: brand.section_10_photo_yep,
-          nope: brand.section_11_photo_nope
+          yep: contract.photographyYes,
+          nope: contract.photographyNo,
         },
-        implementation: brand.section_12_implementation
+        implementation: contract.implementation,
       }
     }
 

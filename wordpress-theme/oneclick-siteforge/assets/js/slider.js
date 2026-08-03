@@ -7,7 +7,8 @@ document.addEventListener('DOMContentLoaded', function() {
   const sliders = document.querySelectorAll('.block-top-slides.swiper-container');
 
   sliders.forEach(function(sliderElement) {
-    const autoplay = sliderElement.dataset.autoplay === 'true';
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const autoplay = sliderElement.dataset.autoplay === 'true' && !reducedMotion;
 
     const swiper = new Swiper(sliderElement, {
       loop: true,
@@ -17,7 +18,7 @@ document.addEventListener('DOMContentLoaded', function() {
       },
       autoplay: autoplay ? {
         delay: 5000,
-        disableOnInteraction: false
+        disableOnInteraction: true
       } : false,
       pagination: {
         el: sliderElement.querySelector('.swiper-pagination'),
@@ -35,5 +36,24 @@ document.addEventListener('DOMContentLoaded', function() {
         enabled: true
       }
     });
+
+    const autoplayToggle = sliderElement.querySelector('.swiper-autoplay-toggle');
+    if (autoplayToggle) {
+      if (!autoplay) {
+        autoplayToggle.hidden = true;
+      }
+      autoplayToggle.addEventListener('click', function() {
+        const paused = autoplayToggle.getAttribute('aria-pressed') === 'true';
+        if (paused) {
+          swiper.autoplay.start();
+          autoplayToggle.textContent = 'Pause slideshow';
+          autoplayToggle.setAttribute('aria-pressed', 'false');
+        } else {
+          swiper.autoplay.stop();
+          autoplayToggle.textContent = 'Play slideshow';
+          autoplayToggle.setAttribute('aria-pressed', 'true');
+        }
+      });
+    }
   });
 });

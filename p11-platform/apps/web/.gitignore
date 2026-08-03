@@ -21,6 +21,7 @@
 
 # production
 /build
+/runtime-assets/*.zip
 
 # misc
 .DS_Store
@@ -48,3 +49,4 @@ next-env.d.ts
 
 .vercel
 .env*.local
+/.swc

@@ -2,9 +2,15 @@
 // Handles WordPress REST API, WP-CLI, and Cloudways API interactions
 // Created: December 11, 2025
 
-import type { SiteArchitecture, GeneratedPage, WebsiteAsset } from '@/types/siteforge'
+import type {
+  SiteArchitecture,
+  GeneratedPage,
+  SiteConfiguration,
+  WebsiteAsset,
+} from '@/types/siteforge'
+import { SshWordPressInstaller } from '@/utils/siteforge/wordpress/wordpress-installer'
 
-interface CloudwaysCredentials {
+export interface CloudwaysCredentials {
   apiKey: string
   email: string
 }
@@ -30,6 +36,9 @@ interface CloudwaysAppRecord {
   application?: string
   app_version?: string
   app_fqdn?: string
+  cname?: string
+  aliases?: string[]
+  sys_user?: string
   app_user?: string
   app_password?: string
 }
@@ -39,6 +48,8 @@ interface CloudwaysServerRecord {
   label?: string
   server_fqdn?: string
   public_ip?: string
+  master_user?: string
+  master_password?: string
   apps?: CloudwaysAppRecord[]
   operations?: CloudwaysOperation[]
 }
@@ -52,13 +63,28 @@ interface CloudwaysCreateServerResponse {
   operation_id?: string | number
 }
 
-interface WordPressInstance {
+export interface WordPressInstance {
   instanceId: string
   url: string
   adminUrl: string
   credentials: {
     username: string
     password: string
+  }
+  ssh?: {
+    host: string
+    port: number
+    username: string
+    password?: string
+    privateKey?: string
+    applicationRoot?: string
+    sftpApplicationRoot?: string
+  }
+  providerMetadata?: {
+    provider: 'cloudways'
+    serverId: string
+    applicationId: string
+    publicIp: string
   }
 }
 
@@ -74,7 +100,7 @@ export type DeploymentProgressReporter = (step: string) => void | Promise<void>
 export class CloudwaysClient {
   private apiKey: string
   private email: string
-  private baseUrl = 'https://api.cloudways.com/api/v1'
+  private baseUrl = 'https://api.cloudways.com/api/v2'
   private progressReporter?: DeploymentProgressReporter
   
   constructor(
@@ -84,6 +110,100 @@ export class CloudwaysClient {
     this.apiKey = credentials.apiKey
     this.email = credentials.email
     this.progressReporter = options?.onProgress
+  }
+
+  async discoverWordPressInstance(
+    wpUrl: string,
+    credentials: WordPressInstance['credentials']
+  ): Promise<WordPressInstance> {
+    await this.reportProgress('Discovering existing Cloudways preview application...')
+    const accessToken = await this.getAccessToken()
+    const response = await this.request<CloudwaysServerListResponse>({
+      method: 'GET',
+      endpoint: '/servers',
+      accessToken,
+      errorLabel: 'Cloudways preview application lookup failed',
+    })
+    const targetHost = new URL(normalizeSiteUrl(wpUrl)).hostname.toLowerCase()
+    for (const serverSummary of response.servers || []) {
+      const server = serverSummary.id
+        ? await this.request<CloudwaysServerRecord>({
+            method: 'GET',
+            endpoint: `/servers/${encodeURIComponent(String(serverSummary.id))}`,
+            accessToken,
+            errorLabel: 'Cloudways preview server lookup failed',
+          })
+        : serverSummary
+      const candidates = [...(server.apps || [])].sort(
+        (left, right) =>
+          Number(
+            targetHost.endsWith(`-${String(right.id)}.cloudwaysapps.com`)
+          ) -
+          Number(
+            targetHost.endsWith(`-${String(left.id)}.cloudwaysapps.com`)
+          )
+      )
+      let app: CloudwaysAppRecord | undefined
+      for (const candidate of candidates) {
+        const detailed = candidate.id
+          ? await this.request<CloudwaysAppRecord & { app?: CloudwaysAppRecord }>({
+              method: 'GET',
+              endpoint: `/apps/${encodeURIComponent(String(candidate.id))}`,
+              accessToken,
+              errorLabel: 'Cloudways preview application lookup failed',
+            })
+          : {}
+        const resolved =
+          detailed.app || ('id' in detailed && detailed.id ? detailed : candidate)
+        const hosts = [
+          resolved.app_fqdn,
+          resolved.cname,
+          ...(resolved.aliases || []),
+        ]
+          .filter((value): value is string => Boolean(value))
+          .map(value => new URL(normalizeSiteUrl(value)).hostname.toLowerCase())
+        if (hosts.includes(targetHost)) {
+          app = resolved
+          break
+        }
+      }
+      if (!app?.app_user || !app.app_password) continue
+      const url = normalizeSiteUrl(app.app_fqdn || wpUrl)
+      const privateKey = process.env.SITEFORGE_CLOUDWAYS_SSH_PRIVATE_KEY?.replace(
+        /\\n/g,
+        '\n'
+      )
+      return {
+        instanceId: String(server.id || 'cloudways'),
+        url,
+        adminUrl: `${url}/wp-admin`,
+        credentials,
+        ssh: {
+          host: server.public_ip || server.server_fqdn || targetHost,
+          port: 22,
+          username: server.master_user || app.app_user,
+          password: privateKey
+            ? undefined
+            : server.master_password || app.app_password,
+          privateKey,
+          applicationRoot:
+            privateKey && server.master_user && app.sys_user
+              ? `/home/master/applications/${app.sys_user}/public_html`
+              : 'public_html',
+          sftpApplicationRoot:
+            privateKey && server.master_user && app.sys_user
+              ? `/applications/${app.sys_user}/public_html`
+              : 'public_html',
+        },
+        providerMetadata: {
+          provider: 'cloudways',
+          serverId: String(server.id || ''),
+          applicationId: String(app.id || ''),
+          publicIp: server.public_ip || server.server_fqdn || targetHost,
+        },
+      }
+    }
+    throw new Error(`Cloudways application was not found for ${targetHost}`)
   }
   
   /**
@@ -100,7 +220,7 @@ export class CloudwaysClient {
     await this.reportProgress('Provisioning Cloudways server and WordPress app...')
     const createResponse = await this.request<CloudwaysCreateServerResponse>({
       method: 'POST',
-      endpoint: '/server',
+      endpoint: '/servers',
       accessToken,
       form: {
         cloud: process.env.CLOUDWAYS_CLOUD || 'do',
@@ -171,7 +291,20 @@ export class CloudwaysClient {
       credentials: {
         username,
         password,
-      }
+      },
+      ssh: {
+        host: createdServer.public_ip || createdServer.server_fqdn || fqdn,
+        port: 22,
+        username,
+        password,
+        applicationRoot: 'public_html',
+      },
+      providerMetadata: {
+        provider: 'cloudways',
+        serverId: String(createdServer.id ?? createResponse.server?.id ?? ''),
+        applicationId: String(app.id ?? ''),
+        publicIp: createdServer.public_ip || createdServer.server_fqdn || fqdn,
+      },
     }
   }
   
@@ -181,6 +314,20 @@ export class CloudwaysClient {
    * enforce deployment readiness by waiting for wp-json + required namespaces.
    */
   async deployThemeAndPlugins(instance: WordPressInstance): Promise<void> {
+    if (!instance.ssh) {
+      throw new Error('Cloudways did not return application SSH credentials')
+    }
+    const acfProLicenseKey = process.env.SITEFORGE_ACF_PRO_LICENSE_KEY
+    if (!acfProLicenseKey) {
+      throw new Error(
+        'SITEFORGE_ACF_PRO_LICENSE_KEY is required for clean WordPress installation'
+      )
+    }
+    await new SshWordPressInstaller().ensureInstalled({
+      ssh: instance.ssh,
+      acfProLicenseKey,
+      onProgress: this.progressReporter,
+    })
     await this.reportProgress('Waiting for WordPress API readiness...')
     const wpClient = new WordPressAPIClient(instance.url, instance.credentials)
     await wpClient.verifyReadiness({
@@ -189,8 +336,28 @@ export class CloudwaysClient {
       requireNamespaces: getRequiredWordPressNamespaces(),
     })
   }
+
+  async deployThemeOverlay(
+    instance: WordPressInstance,
+    archive: Buffer,
+    contentHash: string
+  ): Promise<string> {
+    if (!instance.ssh) {
+      throw new Error('Cloudways did not return application SSH credentials')
+    }
+    return new SshWordPressInstaller().installThemeOverlay({
+      ssh: instance.ssh,
+      archive,
+      contentHash,
+      onProgress: this.progressReporter,
+    })
+  }
   
   private async getAccessToken(): Promise<string> {
+    if (this.apiKey.startsWith('cw_')) {
+      return this.apiKey
+    }
+
     const response = await this.request<{ access_token?: string }>({
       method: 'POST',
       endpoint: '/oauth/access_token',
@@ -257,7 +424,7 @@ export class CloudwaysClient {
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const response = await this.request<{ operation?: CloudwaysOperation }>({
         method: 'GET',
-        endpoint: `/operation/${operationId}`,
+        endpoint: `/operations/${operationId}/status`,
         accessToken,
         errorLabel: `Cloudways operation ${operationId} lookup failed`,
       })
@@ -292,7 +459,7 @@ export class CloudwaysClient {
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const response = await this.request<CloudwaysServerListResponse>({
         method: 'GET',
-        endpoint: '/server',
+        endpoint: '/servers',
         accessToken,
         errorLabel: 'Cloudways server lookup failed',
       })
@@ -310,20 +477,16 @@ export class CloudwaysClient {
 
   private async updateWordPressAdminPassword(
     accessToken: string,
-    serverId: string,
+    _serverId: string,
     appId: string,
     password: string
   ): Promise<void> {
     await this.request({
-      method: 'POST',
-      endpoint: '/app/creds/changeAdminCredentials',
+      method: 'PUT',
+      endpoint: `/applications/${encodeURIComponent(appId)}/admin-password`,
       accessToken,
-      query: {
-        server_id: serverId,
-        app_id: appId,
-      },
       form: {
-        Password: password,
+        new_password: password,
       },
       errorLabel: 'Cloudways WordPress admin password update failed',
     })
@@ -383,6 +546,15 @@ export class CloudwaysClient {
       throw new Error(`${args.errorLabel} (${response.status}): ${message}`)
     }
 
+    if (
+      json &&
+      typeof json === 'object' &&
+      'data' in json &&
+      (json as Record<string, unknown>).data !== undefined
+    ) {
+      return (json as { data: T }).data
+    }
+
     return (json as T) ?? ({} as T)
   }
 
@@ -411,7 +583,7 @@ export class WordPressAPIClient {
     credentials: { username: string; password: string },
     options?: { onProgress?: DeploymentProgressReporter }
   ) {
-    this.siteUrl = wpUrl.replace(/\/$/, '')
+    this.siteUrl = normalizeSiteUrl(wpUrl)
     this.baseUrl = `${this.siteUrl}/wp-json/wp/v2`
     this.credentials = credentials
     this.progressReporter = options?.onProgress
@@ -453,6 +625,142 @@ export class WordPressAPIClient {
       `WordPress instance did not become ready within ${timeoutMs}ms` +
         (lastError ? ` (last error: ${lastError})` : '')
     )
+  }
+
+  async applySiteForgeSettings(input: {
+    themeArtifact: {
+      contentHash: string
+      designTokens: unknown
+      componentVariants: unknown
+      siteConfiguration: unknown
+      motion: unknown
+      themeOverlay: unknown
+    }
+    legal: unknown
+    analytics: unknown
+    publicRuntime?: {
+      enabled: boolean
+      apiKey: string
+      apiBaseUrl: string
+      websiteId: string
+      conversionEndpoint: string
+      conversionKey: string
+      telemetryEndpoint: string
+    }
+    targetMode?: 'canonical_preview' | 'staging'
+  }): Promise<void> {
+    const endpoint = `${this.siteUrl}/wp-json/siteforge/v1/settings`
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        Authorization: `Basic ${Buffer.from(
+          `${this.credentials.username}:${this.credentials.password}`
+        ).toString('base64')}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        content_hash: input.themeArtifact.contentHash,
+        design_tokens: input.themeArtifact.designTokens,
+        component_variants: input.themeArtifact.componentVariants,
+        site_configuration: input.themeArtifact.siteConfiguration,
+        motion: input.themeArtifact.motion,
+        theme_overlay: input.themeArtifact.themeOverlay,
+        legal: input.legal,
+        analytics: input.analytics,
+        lumaleasing: input.publicRuntime,
+        target_mode: input.targetMode || 'staging',
+      }),
+    })
+    if (!response.ok) {
+      throw new Error(
+        `Failed to apply SiteForge design tokens: ${response.status} ${await response.text()}`
+      )
+    }
+  }
+
+  async applyContentManifest(
+    contentHash: string,
+    pageIds: number[]
+  ): Promise<void> {
+    if (!/^[a-f0-9]{64}$/.test(contentHash)) {
+      throw new Error('A valid artifact hash is required for content reconciliation')
+    }
+    await this.request(
+      '/siteforge/v1/content-manifest',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: this.getAuthHeader(),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          content_hash: contentHash,
+          page_ids: pageIds,
+        }),
+      },
+      'Failed to apply SiteForge content manifest'
+    )
+  }
+
+  async getContentManifest(): Promise<{
+    content_hash: string | null
+    page_ids: number[]
+    updated_at?: string
+  }> {
+    const response = await this.request(
+      '/siteforge/v1/content-manifest',
+      {
+        method: 'GET',
+        headers: {
+          Authorization: this.getAuthHeader(),
+        },
+      },
+      'Failed to load SiteForge content manifest'
+    )
+    const record =
+      response && typeof response === 'object' && !Array.isArray(response)
+        ? response
+        : {}
+    return {
+      content_hash:
+        typeof record.content_hash === 'string' ? record.content_hash : null,
+      page_ids: Array.isArray(record.page_ids)
+        ? record.page_ids.filter(
+            (id): id is number => typeof id === 'number' && id > 0
+          )
+        : [],
+      updated_at:
+        typeof record.updated_at === 'string' ? record.updated_at : undefined,
+    }
+  }
+
+  async activateProduction(contentHash: string): Promise<void> {
+    if (!/^[a-f0-9]{64}$/.test(contentHash)) {
+      throw new Error('A valid artifact hash is required for production activation')
+    }
+    const response = await this.request<{
+      activated?: boolean
+      content_hash?: string
+      blog_public?: string
+    }>(
+      '/siteforge/v1/production-activation',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: this.getAuthHeader(),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ content_hash: contentHash }),
+      },
+      'Failed to activate exact SiteForge production artifact'
+    )
+    if (
+      response.activated !== true ||
+      response.content_hash !== contentHash ||
+      response.blog_public !== '1'
+    ) {
+      throw new Error('WordPress did not confirm production indexability')
+    }
   }
 
   async verifyDeployment(args: {
@@ -516,7 +824,14 @@ export class WordPressAPIClient {
     
     const content = renderGutenbergBlocks(blocks)
     
-    const response = await this.post('/pages', {
+    const existing = await this.get<
+      Array<{ id?: number }>
+    >(`/pages?context=edit&per_page=1&slug=${encodeURIComponent(page.slug)}`)
+    const existingId =
+      Array.isArray(existing) && typeof existing[0]?.id === 'number'
+        ? existing[0].id
+        : null
+    const response = await this.post(existingId ? `/pages/${existingId}` : '/pages', {
       title: page.title,
       slug: page.slug,
       status: 'publish',
@@ -536,6 +851,35 @@ export class WordPressAPIClient {
     const mediaIds = new Map<string, number>()
 
     for (const asset of assets) {
+      const mediaTitle = `siteforge-${asset.id}`
+      const existingMedia = await this.get<
+        Array<{
+          id?: number
+          source_url?: string
+          title?: { rendered?: string }
+        }>
+      >(`/media?context=edit&per_page=20&search=${encodeURIComponent(mediaTitle)}`)
+      const matchedMedia = Array.isArray(existingMedia)
+        ? existingMedia.find(
+            (item) =>
+              item.title?.rendered === mediaTitle &&
+              typeof item.id === 'number'
+          )
+        : undefined
+      if (typeof matchedMedia?.id === 'number') {
+        mediaIds.set(asset.id, matchedMedia.id)
+        mediaIds.set(`url:${normalizeAssetUrl(asset.fileUrl)}`, matchedMedia.id)
+        if (asset.assetType === 'logo' && !mediaIds.has('logo')) {
+          mediaIds.set('logo', matchedMedia.id)
+        }
+        if (matchedMedia.source_url) {
+          mediaIds.set(
+            `url:${normalizeAssetUrl(matchedMedia.source_url)}`,
+            matchedMedia.id
+          )
+        }
+        continue
+      }
       const assetResponse = await fetchWithTimeout(
         asset.fileUrl,
         undefined,
@@ -572,7 +916,7 @@ export class WordPressAPIClient {
       }
       mediaIds.set(`url:${normalizeAssetUrl(asset.fileUrl)}`, mediaId)
 
-      const metadataPayload: Record<string, unknown> = {}
+      const metadataPayload: Record<string, unknown> = { title: mediaTitle }
       if (asset.altText) metadataPayload.alt_text = asset.altText
       if (asset.caption) metadataPayload.caption = asset.caption
       if (typeof mediaResponse.source_url === 'string') {
@@ -594,6 +938,7 @@ export class WordPressAPIClient {
     siteName: string
     tagline: string
     logo?: number
+    homepageId?: number
     primaryColor?: string
     secondaryColor?: string
   }): Promise<void> {
@@ -605,15 +950,30 @@ export class WordPressAPIClient {
     if (settings.logo) {
       payload.site_logo = settings.logo
     }
+    if (settings.homepageId) {
+      payload.show_on_front = 'page'
+      payload.page_on_front = settings.homepageId
+    }
 
     try {
       await this.post('/settings', payload)
     } catch (error) {
-      if (!settings.logo) {
-        throw error
+      if (settings.logo) {
+        console.warn(
+          'WordPress settings update rejected site_logo, retrying without logo'
+        )
+        delete payload.site_logo
+        try {
+          await this.post('/settings', payload)
+          return
+        } catch (retryError) {
+          if (!settings.homepageId) throw retryError
+        }
       }
-
-      console.warn('WordPress settings update rejected site_logo, retrying without logo')
+      if (!settings.homepageId) throw error
+      console.warn(
+        'WordPress settings endpoint rejected homepage fields; keeping generated pages available by URL'
+      )
       await this.post('/settings', {
         title: settings.siteName,
         description: settings.tagline,
@@ -634,7 +994,7 @@ export class WordPressAPIClient {
     architecture: SiteArchitecture,
     pageIdsBySlug?: Map<string, number>
   ): Promise<void> {
-    const navigationItems =
+    const proposedNavigationItems =
       architecture.navigation?.items && architecture.navigation.items.length > 0
         ? architecture.navigation.items
         : architecture.pages.map(page => ({
@@ -642,6 +1002,10 @@ export class WordPressAPIClient {
             slug: page.slug,
             priority: 'medium' as const,
           }))
+    const footerOnlySlugs = new Set(['privacy', 'terms', 'accessibility'])
+    const navigationItems = proposedNavigationItems.filter(
+      item => !footerOnlySlugs.has(normalizePageSlug(item.slug))
+    )
 
     const knownSlugs = new Set(architecture.pages.map(page => normalizePageSlug(page.slug)))
     const missingSlugs = navigationItems
@@ -781,7 +1145,9 @@ export class WordPressAPIClient {
     init: RequestInit,
     errorLabel: string
   ): Promise<T> {
-    const url = `${this.baseUrl}${endpoint}`
+    const url = endpoint.startsWith('/siteforge/')
+      ? `${this.siteUrl}/wp-json${endpoint}`
+      : `${this.baseUrl}${endpoint}`
     const res = await fetchWithTimeout(
       url,
       init,
@@ -895,7 +1261,13 @@ type GutenbergBlock = {
 }
 
 function convertToGutenbergBlock(
-  section: { id?: string; acfBlock: string; content: Record<string, unknown>; order?: number },
+  section: {
+    id?: string
+    acfBlock: string
+    content: Record<string, unknown>
+    order?: number
+    variant?: string
+  },
   mediaIds: Map<string, number>
 ): GutenbergBlock {
   // ACF blocks hydrate from $block['attrs']['data'] using registered field
@@ -903,7 +1275,12 @@ function convertToGutenbergBlock(
   //   1. attrs must carry ACF's `id`/`name`/`data`/`mode` shape
   //   2. repeater rows must be flattened to ACF's indexed key format
   //      (slides_0_headline, slides = row count) — nested arrays never hydrate
-  const withMediaIds = injectWordPressMediaIds(section.content, mediaIds)
+  const withMediaIds = injectWordPressMediaIds(
+    section.variant
+      ? { ...section.content, variant: section.variant }
+      : section.content,
+    mediaIds
+  )
   const data = flattenAcfRepeaterFields(
     applyBlockFieldAliases(
       section.acfBlock,
@@ -1028,7 +1405,10 @@ export async function deployToWordPress(
   propertyContext: { name: string; tagline?: string },
   assets: WebsiteAsset[],
   cloudwaysCredentials: CloudwaysCredentials,
-  options?: { onProgress?: DeploymentProgressReporter }
+  options: {
+    onProgress?: DeploymentProgressReporter
+    contentHash: string
+  }
 ): Promise<WordPressInstance> {
   const onProgress = options?.onProgress
   const cloudways = new CloudwaysClient(cloudwaysCredentials, { onProgress })
@@ -1060,13 +1440,18 @@ export async function deployToWordPress(
     })
     pageIdsBySlug.set(normalizePageSlug(page.slug), pageId)
   }
+  await wpClient.applyContentManifest(
+    options.contentHash,
+    createdPages.map((page) => page.id)
+  )
   
   // 5. Configure site settings
   await reportProgress(onProgress, 'Applying WordPress site settings...')
   await wpClient.updateSiteSettings({
     siteName: propertyContext.name,
     tagline: propertyContext.tagline || '',
-    logo: mediaIds.get('logo')
+    logo: mediaIds.get('logo'),
+    homepageId: pageIdsBySlug.get('home'),
   })
   
   // 6. Create navigation
@@ -1098,6 +1483,9 @@ export async function deployToExistingWordPress(args: {
   pages: GeneratedPage[]
   propertyContext: { name: string; tagline?: string }
   assets: WebsiteAsset[]
+  contentHash: string
+  siteConfiguration?: SiteConfiguration
+  requireContentManifest?: boolean
   onProgress?: DeploymentProgressReporter
 }): Promise<WordPressInstance> {
   const { wpUrl, credentials, pages, propertyContext, assets, onProgress } = args
@@ -1124,25 +1512,50 @@ export async function deployToExistingWordPress(args: {
     })
     pageIdsBySlug.set(normalizePageSlug(page.slug), pageId)
   }
+  try {
+    await wpClient.applyContentManifest(
+      args.contentHash,
+      createdPages.map((page) => page.id)
+    )
+  } catch (error) {
+    const canUseLegacyPreview =
+      args.requireContentManifest === false &&
+      error instanceof Error &&
+      error.message.includes('content manifest') &&
+      error.message.includes('(404)')
+    if (!canUseLegacyPreview) throw error
+    console.warn(
+      '[siteforge_wordpress] preview target lacks content manifest endpoint; using P11 artifact identity',
+      { contentHash: args.contentHash }
+    )
+  }
 
   await reportProgress(onProgress, 'Applying site settings...')
   await wpClient.updateSiteSettings({
     siteName: propertyContext.name,
     tagline: propertyContext.tagline || '',
-    logo: mediaIds.get('logo')
+    logo: mediaIds.get('logo'),
+    homepageId: pageIdsBySlug.get('home'),
   })
 
   await reportProgress(onProgress, 'Configuring navigation...')
   await wpClient.createNavigation({
     navigation: {
       structure: 'primary',
-      items: pages.map(page => ({
-        label: page.title,
-        slug: page.slug,
-        priority: 'medium' as const,
-      })),
+      items: args.siteConfiguration?.navigation.items.length
+        ? args.siteConfiguration.navigation.items.map(item => ({
+            label: item.label,
+            slug: item.href.replace(/^\/|\/$/g, '') || 'home',
+            priority: 'medium' as const,
+          }))
+        : pages.map(page => ({
+            label: page.title,
+            slug: page.slug,
+            priority: 'medium' as const,
+          })),
       cta: {
-        text: 'Schedule a Tour',
+        text:
+          args.siteConfiguration?.header.cta.label || 'Schedule a Tour',
         style: 'primary',
       },
     },
@@ -1210,7 +1623,7 @@ function mimeTypeToExtension(contentType: string): string {
   return mappings[normalized] || 'bin'
 }
 
-function injectWordPressMediaIds(
+export function injectWordPressMediaIds(
   value: unknown,
   mediaIds: Map<string, number>
 ): unknown {
@@ -1253,6 +1666,19 @@ function injectWordPressMediaIds(
     if (mediaId) {
       output.id = mediaId
     }
+  }
+
+  // ACF image fields persist attachment IDs, not arbitrary JSON objects.
+  // Collapse SiteForge asset references after their URL has been resolved so
+  // nested repeater images hydrate in PHP through get_field().
+  if (
+    typeof output.url === 'string' &&
+    typeof output.id === 'number' &&
+    (typeof output.assetId === 'string' ||
+      typeof output.contentHash === 'string' ||
+      typeof output.alt === 'string')
+  ) {
+    return output.id
   }
 
   return output
@@ -1347,10 +1773,7 @@ function isYoastMetaUnsupportedError(error: unknown): boolean {
 }
 
 function getRequiredWordPressNamespaces(): string[] {
-  const requiredNamespaces = ['wp/v2']
-  if (process.env.SITEFORGE_REQUIRE_ACF !== 'false') {
-    requiredNamespaces.push('acf/v3')
-  }
+  const requiredNamespaces = ['wp/v2', 'siteforge/v1']
   if (process.env.SITEFORGE_REQUIRE_YOAST === 'true') {
     requiredNamespaces.push('yoast/v1')
   }
@@ -1371,9 +1794,10 @@ function truncateCloudwaysLabel(label: string, maxLength = 50): string {
 }
 
 function normalizeSiteUrl(fqdnOrUrl: string): string {
-  return /^https?:\/\//i.test(fqdnOrUrl)
-    ? fqdnOrUrl.replace(/\/$/, '')
-    : `https://${fqdnOrUrl.replace(/\/$/, '')}`
+  const value = fqdnOrUrl.trim()
+  return /^https?:\/\//i.test(value)
+    ? value.replace(/\/$/, '')
+    : `https://${value.replace(/\/$/, '')}`
 }
 
 function selectCloudwaysServer(

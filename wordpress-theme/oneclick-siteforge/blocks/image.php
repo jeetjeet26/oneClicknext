@@ -9,13 +9,9 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-$image = get_field( 'image' );
-$size = get_field( 'size' ) ?: 'large';
-$caption = get_field( 'caption' );
-
-if ( empty( $image ) ) {
-	return;
-}
+$image = oneclick_get_block_field( 'image', $block );
+$size = oneclick_get_block_field( 'size', $block, 'large' );
+$caption = oneclick_get_block_field( 'caption', $block );
 
 $size_class = '';
 switch ( $size ) {
@@ -37,17 +33,24 @@ switch ( $size ) {
 
 <figure <?php echo oneclick_get_block_wrapper_attributes( array( 'class' => 'block-image ' . $size_class ) ); ?>>
 	<?php
-	if ( is_array( $image ) && isset( $image['ID'] ) ) {
-		echo wp_get_attachment_image(
-			$image['ID'],
-			$wp_size,
-			false,
-			array(
-				'class' => 'hero-image',
-				'alt'   => esc_attr( $caption ?? get_post_meta( $image['ID'], '_wp_attachment_image_alt', true ) ),
-				'loading' => 'lazy',
-			)
-		);
+	$image_html = oneclick_get_image_html(
+		$image,
+		$wp_size,
+		array(
+			'class'   => 'hero-image',
+			'alt'     => $caption ?? oneclick_get_image_alt( $image ),
+			'loading' => 'lazy',
+		)
+	);
+	if ( $image_html ) {
+		echo $image_html;
+	} else {
+		?>
+		<div class="image-placeholder" role="img" aria-label="<?php esc_attr_e( 'Property photography coming soon', 'oneclick-siteforge' ); ?>">
+			<span><?php esc_html_e( 'Property photography', 'oneclick-siteforge' ); ?></span>
+			<strong><?php esc_html_e( 'Coming soon', 'oneclick-siteforge' ); ?></strong>
+		</div>
+		<?php
 	}
 
 	if ( ! empty( $caption ) ) {

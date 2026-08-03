@@ -43,6 +43,7 @@ export async function GET(request: NextRequest) {
 
     // Run Brand Agent analysis
     let brandContext
+    let usedFallbackAnalysis = false
     try {
       const brandAgent = new BrandAgent(propertyId)
       brandContext = await brandAgent.analyze()
@@ -54,10 +55,11 @@ export async function GET(request: NextRequest) {
       console.error('❌ Brand Agent FAILED:', agentError)
       console.error('Error stack:', agentError instanceof Error ? agentError.stack : 'No stack')
       console.error('Error details:', JSON.stringify(agentError, null, 2))
-      // Return a basic fallback context if agent fails
+      usedFallbackAnalysis = true
+      // Return a visibly degraded fallback context if agent analysis fails.
       brandContext = {
         source: 'generated',
-        confidence: 0.5,
+        confidence: 0.35,
         brandPersonality: { primary: 'modern', traits: ['professional'], avoid: [] },
         visualIdentity: { moodKeywords: ['clean'], colorMood: 'neutral', photoStyle: {}, designStyle: 'modern' },
         targetAudience: { demographics: 'general', psychographics: '', priorities: [], painPoints: [] },
@@ -87,15 +89,24 @@ export async function GET(request: NextRequest) {
       .eq('property_id', propertyId)
       .single()
     
+    const stats = {
+      photos: photos?.length || 0,
+      documents: documents?.length || 0,
+      hasBrandForge: brandForge?.generation_status === 'complete'
+    }
+    const analysisQuality = assessAnalysisQuality({
+      source: brandContext.source,
+      confidence: brandContext.confidence,
+      usedFallbackAnalysis,
+      ...stats,
+    })
+
     return NextResponse.json({
       propertyId,
       propertyName: property.name,
       brandContext,
-      stats: {
-        photos: photos?.length || 0,
-        documents: documents?.length || 0,
-        hasBrandForge: brandForge?.generation_status === 'complete'
-      }
+      stats,
+      analysisQuality,
     })
 
   } catch (error) {
@@ -104,6 +115,49 @@ export async function GET(request: NextRequest) {
       { error: error instanceof Error ? error.message : 'Analysis failed' },
       { status: 500 }
     )
+  }
+}
+
+function assessAnalysisQuality(input: {
+  source: string
+  confidence: number
+  usedFallbackAnalysis: boolean
+  photos: number
+  documents: number
+  hasBrandForge: boolean
+}) {
+  const warnings: string[] = []
+
+  if (input.usedFallbackAnalysis) {
+    warnings.push('AI brand analysis failed, so SiteForge is using a generic fallback.')
+  }
+  if (!input.hasBrandForge) {
+    warnings.push('No completed BrandForge brand book was found.')
+  }
+  if (input.documents === 0) {
+    warnings.push('No property knowledge documents were found.')
+  }
+  if (input.photos === 0) {
+    warnings.push('No property photos were found; generated imagery may be required.')
+  }
+  if (input.confidence < 0.6) {
+    warnings.push('Brand confidence is low. Review the recommendations before generating.')
+  }
+
+  return {
+    level: input.usedFallbackAnalysis || input.confidence < 0.6
+      ? 'needs_review'
+      : warnings.length > 0
+        ? 'good'
+        : 'strong',
+    confidence: input.confidence,
+    source: input.source,
+    warnings,
+    evidence: {
+      hasBrandForge: input.hasBrandForge,
+      documents: input.documents,
+      photos: input.photos,
+    },
   }
 }
 

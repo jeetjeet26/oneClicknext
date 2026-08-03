@@ -54,35 +54,48 @@ export async function GET(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
-    // Backfill blueprint for older records (best-effort)
-    let siteBlueprint = website.blueprint as unknown as { pages?: GeneratedPage[] } | null
-    let siteBlueprintVersion: number | null = siteBlueprint ? 1 : null
-    let siteBlueprintUpdatedAt: string | null = null
+    const { data: currentArtifact } = website.current_artifact_version_id
+      ? await supabase
+          .from('siteforge_blueprint_versions')
+          .select('id, version, blueprint, asset_manifest, created_at')
+          .eq('id', website.current_artifact_version_id)
+          .eq('website_id', website.id)
+          .maybeSingle()
+      : { data: null }
+
+    // Current previews consume the immutable artifact. Legacy records are only
+    // adapted when no artifact has been published yet.
+    let siteBlueprint = (currentArtifact?.blueprint || website.blueprint) as unknown as {
+      pages?: GeneratedPage[]
+      designSystem?: {
+        colorSystem?: Record<string, unknown>
+        typography?: Record<string, unknown>
+        spacing?: Record<string, unknown>
+      }
+    } | null
+    let siteBlueprintVersion: number | null =
+      currentArtifact?.version || (siteBlueprint ? 1 : null)
+    let siteBlueprintUpdatedAt: string | null =
+      currentArtifact?.created_at || null
 
     if (!siteBlueprint && Array.isArray(website.pages_generated) && website.pages_generated.length > 0) {
       try {
         const blueprint = makeBlueprintFromPages(website.pages_generated as unknown as GeneratedPage[], 1)
-        const updatePayload = {
-          blueprint,
-          pages_generated: blueprint.pages
-        }
-        await supabase
-          .from('property_websites')
-          .update(updatePayload as never)
-          .eq('id', websiteId)
-        siteBlueprint = blueprint
+        siteBlueprint = blueprint as unknown as typeof siteBlueprint
         siteBlueprintVersion = 1
         siteBlueprintUpdatedAt = blueprint.updatedAt ?? null
       } catch (e) {
-        console.warn('Failed to backfill blueprint (non-fatal):', e)
+        console.warn('Failed to adapt legacy blueprint (non-fatal):', e)
       }
     }
 
-    // Get assets
-    const { data: assets } = await supabase
-      .from('website_assets')
-      .select('*')
+    const { data: artifactHistory } = await supabase
+      .from('siteforge_blueprint_versions')
+      .select(
+        'id, version, content_hash, parent_version_id, change_type, changes_summary, quality_score, quality_report, created_at, deployment_decision, deployment_approved_at'
+      )
       .eq('website_id', websiteId)
+      .order('version', { ascending: false })
 
     const response = {
       websiteId: website.id,
@@ -91,13 +104,30 @@ export async function GET(
       brandSource: website.brand_source,
       brandConfidence: website.brand_confidence,
       brandReadiness: getBrandReadiness(website.brand_source, website.brand_confidence),
-      deploymentReadiness: getDeploymentReadiness(),
+      deploymentReadiness: getDeploymentReadiness(
+        Boolean(website.wordpress_credential_ref)
+      ),
       siteArchitecture: website.site_architecture,
+      designSystem: siteBlueprint?.designSystem
+        ? {
+            ...siteBlueprint.designSystem,
+            colors: siteBlueprint.designSystem.colorSystem,
+          }
+        : undefined,
       siteBlueprint,
       siteBlueprintVersion,
       siteBlueprintUpdatedAt,
       pagesGenerated: siteBlueprint?.pages || (website.pages_generated as unknown as GeneratedPage[]) || [],
-      assets: assets || [],
+      assets: currentArtifact?.asset_manifest || [],
+      artifact: {
+        currentId: website.current_artifact_version_id,
+        canonicalPreviewUrl: website.canonical_preview_url,
+        canonicalPreviewArtifactId: website.canonical_preview_artifact_id,
+        canonicalPreviewContentHash: website.canonical_preview_content_hash,
+        deployedArtifactId: website.deployed_artifact_version_id,
+        deployedContentHash: website.deployed_content_hash,
+        history: artifactHistory || [],
+      },
       deploymentDiagnostics: extractDeploymentDiagnostics(website.generation_input),
       wpUrl: website.wp_url,
       wpAdminUrl: website.wp_admin_url,
@@ -159,7 +189,9 @@ function getBrandReadiness(
   }
 }
 
-function getDeploymentReadiness(): WebsiteStatusResponse['deploymentReadiness'] {
+function getDeploymentReadiness(
+  hasCredentialReference = false
+): WebsiteStatusResponse['deploymentReadiness'] {
   const hasCloudways = Boolean(process.env.CLOUDWAYS_API_KEY && process.env.CLOUDWAYS_EMAIL)
   const hasExistingWp = Boolean(
     process.env.SITEFORGE_WP_URL &&
@@ -175,7 +207,7 @@ function getDeploymentReadiness(): WebsiteStatusResponse['deploymentReadiness'] 
     }
   }
 
-  if (hasExistingWp) {
+  if (hasExistingWp || hasCredentialReference) {
     return {
       ready: true,
       mode: 'existing_wordpress',

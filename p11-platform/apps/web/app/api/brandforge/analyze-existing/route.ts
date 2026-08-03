@@ -1,9 +1,8 @@
+import { createHash } from 'node:crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
-import { GoogleGenerativeAI } from '@google/generative-ai'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
-
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || '')
+import { createBrandImportPreview } from '@/utils/brandforge/imports'
 
 /**
  * Analyze existing knowledge base documents to extract brand insights
@@ -29,12 +28,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
-    // Check if property has documents
     const { data: docs, error: docsError } = await supabase
       .from('documents')
-      .select('content, metadata')
+      .select('id')
       .eq('property_id', propertyId)
-      .limit(50) // Sample up to 50 chunks
+      .limit(50)
 
     if (docsError || !docs || docs.length === 0) {
       return NextResponse.json({ 
@@ -43,63 +41,20 @@ export async function POST(req: NextRequest) {
       }, { status: 404 })
     }
 
-    // Combine document content for analysis
-    const combinedContent = docs
-      .map(d => d.content)
-      .join('\n\n')
-      .substring(0, 30000) // Limit to ~30k chars
-
-    // Use Gemini to extract brand insights
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' })
-    
-    const analysisPrompt = `
-Analyze these property documents and extract brand insights:
-
-${combinedContent}
-
-Extract and return JSON with:
-{
-  "brandVoice": "1-2 word description (modern/luxury/community-focused/etc)",
-  "brandPersonality": ["trait1", "trait2", "trait3"],
-  "colorsMentioned": ["#hex or color names"],
-  "targetAudience": "Who the property targets",
-  "keyMessages": ["message 1", "message 2", "message 3"],
-  "amenitiesHighlighted": ["top 5 amenities mentioned"],
-  "toneAnalysis": "Formal/Casual/Mixed",
-  "confidence": 0-100
-}
-
-Only extract what's clearly present in the documents. If something isn't mentioned, use null.
-`
-
-    const result = await model.generateContent(analysisPrompt)
-    const responseText = result.response.text()
-    
-    const jsonMatch = responseText.match(/\{[\s\S]*\}/)
-    if (!jsonMatch) {
-      throw new Error('Failed to extract insights')
-    }
-
-    const insights = JSON.parse(jsonMatch[0])
-
-    // Save insights to a lightweight format (not full brand asset)
-    // Store in property settings or create a brand_insights table
-    await supabase
-      .from('properties')
-      .update({
-        settings: {
-          brand_insights: {
-            ...insights,
-            analyzed_at: new Date().toISOString(),
-            document_count: docs.length
-          }
-        }
-      })
-      .eq('id', propertyId)
+    const preview = await createBrandImportPreview({
+      orgId: access.orgId!,
+      propertyId,
+      userId: user.id,
+      sourceType: 'package',
+      idempotencyKey: `legacy-analyze-${createHash('sha256').update(
+        docs.map(doc => doc.id).sort().join(','),
+      ).digest('hex')}`,
+      documentIds: docs.map(doc => doc.id),
+    })
 
     return NextResponse.json({
       success: true,
-      insights,
+      preview,
       documentCount: docs.length
     })
 

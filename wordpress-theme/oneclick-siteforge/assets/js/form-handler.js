@@ -21,11 +21,29 @@ document.addEventListener('DOMContentLoaded', function() {
       // Collect form data
       const formData = new FormData(form);
       const data = Object.fromEntries(formData);
+      const submissionId = form.dataset.submissionId ||
+        (window.crypto && typeof window.crypto.randomUUID === 'function'
+          ? window.crypto.randomUUID()
+          : 'siteforge-' + Date.now() + '-' + Math.random().toString(16).slice(2));
+      form.dataset.submissionId = submissionId;
 
       // Add metadata
       data.form_type = formType;
+      data.submission_id = submissionId;
+      data.consent = formData.has('consent');
       data.timestamp = new Date().toISOString();
       data.page_url = window.location.href;
+      data.referrer = document.referrer || undefined;
+      data.session_id = window.localStorage.getItem('siteforge_analytics_session') || undefined;
+      data.analytics_consent = window.localStorage.getItem('siteforge_analytics_consent') || 'unknown';
+      const campaignParams = new URLSearchParams(window.location.search);
+      data.campaign = {
+        source: campaignParams.get('utm_source') || undefined,
+        medium: campaignParams.get('utm_medium') || undefined,
+        campaign: campaignParams.get('utm_campaign') || undefined,
+        content: campaignParams.get('utm_content') || undefined,
+        term: campaignParams.get('utm_term') || undefined
+      };
 
       // Show loading state
       const submitButton = form.querySelector('button[type="submit"]');
@@ -37,7 +55,8 @@ document.addEventListener('DOMContentLoaded', function() {
       fetch(endpoint, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'X-SiteForge-Key': form.dataset.publicKey || ''
         },
         body: JSON.stringify(data)
       })
@@ -50,6 +69,14 @@ document.addEventListener('DOMContentLoaded', function() {
         .then(function(result) {
           showFormSuccess(form);
           form.reset();
+          delete form.dataset.submissionId;
+          document.dispatchEvent(new CustomEvent('siteforge:conversion-confirmed', {
+            detail: {
+              event: formType === 'tour' ? 'tour_booked' : 'lead_submit',
+              leadId: result.leadId,
+              tourId: result.tour && result.tour.tourId
+            }
+          }));
 
           if (redirectUrl) {
             setTimeout(function() {

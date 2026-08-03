@@ -109,6 +109,16 @@ describe('siteforge preview route auth', () => {
 
     const assetsEqMock = vi.fn().mockResolvedValue({ data: [], error: null })
     const assetsSelectMock = vi.fn().mockReturnValue({ eq: assetsEqMock })
+    const artifactOrderMock = vi.fn().mockResolvedValue({
+      data: [],
+      error: null,
+    })
+    const artifactEqMock = vi.fn().mockReturnValue({
+      order: artifactOrderMock,
+    })
+    const artifactSelectMock = vi.fn().mockReturnValue({
+      eq: artifactEqMock,
+    })
 
     fromMock.mockImplementation((table: string) => {
       if (table === 'property_websites') {
@@ -116,6 +126,9 @@ describe('siteforge preview route auth', () => {
       }
       if (table === 'website_assets') {
         return { select: assetsSelectMock }
+      }
+      if (table === 'siteforge_blueprint_versions') {
+        return { select: artifactSelectMock }
       }
       throw new Error(`Unexpected table: ${table}`)
     })

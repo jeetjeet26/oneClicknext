@@ -47,16 +47,54 @@ export async function GET(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
-    const status = (website.generation_status ?? 'queued') as WebsiteStatusResponse['status']
-    const progress = typeof website.generation_progress === 'number' ? website.generation_progress : 0
+    const { data: sharedJob } = await serviceSupabase
+      .from('shared_jobs')
+      .select(
+        'id, domain, lifecycle_status, workflow_run_id, stage, progress, current_step, retry_at, cancel_requested, attempt_count, max_attempts, error_message'
+      )
+      .in('domain', [
+        'siteforge.generation',
+        'siteforge.deployment',
+        'siteforge.production-certification',
+        'siteforge.preview',
+        'siteforge.semantic_edit',
+      ])
+      .in(
+        'subject_id',
+        [
+          website.id,
+          website.current_artifact_version_id,
+          website.staging_artifact_id,
+          website.production_artifact_id,
+        ].filter((value): value is string => typeof value === 'string')
+      )
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    const status = sharedJob
+      ? mapSharedJobStatus(sharedJob.lifecycle_status, website.generation_status)
+      : (website.generation_status ?? 'queued') as WebsiteStatusResponse['status']
+    const progress = sharedJob
+      ? sharedJob.progress
+      : typeof website.generation_progress === 'number'
+        ? website.generation_progress
+        : 0
     const deploymentDiagnostics = extractDeploymentDiagnostics(website.generation_input)
 
     const response: WebsiteStatusResponse = {
       websiteId: website.id,
+      jobId: sharedJob?.id,
+      workflowRunId: sharedJob?.workflow_run_id ?? undefined,
+      lifecycleStatus: sharedJob?.lifecycle_status as WebsiteStatusResponse['lifecycleStatus'],
+      retryAt: sharedJob?.retry_at ?? undefined,
+      cancelRequested: sharedJob?.cancel_requested,
+      attemptCount: sharedJob?.attempt_count,
+      maxAttempts: sharedJob?.max_attempts,
       status,
       progress,
-      currentStep: website.current_step ?? undefined,
-      errorMessage: website.error_message ?? undefined,
+      currentStep: sharedJob?.current_step || website.current_step || undefined,
+      errorMessage: sharedJob?.error_message || website.error_message || undefined,
       brandReadiness: getBrandReadiness(website.brand_source, website.brand_confidence),
       deploymentReadiness: getDeploymentReadiness(),
       siteArchitecture: website.site_architecture
@@ -76,6 +114,19 @@ export async function GET(
       { status: 500 }
     )
   }
+}
+
+function mapSharedJobStatus(
+  lifecycleStatus: string,
+  websiteStatus: string | null
+): WebsiteStatusResponse['status'] {
+  if (lifecycleStatus === 'succeeded') {
+    return websiteStatus === 'complete' ? 'complete' : 'ready_for_preview'
+  }
+  if (lifecycleStatus === 'failed' || lifecycleStatus === 'cancelled') {
+    return 'failed'
+  }
+  return (websiteStatus || 'queued') as WebsiteStatusResponse['status']
 }
 
 function extractDeploymentDiagnostics(
@@ -139,9 +190,11 @@ function getDeploymentReadiness(): WebsiteStatusResponse['deploymentReadiness'] 
 
   if (hasExistingWp) {
     return {
-      ready: true,
+      ready: false,
       mode: 'existing_wordpress',
-      blockers: [],
+      blockers: [
+        'The staging and audited launch-release route currently requires a Cloudways application identity.',
+      ],
     }
   }
 

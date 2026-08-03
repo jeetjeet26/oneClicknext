@@ -14,6 +14,17 @@ document.addEventListener('DOMContentLoaded', function() {
 
     if (!container) return;
 
+    if (dataSource === 'siteforge' || dataSource === 'manual') {
+      const publishedRows = container.querySelectorAll('[data-floor-plan-row]');
+      if (publishedRows.length === 0 && filtersContainer) {
+        filtersContainer.hidden = true;
+      }
+      if (publishedRows.length > 0 && filtersContainer) {
+        setupFilters(filtersContainer, container);
+      }
+      return;
+    }
+
     // Load plans data
     loadPlans(dataSource, container, displayStyle);
 
@@ -23,13 +34,29 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   });
 
+  function renderPlanPlaceholders(container) {
+    const slots = [1, 2, 3].map(function(slot) {
+      return '<div class="plan-card plan-placeholder" aria-label="Floor plan placeholder ' + slot + '">' +
+        '<div class="plan-placeholder-image" aria-hidden="true"></div>' +
+        '<h3>Floor plan coming soon</h3>' +
+        '<p>Details will be added after the floor plan is reviewed.</p>' +
+        '</div>';
+    }).join('');
+
+    container.innerHTML = '<div class="plans-empty-state">' +
+      '<h2>Floor plans coming soon</h2>' +
+      '<p>Check back soon for reviewed layouts, pricing, and availability.</p>' +
+      '<div class="plans-list">' + slots + '</div>' +
+      '</div>';
+  }
+
   function loadPlans(dataSource, container, displayStyle) {
     const apiUrl = dataSource === 'yardi'
       ? window.oneClickPlansSettings.yardi_url
       : window.oneClickPlansSettings.rentcafe_url;
 
     if (!apiUrl) {
-      container.innerHTML = '<p>API endpoint not configured.</p>';
+      renderPlanPlaceholders(container);
       return;
     }
 

@@ -1,0 +1,63 @@
+{
+  "contractVersion": 2,
+  "siteId": "site-fixture-1",
+  "artifactId": "22222222-2222-4222-8222-222222222222",
+  "artifactContentHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "assetManifestHash": "7225e38a4455531581e2a06fa955b3b65c39c4d8aeb80c9c5eec52cdfa4b993c",
+  "operationHash": "d762d7c74e2831cb2db7facccc0cde9888b659776b9563f7c2121be5572c09c2",
+  "idempotencyKey": "23a55ea384850df7097f214c94bf3519b51ce31272a933aee61af7239f7988a7",
+  "expectedRemoteContentHash": null,
+  "assetPreparationId": "prep_6463c60933fbdabdc4169e0fa789ab47d610d308",
+  "plan": {
+    "pages": [
+      {
+        "pageKey": "home",
+        "slug": "home",
+        "title": "Fixture Home",
+        "purpose": "Homepage",
+        "status": "publish",
+        "menuOrder": 0,
+        "template": "",
+        "excerpt": "",
+        "seo": null,
+        "sections": []
+      }
+    ],
+    "removals": {
+      "pageKeys": [],
+      "pageSlugs": []
+    },
+    "navigation": {
+      "location": "primary",
+      "name": "SiteForge Primary",
+      "items": []
+    },
+    "designTokens": {
+      "colors": {
+        "primary": "#111111",
+        "secondary": "#222222",
+        "accent": "#333333",
+        "background": "#ffffff",
+        "text": "#111111"
+      },
+      "typography": {
+        "headingFont": "Inter, sans-serif",
+        "bodyFont": "Inter, sans-serif",
+        "headingWeight": 700
+      },
+      "spacing": {
+        "containerMaxWidth": "1200px",
+        "sectionPadding": "6rem"
+      }
+    },
+    "siteSettings": {
+      "siteName": "Fixture Community",
+      "tagline": "Welcome home",
+      "homepagePageKey": "home",
+      "logoAssetId": "11111111-1111-4111-8111-111111111111",
+      "faviconAssetId": null
+    },
+    "legal": {},
+    "analytics": {}
+  }
+}

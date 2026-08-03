@@ -2,9 +2,13 @@
 // /dashboard/siteforge/[websiteId]
 // Created: December 11, 2025
 
-import { WebsitePreview } from '@/components/siteforge'
+import {
+  SiteForgeEditorWorkspace,
+  WebsitePreview,
+} from '@/components/siteforge'
 import { createClient } from '@/utils/supabase/server'
 import { redirect } from 'next/navigation'
+import Link from 'next/link'
 
 export default async function SiteForgePreviewPage({
   params
@@ -19,20 +23,26 @@ export default async function SiteForgePreviewPage({
   }
 
   const { websiteId } = await params
+  const semanticEditorEnabled =
+    process.env.SITEFORGE_SEMANTIC_EDITOR_ENABLED === 'true'
 
   return (
     <div className="container max-w-7xl py-8">
       <div className="mb-6">
-        <a
+        <Link
           href="/dashboard/siteforge"
           className="text-sm text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white flex items-center space-x-1 font-medium"
         >
           <span>←</span>
           <span>Back to SiteForge</span>
-        </a>
+        </Link>
       </div>
 
-      <WebsitePreview websiteId={websiteId} />
+      {semanticEditorEnabled ? (
+        <SiteForgeEditorWorkspace websiteId={websiteId} />
+      ) : (
+        <WebsitePreview websiteId={websiteId} />
+      )}
     </div>
   )
 }

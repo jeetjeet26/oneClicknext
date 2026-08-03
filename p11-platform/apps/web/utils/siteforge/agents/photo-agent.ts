@@ -8,7 +8,8 @@ import { BaseAgent, type VectorSearchResult } from './base-agent'
 import { SITEFORGE_CLAUDE_MODEL } from '@/utils/siteforge/models'
 import type { BrandContext } from './brand-agent'
 import type { ArchitectureProposal } from './architecture-agent'
-import Anthropic from '@anthropic-ai/sdk'
+import type { GeneratedPage } from '@/types/siteforge'
+import { createSiteForgePlaceholderPhotos } from './photo-placeholders'
 import { 
   isImagenAvailable, 
   generateAndUploadImage, 
@@ -19,9 +20,17 @@ export interface PhotoStrategy {
   uploadedPhotoUsage: Array<{
     photoId: string
     url: string
-    category: 'hero' | 'amenity' | 'lifestyle' | 'gallery' | 'exterior' | 'interior'
+    category:
+      | 'hero'
+      | 'amenity'
+      | 'lifestyle'
+      | 'gallery'
+      | 'exterior'
+      | 'interior'
+      | 'neighborhood'
     quality: number
     useFor: string
+    altText?: string
     brandAlignment: number
     reasoning: string
   }>
@@ -51,7 +60,7 @@ export interface PhotoManifest {
     gallery: Photo[]
     logos: Photo[]
   }
-  assignments: Map<string, string>  // sectionId -> photoId
+  assignments: Record<string, string> // sectionId -> photoId
   stats: {
     uploaded: number
     generated: number
@@ -61,18 +70,67 @@ export interface PhotoManifest {
   // Logo assets from BrandForge (if available)
   logoAssets?: {
     primaryUrl?: string
+    primaryAssetId?: string
     variations?: string[]
+    variantAssetIds?: string[]
   }
 }
 
 export interface Photo {
   id: string
+  assetId?: string
+  contentHash?: string
+  altText?: string
   url: string
   type: 'uploaded' | 'generated' | 'brandforge'
   category: string
   quality: number
   scene?: string
   prompt?: string
+  sourceAssetId?: string
+  rightsStatus?: 'unknown' | 'owned' | 'licensed' | 'generated' | 'restricted'
+  approvalStatus?: 'pending' | 'approved' | 'rejected'
+}
+
+type UploadedPropertyPhoto = {
+  id: string
+  url: string
+  filename: string
+  operatorCategory?: PhotoStrategy['uploadedPhotoUsage'][number]['category']
+  altText?: string
+}
+
+type UploadedPhotoCategory =
+  PhotoStrategy['uploadedPhotoUsage'][number]['category']
+
+type AnalyzedPhoto = {
+  photoId: string
+  url: string
+  category: string
+  quality: number
+  brand_alignment: number
+  mood: string
+  scene: string
+  has_people: boolean
+  operatorCategory?: UploadedPhotoCategory
+  operatorAltText?: string
+}
+
+type PhotoNeed = NonNullable<
+  ArchitectureProposal['pages'][number]['sections'][number]['photoRequirement']
+> & { sectionId: string }
+
+type PhotoInsights = {
+  amenityFocus: VectorSearchResult[]
+  lifestyleMoments: VectorSearchResult[]
+  visualDiff: VectorSearchResult[]
+}
+
+type PhotoStrategyInput = {
+  brandContext: BrandContext
+  analyzedPhotos: AnalyzedPhoto[]
+  photoInsights: PhotoInsights
+  photoNeeds: PhotoNeed[]
 }
 
 /**
@@ -88,7 +146,7 @@ export class PhotoAgent extends BaseAgent {
     brandContext: BrandContext,
     architecture: ArchitectureProposal
   ): Promise<PhotoStrategy> {
-    
+
     await this.logAction('photo_strategy_start', { propertyId: this.propertyId })
     
     // 1. Get uploaded photos
@@ -110,6 +168,30 @@ export class PhotoAgent extends BaseAgent {
       photoInsights,
       photoNeeds
     })
+    const operatorCategorized = analyzedPhotos
+      .filter(
+        (photo): photo is AnalyzedPhoto & { operatorCategory: UploadedPhotoCategory } =>
+          photo.operatorCategory !== undefined
+      )
+      .map(photo => ({
+        photoId: photo.photoId,
+        url: photo.url,
+        category: photo.operatorCategory,
+        quality: Math.max(Number(photo.quality) || 0, 8),
+        brandAlignment: Math.max(Number(photo.brand_alignment) || 0, 8),
+        useFor: `Operator-selected ${photo.operatorCategory} photography`,
+        altText: photo.operatorAltText,
+        reasoning: 'The operator explicitly categorized and approved this photo.',
+      }))
+    const operatorPhotoIds = new Set(
+      operatorCategorized.map(photo => photo.photoId)
+    )
+    strategy.uploadedPhotoUsage = [
+      ...operatorCategorized,
+      ...strategy.uploadedPhotoUsage.filter(
+        photo => !operatorPhotoIds.has(photo.photoId)
+      ),
+    ]
     
     await this.logAction('photo_strategy_complete', {
       uploadedCount: strategy.uploadedPhotoUsage.length,
@@ -125,7 +207,7 @@ export class PhotoAgent extends BaseAgent {
    */
   async execute(
     strategy: PhotoStrategy,
-    pages: any[],
+    pages: GeneratedPage[],
     brandContext?: BrandContext
   ): Promise<PhotoManifest> {
     
@@ -135,33 +217,41 @@ export class PhotoAgent extends BaseAgent {
       hasBrandForgeLogo: !!brandContext?.logoAssets?.primaryUrl
     })
     
-    if (strategy.photosToGenerate.length > 0 && !isImagenAvailable()) {
-      throw new Error(
-        'SiteForge requires Google Imagen to generate missing photos. Configure Imagen or upload enough property photos to cover the requested scenes.'
-      )
-    }
+    const hasApprovedUploads = strategy.uploadedPhotoUsage.length > 0
+    const canGenerateMissingPhotos = hasApprovedUploads && isImagenAvailable()
 
-    // Generate missing photos. Fail closed if required generation is unavailable.
-    const generatedPhotos: Photo[] = []
-    
-    for (const spec of strategy.photosToGenerate) {
-      const photo = await this.generatePhoto(spec, brandContext)
-      generatedPhotos.push(photo)
-      
-      // Add delay between generations to avoid rate limiting
-      if (isImagenAvailable() && strategy.photosToGenerate.indexOf(spec) < strategy.photosToGenerate.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 2000))
+    // Never invent property imagery when no approved source photos exist. Use
+    // explicit, replaceable placeholders so the site can still be generated.
+    // A partial manual upload also keeps placeholders for uncovered categories
+    // when Imagen is unavailable instead of failing the whole website.
+    const generatedPhotos: Photo[] =
+      !hasApprovedUploads ||
+      (!isImagenAvailable() && strategy.photosToGenerate.length > 0)
+        ? createSiteForgePlaceholderPhotos(strategy)
+        : []
+
+    if (canGenerateMissingPhotos) {
+      for (const spec of strategy.photosToGenerate) {
+        const photo = await this.generatePhoto(spec, brandContext)
+        generatedPhotos.push(photo)
+
+        // Add delay between generations to avoid rate limiting
+        if (isImagenAvailable() && strategy.photosToGenerate.indexOf(spec) < strategy.photosToGenerate.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 2000))
+        }
       }
     }
-    
+
     // Combine with uploaded
     const allPhotos: Photo[] = [
       ...strategy.uploadedPhotoUsage.map(u => ({
         id: u.photoId,
+        sourceAssetId: u.photoId,
         url: u.url,
         type: 'uploaded' as const,
         category: u.category,
-        quality: u.quality
+        quality: u.quality,
+        altText: u.altText,
       })),
       ...generatedPhotos
     ]
@@ -175,12 +265,15 @@ export class PhotoAgent extends BaseAgent {
       
       logoAssets = {
         primaryUrl: brandContext.logoAssets.primaryUrl,
-        variations: brandContext.logoAssets.variations || []
+        primaryAssetId: brandContext.logoAssets.primaryAssetId,
+        variations: brandContext.logoAssets.variations || [],
+        variantAssetIds: brandContext.logoAssets.variantAssetIds || [],
       }
       
       // Add primary logo
       logoPhotos.push({
-        id: `logo-primary-${Date.now()}`,
+        id: brandContext.logoAssets.primaryAssetId || `logo-primary-${Date.now()}`,
+        sourceAssetId: brandContext.logoAssets.primaryAssetId,
         url: brandContext.logoAssets.primaryUrl,
         type: 'brandforge',
         category: 'logo',
@@ -188,9 +281,11 @@ export class PhotoAgent extends BaseAgent {
       })
       
       // Add logo variations
-      for (const variationUrl of (brandContext.logoAssets.variations || [])) {
+      for (const [index, variationUrl] of (brandContext.logoAssets.variations || []).entries()) {
+        const sourceAssetId = brandContext.logoAssets.variantAssetIds?.[index]
         logoPhotos.push({
-          id: `logo-variation-${Date.now()}-${Math.random().toString(36).substring(7)}`,
+          id: sourceAssetId || `logo-variation-${Date.now()}-${index}`,
+          sourceAssetId,
           url: variationUrl,
           type: 'brandforge',
           category: 'logo',
@@ -234,21 +329,35 @@ export class PhotoAgent extends BaseAgent {
   }
   
   /**
-   * Get uploaded photos from property KB
+   * Get approved, rights-cleared property assets. The content asset library is
+   * authoritative; legacy document images are intentionally not promoted.
    */
-  private async getUploadedPhotos(): Promise<Array<{ id: string; url: string; filename: string }>> {
+  private async getUploadedPhotos(): Promise<UploadedPropertyPhoto[]> {
     const { data } = await this.supabase
-      .from('documents')
-      .select('id, original_file_url, original_file_name')
+      .from('content_assets')
+      .select('id, file_url, name, asset_role, alt_text')
       .eq('property_id', this.propertyId)
-      .in('metadata->type', ['photo', 'image'])
+      .eq('approval_status', 'approved')
+      .in('rights_status', ['owned', 'licensed', 'generated'])
+      .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
+      .in('asset_role', [
+        'hero',
+        'amenity',
+        'gallery',
+        'interior',
+        'exterior',
+        'lifestyle',
+        'neighborhood',
+      ])
     
     return (data || [])
-      .filter((d) => Boolean(d.original_file_url))
+      .filter((asset) => Boolean(asset.file_url))
       .map(d => ({
         id: d.id,
-        url: d.original_file_url || '',
-        filename: d.original_file_name || 'uploaded-photo'
+        url: d.file_url,
+        filename: d.name,
+        operatorCategory: d.asset_role as UploadedPropertyPhoto['operatorCategory'],
+        altText: d.alt_text || undefined,
       }))
   }
   
@@ -256,13 +365,13 @@ export class PhotoAgent extends BaseAgent {
    * Analyze photos using Claude vision
    */
   private async analyzePhotos(
-    photos: Array<{ id: string; url: string; filename: string }>,
+    photos: UploadedPropertyPhoto[],
     brandContext: BrandContext
-  ): Promise<any[]> {
+  ): Promise<AnalyzedPhoto[]> {
     
     // Analyze each photo in parallel (limit concurrency)
     const batchSize = 5
-    const analyzed = []
+    const analyzed: AnalyzedPhoto[] = []
     
     for (let i = 0; i < photos.length; i += batchSize) {
       const batch = photos.slice(i, i + batchSize)
@@ -279,9 +388,9 @@ export class PhotoAgent extends BaseAgent {
    * Analyze single photo with Claude vision
    */
   private async analyzePhoto(
-    photo: { id: string; url: string; filename: string },
+    photo: UploadedPropertyPhoto,
     brandContext: BrandContext
-  ): Promise<any> {
+  ): Promise<AnalyzedPhoto> {
     
     try {
       const message = await this.anthropic.messages.create({
@@ -325,19 +434,34 @@ Output JSON only.`
       }
       
       // Use shared robust JSON parser
-      const analysis = this.parseJSON<any>(textContent.text, 'PhotoAgent.analyzePhoto')
+      const analysis = this.parseJSON<Partial<AnalyzedPhoto>>(
+        textContent.text,
+        'PhotoAgent.analyzePhoto'
+      )
       
       return {
         photoId: photo.id,
         url: photo.url,
-        ...analysis
+        quality: typeof analysis.quality === 'number' ? analysis.quality : 5,
+        brand_alignment:
+          typeof analysis.brand_alignment === 'number' ? analysis.brand_alignment : 5,
+        mood: typeof analysis.mood === 'string' ? analysis.mood : 'unknown',
+        scene: typeof analysis.scene === 'string' ? analysis.scene : 'unknown',
+        has_people: analysis.has_people === true,
+        operatorCategory: photo.operatorCategory,
+        operatorAltText: photo.altText,
+        category:
+          photo.operatorCategory ||
+          (typeof analysis.category === 'string' ? analysis.category : 'gallery'),
       }
     } catch (e) {
       console.error('Failed to analyze photo:', photo.id, e)
       return {
         photoId: photo.id,
         url: photo.url,
-        category: 'gallery',
+        category: photo.operatorCategory || 'gallery',
+        operatorCategory: photo.operatorCategory,
+        operatorAltText: photo.altText,
         quality: 5,
         brand_alignment: 5,
         mood: 'unknown',
@@ -350,7 +474,7 @@ Output JSON only.`
   /**
    * Get photo insights from vector search
    */
-  private async getPhotoInsights() {
+  private async getPhotoInsights(): Promise<PhotoInsights> {
     const [amenityFocus, lifestyleMoments, visualDiff] = await Promise.all([
       this.vectorSearch("What amenities should be photographed and showcased prominently?"),
       this.vectorSearch("What lifestyle activities and moments are important to residents?"),
@@ -363,8 +487,8 @@ Output JSON only.`
   /**
    * Extract photo needs from architecture
    */
-  private extractPhotoNeeds(architecture: ArchitectureProposal): any[] {
-    const needs: any[] = []
+  private extractPhotoNeeds(architecture: ArchitectureProposal): PhotoNeed[] {
+    const needs: PhotoNeed[] = []
     
     for (const page of architecture.pages) {
       for (const section of page.sections) {
@@ -383,7 +507,7 @@ Output JSON only.`
   /**
    * Create photo strategy using Claude
    */
-  private async createStrategy(data: any): Promise<PhotoStrategy> {
+  private async createStrategy(data: PhotoStrategyInput): Promise<PhotoStrategy> {
     
     const systemPrompt = `You are a real estate photography director. You plan photo strategies that:
 1. Use uploaded photos when they match brand quality
@@ -401,9 +525,9 @@ ${JSON.stringify(data.brandContext.visualIdentity, null, 2)}
 ${JSON.stringify(data.analyzedPhotos, null, 2)}
 
 # PHOTO INSIGHTS (Vector search):
-Amenity Focus: ${data.photoInsights.amenityFocus.map((d: any) => d.content).join('\n')}
-Lifestyle Moments: ${data.photoInsights.lifestyleMoments.map((d: any) => d.content).join('\n')}
-Visual Differentiators: ${data.photoInsights.visualDiff.map((d: any) => d.content).join('\n')}
+Amenity Focus: ${data.photoInsights.amenityFocus.map(d => d.content).join('\n')}
+Lifestyle Moments: ${data.photoInsights.lifestyleMoments.map(d => d.content).join('\n')}
+Visual Differentiators: ${data.photoInsights.visualDiff.map(d => d.content).join('\n')}
 
 # PHOTO NEEDS (From architecture):
 ${JSON.stringify(data.photoNeeds, null, 2)}
@@ -459,7 +583,6 @@ ${JSON.stringify(data.photoNeeds, null, 2)}
     
     const response = await this.callClaude(prompt, {
       systemPrompt,
-      temperature: 1.0,
       maxTokens: 30000,
       jsonMode: true
     })
@@ -471,7 +594,10 @@ ${JSON.stringify(data.photoNeeds, null, 2)}
   /**
    * Generate photo using Google Imagen 3
    */
-  private async generatePhoto(spec: any, brandContext?: BrandContext): Promise<Photo> {
+  private async generatePhoto(
+    spec: PhotoStrategy['photosToGenerate'][number],
+    brandContext?: BrandContext
+  ): Promise<Photo> {
     
     await this.logAction('photo_generation', {
       category: spec.category,
@@ -530,24 +656,33 @@ ${JSON.stringify(data.photoNeeds, null, 2)}
    */
   private async assignPhotosToSections(
     photos: Photo[],
-    pages: any[]
-  ): Promise<Map<string, string>> {
+    pages: GeneratedPage[]
+  ): Promise<Record<string, string>> {
     
-    const assignments = new Map<string, string>()
+    const assignments: Record<string, string> = {}
     
     // For each section that needs photos
     for (const page of pages) {
       for (const section of page.sections || []) {
-        if (section.photoRequirement) {
+        const photoRequirement =
+          section.photoRequirement &&
+          typeof section.photoRequirement === 'object' &&
+          'category' in section.photoRequirement &&
+          typeof section.photoRequirement.category === 'string'
+            ? section.photoRequirement
+            : null
+        if (photoRequirement) {
           // Find best matching photo
           const matches = photos.filter(p => 
-            p.category === section.photoRequirement.category
+            p.category === photoRequirement.category
           )
           
           if (matches.length > 0) {
             // Pick highest quality
             const best = matches.sort((a, b) => b.quality - a.quality)[0]
-            assignments.set(section.id, best.id)
+            if (section.id) {
+              assignments[section.id] = best.id
+            }
           }
         }
       }

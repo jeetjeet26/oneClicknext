@@ -4,6 +4,7 @@
 // Created: December 16, 2025
 
 import { BaseAgent, type VectorSearchResult } from './base-agent'
+import { normalizeBrandTypographySection } from './brand-typography'
 
 // Structured color from BrandForge
 export interface BrandColor {
@@ -23,7 +24,9 @@ export interface BrandTypography {
 // Logo assets from BrandForge
 export interface BrandLogoAssets {
   primaryUrl?: string
+  primaryAssetId?: string
   variations?: string[]
+  variantAssetIds?: string[]
   concept?: string
   style?: string
 }
@@ -115,6 +118,22 @@ type CompetitorSnapshotQuery = {
   }
 }
 
+type UnknownRecord = Record<string, unknown>
+
+function asRecord(value: unknown): UnknownRecord {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as UnknownRecord)
+    : {}
+}
+
+function errorMessage(error: unknown): string | null {
+  return error instanceof Error ? error.message : null
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined
+}
+
 /**
  * Brand Agent - Foundation agent that establishes brand context
  * All other agents depend on BrandContext output
@@ -137,9 +156,16 @@ export class BrandAgent extends BaseAgent {
     console.log(`🎨 [BrandAgent] Starting brand analysis for property: ${this.propertyId}`)
     
     // 1. Gather all sources in parallel with individual error tracking
-    let brandForgeData: any = null
-    let propertyInfo: any = null
-    let vectorContext: any = null
+    let brandForgeData: unknown = null
+    let propertyInfo: unknown = null
+    let vectorContext: BrandSources['vectorContext'] = {
+      uniqueness: [],
+      audience: [],
+      personality: [],
+      amenities: [],
+      positioning: [],
+      photoGuidelines: [],
+    }
     let brandForgeError: Error | null = null
     let vectorError: Error | null = null
     
@@ -169,17 +195,18 @@ export class BrandAgent extends BaseAgent {
     }
     
     // Log detailed retrieval results
-    if (brandForgeData) {
+    const brandForgeRecord = asRecord(brandForgeData)
+    if (Object.keys(brandForgeRecord).length > 0) {
       console.log('✅ [BrandAgent] BrandForge data retrieved successfully:', {
-        hasIntro: !!brandForgeData.section_1_introduction,
-        hasColors: !!brandForgeData.section_8_colors,
-        hasTypography: !!brandForgeData.section_7_typography,
-        hasLogo: !!brandForgeData.section_6_logo,
-        status: brandForgeData.generation_status
+        hasIntro: !!brandForgeRecord.section_1_introduction,
+        hasColors: !!brandForgeRecord.section_8_colors,
+        hasTypography: !!brandForgeRecord.section_7_typography,
+        hasLogo: !!brandForgeRecord.section_6_logo,
+        status: brandForgeRecord.generation_status
       })
     } else {
       console.warn('⚠️ [BrandAgent] No BrandForge data available:', {
-        error: (brandForgeError as any)?.message || 'null returned',
+        error: errorMessage(brandForgeError) || 'null returned',
         propertyId: this.propertyId
       })
     }
@@ -188,7 +215,7 @@ export class BrandAgent extends BaseAgent {
     const competitors = await this.getCompetitorAnalysis()
     
     // 3. Determine which data sources we have
-    const hasBrandBook = !!brandForgeData && Object.keys(brandForgeData).length > 0
+    const hasBrandBook = Object.keys(brandForgeRecord).length > 0
     const hasKB = this.hasVectorContent(vectorContext)
     
     const dataScenario = hasBrandBook && hasKB ? 'both' :
@@ -199,8 +226,8 @@ export class BrandAgent extends BaseAgent {
     console.log(`🎨 [BrandAgent] Data scenario determined: ${dataScenario}`, {
       hasBrandBook,
       hasKB,
-      brandForgeError: (brandForgeError as any)?.message || null,
-      vectorError: (vectorError as any)?.message || null,
+      brandForgeError: errorMessage(brandForgeError),
+      vectorError: errorMessage(vectorError),
       vectorCounts: {
         uniqueness: vectorContext?.uniqueness?.length || 0,
         audience: vectorContext?.audience?.length || 0,
@@ -260,7 +287,7 @@ export class BrandAgent extends BaseAgent {
    * Extract structured values directly from BrandForge data
    * These values are preserved exactly as stored, not synthesized by Claude
    */
-  private extractStructuredBrandForgeValues(brandForgeData: any): {
+  private extractStructuredBrandForgeValues(brandForgeData: unknown): {
     colorPalette?: BrandContext['colorPalette']
     typography?: BrandContext['typography']
     logoAssets?: BrandContext['logoAssets']
@@ -272,47 +299,56 @@ export class BrandAgent extends BaseAgent {
     } = {}
     
     // Extract colors from section_8_colors
-    const colorsSection = brandForgeData.section_8_colors
-    if (colorsSection) {
+    const brandForgeRecord = asRecord(brandForgeData)
+    const colorsSection = asRecord(brandForgeRecord.section_8_colors)
+    if (Object.keys(colorsSection).length > 0) {
       const primaryColors: BrandColor[] = []
       const secondaryColors: BrandColor[] = []
       
       // Handle primary colors (can be array or object)
       if (Array.isArray(colorsSection.primary)) {
-        for (const color of colorsSection.primary) {
-          if (color.hex) {
+        for (const value of colorsSection.primary) {
+          const color = asRecord(value)
+          if (typeof color.hex === 'string') {
             primaryColors.push({
-              name: color.name || 'Primary',
+              name: optionalString(color.name) || 'Primary',
               hex: color.hex,
-              usage: color.usage
+              usage: optionalString(color.usage)
             })
           }
         }
-      } else if (colorsSection.primary?.hex) {
+      } else {
+        const primary = asRecord(colorsSection.primary)
+        if (typeof primary.hex === 'string') {
         primaryColors.push({
-          name: colorsSection.primary.name || 'Primary',
-          hex: colorsSection.primary.hex,
-          usage: colorsSection.primary.usage
+          name: optionalString(primary.name) || 'Primary',
+          hex: primary.hex,
+          usage: optionalString(primary.usage)
         })
+        }
       }
       
       // Handle secondary colors
       if (Array.isArray(colorsSection.secondary)) {
-        for (const color of colorsSection.secondary) {
-          if (color.hex) {
+        for (const value of colorsSection.secondary) {
+          const color = asRecord(value)
+          if (typeof color.hex === 'string') {
             secondaryColors.push({
-              name: color.name || 'Secondary',
+              name: optionalString(color.name) || 'Secondary',
               hex: color.hex,
-              usage: color.usage
+              usage: optionalString(color.usage)
             })
           }
         }
-      } else if (colorsSection.secondary?.hex) {
+      } else {
+        const secondary = asRecord(colorsSection.secondary)
+        if (typeof secondary.hex === 'string') {
         secondaryColors.push({
-          name: colorsSection.secondary.name || 'Secondary',
-          hex: colorsSection.secondary.hex,
-          usage: colorsSection.secondary.usage
+          name: optionalString(secondary.name) || 'Secondary',
+          hex: secondary.hex,
+          usage: optionalString(secondary.usage)
         })
+        }
       }
       
       if (primaryColors.length > 0 || secondaryColors.length > 0) {
@@ -324,33 +360,28 @@ export class BrandAgent extends BaseAgent {
     }
     
     // Extract typography from section_7_typography
-    const typographySection = brandForgeData.section_7_typography
+    const typographySection = brandForgeRecord.section_7_typography
     if (typographySection) {
-      const primaryFont = typographySection.primaryFont || 
-                          typographySection.primary?.font ||
-                          typographySection.headingFont
-      const secondaryFont = typographySection.secondaryFont || 
-                            typographySection.secondary?.font ||
-                            typographySection.bodyFont
-      
-      if (primaryFont || secondaryFont) {
-        result.typography = {
-          primaryFont: primaryFont || 'Inter',
-          primaryUsage: typographySection.primaryUsage || typographySection.primary?.usage || 'Headlines, logo, signage',
-          secondaryFont: secondaryFont || 'Inter',
-          secondaryUsage: typographySection.secondaryUsage || typographySection.secondary?.usage || 'Body copy, digital applications'
-        }
-      }
+      result.typography = normalizeBrandTypographySection(typographySection)
     }
     
     // Extract logo assets from section_6_logo
-    const logoSection = brandForgeData.section_6_logo
-    if (logoSection) {
+    const logoSection = asRecord(brandForgeRecord.section_6_logo)
+    if (Object.keys(logoSection).length > 0) {
+      const variations =
+        Array.isArray(logoSection.logoVariations)
+          ? logoSection.logoVariations.filter((value): value is string => typeof value === 'string')
+          : Array.isArray(logoSection.variations)
+            ? logoSection.variations.filter((value): value is string => typeof value === 'string')
+            : []
       result.logoAssets = {
-        primaryUrl: logoSection.logoUrl || logoSection.url || logoSection.primaryUrl,
-        variations: logoSection.logoVariations || logoSection.variations || [],
-        concept: logoSection.concept,
-        style: logoSection.style
+        primaryUrl:
+          optionalString(logoSection.logoUrl) ||
+          optionalString(logoSection.url) ||
+          optionalString(logoSection.primaryUrl),
+        variations,
+        concept: optionalString(logoSection.concept),
+        style: optionalString(logoSection.style)
       }
     }
     
@@ -545,7 +576,7 @@ CRITICAL RULES:
       console.log('⚠️ Returning fallback brand context')
       
       // Return sensible fallback based on property info
-      return this.createFallbackBrandContext(sources.propertyInfo, scenario)
+      return this.createFallbackBrandContext(sources.propertyInfo)
     }
   }
   
@@ -695,10 +726,10 @@ Use conservative, professional defaults that work for most properties.`
   /**
    * Create fallback brand context when synthesis fails
    */
-  private createFallbackBrandContext(propertyInfo: unknown, scenario: string): BrandContext {
-    const info = propertyInfo as any || {}
-    const propertyName = info.name || 'Property'
-    const propertyType = info.property_type || 'multifamily'
+  private createFallbackBrandContext(propertyInfo: unknown): BrandContext {
+    const info = asRecord(propertyInfo)
+    const propertyName = optionalString(info.name) || 'Property'
+    const propertyType = optionalString(info.property_type) || 'multifamily'
     
     // Infer basic personality from property type
     const isLuxury = propertyType.toLowerCase().includes('luxury') || 

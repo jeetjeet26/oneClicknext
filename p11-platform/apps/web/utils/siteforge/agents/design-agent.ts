@@ -3,7 +3,7 @@
 // Uses Claude Sonnet 4 with theme design tokens
 // Created: December 16, 2025
 
-import { BaseAgent } from './base-agent'
+import { BaseAgent, type VectorSearchResult } from './base-agent'
 import { WordPressMcpClient, type ThemeDesignTokens } from '@/utils/mcp/wordpress-client'
 import type { BrandContext } from './brand-agent'
 
@@ -62,6 +62,13 @@ interface ComponentStyle {
   variant: string
   treatment: string
   reasoning: string
+}
+
+interface DesignInsights {
+  visualPreferences: VectorSearchResult[]
+  designGuidelines: VectorSearchResult[]
+  spacingPreferences: VectorSearchResult[]
+  colorPreferences: VectorSearchResult[]
 }
 
 /**
@@ -157,7 +164,7 @@ export class DesignAgent extends BaseAgent {
   /**
    * Get design insights from vector search
    */
-  private async getDesignInsights() {
+  private async getDesignInsights(): Promise<DesignInsights> {
     
     const [
       visualPreferences,
@@ -185,7 +192,7 @@ export class DesignAgent extends BaseAgent {
   private async synthesizeDesignSystem(data: {
     brandContext: BrandContext
     themeTokens: ThemeDesignTokens
-    designInsights: any
+    designInsights: DesignInsights
   }): Promise<DesignSystem> {
     
     const systemPrompt = `You are a design system architect specializing in real estate web design. You create design systems that:
@@ -204,16 +211,16 @@ ${JSON.stringify(data.brandContext, null, 2)}
 # DESIGN INSIGHTS (Vector search):
 
 Visual Preferences:
-${data.designInsights.visualPreferences.map((d: any) => `- ${d.content}`).join('\n')}
+${data.designInsights.visualPreferences.map(d => `- ${d.content}`).join('\n')}
 
 Design Guidelines:
-${data.designInsights.designGuidelines.map((d: any) => `- ${d.content}`).join('\n')}
+${data.designInsights.designGuidelines.map(d => `- ${d.content}`).join('\n')}
 
 Spacing Preferences:
-${data.designInsights.spacingPreferences.map((d: any) => `- ${d.content}`).join('\n')}
+${data.designInsights.spacingPreferences.map(d => `- ${d.content}`).join('\n')}
 
 Color Preferences:
-${data.designInsights.colorPreferences.map((d: any) => `- ${d.content}`).join('\n')}
+${data.designInsights.colorPreferences.map(d => `- ${d.content}`).join('\n')}
 
 # WORDPRESS THEME CAPABILITIES:
 
@@ -262,19 +269,19 @@ Create a design system that expresses brand personality using theme capabilities
   "componentStyles": {
     "hero": {
       "layout": "fullwidth|split|centered",
-      "variant": "Based on brand energy and personality",
+      "variant": "cinematic|editorial|split",
       "treatment": "overlay|minimal|split",
       "reasoning": "Hero approach that matches brand"
     },
     "amenityShowcase": {
       "layout": "grid|masonry|carousel",
-      "variant": "elevated-cards|minimal|bordered",
+      "variant": "amenity-grid|tabs|editorial",
       "treatment": "photo-heavy|icon-based|mixed",
       "reasoning": "Amenity presentation matching sophistication"
     },
     "ctaSections": {
       "layout": "inline|sticky|floating",
-      "variant": "prominent|balanced|subtle",
+      "variant": "inline|banner|sticky",
       "treatment": "button|form|banner",
       "reasoning": "CTA prominence based on audience urgency"
     }
@@ -297,7 +304,7 @@ Create a design system that expresses brand personality using theme capabilities
 
 1. If theme colors match brand mood, use theme defaults (easier maintenance)
 2. If brand requires luxury spacing, select 'luxury' from spacingScales
-3. Component variants must match brand personality (luxury→fullwidth, family→split)
+3. Component variants must use exactly one of the finite values listed above
 4. Favor strong hierarchy, thoughtful spacing, and clear CTA prominence when the brand context supports it
 5. Custom CSS only when theme limitations prevent brand expression
 6. Every choice must be justified by brand context or design insights
@@ -307,13 +314,12 @@ Create a design system that expresses brand personality using theme capabilities
 colorSystem.strategy: "hybrid" - use theme primary, customize secondary for warmth
 typography.scale: "luxury" - matches resort positioning
 spacing.scale: "luxury" - conveys high-end market position
-componentStyles.hero.variant: "fullwidth" - impact and sophistication
+componentStyles.hero.variant: "cinematic" - impact and sophistication
 animations.level: "subtle" - sophisticated, not flashy
 `
     
     const response = await this.callClaude(prompt, {
       systemPrompt,
-      temperature: 1.0,
       maxTokens: 30000,
       jsonMode: true
     })

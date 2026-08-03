@@ -58,6 +58,14 @@ export interface GeneratedImage {
   mimeType: string
 }
 
+type UnknownRecord = Record<string, unknown>
+
+function asRecord(value: unknown): UnknownRecord {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as UnknownRecord)
+    : {}
+}
+
 /**
  * Check if Imagen is configured and available
  */
@@ -112,9 +120,16 @@ export async function generateImage(
   })
 
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}))
-    const errorMessage = errorData.error?.message || `Image generation failed: ${response.status}`
-    const errorCode = errorData.error?.code || response.status
+    const errorData = asRecord(await response.json().catch(() => ({})))
+    const apiError = asRecord(errorData.error)
+    const errorMessage =
+      typeof apiError.message === 'string'
+        ? apiError.message
+        : `Image generation failed: ${response.status}`
+    const errorCode =
+      typeof apiError.code === 'number' || typeof apiError.code === 'string'
+        ? apiError.code
+        : response.status
     
     console.error('Imagen API error:', { code: errorCode, message: errorMessage })
     
@@ -127,8 +142,8 @@ export async function generateImage(
     throw new Error(errorMessage)
   }
 
-  const data = await response.json()
-  const predictions = data.predictions || []
+  const data = asRecord(await response.json())
+  const predictions = Array.isArray(data.predictions) ? data.predictions : []
   
   // Handle empty predictions (may be content filtered or other issue)
   if (predictions.length === 0) {
@@ -137,10 +152,17 @@ export async function generateImage(
   }
   
   return predictions
-    .filter((p: any) => p.bytesBase64Encoded)
-    .map((p: any) => ({
-      base64Data: p.bytesBase64Encoded,
-      mimeType: p.mimeType || 'image/png'
+    .map(asRecord)
+    .filter(
+      (prediction): prediction is UnknownRecord & { bytesBase64Encoded: string } =>
+        typeof prediction.bytesBase64Encoded === 'string'
+    )
+    .map(prediction => ({
+      base64Data: prediction.bytesBase64Encoded,
+      mimeType:
+        typeof prediction.mimeType === 'string'
+          ? prediction.mimeType
+          : 'image/png'
     }))
 }
 

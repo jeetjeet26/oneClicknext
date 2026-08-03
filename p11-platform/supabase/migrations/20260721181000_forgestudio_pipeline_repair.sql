@@ -31,6 +31,12 @@ ALTER TABLE public.content_drafts
 -- ---------------------------------------------------------------------------
 -- 2. social_connections platform constraint (single source of truth, adds x)
 -- ---------------------------------------------------------------------------
+-- The supporting-schema backfill used CREATE TABLE IF NOT EXISTS, so databases
+-- that already had the original ForgeStudio table never received this column.
+ALTER TABLE public.social_connections
+  ADD COLUMN IF NOT EXISTS connected_by uuid
+    REFERENCES public.profiles(id) ON DELETE SET NULL;
+
 ALTER TABLE public.social_connections DROP CONSTRAINT IF EXISTS check_valid_platform;
 ALTER TABLE public.social_connections DROP CONSTRAINT IF EXISTS social_connections_platform_check;
 ALTER TABLE public.social_connections

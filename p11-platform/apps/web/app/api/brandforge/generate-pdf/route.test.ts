@@ -89,6 +89,8 @@ describe('brandforge generate-pdf route', () => {
     const brandRow = {
       id: 'brand-1',
       property_id: 'property-1',
+      generation_status: 'complete',
+      approval_status: 'approved',
       section_1_introduction: { title: 'Intro', tagline: 'Tag', story: 'Story', brandEssence: 'Essence' },
       section_2_positioning: { statement: 'Positioning', rationale: 'Because' },
       section_3_target_audience: { primary: 'Renters', demographics: { age: '25-35' }, psychographics: ['value'] },

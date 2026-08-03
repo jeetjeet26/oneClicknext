@@ -9,7 +9,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-$items = get_field( 'items' ) ?: array();
+$items = oneclick_get_block_field( 'items', $block, array() );
 
 if ( empty( $items ) ) {
 	return;

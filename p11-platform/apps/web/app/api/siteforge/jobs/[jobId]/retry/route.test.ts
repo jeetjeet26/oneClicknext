@@ -1,0 +1,181 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  expectJsonError,
+  makeJsonRequest,
+  mockAuthenticatedUser,
+  mockUnauthenticatedUser,
+} from '@/test/route-test-helpers'
+
+const {
+  authGetUserMock,
+  createClientMock,
+  createServiceClientMock,
+  validatePropertyAccessMock,
+  serviceFromMock,
+  startWorkflowMock,
+  deploymentWorkflowMock,
+} = vi.hoisted(() => ({
+  authGetUserMock: vi.fn(),
+  createClientMock: vi.fn(),
+  createServiceClientMock: vi.fn(),
+  validatePropertyAccessMock: vi.fn(),
+  serviceFromMock: vi.fn(),
+  startWorkflowMock: vi.fn(),
+  deploymentWorkflowMock: vi.fn(),
+}))
+
+vi.mock('@/utils/supabase/server', () => ({
+  createClient: createClientMock,
+}))
+vi.mock('@/utils/supabase/admin', () => ({
+  createServiceClient: createServiceClientMock,
+}))
+vi.mock('@/utils/services/auth-guard', () => ({
+  validatePropertyAccess: validatePropertyAccessMock,
+}))
+vi.mock('workflow/api', () => ({
+  start: startWorkflowMock,
+}))
+vi.mock('@/workflows/siteforge-generation', () => ({
+  siteForgeGenerationWorkflow: vi.fn(),
+}))
+vi.mock('@/workflows/siteforge-staging-deployment', () => ({
+  siteForgeStagingDeploymentWorkflow: deploymentWorkflowMock,
+}))
+
+const jobId = '11111111-1111-4111-8111-111111111111'
+const propertyId = '22222222-2222-4222-8222-222222222222'
+
+function jobQuery(result: unknown) {
+  const builder: Record<string, unknown> = {}
+  builder.select = vi.fn(() => builder)
+  builder.eq = vi.fn(() => builder)
+  builder.in = vi.fn(() => builder)
+  builder.single = vi.fn().mockResolvedValue(result)
+  return builder
+}
+
+describe('SiteForge job retry', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    createClientMock.mockResolvedValue({
+      auth: { getUser: authGetUserMock },
+    })
+    createServiceClientMock.mockReturnValue({ from: serviceFromMock })
+  })
+
+  it('requires authentication', async () => {
+    mockUnauthenticatedUser(authGetUserMock)
+    const { POST } = await import('./route')
+    const response = await POST(
+      makeJsonRequest(`http://localhost/api/siteforge/jobs/${jobId}/retry`),
+      { params: Promise.resolve({ jobId }) }
+    )
+    await expectJsonError(response, 401, 'Unauthorized')
+  })
+
+  it('fails closed when the retry budget is exhausted', async () => {
+    mockAuthenticatedUser(authGetUserMock)
+    validatePropertyAccessMock.mockResolvedValue({ authorized: true })
+    serviceFromMock.mockReturnValue(
+      jobQuery({
+        data: {
+          id: jobId,
+          property_id: propertyId,
+          lifecycle_status: 'failed',
+          cancel_requested: false,
+          attempt_count: 3,
+          max_attempts: 3,
+          payload: {},
+        },
+        error: null,
+      })
+    )
+
+    const { POST } = await import('./route')
+    const response = await POST(
+      makeJsonRequest(`http://localhost/api/siteforge/jobs/${jobId}/retry`),
+      { params: Promise.resolve({ jobId }) }
+    )
+
+    await expectJsonError(
+      response,
+      409,
+      'SiteForge job has exhausted its retry limit'
+    )
+    expect(startWorkflowMock).not.toHaveBeenCalled()
+  })
+
+  it('reuses the generic endpoint for failed deployment jobs', async () => {
+    mockAuthenticatedUser(authGetUserMock)
+    validatePropertyAccessMock.mockResolvedValue({ authorized: true })
+    startWorkflowMock.mockResolvedValue({
+      runId: 'deployment-retry-run',
+      cancel: vi.fn(),
+    })
+    const failedJob = jobQuery({
+      data: {
+        id: jobId,
+        domain: 'siteforge.deployment',
+        property_id: propertyId,
+        lifecycle_status: 'failed',
+        cancel_requested: false,
+        attempt_count: 1,
+        max_attempts: 3,
+        payload: {
+          websiteId: '33333333-3333-4333-8333-333333333333',
+          propertyId,
+          orgId: '44444444-4444-4444-8444-444444444444',
+          targetId: '77777777-7777-4777-8777-777777777777',
+          deploymentId: '88888888-8888-4888-8888-888888888888',
+          artifactId: '55555555-5555-4555-8555-555555555555',
+          contentHash: 'a'.repeat(64),
+          approvalId: '66666666-6666-4666-8666-666666666666',
+          localSimulation: true,
+          startedAt: '2026-07-30T18:00:00.000Z',
+        },
+      },
+      error: null,
+    })
+    const updateBuilder: Record<string, unknown> = {}
+    updateBuilder.update = vi.fn(() => updateBuilder)
+    updateBuilder.eq = vi.fn(() => updateBuilder)
+    updateBuilder.select = vi.fn(() => updateBuilder)
+    updateBuilder.maybeSingle = vi
+      .fn()
+      .mockResolvedValue({ data: { id: jobId }, error: null })
+    let sharedJobCalls = 0
+    serviceFromMock.mockImplementation((table: string) => {
+      if (table !== 'shared_jobs') {
+        throw new Error(`Unexpected table: ${table}`)
+      }
+      sharedJobCalls += 1
+      return sharedJobCalls === 1 ? failedJob : updateBuilder
+    })
+
+    const { POST } = await import('./route')
+    const response = await POST(
+      makeJsonRequest(`http://localhost/api/siteforge/jobs/${jobId}/retry`),
+      { params: Promise.resolve({ jobId }) }
+    )
+
+    expect(response.status).toBe(200)
+    expect(updateBuilder.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        lifecycle_status: 'retrying',
+        status_reason: 'manual_retry_claimed',
+        attempt_count: 2,
+      })
+    )
+    expect(
+      vi.mocked(updateBuilder.maybeSingle as ReturnType<typeof vi.fn>).mock
+        .invocationCallOrder[0]
+    ).toBeLessThan(startWorkflowMock.mock.invocationCallOrder[0])
+    expect(startWorkflowMock).toHaveBeenCalledWith(deploymentWorkflowMock, [
+      expect.objectContaining({
+        sharedJobId: jobId,
+        localSimulation: true,
+      }),
+    ])
+  })
+})

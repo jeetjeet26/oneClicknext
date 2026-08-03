@@ -6,6 +6,7 @@
 import { BaseAgent, type VectorSearchResult } from './base-agent'
 import { WordPressMcpClient, type WordPressCapabilities } from '@/utils/mcp/wordpress-client'
 import type { BrandContext } from './brand-agent'
+import type { SiteAnalysis } from '@/utils/mcp/wordpress-client'
 
 export interface ArchitectureProposal {
   navigation: {
@@ -35,11 +36,13 @@ export interface ArchitectureProposal {
   }>
 }
 
-interface SectionSpec {
+export interface SectionSpec {
   id: string
   type: string
+  label?: string
   purpose: string
   block: string
+  acfBlock?: string
   variant?: string
   fields: Record<string, unknown>
   cssClasses?: string[]
@@ -152,7 +155,9 @@ export class ArchitectureAgent extends BaseAgent {
   /**
    * Analyze a user-provided reference site for patterns
    */
-  private async analyzeReference(userPreferences?: Record<string, unknown>): Promise<any> {
+  private async analyzeReference(
+    userPreferences?: Record<string, unknown>
+  ): Promise<SiteAnalysis | null> {
     const referenceSiteUrl =
       typeof userPreferences?.referenceSiteUrl === 'string'
         ? userPreferences.referenceSiteUrl.trim()
@@ -177,7 +182,7 @@ export class ArchitectureAgent extends BaseAgent {
     brandContext: BrandContext
     propertyContext: PropertyContext
     wpCapabilities: WordPressCapabilities
-    referenceAnalysis: any
+    referenceAnalysis: SiteAnalysis | null
     userPreferences?: Record<string, unknown>
   }): Promise<ArchitectureProposal> {
     
@@ -229,7 +234,7 @@ ${JSON.stringify(data.wpCapabilities.designTokens, null, 2)}
 
 ${data.referenceAnalysis ? `
 # REFERENCE SITE ANALYSIS:
-${JSON.stringify(data.referenceAnalysis.insights_for_agents || data.referenceAnalysis.insightsForAgents, null, 2)}
+${JSON.stringify(data.referenceAnalysis.insightsForAgents, null, 2)}
 ` : ''}
 
 # USER PREFERENCES:
@@ -326,7 +331,6 @@ Use the available WordPress blocks to meet this quality bar.`
     
     const response = await this.callClaude(prompt, {
       systemPrompt,
-      temperature: 1.0,
       maxTokens: 30000,
       jsonMode: true
     })

@@ -566,7 +566,10 @@ export async function POST(req: NextRequest) {
         status: 'reviewing',
         generated_at: new Date().toISOString()
       },
-      generation_status: 'reviewing'
+      generation_status: 'reviewing',
+      contract_version: '1.0',
+      brand_origin: brandRaw.brand_origin || 'generated',
+      approval_status: 'reviewing',
     }
 
     // Save as draft section

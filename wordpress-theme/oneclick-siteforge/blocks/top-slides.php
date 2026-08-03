@@ -9,9 +9,9 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-$slides = get_field( 'slides' ) ?: array();
-$autoplay = get_field( 'autoplay' );
-$overlay_style = get_field( 'overlay_style' ) ?: 'gradient';
+$slides = oneclick_get_block_field( 'slides', $block, array() );
+$autoplay = oneclick_get_block_field( 'autoplay', $block, false );
+$overlay_style = oneclick_get_block_field( 'overlay_style', $block, 'gradient' );
 
 if ( empty( $slides ) ) {
 	return;
@@ -27,23 +27,22 @@ if ( empty( $slides ) ) {
 			$cta_text = $slide['cta_text'] ?? '';
 			$cta_link = $slide['cta_link'] ?? '';
 			$image = $slide['image'] ?? '';
-
-			if ( empty( $image ) ) {
-				continue;
-			}
 			?>
-			<div class="swiper-slide">
+			<div class="swiper-slide<?php echo empty( $image ) ? ' is-placeholder' : ''; ?>">
 				<?php
-				if ( is_array( $image ) && isset( $image['ID'] ) ) {
-					echo wp_get_attachment_image(
-						$image['ID'],
+				if ( ! empty( $image ) ) {
+					echo oneclick_get_image_html(
+						$image,
 						'full',
-						false,
 						array(
-							'class' => 'slide-image',
-							'alt'   => esc_attr( $headline ),
+							'class' => oneclick_is_placeholder_image( $image ) ? 'slide-image is-placeholder-image' : 'slide-image',
+							'alt'   => $headline,
 						)
 					);
+				} else {
+					?>
+					<div class="slide-image slide-image-placeholder" aria-hidden="true"></div>
+					<?php
 				}
 				?>
 
@@ -83,6 +82,11 @@ if ( empty( $slides ) ) {
 	</div>
 
 	<div class="swiper-pagination"></div>
-	<div class="swiper-button-prev"></div>
-	<div class="swiper-button-next"></div>
+	<button type="button" class="swiper-button-prev" aria-label="<?php esc_attr_e( 'Previous slide', 'oneclick-siteforge' ); ?>"></button>
+	<button type="button" class="swiper-button-next" aria-label="<?php esc_attr_e( 'Next slide', 'oneclick-siteforge' ); ?>"></button>
+	<?php if ( $autoplay ) { ?>
+		<button type="button" class="swiper-autoplay-toggle" aria-pressed="false">
+			<?php esc_html_e( 'Pause slideshow', 'oneclick-siteforge' ); ?>
+		</button>
+	<?php } ?>
 </section>

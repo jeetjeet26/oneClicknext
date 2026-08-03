@@ -6,8 +6,56 @@
   "installCommand": "npm install",
   "crons": [
     {
+      "path": "/api/workflows/process",
+      "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/cron/sync-reviews",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/publish-scheduled",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/tours/reminders",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/sync-ads",
+      "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/tours/noshow",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/reports/send",
+      "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/cron/knowledge-refresh",
+      "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/cron/scrape-competitors",
+      "schedule": "0 3 * * *"
+    },
+    {
       "path": "/api/cron/crm-sync",
       "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/cron/siteforge-production-health",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/siteforge-outbox",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/siteforge-analytics",
+      "schedule": "5 * * * *"
     }
   ]
 }

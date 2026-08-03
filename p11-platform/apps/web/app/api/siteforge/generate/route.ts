@@ -5,9 +5,47 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
-import { SiteForgeOrchestrator, type BrandContext } from '@/utils/siteforge/agents'
-import type { GenerateWebsiteRequest, GeneratedPage, SiteArchitecture } from '@/types/siteforge'
+import type { GeneratedPage, GenerationPreferences, SiteArchitecture } from '@/types/siteforge'
+import type { Json } from '@/types/supabase'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
+import {
+  createGenerationRequestSchema,
+  siteForgePlanSchema,
+} from '@/utils/siteforge/contracts'
+import { start } from 'workflow/api'
+import { siteForgeGenerationWorkflow } from '@/workflows/siteforge-generation'
+import { publishSiteForgeArtifact } from '@/utils/siteforge/artifacts/repository'
+
+export async function terminalizeOrphanGenerationJob(
+  serviceSupabase: ReturnType<typeof createServiceClient>,
+  sharedJobId: string,
+  message: string
+): Promise<void> {
+  const terminalAt = new Date().toISOString()
+  const { data, error } = await serviceSupabase
+    .from('shared_jobs')
+    .update({
+      lifecycle_status: 'failed',
+      status_reason: 'website_create_failed',
+      stage: 'failed',
+      current_step: 'Generation website record could not be created',
+      error_message: message,
+      error_details: { message } as Json,
+      finished_at: terminalAt,
+      updated_at: terminalAt,
+    })
+    .eq('id', sharedJobId)
+    .eq('lifecycle_status', 'queued')
+    .select('id')
+    .maybeSingle()
+  if (error || !data) {
+    throw new Error(
+      `Failed to terminalize orphan generation job: ${
+        error?.message || 'job row was not updated'
+      }`
+    )
+  }
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -19,15 +57,67 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const body: GenerateWebsiteRequest = await request.json()
-    const { propertyId, preferences, prompt, brandContext } = body
+    const parsedBody = createGenerationRequestSchema.safeParse(await request.json())
+    if (!parsedBody.success) {
+      return NextResponse.json(
+        { error: 'Invalid generation request' },
+        { status: 400 }
+      )
+    }
+    const { planId, confirmedRevision, contentHash, idempotencyKey } = parsedBody.data
     const localSimulationEnabled =
       new URL(request.url).searchParams.get('simulate') === '1' &&
       process.env.NODE_ENV !== 'production'
 
-    if (!propertyId) {
-      return NextResponse.json({ error: 'propertyId required' }, { status: 400 })
+    const { data: planRecord, error: planError } = await serviceSupabase
+      .from('siteforge_plans')
+      .select('id, property_id, status, current_revision, confirmed_version_id')
+      .eq('id', planId)
+      .single()
+
+    if (
+      planError ||
+      !planRecord ||
+      planRecord.status !== 'confirmed' ||
+      planRecord.current_revision !== confirmedRevision ||
+      !planRecord.confirmed_version_id
+    ) {
+      return NextResponse.json(
+        { error: 'A matching confirmed plan is required for generation' },
+        { status: 409 }
+      )
     }
+
+    const { data: planVersion, error: planVersionError } = await serviceSupabase
+      .from('siteforge_plan_versions')
+      .select('id, plan, content_hash')
+      .eq('id', planRecord.confirmed_version_id)
+      .eq('plan_id', planRecord.id)
+      .eq('revision', confirmedRevision)
+      .single()
+
+    if (
+      planVersionError ||
+      !planVersion ||
+      planVersion.content_hash !== contentHash
+    ) {
+      return NextResponse.json(
+        { error: 'Confirmed plan content no longer matches this request' },
+        { status: 409 }
+      )
+    }
+
+    const structuredPlan = siteForgePlanSchema.parse(planVersion.plan)
+    const propertyId = planRecord.property_id
+    const preferences: GenerationPreferences = {
+      style: structuredPlan.preferences.style,
+      emphasis: structuredPlan.preferences.emphasis,
+      ctaPriority: structuredPlan.preferences.ctaPriority,
+    }
+    const prompt = [
+      structuredPlan.summary,
+      ...structuredPlan.recommendations,
+    ].join('\n\n')
 
     // Verify user has access to this property
     const { data: property, error: propertyError } = await serviceSupabase
@@ -36,7 +126,7 @@ export async function POST(request: NextRequest) {
       .eq('id', propertyId)
       .single()
 
-    if (propertyError || !property) {
+    if (propertyError || !property?.org_id) {
       return NextResponse.json({ error: 'Property not found' }, { status: 404 })
     }
 
@@ -58,6 +148,66 @@ export async function POST(request: NextRequest) {
       : 1
     const nowIso = new Date().toISOString()
 
+    const sharedJobPayload = {
+      planId,
+      planVersionId: planVersion.id,
+      confirmedRevision,
+      contentHash,
+      idempotencyKey,
+    }
+    const { data: sharedJob, error: sharedJobError } = await serviceSupabase
+      .from('shared_jobs')
+      .insert({
+        org_id: property.org_id,
+        property_id: propertyId,
+        domain: 'siteforge.generation',
+        subject_type: 'property_website',
+        subject_id: null,
+        lifecycle_status: 'queued',
+        status_reason: 'workflow_starting',
+        stage: 'queued',
+        progress: 0,
+        current_step: 'Preparing durable generation workflow',
+        dedupe_key: idempotencyKey,
+        payload: sharedJobPayload as unknown as Json,
+        attempt_count: 1,
+        max_attempts: 3,
+        queued_at: nowIso,
+        updated_at: nowIso,
+      })
+      .select('id')
+      .single()
+
+    if (sharedJobError || !sharedJob) {
+      if (sharedJobError?.code === '23505') {
+        const { data: existingJob } = await serviceSupabase
+          .from('shared_jobs')
+          .select('id, subject_id, lifecycle_status, workflow_run_id')
+          .eq('org_id', property.org_id)
+          .eq('domain', 'siteforge.generation')
+          .eq('dedupe_key', idempotencyKey)
+          .maybeSingle()
+        if (existingJob?.id && existingJob.subject_id) {
+          return NextResponse.json({
+            jobId: existingJob.id,
+            websiteId: existingJob.subject_id,
+            status: existingJob.lifecycle_status,
+            workflowRunId: existingJob.workflow_run_id,
+            duplicate: true,
+            estimatedTimeSeconds: 180,
+          })
+        }
+        return NextResponse.json(
+          { error: 'This generation request is already starting' },
+          { status: 409 }
+        )
+      }
+      return NextResponse.json(
+        { error: 'Failed to create durable generation job' },
+        { status: 500 }
+      )
+    }
+
     const simulatedPages = localSimulationEnabled
       ? buildLocalSimulationPages(property.name)
       : undefined
@@ -68,6 +218,7 @@ export async function POST(request: NextRequest) {
     // Create website record
     const websitePayload = {
       property_id: propertyId,
+      org_id: property.org_id,
       version: nextVersion,
       generation_status: localSimulationEnabled ? 'ready_for_preview' : 'queued',
       generation_progress: localSimulationEnabled ? 100 : 0,
@@ -76,7 +227,12 @@ export async function POST(request: NextRequest) {
         : 'Queued for generation',
       user_preferences: preferences,
       generation_input: {
-        prompt: prompt || null,
+        sharedJobId: sharedJob.id,
+        planId,
+        planVersionId: planVersion.id,
+        confirmedRevision,
+        contentHash,
+        idempotencyKey,
         createdAt: nowIso,
         localSimulation: localSimulationEnabled
           ? {
@@ -100,6 +256,21 @@ export async function POST(request: NextRequest) {
 
     if (websiteError || !website) {
       console.error('Error creating website record:', websiteError)
+      try {
+        await terminalizeOrphanGenerationJob(
+          serviceSupabase,
+          sharedJob.id,
+          websiteError?.message || 'Failed to create generation website'
+        )
+      } catch {
+        return NextResponse.json(
+          {
+            error:
+              'Failed to create website and could not terminalize its generation job',
+          },
+          { status: 500 }
+        )
+      }
       return NextResponse.json({ error: 'Failed to create website' }, { status: 500 })
     }
 
@@ -109,9 +280,13 @@ export async function POST(request: NextRequest) {
       job_type: 'full_generation',
       status: localSimulationEnabled ? 'complete' : 'queued',
       input_params: {
+        sharedJobId: sharedJob.id,
         propertyId,
-        preferences,
-        prompt,
+        planId,
+        planVersionId: planVersion.id,
+        confirmedRevision,
+        contentHash,
+        idempotencyKey,
         localSimulation: localSimulationEnabled,
       },
       output_data: localSimulationEnabled
@@ -122,6 +297,7 @@ export async function POST(request: NextRequest) {
         : null,
       started_at: localSimulationEnabled ? nowIso : null,
       completed_at: localSimulationEnabled ? nowIso : null,
+      shared_job_id: sharedJob.id,
     }
 
     const { data: job, error: jobError } = await serviceSupabase
@@ -130,22 +306,215 @@ export async function POST(request: NextRequest) {
       .select()
       .single()
 
-    if (jobError) {
+    if (jobError || !job) {
       console.error('Error creating job:', jobError)
+      await serviceSupabase
+        .from('property_websites')
+        .update({
+          generation_status: 'failed',
+          error_message: 'Failed to create durable generation job',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', website.id)
+
+      await serviceSupabase
+        .from('shared_jobs')
+        .update({
+          lifecycle_status: 'failed',
+          status_reason: 'compatibility_job_failed',
+          stage: 'failed',
+          current_step: 'Failed to create compatibility job',
+          error_message: 'Failed to create compatibility SiteForge job',
+          finished_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', sharedJob.id)
+
+      return NextResponse.json({ error: 'Failed to create generation job' }, { status: 500 })
     }
 
-    if (!localSimulationEnabled) {
-      // Start generation in background (don't wait)
-      // Pass pre-analyzed brandContext to avoid running Brand Agent twice
-      generateWebsiteAsync(website.id, propertyId, preferences, prompt, brandContext).catch(error => {
-        console.error('Background generation error:', error)
+    const { data: consumedPlan, error: consumePlanError } = await serviceSupabase
+      .from('siteforge_plans')
+      .update({
+        status: 'consumed',
+        consumed_at: nowIso,
+        updated_at: nowIso,
       })
+      .eq('id', planId)
+      .eq('status', 'confirmed')
+      .eq('confirmed_version_id', planVersion.id)
+      .select('id')
+      .single()
+
+    if (consumePlanError || !consumedPlan) {
+      const message = 'Confirmed plan was already consumed or changed'
+      await Promise.all([
+        serviceSupabase
+          .from('shared_jobs')
+          .update({
+            lifecycle_status: 'failed',
+            status_reason: 'plan_consume_conflict',
+            stage: 'failed',
+            current_step: message,
+            error_message: message,
+            finished_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', sharedJob.id),
+        serviceSupabase
+          .from('siteforge_jobs')
+          .update({
+            status: 'failed',
+            completed_at: new Date().toISOString(),
+            error_details: { message } as Json,
+          })
+          .eq('id', job.id),
+        serviceSupabase
+          .from('property_websites')
+          .update({
+            generation_status: 'failed',
+            current_step: message,
+            error_message: message,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', website.id),
+      ])
+      return NextResponse.json({ error: message }, { status: 409 })
+    }
+
+    let workflowRunId: string | null = null
+    if (!localSimulationEnabled) {
+      try {
+        const run = await start(siteForgeGenerationWorkflow, [
+          {
+            sharedJobId: sharedJob.id,
+            legacyJobId: job.id,
+            websiteId: website.id,
+            propertyId,
+            orgId: property.org_id,
+            planVersionId: planVersion.id,
+            preferences,
+            prompt,
+            startedAt: nowIso,
+          },
+        ])
+        workflowRunId = run.runId
+        const { error: workflowLinkError } = await serviceSupabase
+          .from('shared_jobs')
+          .update({
+            workflow_run_id: run.runId,
+            workflow_name: 'siteForgeGenerationWorkflow',
+            subject_id: website.id,
+            payload: {
+              ...sharedJobPayload,
+              websiteId: website.id,
+              legacyJobId: job.id,
+            } as Json,
+            status_reason: 'workflow_queued',
+            current_step: 'Durable workflow queued',
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', sharedJob.id)
+        if (workflowLinkError) {
+          await run.cancel()
+          throw new Error(`Failed to link workflow run: ${workflowLinkError.message}`)
+        }
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : 'Failed to start durable workflow'
+        await Promise.all([
+          serviceSupabase
+            .from('shared_jobs')
+            .update({
+              lifecycle_status: 'failed',
+              status_reason: 'workflow_start_failed',
+              stage: 'failed',
+              current_step: 'Workflow failed to start',
+              error_message: message,
+              finished_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', sharedJob.id),
+          serviceSupabase
+            .from('siteforge_jobs')
+            .update({
+              status: 'failed',
+              completed_at: new Date().toISOString(),
+              error_details: { message } as Json,
+            })
+            .eq('id', job.id),
+          serviceSupabase
+            .from('property_websites')
+            .update({
+              generation_status: 'failed',
+              error_message: message,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', website.id),
+        ])
+        return NextResponse.json({ error: message }, { status: 500 })
+      }
+    } else {
+      const simulatedArtifact = await publishSiteForgeArtifact(
+        {
+          websiteId: website.id,
+          propertyId,
+          orgId: property.org_id,
+          sharedJobId: sharedJob.id,
+          sourcePlanVersionId: planVersion.id,
+          blueprint: {
+            version: 1,
+            propertyId,
+            generatedAt: nowIso,
+            pages: simulatedPages || [],
+            architecture: simulatedArchitecture || {},
+            plan: structuredPlan,
+          } as unknown as Json,
+          qualityReport: {
+            passed: true,
+            score: 100,
+            mode: 'local_simulation',
+          } as Json,
+          qualityScore: 100,
+        },
+        serviceSupabase
+      )
+      const { data: completedJob, error: completeJobError } = await serviceSupabase
+        .from('shared_jobs')
+        .update({
+          lifecycle_status: 'succeeded',
+          status_reason: 'local_simulation_complete',
+          stage: 'ready_for_preview',
+          progress: 100,
+          current_step: 'Generation complete (local simulation).',
+          subject_id: website.id,
+          output: {
+            mode: 'local_simulation',
+            websiteId: website.id,
+            artifactId: simulatedArtifact.id,
+            contentHash: simulatedArtifact.contentHash,
+          },
+          started_at: nowIso,
+          finished_at: nowIso,
+          updated_at: nowIso,
+        })
+        .eq('id', sharedJob.id)
+        .select('id')
+        .single()
+      if (completeJobError || !completedJob) {
+        throw new Error(
+          `Failed to terminalize local generation: ${
+            completeJobError?.message || 'missing job'
+          }`
+        )
+      }
     }
 
     return NextResponse.json({
-      jobId: job?.id || website.id,
+      jobId: sharedJob.id,
       websiteId: website.id,
       status: 'queued',
+      workflowRunId,
       estimatedTimeSeconds: localSimulationEnabled ? 1 : 180,
       localSimulation: localSimulationEnabled,
     })
@@ -194,65 +563,3 @@ function buildLocalSimulationArchitecture(pages: GeneratedPage[]): SiteArchitect
     },
   }
 }
-
-/**
- * Background generation process - AGENTIC VERSION
- * Uses orchestrator to coordinate all agents
- * 
- * @param brandContext - Pre-analyzed brand context from /api/siteforge/analyze
- *                       If provided, skips running Brand Agent again
- */
-async function generateWebsiteAsync(
-  websiteId: string,
-  propertyId: string,
-  preferences?: GenerateWebsiteRequest['preferences'],
-  prompt?: string,
-  brandContext?: BrandContext
-) {
-  const supabase = createServiceClient()
-  
-  try {
-    // Initialize orchestrator with all agents
-    const orchestrator = new SiteForgeOrchestrator(
-      propertyId,
-      websiteId,
-      undefined // No existing WP instance yet
-    )
-    
-    // Generate complete blueprint (agents work autonomously)
-    // Pass pre-analyzed brandContext to skip re-running Brand Agent
-    const normalizedPreferences = preferences
-      ? (preferences as unknown as Record<string, unknown>)
-      : undefined
-    const blueprint = await orchestrator.generate(normalizedPreferences, brandContext)
-    
-    // Blueprint is already saved by orchestrator
-    console.log('✅ Agentic generation complete:', {
-      pages: blueprint.pages.length,
-      sections: blueprint.pages.reduce((sum, p) => sum + p.sections.length, 0),
-      quality: blueprint.qualityReport.score,
-      time: blueprint.generationTime
-    })
-    
-  } catch (error) {
-    console.error('Agentic generation error:', error)
-    
-    await supabase
-      .from('property_websites')
-      .update({
-        generation_status: 'failed',
-        error_message: error instanceof Error ? error.message : 'Generation failed'
-      })
-      .eq('id', websiteId)
-  }
-}
-
-// Old asset gathering function removed - Photo Agent handles this now
-
-
-
-
-
-
-
-

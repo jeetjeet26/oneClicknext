@@ -9,9 +9,23 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'ONECLICK_SITEFORGE_VERSION', '1.0.0' );
+define( 'ONECLICK_SITEFORGE_VERSION', '2.2.7' );
 define( 'ONECLICK_SITEFORGE_DIR', get_template_directory() );
 define( 'ONECLICK_SITEFORGE_URI', get_template_directory_uri() );
+
+/**
+ * Keep ACF field-group contracts versioned with the theme.
+ */
+function oneclick_siteforge_acf_json_save_path() {
+	return ONECLICK_SITEFORGE_DIR . '/acf-json';
+}
+add_filter( 'acf/settings/save_json', 'oneclick_siteforge_acf_json_save_path' );
+
+function oneclick_siteforge_acf_json_load_paths( $paths ) {
+	$paths[] = ONECLICK_SITEFORGE_DIR . '/acf-json';
+	return array_values( array_unique( $paths ) );
+}
+add_filter( 'acf/settings/load_json', 'oneclick_siteforge_acf_json_load_paths' );
 
 /**
  * Theme Setup
@@ -21,6 +35,15 @@ function oneclick_siteforge_setup() {
 	add_theme_support( 'automatic-feed-links' );
 	add_theme_support( 'title-tag' );
 	add_theme_support( 'post-thumbnails' );
+	add_theme_support(
+		'custom-logo',
+		array(
+			'height'      => 180,
+			'width'       => 520,
+			'flex-height' => true,
+			'flex-width'  => true,
+		)
+	);
 	add_theme_support( 'responsive-embeds' );
 	add_theme_support( 'wp-block-styles' );
 	add_theme_support( 'woocommerce' );
@@ -41,7 +64,7 @@ function oneclick_siteforge_enqueue_assets() {
 	// Google Fonts
 	wp_enqueue_style(
 		'google-fonts',
-		'https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=Inter:wght@400;500;600;700&display=swap',
+		'https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=Montserrat:wght@400;500;600;700&display=swap',
 		array(),
 		null
 	);
@@ -53,6 +76,36 @@ function oneclick_siteforge_enqueue_assets() {
 		array( 'google-fonts' ),
 		ONECLICK_SITEFORGE_VERSION
 	);
+
+	$siteforge_tokens = get_option( 'oneclick_siteforge_design_tokens', array() );
+	$siteforge_configuration = get_option( 'oneclick_siteforge_configuration', array() );
+	$siteforge_motion = get_option( 'oneclick_siteforge_motion', array() );
+	if ( is_array( $siteforge_tokens ) && ! empty( $siteforge_tokens['content_hash'] ) ) {
+		$colors     = $siteforge_tokens['colors'] ?? array();
+		$typography = $siteforge_tokens['typography'] ?? array();
+		$spacing    = $siteforge_tokens['spacing'] ?? array();
+		$token_css  = sprintf(
+			'html:root{--color-primary:%1$s;--color-secondary:%2$s;--color-accent:%3$s;--color-background:%4$s;--color-bg:%4$s;--font-heading:%5$s;--font-body:%6$s;--container-max-width:%7$s;--max-width:%7$s;--section-padding:%8$s;--spacing-xxl:%8$s;--color-text:%9$s;}',
+			$colors['primary'] ?? '#1a1a1a',
+			$colors['secondary'] ?? '#c9a96e',
+			$colors['accent'] ?? '#8a6d3b',
+			$colors['background'] ?? '#ffffff',
+			$typography['headingFont'] ?? '"Cormorant Garamond", serif',
+			$typography['bodyFont'] ?? 'Inter, sans-serif',
+			$spacing['containerMaxWidth'] ?? '1400px',
+			$spacing['sectionPadding'] ?? '6rem',
+			$colors['text'] ?? ( $colors['primary'] ?? '#1a1a1a' )
+		);
+		wp_add_inline_style( 'oneclick-siteforge-style', $token_css );
+	}
+	if ( is_array( $siteforge_motion ) ) {
+		$motion_css = sprintf(
+			':root{--siteforge-motion-duration:%dms;--siteforge-motion-easing:%s;}',
+			min( 5000, absint( $siteforge_motion['durationMs'] ?? 0 ) ),
+			in_array( $siteforge_motion['easing'] ?? '', array( 'linear', 'ease', 'ease-in', 'ease-out', 'ease-in-out' ), true ) ? $siteforge_motion['easing'] : 'ease'
+		);
+		wp_add_inline_style( 'oneclick-siteforge-style', $motion_css );
+	}
 
 	// Block Styles
 	wp_enqueue_style(
@@ -162,12 +215,70 @@ function oneclick_siteforge_enqueue_assets() {
 		true
 	);
 
+	$lumaleasing = oneclick_siteforge_lumaleasing_configuration();
+	if ( ! empty( $lumaleasing['enabled'] ) && ! empty( $lumaleasing['apiKey'] ) && ! empty( $lumaleasing['apiBaseUrl'] ) ) {
+		$widget_url = trailingslashit( $lumaleasing['apiBaseUrl'] ) . 'lumaleasing.js';
+		wp_enqueue_script(
+			'oneclick-siteforge-lumaleasing',
+			$widget_url,
+			array(),
+			null,
+			true
+		);
+		wp_add_inline_script(
+			'oneclick-siteforge-lumaleasing',
+			'window.LUMALEASING_API_BASE=' . wp_json_encode( $lumaleasing['apiBaseUrl'] ) . ';window.lumaleasing=window.lumaleasing||function(){(window.lumaleasing.q=window.lumaleasing.q||[]).push(arguments)};window.lumaleasing("init",' . wp_json_encode( $lumaleasing['apiKey'] ) . ');',
+			'before'
+		);
+	}
+
 	wp_enqueue_script(
 		'oneclick-siteforge-mobile-menu',
 		ONECLICK_SITEFORGE_URI . '/assets/js/mobile-menu.js',
 		array(),
 		ONECLICK_SITEFORGE_VERSION,
 		true
+	);
+
+	wp_enqueue_script(
+		'oneclick-siteforge-site-behavior',
+		ONECLICK_SITEFORGE_URI . '/assets/js/site-behavior.js',
+		array(),
+		ONECLICK_SITEFORGE_VERSION,
+		true
+	);
+	wp_localize_script(
+		'oneclick-siteforge-site-behavior',
+		'oneClickSiteConfiguration',
+		is_array( $siteforge_configuration ) ? $siteforge_configuration : array()
+	);
+
+	wp_enqueue_script(
+		'oneclick-siteforge-analytics',
+		ONECLICK_SITEFORGE_URI . '/assets/js/analytics.js',
+		array(),
+		ONECLICK_SITEFORGE_VERSION,
+		true
+	);
+	$siteforge_analytics = get_option(
+		'oneclick_siteforge_analytics',
+		array( 'consentMode' => 'required', 'events' => array() )
+	);
+	$siteforge_runtime = oneclick_siteforge_lumaleasing_configuration();
+	$siteforge_manifest = get_option( 'oneclick_siteforge_content_manifest', array() );
+	$siteforge_analytics = array_merge(
+		is_array( $siteforge_analytics ) ? $siteforge_analytics : array(),
+		array(
+			'endpoint'    => $siteforge_runtime['telemetryEndpoint'],
+			'publicKey'   => $siteforge_runtime['conversionKey'],
+			'websiteId'   => $siteforge_runtime['websiteId'],
+			'contentHash' => sanitize_text_field( $siteforge_manifest['content_hash'] ?? '' ),
+		)
+	);
+	wp_localize_script(
+		'oneclick-siteforge-analytics',
+		'oneClickAnalytics',
+		$siteforge_analytics
 	);
 
 	wp_localize_script(
@@ -388,6 +499,27 @@ function oneclick_siteforge_register_theme_fields() {
 						'instructions' => 'Full URL for form submissions (e.g., https://api.oneclickcommunities.com/leads)',
 					),
 					array(
+						'key'           => 'field_lumaleasing_enabled',
+						'label'         => 'Enable certified LumaLeasing widget',
+						'name'          => 'lumaleasing_enabled',
+						'type'          => 'true_false',
+						'default_value' => 0,
+					),
+					array(
+						'key'          => 'field_lumaleasing_api_key',
+						'label'        => 'LumaLeasing public API key',
+						'name'         => 'lumaleasing_api_key',
+						'type'         => 'text',
+						'instructions' => 'Property-scoped public widget key issued by P11.',
+					),
+					array(
+						'key'           => 'field_lumaleasing_api_base_url',
+						'label'         => 'LumaLeasing API base URL',
+						'name'          => 'lumaleasing_api_base_url',
+						'type'          => 'url',
+						'default_value' => 'https://hellop11.com',
+					),
+					array(
 						'key'   => 'field_yardi_api_url',
 						'label' => 'Yardi API URL',
 						'name'  => 'yardi_api_url',
@@ -438,6 +570,77 @@ function oneclick_siteforge_register_theme_fields() {
 	}
 }
 add_action( 'acf/init', 'oneclick_siteforge_register_theme_fields' );
+
+/**
+ * Resolve the certified public widget/conversion configuration.
+ */
+function oneclick_siteforge_lumaleasing_configuration() {
+	$certified = get_option( 'oneclick_siteforge_lumaleasing', array() );
+	$certified = is_array( $certified ) ? $certified : array();
+	$api_base = esc_url_raw( $certified['apiBaseUrl'] ?? oneclick_get_field( 'lumaleasing_api_base_url', 'https://hellop11.com' ) );
+
+	return array(
+		'enabled'            => isset( $certified['enabled'] ) ? (bool) $certified['enabled'] : (bool) oneclick_get_field( 'lumaleasing_enabled', false ),
+		'apiKey'             => sanitize_text_field( $certified['apiKey'] ?? oneclick_get_field( 'lumaleasing_api_key' ) ),
+		'apiBaseUrl'         => untrailingslashit( $api_base ),
+		'websiteId'         => sanitize_text_field( $certified['websiteId'] ?? '' ),
+		'conversionEndpoint'=> esc_url_raw( $certified['conversionEndpoint'] ?? oneclick_get_field( 'lead_capture_endpoint' ) ),
+		'conversionKey'     => sanitize_text_field( $certified['conversionKey'] ?? '' ),
+		'telemetryEndpoint' => esc_url_raw( $certified['telemetryEndpoint'] ?? '' ),
+	);
+}
+
+/**
+ * Register the immutable floor-plan row contract used by generated pages.
+ */
+function oneclick_siteforge_register_floor_plan_fields() {
+	if ( ! function_exists( 'acf_add_local_field_group' ) ) {
+		return;
+	}
+
+	$sub_fields = array();
+	$field_types = array(
+		'id' => 'text', 'name' => 'text', 'bedrooms' => 'number', 'bathrooms' => 'number',
+		'sqft_min' => 'number', 'sqft_max' => 'number', 'rent_min' => 'number', 'rent_max' => 'number',
+		'available_count' => 'number', 'specials' => 'textarea', 'image_url' => 'url',
+		'image_alt' => 'text', 'availability_url' => 'url', 'apply_url' => 'url',
+	);
+	foreach ( $field_types as $name => $type ) {
+		$sub_fields[] = array(
+			'key'   => 'field_siteforge_floor_plan_' . $name,
+			'label' => ucwords( str_replace( '_', ' ', $name ) ),
+			'name'  => $name,
+			'type'  => $type,
+		);
+	}
+
+	acf_add_local_field_group(
+		array(
+			'key'    => 'group_siteforge_floor_plan_inventory',
+			'title'  => 'SiteForge Floor Plan Inventory',
+			'fields' => array(
+				array(
+					'key'        => 'field_siteforge_floor_plans',
+					'label'      => 'Floor Plans',
+					'name'       => 'floor_plans',
+					'type'       => 'repeater',
+					'layout'     => 'block',
+					'sub_fields' => $sub_fields,
+				),
+			),
+			'location' => array(
+				array(
+					array(
+						'param'    => 'block',
+						'operator' => '==',
+						'value'    => 'acf/plans-availability',
+					),
+				),
+			),
+		)
+	);
+}
+add_action( 'acf/init', 'oneclick_siteforge_register_floor_plan_fields' );
 
 /**
  * Helper: Get field with fallback

@@ -1,0 +1,104 @@
+import { describe, expect, it } from 'vitest'
+import {
+  CsvFloorPlanAdapter,
+  ManualFloorPlanAdapter,
+  createApprovedFloorPlanSnapshot,
+  createFloorPlanPreview,
+  parseFloorPlanCsv,
+} from './floor-plans'
+
+describe('provider-neutral floor-plan adapters', () => {
+  it('parses quoted CSV fields and normalizes a deterministic preview', () => {
+    const csv = [
+      'external_id,name,bedrooms,bathrooms,sqft_min,sqft_max,rent_min,image_url,image_alt',
+      'A1,"The Aspen, Renovated",1,1,700,750,1895,https://cdn.example.com/a1.jpg,"Aspen one-bedroom floor plan"',
+    ].join('\n')
+
+    expect(parseFloorPlanCsv(csv)[0]?.name).toBe('The Aspen, Renovated')
+    const preview = createFloorPlanPreview(new CsvFloorPlanAdapter(), csv)
+    expect(preview.errors).toEqual([])
+    expect(preview.rows[0]).toEqual(
+      expect.objectContaining({
+        canonical_key: 'a1',
+        unit_type: 'The Aspen, Renovated',
+        bedrooms: 1,
+        confidence: 0.95,
+      })
+    )
+    expect(preview.idempotencyKey).toMatch(/^[a-f0-9]{64}$/)
+  })
+
+  it('returns row-level errors and excludes invalid rows from confirmation', () => {
+    const preview = createFloorPlanPreview(new ManualFloorPlanAdapter(), [
+      {
+        name: 'Studio',
+        bedrooms: 0,
+        sqftMin: 600,
+        sqftMax: 500,
+        imageUrl: 'https://cdn.example.com/studio.jpg',
+      },
+    ])
+
+    expect(preview.rows).toEqual([])
+    expect(preview.errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ row: 1, field: 'sqftMax' }),
+        expect.objectContaining({ row: 1, field: 'imageAlt' }),
+      ])
+    )
+  })
+
+  it('reports explicit stale-data state', () => {
+    const freshness = new ManualFloorPlanAdapter().freshness(
+      '2026-07-01T00:00:00.000Z',
+      24,
+      new Date('2026-07-03T00:00:00.000Z')
+    )
+    expect(freshness).toEqual({ stale: true, ageHours: 48 })
+  })
+
+  it('creates a stable immutable snapshot from approved inventory rows', () => {
+    const snapshot = createApprovedFloorPlanSnapshot(
+      [
+        {
+          canonical_key: 'b2',
+          unit_type: 'Birch',
+          bedrooms: 2,
+          bathrooms: 2,
+          sqft_min: 1_000,
+          sqft_max: 1_050,
+          rent_min: 2_100,
+          rent_max: 2_250,
+          available_count: 3,
+          move_in_specials: null,
+          floor_plan_image_url: 'https://cdn.example.com/birch.png',
+          floor_plan_image_alt: 'Birch two-bedroom floor plan',
+          availability_url: 'https://property.example.com/availability',
+          apply_url: 'https://property.example.com/apply',
+        },
+        {
+          canonical_key: 'a1',
+          unit_type: 'Aspen',
+          bedrooms: 1,
+          bathrooms: 1,
+          sqft_min: 700,
+          sqft_max: null,
+          rent_min: 1_800,
+          rent_max: null,
+          available_count: 1,
+          move_in_specials: 'One month free',
+          floor_plan_image_url: null,
+          floor_plan_image_alt: null,
+          availability_url: null,
+          apply_url: null,
+        },
+      ],
+      '2026-07-31T12:00:00.000Z'
+    )
+
+    expect(snapshot.rows.map((row) => row.id)).toEqual(['a1', 'b2'])
+    expect(snapshot.contentHash).toMatch(/^[a-f0-9]{64}$/)
+    expect(Object.isFrozen(snapshot)).toBe(true)
+    expect(Object.isFrozen(snapshot.rows[0])).toBe(true)
+  })
+})

@@ -2,6 +2,7 @@ import type { NextConfig } from "next";
 import { config as loadDotenv } from "dotenv";
 import { existsSync } from "fs";
 import { resolve } from "path";
+import { withWorkflow } from "workflow/next";
 
 /**
  * Load environment variables early so they're available to:
@@ -28,6 +29,10 @@ for (const p of envPaths) {
 const nextConfig: NextConfig = {
   /* config options here */
   reactCompiler: true,
+  serverExternalPackages: ["ssh2"],
+  outputFileTracingIncludes: {
+    "/.well-known/workflow/v1/step": ["./runtime-assets/*"],
+  },
   /**
    * Ensure Edge middleware has access to required public env vars in dev/prod.
    * (This does not expose anything that isn't already NEXT_PUBLIC_*)
@@ -40,9 +45,8 @@ const nextConfig: NextConfig = {
     NEXT_PUBLIC_SITE_URL: process.env.NEXT_PUBLIC_SITE_URL ?? "",
   },
   turbopack: {
-    // Fix workspace root detection - prevent Turbopack from using wrong lockfile
     root: __dirname,
   },
 };
 
-export default nextConfig;
+export default withWorkflow(nextConfig);

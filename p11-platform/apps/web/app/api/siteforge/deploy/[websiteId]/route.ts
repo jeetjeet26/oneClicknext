@@ -1,114 +1,13 @@
-// SiteForge: Deploy Website to WordPress API
-// POST /api/siteforge/deploy/[websiteId]
-// Created: December 11, 2025
-
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
+import { start } from 'workflow/api'
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
-import {
-  deployToExistingWordPress,
-  deployToWordPress,
-  type DeploymentProgressReporter,
-} from '@/utils/siteforge/wordpress-client'
-import { getPropertyContext } from '@/utils/siteforge/brand-intelligence'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
-import {
-  badRequest,
-  forbidden,
-  serverError,
-  unauthorized,
-} from '@/utils/services/api-helpers'
 import { createRequestContext } from '@/utils/services/request-context'
-import { normalizeLegacyPages } from '@/utils/siteforge/blueprint'
-import type { GeneratedPage, SiteArchitecture, WebsiteAsset } from '@/types/siteforge'
+import { getWordPressCredentialReference } from '@/utils/siteforge/wordpress/credential-vault'
+import { siteForgeStagingDeploymentWorkflow } from '@/workflows/siteforge-staging-deployment'
 import type { Json } from '@/types/supabase'
-
-type DeploymentWebsite = {
-  property_id: string
-  blueprint?: { pages?: GeneratedPage[]; version?: number; updatedAt?: string } | null
-  pages_generated?: GeneratedPage[] | null
-  site_blueprint_version?: number | null
-  site_blueprint_updated_at?: string | null
-  version?: number | null
-  site_architecture?: Partial<SiteArchitecture> | null
-  generation_input?: Json | null
-}
-
-type DeploymentErrorCategory = 'verification' | 'configuration' | 'provisioning' | 'unknown'
-
-type DeploymentDiagnostics = {
-  workflow: 'siteforge_wordpress_deploy'
-  status: 'success' | 'failed'
-  provider: 'cloudways' | 'existing_wordpress' | 'local_simulation'
-  startedAt: string
-  completedAt: string
-  pagesAttempted: number
-  assetsAttempted: number
-  verification: {
-    enabled: true
-    status: 'passed' | 'failed'
-    message?: string
-  }
-  target?: {
-    url: string
-    adminUrl: string
-    instanceId: string
-  }
-  deploySource: {
-    field: 'blueprint' | 'pages_generated'
-    blueprintVersion: number | null
-    blueprintUpdatedAt: string | null
-  }
-  error?: {
-    message: string
-    category: DeploymentErrorCategory
-  }
-}
-
-type DeployAsyncOptions = {
-  localSimulation?: boolean
-}
-
-function resolveDeploySource(
-  website: DeploymentWebsite
-): {
-  pages: GeneratedPage[]
-  source: DeploymentDiagnostics['deploySource']
-} {
-  const blueprintPages = Array.isArray(website.blueprint?.pages)
-    ? website.blueprint.pages
-    : []
-
-  if (blueprintPages.length > 0) {
-    const normalizedVersion =
-      website.site_blueprint_version ??
-      website.version ??
-      website.blueprint?.version ??
-      null
-    const normalizedUpdatedAt =
-      website.site_blueprint_updated_at ??
-      website.blueprint?.updatedAt ??
-      null
-    return {
-      pages: normalizeLegacyPages(blueprintPages),
-      source: {
-        field: 'blueprint',
-        blueprintVersion: normalizedVersion,
-        blueprintUpdatedAt: normalizedUpdatedAt,
-      },
-    }
-  }
-
-  const legacyPages = Array.isArray(website.pages_generated) ? website.pages_generated : []
-  return {
-    pages: normalizeLegacyPages(legacyPages),
-    source: {
-      field: 'pages_generated',
-      blueprintVersion: null,
-      blueprintUpdatedAt: null,
-    },
-  }
-}
 
 export async function POST(
   request: NextRequest,
@@ -116,438 +15,448 @@ export async function POST(
 ) {
   const ctx = createRequestContext(request, '/api/siteforge/deploy/[websiteId]')
   ctx.logStart()
-
   try {
-    const supabase = await createClient()
-    const serviceSupabase = createServiceClient()
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-    if (authError || !user) {
-      ctx.logSuccess(401, { reason: 'unauthorized' })
-      return unauthorized(ctx.responseHeaders)
-    }
-
     const { websiteId } = await params
-
-    if (!websiteId) {
-      ctx.logSuccess(400, { reason: 'missing_website_id' })
-      return badRequest('websiteId required', ctx.responseHeaders)
+    if (!z.string().uuid().safeParse(websiteId).success) {
+      return NextResponse.json(
+        { error: 'Invalid website identifier' },
+        { status: 400, headers: ctx.responseHeaders }
+      )
+    }
+    const supabase = await createClient()
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    if (!user) {
+      return NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401, headers: ctx.responseHeaders }
+      )
     }
 
-    // Get website with property check
-    const { data: website, error } = await serviceSupabase
+    const client = createServiceClient()
+    const { data: website, error: websiteError } = await client
       .from('property_websites')
-      .select('*')
+      .select(
+        'id, org_id, property_id, current_artifact_version_id, canonical_preview_artifact_id, canonical_preview_content_hash, wordpress_credential_ref, staging_artifact_id, staging_content_hash, staging_url, staging_admin_url'
+      )
       .eq('id', websiteId)
       .single()
-
-    if (error || !website) {
-      ctx.logSuccess(404, { reason: 'website_not_found', websiteId })
+    if (websiteError || !website) {
       return NextResponse.json(
         { error: 'Website not found' },
         { status: 404, headers: ctx.responseHeaders }
       )
     }
-
-    if (typeof website.property_id !== 'string') {
-      ctx.logSuccess(400, { reason: 'invalid_website_property_mapping', websiteId })
-      return badRequest('Website property mapping is invalid', ctx.responseHeaders)
-    }
-
     const access = await validatePropertyAccess(user.id, website.property_id)
     if (!access.authorized) {
-      ctx.logSuccess(403, {
-        reason: 'forbidden_property_access',
-        websiteId,
-        propertyId: website.property_id,
-        userId: user.id,
-      })
-      return forbidden(ctx.responseHeaders)
-    }
-
-    // Check if website is ready for deployment
-    if (website.generation_status !== 'ready_for_preview' && website.generation_status !== 'complete') {
-      ctx.logSuccess(400, { reason: 'website_not_ready_for_deploy', websiteId })
-      return badRequest('Website must be ready for preview before deploying', ctx.responseHeaders)
-    }
-
-    // Check if already deployed
-    if (website.wp_url) {
-      ctx.logSuccess(400, { reason: 'website_already_deployed', websiteId })
       return NextResponse.json(
-        {
-          error: 'Website already deployed',
-          wpUrl: website.wp_url,
-          wpAdminUrl: website.wp_admin_url,
-        },
-        { status: 400, headers: ctx.responseHeaders }
+        { error: 'Forbidden' },
+        { status: 403, headers: ctx.responseHeaders }
+      )
+    }
+    if (!website.current_artifact_version_id) {
+      return NextResponse.json(
+        { error: 'Website is missing a current immutable artifact' },
+        { status: 409, headers: ctx.responseHeaders }
       )
     }
 
-    // Deployment options:
-    // A) Cloudways provision + deploy (requires CLOUDWAYS_API_KEY + CLOUDWAYS_EMAIL)
-    // B) Deploy to an existing WordPress instance (requires SITEFORGE_WP_URL + SITEFORGE_WP_USERNAME + SITEFORGE_WP_APP_PASSWORD)
-    const cloudwaysApiKey = process.env.CLOUDWAYS_API_KEY
-    const cloudwaysEmail = process.env.CLOUDWAYS_EMAIL
-    const wpUrl = process.env.SITEFORGE_WP_URL
-    const wpUsername = process.env.SITEFORGE_WP_USERNAME
-    const wpAppPassword = process.env.SITEFORGE_WP_APP_PASSWORD
-
-    const hasCloudways = Boolean(cloudwaysApiKey && cloudwaysEmail)
-    const hasExistingWp = Boolean(wpUrl && wpUsername && wpAppPassword)
-    const localSimulationRequested = new URL(request.url).searchParams.get('simulate') === '1'
-    const localSimulationEnabled =
-      localSimulationRequested && process.env.NODE_ENV !== 'production'
-
-    if (!hasCloudways && !hasExistingWp && !localSimulationEnabled) {
-      ctx.logSuccess(400, { reason: 'missing_wordpress_deploy_config', websiteId })
+    const { data: artifact, error: artifactError } = await client
+      .from('siteforge_blueprint_versions')
+      .select(
+        'id, content_hash, asset_manifest_hash, base_theme_package_sha256, overlay_package_sha256, deployment_decision, deployment_approved_at, confirmed_approval_id'
+      )
+      .eq('id', website.current_artifact_version_id)
+      .eq('website_id', website.id)
+      .single()
+    if (
+      artifactError ||
+      !artifact ||
+      !artifact.asset_manifest_hash ||
+      !artifact.base_theme_package_sha256 ||
+      artifact.deployment_decision !== 'approved' ||
+      !artifact.deployment_approved_at ||
+      !artifact.confirmed_approval_id ||
+      website.canonical_preview_artifact_id !== artifact.id ||
+      website.canonical_preview_content_hash !== artifact.content_hash
+    ) {
       return NextResponse.json(
         {
           error:
-            'WordPress deployment requires either Cloudways credentials (CLOUDWAYS_API_KEY + CLOUDWAYS_EMAIL) or an existing WP target (SITEFORGE_WP_URL + SITEFORGE_WP_USERNAME + SITEFORGE_WP_APP_PASSWORD).',
-          requiresConfig: true,
-          localSimulationHint:
-            'For deterministic local smoke only, append ?simulate=1 while running in non-production.'
+            'Approve an exact, fully snapshotted WordPress preview before deploying to staging',
         },
-        { status: 400, headers: ctx.responseHeaders }
+        { status: 409, headers: ctx.responseHeaders }
+      )
+    }
+    if (
+      website.staging_artifact_id === artifact.id &&
+      website.staging_content_hash === artifact.content_hash &&
+      website.staging_url
+    ) {
+      return NextResponse.json(
+        {
+          status: 'ready',
+          artifactId: artifact.id,
+          contentHash: artifact.content_hash,
+          stagingUrl: website.staging_url,
+          stagingAdminUrl: website.staging_admin_url,
+          pushToLiveLocation: 'siteforge_launch_release',
+        },
+        { headers: ctx.responseHeaders }
       )
     }
 
-    // Update status to deploying
-    const { pages: deployPages, source: deploySource } = resolveDeploySource(website as DeploymentWebsite)
-
-    if (deployPages.length === 0) {
-      ctx.logSuccess(400, { reason: 'no_pages_available_for_deploy', websiteId })
-      return badRequest('Website has no pages available to deploy', ctx.responseHeaders)
+    const localSimulation =
+      request.nextUrl.searchParams.get('simulate') === '1' &&
+      process.env.NODE_ENV !== 'production'
+    let parentMetadata:
+      | {
+          serverId: string
+          applicationId: string
+          publicIp: string
+        }
+      | null = null
+    if (!localSimulation) {
+      if (
+        !website.wordpress_credential_ref ||
+        !process.env.CLOUDWAYS_API_KEY ||
+        !process.env.CLOUDWAYS_EMAIL
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              'A linked Cloudways parent application and Cloudways API credentials are required',
+            requiresConfig: true,
+          },
+          { status: 409, headers: ctx.responseHeaders }
+        )
+      }
+      const parent = await getWordPressCredentialReference(
+        website.wordpress_credential_ref
+      )
+      if (parent.provider !== 'cloudways' || !parent.providerMetadata) {
+        return NextResponse.json(
+          { error: 'The linked WordPress target is not a Cloudways application' },
+          { status: 409, headers: ctx.responseHeaders }
+        )
+      }
+      parentMetadata = parent.providerMetadata
     }
 
-    await serviceSupabase
-      .from('property_websites')
+    const { data: existingTarget, error: targetLookupError } = await client
+      .from('siteforge_wordpress_targets')
+      .select('id')
+      .eq('website_id', website.id)
+      .eq('target_type', 'staging')
+      .eq('is_active', true)
+      .maybeSingle()
+    if (targetLookupError) throw new Error(targetLookupError.message)
+    let targetId = existingTarget?.id
+    if (!targetId) {
+      const { data: createdTarget, error: targetCreateError } = await client
+        .from('siteforge_wordpress_targets')
+        .insert({
+          org_id: website.org_id,
+          property_id: website.property_id,
+          website_id: website.id,
+          target_type: 'staging',
+          provider: localSimulation ? 'local_simulation' : 'cloudways',
+          provider_parent_application_id: parentMetadata?.applicationId || null,
+          provider_server_id: parentMetadata?.serverId || null,
+          dashboard_url: parentMetadata
+            ? `https://platform.cloudways.com/apps`
+            : null,
+          protection_mode: 'noindex',
+          status: 'pending',
+          is_active: true,
+          metadata: {
+            parentPublicIp: parentMetadata?.publicIp || null,
+            promotionPolicy: 'siteforge_launch_release_v1',
+          } as Json,
+        })
+        .select('id')
+        .single()
+      if (targetCreateError || !createdTarget) {
+        throw new Error(
+          `Failed to create staging target: ${
+            targetCreateError?.message || 'missing row'
+          }`
+        )
+      }
+      targetId = createdTarget.id
+    }
+
+    const dedupeKey = [
+      'siteforge-staging',
+      website.id,
+      artifact.id,
+      artifact.content_hash,
+      localSimulation ? 'simulation' : 'cloudways',
+    ].join(':')
+    const now = new Date().toISOString()
+    const { data: existingJob } = await client
+      .from('shared_jobs')
+      .select('id, lifecycle_status, workflow_run_id, attempt_count')
+      .eq('org_id', website.org_id)
+      .eq('domain', 'siteforge.deployment')
+      .eq('dedupe_key', dedupeKey)
+      .maybeSingle()
+    if (
+      existingJob &&
+      ['queued', 'running', 'retrying', 'succeeded'].includes(
+        existingJob.lifecycle_status
+      )
+    ) {
+      return NextResponse.json(
+        {
+          jobId: existingJob.id,
+          workflowRunId: existingJob.workflow_run_id,
+          status: existingJob.lifecycle_status,
+          duplicate: true,
+        },
+        {
+          status: existingJob.lifecycle_status === 'succeeded' ? 200 : 202,
+          headers: ctx.responseHeaders,
+        }
+      )
+    }
+
+    const { data: existingDeployment } = await client
+      .from('siteforge_artifact_deployments')
+      .select('id')
+      .eq('target_id', targetId)
+      .eq('artifact_id', artifact.id)
+      .maybeSingle()
+    const deploymentValues = {
+      org_id: website.org_id,
+      property_id: website.property_id,
+      website_id: website.id,
+      target_id: targetId,
+      artifact_id: artifact.id,
+      artifact_content_hash: artifact.content_hash,
+      asset_manifest_hash: artifact.asset_manifest_hash,
+      base_theme_package_sha256: artifact.base_theme_package_sha256,
+      overlay_package_sha256: artifact.overlay_package_sha256,
+      approval_id: artifact.confirmed_approval_id,
+      shared_job_id: existingJob?.id || null,
+      status: 'queued' as const,
+      certification_report: {
+        status: 'queued',
+        artifactId: artifact.id,
+        contentHash: artifact.content_hash,
+      } as Json,
+    }
+    const deploymentQuery = existingDeployment
+      ? client
+          .from('siteforge_artifact_deployments')
+          .update(deploymentValues)
+          .eq('id', existingDeployment.id)
+      : client.from('siteforge_artifact_deployments').insert(deploymentValues)
+    const { data: deployment, error: deploymentError } = await deploymentQuery
+      .select('id')
+      .single()
+    if (deploymentError || !deployment) {
+      throw new Error(
+        `Failed to create exact staging release: ${
+          deploymentError?.message || 'missing row'
+        }`
+      )
+    }
+
+    const jobValues = {
+      lifecycle_status: 'queued' as const,
+      status_reason: 'staging_workflow_starting',
+      stage: 'queued',
+      progress: 0,
+      current_step: 'Preparing linked Cloudways staging deployment',
+      payload: {
+        websiteId: website.id,
+        propertyId: website.property_id,
+        orgId: website.org_id,
+        targetId,
+        deploymentId: deployment.id,
+        artifactId: artifact.id,
+        contentHash: artifact.content_hash,
+        approvalId: artifact.confirmed_approval_id,
+        localSimulation,
+        startedAt: now,
+      } as Json,
+      workflow_run_id: null,
+      error_message: null,
+      error_details: null,
+      cancel_requested: false,
+      attempt_count: (existingJob?.attempt_count || 0) + 1,
+      max_attempts: 3,
+      queued_at: now,
+      updated_at: now,
+    }
+    const jobQuery = existingJob
+      ? client.from('shared_jobs').update(jobValues).eq('id', existingJob.id)
+      : client.from('shared_jobs').insert({
+          ...jobValues,
+          org_id: website.org_id,
+          property_id: website.property_id,
+          domain: 'siteforge.deployment',
+          subject_type: 'siteforge_artifact',
+          subject_id: artifact.id,
+          dedupe_key: dedupeKey,
+        })
+    const { data: job, error: jobError } = await jobQuery
+      .select('id')
+      .single()
+    if (jobError || !job) {
+      throw new Error(
+        `Failed to queue staging deployment: ${jobError?.message || 'missing row'}`
+      )
+    }
+
+    const { data: linkedDeployment, error: deploymentLinkError } = await client
+      .from('siteforge_artifact_deployments')
       .update({
-        generation_status: 'deploying',
-        current_step:
-          deploySource.field === 'blueprint'
-            ? `Deploying edited blueprint (v${deploySource.blueprintVersion ?? 'unknown'}) to WordPress...`
-            : 'Deploying legacy generated pages to WordPress...'
+        shared_job_id: job.id,
+        status: 'queued',
+        certification_report: {
+          status: 'queued',
+          jobId: job.id,
+          artifactId: artifact.id,
+          contentHash: artifact.content_hash,
+        } as Json,
       })
-      .eq('id', websiteId)
+      .eq('id', deployment.id)
+      .eq('artifact_id', artifact.id)
+      .select('id')
+      .maybeSingle()
+    if (deploymentLinkError || !linkedDeployment) {
+      throw new Error(
+        `Failed to link deployment job identity: ${
+          deploymentLinkError?.message || 'deployment row was not updated'
+        }`
+      )
+    }
 
-    // Start deployment in background
-    deployToWordPressAsync(
-      websiteId,
-      {
-        ...(website as DeploymentWebsite),
-        blueprint: deploySource.field === 'blueprint' ? (website as DeploymentWebsite).blueprint : null,
-        pages_generated: deployPages,
-      },
-      { localSimulation: localSimulationEnabled }
-    ).catch(error => {
-      console.error('Deployment error:', error)
-    })
+    const workflowInput = {
+      sharedJobId: job.id,
+      deploymentId: deployment.id,
+      targetId,
+      websiteId: website.id,
+      propertyId: website.property_id,
+      orgId: website.org_id,
+      artifactId: artifact.id,
+      contentHash: artifact.content_hash,
+      approvalId: artifact.confirmed_approval_id,
+      localSimulation,
+      startedAt: now,
+    }
+    let run: Awaited<ReturnType<typeof start>>
+    try {
+      run = await start(siteForgeStagingDeploymentWorkflow, [workflowInput])
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Staging workflow failed to start'
+      const failedAt = new Date().toISOString()
+      const [failedJob, failedDeployment] = await Promise.all([
+        client
+          .from('shared_jobs')
+          .update({
+            lifecycle_status: 'failed',
+            status_reason: 'staging_start_failed',
+            stage: 'failed',
+            current_step: 'Staging workflow failed to start',
+            error_message: message,
+            error_details: { message } as Json,
+            finished_at: failedAt,
+            updated_at: failedAt,
+          })
+          .eq('id', job.id)
+          .eq('lifecycle_status', 'queued')
+          .select('id')
+          .maybeSingle(),
+        client
+          .from('siteforge_artifact_deployments')
+          .update({
+            status: 'failed',
+            certification_report: { status: 'failed', error: message } as Json,
+          })
+          .eq('id', deployment.id)
+          .select('id')
+          .maybeSingle(),
+      ])
+      if (
+        failedJob.error ||
+        !failedJob.data ||
+        failedDeployment.error ||
+        !failedDeployment.data
+      ) {
+        throw new Error('Staging launch failed without complete terminal state')
+      }
+      throw error
+    }
+    const [linkedJob, updatedWebsite] = await Promise.all([
+      client
+        .from('shared_jobs')
+        .update({
+          workflow_run_id: run.runId,
+          workflow_name: 'siteForgeStagingDeploymentWorkflow',
+          payload: workflowInput as unknown as Json,
+          status_reason: 'staging_workflow_queued',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', job.id)
+        .select('id')
+        .maybeSingle(),
+      client
+        .from('property_websites')
+        .update({
+          editor_lifecycle_status: 'deploying_staging',
+          generation_status: 'deploying',
+          staging_target_id: targetId,
+          current_step: 'Deploying exact artifact to linked Cloudways staging',
+          error_message: null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', website.id)
+        .select('id')
+        .maybeSingle(),
+    ])
+    if (
+      linkedJob.error ||
+      !linkedJob.data ||
+      updatedWebsite.error ||
+      !updatedWebsite.data
+    ) {
+      await run.cancel()
+      throw new Error(
+        `Failed to persist staging workflow launch: ${
+          linkedJob.error?.message ||
+          updatedWebsite.error?.message ||
+          'one or more rows were not updated'
+        }`
+      )
+    }
 
-    ctx.logSuccess(200, { websiteId, status: 'deploying' })
     return NextResponse.json(
       {
-        status: 'deploying',
-        message: 'Deployment started. This may take a few minutes.',
+        jobId: job.id,
+        deploymentId: deployment.id,
+        targetId,
+        workflowRunId: run.runId,
+        status: 'queued',
+        message: 'Cloudways staging deployment queued.',
+        promotionPolicy: 'Push to Live is available only in Cloudways.',
       },
-      { headers: ctx.responseHeaders }
+      { status: 202, headers: ctx.responseHeaders }
     )
-
   } catch (error) {
-    ctx.logError(500, error, { operation: 'siteforge_deploy_start' })
-    return serverError(error, ctx.responseHeaders)
-  }
-}
-
-/**
- * Background WordPress deployment process
- * Uses service client since this runs after HTTP response is sent
- */
-export async function deployToWordPressAsync(
-  websiteId: string,
-  website: DeploymentWebsite,
-  options: DeployAsyncOptions = {}
-) {
-  // Use service client for background tasks (no request context available)
-  const supabase = createServiceClient()
-  
-  const startedAt = new Date().toISOString()
-  const deploySource = resolveDeploySource(website)
-  let pagesAttempted = deploySource.pages.length
-  let assetsAttempted = 0
-  const localSimulation = options.localSimulation === true
-  const provider: DeploymentDiagnostics['provider'] = localSimulation
-    ? 'local_simulation'
-    : resolveDeploymentProvider()
-  let lastProgressStep = ''
-  let lastProgressAt = 0
-
-  try {
-    const cloudwaysApiKey = process.env.CLOUDWAYS_API_KEY
-    const cloudwaysEmail = process.env.CLOUDWAYS_EMAIL
-    const wpUrl = process.env.SITEFORGE_WP_URL
-    const wpUsername = process.env.SITEFORGE_WP_USERNAME
-    const wpAppPassword = process.env.SITEFORGE_WP_APP_PASSWORD
-
-    // Load assets for this website
-    const { data: assets } = await supabase
-      .from('website_assets')
-      .select('*')
-      .eq('website_id', websiteId)
-
-    // Determine deploy source explicitly (edited blueprint preferred, legacy fallback explicit).
-    const pages = deploySource.pages
-    const normalizedAssets = (assets || []) as unknown as WebsiteAsset[]
-    pagesAttempted = pages.length
-    assetsAttempted = normalizedAssets.length
-    const architecture = {
-      pages,
-      navigation: website.site_architecture?.navigation,
-      designDecisions: website.site_architecture?.designDecisions,
-    } as unknown as SiteArchitecture
-
-    const progressReporter: DeploymentProgressReporter = async step => {
-      const now = Date.now()
-      if (step === lastProgressStep && now - lastProgressAt < 15_000) {
-        return
-      }
-      lastProgressStep = step
-      lastProgressAt = now
-      await supabase
-        .from('property_websites')
-        .update({ current_step: step })
-        .eq('id', websiteId)
-    }
-
-    let instance: Awaited<ReturnType<typeof deployToWordPress>>
-    if (localSimulation) {
-      const baseUrl = getLocalSimulationBaseUrl()
-      instance = {
-        instanceId: `local-sim-${websiteId.slice(0, 8)}`,
-        url: `${baseUrl}/siteforge/preview/${websiteId}`,
-        adminUrl: `${baseUrl}/siteforge/preview/${websiteId}`,
-        credentials: {
-          username: 'local-simulation',
-          password: 'local-simulation',
-        },
-      }
-    } else if (cloudwaysApiKey && cloudwaysEmail) {
-      // Get property context (for naming/settings)
-      await progressReporter('Loading property context for Cloudways provisioning...')
-      const propertyContext = await getPropertyContext(website.property_id)
-      // Provision + deploy through Cloudways + WordPress API orchestration
-      instance = await runWithTimeout(
-        deployToWordPress(
-          architecture,
-          propertyContext,
-          normalizedAssets,
-          { apiKey: cloudwaysApiKey, email: cloudwaysEmail },
-          { onProgress: progressReporter }
-        ),
-        getDeploymentTimeoutMs(),
-        'SiteForge deployment timed out while provisioning/deploying to Cloudways'
-      )
-    } else if (wpUrl && wpUsername && wpAppPassword) {
-      // Get property context (for naming/settings)
-      await progressReporter('Loading property context for existing WordPress deployment...')
-      const propertyContext = await getPropertyContext(website.property_id)
-      instance = await runWithTimeout(
-        deployToExistingWordPress({
-          wpUrl,
-          credentials: { username: wpUsername, password: wpAppPassword },
-          pages,
-          propertyContext,
-          assets: normalizedAssets,
-          onProgress: progressReporter,
-        }),
-        getDeploymentTimeoutMs(),
-        'SiteForge deployment timed out while deploying to existing WordPress'
-      )
-    } else {
-      throw new Error('No deployment credentials configured')
-    }
-
-    const diagnostics: DeploymentDiagnostics = {
-      workflow: 'siteforge_wordpress_deploy',
-      status: 'success',
-      provider,
-      startedAt,
-      completedAt: new Date().toISOString(),
-      pagesAttempted,
-      assetsAttempted,
-      verification: {
-        enabled: true,
-        status: 'passed',
-        message: localSimulation
-          ? 'Deployment verified in deterministic local simulation mode.'
-          : undefined,
+    ctx.logError(500, error)
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Failed to start Cloudways staging deployment',
       },
-      target: {
-        url: instance.url,
-        adminUrl: instance.adminUrl,
-        instanceId: instance.instanceId,
-      },
-      deploySource: deploySource.source,
-    }
-
-    // Mark as complete
-    await supabase
-      .from('property_websites')
-      .update({
-        generation_status: 'complete',
-        current_step: `Deployment complete (verified ${pagesAttempted} pages, ${assetsAttempted} assets).`,
-        error_message: null,
-        wp_url: instance.url,
-        wp_admin_url: instance.adminUrl,
-        wp_instance_id: instance.instanceId,
-        wp_credentials: instance.credentials,
-        deployed_at: diagnostics.completedAt,
-        generation_input: mergeDeploymentDiagnostics(
-          website.generation_input,
-          diagnostics
-        ),
-      })
-      .eq('id', websiteId)
-      
-  } catch (error) {
-    console.error('WordPress deployment error:', error)
-    const message =
-      error instanceof Error ? error.message : 'Deployment failed'
-    const diagnostics: DeploymentDiagnostics = {
-      workflow: 'siteforge_wordpress_deploy',
-      status: 'failed',
-      provider,
-      startedAt,
-      completedAt: new Date().toISOString(),
-      pagesAttempted,
-      assetsAttempted,
-      verification: {
-        enabled: true,
-        status: classifyDeploymentErrorCategory(message) === 'verification' ? 'failed' : 'passed',
-      },
-      deploySource: deploySource.source,
-      error: {
-        message,
-        category: classifyDeploymentErrorCategory(message),
-      },
-    }
-
-    await supabase
-      .from('property_websites')
-      .update({
-        generation_status: 'deploy_failed',
-        current_step: diagnostics.error?.category === 'verification'
-          ? 'Deployment failed during verification'
-          : 'Deployment failed',
-        error_message: message,
-        generation_input: mergeDeploymentDiagnostics(
-          website.generation_input,
-          diagnostics
-        ),
-      })
-      .eq('id', websiteId)
+      { status: 500, headers: ctx.responseHeaders }
+    )
   }
 }
-
-function mergeDeploymentDiagnostics(
-  existingGenerationInput: DeploymentWebsite['generation_input'],
-  diagnostics: DeploymentDiagnostics
-): Json {
-  const base =
-    existingGenerationInput &&
-    typeof existingGenerationInput === 'object' &&
-    !Array.isArray(existingGenerationInput)
-      ? (existingGenerationInput as { [key: string]: Json | undefined })
-      : {}
-
-  return {
-    ...base,
-    deploymentDiagnostics: diagnostics as unknown as Json,
-  }
-}
-
-function resolveDeploymentProvider(): DeploymentDiagnostics['provider'] {
-  return process.env.CLOUDWAYS_API_KEY && process.env.CLOUDWAYS_EMAIL
-    ? 'cloudways'
-    : 'existing_wordpress'
-}
-
-function getLocalSimulationBaseUrl(): string {
-  return (
-    process.env.NEXT_PUBLIC_BASE_URL ||
-    process.env.PLAYWRIGHT_BASE_URL ||
-    'http://127.0.0.1:3000'
-  )
-}
-
-function getDeploymentTimeoutMs(): number {
-  const parsed = Number(process.env.SITEFORGE_DEPLOY_TIMEOUT_MS || 2_700_000)
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 2_700_000
-}
-
-async function runWithTimeout<T>(
-  promise: Promise<T>,
-  timeoutMs: number,
-  timeoutMessage: string
-): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    let settled = false
-    const timer = setTimeout(() => {
-      if (settled) {
-        return
-      }
-      settled = true
-      reject(new Error(timeoutMessage))
-    }, timeoutMs)
-
-    promise
-      .then(value => {
-        if (settled) {
-          return
-        }
-        settled = true
-        clearTimeout(timer)
-        resolve(value)
-      })
-      .catch(error => {
-        if (settled) {
-          return
-        }
-        settled = true
-        clearTimeout(timer)
-        reject(error)
-      })
-  })
-}
-
-function classifyDeploymentErrorCategory(
-  message: string
-): DeploymentErrorCategory {
-  const normalized = message.toLowerCase()
-  if (
-    normalized.includes('verification failed') ||
-    normalized.includes('did not become ready') ||
-    normalized.includes('missing required wordpress namespaces') ||
-    normalized.includes('missing published pages')
-  ) {
-    return 'verification'
-  }
-  if (
-    normalized.includes('requires either cloudways credentials') ||
-    normalized.includes('no deployment credentials configured')
-  ) {
-    return 'configuration'
-  }
-  if (normalized.includes('cloudways') || normalized.includes('operation')) {
-    return 'provisioning'
-  }
-  return 'unknown'
-}
-
-
-
-
-
-
-

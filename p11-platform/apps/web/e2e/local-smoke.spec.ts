@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import type { Page } from '@playwright/test'
 
 const seededUser = {
   email: 'local-admin@p11.test',
@@ -12,7 +13,7 @@ async function signInWithSeededUser() {
   return seededUser
 }
 
-async function login(page: Parameters<typeof test>[0]['page']) {
+async function login(page: Page) {
   const user = await signInWithSeededUser()
   await page.goto('/auth/login')
   await page.getByLabel('Email address').fill(user.email)
@@ -27,7 +28,7 @@ async function login(page: Parameters<typeof test>[0]['page']) {
 }
 
 async function callAuthedApi(
-  page: Parameters<typeof test>[0]['page'],
+  page: Page,
   url: string,
   init?: {
     method?: string
@@ -66,7 +67,7 @@ async function callAuthedApi(
 }
 
 async function callAuthedTextApi(
-  page: Parameters<typeof test>[0]['page'],
+  page: Page,
   url: string,
   init?: { method?: string; body?: Record<string, unknown> }
 ) {
@@ -96,7 +97,7 @@ async function callAuthedTextApi(
 }
 
 async function resolvePropertyIdForSmoke(
-  page: Parameters<typeof test>[0]['page']
+  page: Page
 ): Promise<string> {
   const propertiesResponse = await callAuthedApi(page, '/api/properties')
   expect(propertiesResponse.ok).toBeTruthy()
@@ -166,7 +167,7 @@ async function resolvePropertyIdForSmoke(
 }
 
 async function ensurePropertyAuditQueries(
-  page: Parameters<typeof test>[0]['page'],
+  page: Page,
   propertyId: string
 ) {
   const queriesResponse = await callAuthedApi(
@@ -216,7 +217,7 @@ async function ensurePropertyAuditQueries(
 }
 
 async function waitForWebsiteStatus(
-  page: Parameters<typeof test>[0]['page'],
+  page: Page,
   websiteId: string,
   terminalStatuses: string[],
   timeoutMs = 120_000
@@ -228,12 +229,27 @@ async function waitForWebsiteStatus(
     const statusResponse = await callAuthedApi(page, `/api/siteforge/status/${websiteId}`)
     lastResponse = statusResponse
 
-    if (statusResponse.ok) {
-      const statusData = statusResponse.data as Record<string, unknown>
-      const status = typeof statusData.status === 'string' ? statusData.status : ''
-      if (terminalStatuses.includes(status)) {
-        return statusData
-      }
+    if (!statusResponse.ok) {
+      const payload = statusResponse.data as { error?: unknown } | null
+      const detail =
+        payload && typeof payload.error === 'string'
+          ? payload.error
+          : `HTTP ${statusResponse.status}`
+      const action =
+        statusResponse.status === 401
+          ? 'The smoke session expired; sign in again.'
+          : statusResponse.status === 403
+            ? 'The seeded user cannot access this SiteForge website.'
+            : statusResponse.status >= 500
+              ? 'The SiteForge status route failed; inspect local server logs.'
+              : 'The SiteForge status request was rejected.'
+      throw new Error(`${action} ${detail}`)
+    }
+
+    const statusData = statusResponse.data as Record<string, unknown>
+    const status = typeof statusData.status === 'string' ? statusData.status : ''
+    if (terminalStatuses.includes(status)) {
+      return statusData
     }
 
     await new Promise(resolve => setTimeout(resolve, 1000))
@@ -244,8 +260,187 @@ async function waitForWebsiteStatus(
   )
 }
 
+async function waitForCanonicalPreviewJob(
+  page: Page,
+  websiteId: string,
+  jobId: string,
+  timeoutMs = 300_000
+) {
+  const deadline = Date.now() + timeoutMs
+  let lastResponse: { ok: boolean; status: number; data: unknown } | null = null
+
+  while (Date.now() < deadline) {
+    const response = await callAuthedApi(
+      page,
+      `/api/siteforge/canonical-preview/${websiteId}?jobId=${jobId}`
+    )
+    lastResponse = response
+    if (response.ok) {
+      const data = response.data as {
+        status?: string
+        error?: string | null
+      }
+      if (
+        data.status === 'succeeded' ||
+        data.status === 'failed' ||
+        data.status === 'cancelled'
+      ) {
+        return data
+      }
+    }
+    await new Promise(resolve => setTimeout(resolve, 2000))
+  }
+
+  throw new Error(
+    `Timed out waiting for canonical preview job ${jobId}: ${JSON.stringify(lastResponse)}`
+  )
+}
+
+async function createApprovedSiteForgeGeneration(
+  page: Page,
+  propertyId: string,
+  operatorDirection: string,
+  options: { simulate?: boolean } = { simulate: true }
+) {
+  const preferences = {
+    style: 'modern',
+    emphasis: 'amenities',
+    ctaPriority: 'contact',
+    enabledCapabilities: [],
+  }
+  const readinessResponse = await callAuthedApi(page, '/api/onboarding/readiness', {
+    method: 'POST',
+    body: { propertyId },
+  })
+  expect(
+    readinessResponse.ok,
+    `SiteForge readiness build failed: ${JSON.stringify(readinessResponse)}`
+  ).toBeTruthy()
+  const readiness = readinessResponse.data as {
+    snapshot?: { id?: string; status?: string; unresolved_conflicts?: unknown[] }
+  }
+  if (readiness.snapshot?.status !== 'approved') {
+    expect(
+      readiness.snapshot?.status,
+      `SiteForge readiness is blocked: ${JSON.stringify(readiness.snapshot)}`
+    ).toBe('ready')
+    const readinessApproval = await callAuthedApi(
+      page,
+      `/api/onboarding/readiness/${readiness.snapshot?.id}/approve`,
+      {
+        method: 'POST',
+        body: {
+          propertyId,
+          rationale: 'Local smoke approves the evidence-backed onboarding snapshot.',
+        },
+      }
+    )
+    expect(
+      readinessApproval.ok,
+      `SiteForge readiness approval failed: ${JSON.stringify(readinessApproval)}`
+    ).toBeTruthy()
+  }
+  const planResponse = await callAuthedApi(page, '/api/siteforge/plan', {
+    method: 'POST',
+    body: {
+      propertyId,
+      conversationHistory: [],
+      userMessage: operatorDirection,
+      preferences,
+    },
+  })
+  expect(
+    planResponse.ok,
+    `SiteForge plan creation failed: ${JSON.stringify(planResponse)}`
+  ).toBeTruthy()
+  const plan = planResponse.data as {
+    planId?: string
+    planVersionId?: string
+    revision?: number
+    contentHash?: string
+    planState?: string
+    plan?: { propertyId?: string; preferences?: Record<string, unknown> }
+    readiness?: { ready?: boolean; issues?: unknown[] }
+  }
+  expect(typeof plan.planId).toBe('string')
+  expect(typeof plan.planVersionId).toBe('string')
+  expect(plan.revision).toBeGreaterThan(0)
+  expect(plan.contentHash).toMatch(/^[a-f0-9]{64}$/)
+  expect(plan.planState).toBe('ready_for_review')
+  expect(plan.plan?.propertyId).toBe(propertyId)
+  expect(plan.plan?.preferences).toMatchObject(preferences)
+  expect(
+    plan.readiness?.ready,
+    `SiteForge plan was not ready: ${JSON.stringify(plan.readiness)}`
+  ).toBe(true)
+
+  const decisionResponse = await callAuthedApi(
+    page,
+    `/api/siteforge/plans/${plan.planId as string}/decision`,
+    {
+      method: 'POST',
+      body: {
+        propertyId,
+        expectedRevision: plan.revision,
+        contentHash: plan.contentHash,
+        decisionStatus: 'approved',
+        decisionReason: 'Local smoke approves this exact immutable plan revision.',
+      },
+    }
+  )
+  expect(
+    decisionResponse.ok,
+    `SiteForge plan approval failed: ${JSON.stringify(decisionResponse)}`
+  ).toBeTruthy()
+  const decision = decisionResponse.data as {
+    status?: string
+    revision?: number
+    contentHash?: string
+    planVersionId?: string
+  }
+  expect(decision.status).toBe('confirmed')
+  expect(decision.revision).toBe(plan.revision)
+  expect(decision.contentHash).toBe(plan.contentHash)
+  expect(decision.planVersionId).toBe(plan.planVersionId)
+
+  const generateResponse = await callAuthedApi(
+    page,
+    `/api/siteforge/generate${options.simulate === false ? '' : '?simulate=1'}`,
+    {
+      method: 'POST',
+      body: {
+        planId: plan.planId,
+        confirmedRevision: plan.revision,
+        contentHash: plan.contentHash,
+        idempotencyKey: crypto.randomUUID(),
+      },
+    }
+  )
+  expect(
+    generateResponse.ok,
+    `SiteForge generation failed: ${JSON.stringify(generateResponse)}`
+  ).toBeTruthy()
+  const generation = generateResponse.data as {
+    websiteId?: string
+    jobId?: string
+    status?: string
+  }
+  expect(typeof generation.websiteId).toBe('string')
+  expect(typeof generation.jobId).toBe('string')
+  expect(generation.status).toBe('queued')
+
+  return {
+    websiteId: generation.websiteId as string,
+    jobId: generation.jobId as string,
+    planId: plan.planId as string,
+    planVersionId: plan.planVersionId as string,
+    revision: plan.revision as number,
+    contentHash: plan.contentHash as string,
+  }
+}
+
 async function waitForPropertyAuditRun(
-  page: Parameters<typeof test>[0]['page'],
+  page: Page,
   runId: string,
   timeoutMs = 900_000
 ) {
@@ -595,44 +790,20 @@ test.describe('local smoke flows', () => {
     }
   })
 
-  test('siteforge deploy and rollback flow restores to previous generated version', async ({ page }) => {
+  test('siteforge confirmed plan produces an immutable artifact before staging', async ({ page }) => {
     test.setTimeout(180_000)
     await login(page)
     const propertyId = await resolvePropertyIdForSmoke(page)
 
-    const firstGenerateResponse = await callAuthedApi(page, '/api/siteforge/generate?simulate=1', {
-      method: 'POST',
-      body: {
-        propertyId,
-        prompt: 'Smoke test first generated version',
-      },
-    })
-    expect(
-      firstGenerateResponse.ok,
-      `First generate failed: ${JSON.stringify(firstGenerateResponse)}`
-    ).toBeTruthy()
-    const firstGenerateData = firstGenerateResponse.data as Record<string, unknown>
-    expect(typeof firstGenerateData.websiteId).toBe('string')
-    const firstWebsiteId = firstGenerateData.websiteId as string
-
-    const secondGenerateResponse = await callAuthedApi(page, '/api/siteforge/generate?simulate=1', {
-      method: 'POST',
-      body: {
-        propertyId,
-        prompt: 'Smoke test second generated version',
-      },
-    })
-    expect(
-      secondGenerateResponse.ok,
-      `Second generate failed: ${JSON.stringify(secondGenerateResponse)}`
-    ).toBeTruthy()
-    const secondGenerateData = secondGenerateResponse.data as Record<string, unknown>
-    expect(typeof secondGenerateData.websiteId).toBe('string')
-    const secondWebsiteId = secondGenerateData.websiteId as string
+    const generation = await createApprovedSiteForgeGeneration(
+      page,
+      propertyId,
+      'Smoke test immutable generated version'
+    )
 
     const generationStatus = await waitForWebsiteStatus(
       page,
-      secondWebsiteId,
+      generation.websiteId,
       ['ready_for_preview', 'complete', 'failed'],
       180_000
     )
@@ -643,80 +814,103 @@ test.describe('local smoke flows', () => {
 
     const deployResponse = await callAuthedApi(
       page,
-      `/api/siteforge/deploy/${secondWebsiteId}?simulate=1`,
+      `/api/siteforge/deploy/${generation.websiteId}?simulate=1`,
       { method: 'POST' }
     )
-    expect(deployResponse.ok, `Deploy request failed: ${JSON.stringify(deployResponse)}`).toBe(true)
+    expect(deployResponse.status).toBe(409)
+    expect(
+      String((deployResponse.data as Record<string, unknown>)?.error || '')
+    ).toContain('Approve an exact')
 
-    const deployedStatus = await waitForWebsiteStatus(
+    const artifactResponse = await callAuthedApi(
       page,
-      secondWebsiteId,
-      ['complete', 'deploy_failed'],
+      `/api/siteforge/rollback/${generation.websiteId}`
+    )
+    expect(
+      artifactResponse.ok,
+      `Immutable artifact lookup failed: ${JSON.stringify(artifactResponse)}`
+    ).toBeTruthy()
+    const artifactData = artifactResponse.data as Record<string, unknown>
+    const currentArtifact = artifactData.currentArtifact as
+      | { id?: string; version?: number; content_hash?: string }
+      | undefined
+    expect(typeof currentArtifact?.id).toBe('string')
+    expect(typeof currentArtifact?.version).toBe('number')
+    expect(currentArtifact?.content_hash).toMatch(/^[a-f0-9]{64}$/)
+    expect(artifactData.canRollback).toBe(false)
+    expect(artifactData.history).toEqual([])
+  })
+
+  test('siteforge semantic editor opens one-window chat and staging workspace', async ({
+    page,
+  }) => {
+    test.setTimeout(180_000)
+    test.skip(
+      process.env.SITEFORGE_SEMANTIC_EDITOR_ENABLED !== 'true',
+      'Set SITEFORGE_SEMANTIC_EDITOR_ENABLED=true to run the semantic editor smoke.'
+    )
+    await login(page)
+    const propertyId = await resolvePropertyIdForSmoke(page)
+    const generated = await createApprovedSiteForgeGeneration(
+      page,
+      propertyId,
+      'Semantic editor local smoke website'
+    )
+    const websiteId = generated.websiteId
+    await waitForWebsiteStatus(
+      page,
+      websiteId,
+      ['ready_for_preview', 'failed'],
       120_000
     )
-    expect(
-      deployedStatus.status === 'complete',
-      `Deploy did not complete successfully: ${JSON.stringify(deployedStatus)}`
-    ).toBe(true)
-    const deployedDiagnostics = deployedStatus.deploymentDiagnostics as
-      | Record<string, unknown>
-      | undefined
-    expect(deployedDiagnostics?.status).toBe('success')
-    expect(deployedDiagnostics?.provider).toBe('local_simulation')
-    expect(
-      (deployedDiagnostics?.verification as Record<string, unknown> | undefined)?.status
-    ).toBe('passed')
 
-    let rollbackPreviewData: Record<string, unknown> | null = null
-    let rollbackPreviewLastResponse: { ok: boolean; status: number; data: unknown } | null = null
-    for (let attempt = 0; attempt < 20; attempt++) {
-      const rollbackPreviewResponse = await callAuthedApi(
-        page,
-        `/api/siteforge/rollback/${secondWebsiteId}`
+    await page.goto(`/dashboard/siteforge/${websiteId}`)
+    await expect(
+      page.getByText(/Production promotion requires a separate, expiring manager launch approval/)
+    ).toBeVisible()
+    await expect(
+      page.getByPlaceholder(/Describe any site-wide change/i)
+    ).toBeVisible()
+    await expect(
+      page.getByRole('button', { name: 'Deploy to staging' })
+    ).toBeVisible()
+    await expect(page.getByText('Human launch gate enforced')).toBeVisible()
+    await expect(
+      page.getByRole('button', { name: 'Prepare launch release' })
+    ).toBeVisible()
+    await expect(
+      page.getByLabel('Production operation rationale')
+    ).toBeVisible()
+
+    if (process.env.SITEFORGE_RUNTIME_V2_SMOKE !== '1') return
+
+    await page.getByRole('button', { name: 'WordPress preview' }).click()
+    await page.getByRole('button', { name: 'Render exact revision' }).click()
+    await expect(
+      page.getByTitle('Exact WordPress preview')
+    ).toBeVisible({ timeout: 120_000 })
+
+    await page
+      .getByLabel('Site edit request')
+      .fill(
+        'Change only the homepage hero heading to "Runtime v2 exact edit smoke". Preserve every color, font, spacing value, asset, and layout.'
       )
-      rollbackPreviewLastResponse = rollbackPreviewResponse
-      if (!rollbackPreviewResponse.ok) {
-        await new Promise(resolve => setTimeout(resolve, 500))
-        continue
-      }
-      rollbackPreviewData = rollbackPreviewResponse.data as Record<string, unknown>
-      if (rollbackPreviewData.canRollback === true) {
-        break
-      }
-      await new Promise(resolve => setTimeout(resolve, 500))
-    }
-
-    expect(
-      rollbackPreviewLastResponse?.ok,
-      `Rollback preview request failed: ${JSON.stringify(rollbackPreviewLastResponse)}`
-    ).toBeTruthy()
-    expect(rollbackPreviewData, 'Rollback preview never became available').toBeTruthy()
-    expect(rollbackPreviewData?.canRollback).toBe(true)
-    expect(rollbackPreviewData?.rollbackToWebsiteId).toBe(firstWebsiteId)
-    expect(typeof rollbackPreviewData.currentVersion).toBe('number')
-    expect(typeof rollbackPreviewData.rollbackToVersion).toBe('number')
-    expect(
-      Number(rollbackPreviewData.currentVersion) > Number(rollbackPreviewData.rollbackToVersion)
-    ).toBe(true)
-
-    const rollbackResponse = await callAuthedApi(page, `/api/siteforge/rollback/${secondWebsiteId}`, {
-      method: 'POST',
+    await page.getByRole('button', { name: 'Send' }).click()
+    await expect(page.getByRole('button', { name: 'Working…' })).toBeHidden({
+      timeout: 120_000,
     })
-    expect(rollbackResponse.ok).toBeTruthy()
-    const rollbackData = rollbackResponse.data as Record<string, unknown>
-    expect(rollbackData.success).toBe(true)
-    expect(rollbackData.rolledBackToWebsiteId).toBe(firstWebsiteId)
+    await expect(
+      page.getByTitle('Exact WordPress preview')
+    ).toBeVisible({ timeout: 120_000 })
 
-    const statusData = await waitForWebsiteStatus(
-      page,
-      secondWebsiteId,
-      ['ready_for_preview'],
-      30_000
-    )
-    expect(statusData.status).toBe('ready_for_preview')
-    expect(String(statusData.currentStep || '')).toContain('Rolled back to version')
-    expect(statusData.wpUrl).toBeUndefined()
-    expect(statusData.wpAdminUrl).toBeUndefined()
+    await page.getByRole('button', { name: 'Undo' }).click()
+    await expect(page.getByText('WordPress preview stale')).toBeVisible({
+      timeout: 60_000,
+    })
+    await page.getByRole('button', { name: 'Render exact revision' }).click()
+    await expect(
+      page.getByTitle('Exact WordPress preview')
+    ).toBeVisible({ timeout: 120_000 })
   })
 
   test('siteforge real target deploy and rollback flow (opt-in)', async ({ page }) => {
@@ -734,27 +928,19 @@ test.describe('local smoke flows', () => {
     await login(page)
     const propertyId = await resolvePropertyIdForSmoke(page)
 
-    const firstGenerateResponse = await callAuthedApi(page, '/api/siteforge/generate?simulate=1', {
-      method: 'POST',
-      body: {
-        propertyId,
-        prompt: 'Real deploy smoke first generated version',
-      },
-    })
-    expect(firstGenerateResponse.ok).toBeTruthy()
-    const firstGenerateData = firstGenerateResponse.data as Record<string, unknown>
-    const firstWebsiteId = firstGenerateData.websiteId as string
-
-    const secondGenerateResponse = await callAuthedApi(page, '/api/siteforge/generate?simulate=1', {
-      method: 'POST',
-      body: {
-        propertyId,
-        prompt: 'Real deploy smoke second generated version',
-      },
-    })
-    expect(secondGenerateResponse.ok).toBeTruthy()
-    const secondGenerateData = secondGenerateResponse.data as Record<string, unknown>
-    const secondWebsiteId = secondGenerateData.websiteId as string
+    const firstGeneration = await createApprovedSiteForgeGeneration(
+      page,
+      propertyId,
+      'Real deploy smoke first generated version'
+    )
+    const secondGeneration = await createApprovedSiteForgeGeneration(
+      page,
+      propertyId,
+      'Real deploy smoke second generated version'
+    )
+    const secondWebsiteId = secondGeneration.websiteId
+    expect(secondGeneration.planId).not.toBe(firstGeneration.planId)
+    expect(secondWebsiteId).not.toBe(firstGeneration.websiteId)
 
     await waitForWebsiteStatus(
       page,
@@ -793,10 +979,21 @@ test.describe('local smoke flows', () => {
     expect(rollbackPreviewResponse.ok).toBeTruthy()
     const rollbackPreviewData = rollbackPreviewResponse.data as Record<string, unknown>
     expect(rollbackPreviewData.canRollback).toBe(true)
-    expect(rollbackPreviewData.rollbackToWebsiteId).toBe(firstWebsiteId)
+    expect(typeof rollbackPreviewData.rollbackToArtifactId).toBe('string')
+    expect(typeof rollbackPreviewData.rollbackToContentHash).toBe('string')
+    const currentArtifact = rollbackPreviewData.currentArtifact as
+      | { id?: string; version?: number }
+      | undefined
+    expect(typeof currentArtifact?.id).toBe('string')
 
     const rollbackResponse = await callAuthedApi(page, `/api/siteforge/rollback/${secondWebsiteId}`, {
       method: 'POST',
+      body: {
+        expectedCurrentArtifactId: currentArtifact?.id,
+        targetArtifactId: rollbackPreviewData.rollbackToArtifactId,
+        targetContentHash: rollbackPreviewData.rollbackToContentHash,
+        decisionReason: 'Real deploy smoke verifies immutable artifact rollback.',
+      },
     })
     expect(rollbackResponse.ok).toBeTruthy()
 
@@ -840,6 +1037,7 @@ test.describe('local smoke flows', () => {
 
     const apiKey = process.env.LUMALEASING_REAL_SMOKE_API_KEY
     test.skip(!apiKey, 'Set LUMALEASING_REAL_SMOKE_API_KEY to run real LumaLeasing provider smoke.')
+    if (!apiKey) return
 
     await login(page)
     const propertyId = await resolvePropertyIdForSmoke(page)
@@ -1574,5 +1772,227 @@ test.describe('local smoke flows', () => {
     expect(statusData.brandAsset?.isComplete).toBe(true)
     expect(statusData.brandAsset?.approvedSections).toBe(12)
     expect(typeof statusData.brandAsset?.pdfUrl).toBe('string')
+
+    const legalResponse = await callAuthedApi(page, '/api/onboarding/legal', {
+      method: 'PUT',
+      body: {
+        propertyId,
+        jurisdiction: 'Texas, United States',
+        legalEntityName: 'Local Smoke Property LLC',
+        effectiveAt: new Date().toISOString(),
+        approve: true,
+        privacyPolicy: { text: 'Local smoke approved privacy policy.' },
+        terms: { text: 'Local smoke approved website terms.' },
+        accessibility: { text: 'Local smoke approved accessibility statement.' },
+        fairHousing: { text: 'Local smoke approved Fair Housing statement.' },
+        pricingDisclaimer: { text: 'Pricing and availability may change.' },
+        analyticsConsent: { text: 'Analytics require consent.' },
+        communicationsConsent: { text: 'Communications require consent.' },
+        sourceReferences: [],
+      },
+    })
+    expect(legalResponse.ok, `Legal approval failed: ${JSON.stringify(legalResponse)}`).toBe(true)
+    const generation = await createApprovedSiteForgeGeneration(
+      page,
+      propertyId,
+      'Generate from the approved generated-brand onboarding snapshot.',
+    )
+    expect(generation.contentHash).toMatch(/^[a-f0-9]{64}$/)
+  })
+
+  test('existing brand import pins readiness and generates a canonical SiteForge preview', async ({
+    page,
+  }) => {
+    test.setTimeout(180_000)
+    await login(page)
+    const propertyId = await resolvePropertyIdForSmoke(page)
+    const uploaded = await page.evaluate(async ({ propertyId: targetPropertyId }) => {
+      const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="120" viewBox="0 0 320 120"><rect width="320" height="120" fill="#123456"/><text x="160" y="70" text-anchor="middle" fill="white" font-size="32">Existing Brand</text></svg>'
+      const form = new FormData()
+      form.set('propertyId', targetPropertyId)
+      form.set('role', 'primary_logo')
+      form.set('rightsStatus', 'owned')
+      form.set('altText', 'Existing Brand logo')
+      form.set('file', new File([svg], 'existing-brand-logo.svg', { type: 'image/svg+xml' }))
+      const uploadResponse = await fetch('/api/brandforge/content-assets', {
+        method: 'POST',
+        body: form,
+      })
+      const uploadBody = await uploadResponse.json()
+      if (!uploadResponse.ok) return { ok: false, status: uploadResponse.status, data: uploadBody }
+      const reviewResponse = await fetch('/api/brandforge/content-assets', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          propertyId: targetPropertyId,
+          assetId: uploadBody.asset.id,
+          approvalStatus: 'approved',
+          rightsStatus: 'owned',
+          rightsMetadata: { operatorConfirmed: true },
+          altText: 'Existing Brand logo',
+        }),
+      })
+      return {
+        ok: reviewResponse.ok,
+        status: reviewResponse.status,
+        data: reviewResponse.ok ? uploadBody.asset : await reviewResponse.json(),
+      }
+    }, { propertyId })
+    expect(uploaded.ok, `Existing logo governance failed: ${JSON.stringify(uploaded)}`).toBe(true)
+    const logo = uploaded.data as { id: string; file_url: string }
+
+    const previewResponse = await callAuthedApi(page, '/api/brandforge/import/preview', {
+      method: 'POST',
+      body: {
+        propertyId,
+        sourceType: 'manual',
+        idempotencyKey: `local-smoke-existing-${crypto.randomUUID()}`,
+        manual: {
+          identity: { name: 'Existing Brand Apartments', tagline: 'Already established' },
+          logos: {
+            variants: [{
+              role: 'primary',
+              assetId: logo.id,
+              url: logo.file_url,
+              alt: 'Existing Brand logo',
+              restrictions: ['Do not stretch'],
+            }],
+          },
+          typography: {
+            roles: [
+              { role: 'headline', family: 'Arial', weights: [700], usage: 'Headlines', fallback: 'Arial, sans-serif' },
+              { role: 'body', family: 'Georgia', weights: [400], usage: 'Body', fallback: 'Georgia, serif' },
+            ],
+          },
+          colors: {
+            roles: [
+              { role: 'primary', name: 'Existing Blue', hex: '#123456', usage: 'Primary' },
+              { role: 'secondary', name: 'White', hex: '#FFFFFF', usage: 'Background' },
+              { role: 'accent', name: 'Gold', hex: '#D4A72C', usage: 'Calls to action' },
+            ],
+          },
+        },
+      },
+    })
+    expect(previewResponse.ok, `Existing brand preview failed: ${JSON.stringify(previewResponse)}`).toBe(true)
+    const preview = (previewResponse.data as {
+      preview?: { id?: string; extracted_contract?: Record<string, unknown> }
+    }).preview
+    expect(typeof preview?.id).toBe('string')
+
+    const confirmResponse = await callAuthedApi(page, '/api/brandforge/import/confirm', {
+      method: 'POST',
+      body: {
+        propertyId,
+        importId: preview?.id,
+        contract: preview?.extracted_contract,
+        resolutions: {},
+      },
+    })
+    expect(confirmResponse.ok, `Existing brand confirmation failed: ${JSON.stringify(confirmResponse)}`).toBe(true)
+    const legalResponse = await callAuthedApi(page, '/api/onboarding/legal', {
+      method: 'PUT',
+      body: {
+        propertyId,
+        jurisdiction: 'Texas, United States',
+        legalEntityName: 'Existing Brand Property LLC',
+        effectiveAt: new Date().toISOString(),
+        approve: true,
+        privacyPolicy: { text: 'Approved privacy policy for existing brand smoke.' },
+        terms: { text: 'Approved terms for existing brand smoke.' },
+        accessibility: { text: 'Approved accessibility statement for existing brand smoke.' },
+        fairHousing: { text: 'Approved Fair Housing statement for existing brand smoke.' },
+        pricingDisclaimer: { text: 'Pricing and availability may change.' },
+        analyticsConsent: { text: 'Analytics require consent.' },
+        communicationsConsent: { text: 'Communications require consent.' },
+        sourceReferences: [],
+      },
+    })
+    expect(legalResponse.ok, `Existing-brand legal approval failed: ${JSON.stringify(legalResponse)}`).toBe(true)
+
+    const generation = await createApprovedSiteForgeGeneration(
+      page,
+      propertyId,
+      'Generate from the approved existing-brand contract and frozen onboarding truth.',
+    )
+    const status = await waitForWebsiteStatus(page, generation.websiteId, [
+      'ready_for_preview',
+      'complete',
+      'failed',
+    ], 90_000)
+    expect(status.status, `Existing-brand SiteForge generation failed: ${JSON.stringify(status)}`)
+      .not.toBe('failed')
+    const artifactResponse = await callAuthedApi(
+      page,
+      `/api/siteforge/preview/${generation.websiteId}`
+    )
+    expect(
+      artifactResponse.ok,
+      `Current artifact lookup failed: ${JSON.stringify(artifactResponse)}`
+    ).toBe(true)
+    const artifactPayload = artifactResponse.data as {
+      artifact?: {
+        currentId?: string | null
+        history?: Array<{ id?: string; content_hash?: string }>
+      }
+    }
+    const currentArtifact = artifactPayload.artifact?.history?.find(
+      artifact => artifact.id === artifactPayload.artifact?.currentId
+    )
+    expect(currentArtifact?.id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+    )
+    expect(currentArtifact?.content_hash).toMatch(/^[a-f0-9]{64}$/)
+    const canonical = await callAuthedApi(
+      page,
+      `/api/siteforge/canonical-preview/${generation.websiteId}`,
+      {
+        method: 'POST',
+        body: {
+          artifactId: currentArtifact?.id,
+          contentHash: currentArtifact?.content_hash,
+        },
+      }
+    )
+    expect(canonical.ok, `Canonical preview failed: ${JSON.stringify(canonical)}`).toBe(true)
+    const canonicalData = canonical.data as {
+      status?: string
+      jobId?: string
+      previewUrl?: string
+    }
+    if (canonical.status === 202) {
+      expect(canonicalData.jobId).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+      )
+      const terminal = await waitForCanonicalPreviewJob(
+        page,
+        generation.websiteId,
+        canonicalData.jobId as string
+      )
+      expect(
+        terminal.status,
+        `Canonical preview job failed: ${JSON.stringify(terminal)}`
+      ).toBe('succeeded')
+    } else {
+      expect(canonicalData.status).toBe('ready')
+      expect(canonicalData.previewUrl).toMatch(/^https?:\/\//)
+    }
+    const exactPreview = await callAuthedApi(
+      page,
+      `/api/siteforge/preview/${generation.websiteId}`
+    )
+    const exactArtifact = (exactPreview.data as {
+      artifact?: {
+        currentId?: string | null
+        canonicalPreviewArtifactId?: string | null
+        canonicalPreviewContentHash?: string | null
+        canonicalPreviewUrl?: string | null
+      }
+    }).artifact
+    expect(exactArtifact?.canonicalPreviewArtifactId).toBe(currentArtifact?.id)
+    expect(exactArtifact?.canonicalPreviewContentHash).toBe(
+      currentArtifact?.content_hash
+    )
+    expect(exactArtifact?.canonicalPreviewUrl).toMatch(/^https?:\/\//)
   })
 })

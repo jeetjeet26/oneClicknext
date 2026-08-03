@@ -1,0 +1,58 @@
+import { SITEFORGE_CERTIFICATION_POLICY_VERSION } from './browser-evidence'
+
+export async function collectBrowserCertificationEvidence(input: {
+  targetUrl: string
+  expectedUrls: string[]
+  credentials?: { username: string; password: string }
+  phase: 'protected' | 'public'
+}): Promise<unknown | undefined> {
+  const endpoint = process.env.SITEFORGE_BROWSER_CERTIFIER_URL
+  if (!endpoint) return undefined
+  const parsed = new URL(endpoint)
+  const localEndpoint =
+    parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1'
+  if (parsed.protocol !== 'https:' && !(process.env.NODE_ENV !== 'production' && localEndpoint)) {
+    throw new Error('SITEFORGE_BROWSER_CERTIFIER_URL must use HTTPS')
+  }
+  const secret = process.env.SITEFORGE_BROWSER_CERTIFIER_SECRET
+  if (!secret || secret.length < 32) {
+    throw new Error('SITEFORGE_BROWSER_CERTIFIER_SECRET must contain at least 32 characters')
+  }
+
+  const response = await fetch(parsed, {
+    method: 'POST',
+    redirect: 'error',
+    signal: AbortSignal.timeout(
+      Number(process.env.SITEFORGE_BROWSER_CERTIFIER_TIMEOUT_MS || 180_000)
+    ),
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${secret}`,
+    },
+    body: JSON.stringify({
+      policyVersion: SITEFORGE_CERTIFICATION_POLICY_VERSION,
+      phase: input.phase,
+      targetUrl: input.targetUrl,
+      expectedUrls: input.expectedUrls,
+      credentials: input.credentials,
+      requirements: {
+        screenshots: ['desktop', 'tablet', 'mobile'],
+        visualBaseline: true,
+        interactions: true,
+        axe: true,
+        lighthouseMobile: true,
+        seo: true,
+        redirects: true,
+        consent: true,
+      },
+    }),
+  })
+  if (!response.ok) {
+    throw new Error(`Browser certifier failed with HTTP ${response.status}`)
+  }
+  const payload = await response.json() as { evidence?: unknown }
+  if (!payload.evidence) {
+    throw new Error('Browser certifier returned no evidence')
+  }
+  return payload.evidence
+}

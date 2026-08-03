@@ -5,6 +5,12 @@ function formatEmbeddingForPgVector(embedding: number[]): string {
   return `[${embedding.join(',')}]`
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {}
+}
+
 export async function retrieveKbContext(args: {
   propertyId: string
   query: string
@@ -40,11 +46,15 @@ export async function retrieveKbContext(args: {
     return { contextText: '', chunks: [] }
   }
 
-  const chunks: Array<{ content: string; similarity: number; metadata: unknown }> = (documents as Array<any>).map((d: any) => ({
-    content: String(d.content ?? ''),
-    similarity: Number(d.similarity ?? 0),
-    metadata: d.metadata as unknown
-  }))
+  const chunks: Array<{ content: string; similarity: number; metadata: unknown }> =
+    (documents as unknown[]).map(document => {
+      const row = asRecord(document)
+      return {
+        content: String(row.content ?? ''),
+        similarity: Number(row.similarity ?? 0),
+        metadata: row.metadata,
+      }
+    })
 
   const contextText = chunks
     .map((c: { content: string; similarity: number }, idx: number) => `SOURCE ${idx + 1} (similarity ${c.similarity.toFixed(3)}):\n${c.content}`)

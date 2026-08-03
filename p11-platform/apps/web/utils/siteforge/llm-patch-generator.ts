@@ -6,7 +6,13 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { WordPressMcpClient } from '@/utils/mcp/wordpress-client'
 import { SITEFORGE_CLAUDE_MODEL } from '@/utils/siteforge/models'
-import type { SiteBlueprint, BlueprintPatchOperation } from '@/types/siteforge'
+import {
+  blueprintPatchOperationsSchema,
+  type GeneratedPage,
+  type PageSection,
+  type SiteBlueprint,
+  type BlueprintPatchOperation,
+} from '@/types/siteforge'
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY!
@@ -136,7 +142,6 @@ Generate patches now.
   const message = await anthropic.messages.create({
     model: SITEFORGE_CLAUDE_MODEL,
     max_tokens: 4000,
-    temperature: 1.0,
     system: systemPrompt,
     messages: [
       {
@@ -159,12 +164,12 @@ Generate patches now.
   }
   
   try {
-    const patches = JSON.parse(responseText)
+    const patches = blueprintPatchOperationsSchema.parse(JSON.parse(responseText))
     
     // Validate patches
     validatePatches(patches, wpCapabilities.availableBlocks)
     
-    return patches as BlueprintPatchOperation[]
+    return patches
   } catch (e) {
     console.error('Failed to parse patches:', e)
     console.error('Response:', responseText)
@@ -175,7 +180,7 @@ Generate patches now.
 /**
  * Find section by ID in blueprint
  */
-function findSectionById(blueprint: SiteBlueprint, sectionId: string): any {
+function findSectionById(blueprint: SiteBlueprint, sectionId: string): PageSection | null {
   for (const page of blueprint.pages) {
     for (const section of page.sections || []) {
       if (section.id === sectionId) {
@@ -189,7 +194,7 @@ function findSectionById(blueprint: SiteBlueprint, sectionId: string): any {
 /**
  * Find page containing section
  */
-function findPageContainingSection(blueprint: SiteBlueprint, sectionId: string): any {
+function findPageContainingSection(blueprint: SiteBlueprint, sectionId: string): GeneratedPage | null {
   for (const page of blueprint.pages) {
     for (const section of page.sections || []) {
       if (section.id === sectionId) {
@@ -209,15 +214,9 @@ function validatePatches(
 ): void {
   
   for (const patch of patches) {
-    // Validate operation type
-    if (!['update_section', 'add_section', 'remove_section', 'move_section'].includes(patch.op)) {
-      throw new Error(`Invalid patch operation: ${patch.op}`)
-    }
-    
-    // Validate add_section has valid block
-    if (patch.op === 'add_section') {
+    if (patch.op === 'add_section' || patch.op === 'section.upsert') {
       if (!patch.section?.acfBlock) {
-        throw new Error('add_section must specify acfBlock')
+        throw new Error(`${patch.op} must specify acfBlock`)
       }
       if (!availableBlocks.includes(patch.section.acfBlock)) {
         throw new Error(`Block not available: ${patch.section.acfBlock}`)

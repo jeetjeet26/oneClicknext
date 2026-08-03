@@ -99,7 +99,7 @@ $radius_meters = intval( $radius_miles ) * 1609.34;
 				position: location,
 				map: map,
 				title: '<?php esc_attr_e( 'Property Location', 'oneclick-siteforge' ); ?>',
-				icon: 'http://maps.google.com/mapfiles/ms/icons/blue-dot.png',
+				icon: 'https://maps.google.com/mapfiles/ms/icons/blue-dot.png',
 			});
 
 			const placesService = new google.maps.places.PlacesService( map );
@@ -135,7 +135,7 @@ $radius_meters = intval( $radius_miles ) * 1609.34;
 								position: place.geometry.location,
 								map: map,
 								title: place.name,
-								icon: 'http://maps.google.com/mapfiles/ms/icons/' + color + '-dot.png',
+								icon: 'https://maps.google.com/mapfiles/ms/icons/' + color + '-dot.png',
 							});
 						});
 					}

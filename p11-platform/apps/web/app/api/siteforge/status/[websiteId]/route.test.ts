@@ -61,7 +61,21 @@ describe('siteforge status route auth', () => {
     })
     const eqMock = vi.fn().mockReturnValue({ single: singleMock })
     const selectMock = vi.fn().mockReturnValue({ eq: eqMock })
-    serviceFromMock.mockReturnValue({ select: selectMock })
+    const sharedBuilder: Record<string, unknown> = {}
+    sharedBuilder.select = vi.fn(() => sharedBuilder)
+    sharedBuilder.eq = vi.fn(() => sharedBuilder)
+    sharedBuilder.in = vi.fn(() => sharedBuilder)
+    sharedBuilder.order = vi.fn(() => sharedBuilder)
+    sharedBuilder.limit = vi.fn(() => sharedBuilder)
+    sharedBuilder.maybeSingle = vi.fn().mockResolvedValue({
+      data: null,
+      error: null,
+    })
+    serviceFromMock.mockImplementation((table: string) =>
+      table === 'property_websites'
+        ? { select: selectMock }
+        : sharedBuilder
+    )
 
     const { GET } = await import('./route')
     const response = await GET(
@@ -109,7 +123,21 @@ describe('siteforge status route auth', () => {
     })
     const eqMock = vi.fn().mockReturnValue({ single: singleMock })
     const selectMock = vi.fn().mockReturnValue({ eq: eqMock })
-    serviceFromMock.mockReturnValue({ select: selectMock })
+    const sharedBuilder: Record<string, unknown> = {}
+    sharedBuilder.select = vi.fn(() => sharedBuilder)
+    sharedBuilder.eq = vi.fn(() => sharedBuilder)
+    sharedBuilder.in = vi.fn(() => sharedBuilder)
+    sharedBuilder.order = vi.fn(() => sharedBuilder)
+    sharedBuilder.limit = vi.fn(() => sharedBuilder)
+    sharedBuilder.maybeSingle = vi.fn().mockResolvedValue({
+      data: null,
+      error: null,
+    })
+    serviceFromMock.mockImplementation((table: string) =>
+      table === 'property_websites'
+        ? { select: selectMock }
+        : sharedBuilder
+    )
 
     const { GET } = await import('./route')
     const response = await GET(

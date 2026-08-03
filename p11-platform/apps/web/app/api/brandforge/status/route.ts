@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
+import {
+  hashBrandForgeContract,
+  normalizeBrandAssetRow,
+} from '@/utils/brandforge/normalize'
 
 const BRAND_SECTIONS = [
   { step: 1, slug: 'introduction', title: 'Introduction & Market Context', column: 'section_1_introduction' },
@@ -69,7 +73,14 @@ function buildWarnings(brandAsset: Record<string, unknown>) {
   }> = []
 
   const logoSection = asRecord(brandAsset.section_6_logo)
-  const logoPrimaryUrl = asString(logoSection?.primary_url) ?? asString(logoSection?.logoUrl)
+  const variants = Array.isArray(logoSection?.variants)
+    ? logoSection.variants.map(asRecord).filter(Boolean)
+    : []
+  const primaryVariant = variants.find(variant => variant?.role === 'primary')
+  const logoPrimaryUrl =
+    asString(primaryVariant?.url)
+    ?? asString(logoSection?.primary_url)
+    ?? asString(logoSection?.logoUrl)
 
   if (logoPrimaryUrl === '/placeholder-logo.png') {
     warnings.push({
@@ -243,13 +254,17 @@ export async function GET(req: NextRequest) {
     }
 
     const brandRecord = brandAsset as unknown as Record<string, unknown>
+    const contract = normalizeBrandAssetRow(brandRecord)
+    const canonicalHash = hashBrandForgeContract(contract)
     const approvedSections = countApprovedSections(brandRecord)
     const currentStep = asNumber(brandRecord.current_step)
     const currentStepName = asString(brandRecord.current_step_name)
     const draftSection = asDraftSection(brandRecord.draft_section)
     const currentSectionTitle = getSectionTitle(draftSection?.step ?? currentStep, draftSection?.name ?? currentStepName)
     const hasExport = Boolean(brandAsset.brand_book_pdf_url)
-    const isComplete = brandAsset.generation_status === 'complete'
+    const isComplete =
+      brandAsset.generation_status === 'complete'
+      || brandAsset.approval_status === 'approved'
     const warnings = buildWarnings(brandRecord)
     const phase = buildPhase(asString(brandAsset.generation_status), isComplete, hasExport, Boolean(draftSection))
     const lastActivityAt =
@@ -260,7 +275,10 @@ export async function GET(req: NextRequest) {
       ? Math.max(0, Math.floor((Date.now() - Date.parse(lastActivityAt)) / 1000))
       : null
 
-    const sectionNameStory = asRecord(brandAsset.section_5_name_story)
+    const primaryColor = contract.colors.roles.find(color => color.role === 'primary')
+    const secondaryColor = contract.colors.roles.find(color => color.role === 'secondary')
+    const accentColors = contract.colors.roles.filter(color => color.role === 'accent')
+    const primaryLogo = contract.logos.variants.find(logo => logo.role === 'primary')
 
     return NextResponse.json({
       exists: true,
@@ -280,9 +298,17 @@ export async function GET(req: NextRequest) {
         exportUrl: brandAsset.brand_book_pdf_url,
         exportFormat: 'pdf',
         pdfGeneratedAt: brandAsset.pdf_generated_at,
-        brandName: asString(sectionNameStory?.name),
-        colors: brandAsset.section_8_colors,
-        logo: brandAsset.section_6_logo,
+        brandName: contract.identity.name,
+        origin: contract.origin,
+        approvalStatus: brandAsset.approval_status,
+        contractVersion: contract.contractVersion,
+        contractHash: brandAsset.contract_hash || canonicalHash,
+        colors: {
+          primary: primaryColor ? { hex: primaryColor.hex } : null,
+          secondary: secondaryColor ? { hex: secondaryColor.hex } : null,
+          accents: accentColors.map(color => ({ hex: color.hex })),
+        },
+        logo: primaryLogo,
         updatedAt: brandAsset.updated_at,
         draftSection,
         activeSection: currentSectionTitle

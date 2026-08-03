@@ -4,8 +4,18 @@ import {
   WordPressAPIClient,
   deployToExistingWordPress,
   flattenAcfRepeaterFields,
+  injectWordPressMediaIds,
 } from './wordpress-client'
 import type { GeneratedPage, WebsiteAsset } from '@/types/siteforge'
+
+const { ensureInstalledMock } = vi.hoisted(() => ({
+  ensureInstalledMock: vi.fn(),
+}))
+vi.mock('@/utils/siteforge/wordpress/wordpress-installer', () => ({
+  SshWordPressInstaller: class {
+    ensureInstalled = ensureInstalledMock
+  },
+}))
 
 function jsonResponse(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -28,6 +38,63 @@ describe('wordpress-client', () => {
     vi.unstubAllEnvs()
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
+  })
+
+  it('uses the SiteForge REST namespace for content manifests', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({}))
+    const client = new WordPressAPIClient('https://example.com/\n', {
+      username: 'admin',
+      password: 'app-password',
+    })
+
+    await client.applyContentManifest('a'.repeat(64), [1, 2])
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://example.com/wp-json/siteforge/v1/content-manifest',
+      expect.objectContaining({ method: 'POST' })
+    )
+  })
+
+  it('activates indexing only when WordPress confirms the exact production hash', async () => {
+    const hash = 'b'.repeat(64)
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        activated: true,
+        content_hash: hash,
+        blog_public: '1',
+      })
+    )
+    const client = new WordPressAPIClient('https://example.com', {
+      username: 'admin',
+      password: 'app-password',
+    })
+
+    await expect(client.activateProduction(hash)).resolves.toBeUndefined()
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://example.com/wp-json/siteforge/v1/production-activation',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ content_hash: hash }),
+      })
+    )
+  })
+
+  it('rejects production activation when WordPress confirms a different hash', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        activated: true,
+        content_hash: 'c'.repeat(64),
+        blog_public: '1',
+      })
+    )
+    const client = new WordPressAPIClient('https://example.com', {
+      username: 'admin',
+      password: 'app-password',
+    })
+
+    await expect(client.activateProduction('b'.repeat(64))).rejects.toThrow(
+      'WordPress did not confirm production indexability'
+    )
   })
 
   it('uploads assets to the WordPress media library and aliases logo media ids', async () => {
@@ -62,6 +129,7 @@ describe('wordpress-client', () => {
     ]
 
     fetchMock
+      .mockResolvedValueOnce(jsonResponse([]))
       .mockResolvedValueOnce(
         new Response('logo-binary', {
           status: 200,
@@ -70,12 +138,14 @@ describe('wordpress-client', () => {
       )
       .mockResolvedValueOnce(jsonResponse({ id: 101 }))
       .mockResolvedValueOnce(jsonResponse({ id: 101 }))
+      .mockResolvedValueOnce(jsonResponse([]))
       .mockResolvedValueOnce(
         new Response('hero-binary', {
           status: 200,
           headers: { 'Content-Type': 'image/jpeg' },
         })
       )
+      .mockResolvedValueOnce(jsonResponse({ id: 202 }))
       .mockResolvedValueOnce(jsonResponse({ id: 202 }))
 
     const mediaIds = await client.uploadAssets(assets)
@@ -85,7 +155,7 @@ describe('wordpress-client', () => {
     expect(mediaIds.get('hero-asset')).toBe(202)
 
     expect(fetchMock).toHaveBeenNthCalledWith(
-      2,
+      3,
       'https://example.com/wp-json/wp/v2/media',
       expect.objectContaining({
         method: 'POST',
@@ -166,9 +236,10 @@ describe('wordpress-client', () => {
 
     fetchMock
       .mockResolvedValueOnce(
-        jsonResponse({ namespaces: ['wp/v2', 'acf/v3'] })
+        jsonResponse({ namespaces: ['wp/v2', 'acf/v3', 'siteforge/v1'] })
       )
       .mockResolvedValueOnce(jsonResponse({ id: 1, name: 'Admin User' }))
+      .mockResolvedValueOnce(jsonResponse([]))
       .mockResolvedValueOnce(
         new Response('logo-binary', {
           status: 200,
@@ -176,7 +247,10 @@ describe('wordpress-client', () => {
         })
       )
       .mockResolvedValueOnce(jsonResponse({ id: 15 }))
+      .mockResolvedValueOnce(jsonResponse({ id: 15 }))
+      .mockResolvedValueOnce(jsonResponse([]))
       .mockResolvedValueOnce(jsonResponse({ id: 9001 }))
+      .mockResolvedValueOnce(jsonResponse({}))
       .mockResolvedValueOnce(jsonResponse({}))
       .mockResolvedValueOnce(jsonResponse({ id: 44 }))
       .mockResolvedValueOnce(jsonResponse({ id: 501 }))
@@ -199,6 +273,7 @@ describe('wordpress-client', () => {
         tagline: 'Tour today',
       },
       assets,
+      contentHash: 'a'.repeat(64),
     })
 
     expect(deployed).toEqual({
@@ -212,14 +287,14 @@ describe('wordpress-client', () => {
     })
 
     expect(fetchMock).toHaveBeenNthCalledWith(
-      5,
+      8,
       'https://site.example.com/wp-json/wp/v2/pages',
       expect.objectContaining({
         method: 'POST',
       })
     )
 
-    const createPageBody = JSON.parse(String(fetchMock.mock.calls[4][1]?.body))
+    const createPageBody = JSON.parse(String(fetchMock.mock.calls[7][1]?.body))
     expect(createPageBody.title).toBe('Home')
     expect(createPageBody.slug).toBe('home')
     expect(createPageBody.content).toContain('acf/top-slides')
@@ -240,14 +315,14 @@ describe('wordpress-client', () => {
     expect(blockAttrs.data.slides_1_subheadline).toBe('Second')
 
     // Classic menu created and assigned to the primary location
-    const menuCall = fetchMock.mock.calls[6]
+    const menuCall = fetchMock.mock.calls[10]
     expect(menuCall[0]).toBe('https://site.example.com/wp-json/wp/v2/menus')
     expect(JSON.parse(String(menuCall[1]?.body))).toEqual({
       name: 'Primary Navigation',
       locations: ['primary'],
     })
 
-    const menuItemCall = fetchMock.mock.calls[7]
+    const menuItemCall = fetchMock.mock.calls[11]
     expect(menuItemCall[0]).toBe('https://site.example.com/wp-json/wp/v2/menu-items')
     expect(JSON.parse(String(menuItemCall[1]?.body))).toEqual({
       title: 'Home',
@@ -356,6 +431,37 @@ describe('wordpress-client', () => {
     })
   })
 
+  it('collapses SiteForge image references to WordPress attachment IDs', () => {
+    const mediaIds = new Map([
+      ['url:https://cdn.example.com/hero.jpg', 42],
+    ])
+
+    expect(
+      injectWordPressMediaIds(
+        {
+          slides: [
+            {
+              headline: 'Welcome',
+              image: {
+                url: 'https://cdn.example.com/hero.jpg',
+                assetId: 'asset-hero',
+                alt: 'Property exterior',
+              },
+            },
+          ],
+        },
+        mediaIds
+      )
+    ).toEqual({
+      slides: [
+        {
+          headline: 'Welcome',
+          image: 42,
+        },
+      ],
+    })
+  })
+
   it('fails readiness checks when required namespaces are missing', async () => {
     const client = new WordPressAPIClient('https://example.com', {
       username: 'admin',
@@ -447,7 +553,7 @@ describe('wordpress-client', () => {
 
     const instance = await client.createWordPressInstance('Sunset Apartments')
 
-    expect(instance).toEqual({
+    expect(instance).toEqual(expect.objectContaining({
       instanceId: '50710',
       url: 'https://sunset-50710.cloudwaysapps.com',
       adminUrl: 'https://sunset-50710.cloudwaysapps.com/wp-admin',
@@ -455,21 +561,104 @@ describe('wordpress-client', () => {
         username: 'admin',
         password: 'wp-secret',
       },
-    })
+      ssh: expect.objectContaining({
+        host: '12847-50710.cloudwaysapps.com',
+      }),
+      providerMetadata: expect.objectContaining({
+        applicationId: '131933',
+      }),
+    }))
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
-      'https://api.cloudways.com/api/v1/oauth/access_token',
+      'https://api.cloudways.com/api/v2/oauth/access_token',
       expect.objectContaining({
         method: 'POST',
       })
     )
     expect(fetchMock).toHaveBeenNthCalledWith(
       3,
-      'https://api.cloudways.com/api/v1/server',
+      'https://api.cloudways.com/api/v2/servers',
       expect.objectContaining({
         method: 'POST',
         body: expect.stringContaining('application=wordpress'),
+      })
+    )
+  })
+
+  it('uses a modern Cloudways access token without an OAuth exchange', async () => {
+    vi.stubEnv(
+      'SITEFORGE_CLOUDWAYS_SSH_PRIVATE_KEY',
+      '-----BEGIN OPENSSH PRIVATE KEY-----\\nkey-data\\n-----END OPENSSH PRIVATE KEY-----'
+    )
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse({
+          data: {
+            servers: [
+              {
+                id: '50710',
+                server_fqdn: '12847-50710.cloudwaysapps.com',
+              },
+            ],
+          },
+        })
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          id: '50710',
+          server_fqdn: '12847-50710.cloudwaysapps.com',
+          master_user: 'server-master',
+          master_password: 'server-password',
+          apps: [{ id: '131933', label: 'SiteForge Preview' }],
+        })
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          app: {
+            id: '131933',
+            app_fqdn: 'preview.example.com',
+            sys_user: 'application-system-user',
+            app_user: 'preview-user',
+            app_password: 'preview-password',
+          },
+        })
+      )
+
+    const instance = await new CloudwaysClient({
+      apiKey: 'cw_access-token',
+      email: 'jesse@p11.com',
+    }).discoverWordPressInstance('https://preview.example.com', {
+      username: 'admin',
+      password: 'app-password',
+    })
+
+    expect(instance.providerMetadata?.applicationId).toBe('131933')
+    expect(instance.ssh).toEqual(
+      expect.objectContaining({
+        username: 'server-master',
+        privateKey:
+          '-----BEGIN OPENSSH PRIVATE KEY-----\nkey-data\n-----END OPENSSH PRIVATE KEY-----',
+        applicationRoot:
+          '/home/master/applications/application-system-user/public_html',
+        sftpApplicationRoot:
+          '/applications/application-system-user/public_html',
+      })
+    )
+    expect(instance.ssh?.password).toBeUndefined()
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      'https://api.cloudways.com/api/v2/apps/131933',
+      expect.objectContaining({ method: 'GET' })
+    )
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      'https://api.cloudways.com/api/v2/servers',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: 'Bearer cw_access-token',
+        }),
       })
     )
   })
@@ -534,9 +723,9 @@ describe('wordpress-client', () => {
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       6,
-      'https://api.cloudways.com/api/v1/app/creds/changeAdminCredentials?server_id=50710&app_id=131933',
+      'https://api.cloudways.com/api/v2/applications/131933/admin-password',
       expect.objectContaining({
-        method: 'POST',
+        method: 'PUT',
       })
     )
   })

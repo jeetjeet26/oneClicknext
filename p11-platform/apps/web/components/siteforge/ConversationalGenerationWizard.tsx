@@ -3,16 +3,26 @@
 // SiteForge Conversational Generation Wizard
 // Multi-phase wizard similar to BrandForge conversational flow
 // Phase 1: Pre-analysis (Brand Agent findings)
-// Phase 2: Conversation (Plan with user input)
-// Phase 3: Confirmation (Review and approve)
-// Phase 4: Generation (Progress tracking)
+// Phase 2: Property assets (photos and floor plans)
+// Phase 3: Conversation (Plan with user input)
+// Phase 4: Confirmation (Review and approve)
+// Phase 5: Generation (Progress tracking)
 // Created: December 16, 2025
 
-import { useState, useEffect, useRef } from 'react'
+import { useCallback, useState, useEffect, useRef } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { useRouter } from 'next/navigation'
+import { PropertyAssetsStep } from './PropertyAssetsStep'
+import type { GenerationPreferences, WebsiteStatusResponse } from '@/types/siteforge'
+import {
+  buildGenerationRequest,
+  classifyWebsiteStatus,
+  preferencesMatch,
+  responseErrorMessage,
+  siteForgeStatusEndpoint,
+} from './orchestration'
 
 interface ConversationalGenerationWizardProps {
   propertyId: string
@@ -21,14 +31,28 @@ interface ConversationalGenerationWizardProps {
   onClose: () => void
 }
 
-type Phase = 'analyzing' | 'conversation' | 'confirmation' | 'generating' | 'complete'
+type Phase =
+  | 'analyzing'
+  | 'assets'
+  | 'conversation'
+  | 'confirmation'
+  | 'generating'
+  | 'complete'
+  | 'failed'
 
 interface BrandAnalysis {
-  brandContext: any
+  brandContext: Record<string, unknown> & {
+    source?: string
+    confidence?: number
+  }
   stats: {
     photos: number
     documents: number
     hasBrandForge: boolean
+  }
+  analysisQuality?: {
+    level: 'strong' | 'good' | 'needs_review'
+    warnings: string[]
   }
 }
 
@@ -36,6 +60,39 @@ interface ConversationMessage {
   role: 'user' | 'assistant'
   content: string
   timestamp: string
+}
+
+interface ServerPlanSnapshot {
+  planId: string
+  planVersionId: string
+  revision: number
+  contentHash: string
+  planState: 'ready_for_review' | 'confirmed' | 'consumed' | 'draft' | 'denied'
+  plan: {
+    summary: string
+    preferences: GenerationPreferences
+    pages: Array<{
+      slug: string
+      title: string
+      sections: Array<{ id: string; label: string; purpose: string }>
+    }>
+    brandDirection: {
+      positioning: string
+      visualDirection: string
+    }
+    conversionStrategy: {
+      primaryAction: string
+    }
+    recommendations: string[]
+  }
+  readiness: {
+    ready: boolean
+    issues: Array<{
+      code: string
+      severity: 'warning' | 'blocker'
+      message: string
+    }>
+  }
 }
 
 export function ConversationalGenerationWizard({
@@ -53,14 +110,16 @@ export function ConversationalGenerationWizard({
   const [generationProgress, setGenerationProgress] = useState(0)
   const [generationStep, setGenerationStep] = useState('')
   const [websiteId, setWebsiteId] = useState<string | null>(null)
+  const [generationJobId, setGenerationJobId] = useState<string | null>(null)
+  const [canRetryGeneration, setCanRetryGeneration] = useState(false)
+  const [generationError, setGenerationError] = useState('')
+  const [serverPlan, setServerPlan] = useState<ServerPlanSnapshot | null>(null)
+  const [changeRequest, setChangeRequest] = useState('')
+  const [preferences, setPreferences] = useState<GenerationPreferences>({
+    ctaPriority: 'contact',
+    enabledCapabilities: [],
+  })
   const chatEndRef = useRef<HTMLDivElement>(null)
-  
-  // Phase 1: Run pre-analysis when dialog opens
-  useEffect(() => {
-    if (open && phase === 'analyzing') {
-      runPreAnalysis()
-    }
-  }, [open])
   
   // Auto-scroll chat
   useEffect(() => {
@@ -70,34 +129,94 @@ export function ConversationalGenerationWizard({
   // Poll generation status
   useEffect(() => {
     if (phase === 'generating' && websiteId) {
-      const interval = setInterval(async () => {
+      let cancelled = false
+      let timeout: ReturnType<typeof setTimeout> | undefined
+      const startedAt = Date.now()
+
+      const poll = async () => {
         try {
-          const res = await fetch(`/api/siteforge/status/${websiteId}`)
-          const data = await res.json()
+          const res = await fetch(siteForgeStatusEndpoint(websiteId), {
+            cache: 'no-store',
+          })
+          const data = await res.json().catch(() => ({}))
+          if (!res.ok) {
+            throw new Error(
+              responseErrorMessage(res.status, data, 'checking generation progress')
+            )
+          }
+          if (cancelled) return
+          const status = data as WebsiteStatusResponse
           
-          setGenerationProgress(data.progress || 0)
-          setGenerationStep(data.currentStep || '')
-          
-          if (data.status === 'ready_for_preview' || data.status === 'complete') {
+          setGenerationProgress(status.progress || 0)
+          setGenerationStep(status.currentStep || '')
+          if (typeof status.jobId === 'string') setGenerationJobId(status.jobId)
+
+          const outcome = classifyWebsiteStatus(status, 'generation')
+          if (outcome.terminal && outcome.succeeded) {
             setPhase('complete')
-            clearInterval(interval)
             setTimeout(() => {
               router.push(`/dashboard/siteforge/${websiteId}`)
             }, 2000)
-          } else if (data.status === 'failed') {
-            clearInterval(interval)
-            alert('Generation failed: ' + data.errorMessage)
+            return
           }
+          if (outcome.terminal && !outcome.succeeded) {
+            setGenerationError(outcome.message)
+            setCanRetryGeneration(
+              status.lifecycleStatus === 'failed' &&
+              typeof status.attemptCount === 'number' &&
+              typeof status.maxAttempts === 'number' &&
+              status.attemptCount < status.maxAttempts &&
+              !status.cancelRequested
+            )
+            setPhase('failed')
+            return
+          }
+          if (Date.now() - startedAt >= 10 * 60_000) {
+            throw new Error(
+              'Generation is still not complete after 10 minutes. Check SiteForge job logs, then retry the failed job or return to the plan.'
+            )
+          }
+          timeout = setTimeout(poll, 2000)
         } catch (err) {
           console.error('Status poll error:', err)
+          if (!cancelled) {
+            setGenerationError(
+              err instanceof Error
+                ? err.message
+                : 'Could not check generation progress. Retry from the saved plan.'
+            )
+            setCanRetryGeneration(false)
+            setPhase('failed')
+          }
         }
-      }, 2000)
-      
-      return () => clearInterval(interval)
+      }
+
+      void poll()
+      return () => {
+        cancelled = true
+        if (timeout) clearTimeout(timeout)
+      }
     }
-  }, [phase, websiteId])
+  }, [phase, router, websiteId])
+
+  const resetWizard = useCallback(() => {
+    setPhase('analyzing')
+    setAnalysis(null)
+    setConversation([])
+    setUserInput('')
+    setLoading(false)
+    setGenerationProgress(0)
+    setGenerationStep('')
+    setWebsiteId(null)
+    setGenerationJobId(null)
+    setCanRetryGeneration(false)
+    setGenerationError('')
+    setServerPlan(null)
+    setChangeRequest('')
+    setPreferences({ ctaPriority: 'contact', enabledCapabilities: [] })
+  }, [])
   
-  async function runPreAnalysis() {
+  const runPreAnalysis = useCallback(async () => {
     setLoading(true)
     try {
       const res = await fetch(`/api/siteforge/analyze?propertyId=${propertyId}`)
@@ -113,10 +232,7 @@ export function ConversationalGenerationWizard({
       }
       
       setAnalysis(data)
-      setPhase('conversation')
-      
-      // Start conversation with initial AI message
-      await startConversation(data.brandContext)
+      setPhase('assets')
       
     } catch (error) {
       console.error('Pre-analysis error:', error)
@@ -125,9 +241,25 @@ export function ConversationalGenerationWizard({
     } finally {
       setLoading(false)
     }
-  }
-  
-  async function startConversation(brandContext: any) {
+  }, [onClose, propertyId])
+
+  // Phase 1: Run pre-analysis when dialog opens
+  useEffect(() => {
+    if (open && phase === 'analyzing') {
+      void runPreAnalysis()
+    } else if (!open) {
+      resetWizard()
+    }
+  }, [open, phase, resetWizard, runPreAnalysis])
+
+  async function continueFromAssets() {
+    if (!analysis) return
+    if (!serverPlan) {
+      setPhase('conversation')
+      await startConversation(analysis.brandContext)
+      return
+    }
+
     setLoading(true)
     try {
       const res = await fetch('/api/siteforge/plan', {
@@ -135,9 +267,51 @@ export function ConversationalGenerationWizard({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           propertyId,
-          brandContext,
+          planId: serverPlan.planId,
+          expectedRevision: serverPlan.revision,
+          conversationHistory: conversation,
+          userMessage:
+            'Property photos or floor-plan inventory were updated through the asset step. Refresh the plan against the current approved property assets and units while preserving the selected direction.',
+          preferences,
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        throw new Error(data.error || `Planning failed: ${res.status}`)
+      }
+      setServerPlan(data)
+      if (typeof data.aiResponse === 'string') {
+        setConversation(current => [
+          ...current,
+          {
+            role: 'assistant',
+            content: data.aiResponse,
+            timestamp: new Date().toISOString(),
+          },
+        ])
+      }
+      setPhase('conversation')
+    } catch (error) {
+      setGenerationError(
+        error instanceof Error ? error.message : 'Could not refresh the plan'
+      )
+    } finally {
+      setLoading(false)
+    }
+  }
+  
+  async function startConversation(brandContext: Record<string, unknown>) {
+    setLoading(true)
+    try {
+      const res = await fetch('/api/siteforge/plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          propertyId,
+          brandContext: { ...brandContext, propertyName },
           conversationHistory: [],
-          userMessage: null
+          userMessage: null,
+          preferences,
         })
       })
 
@@ -148,6 +322,7 @@ export function ConversationalGenerationWizard({
 
       const data = await res.json()
 
+      setServerPlan(data)
       setConversation([{
         role: 'assistant',
         content: data.aiResponse,
@@ -156,6 +331,11 @@ export function ConversationalGenerationWizard({
       
     } catch (error) {
       console.error('Start conversation error:', error)
+      setConversation([{
+        role: 'assistant',
+        content: 'I could not load the narrative recommendation. You can still choose a direction below and review the plan, or close this window and try the analysis again.',
+        timestamp: new Date().toISOString(),
+      }])
     } finally {
       setLoading(false)
     }
@@ -180,9 +360,11 @@ export function ConversationalGenerationWizard({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           propertyId,
-          brandContext: analysis?.brandContext,
+          planId: serverPlan?.planId,
+          expectedRevision: serverPlan?.revision,
           conversationHistory: conversation,
-          userMessage: userInput
+          userMessage: userInput,
+          preferences,
         })
       })
 
@@ -193,20 +375,13 @@ export function ConversationalGenerationWizard({
 
       const data = await res.json()
 
+      setServerPlan(data)
       // Add AI response
       setConversation(prev => [...prev, {
         role: 'assistant',
         content: data.aiResponse,
         timestamp: new Date().toISOString()
       }])
-
-      // Check if ready to generate
-      if (data.readyToGenerate) {
-        // Move to confirmation immediately
-        setTimeout(() => {
-          setPhase('confirmation')
-        }, 500)
-      }
 
     } catch (error) {
       console.error('Send message error:', error)
@@ -220,75 +395,293 @@ export function ConversationalGenerationWizard({
       setLoading(false)
     }
   }
-  
-  async function startGeneration() {
-    setPhase('generating')
+
+  async function persistSelectedPreferences(
+    currentPlan: ServerPlanSnapshot
+  ): Promise<ServerPlanSnapshot> {
+    if (preferencesMatch(currentPlan.plan.preferences, preferences)) {
+      return currentPlan
+    }
+
+    const response = await fetch('/api/siteforge/plan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        propertyId,
+        planId: currentPlan.planId,
+        expectedRevision: currentPlan.revision,
+        conversationHistory: conversation,
+        userMessage: null,
+        preferences,
+      }),
+    })
+    const result = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      throw new Error(
+        responseErrorMessage(response.status, result, 'saving plan preferences')
+      )
+    }
+    const persisted = result as ServerPlanSnapshot
+    setServerPlan(persisted)
+    return persisted
+  }
+
+  async function reviewPlan() {
+    if (!serverPlan) return
     setLoading(true)
-    
+    setGenerationError('')
     try {
-      // Extract preferences from conversation
-      const preferences = extractPreferencesFromConversation(conversation)
-      
-      const res = await fetch('/api/siteforge/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          propertyId,
-          preferences,
-          prompt: conversation.map(m => `${m.role}: ${m.content}`).join('\n\n'),
-          // Pass the pre-analyzed brand context to avoid re-running Brand Agent
-          brandContext: analysis?.brandContext
-        })
-      })
-      
-      const data = await res.json()
-      setWebsiteId(data.websiteId)
-      
+      await persistSelectedPreferences(serverPlan)
+      setPhase('confirmation')
     } catch (error) {
-      console.error('Generation start error:', error)
-      alert('Failed to start generation')
-      setPhase('conversation')
+      setGenerationError(
+        error instanceof Error ? error.message : 'Could not save plan preferences'
+      )
     } finally {
       setLoading(false)
     }
   }
   
-  function extractPreferencesFromConversation(conv: ConversationMessage[]) {
-    const text = conv.map(m => m.content).join(' ').toLowerCase()
+  async function startGeneration() {
+    if (!serverPlan) {
+      setGenerationError('Review a saved plan before starting generation.')
+      setPhase('failed')
+      return
+    }
+
+    setPhase('generating')
+    setLoading(true)
+    setGenerationError('')
     
-    // Extract style preference
-    let style: string | undefined
-    if (text.includes('luxury') || text.includes('sophisticated')) style = 'luxury'
-    else if (text.includes('modern')) style = 'modern'
-    else if (text.includes('cozy') || text.includes('warm')) style = 'cozy'
-    else if (text.includes('vibrant') || text.includes('energetic')) style = 'vibrant'
-    
-    // Extract emphasis
-    let emphasis: string | undefined
-    if (text.includes('amenity') || text.includes('amenities')) emphasis = 'amenities'
-    else if (text.includes('location') || text.includes('neighborhood')) emphasis = 'location'
-    else if (text.includes('lifestyle')) emphasis = 'lifestyle'
-    else if (text.includes('value') || text.includes('price')) emphasis = 'value'
-    
-    return { style, emphasis }
+    try {
+      const approvedPlan = await persistSelectedPreferences(serverPlan)
+      const decisionResponse = await fetch(
+        `/api/siteforge/plans/${approvedPlan.planId}/decision`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            propertyId,
+            expectedRevision: approvedPlan.revision,
+            contentHash: approvedPlan.contentHash,
+            decisionStatus: 'approved',
+            decisionReason: 'Approved in the SiteForge generation wizard.',
+          }),
+        }
+      )
+      const decision = await decisionResponse.json().catch(() => ({}))
+      if (!decisionResponse.ok) {
+        throw new Error(
+          typeof decision.error === 'string'
+            ? decision.error
+            : `Plan approval failed (${decisionResponse.status})`
+        )
+      }
+
+      const res = await fetch('/api/siteforge/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          buildGenerationRequest(approvedPlan, crypto.randomUUID())
+        )
+      })
+      
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        throw new Error(
+          typeof data.error === 'string' ? data.error : `Generation failed to start (${res.status})`
+        )
+      }
+      if (typeof data.websiteId !== 'string' || !data.websiteId) {
+        throw new Error('Generation started without a website identifier')
+      }
+      setWebsiteId(data.websiteId)
+      if (typeof data.jobId === 'string') setGenerationJobId(data.jobId)
+      
+    } catch (error) {
+      console.error('Generation start error:', error)
+      setGenerationError(
+        error instanceof Error ? error.message : 'Failed to start generation'
+      )
+      setPhase('failed')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function cancelGeneration() {
+    if (!generationJobId) return
+    setLoading(true)
+    try {
+      const response = await fetch(
+        `/api/siteforge/jobs/${generationJobId}/cancel`,
+        { method: 'POST' }
+      )
+      const result = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(
+          typeof result.error === 'string'
+            ? result.error
+            : `Cancellation failed (${response.status})`
+        )
+      }
+      setGenerationError('Generation cancelled.')
+      setCanRetryGeneration(false)
+      setPhase('failed')
+    } catch (error) {
+      setGenerationError(
+        error instanceof Error ? error.message : 'Failed to cancel generation'
+      )
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function retryGeneration() {
+    if (!generationJobId) return
+    setLoading(true)
+    setGenerationError('')
+    try {
+      const response = await fetch(
+        `/api/siteforge/jobs/${generationJobId}/retry`,
+        { method: 'POST' }
+      )
+      const result = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(
+          typeof result.error === 'string'
+            ? result.error
+            : `Retry failed (${response.status})`
+        )
+      }
+      setCanRetryGeneration(false)
+      setGenerationProgress(0)
+      setGenerationStep('Retry queued')
+      setPhase('generating')
+    } catch (error) {
+      setGenerationError(
+        error instanceof Error ? error.message : 'Failed to retry generation'
+      )
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function requestPlanChanges() {
+    if (!serverPlan || !changeRequest.trim()) return
+    setLoading(true)
+    try {
+      const modifiedPlan = {
+        ...serverPlan.plan,
+        recommendations: [
+          ...serverPlan.plan.recommendations,
+          changeRequest.trim(),
+        ],
+      }
+      const response = await fetch(
+        `/api/siteforge/plans/${serverPlan.planId}/decision`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            propertyId,
+            expectedRevision: serverPlan.revision,
+            contentHash: serverPlan.contentHash,
+            decisionStatus: 'modified',
+            decisionReason: changeRequest.trim(),
+            modifiedPlan,
+          }),
+        }
+      )
+      const result = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(
+          typeof result.error === 'string'
+            ? result.error
+            : `Plan update failed (${response.status})`
+        )
+      }
+      setServerPlan({
+        ...serverPlan,
+        planVersionId: result.planVersionId,
+        revision: result.revision,
+        contentHash: result.contentHash,
+        planState: 'ready_for_review',
+        plan: modifiedPlan,
+      })
+      setConversation(current => [
+        ...current,
+        {
+          role: 'user',
+          content: changeRequest.trim(),
+          timestamp: new Date().toISOString(),
+        },
+      ])
+      setChangeRequest('')
+      setPhase('conversation')
+    } catch (error) {
+      setGenerationError(
+        error instanceof Error ? error.message : 'Failed to save requested changes'
+      )
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function discardPlan() {
+    if (!serverPlan) return
+    setLoading(true)
+    try {
+      const response = await fetch(
+        `/api/siteforge/plans/${serverPlan.planId}/decision`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            propertyId,
+            expectedRevision: serverPlan.revision,
+            contentHash: serverPlan.contentHash,
+            decisionStatus: 'denied',
+            decisionReason: 'Discarded in the SiteForge generation wizard.',
+          }),
+        }
+      )
+      const result = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(
+          typeof result.error === 'string'
+            ? result.error
+            : `Plan discard failed (${response.status})`
+        )
+      }
+      onClose()
+    } catch (error) {
+      setGenerationError(
+        error instanceof Error ? error.message : 'Failed to discard plan'
+      )
+    } finally {
+      setLoading(false)
+    }
   }
   
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-3xl max-h-[85vh] overflow-hidden flex flex-col">
-        <DialogHeader>
+      <DialogContent className="flex h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] max-w-4xl flex-col gap-0 overflow-hidden p-0 sm:h-[min(90dvh,900px)]">
+        <DialogHeader className="shrink-0 border-b px-6 py-5 pr-12">
           <DialogTitle className="flex items-center gap-2">
             <span>🎨</span>
             {phase === 'analyzing' && 'Analyzing Brand Intelligence...'}
+            {phase === 'assets' && `Add Property Assets for ${propertyName}`}
             {phase === 'conversation' && `Planning Website for ${propertyName}`}
             {phase === 'confirmation' && 'Review Your Plan'}
             {phase === 'generating' && 'Generating Website...'}
             {phase === 'complete' && '✅ Website Ready!'}
+            {phase === 'failed' && 'Generation Needs Attention'}
           </DialogTitle>
         </DialogHeader>
-        
-        {/* Phase 1: Analyzing */}
-        {phase === 'analyzing' && (
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-5 sm:px-6 sm:pb-6">
+          {/* Phase 1: Analyzing */}
+          {phase === 'analyzing' && (
           <div className="flex flex-col items-center justify-center py-12 space-y-4">
             <div className="animate-spin text-4xl">🔍</div>
             <p className="text-lg font-medium">Analyzing brand intelligence...</p>
@@ -296,9 +689,68 @@ export function ConversationalGenerationWizard({
               Reading BrandForge data, vector embeddings, and knowledge base
             </p>
           </div>
-        )}
+          )}
         
-        {/* Phase 2: Conversation */}
+        {/* Phase 2: Property assets */}
+        {phase === 'assets' && analysis && (
+          <div className="space-y-4 py-4">
+            <div className="rounded-lg bg-gradient-to-r from-indigo-50 to-purple-50 p-4 dark:from-indigo-950/30 dark:to-purple-950/30">
+              <h3 className="text-sm font-semibold">
+                Add the real property content SiteForge should use
+              </h3>
+              <p className="mt-1 text-xs text-gray-600 dark:text-gray-300">
+                This step is optional. You can continue with placeholders, but
+                adding photography and floor plans now gives the plan and
+                generated site better source material.
+              </p>
+            </div>
+            <PropertyAssetsStep
+              propertyId={propertyId}
+              onPhotoCountChange={count =>
+                setAnalysis(current =>
+                  current
+                    ? {
+                        ...current,
+                        stats: {
+                          ...current.stats,
+                          photos: Math.max(current.stats.photos, count),
+                        },
+                        analysisQuality: current.analysisQuality
+                          ? {
+                              ...current.analysisQuality,
+                              warnings:
+                                count > 0
+                                  ? current.analysisQuality.warnings.filter(
+                                      warning =>
+                                        !warning
+                                          .toLowerCase()
+                                          .includes('no property photos')
+                                    )
+                                  : current.analysisQuality.warnings,
+                            }
+                          : undefined,
+                      }
+                    : current
+                )
+              }
+            />
+            {generationError && (
+              <p className="rounded-md bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-950/40 dark:text-red-300">
+                {generationError}
+              </p>
+            )}
+            <div className="flex justify-end">
+              <Button
+                onClick={() => void continueFromAssets()}
+                disabled={loading}
+              >
+                {loading ? 'Refreshing plan…' : 'Continue to website direction →'}
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* Phase 3: Conversation */}
         {phase === 'conversation' && analysis && (
           <div className="flex flex-col flex-1 min-h-0">
             {/* Brand Analysis Summary */}
@@ -334,8 +786,100 @@ export function ConversationalGenerationWizard({
                   ⭐ Using BrandForge brand book
                 </div>
               )}
+
+              {analysis.analysisQuality?.warnings.map(warning => (
+                <div
+                  key={warning}
+                  className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
+                >
+                  Review recommended: {warning}
+                </div>
+              ))}
             </div>
-            
+
+            <div className="mb-4 space-y-3 rounded-lg border p-4">
+              <div>
+                <h3 className="text-sm font-semibold">Set the direction</h3>
+                <p className="text-xs text-gray-500">
+                  Optional—leave a choice unselected and SiteForge will use its brand recommendation.
+                </p>
+              </div>
+              <PreferencePicker
+                label="Visual style"
+                value={preferences.style}
+                options={[
+                  ['modern', 'Modern'],
+                  ['luxury', 'Luxury'],
+                  ['cozy', 'Warm'],
+                  ['vibrant', 'Vibrant'],
+                  ['professional', 'Professional'],
+                ]}
+                onChange={style => setPreferences(current => ({
+                  ...current,
+                  style: style as GenerationPreferences['style'],
+                }))}
+              />
+              <PreferencePicker
+                label="Primary focus"
+                value={preferences.emphasis}
+                options={[
+                  ['amenities', 'Amenities'],
+                  ['location', 'Location'],
+                  ['lifestyle', 'Lifestyle'],
+                  ['value', 'Value'],
+                  ['community', 'Community'],
+                ]}
+                onChange={emphasis => setPreferences(current => ({
+                  ...current,
+                  emphasis: emphasis as GenerationPreferences['emphasis'],
+                }))}
+              />
+              <PreferencePicker
+                label="Primary action"
+                value={preferences.ctaPriority}
+                options={[
+                  ['tours', 'Schedule tours'],
+                  ['applications', 'Apply now'],
+                  ['contact', 'Contact team'],
+                  ['calls', 'Call property'],
+                ]}
+                onChange={ctaPriority => setPreferences(current => ({
+                  ...current,
+                  ctaPriority: ctaPriority as GenerationPreferences['ctaPriority'],
+                }))}
+              />
+              <fieldset className="space-y-2">
+                <legend className="text-xs font-medium text-gray-700 dark:text-gray-300">
+                  Optional connected capabilities
+                </legend>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {([
+                    ['crm', 'CRM / LeadPulse delivery'],
+                    ['tours', 'LumaLeasing tour booking'],
+                    ['chatbot', 'Property chatbot'],
+                    ['analytics', 'Analytics and tag manager'],
+                  ] as const).map(([capability, label]) => (
+                    <label key={capability} className="flex items-center gap-2 rounded-md border px-3 py-2 text-xs">
+                      <input
+                        type="checkbox"
+                        checked={preferences.enabledCapabilities?.includes(capability) || false}
+                        onChange={event => setPreferences(current => ({
+                          ...current,
+                          enabledCapabilities: event.target.checked
+                            ? Array.from(new Set([...(current.enabledCapabilities || []), capability]))
+                            : (current.enabledCapabilities || []).filter(value => value !== capability),
+                        }))}
+                      />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+                <p className="text-xs text-gray-500">
+                  Enabled capabilities block planning until their property integration is ready.
+                </p>
+              </fieldset>
+            </div>
+
             {/* Chat Messages */}
             <div className="flex-1 overflow-y-auto space-y-4 mb-4 pr-2">
               {conversation.map((msg, idx) => (
@@ -391,38 +935,115 @@ export function ConversationalGenerationWizard({
                 className="resize-none"
               />
               
-              <div className="flex justify-between items-center">
+              <div className="flex flex-wrap justify-between gap-2">
                 <div className="text-xs text-gray-500">
-                  Press Enter to send, Shift+Enter for new line
+                  Chat is optional. You can review the plan whenever you are ready.
                 </div>
-                <Button
-                  onClick={sendMessage}
-                  disabled={loading || !userInput.trim()}
-                >
-                  Send →
-                </Button>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setGenerationError('')
+                      setPhase('assets')
+                    }}
+                    disabled={loading}
+                  >
+                    Property assets
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={sendMessage}
+                    disabled={loading || !userInput.trim()}
+                  >
+                    Send
+                  </Button>
+                  <Button
+                    onClick={() => void reviewPlan()}
+                    disabled={loading || !serverPlan}
+                  >
+                    {loading ? 'Saving preferences…' : 'Review plan →'}
+                  </Button>
+                </div>
               </div>
             </div>
           </div>
         )}
         
-        {/* Phase 3: Confirmation */}
+        {/* Phase 4: Confirmation */}
         {phase === 'confirmation' && (
           <div className="space-y-4 py-4">
             <div className="bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-950/30 dark:to-emerald-950/30 border border-green-200 dark:border-green-800 rounded-lg p-6">
               <div className="flex items-center gap-2 text-green-700 dark:text-green-400 font-bold text-lg mb-2">
                 <span>✅</span>
-                <span>Ready to Generate!</span>
+                <span>Ready for your approval</span>
               </div>
               <p className="text-sm text-green-600 dark:text-green-400">
-                Your website plan is complete. Click below to start the agentic generation system.
+                Confirm the direction below. Generation starts only when you click Generate Website.
               </p>
             </div>
+
+            <div className="grid gap-3 sm:grid-cols-3">
+              <PlanChoice
+                label="Visual style"
+                value={preferenceLabel('style', serverPlan?.plan.preferences.style)}
+              />
+              <PlanChoice
+                label="Primary focus"
+                value={preferenceLabel('emphasis', serverPlan?.plan.preferences.emphasis)}
+              />
+              <PlanChoice
+                label="Primary action"
+                value={preferenceLabel(
+                  'ctaPriority',
+                  serverPlan?.plan.preferences.ctaPriority
+                )}
+              />
+            </div>
+
+            {serverPlan && (
+              <div className="space-y-3 rounded-lg border p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h4 className="font-medium">Saved plan revision {serverPlan.revision}</h4>
+                  <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+                    serverPlan.readiness.ready
+                      ? 'bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300'
+                      : 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300'
+                  }`}>
+                    {serverPlan.readiness.ready ? 'Ready to approve' : 'Blocked'}
+                  </span>
+                </div>
+                <p className="text-sm text-gray-600 dark:text-gray-400">
+                  {serverPlan.plan.summary}
+                </p>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {serverPlan.plan.pages.map(page => (
+                    <div key={page.slug} className="rounded-md bg-gray-50 p-3 dark:bg-gray-900">
+                      <div className="text-sm font-semibold">{page.title}</div>
+                      <div className="mt-1 text-xs text-gray-500">
+                        {page.sections.map(section => section.label).join(' · ')}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {serverPlan.readiness.issues.map(issue => (
+                  <div
+                    key={issue.code}
+                    className={`rounded-md px-3 py-2 text-xs ${
+                      issue.severity === 'blocker'
+                        ? 'bg-red-50 text-red-800 dark:bg-red-950/40 dark:text-red-300'
+                        : 'bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300'
+                    }`}
+                  >
+                    {issue.message}
+                  </div>
+                ))}
+              </div>
+            )}
             
             <div className="space-y-2">
               <h4 className="font-medium flex items-center gap-2">
                 <span>📋</span>
-                Your Approved Plan:
+                Current AI recommendation:
               </h4>
               <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 text-sm space-y-3 max-h-60 overflow-y-auto">
                 {conversation.filter(m => m.role === 'assistant').slice(-1).map((msg, idx) => (
@@ -432,18 +1053,60 @@ export function ConversationalGenerationWizard({
                 ))}
               </div>
             </div>
+
+            <div className="space-y-2 rounded-lg border p-4">
+              <label htmlFor="siteforge-change-request" className="text-sm font-medium">
+                Want a different direction?
+              </label>
+              <Textarea
+                id="siteforge-change-request"
+                value={changeRequest}
+                onChange={event => setChangeRequest(event.target.value)}
+                placeholder="Describe the change. SiteForge will save it as a new plan revision."
+                rows={2}
+                disabled={loading}
+              />
+              <div className="flex justify-end">
+                <Button
+                  variant="outline"
+                  onClick={requestPlanChanges}
+                  disabled={loading || !changeRequest.trim()}
+                >
+                  Save as new revision
+                </Button>
+              </div>
+            </div>
             
             <div className="flex justify-between pt-4">
-              <Button
-                variant="outline"
-                onClick={() => setPhase('conversation')}
-                disabled={loading}
-              >
-                ← Make Changes
-              </Button>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => setPhase('conversation')}
+                  disabled={loading}
+                >
+                  ← Continue planning
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setGenerationError('')
+                    setPhase('assets')
+                  }}
+                  disabled={loading}
+                >
+                  Edit property assets
+                </Button>
+                <Button
+                  variant="ghost"
+                  onClick={discardPlan}
+                  disabled={loading}
+                >
+                  Discard plan
+                </Button>
+              </div>
               <Button
                 onClick={startGeneration}
-                disabled={loading}
+                disabled={loading || !serverPlan?.readiness.ready}
                 className="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700"
               >
                 {loading ? (
@@ -459,7 +1122,7 @@ export function ConversationalGenerationWizard({
           </div>
         )}
         
-        {/* Phase 4: Generating */}
+        {/* Phase 5: Generating */}
         {phase === 'generating' && (
           <div className="py-8 space-y-6">
             <div className="text-center">
@@ -518,10 +1181,18 @@ export function ConversationalGenerationWizard({
                 description="Validating quality"
               />
             </div>
+
+            {generationJobId && (
+              <div className="flex justify-end">
+                <Button variant="outline" onClick={cancelGeneration} disabled={loading}>
+                  Cancel generation
+                </Button>
+              </div>
+            )}
           </div>
         )}
         
-        {/* Phase 5: Complete */}
+        {/* Phase 6: Complete */}
         {phase === 'complete' && (
           <div className="py-12 text-center space-y-4">
             <div className="text-6xl mb-4">✅</div>
@@ -531,6 +1202,34 @@ export function ConversationalGenerationWizard({
             </p>
           </div>
         )}
+
+          {phase === 'failed' && (
+          <div className="space-y-5 py-8">
+            <div className="rounded-lg border border-red-200 bg-red-50 p-5 dark:border-red-900 dark:bg-red-950/30">
+              <h3 className="font-semibold text-red-800 dark:text-red-300">
+                SiteForge could not finish this generation
+              </h3>
+              <p className="mt-2 text-sm text-red-700 dark:text-red-400">
+                {generationError || 'Website generation failed. Please try again.'}
+              </p>
+            </div>
+            <div className="flex justify-between gap-3">
+              <Button variant="outline" onClick={() => setPhase('conversation')}>
+                ← Review plan
+              </Button>
+              {canRetryGeneration && generationJobId ? (
+                <Button onClick={retryGeneration} disabled={loading}>
+                  {loading ? 'Retrying…' : 'Retry failed job'}
+                </Button>
+              ) : (
+                <Button onClick={() => setPhase('conversation')} disabled={loading}>
+                  Refine plan
+                </Button>
+              )}
+            </div>
+          </div>
+          )}
+        </div>
       </DialogContent>
     </Dialog>
   )
@@ -558,6 +1257,90 @@ function AgentStep({
       </div>
     </div>
   )
+}
+
+function PreferencePicker({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string
+  value?: string
+  options: Array<[string, string]>
+  onChange: (value: string | undefined) => void
+}) {
+  return (
+    <div className="space-y-1.5">
+      <div className="text-xs font-medium text-gray-700 dark:text-gray-300">{label}</div>
+      <div className="flex flex-wrap gap-2">
+        {options.map(([optionValue, optionLabel]) => {
+          const selected = value === optionValue
+          return (
+            <Button
+              key={optionValue}
+              type="button"
+              size="sm"
+              variant={selected ? 'default' : 'outline'}
+              aria-pressed={selected}
+              onClick={() => onChange(selected ? undefined : optionValue)}
+            >
+              {optionLabel}
+            </Button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function PlanChoice({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border bg-gray-50 p-3 dark:bg-gray-900">
+      <div className="text-xs text-gray-500">{label}</div>
+      <div className="mt-1 text-sm font-semibold">{value}</div>
+    </div>
+  )
+}
+
+const preferenceLabels = {
+  style: {
+    modern: 'Modern',
+    luxury: 'Luxury',
+    cozy: 'Warm',
+    vibrant: 'Vibrant',
+    professional: 'Professional',
+  },
+  emphasis: {
+    amenities: 'Amenities',
+    location: 'Location',
+    lifestyle: 'Lifestyle',
+    value: 'Value',
+    community: 'Community',
+  },
+  ctaPriority: {
+    tours: 'Schedule tours',
+    applications: 'Apply now',
+    contact: 'Contact team',
+    calls: 'Call property',
+  },
+} satisfies Record<
+  'style' | 'emphasis' | 'ctaPriority',
+  Record<string, string>
+>
+
+function preferenceLabel(
+  key: 'style' | 'emphasis' | 'ctaPriority',
+  value:
+    | GenerationPreferences['style']
+    | GenerationPreferences['emphasis']
+    | GenerationPreferences['ctaPriority']
+): string {
+  if (!value) {
+    return 'AI recommendation'
+  }
+  const labels = preferenceLabels[key] as Record<string, string>
+  return labels[value] || value
 }
 
 

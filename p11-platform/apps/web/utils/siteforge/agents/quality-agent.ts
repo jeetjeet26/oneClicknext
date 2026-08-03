@@ -59,8 +59,8 @@ export class QualityAgent extends BaseAgent {
       wordpressCompatibility
     ] = await Promise.all([
       this.checkBrandConsistency(data.pages, data.brandContext),
-      this.checkContentQuality(data.pages, data.brandContext),
-      this.checkPhotoQuality(data.photoManifest, data.brandContext),
+      this.checkContentQuality(data.pages),
+      this.checkPhotoQuality(data.photoManifest),
       this.checkDesignCoherence(data.designSystem, data.brandContext),
       this.checkWordPressCompatibility(data.pages, data.wpCapabilities)
     ])
@@ -195,7 +195,6 @@ Return JSON only:
     try {
       const response = await this.callClaude(prompt, {
         systemPrompt,
-        temperature: 1.0,
         maxTokens: 500,
         jsonMode: true
       })
@@ -213,11 +212,12 @@ Return JSON only:
       }
     } catch (error) {
       console.error(`❌ [QualityAgent] Failed to evaluate brand match for ${pageSlug}/${section.id}:`, error)
-      // Return neutral score on error to avoid blocking
+      // Evaluation infrastructure failure is not evidence of quality. Fail
+      // closed so the orchestrator cannot publish an unverified blueprint.
       return {
-        score: 75,
-        issue: 'Could not evaluate (LLM error)',
-        suggestion: 'Manual review recommended'
+        score: 0,
+        issue: 'Brand consistency could not be evaluated',
+        suggestion: 'Retry quality validation before publishing'
       }
     }
   }
@@ -226,8 +226,7 @@ Return JSON only:
    * Check content quality
    */
   private async checkContentQuality(
-    pages: GeneratedPage[],
-    brandContext: BrandContext
+    pages: GeneratedPage[]
   ): Promise<QualityCheck> {
     
     const issues: string[] = []
@@ -277,8 +276,7 @@ Return JSON only:
    * Check photo quality
    */
   private async checkPhotoQuality(
-    photoManifest: PhotoManifest,
-    brandContext: BrandContext
+    photoManifest: PhotoManifest
   ): Promise<QualityCheck> {
     
     const issues: string[] = []
