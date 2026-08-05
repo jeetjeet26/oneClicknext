@@ -278,8 +278,11 @@ export async function bootstrapAuroraArtifacts(input: {
     requireIndexable: false,
   })
   if (!certification.passed) {
+    const failedChecks = certification.checks
+      .filter(check => !check.passed)
+      .map(check => ({ code: check.code, evidence: check.evidence }))
     throw new AuroraLifecycleControlError(
-      'Protected Aurora rollback certification failed',
+      `Protected Aurora rollback certification failed: ${JSON.stringify(failedChecks)}`,
       409,
       'rollback_certification_failed'
     )
