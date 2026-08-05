@@ -4,6 +4,7 @@ import {
   assertAuroraMutationPrerequisites,
   assertActiveAuroraLifecycleLease,
   auroraOwnedMetadata,
+  inactiveAuroraLeaseFilter,
   isAuroraOwnedMetadata,
   isAuroraBootstrapAnchor,
   requireAuroraLifecycleBearer,
@@ -130,6 +131,14 @@ describe('Aurora lifecycle control guardrails', () => {
         rolloutStatus: 'enabled',
       })
     ).toBe(false)
+  })
+
+  it('allows failed leases with a null or expired timestamp to be reacquired', () => {
+    expect(
+      inactiveAuroraLeaseFilter('2026-08-05T16:30:00.000Z')
+    ).toBe(
+      'lease_expires_at.is.null,lease_expires_at.lte.2026-08-05T16:30:00.000Z'
+    )
   })
 
   it('blocks mutation until baseline, targets, and backup are verified', () => {

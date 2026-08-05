@@ -305,6 +305,10 @@ function leaseDedupeKey(websiteId: string): string {
   return `aurora-lifecycle:${websiteId}`
 }
 
+export function inactiveAuroraLeaseFilter(now: string): string {
+  return `lease_expires_at.is.null,lease_expires_at.lte.${now}`
+}
+
 async function loadLease(
   identity: AuroraLifecycleIdentity,
   client: ServiceClient
@@ -450,7 +454,7 @@ export async function acquireOrRenewAuroraLifecycleLease(
       .eq('id', lease.id)
     update = active
       ? update.eq('lease_owner', identity.ownerId)
-      : update.lte('lease_expires_at', now)
+      : update.or(inactiveAuroraLeaseFilter(now))
     const updated = await update.select('*').maybeSingle()
     if (updated.error || !updated.data) {
       fail(
