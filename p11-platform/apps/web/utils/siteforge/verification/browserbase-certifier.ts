@@ -760,6 +760,7 @@ export async function collectBrowserbaseCertificationEvidence(
   });
 
   const page = context.pages()[0] || (await context.newPage());
+  await page.emulateMedia({ reducedMotion: "reduce" });
   if (input.credentials) {
     await page.setExtraHTTPHeaders({
       Authorization: `Basic ${Buffer.from(
