@@ -305,8 +305,11 @@ function leaseDedupeKey(websiteId: string): string {
   return `aurora-lifecycle:${websiteId}`
 }
 
-export function inactiveAuroraLeaseFilter(now: string): string {
-  return `lease_expires_at.is.null,lease_expires_at.lte.${now}`
+export function isAuroraLeaseActive(
+  expiresAt: string | null,
+  now = Date.now()
+): boolean {
+  return Boolean(expiresAt && new Date(expiresAt).getTime() > now)
 }
 
 async function loadLease(
@@ -413,9 +416,7 @@ export async function acquireOrRenewAuroraLifecycleLease(
   if (!lease) {
     fail('Aurora lifecycle lease could not be reconciled', 409, 'lease_conflict')
   }
-  const active =
-    Boolean(lease.lease_expires_at) &&
-    new Date(lease.lease_expires_at as string).getTime() > Date.now()
+  const active = isAuroraLeaseActive(lease.lease_expires_at)
   if (active && lease.lease_owner !== identity.ownerId) {
     fail(
       'Another owner holds the Aurora lifecycle lease',
@@ -454,7 +455,7 @@ export async function acquireOrRenewAuroraLifecycleLease(
       .eq('id', lease.id)
     update = active
       ? update.eq('lease_owner', identity.ownerId)
-      : update.or(inactiveAuroraLeaseFilter(now))
+      : update.eq('updated_at', lease.updated_at)
     const updated = await update.select('*').maybeSingle()
     if (updated.error || !updated.data) {
       fail(
