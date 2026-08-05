@@ -915,6 +915,18 @@ export async function collectBrowserbaseCertificationEvidence(
               timeout: 30_000,
             });
             await visualPage.waitForTimeout(750);
+            await visualPage
+              .waitForLoadState("networkidle", { timeout: 5_000 })
+              .catch(() => undefined);
+            await visualPage.evaluate(async () => {
+              await document.fonts?.ready;
+            });
+            await visualPage.waitForTimeout(250);
+            const navigationCls = await visualPage.evaluate(
+              () =>
+                (window as typeof window & { __siteforgeCLS?: number })
+                  .__siteforgeCLS || 0,
+            );
             await waitForVisualStability(visualPage);
             await dismissTransientWidgetUi(visualPage);
             await hideNonBaselineUi(visualPage);
@@ -1005,15 +1017,12 @@ export async function collectBrowserbaseCertificationEvidence(
                 document.documentElement.scrollWidth -
                   document.documentElement.clientWidth,
               ),
-              cumulativeLayoutShift:
-                (window as typeof window & { __siteforgeCLS?: number })
-                  .__siteforgeCLS || 0,
             }));
             layout.push({
               url: expectedUrl,
               viewport,
               horizontalOverflowPixels: dimensions.overflow,
-              cumulativeLayoutShift: dimensions.cumulativeLayoutShift,
+              cumulativeLayoutShift: navigationCls,
             });
           } finally {
             await visualPage.close();

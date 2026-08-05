@@ -43,7 +43,7 @@ function providerRequest(
     },
     body: JSON.stringify(
       options.body || {
-        policyVersion: "siteforge-browser-certification-v15",
+        policyVersion: "siteforge-browser-certification-v16",
         targetUrl,
         expectedUrls,
         environment: "production",
