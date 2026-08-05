@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import type { Json } from '@/types/supabase'
@@ -19,6 +20,7 @@ import {
   CloudwaysProviderClient,
   parseCloudwaysApplicationHostname,
 } from '@/utils/siteforge/providers/cloudways-provider'
+import { SshWordPressInstaller } from '@/utils/siteforge/wordpress/wordpress-installer'
 
 const querySchema = z.object({
   ownerId: postgresUuidSchema,
@@ -39,6 +41,14 @@ const provisionSchema = z.discriminatedUnion('operation', [
       operation: z.literal('create_and_provision_verified_targets'),
       propertyId: postgresUuidSchema,
       websiteId: postgresUuidSchema,
+    })
+    .strict(),
+  z
+    .object({
+      operation: z.literal('install_verified_base_theme'),
+      propertyId: postgresUuidSchema,
+      websiteId: postgresUuidSchema,
+      packageSha256: z.string().regex(/^[a-f0-9]{64}$/),
     })
     .strict(),
 ])
@@ -104,6 +114,84 @@ export async function POST(request: NextRequest) {
       client,
       'bootstrap'
     )
+    if (parsed.data.operation === 'install_verified_base_theme') {
+      const apiKey = process.env.CLOUDWAYS_API_KEY?.trim()
+      const email = process.env.CLOUDWAYS_EMAIL?.trim()
+      const providerIdentity = exact.target.site_url
+        ? parseCloudwaysApplicationHostname(exact.target.site_url)
+        : null
+      if (!apiKey || !email) {
+        throw new AuroraLifecycleControlError(
+          'Cloudways API credentials are required',
+          503,
+          'provider_unavailable'
+        )
+      }
+      if (!providerIdentity) {
+        throw new AuroraLifecycleControlError(
+          'Exact Aurora Cloudways preview identity could not be derived',
+          409,
+          'provider_identity_missing'
+        )
+      }
+      const { data: themePackage, error: packageError } = await client
+        .from('siteforge_runtime_packages')
+        .select('storage_path')
+        .eq('package_type', 'base_theme')
+        .eq('package_sha256', parsed.data.packageSha256)
+        .eq('publication_status', 'published')
+        .is('revoked_at', null)
+        .maybeSingle()
+      if (packageError || !themePackage?.storage_path) {
+        throw new AuroraLifecycleControlError(
+          'Published immutable base theme package was not found',
+          409,
+          'base_theme_unverified'
+        )
+      }
+      const { data: archiveBlob, error: archiveError } = await client.storage
+        .from('siteforge-artifacts')
+        .download(themePackage.storage_path)
+      if (archiveError || !archiveBlob) {
+        throw new Error('Failed to load immutable base theme package bytes')
+      }
+      const archive = Buffer.from(await archiveBlob.arrayBuffer())
+      if (
+        createHash('sha256').update(archive).digest('hex') !==
+        parsed.data.packageSha256
+      ) {
+        throw new Error('Immutable base theme package digest mismatch')
+      }
+      const cloudways = new CloudwaysProviderClient({ apiKey, email })
+      const application = await cloudways.getApplication({
+        serverId: providerIdentity.serverId,
+        applicationId: providerIdentity.applicationId,
+      })
+      if (!application.public_ip) {
+        throw new Error('Cloudways preview application has no public IP')
+      }
+      await new SshWordPressInstaller().installBaseTheme({
+        ssh: {
+          host: application.public_ip,
+          username: application.app_user,
+          password: application.app_password,
+        },
+        archive,
+        packageSha256: parsed.data.packageSha256,
+      })
+      ctx.logSuccess(200, {
+        ownerId: identity.ownerId,
+        websiteId: identity.websiteId,
+        packageSha256: parsed.data.packageSha256,
+      })
+      return NextResponse.json(
+        {
+          installed: true,
+          packageSha256: parsed.data.packageSha256,
+        },
+        { headers: ctx.responseHeaders }
+      )
+    }
     let stagingApplicationId =
       parsed.data.operation === 'provision_verified_targets'
         ? parsed.data.stagingApplicationId

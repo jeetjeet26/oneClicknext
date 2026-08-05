@@ -220,6 +220,45 @@ function exec(client: Client, command: string): Promise<string> {
 }
 
 export class SshWordPressInstaller {
+  async installBaseTheme(input: {
+    ssh: WordPressSshCredentials
+    archive: Buffer
+    packageSha256: string
+    onProgress?: (step: string) => void | Promise<void>
+  }): Promise<void> {
+    if (!/^[a-f0-9]{64}$/.test(input.packageSha256)) {
+      throw new Error('Base theme package digest is invalid')
+    }
+    assertZipArchive(input.archive, 'SiteForge base theme')
+    if (sha256(input.archive) !== input.packageSha256) {
+      throw new Error('SiteForge base theme package digest mismatch')
+    }
+    const applicationRoot = input.ssh.applicationRoot || 'public_html'
+    const sftpApplicationRoot = input.ssh.sftpApplicationRoot || applicationRoot
+    const archiveName = `oneclick-siteforge-${input.packageSha256.slice(0, 12)}.zip`
+    const remoteArchive = `${sftpApplicationRoot}/${archiveName}`
+    await input.onProgress?.('Installing the exact SiteForge base theme...')
+    const client = await connect(input.ssh)
+    try {
+      const sftp = await getSftp(client)
+      await removeFileIfExists(sftp, remoteArchive)
+      await writeFile(sftp, remoteArchive, input.archive)
+      await exec(
+        client,
+        [
+          `cd ${shellQuote(applicationRoot)}`,
+          `printf '%s  %s\\n' ${shellQuote(input.packageSha256)} ${shellQuote(archiveName)} | sha256sum -c -`,
+          `wp theme install ${shellQuote(archiveName)} --force`,
+          'wp theme activate oneclick-siteforge',
+          `rm -f ${shellQuote(archiveName)}`,
+        ].join(' && ')
+      )
+      await input.onProgress?.('Exact SiteForge base theme activated.')
+    } finally {
+      client.end()
+    }
+  }
+
   async installThemeOverlay(input: {
     ssh: WordPressSshCredentials
     archive: Buffer

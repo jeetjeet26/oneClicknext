@@ -6,7 +6,10 @@ import { strToU8, zipSync } from 'fflate'
 import { afterEach, describe, expect, it } from 'vitest'
 import { canonicalizeSiteForgeContent } from '@/utils/siteforge/content-hash'
 import type { VerifiedRuntimeV3PackageIdentity } from '@/utils/siteforge/artifacts/release'
-import { prepareWordPressInstallerArchives } from './wordpress-installer'
+import {
+  prepareWordPressInstallerArchives,
+  SshWordPressInstaller,
+} from './wordpress-installer'
 
 const temporaryDirectories: string[] = []
 
@@ -61,6 +64,18 @@ describe('WordPress exact package installation', () => {
         acfProArchivePath: fixture.acfPath,
       })
     ).rejects.toThrow('runtime_plugin package digest mismatch')
+  })
+
+  it('rejects base theme bytes that drift from the immutable package digest', async () => {
+    const fixture = await installerFixture()
+
+    await expect(
+      new SshWordPressInstaller().installBaseTheme({
+        ssh: { host: 'unused.example.com', username: 'unused' },
+        archive: Buffer.from(fixture.themeArchive),
+        packageSha256: 'a'.repeat(64),
+      })
+    ).rejects.toThrow('base theme package digest mismatch')
   })
 })
 

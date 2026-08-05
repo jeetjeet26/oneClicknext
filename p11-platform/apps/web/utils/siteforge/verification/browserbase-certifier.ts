@@ -528,6 +528,10 @@ async function waitForVisualStability(page: Page) {
   await page.evaluate(async () => {
     const delay = (milliseconds: number) =>
       new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+    const images = Array.from(document.images);
+    for (const image of images) {
+      image.loading = "eager";
+    }
     const viewportStep = Math.max(window.innerHeight, 1);
     for (
       let offset = 0;
@@ -535,15 +539,14 @@ async function waitForVisualStability(page: Page) {
       offset += viewportStep
     ) {
       window.scrollTo(0, offset);
-      await delay(25);
+      await delay(75);
     }
     window.scrollTo(0, 0);
     await document.fonts?.ready;
-    const images = Array.from(document.images);
     await Promise.race([
       Promise.all(
         images.map(async (image) => {
-          if (!image.complete) {
+          if (!image.complete || image.naturalWidth === 0) {
             await new Promise<void>((resolve) => {
               image.addEventListener("load", () => resolve(), { once: true });
               image.addEventListener("error", () => resolve(), { once: true });
@@ -552,13 +555,21 @@ async function waitForVisualStability(page: Page) {
           await image.decode?.().catch(() => undefined);
         }),
       ),
-      delay(3_000),
+      delay(10_000),
     ]);
   });
   await page
-    .waitForLoadState("networkidle", { timeout: 5_000 })
+    .waitForLoadState("networkidle", { timeout: 10_000 })
     .catch(() => undefined);
-  await page.waitForTimeout(150);
+  await page.evaluate(async () => {
+    await document.fonts?.ready;
+    await Promise.all(
+      Array.from(document.images).map((image) =>
+        image.decode?.().catch(() => undefined),
+      ),
+    );
+  });
+  await page.waitForTimeout(300);
 }
 
 async function dismissTransientWidgetUi(page: Page) {
@@ -583,7 +594,11 @@ async function hideNonBaselineUi(page: Page) {
     const style = document.createElement("style");
     style.id = id;
     style.textContent =
-      ["#lumaleasing-widget", ".siteforge-back-to-top"].join(",") +
+      [
+        "#lumaleasing-widget",
+        ".siteforge-back-to-top",
+        ".siteforge-consent-banner",
+      ].join(",") +
       "{visibility:hidden!important}";
     document.head.appendChild(style);
   });

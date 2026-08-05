@@ -626,6 +626,7 @@ const baseFoundationFiles = [
   "app/api/test-only/siteforge/aurora-lifecycle/lease/route.test.ts",
   "app/api/test-only/siteforge/aurora-lifecycle/cleanup/route.test.ts",
   "app/api/test-only/siteforge/aurora-lifecycle/provider-operations/route.test.ts",
+  "app/api/test-only/siteforge/aurora-lifecycle/resources/route.test.ts",
   "app/api/substrate/actions/[actionAttemptId]/replay/route.test.ts",
   "app/api/substrate/approvals/route.test.ts",
   "app/api/substrate/context-bridge/route.test.ts",

@@ -9,7 +9,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'ONECLICK_SITEFORGE_VERSION', '2.2.8' );
+define( 'ONECLICK_SITEFORGE_VERSION', '2.2.9' );
 define( 'ONECLICK_SITEFORGE_DIR', get_template_directory() );
 define( 'ONECLICK_SITEFORGE_URI', get_template_directory_uri() );
 

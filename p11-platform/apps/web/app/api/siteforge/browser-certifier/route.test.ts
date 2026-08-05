@@ -78,7 +78,7 @@ function request(
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      policyVersion: "siteforge-browser-certification-v14",
+      policyVersion: "siteforge-browser-certification-v15",
       targetUrl: "https://wordpress.example.com/",
       expectedUrls,
       environment: "production",
@@ -363,7 +363,7 @@ describe("SiteForge browser certifier route", () => {
         environment: "production",
         access: "public",
         requireIndexable: true,
-        policyVersion: "siteforge-browser-certification-v14",
+        policyVersion: "siteforge-browser-certification-v15",
         bindingHash,
         evidenceDigest: "1".repeat(64),
         approvalId: "66666666-6666-4666-8666-666666666666",
