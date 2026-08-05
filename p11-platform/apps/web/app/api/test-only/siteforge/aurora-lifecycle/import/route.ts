@@ -14,6 +14,8 @@ import {
   requireAuroraLifecycleIdentity,
 } from '@/utils/siteforge/testing/aurora-lifecycle-control'
 
+export const maxDuration = 600
+
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/)
 const importSchema = z
   .object({

@@ -21,7 +21,7 @@ import {
   persistVisualBaselineCandidates,
 } from "@/utils/siteforge/verification/visual-baselines";
 
-export const maxDuration = 300;
+export const maxDuration = 600;
 
 const requestSchema = z.object({
   policyVersion: z.literal(SITEFORGE_CERTIFICATION_POLICY_VERSION),

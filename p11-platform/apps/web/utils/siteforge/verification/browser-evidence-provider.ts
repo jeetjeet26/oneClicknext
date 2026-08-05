@@ -28,7 +28,7 @@ export async function collectBrowserCertificationEvidence(input: {
     method: 'POST',
     redirect: 'error',
     signal: AbortSignal.timeout(
-      Number(process.env.SITEFORGE_BROWSER_CERTIFIER_TIMEOUT_MS || 290_000)
+      Number(process.env.SITEFORGE_BROWSER_CERTIFIER_TIMEOUT_MS || 570_000)
     ),
     headers: {
       'Content-Type': 'application/json',
