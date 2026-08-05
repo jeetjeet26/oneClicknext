@@ -32,6 +32,45 @@ describe("Cloudways API v2 provider", () => {
     ).toBeNull();
   });
 
+  it("resolves an exact preview hostname when legacy URL ids drift", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(
+      response({
+        servers: [
+          {
+            id: "actual-server",
+            public_ip: "192.0.2.10",
+            apps: [
+              {
+                id: "actual-application",
+                app_fqdn:
+                  "wordpress-1655141-6587075.cloudwaysapps.com",
+                app_user: "siteforge-user",
+                app_password: "siteforge-password",
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      new CloudwaysProviderClient({
+        email: "ops@example.com",
+        apiKey: "cw_access-token",
+      }).getApplication({
+        serverId: "6587075",
+        applicationId: "1655141",
+        expectedHostname:
+          "https://wordpress-1655141-6587075.cloudwaysapps.com",
+      }),
+    ).resolves.toMatchObject({
+      id: "actual-application",
+      server_id: "actual-server",
+      public_ip: "192.0.2.10",
+    });
+  });
+
   it("attaches a verified domain, installs SSL, and enforces HTTPS", async () => {
     const fetchMock = vi
       .fn<typeof fetch>()

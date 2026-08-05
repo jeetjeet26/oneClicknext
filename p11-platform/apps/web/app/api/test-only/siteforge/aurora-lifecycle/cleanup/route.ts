@@ -118,7 +118,7 @@ export async function DELETE(request: NextRequest) {
       )
     }
     const client = createServiceClient()
-    await assertActiveAuroraLifecycleLease(request, identity, client)
+    await assertActiveAuroraLifecycleLease(request, identity, client, 'any')
     const { data: lease, error: leaseError } = await client
       .from('shared_jobs')
       .select('id, output')
@@ -134,10 +134,62 @@ export async function DELETE(request: NextRequest) {
       )
     }
     const baseline = record(lease.output)
-    const rollbackArtifactId = z
-      .string()
-      .uuid()
-      .parse(baseline.rollbackArtifactId)
+    const rollbackArtifact = postgresUuidSchema.safeParse(
+      baseline.rollbackArtifactId
+    )
+    if (!rollbackArtifact.success) {
+      if (
+        Array.isArray(baseline.ownedResources) &&
+        baseline.ownedResources.length > 0
+      ) {
+        throw new AuroraLifecycleControlError(
+          'Partial Aurora bootstrap resources require exact cleanup identity',
+          409,
+          'bootstrap_incomplete'
+        )
+      }
+      const cleanupAt = new Date().toISOString()
+      const { data: released, error: releaseError } = await client
+        .from('shared_jobs')
+        .update({
+          lifecycle_status: 'cancelled',
+          status_reason: 'exclusive_lifecycle_lease_released_after_failed_bootstrap',
+          lease_owner: null,
+          lease_expires_at: null,
+          output: {
+            ...baseline,
+            cleanupVerified: true,
+            cleanupAt,
+            bootstrapCompleted: false,
+            remainingOwnedResourceIds: [],
+          },
+          finished_at: cleanupAt,
+          updated_at: cleanupAt,
+        })
+        .eq('id', lease.id)
+        .eq('lease_owner', identity.ownerId)
+        .select('id')
+        .maybeSingle()
+      if (releaseError || !released) {
+        throw new Error('Failed to release Aurora lease after failed bootstrap')
+      }
+      ctx.logSuccess(200, {
+        ownerId: identity.ownerId,
+        websiteId: identity.websiteId,
+        bootstrapCompleted: false,
+      })
+      return NextResponse.json(
+        {
+          cleanup: {
+            verified: true,
+            bootstrapCompleted: false,
+            remainingOwnedResourceIds: [],
+          },
+        },
+        { headers: ctx.responseHeaders }
+      )
+    }
+    const rollbackArtifactId = rollbackArtifact.data
     const rollbackSourcePrior = record(
       baseline.rollbackSourcePrior as Json | null | undefined
     )

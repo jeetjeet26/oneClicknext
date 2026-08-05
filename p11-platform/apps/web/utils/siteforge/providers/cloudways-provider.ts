@@ -86,6 +86,14 @@ export function parseCloudwaysApplicationHostname(value: string): {
   return match ? { applicationId: match[1], serverId: match[2] } : null;
 }
 
+function normalizeHostname(value: string): string {
+  try {
+    return new URL(value).hostname.toLowerCase();
+  } catch {
+    return value.trim().toLowerCase();
+  }
+}
+
 export class CloudwaysProviderClient {
   private readonly baseUrl = "https://api.cloudways.com/api/v2";
   private accessToken?: string;
@@ -297,6 +305,7 @@ export class CloudwaysProviderClient {
   async getApplication(input: {
     serverId: string;
     applicationId: string | null;
+    expectedHostname?: string;
   }): Promise<z.infer<typeof cloudwaysApplicationSchema>> {
     if (!input.applicationId) {
       throw new Error(
@@ -322,18 +331,33 @@ export class CloudwaysProviderClient {
     const server = response.servers.find(
       (candidate) => String(candidate.id) === input.serverId,
     );
-    const application = server?.apps.find((candidate) =>
+    let application = server?.apps.find((candidate) =>
       String(candidate.id) === input.applicationId,
     );
-    if (!server || !application) {
+    let applicationServer = server;
+    if ((!application || !applicationServer) && input.expectedHostname) {
+      const expectedHostname = normalizeHostname(input.expectedHostname);
+      const matches = response.servers.flatMap((candidate) =>
+        candidate.apps
+          .filter(
+            (app) => normalizeHostname(app.app_fqdn) === expectedHostname,
+          )
+          .map((app) => ({ app, server: candidate })),
+      );
+      if (matches.length === 1) {
+        application = matches[0].app;
+        applicationServer = matches[0].server;
+      }
+    }
+    if (!applicationServer || !application) {
       throw new Error(
-        "Cloudways staging application was not found after provisioning",
+        "Exact Cloudways application was not found by provider identity or hostname",
       );
     }
     return cloudwaysApplicationSchema.parse({
       ...application,
-      server_id: server.id,
-      public_ip: server.public_ip,
+      server_id: applicationServer.id,
+      public_ip: applicationServer.public_ip,
     });
   }
 

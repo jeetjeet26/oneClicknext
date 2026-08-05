@@ -166,6 +166,7 @@ export async function POST(request: NextRequest) {
       const application = await cloudways.getApplication({
         serverId: providerIdentity.serverId,
         applicationId: providerIdentity.applicationId,
+        expectedHostname: exact.target.site_url!,
       })
       if (!application.public_ip) {
         throw new Error('Cloudways preview application has no public IP')
