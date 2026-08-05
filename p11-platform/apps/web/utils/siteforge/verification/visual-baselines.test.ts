@@ -48,7 +48,7 @@ describe('policy-v4 visual baseline repository', () => {
       screenshot_storage_path: 'browser-certification/approved/mobile.png',
       screenshot_sha256: '2'.repeat(64),
       approval_id: '55555555-5555-4555-8555-555555555555',
-      approved_at: '2026-08-04T18:00:00.000Z',
+      approved_at: '2026-08-04 18:00:00+00',
       approved_by: '66666666-6666-4666-8666-666666666666',
     }
     const query = {
@@ -92,6 +92,7 @@ describe('policy-v4 visual baseline repository', () => {
       expect.objectContaining({
         baselineId: row.id,
         approvalId: row.approval_id,
+        approvedAt: '2026-08-04T18:00:00.000Z',
         evidenceDigest: row.evidence_digest,
       }),
     ])

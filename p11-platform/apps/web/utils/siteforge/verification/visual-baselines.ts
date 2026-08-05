@@ -99,7 +99,7 @@ export async function loadExactApprovedVisualBaselines(
       bindingHash: row.binding_hash,
       evidenceDigest: row.evidence_digest,
       approvalId: row.approval_id,
-      approvedAt: row.approved_at,
+      approvedAt: new Date(row.approved_at).toISOString(),
       approvedBy: row.approved_by,
     }
   })
