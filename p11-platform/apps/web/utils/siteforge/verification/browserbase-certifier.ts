@@ -452,27 +452,45 @@ async function testWidgets(page: Page) {
       id: "lumaleasing",
       root: "#lumaleasing-widget",
       trigger:
-        '#lumaleasing-widget button[aria-label*="Open"], #lumaleasing-widget .ll-launcher',
+        '#lumaleasing-widget button[aria-label*="Open"], #lumaleasing-widget .ll-button, #lumaleasing-widget .ll-teaser-body',
       usable:
-        '#lumaleasing-widget [role="dialog"], #lumaleasing-widget .ll-chat',
+        '#lumaleasing-widget [role="dialog"], #lumaleasing-widget .ll-window',
+      close:
+        '#lumaleasing-widget button[aria-label="Close chat"], #lumaleasing-widget .ll-close',
     },
   ];
   for (const candidate of candidates) {
     if ((await page.locator(candidate.root).count()) === 0) continue;
+    const usable = page.locator(candidate.usable).first();
+    const alreadyOpen =
+      (await usable.count()) > 0 &&
+      (await usable.isVisible().catch(() => false));
     const trigger = page.locator(candidate.trigger).first();
     const opened =
-      (await trigger.count()) > 0
+      alreadyOpen ||
+      ((await trigger.count()) > 0
         ? await trigger
             .click()
             .then(() => true)
             .catch(() => false)
-        : false;
-    if (opened) await page.waitForTimeout(250);
+        : false);
+    if (opened && !alreadyOpen) await page.waitForTimeout(250);
+    const isUsable =
+      opened &&
+      (await usable.count()) > 0 &&
+      (await usable.isVisible().catch(() => false));
     widgets.push({
       id: candidate.id,
       opened,
-      usable: opened && (await page.locator(candidate.usable).count()) > 0,
+      usable: isUsable,
     });
+    if (opened) {
+      const close = page.locator(candidate.close).first();
+      if ((await close.count()) > 0) {
+        await close.click().catch(() => undefined);
+        await page.waitForTimeout(150);
+      }
+    }
   }
   return widgets;
 }
@@ -740,6 +758,11 @@ export async function collectBrowserbaseCertificationEvidence(
         timeout: 30_000,
       });
       await page.waitForTimeout(750);
+      const pageLoadCumulativeLayoutShift = await page.evaluate(
+        () =>
+          (window as typeof window & { __siteforgeCLS?: number })
+            .__siteforgeCLS || 0,
+      );
       const chain: Array<{ url: string; status: number }> = [];
       let request = response?.request();
       while (request?.redirectedFrom()) {
@@ -942,15 +965,12 @@ export async function collectBrowserbaseCertificationEvidence(
             document.documentElement.scrollWidth -
               document.documentElement.clientWidth,
           ),
-          cls:
-            (window as typeof window & { __siteforgeCLS?: number })
-              .__siteforgeCLS || 0,
         }));
         layout.push({
           url: expectedUrl,
           viewport,
           horizontalOverflowPixels: dimensions.overflow,
-          cumulativeLayoutShift: dimensions.cls,
+          cumulativeLayoutShift: pageLoadCumulativeLayoutShift,
         });
       }
     }
