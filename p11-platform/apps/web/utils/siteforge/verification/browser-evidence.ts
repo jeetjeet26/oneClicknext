@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { certificationArtifactBindingSchema } from './certification-binding'
 
 export const SITEFORGE_CERTIFICATION_POLICY_VERSION =
-  'siteforge-browser-certification-v9' as const
+  'siteforge-browser-certification-v10' as const
 export const SITEFORGE_BROWSER_EVIDENCE_VERSION =
   'siteforge-browser-evidence-v2' as const
 export const SITEFORGE_LEGACY_BROWSER_EVIDENCE_VERSION =

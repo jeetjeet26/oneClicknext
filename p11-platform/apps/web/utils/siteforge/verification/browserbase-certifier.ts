@@ -808,6 +808,14 @@ export async function collectBrowserbaseCertificationEvidence(
 
   const screenshots: BrowserCertificationEvidence["screenshots"] = [];
   const baselineDiffs: BrowserCertificationEvidence["baselineDiffs"] = [];
+  const pendingBaselineComparisons: Array<{
+    url: string;
+    viewport: keyof typeof VIEWPORTS;
+    baseline: ApprovedBrowserBaseline;
+    actualStoragePath: string;
+    actualSha256: string;
+    actualBytes: Uint8Array;
+  }> = [];
   const layout: BrowserCertificationEvidence["layout"] = [];
   const interactionPages: BrowserCertificationEvidence["interactions"]["pages"] =
     [];
@@ -1027,28 +1035,13 @@ export async function collectBrowserbaseCertificationEvidence(
           if (baseline.storagePath === storagePath) {
             throw new Error("A current screenshot cannot be its own baseline");
           }
-          const baselineBytes = await input.artifactReader(baseline);
-          assertArtifactBytes(baselineBytes, baseline);
-          const comparison = compareBrowserScreenshots(baselineBytes, image);
-          baselineDiffs.push({
+          pendingBaselineComparisons.push({
             url: expectedUrl,
             viewport,
-            baselineId: baseline.baselineId,
-            baselineStoragePath: baseline.storagePath,
-            baselineSha256: baseline.sha256,
-            baselineBindingHash: baseline.bindingHash,
-            baselineEvidenceDigest: baseline.evidenceDigest,
-            baselineApprovalId: baseline.approvalId,
-            baselineApprovedAt: baseline.approvedAt,
-            baselineApprovedBy: baseline.approvedBy,
             actualStoragePath: storagePath,
             actualSha256: digest,
-            comparisonMethod: "pixelmatch-v2",
-            mismatchRatio: comparison.mismatchRatio,
-            mismatchThreshold: SITEFORGE_MAX_VISUAL_MISMATCH_RATIO,
-            mismatchedPixels: comparison.mismatchedPixels,
-            totalPixels: comparison.totalPixels,
-            dimensionsMatch: comparison.dimensionsMatch,
+            actualBytes: image,
+            baseline,
           });
         }
         const dimensions = await page.evaluate(() => ({
@@ -1065,6 +1058,35 @@ export async function collectBrowserbaseCertificationEvidence(
           cumulativeLayoutShift: pageLoadCumulativeLayoutShift,
         });
       }
+    }
+
+    for (const pending of pendingBaselineComparisons) {
+      const baselineBytes = await input.artifactReader(pending.baseline);
+      assertArtifactBytes(baselineBytes, pending.baseline);
+      const comparison = compareBrowserScreenshots(
+        baselineBytes,
+        pending.actualBytes,
+      );
+      baselineDiffs.push({
+        url: pending.url,
+        viewport: pending.viewport,
+        baselineId: pending.baseline.baselineId,
+        baselineStoragePath: pending.baseline.storagePath,
+        baselineSha256: pending.baseline.sha256,
+        baselineBindingHash: pending.baseline.bindingHash,
+        baselineEvidenceDigest: pending.baseline.evidenceDigest,
+        baselineApprovalId: pending.baseline.approvalId,
+        baselineApprovedAt: pending.baseline.approvedAt,
+        baselineApprovedBy: pending.baseline.approvedBy,
+        actualStoragePath: pending.actualStoragePath,
+        actualSha256: pending.actualSha256,
+        comparisonMethod: "pixelmatch-v2",
+        mismatchRatio: comparison.mismatchRatio,
+        mismatchThreshold: SITEFORGE_MAX_VISUAL_MISMATCH_RATIO,
+        mismatchedPixels: comparison.mismatchedPixels,
+        totalPixels: comparison.totalPixels,
+        dimensionsMatch: comparison.dimensionsMatch,
+      });
     }
 
     const lighthouseRuns = await Promise.all(
