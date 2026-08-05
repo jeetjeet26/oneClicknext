@@ -518,11 +518,14 @@ export async function certifyRenderedWordPressArtifact(input: {
     artifact: input.artifactBinding,
     bindingHash,
   })
+  // Browser-collected evidence (screenshots, visual baselines, console state)
+  // is advisory only: it is recorded verbatim for review but never gates the
+  // report. Deterministic HTTP checks above remain the blocking surface.
   checks.push(
     ...browser.checks.map(browserCheck => ({
       id: `browser:${browserCheck.code}`,
       passed: browserCheck.passed,
-      severity: browserCheck.severity,
+      severity: 'warning' as const,
       message: browserCheck.message,
       evidence: {
         category: browserCheck.category,

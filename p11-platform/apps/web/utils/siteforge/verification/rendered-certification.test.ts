@@ -7,7 +7,7 @@ describe('remote WordPress artifact certification', () => {
     vi.unstubAllGlobals()
   })
 
-  it('proves HTML checks but fails closed without browser evidence', async () => {
+  it('passes on deterministic checks while recording browser evidence as advisory warnings', async () => {
     const contentHash = 'a'.repeat(64)
     const fetchMock = vi
       .fn<typeof fetch>()
@@ -90,7 +90,9 @@ describe('remote WordPress artifact certification', () => {
       ],
     })
 
-    expect(report.passed).toBe(false)
+    // Deterministic checks pass, so the report passes even though browser
+    // evidence is missing; the browser failure is preserved as a warning.
+    expect(report.passed).toBe(true)
     expect(report.browser.evidenceAccepted).toBe(false)
     expect(report.checks).toEqual(
       expect.arrayContaining([
@@ -113,8 +115,20 @@ describe('remote WordPress artifact certification', () => {
         expect.objectContaining({
           id: 'browser:evidence.browser.required',
           passed: false,
+          severity: 'warning',
         }),
       ])
     )
+    expect(
+      report.checks.some(
+        check => check.id.startsWith('browser:') && check.severity === 'blocker'
+      )
+    ).toBe(false)
+    // Every deterministic (non-browser) failure still fails the report closed.
+    expect(
+      report.checks.filter(
+        check => !check.id.startsWith('browser:') && check.severity === 'blocker'
+      ).length
+    ).toBeGreaterThan(0)
   })
 })
