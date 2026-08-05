@@ -555,6 +555,21 @@ async function waitForVisualStability(page: Page) {
   await page.waitForTimeout(150);
 }
 
+async function dismissTransientWidgetUi(page: Page) {
+  for (const selector of [
+    "#lumaleasing-widget .ll-close",
+    "#lumaleasing-widget .ll-teaser-close",
+  ]) {
+    const control = page.locator(selector).first();
+    if (
+      (await control.count()) > 0 &&
+      (await control.isVisible().catch(() => false))
+    ) {
+      await control.click().catch(() => undefined);
+    }
+  }
+}
+
 async function testConsent(page: Page) {
   const before = await page.evaluate(() =>
     performance
@@ -974,6 +989,8 @@ export async function collectBrowserbaseCertificationEvidence(
       >) {
         await page.setViewportSize(size);
         await waitForVisualStability(page);
+        await dismissTransientWidgetUi(page);
+        await page.waitForTimeout(150);
         const image = await page.screenshot({ fullPage: true, type: "png" });
         const digest = sha256(image);
         const storagePath = [
