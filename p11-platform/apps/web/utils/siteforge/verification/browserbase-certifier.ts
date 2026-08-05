@@ -584,6 +584,20 @@ async function hideNonBaselineUi(page: Page) {
   });
 }
 
+async function configureCertificationPage(
+  page: Page,
+  credentials?: { username: string; password: string },
+) {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  if (credentials) {
+    await page.setExtraHTTPHeaders({
+      Authorization: `Basic ${Buffer.from(
+        `${credentials.username}:${credentials.password}`,
+      ).toString("base64")}`,
+    });
+  }
+}
+
 async function testConsent(page: Page) {
   const before = await page.evaluate(() =>
     performance
@@ -826,14 +840,7 @@ export async function collectBrowserbaseCertificationEvidence(
   });
 
   const page = context.pages()[0] || (await context.newPage());
-  await page.emulateMedia({ reducedMotion: "reduce" });
-  if (input.credentials) {
-    await page.setExtraHTTPHeaders({
-      Authorization: `Basic ${Buffer.from(
-        `${input.credentials.username}:${input.credentials.password}`,
-      ).toString("base64")}`,
-    });
-  }
+  await configureCertificationPage(page, input.credentials);
 
   const screenshots: BrowserCertificationEvidence["screenshots"] = [];
   const baselineDiffs: BrowserCertificationEvidence["baselineDiffs"] = [];
@@ -870,6 +877,120 @@ export async function collectBrowserbaseCertificationEvidence(
 
   try {
     for (const expectedUrl of input.expectedUrls) {
+      for (const [viewport, size] of Object.entries(VIEWPORTS) as Array<
+        [keyof typeof VIEWPORTS, (typeof VIEWPORTS)[keyof typeof VIEWPORTS]]
+      >) {
+        const visualPage = await context.newPage();
+        try {
+          await configureCertificationPage(visualPage, input.credentials);
+          await visualPage.setViewportSize(size);
+          await visualPage.goto(expectedUrl, {
+            waitUntil: "domcontentloaded",
+            timeout: 30_000,
+          });
+          await visualPage.waitForTimeout(750);
+          await waitForVisualStability(visualPage);
+          await dismissTransientWidgetUi(visualPage);
+          await hideNonBaselineUi(visualPage);
+          await visualPage.waitForTimeout(150);
+
+          const image = await visualPage.screenshot({
+            fullPage: true,
+            type: "png",
+          });
+          const digest = sha256(image);
+          const storagePath = [
+            "browser-certification",
+            input.artifact.artifactId,
+            input.environment,
+            session.id,
+            storageSegment(expectedUrl),
+            `${viewport}-${digest}.png`,
+          ].join("/");
+          const identityDigest = hashSiteForgeContent({
+            artifact: input.artifact,
+            bindingHash: input.bindingHash,
+            targetUrl: normalizeUrl(input.targetUrl),
+            pageUrl: normalizeUrl(expectedUrl),
+            viewport,
+            width: size.width,
+            height: size.height,
+            environment: input.environment,
+            access: input.access,
+            requireIndexable: input.requireIndexable,
+            policyVersion: SITEFORGE_CERTIFICATION_POLICY_VERSION,
+            screenshotSha256: digest,
+            storagePath,
+          });
+          await input.artifactWriter({
+            storagePath,
+            bytes: image,
+            contentType: "image/png",
+            sha256: digest,
+          });
+          screenshots.push({
+            url: expectedUrl,
+            viewport,
+            width: size.width,
+            height: size.height,
+            storagePath,
+            sha256: digest,
+            bytes: image.byteLength,
+            contentType: "image/png",
+            identityDigest,
+          });
+
+          const baseline = baselineByKey.get(
+            `${normalizeUrl(expectedUrl)}|${viewport}`,
+          );
+          if (baseline) {
+            if (
+              baseline.artifact.artifactId !== input.artifact.artifactId ||
+              baseline.artifact.contentHash !== input.artifact.contentHash ||
+              baseline.environment !== input.environment ||
+              baseline.access !== input.access ||
+              baseline.requireIndexable !== input.requireIndexable ||
+              baseline.policyVersion !== SITEFORGE_CERTIFICATION_POLICY_VERSION ||
+              baseline.bindingHash !== input.bindingHash
+            ) {
+              throw new Error("Approved visual baseline identity is not exact");
+            }
+            if (baseline.storagePath === storagePath) {
+              throw new Error("A current screenshot cannot be its own baseline");
+            }
+            pendingBaselineComparisons.push({
+              url: expectedUrl,
+              viewport,
+              actualStoragePath: storagePath,
+              actualSha256: digest,
+              actualBytes: image,
+              baseline,
+            });
+          }
+
+          const dimensions = await visualPage.evaluate(() => ({
+            overflow: Math.max(
+              0,
+              document.documentElement.scrollWidth -
+                document.documentElement.clientWidth,
+            ),
+            cumulativeLayoutShift:
+              (window as typeof window & { __siteforgeCLS?: number })
+                .__siteforgeCLS || 0,
+          }));
+          layout.push({
+            url: expectedUrl,
+            viewport,
+            horizontalOverflowPixels: dimensions.overflow,
+            cumulativeLayoutShift: dimensions.cumulativeLayoutShift,
+          });
+        } finally {
+          await visualPage.close();
+        }
+      }
+    }
+
+    for (const expectedUrl of input.expectedUrls) {
       const network: BrowserCertificationEvidence["interactions"]["pages"][number]["network"] =
         [];
       const requestEntries = new Map<PlaywrightRequest, number>();
@@ -902,11 +1023,6 @@ export async function collectBrowserbaseCertificationEvidence(
       });
       await page.waitForTimeout(750);
       await waitForVisualStability(page);
-      const pageLoadCumulativeLayoutShift = await page.evaluate(
-        () =>
-          (window as typeof window & { __siteforgeCLS?: number })
-            .__siteforgeCLS || 0,
-      );
       const chain: Array<{ url: string; status: number }> = [];
       let request = response?.request();
       while (request?.redirectedFrom()) {
@@ -997,99 +1113,6 @@ export async function collectBrowserbaseCertificationEvidence(
       });
       seoPages.push(await collectSeo(page, expectedUrl));
       if (!consent) consent = await testConsent(page);
-
-      for (const [viewport, size] of Object.entries(VIEWPORTS) as Array<
-        [keyof typeof VIEWPORTS, (typeof VIEWPORTS)[keyof typeof VIEWPORTS]]
-      >) {
-        await page.setViewportSize(size);
-        await waitForVisualStability(page);
-        await dismissTransientWidgetUi(page);
-        await hideNonBaselineUi(page);
-        await page.waitForTimeout(150);
-        const image = await page.screenshot({ fullPage: true, type: "png" });
-        const digest = sha256(image);
-        const storagePath = [
-          "browser-certification",
-          input.artifact.artifactId,
-          input.environment,
-          session.id,
-          storageSegment(expectedUrl),
-          `${viewport}-${digest}.png`,
-        ].join("/");
-        const identityDigest = hashSiteForgeContent({
-          artifact: input.artifact,
-          bindingHash: input.bindingHash,
-          targetUrl: normalizeUrl(input.targetUrl),
-          pageUrl: normalizeUrl(expectedUrl),
-          viewport,
-          width: size.width,
-          height: size.height,
-          environment: input.environment,
-          access: input.access,
-          requireIndexable: input.requireIndexable,
-          policyVersion: SITEFORGE_CERTIFICATION_POLICY_VERSION,
-          screenshotSha256: digest,
-          storagePath,
-        });
-        await input.artifactWriter({
-          storagePath,
-          bytes: image,
-          contentType: "image/png",
-          sha256: digest,
-        });
-        screenshots.push({
-          url: expectedUrl,
-          viewport,
-          width: size.width,
-          height: size.height,
-          storagePath,
-          sha256: digest,
-          bytes: image.byteLength,
-          contentType: "image/png",
-          identityDigest,
-        });
-
-        const baseline = baselineByKey.get(
-          `${normalizeUrl(expectedUrl)}|${viewport}`,
-        );
-        if (baseline) {
-          if (
-            baseline.artifact.artifactId !== input.artifact.artifactId ||
-            baseline.artifact.contentHash !== input.artifact.contentHash ||
-            baseline.environment !== input.environment ||
-            baseline.access !== input.access ||
-            baseline.requireIndexable !== input.requireIndexable ||
-            baseline.policyVersion !== SITEFORGE_CERTIFICATION_POLICY_VERSION ||
-            baseline.bindingHash !== input.bindingHash
-          ) {
-            throw new Error("Approved visual baseline identity is not exact");
-          }
-          if (baseline.storagePath === storagePath) {
-            throw new Error("A current screenshot cannot be its own baseline");
-          }
-          pendingBaselineComparisons.push({
-            url: expectedUrl,
-            viewport,
-            actualStoragePath: storagePath,
-            actualSha256: digest,
-            actualBytes: image,
-            baseline,
-          });
-        }
-        const dimensions = await page.evaluate(() => ({
-          overflow: Math.max(
-            0,
-            document.documentElement.scrollWidth -
-              document.documentElement.clientWidth,
-          ),
-        }));
-        layout.push({
-          url: expectedUrl,
-          viewport,
-          horizontalOverflowPixels: dimensions.overflow,
-          cumulativeLayoutShift: pageLoadCumulativeLayoutShift,
-        });
-      }
     }
 
     for (const pending of pendingBaselineComparisons) {
