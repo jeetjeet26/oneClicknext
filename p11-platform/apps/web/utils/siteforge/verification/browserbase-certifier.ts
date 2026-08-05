@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Browserbase } from "@browserbasehq/sdk";
+import pixelmatch from "pixelmatch";
+import { PNG } from "pngjs";
 import {
   chromium,
   type Page,
@@ -11,6 +13,7 @@ import {
 import {
   SITEFORGE_BROWSER_EVIDENCE_VERSION,
   SITEFORGE_CERTIFICATION_POLICY_VERSION,
+  SITEFORGE_MAX_VISUAL_MISMATCH_RATIO,
   type BrowserCertificationEvidence,
 } from "./browser-evidence";
 import { hashSiteForgeContent } from "@/utils/siteforge/content-hash";
@@ -94,26 +97,6 @@ function sha256(value: Uint8Array): string {
 
 function storageSegment(value: string): string {
   return createHash("sha256").update(value).digest("hex").slice(0, 20);
-}
-
-function pngDimensions(bytes: Uint8Array): {
-  width: number;
-  height: number;
-} | null {
-  if (
-    bytes.length < 24 ||
-    bytes[0] !== 0x89 ||
-    bytes[1] !== 0x50 ||
-    bytes[2] !== 0x4e ||
-    bytes[3] !== 0x47
-  ) {
-    return null;
-  }
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  return {
-    width: view.getUint32(16),
-    height: view.getUint32(20),
-  };
 }
 
 function assertArtifactBytes(
@@ -916,10 +899,22 @@ export async function collectBrowserbaseCertificationEvidence(
           }
           const baselineBytes = await input.artifactReader(baseline);
           assertArtifactBytes(baselineBytes, baseline);
-          const baselineSize = pngDimensions(baselineBytes);
+          const baselinePng = PNG.sync.read(Buffer.from(baselineBytes));
+          const actualPng = PNG.sync.read(Buffer.from(image));
           const dimensionsMatch =
-            baselineSize?.width === size.width &&
-            baselineSize.height === size.height;
+            baselinePng.width === actualPng.width &&
+            baselinePng.height === actualPng.height;
+          const totalPixels = actualPng.width * actualPng.height;
+          const mismatchedPixels = dimensionsMatch
+            ? pixelmatch(
+                baselinePng.data,
+                actualPng.data,
+                undefined,
+                actualPng.width,
+                actualPng.height,
+                { includeAA: false, threshold: 0.1 },
+              )
+            : totalPixels;
           baselineDiffs.push({
             url: expectedUrl,
             viewport,
@@ -933,9 +928,11 @@ export async function collectBrowserbaseCertificationEvidence(
             baselineApprovedBy: baseline.approvedBy,
             actualStoragePath: storagePath,
             actualSha256: digest,
-            comparisonMethod: "sha256-exact",
-            mismatchRatio:
-              baseline.sha256 === digest && dimensionsMatch ? 0 : 1,
+            comparisonMethod: "pixelmatch-v1",
+            mismatchRatio: mismatchedPixels / totalPixels,
+            mismatchThreshold: SITEFORGE_MAX_VISUAL_MISMATCH_RATIO,
+            mismatchedPixels,
+            totalPixels,
             dimensionsMatch,
           });
         }

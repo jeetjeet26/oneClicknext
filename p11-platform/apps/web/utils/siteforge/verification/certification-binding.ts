@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
 
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/)
-const POLICY_VERSION = 'siteforge-browser-certification-v4' as const
+const POLICY_VERSION = 'siteforge-browser-certification-v5' as const
 
 export const certificationArtifactBindingSchema = z.object({
   artifactId: z.string().uuid(),

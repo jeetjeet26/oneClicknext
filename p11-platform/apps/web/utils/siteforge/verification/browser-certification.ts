@@ -3,6 +3,7 @@ import {
   browserCertificationReportSchema,
   SITEFORGE_BROWSER_EVIDENCE_VERSION,
   SITEFORGE_CERTIFICATION_POLICY_VERSION,
+  SITEFORGE_MAX_VISUAL_MISMATCH_RATIO,
   type BrowserCertificationCheck,
   type BrowserCertificationEvidence,
   type BrowserCertificationReport,
@@ -97,7 +98,9 @@ function evaluateVisual(
   const missingLayouts = required.filter(item => !layouts.has(item))
   const failedDiffs = required.flatMap(item => {
     const diff = diffs.get(item)
-    return diff && (!diff.dimensionsMatch || diff.mismatchRatio !== 0)
+    return diff &&
+      (!diff.dimensionsMatch ||
+        diff.mismatchRatio > SITEFORGE_MAX_VISUAL_MISMATCH_RATIO)
       ? [{
           key: item,
           mismatchRatio: diff.mismatchRatio,

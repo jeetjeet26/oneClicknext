@@ -2,11 +2,12 @@ import { z } from 'zod'
 import { certificationArtifactBindingSchema } from './certification-binding'
 
 export const SITEFORGE_CERTIFICATION_POLICY_VERSION =
-  'siteforge-browser-certification-v4' as const
+  'siteforge-browser-certification-v5' as const
 export const SITEFORGE_BROWSER_EVIDENCE_VERSION =
   'siteforge-browser-evidence-v2' as const
 export const SITEFORGE_LEGACY_BROWSER_EVIDENCE_VERSION =
   'siteforge-browser-evidence-v1' as const
+export const SITEFORGE_MAX_VISUAL_MISMATCH_RATIO = 0.0001 as const
 
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/)
 const urlSchema = z.string().url()
@@ -104,8 +105,11 @@ export const browserCertificationEvidenceSchema = z.object({
       baselineApprovedBy: z.string().uuid(),
       actualStoragePath: durableStoragePathSchema,
       actualSha256: sha256Schema,
-      comparisonMethod: z.literal('sha256-exact'),
-      mismatchRatio: z.union([z.literal(0), z.literal(1)]),
+      comparisonMethod: z.literal('pixelmatch-v1'),
+      mismatchRatio: z.number().min(0).max(1),
+      mismatchThreshold: z.literal(SITEFORGE_MAX_VISUAL_MISMATCH_RATIO),
+      mismatchedPixels: z.number().int().min(0),
+      totalPixels: z.number().int().positive(),
       dimensionsMatch: z.boolean(),
     })
   ),
@@ -351,13 +355,12 @@ export const browserCertificationEvidenceSchema = z.object({
         message: 'Visual baseline must use the exact approved binding identity',
       })
     }
-    const expectedRatio =
-      diff.baselineSha256 === diff.actualSha256 && diff.dimensionsMatch ? 0 : 1
-    if (diff.mismatchRatio !== expectedRatio) {
+    const expectedRatio = diff.mismatchedPixels / diff.totalPixels
+    if (Math.abs(diff.mismatchRatio - expectedRatio) > Number.EPSILON) {
       context.addIssue({
         code: 'custom',
         path: ['baselineDiffs'],
-        message: 'Exact SHA-256 comparison result is inconsistent with artifact bytes',
+        message: 'Pixel comparison ratio is inconsistent with its evidence counts',
       })
     }
   }

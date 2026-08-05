@@ -123,8 +123,11 @@ function passingEvidence(): BrowserCertificationEvidence {
       baselineApprovedBy: '33333333-3333-4333-8333-333333333333',
       actualStoragePath: `browser-certification/${artifactId}/production/session/${viewport}-${hash}.png`,
       actualSha256: hash,
-      comparisonMethod: 'sha256-exact' as const,
-      mismatchRatio: 0 as const,
+      comparisonMethod: 'pixelmatch-v1' as const,
+      mismatchRatio: 0,
+      mismatchThreshold: 0.0001 as const,
+      mismatchedPixels: 0,
+      totalPixels: 1_000_000,
       dimensionsMatch: true,
     })),
     layout: viewports.map(([viewport]) => ({
@@ -297,6 +300,24 @@ describe('browser certification suite', () => {
         widgets: [expect.objectContaining({ opened: true, usable: true })],
         keyboard: expect.objectContaining({ traversed: true, traps: [] }),
       })
+    )
+  })
+
+  it('accepts bounded rasterization drift and rejects changes above policy', () => {
+    const bounded = passingEvidence()
+    for (const diff of bounded.baselineDiffs) {
+      diff.mismatchedPixels = 50
+      diff.totalPixels = 1_000_000
+      diff.mismatchRatio = 0.00005
+    }
+    expect(certifyBrowserEvidence(certificationInput(bounded)).passed).toBe(true)
+
+    const excessive = passingEvidence()
+    excessive.baselineDiffs[0].mismatchedPixels = 101
+    excessive.baselineDiffs[0].totalPixels = 1_000_000
+    excessive.baselineDiffs[0].mismatchRatio = 0.000101
+    expect(certifyBrowserEvidence(certificationInput(excessive)).passed).toBe(
+      false
     )
   })
 
