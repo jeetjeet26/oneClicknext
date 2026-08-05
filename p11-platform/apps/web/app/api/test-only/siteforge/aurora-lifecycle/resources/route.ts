@@ -136,7 +136,7 @@ export async function POST(request: NextRequest) {
       }
       const { data: themePackage, error: packageError } = await client
         .from('siteforge_runtime_packages')
-        .select('storage_path')
+        .select('id, storage_path')
         .eq('package_type', 'base_theme')
         .eq('package_sha256', parsed.data.packageSha256)
         .eq('publication_status', 'published')
@@ -179,15 +179,114 @@ export async function POST(request: NextRequest) {
         archive,
         packageSha256: parsed.data.packageSha256,
       })
+      const { data: website, error: websiteError } = await client
+        .from('property_websites')
+        .select('current_artifact_version_id')
+        .eq('id', identity.websiteId)
+        .eq('property_id', identity.propertyId)
+        .single()
+      if (websiteError || !website?.current_artifact_version_id) {
+        throw new Error('Aurora preview is missing its current artifact')
+      }
+      const { data: source, error: sourceError } = await client
+        .from('siteforge_blueprint_versions')
+        .select(
+          'id, version, website_id, blueprint, created_by, org_id, property_id, blueprint_schema_version, content_hash, edit_intent, patches_applied, source_plan_version_id, quality_score, quality_report, approval_action_attempt_id, confirmed_approval_id, deployment_decision, decision_reason, deployment_approved_by, deployment_approved_at, asset_manifest, asset_manifest_hash, base_theme_package_id, base_theme_package_sha256, theme_overlay_id, overlay_package_sha256, site_configuration, motion_configuration, runtime_contract_version, runtime_package_sha256, operation_set, operation_set_hash'
+        )
+        .eq('id', website.current_artifact_version_id)
+        .eq('website_id', identity.websiteId)
+        .eq('property_id', identity.propertyId)
+        .single()
+      if (sourceError || !source) {
+        throw new Error('Failed to load Aurora preview artifact for theme repair')
+      }
+      let repairedArtifactId = source.id
+      if (source.base_theme_package_sha256 !== parsed.data.packageSha256) {
+        const { data: latest, error: versionError } = await client
+          .from('siteforge_blueprint_versions')
+          .select('version')
+          .eq('website_id', identity.websiteId)
+          .order('version', { ascending: false })
+          .limit(1)
+          .single()
+        if (versionError || !latest) {
+          throw new Error('Failed to reserve Aurora theme repair version')
+        }
+        const { data: repaired, error: repairError } = await client
+          .from('siteforge_blueprint_versions')
+          .insert({
+            website_id: source.website_id,
+            version: latest.version + 1,
+            blueprint: source.blueprint,
+            created_by: source.created_by,
+            org_id: source.org_id,
+            property_id: source.property_id,
+            blueprint_schema_version: source.blueprint_schema_version,
+            content_hash: source.content_hash,
+            parent_version_id: source.id,
+            change_type: 'import',
+            changes_summary:
+              'Bind Aurora test baseline to the installed immutable base theme package.',
+            edit_intent: source.edit_intent,
+            patches_applied: source.patches_applied,
+            source_plan_version_id: source.source_plan_version_id,
+            shared_job_id: null,
+            quality_score: source.quality_score,
+            quality_report: source.quality_report,
+            approval_action_attempt_id: source.approval_action_attempt_id,
+            confirmed_approval_id: source.confirmed_approval_id,
+            deployment_decision: source.deployment_decision,
+            decision_reason: source.decision_reason,
+            deployment_approved_by: source.deployment_approved_by,
+            deployment_approved_at: source.deployment_approved_at,
+            remote_verification_report: null,
+            remote_verified_url: null,
+            remote_verified_at: null,
+            asset_manifest: source.asset_manifest,
+            asset_manifest_hash: source.asset_manifest_hash,
+            base_theme_package_id: themePackage.id,
+            base_theme_package_sha256: parsed.data.packageSha256,
+            theme_overlay_id: source.theme_overlay_id,
+            overlay_package_sha256: source.overlay_package_sha256,
+            site_configuration: source.site_configuration,
+            motion_configuration: source.motion_configuration,
+            runtime_contract_version: source.runtime_contract_version,
+            runtime_package_sha256: source.runtime_package_sha256,
+            operation_set: source.operation_set,
+            operation_set_hash: source.operation_set_hash,
+          })
+          .select('id')
+          .single()
+        if (repairError || !repaired) {
+          throw new Error('Failed to bind Aurora preview to installed base theme')
+        }
+        const { data: updatedWebsite, error: projectionError } = await client
+          .from('property_websites')
+          .update({
+            current_artifact_version_id: repaired.id,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', identity.websiteId)
+          .eq('property_id', identity.propertyId)
+          .eq('current_artifact_version_id', source.id)
+          .select('id')
+          .maybeSingle()
+        if (projectionError || !updatedWebsite) {
+          throw new Error('Aurora theme repair lost its artifact update race')
+        }
+        repairedArtifactId = repaired.id
+      }
       ctx.logSuccess(200, {
         ownerId: identity.ownerId,
         websiteId: identity.websiteId,
         packageSha256: parsed.data.packageSha256,
+        artifactId: repairedArtifactId,
       })
       return NextResponse.json(
         {
           installed: true,
           packageSha256: parsed.data.packageSha256,
+          artifactId: repairedArtifactId,
         },
         { headers: ctx.responseHeaders }
       )

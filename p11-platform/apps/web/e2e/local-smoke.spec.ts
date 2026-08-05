@@ -900,6 +900,25 @@ test.describe.serial('Aurora same-website runtime-v3 lifecycle', () => {
       )
       expectApiOk(leaseResponse, 'Acquire exclusive Aurora lifecycle lease')
 
+      const themeInstallResponse = await callAuroraMutation(
+        page,
+        config,
+        config.resourcesUrl,
+        {
+          method: 'POST',
+          body: {
+            operation: 'install_verified_base_theme',
+            propertyId: config.propertyId,
+            websiteId: config.websiteId,
+            packageSha256: config.baseThemePackageSha256,
+          },
+        }
+      )
+      expectApiOk(
+        themeInstallResponse,
+        'Install exact Aurora rollback base theme'
+      )
+
       const importBody = {
         operation: 'import_immutable_rollback_baseline',
         propertyId: config.propertyId,
