@@ -570,6 +570,20 @@ async function dismissTransientWidgetUi(page: Page) {
   }
 }
 
+async function hideNonBaselineUi(page: Page) {
+  await page.evaluate(() => {
+    const id = "siteforge-certification-visual-mask";
+    if (document.getElementById(id)) return;
+    const style = document.createElement("style");
+    style.id = id;
+    style.textContent = [
+      "#lumaleasing-widget",
+      ".siteforge-back-to-top",
+    ].join(",") + "{visibility:hidden!important}";
+    document.head.appendChild(style);
+  });
+}
+
 async function testConsent(page: Page) {
   const before = await page.evaluate(() =>
     performance
@@ -990,6 +1004,7 @@ export async function collectBrowserbaseCertificationEvidence(
         await page.setViewportSize(size);
         await waitForVisualStability(page);
         await dismissTransientWidgetUi(page);
+        await hideNonBaselineUi(page);
         await page.waitForTimeout(150);
         const image = await page.screenshot({ fullPage: true, type: "png" });
         const digest = sha256(image);
