@@ -102,7 +102,8 @@ export async function POST(
         propertyId: baselineIdentity.property_id,
         websiteId: baselineIdentity.website_id,
       },
-      service
+      service,
+      'any'
     )
 
     const baseline = await decideVisualBaseline({
