@@ -900,27 +900,73 @@ test.describe.serial('Aurora same-website runtime-v3 lifecycle', () => {
       )
       expectApiOk(leaseResponse, 'Acquire exclusive Aurora lifecycle lease')
 
-      const importResponse = await callAuroraMutation(
+      const importBody = {
+        operation: 'import_immutable_rollback_baseline',
+        propertyId: config.propertyId,
+        websiteId: config.websiteId,
+        targetId: config.targetId,
+        rolloutAssignmentId: config.rolloutAssignmentId,
+        runtimePackageSha256: config.runtimePackageSha256,
+        runtimeManifestSha256: config.runtimeManifestSha256,
+        baseThemePackageSha256: config.baseThemePackageSha256,
+        runtimeSigningKeyId: config.runtimeSigningKeyId,
+        ownerId: config.ownerId,
+        expiresAt: config.expiresAt,
+      }
+      let importResponse = await callAuroraMutation(
         page,
         config,
         config.importUrl,
         {
           method: 'POST',
-          body: {
-            operation: 'import_immutable_rollback_baseline',
-            propertyId: config.propertyId,
-            websiteId: config.websiteId,
-            targetId: config.targetId,
-            rolloutAssignmentId: config.rolloutAssignmentId,
-            runtimePackageSha256: config.runtimePackageSha256,
-            runtimeManifestSha256: config.runtimeManifestSha256,
-            baseThemePackageSha256: config.baseThemePackageSha256,
-            runtimeSigningKeyId: config.runtimeSigningKeyId,
-            ownerId: config.ownerId,
-            expiresAt: config.expiresAt,
-          },
+          body: importBody,
         }
       )
+      if (
+        importResponse.status === 409 &&
+        (importResponse.data as { code?: string })?.code ===
+          'rollback_certification_failed'
+      ) {
+        const bootstrapResources = await loadAuroraResources(page, config)
+        const bootstrapCandidates = (
+          bootstrapResources.baselineCandidates || []
+        ).filter(
+          baseline =>
+            baseline.status === 'candidate' &&
+            baseline.artifactId === bootstrapResources.currentArtifact?.id
+        )
+        expect(
+          bootstrapCandidates.length,
+          'Rollback bootstrap certification must produce reviewable visual baseline candidates.'
+        ).toBeGreaterThan(0)
+        for (const baseline of bootstrapCandidates) {
+          expect(baseline.id).toBeTruthy()
+          const decision = await callAuroraMutation(
+            reviewerPage,
+            config,
+            `/api/siteforge/certification/baselines/${baseline.id}/decision`,
+            {
+              method: 'POST',
+              body: {
+                propertyId: config.propertyId,
+                operation: 'approve',
+                reason:
+                  'Independent reviewer approved the exact Aurora rollback baseline captured for this test lifecycle.',
+              },
+            }
+          )
+          expectApiOk(
+            decision,
+            `Approve Aurora rollback baseline ${baseline.id}`
+          )
+        }
+        importResponse = await callAuroraMutation(
+          page,
+          config,
+          config.importUrl,
+          { method: 'POST', body: importBody }
+        )
+      }
       expectApiOk(importResponse, 'Import Aurora immutable rollback baseline')
       const importedArtifacts = importResponse.data as {
         currentArtifact: { id: string; contentHash: string }

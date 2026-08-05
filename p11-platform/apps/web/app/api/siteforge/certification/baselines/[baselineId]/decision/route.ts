@@ -12,10 +12,11 @@ import { createServiceClient } from '@/utils/supabase/admin'
 import {
   assertActiveAuroraLifecycleLease,
   AuroraLifecycleControlError,
+  postgresUuidSchema,
 } from '@/utils/siteforge/testing/aurora-lifecycle-control'
 
 const requestSchema = z.object({
-  propertyId: z.string().uuid(),
+  propertyId: postgresUuidSchema,
   operation: z.enum(['approve', 'deny', 'revoke']),
   reason: z.string().trim().min(1).max(2_000),
 })
@@ -31,7 +32,7 @@ export async function POST(
   ctx.logStart()
   try {
     const { baselineId } = await context.params
-    if (!z.string().uuid().safeParse(baselineId).success) {
+    if (!postgresUuidSchema.safeParse(baselineId).success) {
       return NextResponse.json(
         { error: 'Invalid visual baseline identifier' },
         { status: 400, headers: ctx.responseHeaders }
