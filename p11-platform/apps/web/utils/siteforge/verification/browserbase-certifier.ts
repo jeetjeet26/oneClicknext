@@ -518,6 +518,43 @@ function scriptCategory(
   return "essential";
 }
 
+async function waitForVisualStability(page: Page) {
+  await page.evaluate(async () => {
+    const delay = (milliseconds: number) =>
+      new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+    const viewportStep = Math.max(window.innerHeight, 1);
+    for (
+      let offset = 0;
+      offset < document.documentElement.scrollHeight;
+      offset += viewportStep
+    ) {
+      window.scrollTo(0, offset);
+      await delay(25);
+    }
+    window.scrollTo(0, 0);
+    await document.fonts?.ready;
+    const images = Array.from(document.images);
+    await Promise.race([
+      Promise.all(
+        images.map(async (image) => {
+          if (!image.complete) {
+            await new Promise<void>((resolve) => {
+              image.addEventListener("load", () => resolve(), { once: true });
+              image.addEventListener("error", () => resolve(), { once: true });
+            });
+          }
+          await image.decode?.().catch(() => undefined);
+        }),
+      ),
+      delay(3_000),
+    ]);
+  });
+  await page
+    .waitForLoadState("networkidle", { timeout: 5_000 })
+    .catch(() => undefined);
+  await page.waitForTimeout(150);
+}
+
 async function testConsent(page: Page) {
   const before = await page.evaluate(() =>
     performance
@@ -827,6 +864,7 @@ export async function collectBrowserbaseCertificationEvidence(
         timeout: 30_000,
       });
       await page.waitForTimeout(750);
+      await waitForVisualStability(page);
       const pageLoadCumulativeLayoutShift = await page.evaluate(
         () =>
           (window as typeof window & { __siteforgeCLS?: number })
@@ -927,7 +965,7 @@ export async function collectBrowserbaseCertificationEvidence(
         [keyof typeof VIEWPORTS, (typeof VIEWPORTS)[keyof typeof VIEWPORTS]]
       >) {
         await page.setViewportSize(size);
-        await page.waitForTimeout(150);
+        await waitForVisualStability(page);
         const image = await page.screenshot({ fullPage: true, type: "png" });
         const digest = sha256(image);
         const storagePath = [

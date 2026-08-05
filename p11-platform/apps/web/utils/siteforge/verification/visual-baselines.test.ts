@@ -22,7 +22,7 @@ const artifact = {
   operationSetHash: 'e'.repeat(64),
 }
 
-describe('policy-v8 visual baseline repository', () => {
+describe('policy-v9 visual baseline repository', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     proposeSharedActionMock.mockResolvedValue({
@@ -42,7 +42,7 @@ describe('policy-v8 visual baseline repository', () => {
       environment: 'production',
       access_mode: 'public',
       require_indexable: true,
-      policy_version: 'siteforge-browser-certification-v8',
+      policy_version: 'siteforge-browser-certification-v9',
       binding_hash: 'f'.repeat(64),
       evidence_digest: '1'.repeat(64),
       screenshot_storage_path: 'browser-certification/approved/mobile.png',
