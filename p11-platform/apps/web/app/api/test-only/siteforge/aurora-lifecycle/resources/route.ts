@@ -11,23 +11,37 @@ import {
   AuroraLifecycleControlError,
   isAuroraOwnedMetadata,
   loadExactAuroraIdentity,
+  postgresUuidSchema,
   requireAuroraLifecycleIdentity,
 } from '@/utils/siteforge/testing/aurora-lifecycle-control'
 import { provisionAuroraTargets } from '@/utils/siteforge/testing/aurora-lifecycle-bootstrap'
+import {
+  CloudwaysProviderClient,
+  parseCloudwaysApplicationHostname,
+} from '@/utils/siteforge/providers/cloudways-provider'
 
 const querySchema = z.object({
-  ownerId: z.string().uuid(),
-  websiteId: z.string().uuid(),
+  ownerId: postgresUuidSchema,
+  websiteId: postgresUuidSchema,
 })
-const provisionSchema = z
-  .object({
-    operation: z.literal('provision_verified_targets'),
-    propertyId: z.string().uuid(),
-    websiteId: z.string().uuid(),
-    stagingApplicationId: z.string().trim().min(1).max(200),
-    stagingOperationId: z.string().trim().min(1).max(500),
-  })
-  .strict()
+const provisionSchema = z.discriminatedUnion('operation', [
+  z
+    .object({
+      operation: z.literal('provision_verified_targets'),
+      propertyId: postgresUuidSchema,
+      websiteId: postgresUuidSchema,
+      stagingApplicationId: z.string().trim().min(1).max(200),
+      stagingOperationId: z.string().trim().min(1).max(500),
+    })
+    .strict(),
+  z
+    .object({
+      operation: z.literal('create_and_provision_verified_targets'),
+      propertyId: postgresUuidSchema,
+      websiteId: postgresUuidSchema,
+    })
+    .strict(),
+])
 
 function record(value: Json | null | undefined): Record<string, Json | undefined> {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -79,17 +93,65 @@ export async function POST(request: NextRequest) {
       )
     }
     const client = createServiceClient()
+    const exact = await loadExactAuroraIdentity(
+      identity,
+      client,
+      'bootstrap'
+    )
     await assertActiveAuroraLifecycleLease(
       request,
       identity,
       client,
       'bootstrap'
     )
+    let stagingApplicationId =
+      parsed.data.operation === 'provision_verified_targets'
+        ? parsed.data.stagingApplicationId
+        : ''
+    let stagingOperationId =
+      parsed.data.operation === 'provision_verified_targets'
+        ? parsed.data.stagingOperationId
+        : ''
+    if (parsed.data.operation === 'create_and_provision_verified_targets') {
+      const apiKey = process.env.CLOUDWAYS_API_KEY?.trim()
+      const email = process.env.CLOUDWAYS_EMAIL?.trim()
+      const providerIdentity = exact.target.site_url
+        ? parseCloudwaysApplicationHostname(exact.target.site_url)
+        : null
+      if (!apiKey || !email) {
+        throw new AuroraLifecycleControlError(
+          'Cloudways API credentials are required',
+          503,
+          'provider_unavailable'
+        )
+      }
+      if (!providerIdentity) {
+        throw new AuroraLifecycleControlError(
+          'Exact Aurora Cloudways preview identity could not be derived',
+          409,
+          'provider_identity_missing'
+        )
+      }
+      const cloudways = new CloudwaysProviderClient({ apiKey, email })
+      const staging = await cloudways.createStagingApplication({
+        serverId: providerIdentity.serverId,
+        parentApplicationId: providerIdentity.applicationId,
+        label: `aurora-lifecycle-${identity.ownerId.slice(0, 8)}`,
+      })
+      if (!staging.applicationId || !staging.operationId) {
+        throw new Error(
+          'Cloudways did not return the exact staging application and operation identity'
+        )
+      }
+      await cloudways.waitForOperation(staging.operationId)
+      stagingApplicationId = staging.applicationId
+      stagingOperationId = staging.operationId
+    }
     const provisioned = await provisionAuroraTargets({
       identity,
       actorId: user.id,
-      stagingApplicationId: parsed.data.stagingApplicationId,
-      stagingOperationId: parsed.data.stagingOperationId,
+      stagingApplicationId,
+      stagingOperationId,
       client,
     })
     ctx.logSuccess(200, {
@@ -98,7 +160,12 @@ export async function POST(request: NextRequest) {
       ...provisioned,
     })
     return NextResponse.json(
-      { provisioned: true, ...provisioned },
+      {
+        provisioned: true,
+        stagingApplicationId,
+        stagingOperationId,
+        ...provisioned,
+      },
       { headers: ctx.responseHeaders }
     )
   } catch (error) {

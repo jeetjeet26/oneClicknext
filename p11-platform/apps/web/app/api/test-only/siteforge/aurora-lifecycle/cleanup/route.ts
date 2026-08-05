@@ -11,15 +11,16 @@ import {
   AURORA_LIFECYCLE_DOMAIN,
   AuroraLifecycleControlError,
   isAuroraOwnedMetadata,
+  postgresUuidSchema,
   requireAuroraLifecycleIdentity,
 } from '@/utils/siteforge/testing/aurora-lifecycle-control'
 
 const cleanupSchema = z
   .object({
-    propertyId: z.string().uuid(),
-    websiteId: z.string().uuid(),
-    targetId: z.string().uuid(),
-    ownerId: z.string().uuid(),
+    propertyId: postgresUuidSchema,
+    websiteId: postgresUuidSchema,
+    targetId: postgresUuidSchema,
+    ownerId: postgresUuidSchema,
     expiresAt: z.string().datetime(),
     confirmation: z.literal(AURORA_LIFECYCLE_CONFIRMATION),
   })
@@ -151,7 +152,7 @@ export async function DELETE(request: NextRequest) {
             !Array.isArray(value) &&
             value.kind === 'artifact' &&
             typeof value.id === 'string' &&
-            z.string().uuid().safeParse(value.id).success
+            postgresUuidSchema.safeParse(value.id).success
           ) {
             return [value.id]
           }
@@ -166,7 +167,7 @@ export async function DELETE(request: NextRequest) {
             !Array.isArray(value) &&
             value.kind === 'release' &&
             typeof value.id === 'string' &&
-            z.string().uuid().safeParse(value.id).success
+            postgresUuidSchema.safeParse(value.id).success
           ) {
             return [value.id]
           }
@@ -181,7 +182,7 @@ export async function DELETE(request: NextRequest) {
             !Array.isArray(value) &&
             value.kind === 'editor_session' &&
             typeof value.id === 'string' &&
-            z.string().uuid().safeParse(value.id).success
+            postgresUuidSchema.safeParse(value.id).success
           ) {
             return [value.id]
           }
@@ -195,7 +196,7 @@ export async function DELETE(request: NextRequest) {
           !Array.isArray(value) &&
           value.kind === 'rollout' &&
           typeof value.id === 'string' &&
-          z.string().uuid().safeParse(value.id).success
+          postgresUuidSchema.safeParse(value.id).success
             ? [value.id]
             : []
         )
@@ -207,7 +208,7 @@ export async function DELETE(request: NextRequest) {
           !Array.isArray(value) &&
           value.kind === 'artifact_deployment' &&
           typeof value.id === 'string' &&
-          z.string().uuid().safeParse(value.id).success
+          postgresUuidSchema.safeParse(value.id).success
             ? [value.id]
             : []
         )

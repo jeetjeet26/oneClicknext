@@ -7,15 +7,19 @@ export const AURORA_LIFECYCLE_DOMAIN = 'siteforge.aurora-lifecycle'
 export const AURORA_LIFECYCLE_CONFIRMATION =
   'DELETE_OWNED_AURORA_RESOURCES'
 
-const uuid = z.string().uuid()
+export const postgresUuidSchema = z
+  .string()
+  .regex(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  )
 const lifecycleIdentitySchema = z
   .object({
-    ownerId: uuid,
+    ownerId: postgresUuidSchema,
     expiresAt: z.string().datetime(),
-    propertyId: uuid,
-    websiteId: uuid,
-    targetId: uuid,
-    rolloutAssignmentId: uuid,
+    propertyId: postgresUuidSchema,
+    websiteId: postgresUuidSchema,
+    targetId: postgresUuidSchema,
+    rolloutAssignmentId: postgresUuidSchema,
   })
   .strict()
 
@@ -64,6 +68,14 @@ function safeSecretMatch(actual: string, expected: string): boolean {
   return (
     actualBytes.length === expectedBytes.length &&
     timingSafeEqual(actualBytes, expectedBytes)
+  )
+}
+
+function sameInstant(left: string | null, right: string): boolean {
+  return Boolean(
+    left &&
+      Number.isFinite(Date.parse(left)) &&
+      Date.parse(left) === Date.parse(right)
   )
 }
 
@@ -419,7 +431,7 @@ export async function acquireOrRenewAuroraLifecycleLease(
   }
   if (
     lease.lease_owner !== identity.ownerId ||
-    lease.lease_expires_at !== identity.expiresAt ||
+    !sameInstant(lease.lease_expires_at, identity.expiresAt) ||
     lease.lifecycle_status !== 'running'
   ) {
     let update = client
@@ -570,7 +582,7 @@ export async function assertActiveAuroraLifecycleLease(
   if (
     !lease.lease_expires_at ||
     new Date(lease.lease_expires_at).getTime() <= Date.now() ||
-    lease.lease_expires_at !== identity.expiresAt
+    !sameInstant(lease.lease_expires_at, identity.expiresAt)
   ) {
     fail('Aurora lifecycle lease has expired', 409, 'lease_expired')
   }

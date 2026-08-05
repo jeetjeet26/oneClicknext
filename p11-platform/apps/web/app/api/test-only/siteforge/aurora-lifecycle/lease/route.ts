@@ -7,6 +7,7 @@ import {
   acquireOrRenewAuroraLifecycleLease,
   AuroraLifecycleControlError,
   releaseAuroraLifecycleLease,
+  postgresUuidSchema,
   requireAuroraLifecycleIdentity,
   transitionAuroraLifecycleToMutation,
 } from '@/utils/siteforge/testing/aurora-lifecycle-control'
@@ -14,11 +15,11 @@ import {
 const leaseSchema = z
   .object({
     operation: z.enum(['acquire', 'renew', 'activate_mutation']),
-    propertyId: z.string().uuid(),
-    websiteId: z.string().uuid(),
-    targetId: z.string().uuid(),
-    rolloutAssignmentId: z.string().uuid(),
-    ownerId: z.string().uuid(),
+    propertyId: postgresUuidSchema,
+    websiteId: postgresUuidSchema,
+    targetId: postgresUuidSchema,
+    rolloutAssignmentId: postgresUuidSchema,
+    ownerId: postgresUuidSchema,
     expiresAt: z.string().datetime(),
   })
   .strict()

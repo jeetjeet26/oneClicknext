@@ -938,19 +938,36 @@ test.describe.serial('Aurora same-website runtime-v3 lifecycle', () => {
         config.resourcesUrl,
         {
           method: 'POST',
-          body: {
-            operation: 'provision_verified_targets',
-            propertyId: config.propertyId,
-            websiteId: config.websiteId,
-            stagingApplicationId: config.stagingApplicationId,
-            stagingOperationId: config.stagingOperationId,
-          },
+          body:
+            config.stagingApplicationId && config.stagingOperationId
+              ? {
+                  operation: 'provision_verified_targets',
+                  propertyId: config.propertyId,
+                  websiteId: config.websiteId,
+                  stagingApplicationId: config.stagingApplicationId,
+                  stagingOperationId: config.stagingOperationId,
+                }
+              : {
+                  operation: 'create_and_provision_verified_targets',
+                  propertyId: config.propertyId,
+                  websiteId: config.websiteId,
+                },
         }
       )
       expectApiOk(
         provisionResponse,
         'Register exact verified Aurora Cloudways targets'
       )
+      const provisionedTargets = provisionResponse.data as {
+        stagingApplicationId?: string
+        stagingOperationId?: string
+      }
+      config.stagingApplicationId =
+        provisionedTargets.stagingApplicationId || config.stagingApplicationId
+      config.stagingOperationId =
+        provisionedTargets.stagingOperationId || config.stagingOperationId
+      expect(config.stagingApplicationId).toBeTruthy()
+      expect(config.stagingOperationId).toBeTruthy()
 
       const backupStart = await callAuroraMutation(
         page,
@@ -1352,10 +1369,30 @@ test.describe.serial('Aurora same-website runtime-v3 lifecycle', () => {
       ).promotionToken
       expect(promotionToken).toBeTruthy()
 
-      expect(
-        config.promotionOperationId,
-        'AURORA_LIFECYCLE_PROMOTION_OPERATION_ID must be supplied only after the exact Cloudways promotion is performed'
-      ).toBeTruthy()
+      if (!config.promotionOperationId) {
+        const promotionStart = await callAuroraMutation(
+          reviewerPage,
+          config,
+          config.providerOperationsUrl,
+          {
+            method: 'POST',
+            body: {
+              operation: 'start_promotion',
+              propertyId: config.propertyId,
+              websiteId: config.websiteId,
+              releaseId,
+            },
+          }
+        )
+        expectApiOk(
+          promotionStart,
+          'Perform exact owned Aurora Cloudways promotion'
+        )
+        config.promotionOperationId = (
+          promotionStart.data as { operationId?: string }
+        ).operationId || ''
+      }
+      expect(config.promotionOperationId).toBeTruthy()
 
       const promotion = await callAuroraMutation(
         reviewerPage,

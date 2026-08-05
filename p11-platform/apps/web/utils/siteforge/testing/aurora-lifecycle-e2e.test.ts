@@ -93,11 +93,15 @@ describe('Aurora lifecycle E2E preflight', () => {
     delete env.AURORA_LIFECYCLE_BACKUP_ID
     delete env.AURORA_LIFECYCLE_PROMOTION_OPERATION_ID
     delete env.AURORA_LIFECYCLE_RESTORE_OPERATION_ID
+    delete env.AURORA_LIFECYCLE_STAGING_APPLICATION_ID
+    delete env.AURORA_LIFECYCLE_STAGING_OPERATION_ID
     const preflight = inspectAuroraLifecycleEnv(env, NOW)
     expect(preflight.ready).toBe(true)
     if (!preflight.ready) throw new Error(formatAuroraPreflightFailure(preflight))
     expect(preflight.config.startArtifactId).toBe('')
     expect(preflight.config.backupOperationId).toBe('')
+    expect(preflight.config.stagingApplicationId).toBe('')
+    expect(preflight.config.stagingOperationId).toBe('')
   })
 
   it('rejects shared reviewers, broad endpoints, disabled v3, and stale leases', () => {

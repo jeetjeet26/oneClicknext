@@ -10,6 +10,7 @@ import {
   assertActiveAuroraLifecycleLease,
   AuroraLifecycleControlError,
   loadExactAuroraIdentity,
+  postgresUuidSchema,
   requireAuroraLifecycleIdentity,
 } from '@/utils/siteforge/testing/aurora-lifecycle-control'
 
@@ -17,15 +18,15 @@ const sha256 = z.string().regex(/^[a-f0-9]{64}$/)
 const importSchema = z
   .object({
     operation: z.literal('import_immutable_rollback_baseline'),
-    propertyId: z.string().uuid(),
-    websiteId: z.string().uuid(),
-    targetId: z.string().uuid(),
-    rolloutAssignmentId: z.string().uuid(),
+    propertyId: postgresUuidSchema,
+    websiteId: postgresUuidSchema,
+    targetId: postgresUuidSchema,
+    rolloutAssignmentId: postgresUuidSchema,
     runtimePackageSha256: sha256,
     runtimeManifestSha256: sha256,
     baseThemePackageSha256: sha256,
     runtimeSigningKeyId: z.string().trim().min(1).max(200),
-    ownerId: z.string().uuid(),
+    ownerId: postgresUuidSchema,
     expiresAt: z.string().datetime(),
   })
   .strict()

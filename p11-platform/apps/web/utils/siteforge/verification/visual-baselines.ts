@@ -217,6 +217,31 @@ export async function persistVisualBaselineCandidates(
         approval_action_attempt_id: proposal.sharedActionAttemptId,
       })
     if (insertError) {
+      if (insertError.code === '23505') {
+        const { data: concurrent, error: concurrentError } = await client
+          .from('siteforge_visual_baselines')
+          .select('id')
+          .eq('artifact_id', input.artifact.artifactId)
+          .eq('artifact_content_hash', input.artifact.contentHash)
+          .eq('page_url_sha256', pageUrlSha256)
+          .eq('viewport', screenshot.viewport)
+          .eq('environment', input.environment)
+          .eq('access_mode', input.access)
+          .eq('require_indexable', input.requireIndexable)
+          .eq('policy_version', SITEFORGE_CERTIFICATION_POLICY_VERSION)
+          .eq('screenshot_sha256', screenshot.sha256)
+          .eq('binding_hash', input.bindingHash)
+          .maybeSingle()
+        if (concurrentError) {
+          throw new Error(
+            `Failed to inspect concurrent visual baseline candidate: ${concurrentError.message}`
+          )
+        }
+        if (concurrent) {
+          candidateIds.push(concurrent.id)
+          continue
+        }
+      }
       throw new Error(
         `Failed to persist visual baseline candidate: ${insertError.message}`
       )

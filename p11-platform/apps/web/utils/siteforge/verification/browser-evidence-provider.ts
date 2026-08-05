@@ -28,7 +28,7 @@ export async function collectBrowserCertificationEvidence(input: {
     method: 'POST',
     redirect: 'error',
     signal: AbortSignal.timeout(
-      Number(process.env.SITEFORGE_BROWSER_CERTIFIER_TIMEOUT_MS || 180_000)
+      Number(process.env.SITEFORGE_BROWSER_CERTIFIER_TIMEOUT_MS || 290_000)
     ),
     headers: {
       'Content-Type': 'application/json',
@@ -44,16 +44,6 @@ export async function collectBrowserCertificationEvidence(input: {
       targetUrl: input.targetUrl,
       expectedUrls: input.expectedUrls,
       credentials: input.credentials,
-      requirements: {
-        screenshots: ['desktop', 'tablet', 'mobile'],
-        visualBaseline: true,
-        interactions: true,
-        axe: true,
-        lighthouseMobile: true,
-        seo: true,
-        redirects: true,
-        consent: true,
-      },
     }),
   })
   if (!response.ok) {

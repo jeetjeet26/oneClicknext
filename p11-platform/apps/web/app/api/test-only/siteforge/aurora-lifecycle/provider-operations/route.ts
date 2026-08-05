@@ -11,36 +11,45 @@ import {
   AURORA_LIFECYCLE_DOMAIN,
   assertActiveAuroraLifecycleLease,
   AuroraLifecycleControlError,
+  postgresUuidSchema,
   requireAuroraLifecycleIdentity,
 } from '@/utils/siteforge/testing/aurora-lifecycle-control'
 
 const base = {
-  propertyId: z.string().uuid(),
-  websiteId: z.string().uuid(),
+  propertyId: postgresUuidSchema,
+  websiteId: postgresUuidSchema,
 }
 const AURORA_PROVIDER_OPERATION_DOMAIN =
   'siteforge.aurora-lifecycle.provider-operation'
+export const maxDuration = 300
 const requestSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('start_backup'), ...base }).strict(),
   z.object({ operation: z.literal('poll_backup'), ...base }).strict(),
   z
     .object({
+      operation: z.literal('start_promotion'),
+      releaseId: postgresUuidSchema,
+      ...base,
+    })
+    .strict(),
+  z
+    .object({
       operation: z.literal('verify_promotion'),
-      releaseId: z.string().uuid(),
+      releaseId: postgresUuidSchema,
       ...base,
     })
     .strict(),
   z
     .object({
       operation: z.literal('start_restore'),
-      releaseId: z.string().uuid(),
+      releaseId: postgresUuidSchema,
       ...base,
     })
     .strict(),
   z
     .object({
       operation: z.literal('poll_restore'),
-      releaseId: z.string().uuid(),
+      releaseId: postgresUuidSchema,
       ...base,
     })
     .strict(),
@@ -78,7 +87,7 @@ async function claimProviderMutation(
     websiteId: string
     ownerId: string
     expiresAt: string
-    operation: 'backup' | 'restore'
+    operation: 'backup' | 'promotion' | 'restore'
     releaseId?: string
   }
 ) {
@@ -414,7 +423,94 @@ export async function POST(request: NextRequest) {
           'release_not_found'
         )
       }
-      if (parsed.data.operation === 'verify_promotion') {
+      if (parsed.data.operation === 'start_promotion') {
+        if (typeof output.promotionOperationId === 'string') {
+          response = {
+            operation: parsed.data.operation,
+            releaseId: release.id,
+            operationId: output.promotionOperationId,
+            idempotent: true,
+          }
+        } else {
+          const claim = await claimProviderMutation(client, {
+            orgId: production.org_id,
+            propertyId: identity.propertyId,
+            websiteId: identity.websiteId,
+            ownerId: identity.ownerId,
+            expiresAt: identity.expiresAt,
+            operation: 'promotion',
+            releaseId: release.id,
+          })
+          if (!claim.claimed) {
+            const checkpoint = record(claim.job.output)
+            if (typeof checkpoint.operationId !== 'string') {
+              throw new AuroraLifecycleControlError(
+                'Promotion mutation was claimed without a persisted provider identity; manual reconciliation is required',
+                409,
+                'provider_reconciliation_required'
+              )
+            }
+            response = {
+              operation: parsed.data.operation,
+              releaseId: release.id,
+              operationId: checkpoint.operationId,
+              idempotent: true,
+            }
+          } else {
+            const started = await provider.promoteStagingApplication({
+              serverId: production.provider_server_id,
+              stagingApplicationId: staging.provider_application_id,
+              productionApplicationId: production.provider_application_id,
+            })
+            if (!started.operationId) {
+              throw new Error(
+                'Cloudways did not return the exact promotion operation identity'
+              )
+            }
+            await provider.waitForOperation(started.operationId)
+            const completedAt = new Date().toISOString()
+            const { error: checkpointError } = await client
+              .from('shared_jobs')
+              .update({
+                lifecycle_status: 'succeeded',
+                status_reason: 'aurora_promotion_provider_identity_persisted',
+                output: { operationId: started.operationId },
+                finished_at: completedAt,
+                updated_at: completedAt,
+              })
+              .eq('id', claim.job.id)
+              .eq('lease_owner', identity.ownerId)
+            if (checkpointError) {
+              throw new Error(
+                'Failed to checkpoint Cloudways promotion identity'
+              )
+            }
+            const { error } = await client
+              .from('shared_jobs')
+              .update({
+                output: {
+                  ...output,
+                  promotionOperationId: started.operationId,
+                  promotionCompletedAt: completedAt,
+                },
+                updated_at: completedAt,
+              })
+              .eq('id', lease.id)
+              .eq('lease_owner', identity.ownerId)
+            if (error) {
+              throw new Error(
+                'Failed to persist Cloudways promotion identity'
+              )
+            }
+            response = {
+              operation: parsed.data.operation,
+              releaseId: release.id,
+              operationId: started.operationId,
+              idempotent: false,
+            }
+          }
+        }
+      } else if (parsed.data.operation === 'verify_promotion') {
         if (!release.promotion_operation_id) {
           throw new AuroraLifecycleControlError(
             'Promotion has not created an owned provider operation',
