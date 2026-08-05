@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { certificationArtifactBindingSchema } from './certification-binding'
 
 export const SITEFORGE_CERTIFICATION_POLICY_VERSION =
-  'siteforge-browser-certification-v6' as const
+  'siteforge-browser-certification-v7' as const
 export const SITEFORGE_BROWSER_EVIDENCE_VERSION =
   'siteforge-browser-evidence-v2' as const
 export const SITEFORGE_LEGACY_BROWSER_EVIDENCE_VERSION =
@@ -105,7 +105,7 @@ export const browserCertificationEvidenceSchema = z.object({
       baselineApprovedBy: z.string().uuid(),
       actualStoragePath: durableStoragePathSchema,
       actualSha256: sha256Schema,
-      comparisonMethod: z.literal('pixelmatch-v1'),
+      comparisonMethod: z.literal('pixelmatch-v2'),
       mismatchRatio: z.number().min(0).max(1),
       mismatchThreshold: z.literal(SITEFORGE_MAX_VISUAL_MISMATCH_RATIO),
       mismatchedPixels: z.number().int().min(0),

@@ -123,7 +123,7 @@ function passingEvidence(): BrowserCertificationEvidence {
       baselineApprovedBy: '33333333-3333-4333-8333-333333333333',
       actualStoragePath: `browser-certification/${artifactId}/production/session/${viewport}-${hash}.png`,
       actualSha256: hash,
-      comparisonMethod: 'pixelmatch-v1' as const,
+      comparisonMethod: 'pixelmatch-v2' as const,
       mismatchRatio: 0,
       mismatchThreshold: 0.0002 as const,
       mismatchedPixels: 0,

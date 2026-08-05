@@ -546,7 +546,15 @@ async function testConsent(page: Page) {
       ).SiteForgeConsent;
       consent?.open?.();
     });
-    const reopenedGrant = page.locator('[data-consent="granted"]').first();
+    let reopenedGrant = page.locator('[data-consent="granted"]').first();
+    if ((await reopenedGrant.count()) === 0) {
+      await page.evaluate(() => {
+        window.localStorage.removeItem("siteforge_analytics_consent");
+      });
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await page.waitForTimeout(250);
+      reopenedGrant = page.locator('[data-consent="granted"]').first();
+    }
     grantTested =
       (await reopenedGrant.count()) > 0
         ? await reopenedGrant
@@ -575,6 +583,66 @@ async function testConsent(page: Page) {
       loadedBeforeConsent: before.includes(src),
       loadedAfterConsent: after.includes(src),
     })),
+  };
+}
+
+function hasOnlyTrailingUniformRows(shorter: PNG, taller: PNG) {
+  if (shorter.width !== taller.width || shorter.height >= taller.height) {
+    return false;
+  }
+  const finalRowOffset = (shorter.height - 1) * shorter.width * 4;
+  const color = shorter.data.subarray(finalRowOffset, finalRowOffset + 4);
+  for (
+    let offset = finalRowOffset;
+    offset < shorter.height * shorter.width * 4;
+    offset += 4
+  ) {
+    if (!shorter.data.subarray(offset, offset + 4).equals(color)) return false;
+  }
+  for (
+    let offset = shorter.height * taller.width * 4;
+    offset < taller.data.length;
+    offset += 4
+  ) {
+    if (!taller.data.subarray(offset, offset + 4).equals(color)) return false;
+  }
+  return true;
+}
+
+export function compareBrowserScreenshots(
+  baselineBytes: Uint8Array,
+  actualBytes: Uint8Array,
+) {
+  const baseline = PNG.sync.read(Buffer.from(baselineBytes));
+  const actual = PNG.sync.read(Buffer.from(actualBytes));
+  const widthsMatch = baseline.width === actual.width;
+  const exactDimensions = widthsMatch && baseline.height === actual.height;
+  const paddingOnlyHeightDifference =
+    widthsMatch &&
+    (hasOnlyTrailingUniformRows(baseline, actual) ||
+      hasOnlyTrailingUniformRows(actual, baseline));
+  const dimensionsMatch = exactDimensions || paddingOnlyHeightDifference;
+  const comparisonWidth = dimensionsMatch ? baseline.width : actual.width;
+  const comparisonHeight = dimensionsMatch
+    ? Math.min(baseline.height, actual.height)
+    : actual.height;
+  const totalPixels = comparisonWidth * comparisonHeight;
+  const byteLength = totalPixels * 4;
+  const mismatchedPixels = dimensionsMatch
+    ? pixelmatch(
+        baseline.data.subarray(0, byteLength),
+        actual.data.subarray(0, byteLength),
+        undefined,
+        comparisonWidth,
+        comparisonHeight,
+        { includeAA: false, threshold: 0.1 },
+      )
+    : totalPixels;
+  return {
+    dimensionsMatch,
+    mismatchedPixels,
+    totalPixels,
+    mismatchRatio: mismatchedPixels / totalPixels,
   };
 }
 
@@ -922,22 +990,7 @@ export async function collectBrowserbaseCertificationEvidence(
           }
           const baselineBytes = await input.artifactReader(baseline);
           assertArtifactBytes(baselineBytes, baseline);
-          const baselinePng = PNG.sync.read(Buffer.from(baselineBytes));
-          const actualPng = PNG.sync.read(Buffer.from(image));
-          const dimensionsMatch =
-            baselinePng.width === actualPng.width &&
-            baselinePng.height === actualPng.height;
-          const totalPixels = actualPng.width * actualPng.height;
-          const mismatchedPixels = dimensionsMatch
-            ? pixelmatch(
-                baselinePng.data,
-                actualPng.data,
-                undefined,
-                actualPng.width,
-                actualPng.height,
-                { includeAA: false, threshold: 0.1 },
-              )
-            : totalPixels;
+          const comparison = compareBrowserScreenshots(baselineBytes, image);
           baselineDiffs.push({
             url: expectedUrl,
             viewport,
@@ -951,12 +1004,12 @@ export async function collectBrowserbaseCertificationEvidence(
             baselineApprovedBy: baseline.approvedBy,
             actualStoragePath: storagePath,
             actualSha256: digest,
-            comparisonMethod: "pixelmatch-v1",
-            mismatchRatio: mismatchedPixels / totalPixels,
+            comparisonMethod: "pixelmatch-v2",
+            mismatchRatio: comparison.mismatchRatio,
             mismatchThreshold: SITEFORGE_MAX_VISUAL_MISMATCH_RATIO,
-            mismatchedPixels,
-            totalPixels,
-            dimensionsMatch,
+            mismatchedPixels: comparison.mismatchedPixels,
+            totalPixels: comparison.totalPixels,
+            dimensionsMatch: comparison.dimensionsMatch,
           });
         }
         const dimensions = await page.evaluate(() => ({

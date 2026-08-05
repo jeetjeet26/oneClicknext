@@ -78,7 +78,7 @@ function request(
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      policyVersion: "siteforge-browser-certification-v6",
+      policyVersion: "siteforge-browser-certification-v7",
       targetUrl: "https://wordpress.example.com/",
       expectedUrls,
       environment: "production",
@@ -180,7 +180,7 @@ describe("SiteForge browser certifier route", () => {
           actualStoragePath:
             "browser-certification/11111111-1111-4111-8111-111111111111/production/session/mobile.png",
           actualSha256: "f".repeat(64),
-          comparisonMethod: "pixelmatch-v1",
+          comparisonMethod: "pixelmatch-v2",
           mismatchRatio: 0,
           mismatchThreshold: 0.0002,
           mismatchedPixels: 0,
@@ -363,7 +363,7 @@ describe("SiteForge browser certifier route", () => {
         environment: "production",
         access: "public",
         requireIndexable: true,
-        policyVersion: "siteforge-browser-certification-v6",
+        policyVersion: "siteforge-browser-certification-v7",
         bindingHash,
         evidenceDigest: "1".repeat(64),
         approvalId: "66666666-6666-4666-8666-666666666666",

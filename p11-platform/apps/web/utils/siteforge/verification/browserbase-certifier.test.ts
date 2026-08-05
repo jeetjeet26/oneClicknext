@@ -1,6 +1,10 @@
 import { createHash } from 'node:crypto'
+import { PNG } from 'pngjs'
 import { describe, expect, it } from 'vitest'
-import { parseLighthouseReportArtifact } from './browserbase-certifier'
+import {
+  compareBrowserScreenshots,
+  parseLighthouseReportArtifact,
+} from './browserbase-certifier'
 
 const url = 'https://example.com/'
 const storagePath =
@@ -27,7 +31,34 @@ function lighthouseBytes() {
   }))
 }
 
+function png(width: number, height: number, color = [245, 245, 245, 255]) {
+  const image = new PNG({ width, height })
+  for (let offset = 0; offset < image.data.length; offset += 4) {
+    image.data.set(color, offset)
+  }
+  return PNG.sync.write(image)
+}
+
 describe('Browserbase certification evidence', () => {
+  it('normalizes trailing uniform browser background without hiding content drift', () => {
+    expect(compareBrowserScreenshots(png(4, 4), png(4, 6))).toEqual({
+      dimensionsMatch: true,
+      mismatchedPixels: 0,
+      totalPixels: 16,
+      mismatchRatio: 0,
+    })
+
+    const changed = PNG.sync.read(png(4, 6))
+    changed.data.set([0, 0, 0, 255], 4 * 4 * 4)
+    expect(
+      compareBrowserScreenshots(png(4, 4), PNG.sync.write(changed))
+        .dimensionsMatch
+    ).toBe(false)
+    expect(compareBrowserScreenshots(png(4, 4), png(5, 4))).toEqual(
+      expect.objectContaining({ dimensionsMatch: false, mismatchRatio: 1 })
+    )
+  })
+
   it('derives scores only from a digest-verified Lighthouse report', () => {
     const bytes = lighthouseBytes()
     const report = parseLighthouseReportArtifact(bytes, {
