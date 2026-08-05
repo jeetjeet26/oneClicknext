@@ -2,12 +2,12 @@ import { z } from 'zod'
 import { certificationArtifactBindingSchema } from './certification-binding'
 
 export const SITEFORGE_CERTIFICATION_POLICY_VERSION =
-  'siteforge-browser-certification-v5' as const
+  'siteforge-browser-certification-v6' as const
 export const SITEFORGE_BROWSER_EVIDENCE_VERSION =
   'siteforge-browser-evidence-v2' as const
 export const SITEFORGE_LEGACY_BROWSER_EVIDENCE_VERSION =
   'siteforge-browser-evidence-v1' as const
-export const SITEFORGE_MAX_VISUAL_MISMATCH_RATIO = 0.0001 as const
+export const SITEFORGE_MAX_VISUAL_MISMATCH_RATIO = 0.0002 as const
 
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/)
 const urlSchema = z.string().url()

@@ -125,7 +125,7 @@ function passingEvidence(): BrowserCertificationEvidence {
       actualSha256: hash,
       comparisonMethod: 'pixelmatch-v1' as const,
       mismatchRatio: 0,
-      mismatchThreshold: 0.0001 as const,
+      mismatchThreshold: 0.0002 as const,
       mismatchedPixels: 0,
       totalPixels: 1_000_000,
       dimensionsMatch: true,
@@ -306,16 +306,16 @@ describe('browser certification suite', () => {
   it('accepts bounded rasterization drift and rejects changes above policy', () => {
     const bounded = passingEvidence()
     for (const diff of bounded.baselineDiffs) {
-      diff.mismatchedPixels = 50
+      diff.mismatchedPixels = 165
       diff.totalPixels = 1_000_000
-      diff.mismatchRatio = 0.00005
+      diff.mismatchRatio = 0.000165
     }
     expect(certifyBrowserEvidence(certificationInput(bounded)).passed).toBe(true)
 
     const excessive = passingEvidence()
-    excessive.baselineDiffs[0].mismatchedPixels = 101
+    excessive.baselineDiffs[0].mismatchedPixels = 201
     excessive.baselineDiffs[0].totalPixels = 1_000_000
-    excessive.baselineDiffs[0].mismatchRatio = 0.000101
+    excessive.baselineDiffs[0].mismatchRatio = 0.000201
     expect(certifyBrowserEvidence(certificationInput(excessive)).passed).toBe(
       false
     )
