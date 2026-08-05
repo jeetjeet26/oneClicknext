@@ -17,6 +17,7 @@ const requestSchema = z.object({
   artifactId: z.string().uuid(),
   contentHash: z.string().regex(/^[a-f0-9]{64}$/),
   retry: z.boolean().optional().default(false),
+  runBrowserQa: z.boolean().optional().default(false),
 })
 
 const statusQuerySchema = z.object({
@@ -212,7 +213,8 @@ export async function POST(
       website.canonical_preview_content_hash === artifact.content_hash &&
       website.canonical_preview_url &&
       website.editor_lifecycle_status === 'preview_ready' &&
-      !parsed.data.retry
+      !parsed.data.retry &&
+      !parsed.data.runBrowserQa
     ) {
       return NextResponse.json(
         {
@@ -234,8 +236,10 @@ export async function POST(
         { status: 503, headers: ctx.responseHeaders }
       )
     }
-    const previewWordPressUrl = process.env.SITEFORGE_PREVIEW_WP_URL
-      .replace(/\\n/g, '')
+    const previewWordPressUrl = process.env.SITEFORGE_PREVIEW_WP_URL.replace(
+      /\\n/g,
+      ''
+    )
       .trim()
       .replace(/\/+$/, '')
     const { data: existingTarget, error: targetLookupError } = await service
@@ -391,6 +395,7 @@ export async function POST(
       artifactId: artifact.id,
       contentHash: artifact.content_hash,
       targetId,
+      runBrowserQa: parsed.data.runBrowserQa,
       ...(lifecycleIdentity
         ? {
             lifecycleOwnerId: lifecycleIdentity.ownerId,

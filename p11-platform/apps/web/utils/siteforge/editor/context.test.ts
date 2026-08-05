@@ -1,24 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import {
-  isCloudwaysThemeInstallationConfigured,
-  isTrustedCertificationRequired,
-  shouldBlockUncertifiedPreview,
-} from './feature'
+import { isCloudwaysThemeInstallationConfigured } from './feature'
 import { selectRenderedEditorEvidence } from './context'
 
-describe('isTrustedCertificationRequired', () => {
-  it('keeps trusted certification opt-in', () => {
-    expect(isTrustedCertificationRequired(undefined)).toBe(false)
-    expect(isTrustedCertificationRequired('false')).toBe(false)
-    expect(isTrustedCertificationRequired('TRUE')).toBe(true)
-  })
-
-  it('blocks failed preview certification only when enforcement is enabled', () => {
-    expect(shouldBlockUncertifiedPreview(false, 'false')).toBe(false)
-    expect(shouldBlockUncertifiedPreview(false, 'true')).toBe(true)
-    expect(shouldBlockUncertifiedPreview(true, 'true')).toBe(false)
-  })
-
+describe('SiteForge editor context', () => {
   it('rejects placeholder Cloudways configuration for overlay installation', () => {
     expect(
       isCloudwaysThemeInstallationConfigured({

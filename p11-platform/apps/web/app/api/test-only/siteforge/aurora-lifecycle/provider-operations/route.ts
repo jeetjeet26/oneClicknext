@@ -21,6 +21,7 @@ const base = {
 }
 const AURORA_PROVIDER_OPERATION_DOMAIN =
   'siteforge.aurora-lifecycle.provider-operation'
+const AURORA_PROVIDER_LEASE_MS = 15 * 60_000
 export const maxDuration = 300
 const requestSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('start_backup'), ...base }).strict(),
@@ -55,10 +56,21 @@ const requestSchema = z.discriminatedUnion('operation', [
     .strict(),
 ])
 
-function record(value: Json | null | undefined): Record<string, Json | undefined> {
+function record(
+  value: Json | null | undefined
+): Record<string, Json | undefined> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, Json | undefined>)
     : {}
+}
+
+export function boundedProviderLeaseExpiry(
+  runExpiresAt: string,
+  now = Date.now()
+): string {
+  return new Date(
+    Math.min(new Date(runExpiresAt).getTime(), now + AURORA_PROVIDER_LEASE_MS)
+  ).toISOString()
 }
 
 function controlledError(error: unknown, headers: Record<string, string>) {
@@ -117,7 +129,7 @@ async function claimProviderMutation(
         releaseId: input.releaseId || null,
       },
       lease_owner: input.ownerId,
-      lease_expires_at: input.expiresAt,
+      lease_expires_at: boundedProviderLeaseExpiry(input.expiresAt),
       heartbeat_at: now,
       started_at: now,
       max_attempts: 1,
@@ -126,7 +138,9 @@ async function claimProviderMutation(
     .maybeSingle()
   if (inserted.data) return { job: inserted.data, claimed: true }
   if (inserted.error?.code !== '23505') {
-    throw new Error(`Failed to claim Aurora ${input.operation} provider mutation`)
+    throw new Error(
+      `Failed to claim Aurora ${input.operation} provider mutation`
+    )
   }
   const { data: existing, error } = await client
     .from('shared_jobs')
@@ -167,11 +181,7 @@ export async function POST(request: NextRequest) {
       error: authError,
     } = await supabase.auth.getUser()
     if (authError || !user) {
-      throw new AuroraLifecycleControlError(
-        'Unauthorized',
-        401,
-        'unauthorized'
-      )
+      throw new AuroraLifecycleControlError('Unauthorized', 401, 'unauthorized')
     }
     const access = await validatePropertyManagerAccess(
       user.id,
@@ -232,14 +242,13 @@ export async function POST(request: NextRequest) {
     }
     const output = record(lease.output)
     const production = targets?.find(
-      target =>
+      (target) =>
         target.target_type === 'production' &&
         target.id === output.productionTargetId
     )
     const staging = targets?.find(
-      target =>
-        target.target_type === 'staging' &&
-        target.id === output.stagingTargetId
+      (target) =>
+        target.target_type === 'staging' && target.id === output.stagingTargetId
     )
     if (
       production?.provider !== 'cloudways' ||
@@ -329,20 +338,36 @@ export async function POST(request: NextRequest) {
             'provider_reconciliation_required'
           )
         }
-        const started = await provider.createApplicationBackup(
-          production.provider_application_id
-        )
-        if (!started.operationId || !started.backupId) {
-          throw new Error('Cloudways did not return exact backup identities')
+        const started = await provider.createApplicationBackup({
+          serverId: production.provider_server_id,
+          applicationId: production.provider_application_id,
+        })
+        if (!started.operationId) {
+          throw new Error(
+            'Cloudways did not return the exact backup operation identity'
+          )
         }
+        // Cloudways identifies backups by restore-point timestamps, revealed
+        // only after the backup operation completes.
+        await provider.waitForOperation(started.operationId)
+        const restorePoint = await provider.getLatestRestorePoint({
+          serverId: production.provider_server_id,
+          applicationId: production.provider_application_id,
+        })
+        if (!restorePoint) {
+          throw new Error(
+            'Cloudways did not reveal the restore point for the completed backup'
+          )
+        }
+        const backup = { operationId: started.operationId, backupId: restorePoint }
         const { error: checkpointError } = await client
           .from('shared_jobs')
           .update({
             lifecycle_status: 'succeeded',
             status_reason: 'aurora_backup_provider_identity_persisted',
             output: {
-              operationId: started.operationId,
-              backupId: started.backupId,
+              operationId: backup.operationId,
+              backupId: backup.backupId,
             },
             finished_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
@@ -357,19 +382,20 @@ export async function POST(request: NextRequest) {
           .update({
             output: {
               ...output,
-              backupOperationId: started.operationId,
-              backupId: started.backupId,
+              backupOperationId: backup.operationId,
+              backupId: backup.backupId,
               backupStartedAt: new Date().toISOString(),
             },
             updated_at: new Date().toISOString(),
           })
           .eq('id', lease.id)
           .eq('lease_owner', identity.ownerId)
-        if (error) throw new Error('Failed to persist Cloudways backup identity')
+        if (error)
+          throw new Error('Failed to persist Cloudways backup identity')
         response = {
           operation: parsed.data.operation,
-          operationId: started.operationId,
-          backupId: started.backupId,
+          operationId: backup.operationId,
+          backupId: backup.backupId,
           idempotent: false,
         }
       }
@@ -409,9 +435,7 @@ export async function POST(request: NextRequest) {
     } else {
       const { data: release, error: releaseError } = await client
         .from('siteforge_launch_releases')
-        .select(
-          'id, backup_id, backup_operation_id, promotion_operation_id'
-        )
+        .select('id, backup_id, backup_operation_id, promotion_operation_id')
         .eq('id', parsed.data.releaseId)
         .eq('property_id', identity.propertyId)
         .eq('website_id', identity.websiteId)
@@ -498,9 +522,7 @@ export async function POST(request: NextRequest) {
               .eq('id', lease.id)
               .eq('lease_owner', identity.ownerId)
             if (error) {
-              throw new Error(
-                'Failed to persist Cloudways promotion identity'
-              )
+              throw new Error('Failed to persist Cloudways promotion identity')
             }
             response = {
               operation: parsed.data.operation,
@@ -572,7 +594,8 @@ export async function POST(request: NextRequest) {
                 })
                 .eq('id', lease.id)
                 .eq('lease_owner', identity.ownerId)
-              if (error) throw new Error('Failed to reconcile restore checkpoint')
+              if (error)
+                throw new Error('Failed to reconcile restore checkpoint')
               response = {
                 operation: parsed.data.operation,
                 operationId: checkpoint.operationId,
@@ -594,11 +617,14 @@ export async function POST(request: NextRequest) {
             )
           }
           const started = await provider.restoreApplicationBackup({
+            serverId: production.provider_server_id,
             applicationId: production.provider_application_id,
             backupId,
           })
           if (!started.operationId) {
-            throw new Error('Cloudways did not return an exact restore operation')
+            throw new Error(
+              'Cloudways did not return an exact restore operation'
+            )
           }
           const { error: checkpointError } = await client
             .from('shared_jobs')
@@ -631,7 +657,8 @@ export async function POST(request: NextRequest) {
             })
             .eq('id', lease.id)
             .eq('lease_owner', identity.ownerId)
-          if (error) throw new Error('Failed to persist restore operation identity')
+          if (error)
+            throw new Error('Failed to persist restore operation identity')
           response = {
             operation: parsed.data.operation,
             operationId: started.operationId,

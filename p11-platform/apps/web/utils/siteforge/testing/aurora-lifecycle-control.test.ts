@@ -101,10 +101,7 @@ describe('Aurora lifecycle control guardrails', () => {
       rolloutAssignmentId: '44444444-4444-4444-8444-444444444444',
     })
     expect(
-      isAuroraOwnedMetadata(
-        metadata,
-        '55555555-5555-4555-8555-555555555555'
-      )
+      isAuroraOwnedMetadata(metadata, '55555555-5555-4555-8555-555555555555')
     ).toBe(true)
     expect(
       isAuroraOwnedMetadata(
@@ -136,12 +133,8 @@ describe('Aurora lifecycle control guardrails', () => {
   it('allows failed leases with a null or expired timestamp to be reacquired', () => {
     const now = Date.parse('2026-08-05T16:30:00.000Z')
     expect(isAuroraLeaseActive(null, now)).toBe(false)
-    expect(
-      isAuroraLeaseActive('2026-08-05T16:29:59.999Z', now)
-    ).toBe(false)
-    expect(
-      isAuroraLeaseActive('2026-08-05T16:30:00.001Z', now)
-    ).toBe(true)
+    expect(isAuroraLeaseActive('2026-08-05T16:29:59.999Z', now)).toBe(false)
+    expect(isAuroraLeaseActive('2026-08-05T16:30:00.001Z', now)).toBe(true)
   })
 
   it('blocks mutation until baseline, targets, and backup are verified', () => {
@@ -173,7 +166,7 @@ describe('Aurora lifecycle control guardrails', () => {
     ).not.toThrow()
   })
 
-  it('rejects an unowned mutation while the exclusive lease is active', async () => {
+  it('never blocks normal dashboard mutations with a test lease', async () => {
     vi.stubEnv('SITEFORGE_AURORA_LIFECYCLE_CONTROL_ENABLED', 'true')
     const builder = {
       select: vi.fn(),
@@ -185,11 +178,13 @@ describe('Aurora lifecycle control guardrails', () => {
         }) => unknown
       ) =>
         resolve({
-          data: [{
-          id: '11111111-1111-4111-8111-111111111111',
-          lease_expires_at: '2099-08-05T00:00:00.000Z',
-          }],
-        error: null,
+          data: [
+            {
+              id: '11111111-1111-4111-8111-111111111111',
+              lease_expires_at: '2099-08-05T00:00:00.000Z',
+            },
+          ],
+          error: null,
         }),
     }
     builder.select.mockReturnValue(builder)
@@ -201,9 +196,7 @@ describe('Aurora lifecycle control guardrails', () => {
         { websiteId: '22222222-2222-4222-8222-222222222222' },
         client as never
       )
-    ).rejects.toMatchObject({
-      code: 'lease_owner_conflict',
-      statusCode: 409,
-    })
+    ).resolves.toBeNull()
+    expect(client.from).not.toHaveBeenCalled()
   })
 })

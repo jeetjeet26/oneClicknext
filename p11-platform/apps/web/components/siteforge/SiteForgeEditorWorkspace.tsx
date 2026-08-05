@@ -141,8 +141,9 @@ export function SiteForgeEditorWorkspace({ websiteId }: { websiteId: string }) {
   const [previewStep, setPreviewStep] = useState<string | null>(null)
   const [deployingStaging, setDeployingStaging] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [editJobFailure, setEditJobFailure] =
-    useState<EditJobFailure | null>(null)
+  const [editJobFailure, setEditJobFailure] = useState<EditJobFailure | null>(
+    null
+  )
   const [extensionDecisionReasons, setExtensionDecisionReasons] = useState<
     Record<string, string>
   >({})
@@ -206,12 +207,14 @@ export function SiteForgeEditorWorkspace({ websiteId }: { websiteId: string }) {
   }, [payload?.messages])
 
   const renderWordPressPreview = useCallback(
-    async (current: EditorSessionPayload) => {
+    async (current: EditorSessionPayload, runBrowserQa = false) => {
       const artifact = current?.currentArtifact
       if (!artifact || previewingWordPressRef.current) return
       previewingWordPressRef.current = true
       setPreviewingWordPress(true)
-      setPreviewStep('Publishing revision')
+      setPreviewStep(
+        runBrowserQa ? 'Preparing full browser QA' : 'Publishing revision'
+      )
       setError(null)
       try {
         const startResponse = await fetch(
@@ -223,6 +226,7 @@ export function SiteForgeEditorWorkspace({ websiteId }: { websiteId: string }) {
               artifactId: artifact.id,
               contentHash: artifact.content_hash,
               retry: true,
+              runBrowserQa,
             }),
           }
         )
@@ -237,7 +241,8 @@ export function SiteForgeEditorWorkspace({ websiteId }: { websiteId: string }) {
         if (!startData.jobId) {
           throw new Error('WordPress preview did not return a job identity')
         }
-        for (let attempt = 0; attempt < 80; attempt += 1) {
+        const maxAttempts = runBrowserQa ? 360 : 80
+        for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
           const response = await fetch(
             `/api/siteforge/canonical-preview/${websiteId}?jobId=${encodeURIComponent(startData.jobId)}`,
             { cache: 'no-store' }
@@ -568,10 +573,9 @@ export function SiteForgeEditorWorkspace({ websiteId }: { websiteId: string }) {
     } catch (cause) {
       setExtensionDecisionErrors((current) => ({
         ...current,
-        [requestId]:
-          decisionSaved
-            ? 'Decision saved, but the editor could not refresh. Reload to see the updated request status.'
-            : cause instanceof Error
+        [requestId]: decisionSaved
+          ? 'Decision saved, but the editor could not refresh. Reload to see the updated request status.'
+          : cause instanceof Error
             ? cause.message
             : 'Failed to review runtime extension request',
       }))
@@ -631,12 +635,13 @@ export function SiteForgeEditorWorkspace({ websiteId }: { websiteId: string }) {
                 : 'WordPress preview stale'}
             </Badge>
             {payload.previews?.certificationStatus === 'failed' ? (
-              <Badge variant="outline">Rendered · certification warning</Badge>
+              <Badge variant="outline">Browser QA warning · non-blocking</Badge>
+            ) : null}
+            {payload.previews?.certificationStatus === 'passed' ? (
+              <Badge variant="success">Browser QA passed</Badge>
             ) : null}
             {previewMatches && !payload.previews?.certificationStatus ? (
-              <Badge variant="outline">
-                Rendered · certification not required
-              </Badge>
+              <Badge variant="outline">Browser QA not run · optional</Badge>
             ) : null}
             {payload.previews?.renderJob &&
             !['succeeded', 'failed', 'cancelled'].includes(
@@ -721,8 +726,7 @@ export function SiteForgeEditorWorkspace({ websiteId }: { websiteId: string }) {
                   const isPending =
                     pendingExtensionDecision?.requestId === request.id
                   const isProposed = request.status === 'proposed'
-                  const canApprove =
-                    isProposed && request.review.reviewComplete
+                  const canApprove = isProposed && request.review.reviewComplete
 
                   return (
                     <article
@@ -774,7 +778,8 @@ export function SiteForgeEditorWorkspace({ websiteId }: { websiteId: string }) {
                               {request.review.sourceArtifact.id}
                             </p>
                             <p className="break-all font-mono">
-                              Content {request.review.sourceArtifact.content_hash}
+                              Content{' '}
+                              {request.review.sourceArtifact.content_hash}
                             </p>
                           </>
                         ) : (
@@ -790,10 +795,8 @@ export function SiteForgeEditorWorkspace({ websiteId }: { websiteId: string }) {
                       </div>
                       {request.review.files.length ? (
                         <div className="space-y-2">
-                          <p className="font-medium">
-                            Generated file review
-                          </p>
-                          {request.review.files.map(file => (
+                          <p className="font-medium">Generated file review</p>
+                          {request.review.files.map((file) => (
                             <details
                               key={file.path}
                               className="rounded border bg-background p-2"
@@ -848,18 +851,13 @@ export function SiteForgeEditorWorkspace({ websiteId }: { websiteId: string }) {
                       {isProposed ? (
                         <>
                           <div>
-                            <label
-                              htmlFor={reasonId}
-                              className="font-medium"
-                            >
+                            <label htmlFor={reasonId} className="font-medium">
                               Decision reason
                             </label>
                             <Textarea
                               id={reasonId}
                               className="mt-1 min-h-20 bg-background"
-                              value={
-                                extensionDecisionReasons[request.id] || ''
-                              }
+                              value={extensionDecisionReasons[request.id] || ''}
                               onChange={(event) => {
                                 const value = event.target.value
                                 setExtensionDecisionReasons((current) => ({
@@ -923,11 +921,7 @@ export function SiteForgeEditorWorkspace({ websiteId }: { websiteId: string }) {
                         </p>
                       )}
                       {extensionDecisionErrors[request.id] ? (
-                        <p
-                          id={errorId}
-                          role="alert"
-                          className="text-red-700"
-                        >
+                        <p id={errorId} role="alert" className="text-red-700">
                           {extensionDecisionErrors[request.id]}
                         </p>
                       ) : null}
@@ -975,9 +969,7 @@ export function SiteForgeEditorWorkspace({ websiteId }: { websiteId: string }) {
                 role="alert"
                 className="mr-6 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-950"
               >
-                <p className="font-semibold">
-                  Edit {editJobFailure.status}
-                </p>
+                <p className="font-semibold">Edit {editJobFailure.status}</p>
                 {editJobFailure.errorMessage ? (
                   <p className="mt-1 whitespace-pre-wrap font-medium">
                     {editJobFailure.errorMessage}
@@ -1118,18 +1110,32 @@ export function SiteForgeEditorWorkspace({ websiteId }: { websiteId: string }) {
                 WordPress preview
               </Button>
               {previewSource === 'wordpress' ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={previewingWordPress}
-                  onClick={() =>
-                    payload && void renderWordPressPreview(payload)
-                  }
-                >
-                  {previewingWordPress
-                    ? previewStep || 'Rendering…'
-                    : 'Render exact revision'}
-                </Button>
+                <>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={previewingWordPress}
+                    onClick={() =>
+                      payload && void renderWordPressPreview(payload)
+                    }
+                  >
+                    {previewingWordPress
+                      ? previewStep || 'Rendering…'
+                      : 'Render exact revision'}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={!previewMatches || previewingWordPress}
+                    onClick={() =>
+                      payload && void renderWordPressPreview(payload, true)
+                    }
+                  >
+                    {previewingWordPress
+                      ? previewStep || 'Running QA…'
+                      : 'Run full browser QA'}
+                  </Button>
+                </>
               ) : null}
             </div>
             <div className="flex gap-2" aria-label="Preview viewport">

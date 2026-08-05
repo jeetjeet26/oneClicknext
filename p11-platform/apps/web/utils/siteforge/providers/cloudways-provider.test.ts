@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CloudwaysProviderClient,
   CloudwaysUnsupportedOperationError,
+  assertStagingApplicationParent,
   parseCloudwaysApplicationHostname,
 } from "./cloudways-provider";
 
@@ -24,8 +25,8 @@ describe("Cloudways API v2 provider", () => {
         "https://wordpress-1655141-6587075.cloudwaysapps.com/",
       ),
     ).toEqual({
-      applicationId: "1655141",
-      serverId: "6587075",
+      serverId: "1655141",
+      applicationId: "6587075",
     });
     expect(
       parseCloudwaysApplicationHostname("https://apartments.example.com"),
@@ -69,6 +70,91 @@ describe("Cloudways API v2 provider", () => {
       server_id: "actual-server",
       public_ip: "192.0.2.10",
     });
+  });
+
+  it("creates staging through the Cloudways staging clone endpoint", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(
+      response({
+        data: {
+          operation_id: "operation-123",
+          application_id: "staging-456",
+        },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      new CloudwaysProviderClient({
+        email: "ops@example.com",
+        apiKey: "cw_access-token",
+      }).createStagingApplication({
+        serverId: "server-123",
+        parentApplicationId: "production-456",
+        label: "ignored-by-cloudways-staging-clone",
+      }),
+    ).resolves.toEqual({
+      operationId: "operation-123",
+      applicationId: "staging-456",
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.cloudways.com/api/v2/staging/app/cloneApp?server_id=server-123&app_id=production-456",
+      expect.objectContaining({
+        method: "POST",
+        body: undefined,
+      }),
+    );
+  });
+
+  it("verifies live add_staging_app operations nested under the operation envelope", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(
+      response({
+        status: false,
+        operation: {
+          id: "130490119",
+          operation_id: "130490119",
+          type: "add_staging_app",
+          is_completed: "1",
+          server_id: "1655141",
+          app_id: "6597815",
+        },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      new CloudwaysProviderClient({
+        email: "ops@example.com",
+        apiKey: "cw_access-token",
+      }).verifyOperation("130490119", {
+        kind: "staging",
+        serverId: "1655141",
+        applicationId: "6597815",
+        parentApplicationId: "6587075",
+      }),
+    ).resolves.toMatchObject({
+      operation_id: "130490119",
+      app_id: "6597815",
+    });
+  });
+
+  it("rejects staging applications that are not clones of the exact parent", async () => {
+    const application = {
+      id: "6597815",
+      app_fqdn: "wordpress-1655141-6597815.cloudwaysapps.com",
+      app_user: "user",
+      app_password: "password",
+      is_staging: "1",
+      source_app_id: "9999999",
+    };
+    expect(() =>
+      assertStagingApplicationParent(application, "6587075"),
+    ).toThrow(/not a clone of the exact parent application/);
+    expect(() =>
+      assertStagingApplicationParent(
+        { ...application, source_app_id: "6587075" },
+        "6587075",
+      ),
+    ).not.toThrow();
   });
 
   it("attaches a verified domain, installs SSL, and enforces HTTPS", async () => {
@@ -172,10 +258,10 @@ describe("Cloudways API v2 provider", () => {
     });
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
-      "https://api.cloudways.com/api/v2/app/createstaging",
+      "https://api.cloudways.com/api/v2/staging/app/cloneApp?server_id=server-1&app_id=parent-app-1",
       expect.objectContaining({
         method: "POST",
-        body: expect.stringContaining('"app_id":"parent-app-1"'),
+        body: undefined,
       }),
     );
   });
@@ -209,13 +295,11 @@ describe("Cloudways API v2 provider", () => {
     expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
-  it("checkpoints backup identity and polls the returned operation", async () => {
+  it("takes an application backup through the manage endpoint", async () => {
     const fetchMock = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(
-        response({
-          data: { operation_id: "backup-op", backup_id: "backup-1" },
-        }),
+        response({ status: true, operation_id: "backup-op" }),
       )
       .mockResolvedValueOnce(response({ data: { status: "completed" } }));
     vi.stubGlobal("fetch", fetchMock);
@@ -225,17 +309,106 @@ describe("Cloudways API v2 provider", () => {
     });
 
     await expect(
-      client.createApplicationBackup("production-app"),
+      client.createApplicationBackup({
+        serverId: "server-1",
+        applicationId: "production-app",
+      }),
     ).resolves.toEqual({
       operationId: "backup-op",
-      backupId: "backup-1",
     });
     await client.waitForOperation("backup-op");
 
     expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "https://api.cloudways.com/api/v2/app/manage/takeBackup?server_id=server-1&app_id=production-app",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
       2,
       "https://api.cloudways.com/api/v2/operation/backup-op",
       expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  it("resolves the newest restore point from the flex restore-points operation", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        response({ status: true, operation_id: "flex-1" }),
+      )
+      .mockResolvedValueOnce(
+        response({
+          status: true,
+          operation: {
+            id: "flex-1",
+            type: "app_restore_points",
+            is_completed: "1",
+            parameters: JSON.stringify({
+              backup_dates: ["2026-08-01T10:00:00", "2026-08-05T23:19:06"],
+            }),
+          },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      new CloudwaysProviderClient({
+        email: "ops@example.com",
+        apiKey: "cw_access-token",
+      }).getLatestRestorePoint({
+        serverId: "server-1",
+        applicationId: "production-app",
+      }),
+    ).resolves.toBe("2026-08-05T23:19:06");
+  });
+
+  it("restores an application to an exact restore point timestamp", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        response({ status: true, operation_id: "restore-op" }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      new CloudwaysProviderClient({
+        email: "ops@example.com",
+        apiKey: "cw_access-token",
+      }).restoreApplicationBackup({
+        serverId: "server-1",
+        applicationId: "production-app",
+        backupId: "2026-08-05T23:19:06",
+      }),
+    ).resolves.toEqual({ operationId: "restore-op" });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.cloudways.com/api/v2/app/manage/restore?server_id=server-1&app_id=production-app&time=2026-08-05T23%3A19%3A06&type=complete",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("pushes staging to live through the staging sync endpoint", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        response({ status: true, operation_id: "sync-op" }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      new CloudwaysProviderClient({
+        email: "ops@example.com",
+        apiKey: "cw_access-token",
+      }).promoteStagingApplication({
+        serverId: "server-1",
+        stagingApplicationId: "staging-1",
+        productionApplicationId: "production-1",
+      }),
+    ).resolves.toEqual({ operationId: "sync-op" });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.cloudways.com/api/v2/staging/sync/app?server_id=server-1&app_id=production-1&source_app_id=staging-1&source_server_id=server-1&action=push&appFiles=true&dbFiles=true&backup=true",
+      expect.objectContaining({ method: "POST" }),
     );
   });
 

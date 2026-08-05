@@ -3,7 +3,9 @@ import { z } from "zod";
 const cloudwaysOperationSchema = z.object({
   id: z.union([z.string(), z.number()]).optional(),
   operation_id: z.union([z.string(), z.number()]).optional(),
-  status: z.string().optional(),
+  // Cloudways returns a boolean request-status envelope alongside string
+  // operation statuses; only string statuses describe operation state.
+  status: z.union([z.string(), z.boolean()]).optional(),
   is_completed: z.union([z.string(), z.number(), z.boolean()]).optional(),
   operation: z.string().optional(),
   operation_type: z.string().optional(),
@@ -17,6 +19,7 @@ const cloudwaysOperationSchema = z.object({
   staging_app_id: z.union([z.string(), z.number()]).optional(),
   staging_application_id: z.union([z.string(), z.number()]).optional(),
   backup_id: z.union([z.string(), z.number()]).optional(),
+  parameters: z.string().optional(),
 });
 
 type CloudwaysOperation = z.infer<typeof cloudwaysOperationSchema>;
@@ -64,8 +67,25 @@ const cloudwaysApplicationSchema = z
     app_password: z.string().min(1),
     server_id: z.union([z.string(), z.number()]).optional(),
     public_ip: z.string().optional(),
+    is_staging: z.union([z.string(), z.number(), z.boolean()]).optional(),
+    source_app_id: z.union([z.string(), z.number()]).nullable().optional(),
   })
   .passthrough();
+
+export function assertStagingApplicationParent(
+  application: z.infer<typeof cloudwaysApplicationSchema>,
+  expectedParentApplicationId: string,
+): void {
+  if (
+    application.source_app_id === null ||
+    application.source_app_id === undefined ||
+    String(application.source_app_id) !== expectedParentApplicationId
+  ) {
+    throw new Error(
+      `Cloudways staging application ${application.id} is not a clone of the exact parent application ${expectedParentApplicationId}`,
+    );
+  }
+}
 
 export interface CloudwaysProviderCredentials {
   email: string;
@@ -82,8 +102,9 @@ export function parseCloudwaysApplicationHostname(value: string): {
   } catch {
     hostname = value.trim().toLowerCase();
   }
+  // Cloudways preview hosts are wordpress-{server_id}-{app_id}.cloudwaysapps.com
   const match = hostname.match(/^wordpress-(\d+)-(\d+)\.cloudwaysapps\.com$/);
-  return match ? { applicationId: match[1], serverId: match[2] } : null;
+  return match ? { serverId: match[1], applicationId: match[2] } : null;
 }
 
 function normalizeHostname(value: string): string {
@@ -125,23 +146,22 @@ export class CloudwaysProviderClient {
     throw new Error("Cloudways request exhausted its retry budget");
   }
 
-  async createApplicationBackup(applicationId: string): Promise<{
-    operationId: string | null;
-    backupId: string | null;
-  }> {
-    const result = cloudwaysOperationSchema
-      .extend({
-        backup_id: z.union([z.string(), z.number()]).optional(),
-      })
-      .passthrough()
-      .parse(
-        await this.request(
-          `/applications/${encodeURIComponent(applicationId)}/backup`,
-          {
-            method: "POST",
-          },
-        ),
-      );
+  async createApplicationBackup(input: {
+    serverId: string;
+    applicationId: string;
+  }): Promise<{ operationId: string | null }> {
+    // Live contract: POST /app/manage/takeBackup?server_id&app_id
+    // -> { status: true, operation_id } (backups are identified by
+    // restore-point timestamps, not ids; see getLatestRestorePoint).
+    const result = cloudwaysOperationSchema.passthrough().parse(
+      await this.request("/app/manage/takeBackup", {
+        method: "POST",
+        query: {
+          server_id: input.serverId,
+          app_id: input.applicationId,
+        },
+      }),
+    );
     return {
       operationId:
         result.operation_id !== undefined
@@ -149,9 +169,49 @@ export class CloudwaysProviderClient {
           : result.id !== undefined
             ? String(result.id)
             : null,
-      backupId:
-        result.backup_id !== undefined ? String(result.backup_id) : null,
     };
+  }
+
+  async getLatestRestorePoint(input: {
+    serverId: string;
+    applicationId: string;
+  }): Promise<string | null> {
+    // GET /app/manage/backup starts an app_restore_points flex operation whose
+    // completed record embeds the available backup_dates in its parameters.
+    const started = cloudwaysOperationSchema.passthrough().parse(
+      await this.request("/app/manage/backup", {
+        method: "GET",
+        query: {
+          server_id: input.serverId,
+          app_id: input.applicationId,
+        },
+      }),
+    );
+    const operationId =
+      started.operation_id !== undefined
+        ? String(started.operation_id)
+        : started.id !== undefined
+          ? String(started.id)
+          : null;
+    if (!operationId) {
+      throw new Error(
+        "Cloudways did not return a restore-point lookup operation",
+      );
+    }
+    const operation = await this.waitForOperation(operationId);
+    if (typeof operation.parameters !== "string") return null;
+    let backupDates: unknown;
+    try {
+      backupDates = (JSON.parse(operation.parameters) as Record<string, unknown>)
+        .backup_dates;
+    } catch {
+      return null;
+    }
+    if (!Array.isArray(backupDates) || backupDates.length === 0) return null;
+    const dates = backupDates
+      .filter((value): value is string => typeof value === "string")
+      .sort();
+    return dates.length > 0 ? dates[dates.length - 1] : null;
   }
 
   async promoteStagingApplication(input: {
@@ -160,13 +220,20 @@ export class CloudwaysProviderClient {
     productionApplicationId: string;
   }): Promise<{ operationId: string | null }> {
     try {
+      // Live contract: POST /staging/sync/app pushes the staging source
+      // application onto the destination (production) application.
       const result = cloudwaysOperationSchema.passthrough().parse(
-        await this.request("/app/pushtolive", {
+        await this.request("/staging/sync/app", {
           method: "POST",
-          body: {
+          query: {
             server_id: input.serverId,
             app_id: input.productionApplicationId,
-            staging_app_id: input.stagingApplicationId,
+            source_app_id: input.stagingApplicationId,
+            source_server_id: input.serverId,
+            action: "push",
+            appFiles: "true",
+            dbFiles: "true",
+            backup: "true",
           },
         }),
       );
@@ -187,18 +254,23 @@ export class CloudwaysProviderClient {
   }
 
   async restoreApplicationBackup(input: {
+    serverId: string;
     applicationId: string;
     backupId: string;
   }): Promise<{ operationId: string | null }> {
     try {
+      // Live contract: POST /app/manage/restore?server_id&app_id&time&type,
+      // where `time` is the restore-point timestamp captured after backup.
       const result = cloudwaysOperationSchema.passthrough().parse(
-        await this.request(
-          `/applications/${encodeURIComponent(input.applicationId)}/restore`,
-          {
-            method: "POST",
-            body: { backup_id: input.backupId },
+        await this.request("/app/manage/restore", {
+          method: "POST",
+          query: {
+            server_id: input.serverId,
+            app_id: input.applicationId,
+            time: input.backupId,
+            type: "complete",
           },
-        ),
+        }),
       );
       return {
         operationId:
@@ -230,12 +302,11 @@ export class CloudwaysProviderClient {
       })
       .passthrough()
       .parse(
-        await this.request("/app/createstaging", {
+        await this.request("/staging/app/cloneApp", {
           method: "POST",
-          body: {
+          query: {
             server_id: input.serverId,
             app_id: input.parentApplicationId,
-            app_label: input.label.replace(/[^a-z0-9-]/gi, "-").slice(0, 48),
           },
         }),
       );
@@ -262,7 +333,10 @@ export class CloudwaysProviderClient {
     const started = Date.now();
     while (Date.now() - started < timeoutMs) {
       const operation = await this.getOperation(operationId);
-      const status = operation.status?.toLowerCase();
+      const status =
+        typeof operation.status === "string"
+          ? operation.status.toLowerCase()
+          : undefined;
       if (status && ["failed", "error", "cancelled", "canceled"].includes(status)) {
         throw new Error(`Cloudways operation ${operationId} ${status}`);
       }
@@ -285,11 +359,21 @@ export class CloudwaysProviderClient {
   }
 
   async getOperation(operationId: string): Promise<CloudwaysOperation> {
-    return cloudwaysOperationSchema.passthrough().parse(
-      await this.request(`/operation/${encodeURIComponent(operationId)}`, {
-        method: "GET",
-      }),
+    const payload = await this.request(
+      `/operation/${encodeURIComponent(operationId)}`,
+      { method: "GET" },
     );
+    // Cloudways nests the operation record under an `operation` key:
+    // { "status": <bool>, "operation": { id, is_completed, type, app_id, ... } }
+    const unwrapped =
+      payload &&
+      typeof payload === "object" &&
+      "operation" in payload &&
+      (payload as Record<string, unknown>).operation &&
+      typeof (payload as Record<string, unknown>).operation === "object"
+        ? (payload as Record<string, unknown>).operation
+        : payload;
+    return cloudwaysOperationSchema.passthrough().parse(unwrapped);
   }
 
   async verifyOperation(
@@ -327,7 +411,9 @@ export class CloudwaysProviderClient {
           .default([]),
       })
       .passthrough()
-      .parse(await this.request("/servers", { method: "GET" }));
+      // /server (singular) returns servers with embedded apps and credentials;
+      // /servers (plural) is a paginated summary without apps.
+      .parse(await this.request("/server", { method: "GET" }));
     const server = response.servers.find(
       (candidate) => String(candidate.id) === input.serverId,
     );
@@ -430,11 +516,22 @@ export class CloudwaysProviderClient {
 
   private async request(
     endpoint: string,
-    init: { method: "GET" | "POST" | "PUT" | "DELETE"; body?: unknown },
+    init: {
+      method: "GET" | "POST" | "PUT" | "DELETE";
+      body?: unknown;
+      query?: Record<string, string | number>;
+    },
   ): Promise<unknown> {
     const accessToken = await this.authenticate();
+    const url = new URL(`${this.baseUrl}${endpoint}`);
+    for (const [key, value] of Object.entries(init.query || {})) {
+      url.searchParams.set(key, String(value));
+    }
+    const requestUrl = init.query
+      ? url.toString()
+      : `${this.baseUrl}${endpoint}`;
     const response = await this.fetchWithBackoff(() =>
-      fetch(`${this.baseUrl}${endpoint}`, {
+      fetch(requestUrl, {
         method: init.method,
         headers: {
           Authorization: `Bearer ${accessToken}`,
@@ -505,14 +602,21 @@ function assertCompletedCloudwaysOperation(
       `Cloudways operation response does not match requested operation ${operationId}`,
     );
   }
-  const status = operation.status?.trim().toLowerCase();
+  const status =
+    typeof operation.status === "string"
+      ? operation.status.trim().toLowerCase()
+      : undefined;
   if (status && ["failed", "error", "cancelled", "canceled"].includes(status)) {
     throw new Error(`Cloudways operation ${operationId} ${status}`);
   }
-  const completed = Boolean(
-    status &&
-      ["completed", "complete", "success", "succeeded"].includes(status),
-  );
+  const completed =
+    operation.is_completed === true ||
+    operation.is_completed === 1 ||
+    operation.is_completed === "1" ||
+    Boolean(
+      status &&
+        ["completed", "complete", "success", "succeeded"].includes(status),
+    );
   if (!completed) {
     throw new Error(
       `Cloudways operation ${operationId} does not have a verified successful status`,
@@ -531,15 +635,25 @@ function assertCloudwaysOperationOwnership(
     "type",
   ]);
   const aliases: Record<CloudwaysOperationExpectation["kind"], string[]> = {
-    backup: ["backup", "application_backup", "app_backup", "take_backup"],
+    backup: [
+      "backup",
+      "application_backup",
+      "app_backup",
+      "take_backup",
+      "app_level_backup",
+    ],
     promotion: [
       "promotion",
       "push_to_live",
       "pushtolive",
       "staging_push_to_live",
+      "sync_app",
+      "app_sync",
+      "staging_sync_app",
+      "staging_sync",
     ],
-    restore: ["restore", "restore_backup", "application_restore"],
-    staging: ["staging", "create_staging", "createstaging"],
+    restore: ["restore", "restore_backup", "application_restore", "restore_app"],
+    staging: ["staging", "create_staging", "createstaging", "add_staging_app"],
   };
   if (
     !rawType ||
@@ -557,6 +671,7 @@ function assertCloudwaysOperationOwnership(
           "staging_application_id",
           "staging_app_id",
           "application_id",
+          "app_id",
         ])
       : operationValue(operation, [
           "production_app_id",
@@ -565,10 +680,12 @@ function assertCloudwaysOperationOwnership(
           "parent_application_id",
           "parent_app_id",
         ]);
-  if (
-    serverId !== expected.serverId ||
-    applicationId !== expected.applicationId
-  ) {
+  const applicationMatches =
+    applicationId === expected.applicationId ||
+    // Cloudways sync_app operations may report the staging source app id.
+    (expected.kind === "promotion" &&
+      applicationId === expected.stagingApplicationId);
+  if (serverId !== expected.serverId || !applicationMatches) {
     throw new Error(
       `Cloudways operation ${operationId} does not belong to the exact production server/application`,
     );
@@ -579,25 +696,37 @@ function assertCloudwaysOperationOwnership(
       "staging_application_id",
       "staging_app_id",
     ]);
-    if (stagingApplicationId !== expected.stagingApplicationId) {
+    if (
+      stagingApplicationId !== null &&
+      stagingApplicationId !== expected.stagingApplicationId
+    ) {
       throw new Error(
         `Cloudways operation ${operationId} does not belong to the exact staging child application`,
       );
     }
   } else if (expected.kind === "staging") {
+    // Cloudways add_staging_app operations omit the parent application id;
+    // when absent, parent linkage is enforced against the staging app's
+    // source_app_id record instead (see assertStagingApplicationParent).
     const parentApplicationId = operationValue(operation, [
       "parent_app_id",
       "parent_application_id",
       "production_app_id",
     ]);
-    if (parentApplicationId !== expected.parentApplicationId) {
+    if (
+      parentApplicationId !== null &&
+      parentApplicationId !== expected.parentApplicationId
+    ) {
       throw new Error(
         `Cloudways operation ${operationId} does not belong to the exact parent application`,
       );
     }
   } else {
+    // Cloudways backup/restore operations do not carry a backup identity in
+    // the payload; backups are addressed by restore-point timestamps that the
+    // caller records via getLatestRestorePoint. Only enforce when present.
     const backupId = operationValue(operation, ["backup_id"]);
-    if (backupId !== expected.backupId) {
+    if (backupId !== null && backupId !== expected.backupId) {
       throw new Error(
         `Cloudways operation ${operationId} does not reference the recorded backup`,
       );

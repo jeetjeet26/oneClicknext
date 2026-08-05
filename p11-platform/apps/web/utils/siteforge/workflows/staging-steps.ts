@@ -1,11 +1,9 @@
 import { FatalError } from 'workflow'
-import { brandForgeContractV1Schema } from '@/utils/brandforge/contracts'
 import type { GeneratedPage } from '@/types/siteforge'
 import type { Json } from '@/types/supabase'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { normalizeLegacyPages } from '@/utils/siteforge/blueprint'
 import { loadVerifiedSiteForgeRelease } from '@/utils/siteforge/artifacts/release'
-import { loadApprovedFloorPlanSnapshot } from '@/utils/siteforge/providers/floor-plan-repository'
 import { CloudwaysProviderClient } from '@/utils/siteforge/providers/cloudways-provider'
 import {
   getWordPressCredentialReference,
@@ -23,16 +21,10 @@ import {
 } from '@/utils/siteforge/quality/deterministic-gates'
 import { loadSiteForgePublicRuntimeConfig } from '@/utils/siteforge/public-runtime'
 import {
-  buildRenderedCertificationTruth,
-  certifyRenderedWordPressArtifact,
-} from '@/utils/siteforge/verification/rendered-certification'
-import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
-import {
   propertyContextFromOnboardingSnapshot,
   runtimePropertyProfile,
 } from '@/utils/siteforge/property-context'
 import { deployArtifactBoundRuntimeV3 } from '@/utils/siteforge/workflows/runtime-deployment-v3'
-import { buildReleaseCertificationBinding } from '@/utils/siteforge/verification/certification-binding'
 
 export interface SiteForgeStagingWorkflowInput {
   sharedJobId: string
@@ -61,11 +53,24 @@ export function readCloudwaysProvisioningCheckpoint(metadata: unknown): {
   const checkpoint = asRecord(asRecord(metadata).provisioningCheckpoint)
   return {
     operationId:
-      typeof checkpoint.operationId === 'string' ? checkpoint.operationId : null,
+      typeof checkpoint.operationId === 'string'
+        ? checkpoint.operationId
+        : null,
     applicationId:
       typeof checkpoint.applicationId === 'string'
         ? checkpoint.applicationId
         : null,
+  }
+}
+
+export function assertExactStagingManifest(
+  expectedContentHash: string,
+  remoteContentHash: string | null
+): void {
+  if (remoteContentHash !== expectedContentHash) {
+    throw new FatalError(
+      'Cloudways staging manifest does not match the approved artifact'
+    )
   }
 }
 
@@ -134,31 +139,34 @@ export async function assertStagingDeploymentActive(
 ): Promise<void> {
   'use step'
   const client = createServiceClient()
-  const [{ data: job }, { data: website }, { data: artifact }] = await Promise.all([
-    client
-      .from('shared_jobs')
-      .select('lifecycle_status, cancel_requested, lease_owner')
-      .eq('id', input.sharedJobId)
-      .eq('domain', 'siteforge.deployment')
-      .single(),
-    client
-      .from('property_websites')
-      .select(
-        'current_artifact_version_id, canonical_preview_artifact_id, canonical_preview_content_hash, editor_lifecycle_status'
-      )
-      .eq('id', input.websiteId)
-      .eq('property_id', input.propertyId)
-      .eq('org_id', input.orgId)
-      .single(),
-    client
-      .from('siteforge_blueprint_versions')
-      .select('deployment_decision, confirmed_approval_id, content_hash')
-      .eq('id', input.artifactId)
-      .eq('website_id', input.websiteId)
-      .single(),
-  ])
+  const [{ data: job }, { data: website }, { data: artifact }] =
+    await Promise.all([
+      client
+        .from('shared_jobs')
+        .select('lifecycle_status, cancel_requested, lease_owner')
+        .eq('id', input.sharedJobId)
+        .eq('domain', 'siteforge.deployment')
+        .single(),
+      client
+        .from('property_websites')
+        .select(
+          'current_artifact_version_id, canonical_preview_artifact_id, canonical_preview_content_hash, editor_lifecycle_status'
+        )
+        .eq('id', input.websiteId)
+        .eq('property_id', input.propertyId)
+        .eq('org_id', input.orgId)
+        .single(),
+      client
+        .from('siteforge_blueprint_versions')
+        .select('deployment_decision, confirmed_approval_id, content_hash')
+        .eq('id', input.artifactId)
+        .eq('website_id', input.websiteId)
+        .single(),
+    ])
   if (!job || job.cancel_requested || job.lifecycle_status === 'cancelled') {
-    throw new FatalError('SiteForge staging deployment is cancelled or unavailable')
+    throw new FatalError(
+      'SiteForge staging deployment is cancelled or unavailable'
+    )
   }
   const leaseOwner = `siteforge-staging:${input.sharedJobId}`
   if (job.lease_owner !== leaseOwner) {
@@ -188,7 +196,9 @@ export async function assertStagingDeploymentActive(
     website.canonical_preview_artifact_id !== input.artifactId ||
     website.canonical_preview_content_hash !== input.contentHash
   ) {
-    throw new FatalError('Staging deployment artifact changed after preview approval')
+    throw new FatalError(
+      'Staging deployment artifact changed after preview approval'
+    )
   }
   if (
     !artifact ||
@@ -206,7 +216,12 @@ export async function runSiteForgeStagingDeployment(
   'use step'
   const client = createServiceClient()
   await assertStagingNotCancelled(input, client)
-  await updateStage(input, 'preparing_staging', 5, 'Preparing linked Cloudways staging')
+  await updateStage(
+    input,
+    'preparing_staging',
+    5,
+    'Preparing linked Cloudways staging'
+  )
   const release = await loadVerifiedSiteForgeRelease(input, client)
   const runtimeV3 = release.artifact.runtimeContractVersion === 3
   const blueprint = asRecord(release.artifact.blueprint)
@@ -226,10 +241,6 @@ export async function runSiteForgeStagingDeployment(
     ? null
     : siteForgeAnalyticsConfigSchema.parse(blueprint.analytics)
   const propertySnapshot = asRecord(blueprint.propertySnapshot)
-  const brandSnapshot = asRecord(blueprint.brandSnapshot)
-  const brandContractResult = brandForgeContractV1Schema.safeParse(
-    brandSnapshot.contract,
-  )
   const fullPropertyContext =
     propertyContextFromOnboardingSnapshot(propertySnapshot)
   const snapshotProperty = asRecord(propertySnapshot.property)
@@ -284,7 +295,9 @@ export async function runSiteForgeStagingDeployment(
     !parentCredentials.providerMetadata ||
     !parentCredentials.ssh
   ) {
-    throw new FatalError('The linked WordPress target is not a Cloudways parent application')
+    throw new FatalError(
+      'The linked WordPress target is not a Cloudways parent application'
+    )
   }
   if (!process.env.CLOUDWAYS_API_KEY || !process.env.CLOUDWAYS_EMAIL) {
     throw new FatalError('Cloudways API credentials are required for staging')
@@ -298,12 +311,12 @@ export async function runSiteForgeStagingDeployment(
     .eq('target_type', 'staging')
     .eq('is_active', true)
     .single()
-  if (targetError || !target) throw new FatalError('Cloudways staging target not found')
+  if (targetError || !target)
+    throw new FatalError('Cloudways staging target not found')
 
-  let stagingCredentials =
-    target.credential_ref
-      ? await getWordPressCredentialReference(target.credential_ref)
-      : null
+  let stagingCredentials = target.credential_ref
+    ? await getWordPressCredentialReference(target.credential_ref)
+    : null
   let stagingApplicationId = target.provider_application_id
   let stagingUrl = target.site_url
   let stagingAdminUrl = target.admin_url
@@ -318,7 +331,12 @@ export async function runSiteForgeStagingDeployment(
 
   if (!stagingCredentials || !stagingApplicationId || !stagingUrl) {
     await assertStagingNotCancelled(input, client)
-    await updateStage(input, 'provisioning_staging', 20, 'Creating linked Cloudways staging application')
+    await updateStage(
+      input,
+      'provisioning_staging',
+      20,
+      'Creating linked Cloudways staging application'
+    )
     const cloudways = new CloudwaysProviderClient({
       apiKey: process.env.CLOUDWAYS_API_KEY,
       email: process.env.CLOUDWAYS_EMAIL,
@@ -392,7 +410,8 @@ export async function runSiteForgeStagingDeployment(
           provisioningCheckpoint: {
             operationId,
             applicationId: stagingApplicationId,
-            parentApplicationId: parentCredentials.providerMetadata.applicationId,
+            parentApplicationId:
+              parentCredentials.providerMetadata.applicationId,
             serverId: parentCredentials.providerMetadata.serverId,
             completedAt: new Date().toISOString(),
           },
@@ -414,10 +433,16 @@ export async function runSiteForgeStagingDeployment(
     throw new FatalError('Cloudways staging credentials are incomplete')
   }
 
-  await updateStage(input, 'deploying_staging', 45, 'Deploying exact release to Cloudways staging')
+  await updateStage(
+    input,
+    'deploying_staging',
+    45,
+    'Deploying exact release to Cloudways staging'
+  )
   await assertStagingNotCancelled(input, client)
   const acfProLicenseKey = process.env.SITEFORGE_ACF_PRO_LICENSE_KEY
-  if (!acfProLicenseKey) throw new FatalError('SITEFORGE_ACF_PRO_LICENSE_KEY is required')
+  if (!acfProLicenseKey)
+    throw new FatalError('SITEFORGE_ACF_PRO_LICENSE_KEY is required')
   const publicRuntime = await loadSiteForgePublicRuntimeConfig(
     input.websiteId,
     input.propertyId,
@@ -505,78 +530,33 @@ export async function runSiteForgeStagingDeployment(
     })
   }
 
-  await updateStage(input, 'certifying', 85, 'Certifying exact Cloudways staging render')
-  await assertStagingNotCancelled(input, client)
-  const floorPlanSnapshot = await loadApprovedFloorPlanSnapshot(
-    input.propertyId,
-    client
+  await updateStage(
+    input,
+    'verifying',
+    85,
+    'Verifying exact Cloudways staging artifact'
   )
-  const certification = await certifyRenderedWordPressArtifact({
+  await assertStagingNotCancelled(input, client)
+  const manifest = await new WordPressAPIClient(
+    instance.url,
+    instance.credentials
+  ).getContentManifest()
+  assertExactStagingManifest(input.contentHash, manifest.content_hash)
+  const integrityReport = {
+    policyVersion: 'siteforge-staging-integrity-v1',
+    passed: true,
     artifactId: input.artifactId,
     contentHash: input.contentHash,
-    artifactBinding: buildReleaseCertificationBinding(release),
-    targetUrl: instance.url,
-    credentials: instance.credentials,
-    pages,
-    environment: 'staging',
-    access: 'public',
-    requireIndexable: false,
-    brandContract: brandContractResult.success
-      ? brandContractResult.data
-      : undefined,
-    ...buildRenderedCertificationTruth(
-      propertySnapshot,
-      [
-        ...release.provenanceUrls,
-        ...floorPlanSnapshot.rows.flatMap((row) =>
-          row.imageUrl ? [row.imageUrl] : []
-        ),
-      ],
-      publicRuntime.conversionEndpoint,
-      release.runtimeAssets.map((asset) => asset.byteHash),
-    ),
-  })
-  const { error: evidenceError } = await client
-    .from('siteforge_certification_evidence')
-    .insert({
-      org_id: input.orgId,
-      property_id: input.propertyId,
-      website_id: input.websiteId,
-      artifact_id: input.artifactId,
-      policy_version: certification.policyVersion,
-      environment: 'staging',
-      status: certification.passed ? 'passed' : 'failed',
-      report: certification as unknown as Json,
-      evidence_manifest: {
-        targetUrl: instance.url,
-        bindingHash: certification.bindingHash,
-        evidenceHash: certification.evidenceHash,
-        browserEvidenceHash: hashSiteForgeContent(certification.browser),
-      },
-      binding_hash: certification.bindingHash,
-      evidence_hash: certification.evidenceHash,
-      report_hash: hashSiteForgeContent(certification),
-    })
-  if (evidenceError) {
-    throw new Error(
-      `Failed to persist staging certification evidence: ${evidenceError.message}`
-    )
-  }
-  if (!certification.passed) {
-    const blockers = certification.checks
-      .filter(check => !check.passed && check.severity === 'blocker')
-      .map(check => check.id)
-    throw new FatalError(`Cloudways staging certification failed: ${blockers.join(', ')}`)
+    remoteManifestHash: manifest.content_hash,
+    verifiedAt: new Date().toISOString(),
+    ...(runtimeEvidence ? { runtimeEvidence } : {}),
   }
 
   return completeStagingDeployment(input, {
     url: instance.url,
     adminUrl: instance.adminUrl,
     dashboardUrl: stagingDashboardUrl,
-    certification: {
-      ...asRecord(certification),
-      ...(runtimeEvidence ? { runtimeEvidence } : {}),
-    } as Json,
+    certification: integrityReport as Json,
     pages: pages.length,
     assets: release.assets.length,
   })
@@ -626,7 +606,8 @@ async function completeStagingDeployment(
       .update({
         editor_lifecycle_status: 'staging_ready',
         generation_status: 'complete',
-        current_step: 'Cloudways staging is ready; Push to Live remains in Cloudways',
+        current_step:
+          'Cloudways staging is ready; Push to Live remains in Cloudways',
         staging_target_id: input.targetId,
         staging_artifact_id: input.artifactId,
         staging_content_hash: input.contentHash,

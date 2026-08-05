@@ -4,14 +4,11 @@ import type { Json, TablesInsert } from '@/types/supabase'
 import { createServiceClient } from '@/utils/supabase/admin'
 
 export const AURORA_LIFECYCLE_DOMAIN = 'siteforge.aurora-lifecycle'
-export const AURORA_LIFECYCLE_CONFIRMATION =
-  'DELETE_OWNED_AURORA_RESOURCES'
+export const AURORA_LIFECYCLE_CONFIRMATION = 'DELETE_OWNED_AURORA_RESOURCES'
 
 export const postgresUuidSchema = z
   .string()
-  .regex(
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  )
+  .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
 const lifecycleIdentitySchema = z
   .object({
     ownerId: postgresUuidSchema,
@@ -23,9 +20,7 @@ const lifecycleIdentitySchema = z
   })
   .strict()
 
-export type AuroraLifecycleIdentity = z.infer<
-  typeof lifecycleIdentitySchema
->
+export type AuroraLifecycleIdentity = z.infer<typeof lifecycleIdentitySchema>
 export type AuroraLifecyclePhase = 'bootstrap' | 'mutation'
 
 type ServiceClient = ReturnType<typeof createServiceClient>
@@ -46,9 +41,7 @@ function fail(message: string, statusCode: number, code: string): never {
 }
 
 function controlSecret(): string {
-  if (
-    process.env.SITEFORGE_AURORA_LIFECYCLE_CONTROL_ENABLED !== 'true'
-  ) {
+  if (process.env.SITEFORGE_AURORA_LIFECYCLE_CONTROL_ENABLED !== 'true') {
     fail('Aurora lifecycle control is disabled', 404, 'control_disabled')
   }
   const secret = process.env.SITEFORGE_AURORA_LIFECYCLE_CONTROL_SECRET || ''
@@ -74,8 +67,8 @@ function safeSecretMatch(actual: string, expected: string): boolean {
 function sameInstant(left: string | null, right: string): boolean {
   return Boolean(
     left &&
-      Number.isFinite(Date.parse(left)) &&
-      Date.parse(left) === Date.parse(right)
+    Number.isFinite(Date.parse(left)) &&
+    Date.parse(left) === Date.parse(right)
   )
 }
 
@@ -99,7 +92,7 @@ function identityFromHeaders(request: Request): AuroraLifecycleIdentity | null {
       'x-p11-test-rollout-assignment-id'
     ),
   }
-  if (Object.values(values).every(value => value === null)) return null
+  if (Object.values(values).every((value) => value === null)) return null
   const parsed = lifecycleIdentitySchema.safeParse(values)
   if (!parsed.success) {
     fail(
@@ -150,7 +143,7 @@ export function assertNotAcaciaIdentity(input: {
     propertyName === 'acacia' ||
     propertyName.includes('acacia') ||
     urls.some(
-      value =>
+      (value) =>
         value.includes('/acacia') ||
         value.includes('/communities/acacia') ||
         value.includes('dividendhomes.com/acacia')
@@ -335,9 +328,7 @@ function leasePayload(
   prior: Json | null | undefined
 ): Json {
   const record =
-    prior && typeof prior === 'object' && !Array.isArray(prior)
-      ? prior
-      : {}
+    prior && typeof prior === 'object' && !Array.isArray(prior) ? prior : {}
   return {
     ...record,
     ownerId: identity.ownerId,
@@ -397,7 +388,7 @@ export async function acquireOrRenewAuroraLifecycleLease(
         subject_type: 'property_website',
         subject_id: identity.websiteId,
         lifecycle_status: 'running',
-        status_reason: 'exclusive_lifecycle_lease_active',
+        status_reason: 'aurora_run_tracking_active',
         dedupe_key: leaseDedupeKey(identity.websiteId),
         payload: leasePayload(identity, null),
         lease_owner: identity.ownerId,
@@ -409,12 +400,20 @@ export async function acquireOrRenewAuroraLifecycleLease(
       .select('*')
       .maybeSingle()
     if (created.error && created.error.code !== '23505') {
-      fail('Failed to acquire Aurora lifecycle lease', 500, 'lease_acquire_failed')
+      fail(
+        'Failed to acquire Aurora lifecycle lease',
+        500,
+        'lease_acquire_failed'
+      )
     }
     lease = created.data || (await loadLease(identity, client))
   }
   if (!lease) {
-    fail('Aurora lifecycle lease could not be reconciled', 409, 'lease_conflict')
+    fail(
+      'Aurora lifecycle lease could not be reconciled',
+      409,
+      'lease_conflict'
+    )
   }
   const active = isAuroraLeaseActive(lease.lease_expires_at)
   if (active && lease.lease_owner !== identity.ownerId) {
@@ -424,10 +423,7 @@ export async function acquireOrRenewAuroraLifecycleLease(
       'lease_owner_conflict'
     )
   }
-  if (
-    operation === 'renew' &&
-    lease.lease_owner !== identity.ownerId
-  ) {
+  if (operation === 'renew' && lease.lease_owner !== identity.ownerId) {
     fail(
       'Only the current owner can renew the Aurora lifecycle lease',
       409,
@@ -443,7 +439,7 @@ export async function acquireOrRenewAuroraLifecycleLease(
       .from('shared_jobs')
       .update({
         lifecycle_status: 'running',
-        status_reason: 'exclusive_lifecycle_lease_active',
+        status_reason: 'aurora_run_tracking_active',
         lease_owner: identity.ownerId,
         lease_expires_at: identity.expiresAt,
         heartbeat_at: now,
@@ -458,11 +454,7 @@ export async function acquireOrRenewAuroraLifecycleLease(
       : update.eq('updated_at', lease.updated_at)
     const updated = await update.select('*').maybeSingle()
     if (updated.error || !updated.data) {
-      fail(
-        'Aurora lifecycle lease changed concurrently',
-        409,
-        'lease_conflict'
-      )
+      fail('Aurora lifecycle lease changed concurrently', 409, 'lease_conflict')
     }
     lease = updated.data
   }
@@ -474,24 +466,24 @@ export async function acquireOrRenewAuroraLifecycleLease(
     .eq('action_type', actionType)
     .maybeSingle()
   const actionValues: TablesInsert<'shared_action_attempts'> = {
-      job_id: lease.id,
-      org_id: orgId,
-      property_id: identity.propertyId,
-      action_type: actionType,
-      lifecycle_status: 'succeeded',
-      proposal_decision_status: 'approved',
-      execution_status: 'executed',
-      requested_by: actorId,
-      request_payload: leasePayload(identity, null),
-      execution_payload: { leaseId: lease.id } as Json,
-      execution_result: {
-        acquired: true,
-        expiresAt: identity.expiresAt,
-      } as Json,
-      confidence_score: 1,
-      policy_reason: 'Explicit authenticated Aurora lifecycle control',
-      executed_at: now,
-    }
+    job_id: lease.id,
+    org_id: orgId,
+    property_id: identity.propertyId,
+    action_type: actionType,
+    lifecycle_status: 'succeeded',
+    proposal_decision_status: 'approved',
+    execution_status: 'executed',
+    requested_by: actorId,
+    request_payload: leasePayload(identity, null),
+    execution_payload: { leaseId: lease.id } as Json,
+    execution_result: {
+      acquired: true,
+      expiresAt: identity.expiresAt,
+    } as Json,
+    confidence_score: 1,
+    policy_reason: 'Explicit authenticated Aurora lifecycle control',
+    executed_at: now,
+  }
   const actionResult = existingAction
     ? await client
         .from('shared_action_attempts')
@@ -516,52 +508,6 @@ export async function assertActiveAuroraLifecycleLease(
 ): Promise<AuroraLifecycleIdentity | null> {
   const identity = identityFromHeaders(request)
   if (!identity) {
-    if (
-      process.env.SITEFORGE_AURORA_LIFECYCLE_CONTROL_ENABLED !== 'true'
-    ) {
-      return null
-    }
-    const service = client || createServiceClient()
-    if (expected?.websiteId || expected?.propertyId) {
-      let activeLeaseQuery = service
-        .from('shared_jobs')
-        .select('id, lease_expires_at')
-        .eq('domain', AURORA_LIFECYCLE_DOMAIN)
-        .eq('lifecycle_status', 'running')
-      if (expected.websiteId) {
-        activeLeaseQuery = activeLeaseQuery.eq(
-          'subject_id',
-          expected.websiteId
-        )
-      }
-      if (expected.propertyId) {
-        activeLeaseQuery = activeLeaseQuery.eq(
-          'property_id',
-          expected.propertyId
-        )
-      }
-      const { data: activeLeases, error } = await activeLeaseQuery
-      if (error) {
-        fail(
-          'Failed to inspect Aurora lifecycle ownership',
-          500,
-          'lease_lookup_failed'
-        )
-      }
-      if (
-        (activeLeases || []).some(
-          activeLease =>
-            activeLease.lease_expires_at &&
-            new Date(activeLease.lease_expires_at).getTime() > Date.now()
-        )
-      ) {
-        fail(
-          'An exclusive Aurora lifecycle lease blocks unowned mutation',
-          409,
-          'lease_owner_conflict'
-        )
-      }
-    }
     return null
   }
   const service = client || createServiceClient()
@@ -575,14 +521,22 @@ export async function assertActiveAuroraLifecycleLease(
       )
     }
   }
-  await loadExactAuroraIdentity(identity, service, requiredPhase === 'mutation' ? 'mutation' : 'bootstrap')
+  await loadExactAuroraIdentity(
+    identity,
+    service,
+    requiredPhase === 'mutation' ? 'mutation' : 'bootstrap'
+  )
   const lease = await loadLease(identity, service)
   if (
     !lease ||
     lease.lifecycle_status !== 'running' ||
     lease.lease_owner !== identity.ownerId
   ) {
-    fail('Aurora lifecycle lease is not owned by this run', 409, 'lease_not_owned')
+    fail(
+      'Aurora lifecycle lease is not owned by this run',
+      409,
+      'lease_not_owned'
+    )
   }
   if (
     !lease.lease_expires_at ||
@@ -592,7 +546,9 @@ export async function assertActiveAuroraLifecycleLease(
     fail('Aurora lifecycle lease has expired', 409, 'lease_expired')
   }
   const output =
-    lease.output && typeof lease.output === 'object' && !Array.isArray(lease.output)
+    lease.output &&
+    typeof lease.output === 'object' &&
+    !Array.isArray(lease.output)
       ? lease.output
       : {}
   const phase = output.phase === 'mutation' ? 'mutation' : 'bootstrap'
@@ -625,7 +581,9 @@ export async function transitionAuroraLifecycleToMutation(
     fail('Aurora lifecycle lease is not active', 409, 'lease_not_owned')
   }
   const output =
-    lease.output && typeof lease.output === 'object' && !Array.isArray(lease.output)
+    lease.output &&
+    typeof lease.output === 'object' &&
+    !Array.isArray(lease.output)
       ? lease.output
       : {}
   if (output.phase === 'mutation') return lease
@@ -668,27 +626,27 @@ export async function transitionAuroraLifecycleToMutation(
       ]),
   ])
   const rollback = artifacts?.find(
-    artifact => artifact.id === output.rollbackArtifactId
+    (artifact) => artifact.id === output.rollbackArtifactId
   )
   const start = artifacts?.find(
-    artifact => artifact.id === output.startArtifactId
+    (artifact) => artifact.id === output.startArtifactId
   )
   const staging = targets?.find(
-    target =>
+    (target) =>
       target.id === output.stagingTargetId && target.target_type === 'staging'
   )
   const production = targets?.find(
-    target =>
+    (target) =>
       target.id === output.productionTargetId &&
       target.target_type === 'production'
   )
   const stagingRollout = rollouts?.find(
-    rollout =>
+    (rollout) =>
       rollout.id === output.stagingRolloutId &&
       rollout.target_id === output.stagingTargetId
   )
   const productionRollout = rollouts?.find(
-    rollout =>
+    (rollout) =>
       rollout.id === output.productionRolloutId &&
       rollout.target_id === output.productionTargetId
   )
@@ -718,7 +676,7 @@ export async function transitionAuroraLifecycleToMutation(
     .from('shared_jobs')
     .update({
       output: { ...output, phase: 'mutation', mutationActivatedAt: now },
-      status_reason: 'exclusive_lifecycle_mutation_lease_active',
+      status_reason: 'aurora_mutation_tracking_active',
       updated_at: now,
     })
     .eq('id', lease.id)
@@ -726,11 +684,7 @@ export async function transitionAuroraLifecycleToMutation(
     .select('*')
     .maybeSingle()
   if (error || !data) {
-    fail(
-      'Aurora lifecycle phase changed concurrently',
-      409,
-      'lease_conflict'
-    )
+    fail('Aurora lifecycle phase changed concurrently', 409, 'lease_conflict')
   }
   return data
 }
@@ -751,7 +705,7 @@ export function assertAuroraMutationPrerequisites(
     'backupId',
     'backupVerifiedAt',
   ]
-  const missing = required.filter(key => !output[key])
+  const missing = required.filter((key) => !output[key])
   if (missing.length) {
     fail(
       `Aurora bootstrap prerequisites are incomplete: ${missing.join(', ')}`,
@@ -767,13 +721,17 @@ export async function releaseAuroraLifecycleLease(
 ): Promise<void> {
   const lease = await loadLease(identity, client)
   if (!lease || lease.lease_owner !== identity.ownerId) {
-    fail('Aurora lifecycle lease is not owned by this run', 409, 'lease_not_owned')
+    fail(
+      'Aurora lifecycle lease is not owned by this run',
+      409,
+      'lease_not_owned'
+    )
   }
   const { data, error } = await client
     .from('shared_jobs')
     .update({
       lifecycle_status: 'cancelled',
-      status_reason: 'exclusive_lifecycle_lease_released',
+      status_reason: 'aurora_run_tracking_released',
       lease_owner: null,
       lease_expires_at: null,
       finished_at: new Date().toISOString(),
@@ -809,7 +767,9 @@ export async function registerAuroraOwnedResource(
     )
   }
   const output =
-    lease.output && typeof lease.output === 'object' && !Array.isArray(lease.output)
+    lease.output &&
+    typeof lease.output === 'object' &&
+    !Array.isArray(lease.output)
       ? lease.output
       : {}
   const resources = Array.isArray(output.ownedResources)
@@ -817,14 +777,18 @@ export async function registerAuroraOwnedResource(
         (value): value is { kind: string; id: string } =>
           Boolean(
             value &&
-              typeof value === 'object' &&
-              !Array.isArray(value) &&
-              typeof value.kind === 'string' &&
-              typeof value.id === 'string'
+            typeof value === 'object' &&
+            !Array.isArray(value) &&
+            typeof value.kind === 'string' &&
+            typeof value.id === 'string'
           )
       )
     : []
-  if (!resources.some(item => item.kind === resource.kind && item.id === resource.id)) {
+  if (
+    !resources.some(
+      (item) => item.kind === resource.kind && item.id === resource.id
+    )
+  ) {
     resources.push(resource)
   }
   const { data, error } = await client
@@ -868,9 +832,9 @@ export function isAuroraOwnedMetadata(
 ): boolean {
   return Boolean(
     metadata &&
-      typeof metadata === 'object' &&
-      !Array.isArray(metadata) &&
-      metadata.lifecycleOwnerId === ownerId &&
-      metadata.lifecycleRunId === ownerId
+    typeof metadata === 'object' &&
+    !Array.isArray(metadata) &&
+    metadata.lifecycleOwnerId === ownerId &&
+    metadata.lifecycleRunId === ownerId
   )
 }

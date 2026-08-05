@@ -42,6 +42,7 @@ export interface SiteForgeProductionCertificationInput {
   contentHash: string
   productionUrl: string
   startedAt: string
+  evidenceOnly?: boolean
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -58,23 +59,31 @@ async function setStage(
 ) {
   const client = createServiceClient()
   const now = new Date().toISOString()
-  const [{ error: jobError }, { error: deploymentError }, { error: websiteError }] =
+  const { error: jobError } = await client
+    .from('shared_jobs')
+    .update({
+      lifecycle_status: 'running',
+      status_reason: stage,
+      stage,
+      progress,
+      current_step: currentStep,
+      heartbeat_at: now,
+      lease_expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
+      started_at: progress <= 5 ? now : undefined,
+      updated_at: now,
+    })
+    .eq('id', input.sharedJobId)
+    .eq('domain', 'siteforge.production-certification')
+  if (input.evidenceOnly) {
+    if (jobError) {
+      throw new Error(
+        `Failed to persist optional browser QA stage: ${jobError.message}`
+      )
+    }
+    return
+  }
+  const [{ error: deploymentError }, { error: websiteError }] =
     await Promise.all([
-      client
-        .from('shared_jobs')
-        .update({
-          lifecycle_status: 'running',
-          status_reason: stage,
-          stage,
-          progress,
-          current_step: currentStep,
-          heartbeat_at: now,
-          lease_expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
-          started_at: progress <= 5 ? now : undefined,
-          updated_at: now,
-        })
-        .eq('id', input.sharedJobId)
-        .eq('domain', 'siteforge.production-certification'),
       client
         .from('siteforge_artifact_deployments')
         .update({ status: 'production_certifying' })
@@ -156,35 +165,50 @@ export async function certifySiteForgeProduction(
   'use step'
   const client = createServiceClient()
   await assertProductionNotCancelled(input, client)
-  await setStage(input, 'verifying_promotion', 5, 'Verifying operator-promoted artifact')
-  const launchRelease = await getLaunchRelease(input.releaseId, input.propertyId, client)
+  await setStage(
+    input,
+    'verifying_promotion',
+    5,
+    'Verifying operator-promoted artifact'
+  )
+  const launchRelease = await getLaunchRelease(
+    input.releaseId,
+    input.propertyId,
+    client
+  )
   if (
-    launchRelease.state !== 'promoted' ||
+    (input.evidenceOnly
+      ? launchRelease.state !== 'live'
+      : launchRelease.state !== 'promoted') ||
     launchRelease.website_id !== input.websiteId ||
     launchRelease.artifact_id !== input.artifactId ||
     launchRelease.artifact_content_hash !== input.contentHash
   ) {
-    throw new FatalError('Production certification is not linked to the exact promoted launch release')
+    throw new FatalError(
+      'Production certification is not linked to the exact promoted launch release'
+    )
   }
 
-  const [{ data: website, error: websiteError }, { data: artifact, error: artifactError }] =
-    await Promise.all([
-      client
-        .from('property_websites')
-        .select(
-          'id, org_id, property_id, wordpress_credential_ref, target_domain, staging_artifact_id, staging_content_hash, current_artifact_version_id'
-        )
-        .eq('id', input.websiteId)
-        .eq('org_id', input.orgId)
-        .eq('property_id', input.propertyId)
-        .single(),
-      client
-        .from('siteforge_blueprint_versions')
-        .select('id, website_id, content_hash, blueprint')
-        .eq('id', input.artifactId)
-        .eq('website_id', input.websiteId)
-        .single(),
-    ])
+  const [
+    { data: website, error: websiteError },
+    { data: artifact, error: artifactError },
+  ] = await Promise.all([
+    client
+      .from('property_websites')
+      .select(
+        'id, org_id, property_id, wordpress_credential_ref, target_domain, staging_artifact_id, staging_content_hash, current_artifact_version_id, production_artifact_id, production_content_hash'
+      )
+      .eq('id', input.websiteId)
+      .eq('org_id', input.orgId)
+      .eq('property_id', input.propertyId)
+      .single(),
+    client
+      .from('siteforge_blueprint_versions')
+      .select('id, website_id, content_hash, blueprint')
+      .eq('id', input.artifactId)
+      .eq('website_id', input.websiteId)
+      .single(),
+  ])
   if (websiteError || !website || artifactError || !artifact) {
     throw new FatalError(
       `Production certification identity is unavailable: ${
@@ -192,13 +216,19 @@ export async function certifySiteForgeProduction(
       }`
     )
   }
+  const projectedIdentityMatches = input.evidenceOnly
+    ? website.production_artifact_id === input.artifactId &&
+      website.production_content_hash === input.contentHash
+    : website.current_artifact_version_id === input.artifactId &&
+      website.staging_artifact_id === input.artifactId &&
+      website.staging_content_hash === input.contentHash
   if (
-    website.current_artifact_version_id !== input.artifactId ||
-    website.staging_artifact_id !== input.artifactId ||
-    website.staging_content_hash !== input.contentHash ||
+    !projectedIdentityMatches ||
     artifact.content_hash !== input.contentHash
   ) {
-    throw new FatalError('Production promotion no longer matches the exact staged artifact')
+    throw new FatalError(
+      'Production promotion no longer matches the exact staged artifact'
+    )
   }
   if (!website.wordpress_credential_ref) {
     throw new FatalError('Production WordPress credentials are unavailable')
@@ -231,19 +261,23 @@ export async function certifySiteForgeProduction(
     ? null
     : siteForgeAnalyticsConfigSchema.parse(blueprint.analytics)
   const brandContractResult = brandForgeContractV1Schema.safeParse(
-    asRecord(blueprint.brandSnapshot).contract,
+    asRecord(blueprint.brandSnapshot).contract
   )
   const pages = normalizeLegacyPages(
     Array.isArray(blueprint.pages)
       ? (blueprint.pages as unknown as GeneratedPage[])
       : []
   )
-  if (!pages.length) throw new FatalError('Production artifact has no pages to certify')
+  if (!pages.length)
+    throw new FatalError('Production artifact has no pages to certify')
   const { data: assetRows, error: assetError } = await client
     .from('website_assets')
     .select('*')
     .eq('website_id', input.websiteId)
-  if (assetError) throw new Error(`Failed to load production asset manifest: ${assetError.message}`)
+  if (assetError)
+    throw new Error(
+      `Failed to load production asset manifest: ${assetError.message}`
+    )
   const floorPlanSnapshot = await loadApprovedFloorPlanSnapshot(
     input.propertyId,
     client
@@ -265,27 +299,126 @@ export async function certifySiteForgeProduction(
   const publicRuntime = await loadSiteForgePublicRuntimeConfig(
     input.websiteId,
     input.propertyId,
-    client,
+    client
   )
   const certificationTruth = buildRenderedCertificationTruth(
     blueprint.propertySnapshot,
     approvedImageUrls,
     publicRuntime.conversionEndpoint,
-    approvedImageDigests,
+    approvedImageDigests
   )
 
+  if (input.evidenceOnly) {
+    await setStage(
+      input,
+      'running_optional_browser_qa',
+      50,
+      'Running optional production browser QA'
+    )
+    await assertProductionNotCancelled(input, client)
+    const browserQa = await certifyRenderedWordPressArtifact({
+      artifactId: input.artifactId,
+      contentHash: input.contentHash,
+      artifactBinding: buildReleaseCertificationBinding(release),
+      targetUrl: input.productionUrl,
+      credentials: {
+        username: credentials.username,
+        password: credentials.password,
+      },
+      pages,
+      environment: 'production',
+      access: 'public',
+      requireIndexable: true,
+      brandContract: brandContractResult.success
+        ? brandContractResult.data
+        : undefined,
+      ...certificationTruth,
+    })
+    const { error: evidenceError } = await client
+      .from('siteforge_certification_evidence')
+      .insert({
+        org_id: input.orgId,
+        property_id: input.propertyId,
+        website_id: input.websiteId,
+        artifact_id: input.artifactId,
+        release_id: input.releaseId,
+        policy_version: browserQa.policyVersion,
+        environment: 'production',
+        status: browserQa.passed ? 'passed' : 'failed',
+        report: browserQa as unknown as Json,
+        evidence_manifest: {
+          phase: 'optional_public_qa',
+          targetUrl: input.productionUrl,
+          bindingHash: browserQa.bindingHash,
+          evidenceHash: browserQa.evidenceHash,
+          browserEvidenceHash: hashSiteForgeContent(browserQa.browser),
+        },
+        binding_hash: browserQa.bindingHash,
+        evidence_hash: browserQa.evidenceHash,
+        report_hash: hashSiteForgeContent(browserQa),
+      })
+    if (evidenceError) {
+      throw new Error(
+        `Failed to persist optional production browser QA: ${evidenceError.message}`
+      )
+    }
+    const finishedAt = new Date().toISOString()
+    const { error: jobError } = await client
+      .from('shared_jobs')
+      .update({
+        lifecycle_status: 'succeeded',
+        status_reason: browserQa.passed
+          ? 'optional_browser_qa_passed'
+          : 'optional_browser_qa_completed_with_warnings',
+        stage: 'optional_browser_qa_complete',
+        progress: 100,
+        current_step: browserQa.passed
+          ? 'Optional browser QA passed'
+          : 'Optional browser QA completed with non-blocking warnings',
+        output: {
+          artifactId: input.artifactId,
+          contentHash: input.contentHash,
+          browserQaPassed: browserQa.passed,
+          reportHash: hashSiteForgeContent(browserQa),
+        } as Json,
+        heartbeat_at: finishedAt,
+        lease_owner: null,
+        lease_expires_at: null,
+        finished_at: finishedAt,
+        updated_at: finishedAt,
+      })
+      .eq('id', input.sharedJobId)
+      .eq('domain', 'siteforge.production-certification')
+    if (jobError) {
+      throw new Error(
+        `Failed to complete optional production browser QA: ${jobError.message}`
+      )
+    }
+    return browserQa
+  }
+
   if (website.target_domain) {
-    await setStage(input, 'attaching_domain', 20, 'Attaching and verifying production DNS')
+    await setStage(
+      input,
+      'attaching_domain',
+      20,
+      'Attaching and verifying production DNS'
+    )
     if (
       credentials.provider !== 'cloudways' ||
       !credentials.providerMetadata ||
       !process.env.CLOUDWAYS_API_KEY ||
       !process.env.CLOUDWAYS_EMAIL
     ) {
-      throw new FatalError('Cloudways metadata is required to attach the production domain')
+      throw new FatalError(
+        'Cloudways metadata is required to attach the production domain'
+      )
     }
     const dns = getConfiguredDnsProvider()
-    if (!dns) throw new FatalError('A DNS provider is required for production activation')
+    if (!dns)
+      throw new FatalError(
+        'A DNS provider is required for production activation'
+      )
     const dnsRecord = await dns.upsertAddressRecord({
       hostname: website.target_domain,
       address: credentials.providerMetadata.publicIp,
@@ -308,7 +441,10 @@ export async function certifySiteForgeProduction(
         updated_at: new Date().toISOString(),
       })
       .eq('id', input.websiteId)
-    if (error) throw new Error(`Failed to persist production DNS state: ${error.message}`)
+    if (error)
+      throw new Error(
+        `Failed to persist production DNS state: ${error.message}`
+      )
   }
 
   const wp = runtimeV3
@@ -325,7 +461,12 @@ export async function certifySiteForgeProduction(
     })
   }
 
-  await setStage(input, 'certifying_exact_artifact', 50, 'Certifying exact production render')
+  await setStage(
+    input,
+    'certifying_exact_artifact',
+    50,
+    'Certifying exact production render'
+  )
   await assertProductionNotCancelled(input, client)
   const protectedCertification = await certifyRenderedWordPressArtifact({
     artifactId: input.artifactId,
@@ -376,10 +517,17 @@ export async function certifySiteForgeProduction(
     )
   }
   if (!protectedCertification.passed) {
-    throw new FatalError('Production render does not match the approved artifact')
+    throw new FatalError(
+      'Production render does not match the approved artifact'
+    )
   }
 
-  await setStage(input, 'activating_indexing', 75, 'Clearing production noindex protection')
+  await setStage(
+    input,
+    'activating_indexing',
+    75,
+    'Clearing production noindex protection'
+  )
   await assertProductionNotCancelled(input, client)
   let runtimeEvidence: Json | null = null
   if (runtimeV3) {
@@ -465,7 +613,9 @@ export async function certifySiteForgeProduction(
       )
     }
     if (!certification.passed) {
-      throw new FatalError('Production activation failed indexability certification')
+      throw new FatalError(
+        'Production activation failed indexability certification'
+      )
     }
   } catch (cause) {
     if (runtimeV3) {
@@ -578,7 +728,9 @@ export async function certifySiteForgeProduction(
     websiteCompleteError ||
     jobCompleteError
   if (completionError) {
-    throw new Error(`Failed to persist production truth: ${completionError.message}`)
+    throw new Error(
+      `Failed to persist production truth: ${completionError.message}`
+    )
   }
 
   const { data: checkpointedRelease, error: releaseError } = await client
@@ -593,7 +745,9 @@ export async function certifySiteForgeProduction(
     .select('*')
     .single()
   if (releaseError || !checkpointedRelease) {
-    throw new Error('Production succeeded but launch certification could not be checkpointed')
+    throw new Error(
+      'Production succeeded but launch certification could not be checkpointed'
+    )
   }
   const productionCertified = await transitionLaunchRelease(
     checkpointedRelease,
@@ -637,6 +791,25 @@ export async function failSiteForgeProductionCertification(
   'use step'
   const client = createServiceClient()
   const now = new Date().toISOString()
+  if (input.evidenceOnly) {
+    await client
+      .from('shared_jobs')
+      .update({
+        lifecycle_status: 'failed',
+        status_reason: 'optional_browser_qa_failed',
+        stage: 'failed',
+        current_step: 'Optional browser QA could not complete',
+        error_message: message,
+        error_details: { message } as Json,
+        lease_owner: null,
+        lease_expires_at: null,
+        finished_at: now,
+        updated_at: now,
+      })
+      .eq('id', input.sharedJobId)
+      .neq('lifecycle_status', 'cancelled')
+    return
+  }
   await Promise.all([
     client
       .from('shared_jobs')
@@ -665,7 +838,8 @@ export async function failSiteForgeProductionCertification(
       .from('property_websites')
       .update({
         editor_lifecycle_status: 'staging_ready',
-        current_step: 'Production certification failed; production remains protected',
+        current_step:
+          'Production certification failed; production remains protected',
         error_message: message,
         updated_at: now,
       })
@@ -684,9 +858,15 @@ export async function failSiteForgeProductionCertification(
       client
     )
   } catch (restoreError) {
-    console.error('[siteforge_production_certification] restore request failed', {
-      releaseId: input.releaseId,
-      error: restoreError instanceof Error ? restoreError.message : String(restoreError),
-    })
+    console.error(
+      '[siteforge_production_certification] restore request failed',
+      {
+        releaseId: input.releaseId,
+        error:
+          restoreError instanceof Error
+            ? restoreError.message
+            : String(restoreError),
+      }
+    )
   }
 }

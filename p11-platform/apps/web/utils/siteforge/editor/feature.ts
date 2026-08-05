@@ -8,19 +8,6 @@ export function isSiteForgeRuntimeExtensionsEnabled(
   return value?.trim().toLowerCase() === 'true'
 }
 
-export function isTrustedCertificationRequired(
-  value = process.env.SITEFORGE_REQUIRE_TRUSTED_CERTIFICATION
-): boolean {
-  return value?.trim().toLowerCase() === 'true'
-}
-
-export function shouldBlockUncertifiedPreview(
-  certificationPassed: boolean,
-  value = process.env.SITEFORGE_REQUIRE_TRUSTED_CERTIFICATION
-): boolean {
-  return !certificationPassed && isTrustedCertificationRequired(value)
-}
-
 export function isCloudwaysThemeInstallationConfigured(input: {
   apiKey?: string
   email?: string

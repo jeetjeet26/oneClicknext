@@ -1,7 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import {
-  loadDeployableArtifact,
-} from './approval'
+import { loadDeployableArtifact } from './approval'
 
 function query(result: unknown) {
   const chain: Record<string, unknown> = {}
@@ -13,7 +11,7 @@ function query(result: unknown) {
   return chain
 }
 
-describe('SiteForge artifact approval certification gate', () => {
+describe('SiteForge artifact approval gate', () => {
   const artifact = {
     id: '11111111-1111-4111-8111-111111111111',
     website_id: '22222222-2222-4222-8222-222222222222',
@@ -33,7 +31,7 @@ describe('SiteForge artifact approval certification gate', () => {
     canonical_preview_url: 'https://preview.example.com',
   }
 
-  it('rejects approval when the exact preview has no passed certification', async () => {
+  it('allows human approval when optional browser QA has not run', async () => {
     const client = {
       from: vi.fn((table: string) => {
         if (table === 'siteforge_blueprint_versions') {
@@ -51,8 +49,10 @@ describe('SiteForge artifact approval certification gate', () => {
 
     await expect(
       loadDeployableArtifact(artifact.id, artifact.property_id, client as never)
-    ).rejects.toMatchObject({
-      statusCode: 409,
+    ).resolves.toMatchObject({
+      artifact,
+      website,
+      certification: null,
     })
   })
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  assertPromotedManifestIdentity,
   signManualPromotionToken,
   verifyManualPromotionToken,
 } from './service'
@@ -48,5 +49,16 @@ describe('SiteForge manual promotion tokens', () => {
     expect(() => verifyManualPromotionToken(token, identity, secret)).toThrow(
       'expired'
     )
+  })
+})
+
+describe('SiteForge promoted manifest verification', () => {
+  it('accepts only the exact approved artifact hash', () => {
+    expect(() =>
+      assertPromotedManifestIdentity(identity.contentHash, identity.contentHash)
+    ).not.toThrow()
+    expect(() =>
+      assertPromotedManifestIdentity(identity.contentHash, 'b'.repeat(64))
+    ).toThrow('Promoted WordPress manifest does not match')
   })
 })

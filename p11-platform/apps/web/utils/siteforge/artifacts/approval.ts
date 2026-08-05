@@ -28,7 +28,10 @@ export async function loadDeployableArtifact(
     .eq('property_id', propertyId)
     .single()
   if (error || !artifact) {
-    throw new SiteForgeArtifactApprovalError('SiteForge artifact not found', 404)
+    throw new SiteForgeArtifactApprovalError(
+      'SiteForge artifact not found',
+      404
+    )
   }
 
   const deterministic =
@@ -71,7 +74,7 @@ export async function loadDeployableArtifact(
       409
     )
   }
-  const { data: certification, error: certificationError } = await supabase
+  const { data: certificationRow } = await supabase
     .from('siteforge_certification_evidence')
     .select('id, policy_version, status, report_hash, report, created_at')
     .eq('org_id', artifact.org_id)
@@ -84,24 +87,18 @@ export async function loadDeployableArtifact(
     .limit(1)
     .maybeSingle()
   const report =
-    certification?.report &&
-    typeof certification.report === 'object' &&
-    !Array.isArray(certification.report)
-      ? certification.report
+    certificationRow?.report &&
+    typeof certificationRow.report === 'object' &&
+    !Array.isArray(certificationRow.report)
+      ? certificationRow.report
       : null
-  if (
-    certificationError ||
-    !certification ||
+  const certification =
     !report ||
     report.passed !== true ||
     report.artifactId !== artifact.id ||
     report.contentHash !== artifact.content_hash
-  ) {
-    throw new SiteForgeArtifactApprovalError(
-      'This exact canonical preview must pass persisted browser certification before approval',
-      409
-    )
-  }
+      ? null
+      : certificationRow
   return { artifact, website, certification }
 }
 
@@ -139,16 +136,24 @@ async function ensureDeployProposal(
       contentHash: current.artifact.content_hash,
       canonicalPreviewUrl: current.website.canonical_preview_url,
       qualityReport: current.artifact.quality_report,
-      previewCertificationId: current.certification.id,
-      previewCertificationReportHash: current.certification.report_hash,
+      ...(current.certification
+        ? {
+            previewCertificationId: current.certification.id,
+            previewCertificationReportHash: current.certification.report_hash,
+          }
+        : {}),
     },
     action: {
       actionType: 'siteforge.artifact:deploy_staging',
       requestPayload: {
         artifactId,
         contentHash: current.artifact.content_hash,
-        previewCertificationId: current.certification.id,
-        previewCertificationReportHash: current.certification.report_hash,
+        ...(current.certification
+          ? {
+              previewCertificationId: current.certification.id,
+              previewCertificationReportHash: current.certification.report_hash,
+            }
+          : {}),
       },
       executionPayload: {
         websiteId: current.artifact.website_id,
@@ -218,8 +223,12 @@ export async function decideSiteForgeArtifactDeployment(
         artifactId: input.artifactId,
         contentHash: input.contentHash,
         canonicalPreviewUrl: current.website.canonical_preview_url,
-        previewCertificationId: current.certification.id,
-        previewCertificationReportHash: current.certification.report_hash,
+        ...(current.certification
+          ? {
+              previewCertificationId: current.certification.id,
+              previewCertificationReportHash: current.certification.report_hash,
+            }
+          : {}),
       },
       policyDecision: {
         policyName: 'siteforge-artifact-deployment',
@@ -229,8 +238,13 @@ export async function decideSiteForgeArtifactDeployment(
           qualityReport: current.artifact.quality_report,
           canonicalPreviewArtifactId:
             current.website.canonical_preview_artifact_id,
-          previewCertificationId: current.certification.id,
-          previewCertificationReportHash: current.certification.report_hash,
+          ...(current.certification
+            ? {
+                previewCertificationId: current.certification.id,
+                previewCertificationReportHash:
+                  current.certification.report_hash,
+              }
+            : {}),
         },
       },
     },
@@ -244,11 +258,8 @@ export async function decideSiteForgeArtifactDeployment(
       deployment_decision: input.decisionStatus,
       decision_reason: input.decisionReason,
       deployment_approved_by:
-        input.decisionStatus === 'approved'
-          ? input.reviewerProfileId
-          : null,
-      deployment_approved_at:
-        input.decisionStatus === 'approved' ? now : null,
+        input.decisionStatus === 'approved' ? input.reviewerProfileId : null,
+      deployment_approved_at: input.decisionStatus === 'approved' ? now : null,
     })
     .eq('id', input.artifactId)
     .eq('content_hash', input.contentHash)

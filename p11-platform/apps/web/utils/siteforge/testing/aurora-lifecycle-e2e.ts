@@ -27,33 +27,24 @@ export const AURORA_LIFECYCLE_REQUIRED_ENV = [
   'SITEFORGE_RUNTIME_V3_ENABLED',
   'SITEFORGE_SEMANTIC_EDITOR_ENABLED',
   'SITEFORGE_RUNTIME_EXTENSIONS_ENABLED',
-  'SITEFORGE_REQUIRE_TRUSTED_CERTIFICATION',
   'SITEFORGE_RUNTIME_V3_PUBLIC_KEYS',
   'SITEFORGE_OVERLAY_SIGNING_SECRET',
   'SITEFORGE_PROMOTION_TOKEN_SECRET',
-  'SITEFORGE_BROWSER_CERTIFIER_URL',
-  'SITEFORGE_BROWSER_CERTIFIER_SECRET',
-  'SITEFORGE_LIGHTHOUSE_PROVIDER_URL',
-  'SITEFORGE_LIGHTHOUSE_PROVIDER_SECRET',
   'SITEFORGE_ACF_PRO_LICENSE_KEY',
   'SITEFORGE_PREVIEW_WP_URL',
   'SITEFORGE_PREVIEW_WP_USERNAME',
   'SITEFORGE_PREVIEW_WP_APP_PASSWORD',
-  'BROWSERBASE_API_KEY',
-  'BROWSERBASE_PROJECT_ID',
   'CLOUDWAYS_API_KEY',
   'CLOUDWAYS_EMAIL',
 ] as const
 
-const UUID =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const SHA256 = /^[a-f0-9]{64}$/i
 const TRUE_FLAGS = [
   'SITEFORGE_AURORA_LIFECYCLE_CONTROL_ENABLED',
   'SITEFORGE_RUNTIME_V3_ENABLED',
   'SITEFORGE_SEMANTIC_EDITOR_ENABLED',
   'SITEFORGE_RUNTIME_EXTENSIONS_ENABLED',
-  'SITEFORGE_REQUIRE_TRUSTED_CERTIFICATION',
 ] as const
 export const AURORA_LIFECYCLE_CONTROL_PATHS = {
   lease: '/api/test-only/siteforge/aurora-lifecycle/lease',
@@ -122,11 +113,14 @@ function value(env: Environment, key: string): string {
 function parseExpectedUrls(raw: string): string[] {
   const parsed = raw.startsWith('[')
     ? (JSON.parse(raw) as unknown)
-    : raw.split(',').map(item => item.trim()).filter(Boolean)
+    : raw
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean)
   if (
     !Array.isArray(parsed) ||
     parsed.length === 0 ||
-    parsed.some(item => typeof item !== 'string')
+    parsed.some((item) => typeof item !== 'string')
   ) {
     throw new Error('expected a non-empty URL array')
   }
@@ -137,8 +131,11 @@ export function inspectAuroraLifecycleEnv(
   env: Environment,
   now = new Date()
 ): AuroraPreflight {
-  const missing = AURORA_LIFECYCLE_REQUIRED_ENV.filter(key => !value(env, key))
-  if (missing.length) return { ready: false, missing: [...missing], invalid: [] }
+  const missing = AURORA_LIFECYCLE_REQUIRED_ENV.filter(
+    (key) => !value(env, key)
+  )
+  if (missing.length)
+    return { ready: false, missing: [...missing], invalid: [] }
 
   const invalid: string[] = []
   for (const key of UUID_FIELDS) {
@@ -155,7 +152,10 @@ export function inspectAuroraLifecycleEnv(
   if (value(env, 'AURORA_LIFECYCLE_E2E') !== '1') {
     invalid.push('AURORA_LIFECYCLE_E2E (must equal 1)')
   }
-  if (value(env, 'AURORA_LIFECYCLE_CLEANUP_CONFIRM') !== 'DELETE_OWNED_AURORA_RESOURCES') {
+  if (
+    value(env, 'AURORA_LIFECYCLE_CLEANUP_CONFIRM') !==
+    'DELETE_OWNED_AURORA_RESOURCES'
+  ) {
     invalid.push(
       'AURORA_LIFECYCLE_CLEANUP_CONFIRM (must equal DELETE_OWNED_AURORA_RESOURCES)'
     )
@@ -174,8 +174,14 @@ export function inspectAuroraLifecycleEnv(
   }
   const expiresAt = new Date(value(env, 'AURORA_LIFECYCLE_EXPIRES_AT'))
   const ttl = expiresAt.getTime() - now.getTime()
-  if (!Number.isFinite(expiresAt.getTime()) || ttl <= 0 || ttl > 24 * 60 * 60_000) {
-    invalid.push('AURORA_LIFECYCLE_EXPIRES_AT (must be within the next 24 hours)')
+  if (
+    !Number.isFinite(expiresAt.getTime()) ||
+    ttl <= 0 ||
+    ttl > 24 * 60 * 60_000
+  ) {
+    invalid.push(
+      'AURORA_LIFECYCLE_EXPIRES_AT (must be within the next 24 hours)'
+    )
   }
 
   if (value(env, 'SITEFORGE_AURORA_LIFECYCLE_CONTROL_SECRET').length < 32) {
@@ -196,11 +202,9 @@ export function inspectAuroraLifecycleEnv(
       targetIdentity.includes('acacia') ||
       targetIdentity.includes('dividendhomes.com/acacia')
     ) {
-      invalid.push(
-        'AURORA_LIFECYCLE_TARGET_URL (must not identify Acacia)'
-      )
+      invalid.push('AURORA_LIFECYCLE_TARGET_URL (must not identify Acacia)')
     }
-    if (expectedUrls.some(url => new URL(url).origin !== targetOrigin)) {
+    if (expectedUrls.some((url) => new URL(url).origin !== targetOrigin)) {
       invalid.push(
         'AURORA_LIFECYCLE_EXPECTED_URLS (all URLs must share target origin)'
       )
@@ -218,10 +222,7 @@ export function inspectAuroraLifecycleEnv(
       propertyId: value(env, 'AURORA_LIFECYCLE_PROPERTY_ID'),
       websiteId: value(env, 'AURORA_LIFECYCLE_WEBSITE_ID'),
       targetId: value(env, 'AURORA_LIFECYCLE_TARGET_ID'),
-      rolloutAssignmentId: value(
-        env,
-        'AURORA_LIFECYCLE_ROLLOUT_ASSIGNMENT_ID'
-      ),
+      rolloutAssignmentId: value(env, 'AURORA_LIFECYCLE_ROLLOUT_ASSIGNMENT_ID'),
       startArtifactId: '',
       startContentHash: '',
       rollbackArtifactId: '',
@@ -257,8 +258,7 @@ export function inspectAuroraLifecycleEnv(
       leaseUrl: AURORA_LIFECYCLE_CONTROL_PATHS.lease,
       importUrl: AURORA_LIFECYCLE_CONTROL_PATHS.import,
       resourcesUrl: AURORA_LIFECYCLE_CONTROL_PATHS.resources,
-      providerOperationsUrl:
-        AURORA_LIFECYCLE_CONTROL_PATHS.providerOperations,
+      providerOperationsUrl: AURORA_LIFECYCLE_CONTROL_PATHS.providerOperations,
       cleanupUrl: AURORA_LIFECYCLE_CONTROL_PATHS.cleanup,
       targetUrl: value(env, 'AURORA_LIFECYCLE_TARGET_URL'),
       expectedUrls,
@@ -273,14 +273,8 @@ export function inspectAuroraLifecycleEnv(
         env,
         'AURORA_LIFECYCLE_STAGING_APPLICATION_ID'
       ),
-      stagingOperationId: value(
-        env,
-        'AURORA_LIFECYCLE_STAGING_OPERATION_ID'
-      ),
-      controlSecret: value(
-        env,
-        'SITEFORGE_AURORA_LIFECYCLE_CONTROL_SECRET'
-      ),
+      stagingOperationId: value(env, 'AURORA_LIFECYCLE_STAGING_OPERATION_ID'),
+      controlSecret: value(env, 'SITEFORGE_AURORA_LIFECYCLE_CONTROL_SECRET'),
     },
   }
 }
@@ -297,7 +291,9 @@ export function auroraMutationHeaders(config: AuroraLifecycleConfig) {
   }
 }
 
-export function formatAuroraPreflightFailure(preflight: AuroraPreflight): string {
+export function formatAuroraPreflightFailure(
+  preflight: AuroraPreflight
+): string {
   if (preflight.ready) return ''
   const parts = []
   if (preflight.missing.length) {

@@ -1,18 +1,14 @@
 import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
-import { normalizeLegacyPages } from '@/utils/siteforge/blueprint'
-import { loadVerifiedSiteForgeRelease } from '@/utils/siteforge/artifacts/release'
-import { buildReleaseCertificationBinding } from '@/utils/siteforge/verification/certification-binding'
-import { certifyRenderedWordPressArtifact } from '@/utils/siteforge/verification/rendered-certification'
 import { WordPressAPIClient } from '@/utils/siteforge/wordpress-client'
 import { getWordPressCredentialReference } from '@/utils/siteforge/wordpress/credential-vault'
 import { storeWordPressCredentialReference } from '@/utils/siteforge/wordpress/credential-vault'
 import {
   CloudwaysProviderClient,
+  assertStagingApplicationParent,
   parseCloudwaysApplicationHostname,
 } from '@/utils/siteforge/providers/cloudways-provider'
 import type { Database, Json } from '@/types/supabase'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { GeneratedPage } from '@/types/siteforge'
 import {
   AURORA_LIFECYCLE_DOMAIN,
   AuroraLifecycleControlError,
@@ -21,15 +17,18 @@ import {
 
 type Client = SupabaseClient<Database>
 
-function record(value: Json | null | undefined): Record<string, Json | undefined> {
+function record(
+  value: Json | null | undefined
+): Record<string, Json | undefined> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, Json | undefined>)
     : {}
 }
 
-async function previewCredentials(
-  target: { credential_ref: string | null; site_url: string | null }
-) {
+async function previewCredentials(target: {
+  credential_ref: string | null
+  site_url: string | null
+}) {
   if (!target.site_url) {
     throw new AuroraLifecycleControlError(
       'Exact Aurora preview URL is missing',
@@ -106,22 +105,35 @@ export async function bootstrapAuroraArtifacts(input: {
         'bootstrap_identity_conflict'
       )
     }
-    const { error } = await client
-      .from('property_websites')
-      .update({
-        current_artifact_version_id: prior.startArtifactId,
-        current_step: 'Aurora bootstrap artifacts verified',
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', identity.websiteId)
-      .eq('property_id', identity.propertyId)
-    if (error) throw new Error('Failed to reconcile Aurora start artifact')
-    return {
-      rollbackArtifactId: prior.rollbackArtifactId,
-      rollbackContentHash: prior.rollbackContentHash,
-      startArtifactId: prior.startArtifactId,
-      startContentHash: prior.startContentHash,
-      idempotent: true,
+    const artifactIds = [prior.rollbackArtifactId, prior.startArtifactId]
+    const { data: priorArtifacts, error: priorArtifactsError } = await client
+      .from('siteforge_blueprint_versions')
+      .select('id')
+      .in('id', artifactIds)
+    if (priorArtifactsError) {
+      throw new Error('Failed to verify prior Aurora bootstrap artifacts')
+    }
+    const existingArtifactIds = new Set(
+      (priorArtifacts || []).map((artifact) => artifact.id)
+    )
+    if (artifactIds.every((artifactId) => existingArtifactIds.has(artifactId))) {
+      const { error } = await client
+        .from('property_websites')
+        .update({
+          current_artifact_version_id: prior.startArtifactId,
+          current_step: 'Aurora bootstrap artifacts verified',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', identity.websiteId)
+        .eq('property_id', identity.propertyId)
+      if (error) throw new Error('Failed to reconcile Aurora start artifact')
+      return {
+        rollbackArtifactId: prior.rollbackArtifactId,
+        rollbackContentHash: prior.rollbackContentHash,
+        startArtifactId: prior.startArtifactId,
+        startContentHash: prior.startContentHash,
+        idempotent: true,
+      }
     }
   }
 
@@ -217,7 +229,8 @@ export async function bootstrapAuroraArtifacts(input: {
     !source.asset_manifest_hash ||
     !source.operation_set_hash ||
     hashSiteForgeContent(source.blueprint) !== source.content_hash ||
-    hashSiteForgeContent(source.asset_manifest) !== source.asset_manifest_hash ||
+    hashSiteForgeContent(source.asset_manifest) !==
+      source.asset_manifest_hash ||
     hashSiteForgeContent(source.operation_set) !== source.operation_set_hash
   ) {
     throw new AuroraLifecycleControlError(
@@ -240,52 +253,14 @@ export async function bootstrapAuroraArtifacts(input: {
       'remote_baseline_mismatch'
     )
   }
-  const release = await loadVerifiedSiteForgeRelease(
-    {
-      artifactId: source.id,
-      websiteId: identity.websiteId,
-      propertyId: identity.propertyId,
-      orgId: source.org_id,
-      contentHash: source.content_hash,
-    },
-    client
-  )
-  const blueprint = record(source.blueprint)
-  const pages = normalizeLegacyPages(
-    Array.isArray(blueprint.pages)
-      ? (blueprint.pages as unknown as GeneratedPage[])
-      : []
-  )
-  if (!pages.length) {
-    throw new AuroraLifecycleControlError(
-      'Aurora rollback source has no certifiable pages',
-      409,
-      'rollback_source_unverified'
-    )
-  }
-  const certification = await certifyRenderedWordPressArtifact({
+  const verification = {
+    policyVersion: 'siteforge-remote-manifest-v1',
+    passed: true,
     artifactId: source.id,
     contentHash: source.content_hash,
-    artifactBinding: buildReleaseCertificationBinding(release),
     targetUrl: target.site_url!,
-    credentials: {
-      username: credentials.username,
-      password: credentials.password,
-    },
-    pages,
-    environment: 'protected_preview',
-    access: 'protected',
-    requireIndexable: false,
-  })
-  if (!certification.passed) {
-    const failedChecks = certification.checks
-      .filter(check => !check.passed)
-      .map(check => ({ id: check.id, evidence: check.evidence }))
-    throw new AuroraLifecycleControlError(
-      `Protected Aurora rollback certification failed: ${JSON.stringify(failedChecks)}`,
-      409,
-      'rollback_certification_failed'
-    )
+    remoteManifestHash: manifest.content_hash,
+    verifiedAt: new Date().toISOString(),
   }
 
   const now = new Date().toISOString()
@@ -312,7 +287,7 @@ export async function bootstrapAuroraArtifacts(input: {
         shared_job_id: lease.id,
         status: 'live',
         remote_manifest_hash: source.content_hash,
-        certification_report: certification as unknown as Json,
+        certification_report: verification as unknown as Json,
         deployed_url: target.site_url,
         deployed_at: now,
         certified_at: now,
@@ -325,7 +300,7 @@ export async function bootstrapAuroraArtifacts(input: {
       .select('id')
       .single()
     if (deploymentError || !deployment) {
-      throw new Error('Failed to persist Aurora rollback certification')
+      throw new Error('Failed to persist Aurora rollback verification')
     }
     deploymentId = deployment.id
   }
@@ -333,7 +308,7 @@ export async function bootstrapAuroraArtifacts(input: {
     client
       .from('siteforge_blueprint_versions')
       .update({
-        remote_verification_report: certification as unknown as Json,
+        remote_verification_report: verification as unknown as Json,
         remote_verified_url: target.site_url,
         remote_verified_at: now,
       })
@@ -384,9 +359,10 @@ export async function bootstrapAuroraArtifacts(input: {
         blueprint_schema_version: 1,
         content_hash: source.content_hash,
         parent_version_id: source.id,
-        change_type: 'runtime_upgrade',
+        change_type: 'import',
         changes_summary: 'Derived immutable Aurora runtime v3 start artifact',
-        edit_intent: 'Bind certified rollback content to published runtime v3 without WordPress mutation',
+        edit_intent:
+          'Bind certified rollback content to published runtime v3 without WordPress mutation',
         patches_applied: {
           lifecycleOwnerId: identity.ownerId,
           sourceArtifactId: source.id,
@@ -411,7 +387,11 @@ export async function bootstrapAuroraArtifacts(input: {
       .select('id, content_hash')
       .single()
     if (createError || !created) {
-      throw new Error('Failed to derive immutable Aurora runtime v3 start artifact')
+      throw new Error(
+        `Failed to derive immutable Aurora runtime v3 start artifact: ${
+          createError?.message || 'missing row'
+        }`
+      )
     }
     startArtifact = created
   }
@@ -426,44 +406,46 @@ export async function bootstrapAuroraArtifacts(input: {
       })
       .eq('id', identity.websiteId)
       .eq('property_id', identity.propertyId),
-    client.from('shared_jobs').update({
-      output: {
-        ...prior,
-        phase: 'bootstrap',
-        baselineImported: true,
-        rollbackArtifactId: source.id,
-        rollbackContentHash: source.content_hash,
-        rollbackDeploymentId: deploymentId,
-        rollbackCertifiedAt: now,
-        rollbackSourcePrior: {
-          remoteVerificationReport: source.remote_verification_report,
-          remoteVerifiedUrl: source.remote_verified_url,
-          remoteVerifiedAt: source.remote_verified_at,
+    client
+      .from('shared_jobs')
+      .update({
+        output: {
+          ...prior,
+          phase: 'bootstrap',
+          baselineImported: true,
+          rollbackArtifactId: source.id,
+          rollbackContentHash: source.content_hash,
+          rollbackDeploymentId: deploymentId,
+          rollbackCertifiedAt: now,
+          rollbackSourcePrior: {
+            remoteVerificationReport: source.remote_verification_report,
+            remoteVerifiedUrl: source.remote_verified_url,
+            remoteVerifiedAt: source.remote_verified_at,
+          },
+          anchorTargetPrior: {
+            lastVerifiedArtifactId: target.last_verified_artifact_id,
+            lastVerifiedContentHash: target.last_verified_content_hash,
+            lastVerifiedAssetManifestHash:
+              target.last_verified_asset_manifest_hash,
+            lastVerifiedOperationHash: target.last_verified_operation_hash,
+          },
+          startArtifactId: startArtifact.id,
+          startContentHash: startArtifact.content_hash,
+          runtimePackageSha256: input.runtimePackageSha256,
+          runtimeManifestSha256: input.runtimeManifestSha256,
+          baseThemePackageSha256: input.baseThemePackageSha256,
+          ownedResources: [
+            ...((Array.isArray(prior.ownedResources)
+              ? prior.ownedResources
+              : []) as Json[]),
+            { kind: 'artifact', id: startArtifact.id },
+            { kind: 'artifact_deployment', id: deploymentId },
+          ],
         },
-        anchorTargetPrior: {
-          lastVerifiedArtifactId: target.last_verified_artifact_id,
-          lastVerifiedContentHash: target.last_verified_content_hash,
-          lastVerifiedAssetManifestHash:
-            target.last_verified_asset_manifest_hash,
-          lastVerifiedOperationHash: target.last_verified_operation_hash,
-        },
-        startArtifactId: startArtifact.id,
-        startContentHash: startArtifact.content_hash,
-        runtimePackageSha256: input.runtimePackageSha256,
-        runtimeManifestSha256: input.runtimeManifestSha256,
-        baseThemePackageSha256: input.baseThemePackageSha256,
-        ownedResources: [
-          ...((Array.isArray(prior.ownedResources)
-            ? prior.ownedResources
-            : []) as Json[]),
-          { kind: 'artifact', id: startArtifact.id },
-          { kind: 'artifact_deployment', id: deploymentId },
-        ],
-      },
-      updated_at: now,
-    })
-    .eq('id', lease.id)
-    .eq('lease_owner', identity.ownerId),
+        updated_at: now,
+      })
+      .eq('id', lease.id)
+      .eq('lease_owner', identity.ownerId),
   ])
   if (websiteProjection.error || leaseProjection.error) {
     throw new Error('Failed to persist Aurora bootstrap artifacts')
@@ -521,23 +503,24 @@ export async function provisionAuroraTargets(input: {
       idempotent: true,
     }
   }
-  const { data: reconciledTargets, error: reconciledTargetsError } = await client
-    .from('siteforge_wordpress_targets')
-    .select('id, target_type, provider_application_id, metadata')
-    .eq('website_id', identity.websiteId)
-    .contains('metadata', {
-      lifecycleOwnerId: identity.ownerId,
-      lifecycleRunId: identity.ownerId,
-    })
-    .in('target_type', ['staging', 'production'])
+  const { data: reconciledTargets, error: reconciledTargetsError } =
+    await client
+      .from('siteforge_wordpress_targets')
+      .select('id, target_type, provider_application_id, metadata')
+      .eq('website_id', identity.websiteId)
+      .contains('metadata', {
+        lifecycleOwnerId: identity.ownerId,
+        lifecycleRunId: identity.ownerId,
+      })
+      .in('target_type', ['staging', 'production'])
   if (reconciledTargetsError) {
     throw new Error('Failed to reconcile Aurora target provisioning')
   }
   const reconciledProduction = reconciledTargets?.find(
-    target => target.target_type === 'production'
+    (target) => target.target_type === 'production'
   )
   const reconciledStaging = reconciledTargets?.find(
-    target => target.target_type === 'staging'
+    (target) => target.target_type === 'staging'
   )
   if (reconciledProduction && reconciledStaging) {
     const stagingMetadata = record(reconciledStaging.metadata)
@@ -558,13 +541,13 @@ export async function provisionAuroraTargets(input: {
       .in('target_id', [reconciledProduction.id, reconciledStaging.id])
       .eq('website_id', identity.websiteId)
     const productionRollout = reconciledRollouts?.find(
-      rollout =>
+      (rollout) =>
         rollout.target_id === reconciledProduction.id &&
         rollout.status === 'paused' &&
         rollout.requested_contract_version === 3
     )
     const stagingRollout = reconciledRollouts?.find(
-      rollout =>
+      (rollout) =>
         rollout.target_id === reconciledStaging.id &&
         rollout.status === 'paused' &&
         rollout.requested_contract_version === 3
@@ -673,6 +656,10 @@ export async function provisionAuroraTargets(input: {
       applicationId: input.stagingApplicationId,
     }),
   ])
+  assertStagingApplicationParent(
+    stagingApplication,
+    providerIdentity.applicationId
+  )
   const productionUrl = /^https?:\/\//.test(productionApplication.app_fqdn)
     ? productionApplication.app_fqdn
     : `https://${productionApplication.app_fqdn}`
@@ -749,7 +736,7 @@ export async function provisionAuroraTargets(input: {
       site_url: productionUrl,
       admin_url: `${productionUrl.replace(/\/$/, '')}/wp-admin`,
       credential_ref: productionCredentialRef,
-      protection_mode: 'protected',
+      protection_mode: 'noindex',
       status: 'ready',
       is_active: true,
       metadata: ownedMetadata,
@@ -774,7 +761,7 @@ export async function provisionAuroraTargets(input: {
       site_url: stagingUrl,
       admin_url: `${stagingUrl.replace(/\/$/, '')}/wp-admin`,
       credential_ref: stagingCredentialRef,
-      protection_mode: 'protected',
+      protection_mode: 'noindex',
       status: 'ready',
       is_active: true,
       metadata: ownedMetadata,
@@ -800,18 +787,21 @@ export async function provisionAuroraTargets(input: {
       'runtime_package_unverified'
     )
   }
-  const rolloutRows = [productionTarget.id, stagingTarget.id].map(targetId => ({
-    org_id: anchor.org_id,
-    property_id: identity.propertyId,
-    website_id: identity.websiteId,
-    target_id: targetId,
-    requested_contract_version: 3,
-    runtime_package_sha256: runtimeHash,
-    status: 'paused',
-    previous_runtime_contract_version: 1,
-    reason: 'Aurora bootstrap waits for certified baseline and verified backup',
-    assigned_by: input.actorId,
-  }))
+  const rolloutRows = [productionTarget.id, stagingTarget.id].map(
+    (targetId) => ({
+      org_id: anchor.org_id,
+      property_id: identity.propertyId,
+      website_id: identity.websiteId,
+      target_id: targetId,
+      requested_contract_version: 3,
+      runtime_package_sha256: runtimeHash,
+      status: 'paused',
+      previous_runtime_contract_version: 1,
+      reason:
+        'Aurora bootstrap waits for certified baseline and verified backup',
+      assigned_by: input.actorId,
+    })
+  )
   const { data: rollouts, error: rolloutError } = await client
     .from('siteforge_runtime_target_rollouts')
     .insert(rolloutRows)
@@ -840,10 +830,10 @@ export async function provisionAuroraTargets(input: {
         productionTargetId: productionTarget.id,
         stagingTargetId: stagingTarget.id,
         productionRolloutId: rollouts.find(
-          row => row.target_id === productionTarget.id
+          (row) => row.target_id === productionTarget.id
         )?.id,
         stagingRolloutId: rollouts.find(
-          row => row.target_id === stagingTarget.id
+          (row) => row.target_id === stagingTarget.id
         )?.id,
         stagingProvisionOperationId: input.stagingOperationId,
         stagingApplicationId: input.stagingApplicationId,
@@ -853,7 +843,7 @@ export async function provisionAuroraTargets(input: {
             : []) as Json[]),
           { kind: 'target', id: productionTarget.id },
           { kind: 'target', id: stagingTarget.id },
-          ...rollouts.map(row => ({ kind: 'rollout', id: row.id })),
+          ...rollouts.map((row) => ({ kind: 'rollout', id: row.id })),
         ],
       },
       updated_at: now,

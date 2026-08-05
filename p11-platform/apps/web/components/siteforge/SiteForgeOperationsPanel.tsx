@@ -36,7 +36,12 @@ type Operations = {
     rollback_content_hash: string
     created_at: string
   }>
-  certifications: Array<{ id: string; environment: string; status: string; created_at: string }>
+  certifications: Array<{
+    id: string
+    environment: string
+    status: string
+    created_at: string
+  }>
   restores: Array<{ id: string; status: string; created_at: string }>
   rollbackHistory: Array<{
     id: string
@@ -50,8 +55,18 @@ type Operations = {
 
 type IncidentPayload = {
   incidents: Incident[]
-  healthRuns: Array<{ id: string; status: string; trigger_type: string; started_at: string }>
-  repairs: Array<{ id: string; status: string; repair_type: string; created_at: string }>
+  healthRuns: Array<{
+    id: string
+    status: string
+    trigger_type: string
+    started_at: string
+  }>
+  repairs: Array<{
+    id: string
+    status: string
+    repair_type: string
+    created_at: string
+  }>
 }
 
 export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
@@ -67,25 +82,35 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
   const refresh = useCallback(async () => {
     const [operationsResponse, incidentsResponse] = await Promise.all([
       fetch(`/api/siteforge/operations/${websiteId}`, { cache: 'no-store' }),
-      fetch(`/api/siteforge/incidents?websiteId=${websiteId}`, { cache: 'no-store' }),
+      fetch(`/api/siteforge/incidents?websiteId=${websiteId}`, {
+        cache: 'no-store',
+      }),
     ])
     const [operationsData, incidentsData] = await Promise.all([
       operationsResponse.json(),
       incidentsResponse.json(),
     ])
-    if (!operationsResponse.ok) throw new Error(operationsData.error || 'Operations unavailable')
-    if (!incidentsResponse.ok) throw new Error(incidentsData.error || 'Incidents unavailable')
+    if (!operationsResponse.ok)
+      throw new Error(operationsData.error || 'Operations unavailable')
+    if (!incidentsResponse.ok)
+      throw new Error(incidentsData.error || 'Incidents unavailable')
     setOperations(operationsData)
     setIncidents(incidentsData)
   }, [websiteId])
 
   useEffect(() => {
-    void refresh().catch(error =>
-      setMessage(error instanceof Error ? error.message : 'Operations unavailable')
+    void refresh().catch((error) =>
+      setMessage(
+        error instanceof Error ? error.message : 'Operations unavailable'
+      )
     )
   }, [refresh])
 
-  async function postAction(key: string, url: string, body: Record<string, unknown>) {
+  async function postAction(
+    key: string,
+    url: string,
+    body: Record<string, unknown>
+  ) {
     if (busy) return
     setBusy(key)
     setMessage(null)
@@ -114,10 +139,16 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
       return
     }
     try {
-      const previewResponse = await fetch(`/api/siteforge/rollback/${websiteId}`)
+      const previewResponse = await fetch(
+        `/api/siteforge/rollback/${websiteId}`
+      )
       const preview = await previewResponse.json()
       if (!previewResponse.ok || !preview.canRollback) {
-        throw new Error(preview.error || preview.message || 'No verified rollback is available')
+        throw new Error(
+          preview.error ||
+            preview.message ||
+            'No verified rollback is available'
+        )
       }
       await postAction('rollback', `/api/siteforge/rollback/${websiteId}`, {
         expectedCurrentArtifactId: preview.currentArtifact.id,
@@ -131,12 +162,19 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
   }
 
   async function prepareLaunch() {
-    if (!operations?.website.staging_artifact_id || !operations.website.staging_content_hash) {
+    if (
+      !operations?.website.staging_artifact_id ||
+      !operations.website.staging_content_hash
+    ) {
       return
     }
     const previewResponse = await fetch(`/api/siteforge/rollback/${websiteId}`)
     const preview = await previewResponse.json()
-    if (!previewResponse.ok || !preview.rollbackToArtifactId || !preview.rollbackToContentHash) {
+    if (
+      !previewResponse.ok ||
+      !preview.rollbackToArtifactId ||
+      !preview.rollbackToContentHash
+    ) {
       setMessage(
         preview.error ||
           preview.message ||
@@ -156,25 +194,32 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
 
   async function approveLaunch() {
     const release = operations?.releases[0]
-    if (!release || !legalRightsConfirmed || rationale.trim().length < 10) return
-    const result = await postAction('approve-launch', '/api/siteforge/launch/approve', {
-      propertyId: operations!.website.property_id,
-      releaseId: release.id,
-      artifactId: release.artifact_id,
-      contentHash: release.artifact_content_hash,
-      rollbackArtifactId: release.rollback_artifact_id,
-      rollbackContentHash: release.rollback_content_hash,
-      rationale: rationale.trim(),
-      legalRightsSnapshot: {
-        confirmed: true,
-        confirmedAt: new Date().toISOString(),
-        source: 'siteforge-operator-console',
-      },
-      expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-    })
+    if (!release || !legalRightsConfirmed || rationale.trim().length < 10)
+      return
+    const result = await postAction(
+      'approve-launch',
+      '/api/siteforge/launch/approve',
+      {
+        propertyId: operations!.website.property_id,
+        releaseId: release.id,
+        artifactId: release.artifact_id,
+        contentHash: release.artifact_content_hash,
+        rollbackArtifactId: release.rollback_artifact_id,
+        rollbackContentHash: release.rollback_content_hash,
+        rationale: rationale.trim(),
+        legalRightsSnapshot: {
+          confirmed: true,
+          confirmedAt: new Date().toISOString(),
+          source: 'siteforge-operator-console',
+        },
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      }
+    )
     if (typeof result?.promotionToken === 'string') {
       setPromotionToken(result.promotionToken)
-      setMessage('Launch approved. Copy or use the one-time promotion token now.')
+      setMessage(
+        'Launch approved. Copy or use the one-time promotion token now.'
+      )
     }
   }
 
@@ -189,21 +234,35 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
     if (manualOperationId.trim()) {
       body.manualConfirmation = { operationId: manualOperationId.trim() }
     }
-    const result = await postAction('promote-launch', '/api/siteforge/launch/promote', body)
+    const result = await postAction(
+      'promote-launch',
+      '/api/siteforge/launch/promote',
+      body
+    )
     if (result?.manualRequired === true) {
-      setMessage(String(result.dashboardAction || 'Cloudways requires a manual promotion confirmation.'))
+      setMessage(
+        String(
+          result.dashboardAction ||
+            'Cloudways requires a manual promotion confirmation.'
+        )
+      )
     }
   }
 
   const activeIncidents =
-    incidents?.incidents.filter(incident => incident.status !== 'resolved') || []
+    incidents?.incidents.filter((incident) => incident.status !== 'resolved') ||
+    []
   const canCertify =
     operations?.website.staging_certified_at &&
     operations.website.staging_artifact_id &&
     operations.website.staging_content_hash
   const latestRelease = operations?.releases[0]
+  const latestProductionQa = operations?.certifications.find(
+    (certification) => certification.environment === 'production'
+  )
   const activeRelease =
-    latestRelease && !['live', 'failed', 'rolled_back'].includes(latestRelease.state)
+    latestRelease &&
+    !['live', 'failed', 'rolled_back'].includes(latestRelease.state)
       ? latestRelease
       : null
 
@@ -219,12 +278,18 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
         <div className="grid gap-3 md:grid-cols-4">
           <div className="rounded border p-3 text-sm">
             <p className="text-muted-foreground">Lifecycle</p>
-            <p className="font-medium">{operations?.website.editor_lifecycle_status || 'Loading…'}</p>
+            <p className="font-medium">
+              {operations?.website.editor_lifecycle_status || 'Loading…'}
+            </p>
           </div>
           <div className="rounded border p-3 text-sm">
-            <p className="text-muted-foreground">Certification</p>
+            <p className="text-muted-foreground">Browser QA</p>
             <p className="font-medium">
-              {operations?.website.production_certified_at ? 'Production certified' : 'Not certified'}
+              {latestProductionQa
+                ? latestProductionQa.status === 'passed'
+                  ? 'Passed'
+                  : 'Warnings · non-blocking'
+                : 'Not run · optional'}
             </p>
           </div>
           <div className="rounded border p-3 text-sm">
@@ -233,13 +298,15 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
           </div>
           <div className="rounded border p-3 text-sm">
             <p className="text-muted-foreground">Latest health</p>
-            <p className="font-medium">{incidents?.healthRuns[0]?.status || 'No run'}</p>
+            <p className="font-medium">
+              {incidents?.healthRuns[0]?.status || 'No run'}
+            </p>
           </div>
         </div>
 
         <Textarea
           value={rationale}
-          onChange={event => setRationale(event.target.value)}
+          onChange={(event) => setRationale(event.target.value)}
           placeholder="Operator rationale for acknowledgement, repair, restore, or rollback…"
           aria-label="Production operation rationale"
         />
@@ -247,21 +314,23 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
           <input
             type="checkbox"
             checked={legalRightsConfirmed}
-            onChange={event => setLegalRightsConfirmed(event.target.checked)}
+            onChange={(event) => setLegalRightsConfirmed(event.target.checked)}
             className="mt-1"
           />
           <span>
-            I confirm the pinned legal text and every production asset’s ownership or
-            license for this exact release.
+            I confirm the pinned legal text and every production asset’s
+            ownership or license for this exact release.
           </span>
         </label>
-        {promotionToken || latestRelease?.state === 'launch_approved' || latestRelease?.state === 'backed_up' ? (
+        {promotionToken ||
+        latestRelease?.state === 'launch_approved' ||
+        latestRelease?.state === 'backed_up' ? (
           <div className="grid gap-2 md:grid-cols-2">
             <label className="text-sm">
               One-time promotion token
               <input
                 value={promotionToken}
-                onChange={event => setPromotionToken(event.target.value)}
+                onChange={(event) => setPromotionToken(event.target.value)}
                 className="mt-1 w-full rounded border bg-background px-3 py-2 font-mono text-xs"
                 autoComplete="off"
               />
@@ -270,7 +339,7 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
               Cloudways operation ID (manual fallback only)
               <input
                 value={manualOperationId}
-                onChange={event => setManualOperationId(event.target.value)}
+                onChange={(event) => setManualOperationId(event.target.value)}
                 className="mt-1 w-full rounded border bg-background px-3 py-2 text-sm"
               />
             </label>
@@ -307,10 +376,12 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
               Backup & promote approved release
             </Button>
           ) : null}
-          {latestRelease?.state === 'promoted' ? (
+          {latestRelease?.state === 'live' ? (
             <Button
               size="sm"
-              disabled={!operations?.browserCertifierConfigured || Boolean(busy)}
+              disabled={
+                !operations?.browserCertifierConfigured || Boolean(busy)
+              }
               onClick={() =>
                 void postAction(
                   'certify',
@@ -323,7 +394,7 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
                 )
               }
             >
-              Run production certification
+              Run full browser QA
             </Button>
           ) : null}
           <Button
@@ -331,10 +402,14 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
             variant="outline"
             disabled={rationale.trim().length < 10 || Boolean(busy)}
             onClick={() =>
-              void postAction('restore', `/api/siteforge/operations/${websiteId}`, {
-                action: 'request_restore',
-                rationale: rationale.trim(),
-              })
+              void postAction(
+                'restore',
+                `/api/siteforge/operations/${websiteId}`,
+                {
+                  action: 'request_restore',
+                  rationale: rationale.trim(),
+                }
+              )
             }
           >
             Request supervised restore
@@ -349,29 +424,43 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
           </Button>
           {operations?.website.production_url ? (
             <Button size="sm" variant="outline" asChild>
-              <a href={operations.website.production_url} target="_blank" rel="noopener noreferrer">
+              <a
+                href={operations.website.production_url}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
                 Open production
               </a>
             </Button>
           ) : null}
         </div>
-        {latestRelease?.state === 'promoted' &&
+        {latestRelease?.state === 'live' &&
         !operations?.browserCertifierConfigured ? (
           <p role="alert" className="text-sm text-amber-700">
-            Configure the trusted browser certifier before production certification.
+            Browser QA is unavailable until the optional certifier is
+            configured.
           </p>
         ) : null}
 
         {activeIncidents.length ? (
           <div className="space-y-2">
             <p className="text-sm font-medium">Active incidents</p>
-            {activeIncidents.map(incident => (
-              <div key={incident.id} className="flex flex-wrap items-center gap-2 rounded border p-3 text-sm">
-                <Badge variant={incident.severity === 'critical' ? 'destructive' : 'outline'}>
+            {activeIncidents.map((incident) => (
+              <div
+                key={incident.id}
+                className="flex flex-wrap items-center gap-2 rounded border p-3 text-sm"
+              >
+                <Badge
+                  variant={
+                    incident.severity === 'critical' ? 'destructive' : 'outline'
+                  }
+                >
                   {incident.severity}
                 </Badge>
                 <span className="font-medium">{incident.category}</span>
-                <span className="min-w-[220px] flex-1 text-muted-foreground">{incident.summary}</span>
+                <span className="min-w-[220px] flex-1 text-muted-foreground">
+                  {incident.summary}
+                </span>
                 <Button
                   size="sm"
                   variant="outline"
@@ -408,23 +497,37 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
           <History
             title="Launch / certification"
             rows={[
-              ...(operations?.releases || []).map(item => `Release ${item.release_version}: ${item.state}`),
-              ...(operations?.certifications || []).map(item => `${item.environment}: ${item.status}`),
+              ...(operations?.releases || []).map(
+                (item) => `Release ${item.release_version}: ${item.state}`
+              ),
+              ...(operations?.certifications || []).map(
+                (item) => `${item.environment}: ${item.status}`
+              ),
             ]}
           />
           <History
             title="Restore / rollback"
             rows={[
-              ...(operations?.restores || []).map(item => `Restore: ${item.status}`),
-              ...(operations?.rollbackHistory || []).map(item => `Rollback revision v${item.version}`),
+              ...(operations?.restores || []).map(
+                (item) => `Restore: ${item.status}`
+              ),
+              ...(operations?.rollbackHistory || []).map(
+                (item) => `Rollback revision v${item.version}`
+              ),
             ]}
           />
           <History
             title="Repairs"
-            rows={(incidents?.repairs || []).map(item => `${item.repair_type}: ${item.status}`)}
+            rows={(incidents?.repairs || []).map(
+              (item) => `${item.repair_type}: ${item.status}`
+            )}
           />
         </div>
-        {message ? <p role="status" className="text-sm text-muted-foreground">{message}</p> : null}
+        {message ? (
+          <p role="status" className="text-sm text-muted-foreground">
+            {message}
+          </p>
+        ) : null}
       </CardContent>
     </Card>
   )
@@ -436,7 +539,9 @@ function History({ title, rows }: { title: string; rows: string[] }) {
       <p className="font-medium">{title}</p>
       {rows.length ? (
         <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
-          {rows.slice(0, 6).map((row, index) => <li key={`${row}-${index}`}>{row}</li>)}
+          {rows.slice(0, 6).map((row, index) => (
+            <li key={`${row}-${index}`}>{row}</li>
+          ))}
         </ul>
       ) : (
         <p className="mt-2 text-xs text-muted-foreground">No history yet.</p>

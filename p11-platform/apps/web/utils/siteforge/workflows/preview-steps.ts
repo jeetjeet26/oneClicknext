@@ -12,10 +12,6 @@ import {
 } from "@/utils/siteforge/providers/cloudways-provider";
 import { captureOverlayRenderCertification } from "@/utils/siteforge/editor/render-certification";
 import {
-  isTrustedCertificationRequired,
-  shouldBlockUncertifiedPreview,
-} from "@/utils/siteforge/editor/feature";
-import {
   deployToExistingWordPress,
   WordPressAPIClient,
 } from "@/utils/siteforge/wordpress-client";
@@ -52,6 +48,7 @@ export interface SiteForgePreviewWorkflowInput {
   artifactId: string;
   contentHash: string;
   targetId: string;
+  runBrowserQa?: boolean;
 }
 
 export function normalizeSiteForgePreviewCredential(
@@ -206,15 +203,18 @@ export async function renderCanonicalWordPressPreview(
   if (!pages.length) {
     throw new FatalError("Canonical preview artifact contains no pages");
   }
-  const themeArtifact = runtimeV2 || runtimeV3
-    ? null
-    : validateWordPressThemeArtifact(blueprint.wordpressThemeArtifact);
-  const legal = runtimeV2 || runtimeV3
-    ? null
-    : siteForgeLegalConfigSchema.parse(blueprint.legal);
-  const analytics = runtimeV2 || runtimeV3
-    ? null
-    : siteForgeAnalyticsConfigSchema.parse(blueprint.analytics);
+  const themeArtifact =
+    runtimeV2 || runtimeV3
+      ? null
+      : validateWordPressThemeArtifact(blueprint.wordpressThemeArtifact);
+  const legal =
+    runtimeV2 || runtimeV3
+      ? null
+      : siteForgeLegalConfigSchema.parse(blueprint.legal);
+  const analytics =
+    runtimeV2 || runtimeV3
+      ? null
+      : siteForgeAnalyticsConfigSchema.parse(blueprint.analytics);
 
   const fallbackPropertyContext = await getPropertyContext(input.propertyId);
   const propertySnapshot =
@@ -310,13 +310,14 @@ export async function renderCanonicalWordPressPreview(
         });
       }
     }
-    const health = application?.public_ip && !runtimeV3
-      ? await new SiteForgeRuntimeClient({
-          baseUrl: previewUrl,
-          username,
-          applicationPassword: password,
-        }).getHealth()
-      : null;
+    const health =
+      application?.public_ip && !runtimeV3
+        ? await new SiteForgeRuntimeClient({
+            baseUrl: previewUrl,
+            username,
+            applicationPassword: password,
+          }).getHealth()
+        : null;
     if (health && health.status !== "ok") {
       throw new FatalError(
         `Canonical preview runtime reported ${health.status} after installation`,
@@ -618,9 +619,7 @@ export async function renderCanonicalWordPressPreview(
     brandSnapshot.contract,
   );
   await assertPreviewNotCancelled(input, supabase);
-  const runCertification =
-    isTrustedCertificationRequired() ||
-    process.env.SITEFORGE_RUN_OPTIONAL_CERTIFICATION === "true";
+  const runCertification = input.runBrowserQa === true;
   let certificationReportHash: string | null = null;
   let certificationStatus: "passed" | "failed" | "not_run" = "not_run";
   if (runCertification) {
@@ -689,14 +688,6 @@ export async function renderCanonicalWordPressPreview(
     if (evidenceError) {
       throw new Error(
         `Failed to persist canonical preview certification: ${evidenceError.message}`,
-      );
-    }
-    if (shouldBlockUncertifiedPreview(certification.passed)) {
-      const blockers = certification.checks
-        .filter((check) => check.severity === "blocker" && !check.passed)
-        .map((check) => check.id);
-      throw new FatalError(
-        `Canonical preview certification failed: ${blockers.join(", ")}`,
       );
     }
   }

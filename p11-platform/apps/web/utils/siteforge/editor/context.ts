@@ -1,7 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database, Json, Tables } from '@/types/supabase'
 import { createServiceClient } from '@/utils/supabase/admin'
-import { isTrustedCertificationRequired } from '@/utils/siteforge/editor/feature'
 import {
   isSiteForgeRuntimeBackedContractVersion,
   parseSiteForgeRuntimeContractVersion,
@@ -107,13 +106,14 @@ export function selectRenderedEditorEvidence(input: {
   lookupFailed?: boolean
 }): RenderedEditorEvidence {
   const revisionIds = new Set(input.revisionIds)
-  const certifications = input.certifications.filter(certification =>
+  const certifications = input.certifications.filter((certification) =>
     revisionIds.has(certification.artifact_id)
   )
   const currentCertification = certifications.find(
-    certification => certification.artifact_id === input.currentArtifactId
+    (certification) => certification.artifact_id === input.currentArtifactId
   )
-  const selectedCertification = currentCertification || certifications[0] || null
+  const selectedCertification =
+    currentCertification || certifications[0] || null
   if (
     selectedCertification &&
     !['preview', 'staging', 'production'].includes(
@@ -147,10 +147,10 @@ export function selectRenderedEditorEvidence(input: {
     report: {
       certificationRequired: input.certificationRequired,
       reason: input.lookupFailed
-        ? 'Rendered evidence lookup was unavailable; exact certification remains mandatory before deployment approval'
+        ? 'Optional browser QA evidence is temporarily unavailable; editing and human-approved deployment remain available'
         : input.certificationRequired
           ? 'This draft has no rendered evidence yet; editing may continue, but approval and deployment remain blocked until exact certification passes'
-          : 'Trusted browser certification is disabled for semantic editing',
+          : 'Full browser QA is optional and has not been run for this artifact',
     },
   }
 }
@@ -283,10 +283,10 @@ export async function buildSiteForgeEditorSnapshot(
       `Editor WordPress runtime capability unavailable: ${runtimeTargetResult.error.message}`
     )
   }
-  const certificationRequired = isTrustedCertificationRequired()
+  const certificationRequired = false
   const renderedEvidence = selectRenderedEditorEvidence({
     certifications: certificationResult.data || [],
-    revisionIds: (revisionsResult.data || []).map(revision => revision.id),
+    revisionIds: (revisionsResult.data || []).map((revision) => revision.id),
     currentArtifactId: input.expectedArtifactId,
     currentContentHash: input.expectedContentHash,
     certificationRequired,

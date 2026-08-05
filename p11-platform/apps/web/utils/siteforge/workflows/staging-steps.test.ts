@@ -7,6 +7,7 @@ const { createServiceClient, from } = vi.hoisted(() => ({
 vi.mock('@/utils/supabase/admin', () => ({ createServiceClient }))
 
 import {
+  assertExactStagingManifest,
   assertStagingDeploymentActive,
   readCloudwaysProvisioningCheckpoint,
   type SiteForgeStagingWorkflowInput,
@@ -98,5 +99,14 @@ describe('Cloudways staging workflow guards', () => {
       operationId: 'operation-123',
       applicationId: 'application-456',
     })
+  })
+
+  it('rejects a staging readback that differs from the approved artifact', () => {
+    expect(() =>
+      assertExactStagingManifest(input.contentHash, 'b'.repeat(64))
+    ).toThrow('Cloudways staging manifest does not match')
+    expect(() =>
+      assertExactStagingManifest(input.contentHash, input.contentHash)
+    ).not.toThrow()
   })
 })

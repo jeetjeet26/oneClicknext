@@ -321,19 +321,53 @@ export async function POST(request: NextRequest) {
         )
       }
       const cloudways = new CloudwaysProviderClient({ apiKey, email })
-      const staging = await cloudways.createStagingApplication({
-        serverId: providerIdentity.serverId,
-        parentApplicationId: providerIdentity.applicationId,
-        label: `aurora-lifecycle-${identity.ownerId.slice(0, 8)}`,
-      })
-      if (!staging.applicationId || !staging.operationId) {
-        throw new Error(
-          'Cloudways did not return the exact staging application and operation identity'
+      // Reuse a staging identity already bound to this lifecycle lease so
+      // repeated bootstrap attempts stay idempotent instead of cloning again.
+      const { data: leaseRow } = await client
+        .from('shared_jobs')
+        .select('output')
+        .eq('domain', AURORA_LIFECYCLE_DOMAIN)
+        .eq('subject_id', identity.websiteId)
+        .eq('lease_owner', identity.ownerId)
+        .maybeSingle()
+      const boundOutput = record(leaseRow?.output)
+      if (
+        typeof boundOutput.stagingApplicationId === 'string' &&
+        typeof boundOutput.stagingProvisionOperationId === 'string'
+      ) {
+        stagingApplicationId = boundOutput.stagingApplicationId
+        stagingOperationId = boundOutput.stagingProvisionOperationId
+      } else {
+        const staging = await cloudways.createStagingApplication({
+          serverId: providerIdentity.serverId,
+          parentApplicationId: providerIdentity.applicationId,
+          label: `aurora-lifecycle-${identity.ownerId.slice(0, 8)}`,
+        })
+        if (!staging.operationId) {
+          throw new Error(
+            'Cloudways did not return the staging clone operation identity'
+          )
+        }
+        // The clone response only carries operation_id; the staging app id is
+        // revealed on the completed operation record (app_id).
+        const stagingOperation = await cloudways.waitForOperation(
+          staging.operationId
         )
+        const resolvedStagingApplicationId =
+          staging.applicationId ??
+          (stagingOperation.app_id !== undefined
+            ? String(stagingOperation.app_id)
+            : stagingOperation.application_id !== undefined
+              ? String(stagingOperation.application_id)
+              : null)
+        if (!resolvedStagingApplicationId) {
+          throw new Error(
+            'Cloudways did not reveal the staging application identity after the clone completed'
+          )
+        }
+        stagingApplicationId = resolvedStagingApplicationId
+        stagingOperationId = staging.operationId
       }
-      await cloudways.waitForOperation(staging.operationId)
-      stagingApplicationId = staging.applicationId
-      stagingOperationId = staging.operationId
     }
     const provisioned = await provisionAuroraTargets({
       identity,

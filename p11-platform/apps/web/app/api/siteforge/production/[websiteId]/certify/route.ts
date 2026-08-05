@@ -60,7 +60,7 @@ export async function POST(
     const { data: website, error: websiteError } = await client
       .from('property_websites')
       .select(
-        'id, org_id, property_id, wordpress_credential_ref, target_domain, staging_artifact_id, staging_content_hash, staging_certified_at'
+        'id, org_id, property_id, wordpress_credential_ref, target_domain, staging_artifact_id, staging_content_hash, staging_certified_at, production_artifact_id, production_content_hash, production_url'
       )
       .eq('id', websiteId)
       .single()
@@ -97,12 +97,11 @@ export async function POST(
       client
     )
     if (
-      !website.staging_certified_at ||
-      website.staging_artifact_id !== parsed.data.promotedArtifactId ||
-      website.staging_content_hash !== parsed.data.promotedContentHash
+      website.production_artifact_id !== parsed.data.promotedArtifactId ||
+      website.production_content_hash !== parsed.data.promotedContentHash
     ) {
       return NextResponse.json(
-        { error: 'Promotion confirmation does not match the certified staging artifact' },
+        { error: 'Production QA request does not match the live artifact' },
         { status: 409, headers: ctx.responseHeaders }
       )
     }
@@ -119,16 +118,17 @@ export async function POST(
     if (
       releaseError ||
       !release ||
-      release.state !== 'promoted' ||
+      release.state !== 'live' ||
       release.artifact_id !== parsed.data.promotedArtifactId ||
       release.artifact_content_hash !== parsed.data.promotedContentHash ||
       !release.launch_approval_id ||
-      !release.promoted_at ||
-      !release.approval_expires_at ||
-      new Date(release.approval_expires_at).getTime() <= Date.now()
+      !release.promoted_at
     ) {
       return NextResponse.json(
-        { error: 'An active, exact, human-approved promoted launch release is required' },
+        {
+          error:
+            'An exact live launch release is required for optional browser QA',
+        },
         { status: 409, headers: ctx.responseHeaders }
       )
     }
@@ -165,9 +165,11 @@ export async function POST(
     const credentials = await getWordPressCredentialReference(
       website.wordpress_credential_ref
     )
-    const productionUrl = website.target_domain
-      ? `https://${website.target_domain}`
-      : credentials.url
+    const productionUrl =
+      website.production_url ||
+      (website.target_domain
+        ? `https://${website.target_domain}`
+        : credentials.url)
     const now = new Date().toISOString()
 
     const { data: existingTarget } = await client
@@ -189,7 +191,7 @@ export async function POST(
       site_url: productionUrl,
       admin_url: `${productionUrl.replace(/\/$/, '')}/wp-admin`,
       credential_ref: website.wordpress_credential_ref,
-      protection_mode: 'noindex',
+      protection_mode: 'public',
       status: 'ready',
       is_active: true,
       metadata: {
@@ -300,44 +302,15 @@ export async function POST(
       )
     }
 
-    const { data: existingDeployment } = await client
+    const { data: deployment, error: deploymentError } = await client
       .from('siteforge_artifact_deployments')
       .select('id')
       .eq('target_id', target.id)
       .eq('artifact_id', artifact.id)
       .maybeSingle()
-    const deploymentValues = {
-      org_id: website.org_id,
-      property_id: website.property_id,
-      website_id: website.id,
-      target_id: target.id,
-      artifact_id: artifact.id,
-      artifact_content_hash: artifact.content_hash,
-      asset_manifest_hash: artifact.asset_manifest_hash,
-      base_theme_package_sha256: artifact.base_theme_package_sha256,
-      overlay_package_sha256: artifact.overlay_package_sha256,
-      approval_id: artifact.confirmed_approval_id,
-      shared_job_id: job.id,
-      status: 'production_certifying',
-      certification_report: {} as Json,
-      externally_promoted_at: now,
-      deployed_url: null,
-      remote_manifest_hash: null,
-      deployed_at: null,
-      certified_at: null,
-    }
-    const deploymentQuery = existingDeployment
-      ? client
-          .from('siteforge_artifact_deployments')
-          .update(deploymentValues)
-          .eq('id', existingDeployment.id)
-      : client.from('siteforge_artifact_deployments').insert(deploymentValues)
-    const { data: deployment, error: deploymentError } = await deploymentQuery
-      .select('id')
-      .single()
     if (deploymentError || !deployment) {
       throw new Error(
-        `Failed to create production certification record: ${
+        `Failed to load live production deployment for browser QA: ${
           deploymentError?.message || 'missing row'
         }`
       )
@@ -356,6 +329,7 @@ export async function POST(
       actorId: user.id,
       productionUrl,
       startedAt: now,
+      evidenceOnly: true,
       ...(lifecycleIdentity
         ? {
             lifecycleOwnerId: lifecycleIdentity.ownerId,
@@ -378,7 +352,9 @@ export async function POST(
       })
       .eq('id', job.id)
     if (runError) {
-      throw new Error(`Failed to persist production workflow identity: ${runError.message}`)
+      throw new Error(
+        `Failed to persist production workflow identity: ${runError.message}`
+      )
     }
 
     ctx.logSuccess(202, {
@@ -407,8 +383,8 @@ export async function POST(
           status !== 500
             ? (error as Error).message
             : error instanceof Error
-            ? error.message
-            : 'Failed to start production certification',
+              ? error.message
+              : 'Failed to start production certification',
       },
       { status, headers: ctx.responseHeaders }
     )

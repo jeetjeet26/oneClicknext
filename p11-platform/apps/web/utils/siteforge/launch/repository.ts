@@ -1,7 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database, Json, Tables } from '@/types/supabase'
 import { createServiceClient } from '@/utils/supabase/admin'
-import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
 
 export type LaunchRelease = Tables<'siteforge_launch_releases'>
 type ServiceClient = SupabaseClient<Database>
@@ -27,8 +26,8 @@ export function isLaunchChatbotContextReady(input: {
   if (!input.lumaEnabled) return true
   return Boolean(
     input.context?.status === 'current' &&
-      !input.context.requires_review &&
-      input.context.context_markdown.trim()
+    !input.context.requires_review &&
+    input.context.context_markdown.trim()
   )
 }
 
@@ -39,14 +38,12 @@ export function assertObservedRollbackIdentity(input: {
   productionContentHash: string | null
   productionCertifiedAt: string | null
   productionTargetId: string | null
-  certifiedDeployment:
-    | {
-        artifact_id: string
-        artifact_content_hash: string
-        remote_manifest_hash: string | null
-        certified_at: string | null
-      }
-    | null
+  certifiedDeployment: {
+    artifact_id: string
+    artifact_content_hash: string
+    remote_manifest_hash: string | null
+    certified_at: string | null
+  } | null
 }): void {
   if (
     !input.productionArtifactId ||
@@ -86,16 +83,19 @@ async function transition(
   requestId: string | null,
   client: ServiceClient
 ): Promise<LaunchRelease> {
-  const { data, error } = await client.rpc('transition_siteforge_launch_release', {
-    p_release_id: release.id,
-    p_expected_state_version: release.state_version,
-    p_to_state: toState,
-    p_actor_type: actorType,
-    p_actor_id: actorId,
-    p_rationale: rationale || '',
-    p_evidence: evidence,
-    p_request_id: requestId || '',
-  })
+  const { data, error } = await client.rpc(
+    'transition_siteforge_launch_release',
+    {
+      p_release_id: release.id,
+      p_expected_state_version: release.state_version,
+      p_to_state: toState,
+      p_actor_type: actorType,
+      p_actor_id: actorId,
+      p_rationale: rationale || '',
+      p_evidence: evidence,
+      p_request_id: requestId || '',
+    }
+  )
   if (error || !data) {
     throw new SiteForgeLaunchError(
       `Failed to transition launch release to ${toState}: ${error?.message || 'missing result'}`,
@@ -116,7 +116,8 @@ export async function getLaunchRelease(
     .eq('id', releaseId)
     .eq('property_id', propertyId)
     .single()
-  if (error || !data) throw new SiteForgeLaunchError('Launch release not found', 404)
+  if (error || !data)
+    throw new SiteForgeLaunchError('Launch release not found', 404)
   return data
 }
 
@@ -130,16 +131,20 @@ export async function getLaunchStatus(
     .eq('property_id', input.propertyId)
   query = input.releaseId
     ? query.eq('id', input.releaseId)
-    : query.eq('website_id', input.websiteId || '').order('release_version', { ascending: false })
+    : query
+        .eq('website_id', input.websiteId || '')
+        .order('release_version', { ascending: false })
   const { data: release, error } = await query.limit(1).maybeSingle()
-  if (error || !release) throw new SiteForgeLaunchError('Launch release not found', 404)
+  if (error || !release)
+    throw new SiteForgeLaunchError('Launch release not found', 404)
 
   const { data: events, error: eventsError } = await client
     .from('siteforge_launch_events')
     .select('*')
     .eq('release_id', release.id)
     .order('created_at', { ascending: true })
-  if (eventsError) throw new SiteForgeLaunchError('Failed to load launch history', 500)
+  if (eventsError)
+    throw new SiteForgeLaunchError('Failed to load launch history', 500)
 
   return {
     release,
@@ -150,7 +155,7 @@ export async function getLaunchStatus(
       !release.promotion_token_consumed_at &&
       Boolean(
         release.promotion_token_expires_at &&
-          new Date(release.promotion_token_expires_at).getTime() > Date.now()
+        new Date(release.promotion_token_expires_at).getTime() > Date.now()
       ),
   }
 }
@@ -176,7 +181,8 @@ export async function prepareLaunchRelease(
     .eq('id', input.websiteId)
     .eq('property_id', input.propertyId)
     .single()
-  if (websiteError || !website) throw new SiteForgeLaunchError('Website not found', 404)
+  if (websiteError || !website)
+    throw new SiteForgeLaunchError('Website not found', 404)
   if (
     website.current_artifact_version_id !== input.artifactId ||
     website.staging_artifact_id !== input.artifactId ||
@@ -184,7 +190,7 @@ export async function prepareLaunchRelease(
     !website.staging_certified_at
   ) {
     throw new SiteForgeLaunchError(
-      'The exact current artifact must be certified on staging before launch preparation',
+      'The exact current artifact must be verified on staging before launch preparation',
       409
     )
   }
@@ -198,7 +204,9 @@ export async function prepareLaunchRelease(
   ] = await Promise.all([
     client
       .from('siteforge_blueprint_versions')
-      .select('id, content_hash, asset_manifest_hash, base_theme_package_sha256, deployment_decision, confirmed_approval_id')
+      .select(
+        'id, content_hash, asset_manifest_hash, base_theme_package_sha256, deployment_decision, confirmed_approval_id'
+      )
       .eq('id', input.artifactId)
       .eq('website_id', input.websiteId)
       .single(),
@@ -251,13 +259,19 @@ export async function prepareLaunchRelease(
     !artifact.base_theme_package_sha256 ||
     audit?.classification !== 'deployable'
   ) {
-    throw new SiteForgeLaunchError('The exact artifact is not approved and deployable', 409)
+    throw new SiteForgeLaunchError(
+      'The exact artifact is not approved and deployable',
+      409
+    )
   }
   if (
     !rollbackArtifact ||
     rollbackArtifact.content_hash !== input.rollbackContentHash
   ) {
-    throw new SiteForgeLaunchError('Exact rollback artifact identity is required', 409)
+    throw new SiteForgeLaunchError(
+      'Exact rollback artifact identity is required',
+      409
+    )
   }
 
   const { data: certifiedRollbackDeployment, error: rollbackDeploymentError } =
@@ -293,7 +307,9 @@ export async function prepareLaunchRelease(
 
   const { data: deployment, error: deploymentError } = await client
     .from('siteforge_artifact_deployments')
-    .select('id, certification_report, certified_at, artifact_content_hash, remote_manifest_hash')
+    .select(
+      'id, certification_report, certified_at, artifact_content_hash, remote_manifest_hash'
+    )
     .eq('website_id', input.websiteId)
     .eq('artifact_id', input.artifactId)
     .eq('artifact_content_hash', input.contentHash)
@@ -307,7 +323,10 @@ export async function prepareLaunchRelease(
     !deployment ||
     deployment.remote_manifest_hash !== input.contentHash
   ) {
-    throw new SiteForgeLaunchError('Matching staging certification evidence was not found', 409)
+    throw new SiteForgeLaunchError(
+      'Matching staging manifest evidence was not found',
+      409
+    )
   }
 
   const { data: existing } = await client
@@ -317,8 +336,15 @@ export async function prepareLaunchRelease(
     .not('state', 'in', '(live,failed,rolled_back)')
     .maybeSingle()
   let release = existing
-  if (release && (release.artifact_id !== input.artifactId || release.artifact_content_hash !== input.contentHash)) {
-    throw new SiteForgeLaunchError('Another launch release is already active', 409)
+  if (
+    release &&
+    (release.artifact_id !== input.artifactId ||
+      release.artifact_content_hash !== input.contentHash)
+  ) {
+    throw new SiteForgeLaunchError(
+      'Another launch release is already active',
+      409
+    )
   }
 
   if (!release) {
@@ -354,46 +380,6 @@ export async function prepareLaunchRelease(
     release = created
   }
 
-  const reportHash = hashSiteForgeContent(deployment.certification_report)
-  const { data: evidence } = await client
-    .from('siteforge_certification_evidence')
-    .select('id')
-    .eq('release_id', release.id)
-    .eq('environment', 'staging')
-    .eq('report_hash', reportHash)
-    .maybeSingle()
-  if (!evidence) {
-    const report =
-      deployment.certification_report &&
-      typeof deployment.certification_report === 'object' &&
-      !Array.isArray(deployment.certification_report)
-        ? deployment.certification_report
-        : {}
-    const { error: evidenceError } = await client
-      .from('siteforge_certification_evidence')
-      .insert({
-        org_id: website.org_id,
-        property_id: website.property_id,
-        website_id: website.id,
-        artifact_id: artifact.id,
-        release_id: release.id,
-        policy_version:
-          typeof report.policyVersion === 'string'
-            ? report.policyVersion
-            : 'siteforge-remote-certification-v1',
-        environment: 'staging',
-        status: report.passed === true ? 'passed' : 'failed',
-        report: deployment.certification_report,
-        evidence_manifest: {
-          stagingDeploymentId: deployment.id,
-          certifiedAt: deployment.certified_at,
-          remoteManifestHash: deployment.remote_manifest_hash,
-        },
-        report_hash: reportHash,
-      })
-    if (evidenceError) throw new SiteForgeLaunchError('Failed to link certification evidence', 500)
-  }
-
   const dedupeKey = `siteforge-launch:${release.id}:${release.artifact_content_hash}`
   let { data: job } = await client
     .from('shared_jobs')
@@ -423,7 +409,11 @@ export async function prepareLaunchRelease(
       })
       .select('id')
       .single()
-    if (jobError || !createdJob) throw new SiteForgeLaunchError('Failed to create launch approval job', 500)
+    if (jobError || !createdJob)
+      throw new SiteForgeLaunchError(
+        'Failed to create launch approval job',
+        500
+      )
     job = createdJob
   }
   let { data: action } = await client
@@ -451,13 +441,18 @@ export async function prepareLaunchRelease(
           rollbackContentHash: release.rollback_content_hash,
         },
         execution_payload: { releaseId: release.id },
-        policy_reason: 'A manager must separately approve the exact production artifact and rollback identity.',
+        policy_reason:
+          'A manager must separately approve the exact production artifact and rollback identity.',
         confidence_score: 1,
         requested_by: input.requestedBy,
       })
       .select('id')
       .single()
-    if (actionError || !createdAction) throw new SiteForgeLaunchError('Failed to create launch approval request', 500)
+    if (actionError || !createdAction)
+      throw new SiteForgeLaunchError(
+        'Failed to create launch approval request',
+        500
+      )
     action = createdAction
   }
   if (release.launch_action_attempt_id !== action.id) {
@@ -468,7 +463,11 @@ export async function prepareLaunchRelease(
       .eq('state_version', release.state_version)
       .select('*')
       .single()
-    if (linkError || !linked) throw new SiteForgeLaunchError('Failed to link launch approval request', 500)
+    if (linkError || !linked)
+      throw new SiteForgeLaunchError(
+        'Failed to link launch approval request',
+        500
+      )
     release = linked
   }
   if (release.state === 'prepared') {
@@ -477,8 +476,11 @@ export async function prepareLaunchRelease(
       'certified',
       'system',
       input.requestedBy,
-      'Exact staging certification linked',
-      { stagingDeploymentId: deployment.id, reportHash },
+      'Exact staging manifest identity verified',
+      {
+        stagingDeploymentId: deployment.id,
+        remoteManifestHash: deployment.remote_manifest_hash,
+      },
       input.requestId || null,
       client
     )

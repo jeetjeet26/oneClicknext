@@ -26,7 +26,9 @@ const cleanupSchema = z
   })
   .strict()
 
-function record(value: Json | null | undefined): Record<string, Json | undefined> {
+function record(
+  value: Json | null | undefined
+): Record<string, Json | undefined> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, Json | undefined>)
     : {}
@@ -100,11 +102,7 @@ export async function DELETE(request: NextRequest) {
       error: authError,
     } = await supabase.auth.getUser()
     if (authError || !user) {
-      throw new AuroraLifecycleControlError(
-        'Unauthorized',
-        401,
-        'unauthorized'
-      )
+      throw new AuroraLifecycleControlError('Unauthorized', 401, 'unauthorized')
     }
     const access = await validatePropertyManagerAccess(
       user.id,
@@ -153,7 +151,7 @@ export async function DELETE(request: NextRequest) {
         .from('shared_jobs')
         .update({
           lifecycle_status: 'cancelled',
-          status_reason: 'exclusive_lifecycle_lease_released_after_failed_bootstrap',
+          status_reason: 'aurora_run_tracking_released_after_failed_bootstrap',
           lease_owner: null,
           lease_expires_at: null,
           output: {
@@ -197,7 +195,7 @@ export async function DELETE(request: NextRequest) {
       baseline.anchorTargetPrior as Json | null | undefined
     )
     const registeredArtifactIds = Array.isArray(baseline.ownedResources)
-      ? baseline.ownedResources.flatMap(value => {
+      ? baseline.ownedResources.flatMap((value) => {
           if (
             value &&
             typeof value === 'object' &&
@@ -212,7 +210,7 @@ export async function DELETE(request: NextRequest) {
         })
       : []
     const registeredReleaseIds = Array.isArray(baseline.ownedResources)
-      ? baseline.ownedResources.flatMap(value => {
+      ? baseline.ownedResources.flatMap((value) => {
           if (
             value &&
             typeof value === 'object' &&
@@ -227,7 +225,7 @@ export async function DELETE(request: NextRequest) {
         })
       : []
     const registeredSessionIds = Array.isArray(baseline.ownedResources)
-      ? baseline.ownedResources.flatMap(value => {
+      ? baseline.ownedResources.flatMap((value) => {
           if (
             value &&
             typeof value === 'object' &&
@@ -242,7 +240,7 @@ export async function DELETE(request: NextRequest) {
         })
       : []
     const registeredRolloutIds = Array.isArray(baseline.ownedResources)
-      ? baseline.ownedResources.flatMap(value =>
+      ? baseline.ownedResources.flatMap((value) =>
           value &&
           typeof value === 'object' &&
           !Array.isArray(value) &&
@@ -254,7 +252,7 @@ export async function DELETE(request: NextRequest) {
         )
       : []
     const registeredDeploymentIds = Array.isArray(baseline.ownedResources)
-      ? baseline.ownedResources.flatMap(value =>
+      ? baseline.ownedResources.flatMap((value) =>
           value &&
           typeof value === 'object' &&
           !Array.isArray(value) &&
@@ -284,30 +282,30 @@ export async function DELETE(request: NextRequest) {
     if (ownedJobsError || targetsError) {
       throw new Error('Failed to inspect owned Aurora resources for cleanup')
     }
-    const ownedJobIds = (ownedJobs || []).map(job => job.id)
-    const { data: ownedArtifacts, error: ownedArtifactsError } = ownedJobIds.length
-      ? await client
-          .from('siteforge_blueprint_versions')
-          .select('id')
-          .eq('website_id', identity.websiteId)
-          .in('shared_job_id', ownedJobIds)
-      : { data: [], error: null }
+    const ownedJobIds = (ownedJobs || []).map((job) => job.id)
+    const { data: ownedArtifacts, error: ownedArtifactsError } =
+      ownedJobIds.length
+        ? await client
+            .from('siteforge_blueprint_versions')
+            .select('id')
+            .eq('website_id', identity.websiteId)
+            .in('shared_job_id', ownedJobIds)
+        : { data: [], error: null }
     if (ownedArtifactsError) {
       throw new Error('Failed to inspect owned Aurora artifacts for cleanup')
     }
     const removableArtifactIds = [
       ...new Set([
-        ...(ownedArtifacts || []).map(artifact => artifact.id),
+        ...(ownedArtifacts || []).map((artifact) => artifact.id),
         ...registeredArtifactIds,
       ]),
-    ]
-      .filter(artifactId => artifactId !== rollbackArtifactId)
-    const ownedTargets = (targets || []).filter(target =>
+    ].filter((artifactId) => artifactId !== rollbackArtifactId)
+    const ownedTargets = (targets || []).filter((target) =>
       isAuroraOwnedMetadata(target.metadata, identity.ownerId)
     )
     const removableTargetIds = ownedTargets
-      .map(target => target.id)
-      .filter(targetId => targetId !== identity.targetId)
+      .map((target) => target.id)
+      .filter((targetId) => targetId !== identity.targetId)
 
     const [rollbackReadback, anchorReadback] = await Promise.all([
       client
@@ -369,7 +367,7 @@ export async function DELETE(request: NextRequest) {
         production_certified_at: null,
         externally_promoted_artifact_id: null,
         externally_promoted_at: null,
-        editor_lifecycle_status: 'draft',
+        editor_lifecycle_status: 'editing',
         current_step: 'Aurora lifecycle resources cleaned',
         updated_at: new Date().toISOString(),
       })
@@ -402,7 +400,7 @@ export async function DELETE(request: NextRequest) {
       if (error) throw new Error(error.message)
     }
     const productionTarget = ownedTargets.find(
-      target => target.id === identity.targetId
+      (target) => target.id === identity.targetId
     )
     if (productionTarget) {
       const { error } = await client
@@ -451,29 +449,28 @@ export async function DELETE(request: NextRequest) {
     const [
       { data: remainingTargets, error: remainingTargetsError },
       { data: remainingJobs, error: remainingJobsError },
-    ] =
-      await Promise.all([
-        client
-          .from('siteforge_wordpress_targets')
-          .select('id, metadata')
-          .eq('website_id', identity.websiteId),
-        client
-          .from('shared_jobs')
-          .select('id')
-          .eq('property_id', identity.propertyId)
-          .eq('subject_id', identity.websiteId)
-          .contains('payload', { lifecycleOwnerId: identity.ownerId }),
-      ])
+    ] = await Promise.all([
+      client
+        .from('siteforge_wordpress_targets')
+        .select('id, metadata')
+        .eq('website_id', identity.websiteId),
+      client
+        .from('shared_jobs')
+        .select('id')
+        .eq('property_id', identity.propertyId)
+        .eq('subject_id', identity.websiteId)
+        .contains('payload', { lifecycleOwnerId: identity.ownerId }),
+    ])
     if (remainingTargetsError || remainingJobsError) {
       throw new Error('Failed to verify owned Aurora target and job cleanup')
     }
     const remainingIds = [
       ...(remainingTargets || [])
-        .filter(target =>
+        .filter((target) =>
           isAuroraOwnedMetadata(target.metadata, identity.ownerId)
         )
-        .map(target => target.id),
-      ...(remainingJobs || []).map(job => job.id),
+        .map((target) => target.id),
+      ...(remainingJobs || []).map((job) => job.id),
     ]
     if (removableArtifactIds.length) {
       const { data, error } = await client
@@ -481,8 +478,9 @@ export async function DELETE(request: NextRequest) {
         .select('id')
         .in('id', removableArtifactIds)
         .eq('website_id', identity.websiteId)
-      if (error) throw new Error('Failed to verify owned Aurora artifact cleanup')
-      remainingIds.push(...(data || []).map(item => item.id))
+      if (error)
+        throw new Error('Failed to verify owned Aurora artifact cleanup')
+      remainingIds.push(...(data || []).map((item) => item.id))
     }
     if (registeredRolloutIds.length) {
       const { data, error } = await client
@@ -490,8 +488,9 @@ export async function DELETE(request: NextRequest) {
         .select('id')
         .in('id', registeredRolloutIds)
         .eq('website_id', identity.websiteId)
-      if (error) throw new Error('Failed to verify owned Aurora rollout cleanup')
-      remainingIds.push(...(data || []).map(item => item.id))
+      if (error)
+        throw new Error('Failed to verify owned Aurora rollout cleanup')
+      remainingIds.push(...(data || []).map((item) => item.id))
     }
     if (registeredDeploymentIds.length) {
       const { data, error } = await client
@@ -502,7 +501,7 @@ export async function DELETE(request: NextRequest) {
       if (error) {
         throw new Error('Failed to verify owned Aurora deployment cleanup')
       }
-      remainingIds.push(...(data || []).map(item => item.id))
+      remainingIds.push(...(data || []).map((item) => item.id))
     }
     if (registeredReleaseIds.length) {
       const { data, error } = await client
@@ -510,8 +509,9 @@ export async function DELETE(request: NextRequest) {
         .select('id')
         .in('id', registeredReleaseIds)
         .eq('website_id', identity.websiteId)
-      if (error) throw new Error('Failed to verify owned Aurora release cleanup')
-      remainingIds.push(...(data || []).map(item => item.id))
+      if (error)
+        throw new Error('Failed to verify owned Aurora release cleanup')
+      remainingIds.push(...(data || []).map((item) => item.id))
     }
     if (registeredSessionIds.length) {
       const { data, error } = await client
@@ -519,8 +519,9 @@ export async function DELETE(request: NextRequest) {
         .select('id')
         .in('id', registeredSessionIds)
         .eq('website_id', identity.websiteId)
-      if (error) throw new Error('Failed to verify owned Aurora session cleanup')
-      remainingIds.push(...(data || []).map(item => item.id))
+      if (error)
+        throw new Error('Failed to verify owned Aurora session cleanup')
+      remainingIds.push(...(data || []).map((item) => item.id))
     }
     if (remainingIds.length) {
       throw new Error(

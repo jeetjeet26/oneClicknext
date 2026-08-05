@@ -7,7 +7,6 @@ import {
   inspectAuroraLifecycleEnv,
   type AuroraLifecycleConfig,
 } from '@/utils/siteforge/testing/aurora-lifecycle-e2e'
-import { SITEFORGE_CERTIFICATION_POLICY_VERSION } from '@/utils/siteforge/verification/browser-evidence'
 
 const seededUser = {
   email: 'local-admin@p11.test',
@@ -166,7 +165,7 @@ async function resolvePropertyIdForSmoke(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
     )
     expect(
-      properties.some(property => property.id === explicitPropertyId),
+      properties.some((property) => property.id === explicitPropertyId),
       `${explicitPropertyEnv} does not identify a property accessible to this operator.`
     ).toBe(true)
     return explicitPropertyId as string
@@ -175,7 +174,9 @@ async function resolvePropertyIdForSmoke(
   if (properties.length === 0) {
     const onboardingStatus = await callAuthedApi(page, '/api/onboarding')
     expect(onboardingStatus.ok).toBeTruthy()
-    const onboardingData = onboardingStatus.data as { needsOnboarding?: boolean }
+    const onboardingData = onboardingStatus.data as {
+      needsOnboarding?: boolean
+    }
 
     if (onboardingData.needsOnboarding) {
       const onboardingResponse = await callAuthedApi(page, '/api/onboarding', {
@@ -198,59 +199,77 @@ async function resolvePropertyIdForSmoke(
       })
       expect(onboardingResponse.ok).toBeTruthy()
     } else {
-      const createPropertyResponse = await callAuthedApi(page, '/api/properties', {
-        method: 'POST',
-        body: { name: 'P11 Smoke Property' },
-      })
+      const createPropertyResponse = await callAuthedApi(
+        page,
+        '/api/properties',
+        {
+          method: 'POST',
+          body: { name: 'P11 Smoke Property' },
+        }
+      )
       expect(createPropertyResponse.ok).toBeTruthy()
     }
 
-    const refreshedPropertiesResponse = await callAuthedApi(page, '/api/properties')
+    const refreshedPropertiesResponse = await callAuthedApi(
+      page,
+      '/api/properties'
+    )
     expect(refreshedPropertiesResponse.ok).toBeTruthy()
     const refreshedData = refreshedPropertiesResponse.data as {
       properties?: Array<{ id?: string; name?: string }>
     }
-    properties = Array.isArray(refreshedData.properties) ? refreshedData.properties : []
+    properties = Array.isArray(refreshedData.properties)
+      ? refreshedData.properties
+      : []
   }
 
   const namedProperty = properties.find(
-    property => property.name === 'P11 Local Demo Property' && typeof property.id === 'string'
+    (property) =>
+      property.name === 'P11 Local Demo Property' &&
+      typeof property.id === 'string'
   )
   if (namedProperty?.id) return namedProperty.id
 
   const smokeProperty = properties.find(
-    property => property.name === 'P11 Smoke Property' && typeof property.id === 'string'
+    (property) =>
+      property.name === 'P11 Smoke Property' && typeof property.id === 'string'
   )
   if (smokeProperty?.id) return smokeProperty.id
 
   return seededPropertyId
 }
 
-async function ensurePropertyAuditQueries(
-  page: Page,
-  propertyId: string
-) {
+async function ensurePropertyAuditQueries(page: Page, propertyId: string) {
   const queriesResponse = await callAuthedApi(
     page,
     `/api/propertyaudit/queries?propertyId=${propertyId}&includePerformance=false`
   )
-  expect(queriesResponse.ok, `Failed to load PropertyAudit queries: ${JSON.stringify(queriesResponse)}`).toBeTruthy()
+  expect(
+    queriesResponse.ok,
+    `Failed to load PropertyAudit queries: ${JSON.stringify(queriesResponse)}`
+  ).toBeTruthy()
 
   const queriesData = queriesResponse.data as {
     queries?: Array<{ id?: string; text?: string }>
   }
-  const existingQueries = Array.isArray(queriesData.queries) ? queriesData.queries : []
+  const existingQueries = Array.isArray(queriesData.queries)
+    ? queriesData.queries
+    : []
   if (existingQueries.length > 0) {
     return existingQueries
   }
 
-  const generateResponse = await callAuthedApi(page, '/api/propertyaudit/queries', {
-    method: 'POST',
-    body: {
-      propertyId,
-      generateFromProperty: true,
-    },
-  })
+  const generateResponse = await callAuthedApi(
+    page,
+    '/api/propertyaudit/queries',
+    {
+      method: 'POST',
+      body: {
+        propertyId,
+        generateFromProperty: true,
+      },
+    }
+  )
   expect(
     generateResponse.ok,
     `Failed to generate PropertyAudit query panel: ${JSON.stringify(generateResponse)}`
@@ -286,7 +305,10 @@ async function waitForWebsiteStatus(
   let lastResponse: { ok: boolean; status: number; data: unknown } | null = null
 
   while (Date.now() < deadline) {
-    const statusResponse = await callAuthedApi(page, `/api/siteforge/status/${websiteId}`)
+    const statusResponse = await callAuthedApi(
+      page,
+      `/api/siteforge/status/${websiteId}`
+    )
     lastResponse = statusResponse
 
     if (!statusResponse.ok) {
@@ -307,12 +329,13 @@ async function waitForWebsiteStatus(
     }
 
     const statusData = statusResponse.data as Record<string, unknown>
-    const status = typeof statusData.status === 'string' ? statusData.status : ''
+    const status =
+      typeof statusData.status === 'string' ? statusData.status : ''
     if (terminalStatuses.includes(status)) {
       return statusData
     }
 
-    await new Promise(resolve => setTimeout(resolve, 1000))
+    await new Promise((resolve) => setTimeout(resolve, 1000))
   }
 
   throw new Error(
@@ -348,7 +371,7 @@ async function waitForCanonicalPreviewJob(
         return data
       }
     }
-    await new Promise(resolve => setTimeout(resolve, 2000))
+    await new Promise((resolve) => setTimeout(resolve, 2000))
   }
 
   throw new Error(
@@ -368,16 +391,24 @@ async function createApprovedSiteForgeGeneration(
     ctaPriority: 'contact',
     enabledCapabilities: [],
   }
-  const readinessResponse = await callAuthedApi(page, '/api/onboarding/readiness', {
-    method: 'POST',
-    body: { propertyId },
-  })
+  const readinessResponse = await callAuthedApi(
+    page,
+    '/api/onboarding/readiness',
+    {
+      method: 'POST',
+      body: { propertyId },
+    }
+  )
   expect(
     readinessResponse.ok,
     `SiteForge readiness build failed: ${JSON.stringify(readinessResponse)}`
   ).toBeTruthy()
   const readiness = readinessResponse.data as {
-    snapshot?: { id?: string; status?: string; unresolved_conflicts?: unknown[] }
+    snapshot?: {
+      id?: string
+      status?: string
+      unresolved_conflicts?: unknown[]
+    }
   }
   if (readiness.snapshot?.status !== 'approved') {
     expect(
@@ -391,7 +422,8 @@ async function createApprovedSiteForgeGeneration(
         method: 'POST',
         body: {
           propertyId,
-          rationale: 'Local smoke approves the evidence-backed onboarding snapshot.',
+          rationale:
+            'Local smoke approves the evidence-backed onboarding snapshot.',
         },
       }
     )
@@ -444,7 +476,8 @@ async function createApprovedSiteForgeGeneration(
         expectedRevision: plan.revision,
         contentHash: plan.contentHash,
         decisionStatus: 'approved',
-        decisionReason: 'Local smoke approves this exact immutable plan revision.',
+        decisionReason:
+          'Local smoke approves this exact immutable plan revision.',
       },
     }
   )
@@ -508,7 +541,10 @@ async function waitForPropertyAuditRun(
   let lastResponse: { ok: boolean; status: number; data: unknown } | null = null
 
   while (Date.now() < deadline) {
-    const runResponse = await callAuthedApi(page, `/api/propertyaudit/runs/${runId}`)
+    const runResponse = await callAuthedApi(
+      page,
+      `/api/propertyaudit/runs/${runId}`
+    )
     lastResponse = runResponse
 
     if (runResponse.ok) {
@@ -517,17 +553,20 @@ async function waitForPropertyAuditRun(
         score?: { overallScore?: number } | null
         answers?: Array<unknown>
       }
-      const status = typeof runData.run?.status === 'string' ? runData.run.status : ''
+      const status =
+        typeof runData.run?.status === 'string' ? runData.run.status : ''
 
       if (status === 'completed' || status === 'failed') {
         return runData
       }
     }
 
-    await new Promise(resolve => setTimeout(resolve, 2000))
+    await new Promise((resolve) => setTimeout(resolve, 2000))
   }
 
-  throw new Error(`Timed out waiting for PropertyAudit run ${runId}: ${JSON.stringify(lastResponse)}`)
+  throw new Error(
+    `Timed out waiting for PropertyAudit run ${runId}: ${JSON.stringify(lastResponse)}`
+  )
 }
 
 test.describe('Acacia public read-only regression', () => {
@@ -545,7 +584,7 @@ test.describe('Acacia public read-only regression', () => {
     const publicUrl =
       process.env.ACACIA_READONLY_PUBLIC_URL || acacia.property.publicUrl
     const blockedWrites: string[] = []
-    await page.route('**/*', async route => {
+    await page.route('**/*', async (route) => {
       const request = route.request()
       const method = request.method().toUpperCase()
       if (['GET', 'HEAD', 'OPTIONS'].includes(method)) {
@@ -563,12 +602,16 @@ test.describe('Acacia public read-only regression', () => {
         name: /New Townhomes For Sale in Palo Alto, CA/i,
       })
     ).toBeVisible()
-    await expect(page.getByText(acacia.property.address, { exact: true })).toBeVisible()
+    await expect(
+      page.getByText(acacia.property.address, { exact: true })
+    ).toBeVisible()
     await expect(
       page.getByRole('link', { name: acacia.property.phone }).first()
     ).toBeVisible()
     await expect(page.getByText(/final (three )?homes/i).first()).toBeVisible()
-    await expect(page.getByRole('heading', { name: /3 Beds • 2\.5 Baths/i })).toBeVisible()
+    await expect(
+      page.getByRole('heading', { name: /3 Beds • 2\.5 Baths/i })
+    ).toBeVisible()
     await expect(
       page.locator(`a[href="${acacia.publicSiteLinks.availability}"]`).first()
     ).toBeVisible()
@@ -693,15 +736,15 @@ async function waitForAuroraResources(
     `Timed out waiting for ${label}: ${JSON.stringify({
       identity: last?.identity,
       currentArtifact: last?.currentArtifact,
-      extensions: last?.extensionRequests?.map(item => ({
+      extensions: last?.extensionRequests?.map((item) => ({
         id: item.id,
         status: item.status,
       })),
-      baselines: last?.baselineCandidates?.map(item => ({
+      baselines: last?.baselineCandidates?.map((item) => ({
         id: item.id,
         status: item.status,
       })),
-      certifications: last?.certifications?.map(item => ({
+      certifications: last?.certifications?.map((item) => ({
         id: item.id,
         environment: item.environment,
         access: item.access,
@@ -741,7 +784,9 @@ async function waitForAuroraEditorJob(
     if (['failed', 'cancelled'].includes(status || '')) {
       throw new Error(
         `Aurora semantic edit ${status}: ${
-          data.job?.error_message || data.message?.failure_message || 'unknown failure'
+          data.job?.error_message ||
+          data.message?.failure_message ||
+          'unknown failure'
         }`
       )
     }
@@ -846,7 +891,11 @@ async function runCanonicalPreview(
       900_000
     )
   }
-  return response.data as { status?: string; previewUrl?: string; error?: string }
+  return response.data as {
+    status?: string
+    previewUrl?: string
+    error?: string
+  }
 }
 
 test.describe.serial('Aurora same-website runtime-v3 lifecycle', () => {
@@ -864,16 +913,13 @@ test.describe.serial('Aurora same-website runtime-v3 lifecycle', () => {
 
     const preflight = inspectAuroraLifecycleEnv(process.env)
     expect(preflight.ready, formatAuroraPreflightFailure(preflight)).toBe(true)
-    if (!preflight.ready) throw new Error(formatAuroraPreflightFailure(preflight))
+    if (!preflight.ready)
+      throw new Error(formatAuroraPreflightFailure(preflight))
     const config = preflight.config
-    const mutationHeaders = auroraMutationHeaders(config)
-    await page.setExtraHTTPHeaders(mutationHeaders)
     await loginWithUser(page, config.operator)
 
     const reviewerContext = await browser.newContext({
-      baseURL:
-        process.env.PLAYWRIGHT_BASE_URL || 'http://127.0.0.1:3000',
-      extraHTTPHeaders: mutationHeaders,
+      baseURL: process.env.PLAYWRIGHT_BASE_URL || 'http://127.0.0.1:3000',
     })
     const reviewerPage = await reviewerContext.newPage()
     let primaryError: unknown = null
@@ -898,7 +944,7 @@ test.describe.serial('Aurora same-website runtime-v3 lifecycle', () => {
           },
         }
       )
-      expectApiOk(leaseResponse, 'Acquire exclusive Aurora lifecycle lease')
+      expectApiOk(leaseResponse, 'Start non-blocking Aurora run tracking')
 
       const importBody = {
         operation: 'import_immutable_rollback_baseline',
@@ -931,7 +977,7 @@ test.describe.serial('Aurora same-website runtime-v3 lifecycle', () => {
         const bootstrapCandidates = (
           bootstrapResources.baselineCandidates || []
         ).filter(
-          baseline =>
+          (baseline) =>
             baseline.status === 'candidate' &&
             baseline.artifactId === bootstrapResources.currentArtifact?.id
         )
@@ -1138,14 +1184,16 @@ test.describe.serial('Aurora same-website runtime-v3 lifecycle', () => {
       const firstExtensionResources = await waitForAuroraResources(
         page,
         config,
-        resources =>
+        (resources) =>
           Boolean(
-            resources.extensionRequests?.some(item => item.status === 'proposed')
+            resources.extensionRequests?.some(
+              (item) => item.status === 'proposed'
+            )
           ),
         'first custom interaction extension request'
       )
       const deniedExtension = firstExtensionResources.extensionRequests?.find(
-        item => item.status === 'proposed'
+        (item) => item.status === 'proposed'
       )
       expect(deniedExtension?.id).toBeTruthy()
       const denyResponse = await callAuroraMutation(
@@ -1174,18 +1222,20 @@ test.describe.serial('Aurora same-website runtime-v3 lifecycle', () => {
       const secondExtensionResources = await waitForAuroraResources(
         page,
         config,
-        resources =>
+        (resources) =>
           Boolean(
             resources.extensionRequests?.some(
-              item =>
+              (item) =>
                 item.status === 'proposed' && item.id !== deniedExtension?.id
             )
           ),
         'second custom interaction extension request'
       )
-      const approvedExtension = secondExtensionResources.extensionRequests?.find(
-        item => item.status === 'proposed' && item.id !== deniedExtension?.id
-      )
+      const approvedExtension =
+        secondExtensionResources.extensionRequests?.find(
+          (item) =>
+            item.status === 'proposed' && item.id !== deniedExtension?.id
+        )
       expect(approvedExtension?.id).toBeTruthy()
       const approveExtensionResponse = await callAuroraMutation(
         reviewerPage,
@@ -1223,101 +1273,27 @@ test.describe.serial('Aurora same-website runtime-v3 lifecycle', () => {
       )
       expect(semanticEvidence.mutationLeaseViolations || []).toEqual([])
 
-      const firstPreview = await runCanonicalPreview(
-        page,
-        config,
-        artifact
-      )
-      expect(
-        firstPreview.status,
-        `First-use preview must stop after creating baseline candidates: ${JSON.stringify(firstPreview)}`
-      ).toBe('failed')
-      const candidateResources = await waitForAuroraResources(
-        page,
-        config,
-        resources =>
-          Boolean(
-            resources.baselineCandidates?.length &&
-              resources.baselineCandidates.every(
-                item =>
-                  item.status === 'candidate' &&
-                  item.artifactId === artifact.id
-              )
-          ),
-        'policy-v4 visual baseline candidates'
-      )
-      for (const baseline of candidateResources.baselineCandidates || []) {
-        const baselineDecision = await callAuroraMutation(
-          reviewerPage,
-          config,
-          `/api/siteforge/certification/baselines/${baseline.id}/decision`,
-          {
-            method: 'POST',
-            body: {
-              propertyId: config.propertyId,
-              operation: 'approve',
-              reason:
-                'Independent reviewer approved the exact Aurora policy-v4 page and viewport screenshot identity.',
-            },
-          }
-        )
-        expectApiOk(
-          baselineDecision,
-          `Approve Aurora visual baseline ${baseline.id}`
-        )
-      }
-
-      const exactPreview = await runCanonicalPreview(
-        page,
-        config,
-        artifact,
-        true
-      )
+      const exactPreview = await runCanonicalPreview(page, config, artifact)
       expect(exactPreview.status).toBe('succeeded')
       const previewResponse = await callAuthedApi(
         page,
         `/api/siteforge/preview/${config.websiteId}`
       )
       expectApiOk(previewResponse, 'Load Aurora exact preview identity')
-      const previewArtifact = (previewResponse.data as {
-        artifact?: {
-          canonicalPreviewArtifactId?: string
-          canonicalPreviewContentHash?: string
-          canonicalPreviewUrl?: string
+      const previewArtifact = (
+        previewResponse.data as {
+          artifact?: {
+            canonicalPreviewArtifactId?: string
+            canonicalPreviewContentHash?: string
+            canonicalPreviewUrl?: string
+          }
         }
-      }).artifact
+      ).artifact
       expect(previewArtifact).toMatchObject({
         canonicalPreviewArtifactId: artifact.id,
         canonicalPreviewContentHash: artifact.contentHash,
       })
       expect(previewArtifact?.canonicalPreviewUrl).toMatch(/^https:\/\//)
-
-      const certifiedPreview = await waitForAuroraResources(
-        page,
-        config,
-        resources =>
-          Boolean(
-            resources.certifications?.some(
-              item =>
-                item.artifactId === artifact.id &&
-                item.environment === 'preview' &&
-                item.access === 'protected' &&
-                item.status === 'passed' &&
-                item.policyVersion ===
-                  SITEFORGE_CERTIFICATION_POLICY_VERSION
-            )
-          ),
-        'policy-v4 protected preview certification'
-      )
-      expect(
-        certifiedPreview.certifications?.some(
-          item =>
-            item.artifactId === artifact.id &&
-            item.environment === 'preview' &&
-            item.access === 'protected' &&
-            item.status === 'passed'
-        )
-      ).toBe(true)
 
       const artifactApproval = await callAuroraMutation(
         reviewerPage,
@@ -1330,7 +1306,7 @@ test.describe.serial('Aurora same-website runtime-v3 lifecycle', () => {
             contentHash: artifact.contentHash,
             decisionStatus: 'approved',
             decisionReason:
-              'Independent reviewer approved the exact policy-v4 certified Aurora preview for v3 staging.',
+              'Independent reviewer approved the exact Aurora WordPress preview for v3 staging.',
           },
         }
       )
@@ -1343,24 +1319,14 @@ test.describe.serial('Aurora same-website runtime-v3 lifecycle', () => {
         { method: 'POST' }
       )
       expectApiOk(deployResponse, 'Deploy Aurora runtime v3 staging')
-      const stagingResources = await waitForAuroraResources(
+      const stagingStatus = await waitForWebsiteStatus(
         page,
-        config,
-        resources =>
-          Boolean(
-            resources.certifications?.some(
-              item =>
-                item.artifactId === artifact.id &&
-                item.environment === 'staging' &&
-                item.access === 'public' &&
-                item.status === 'passed' &&
-                item.policyVersion ===
-                  SITEFORGE_CERTIFICATION_POLICY_VERSION
-            )
-          ),
-        'public policy-v4 v3 staging certification',
+        config.websiteId,
+        ['staging_ready', 'failed'],
         1_800_000
       )
+      expect(stagingStatus.status).toBe('staging_ready')
+      const stagingResources = await loadAuroraResources(page, config)
       expect(stagingResources.currentArtifact?.runtimeContractVersion).toBe(3)
 
       const prepareResponse = await callAuroraMutation(
@@ -1380,9 +1346,8 @@ test.describe.serial('Aurora same-website runtime-v3 lifecycle', () => {
         }
       )
       expectApiOk(prepareResponse, 'Prepare Aurora launch release')
-      const releaseId = (
-        prepareResponse.data as { release?: { id?: string } }
-      ).release?.id
+      const releaseId = (prepareResponse.data as { release?: { id?: string } })
+        .release?.id
       expect(releaseId).toBeTruthy()
 
       const launchApproval = await callAuroraMutation(
@@ -1434,9 +1399,8 @@ test.describe.serial('Aurora same-website runtime-v3 lifecycle', () => {
           promotionStart,
           'Perform exact owned Aurora Cloudways promotion'
         )
-        config.promotionOperationId = (
-          promotionStart.data as { operationId?: string }
-        ).operationId || ''
+        config.promotionOperationId =
+          (promotionStart.data as { operationId?: string }).operationId || ''
       }
       expect(config.promotionOperationId).toBeTruthy()
 
@@ -1480,45 +1444,21 @@ test.describe.serial('Aurora same-website runtime-v3 lifecycle', () => {
         'Verify persisted Aurora Cloudways promotion operation'
       )
 
-      const productionCertification = await callAuroraMutation(
-        reviewerPage,
-        config,
-        `/api/siteforge/production/${config.websiteId}/certify`,
-        {
-          method: 'POST',
-          body: {
-            releaseId,
-            promotedArtifactId: artifact.id,
-            promotedContentHash: artifact.contentHash,
-          },
-        }
-      )
-      expectApiOk(
-        productionCertification,
-        'Start Aurora production certification'
-      )
       await waitForAuroraResources(
         page,
         config,
-        resources =>
+        (resources) =>
           Boolean(
-            resources.certifications?.some(
-              item =>
+            resources.releases?.some(
+              (item) =>
+                item.id === releaseId &&
+                item.state === 'live' &&
                 item.artifactId === artifact.id &&
-                item.environment === 'production' &&
-                item.access === 'public' &&
-                item.status === 'passed' &&
-                item.policyVersion ===
-                  SITEFORGE_CERTIFICATION_POLICY_VERSION
-            ) &&
-              resources.releases?.some(
-                item =>
-                  item.id === releaseId &&
-                  ['production_certified', 'live'].includes(item.state || '')
-              )
+                item.contentHash === artifact.contentHash
+            )
           ),
-        'public policy-v4 production certification',
-        1_800_000
+        'Cloudways promotion and exact production manifest verification',
+        600_000
       )
 
       const rollbackPreview = await callAuthedApi(
@@ -1672,27 +1612,131 @@ test.describe.serial('Aurora same-website runtime-v3 lifecycle', () => {
   })
 })
 
+test.describe('SiteForge optional browser QA', () => {
+  test('records browser guidance without lifecycle ownership or release blocking', async ({
+    page,
+  }) => {
+    test.setTimeout(
+      Number(process.env.SITEFORGE_BROWSER_QA_TIMEOUT_MS || 1_200_000)
+    )
+    test.skip(
+      process.env.SITEFORGE_BROWSER_QA_E2E !== '1',
+      'Set SITEFORGE_BROWSER_QA_E2E=1 to run the separate Browserbase QA smoke.'
+    )
+    const preflight = inspectAuroraLifecycleEnv(process.env)
+    expect(preflight.ready, formatAuroraPreflightFailure(preflight)).toBe(true)
+    if (!preflight.ready)
+      throw new Error(formatAuroraPreflightFailure(preflight))
+    const config = preflight.config
+    await loginWithUser(page, config.operator)
+
+    const sessionResponse = await callAuthedApi(
+      page,
+      '/api/siteforge/editor/sessions',
+      {
+        method: 'POST',
+        body: {
+          websiteId: config.websiteId,
+          title: `Optional browser QA ${Date.now()}`,
+        },
+      }
+    )
+    expectApiOk(sessionResponse, 'Open browser QA editor session')
+    const session = sessionResponse.data as {
+      currentArtifact?: { id?: string; content_hash?: string }
+    }
+    const artifactId = session.currentArtifact?.id
+    const contentHash = session.currentArtifact?.content_hash
+    expect(artifactId).toBeTruthy()
+    expect(contentHash).toMatch(/^[a-f0-9]{64}$/)
+
+    const startResponse = await callAuthedApi(
+      page,
+      `/api/siteforge/canonical-preview/${config.websiteId}`,
+      {
+        method: 'POST',
+        body: {
+          artifactId,
+          contentHash,
+          retry: true,
+          runBrowserQa: true,
+        },
+      }
+    )
+    expectApiOk(startResponse, 'Start optional full browser QA')
+    const jobId = (startResponse.data as { jobId?: string }).jobId
+    expect(jobId).toBeTruthy()
+
+    let finalStatus: Record<string, unknown> | null = null
+    const deadline = Date.now() + 1_100_000
+    while (Date.now() < deadline) {
+      const statusResponse = await callAuthedApi(
+        page,
+        `/api/siteforge/canonical-preview/${config.websiteId}?jobId=${jobId}`
+      )
+      expectApiOk(statusResponse, 'Poll optional full browser QA')
+      const status = statusResponse.data as Record<string, unknown>
+      if (['succeeded', 'failed'].includes(String(status.status || ''))) {
+        finalStatus = status
+        break
+      }
+      await page.waitForTimeout(2_000)
+    }
+    expect(finalStatus?.status).toBe('succeeded')
+
+    const refreshedSession = await callAuthedApi(
+      page,
+      '/api/siteforge/editor/sessions',
+      {
+        method: 'POST',
+        body: {
+          websiteId: config.websiteId,
+          title: `Optional browser QA result ${Date.now()}`,
+        },
+      }
+    )
+    expectApiOk(refreshedSession, 'Load optional browser QA result')
+    expect(
+      (
+        refreshedSession.data as {
+          previews?: { certificationStatus?: string | null }
+        }
+      ).previews?.certificationStatus
+    ).toMatch(/^(passed|failed)$/)
+  })
+})
+
 test.describe('local smoke flows', () => {
   test('redirects unauthenticated users to login', async ({ page }) => {
     await page.goto('/')
 
     await page.waitForURL('**/auth/login')
-    await expect(page.getByRole('heading', { name: 'Welcome back' })).toBeVisible()
+    await expect(
+      page.getByRole('heading', { name: 'Welcome back' })
+    ).toBeVisible()
     await expect(page.getByLabel('Email address')).toBeVisible()
     await expect(page.getByLabel('Password')).toBeVisible()
   })
 
-  test('seeded local user can sign in and reach an authenticated app route', async ({ page }) => {
+  test('seeded local user can sign in and reach an authenticated app route', async ({
+    page,
+  }) => {
     await login(page)
     const dashboardHeading = page.getByRole('heading', { name: 'Overview' })
-    const onboardingHeading = page.getByRole('heading', { name: 'Welcome to P11 Platform' })
+    const onboardingHeading = page.getByRole('heading', {
+      name: 'Welcome to P11 Platform',
+    })
 
     await expect(dashboardHeading.or(onboardingHeading)).toBeVisible()
 
     if (await dashboardHeading.isVisible()) {
-      await expect(page.getByText('Performance summary for P11 Local Demo Property')).toBeVisible()
+      await expect(
+        page.getByText('Performance summary for P11 Local Demo Property')
+      ).toBeVisible()
     } else {
-      await expect(page.getByRole('heading', { name: 'Welcome to P11 Platform' })).toBeVisible()
+      await expect(
+        page.getByRole('heading', { name: 'Welcome to P11 Platform' })
+      ).toBeVisible()
       await expect(page.getByLabel('Organization name *')).toBeVisible()
     }
   })
@@ -1707,24 +1751,32 @@ test.describe('local smoke flows', () => {
     const sourceName = `P11 Local Smoke Knowledge Source (${propertyId.slice(0, 8)})`
     const sourceUrl = `https://local-smoke.p11.test/${propertyId}`
 
-    const ingestResponse = await callAuthedApi(page, '/api/community/knowledge-sources', {
-      method: 'POST',
-      body: {
-        propertyId,
-        sourceType: 'manual',
-        sourceName,
-        sourceUrl,
-        extractedData: {
-          amenities: ['Smoke Test Rooftop Lounge', 'Smoke Test Fitness Studio'],
-          specials: ['Smoke Test Move-in Special'],
-          brand_origin: 'client_provided_material',
-          deterministic_marker: 'local_smoke_setup_ingest_retrieve',
+    const ingestResponse = await callAuthedApi(
+      page,
+      '/api/community/knowledge-sources',
+      {
+        method: 'POST',
+        body: {
+          propertyId,
+          sourceType: 'manual',
+          sourceName,
+          sourceUrl,
+          extractedData: {
+            amenities: [
+              'Smoke Test Rooftop Lounge',
+              'Smoke Test Fitness Studio',
+            ],
+            specials: ['Smoke Test Move-in Special'],
+            brand_origin: 'client_provided_material',
+            deterministic_marker: 'local_smoke_setup_ingest_retrieve',
+          },
         },
-      },
-    })
-    expect(ingestResponse.ok, `Knowledge source ingest failed: ${JSON.stringify(ingestResponse)}`).toBe(
-      true
+      }
     )
+    expect(
+      ingestResponse.ok,
+      `Knowledge source ingest failed: ${JSON.stringify(ingestResponse)}`
+    ).toBe(true)
 
     const retrievalResponse = await callAuthedApi(
       page,
@@ -1741,14 +1793,21 @@ test.describe('local smoke flows', () => {
       categories?: Record<string, number>
       documentsCount?: number
     }
-    const sources = Array.isArray(retrievalData.sources) ? retrievalData.sources : []
-    const insights = Array.isArray(retrievalData.insights) ? retrievalData.insights : []
+    const sources = Array.isArray(retrievalData.sources)
+      ? retrievalData.sources
+      : []
+    const insights = Array.isArray(retrievalData.insights)
+      ? retrievalData.insights
+      : []
 
     const smokeSource = sources.find(
-      source => source.source_name === sourceName && source.source_url === sourceUrl
+      (source) =>
+        source.source_name === sourceName && source.source_url === sourceUrl
     )
     expect(smokeSource).toBeTruthy()
-    expect(insights.some(insight => insight.includes('Amenities:'))).toBe(true)
+    expect(insights.some((insight) => insight.includes('Amenities:'))).toBe(
+      true
+    )
     expect(typeof retrievalData.documentsCount).toBe('number')
     expect(typeof retrievalData.categories).toBe('object')
   })
@@ -1762,39 +1821,43 @@ test.describe('local smoke flows', () => {
     const suffix = Date.now().toString(36)
     const competitorName = `Local Smoke Competitor ${suffix}`
 
-    const createCompetitorResponse = await callAuthedApi(page, '/api/marketvision/competitors', {
-      method: 'POST',
-      body: {
-        propertyId,
-        name: competitorName,
-        address: '100 Local Smoke Way, Austin, TX',
-        websiteUrl: `https://competitor-${suffix}.p11.test`,
-        propertyType: 'multifamily',
-        amenities: ['Rooftop pool', 'Coworking lounge'],
-        units: [
-          {
-            unitType: 'A1',
-            bedrooms: 1,
-            bathrooms: 1,
-            sqftMin: 650,
-            sqftMax: 700,
-            rentMin: 1700,
-            rentMax: 1850,
-            availableCount: 3,
-          },
-          {
-            unitType: 'B2',
-            bedrooms: 2,
-            bathrooms: 2,
-            sqftMin: 980,
-            sqftMax: 1100,
-            rentMin: 2300,
-            rentMax: 2500,
-            availableCount: 2,
-          },
-        ],
-      },
-    })
+    const createCompetitorResponse = await callAuthedApi(
+      page,
+      '/api/marketvision/competitors',
+      {
+        method: 'POST',
+        body: {
+          propertyId,
+          name: competitorName,
+          address: '100 Local Smoke Way, Austin, TX',
+          websiteUrl: `https://competitor-${suffix}.p11.test`,
+          propertyType: 'multifamily',
+          amenities: ['Rooftop pool', 'Coworking lounge'],
+          units: [
+            {
+              unitType: 'A1',
+              bedrooms: 1,
+              bathrooms: 1,
+              sqftMin: 650,
+              sqftMax: 700,
+              rentMin: 1700,
+              rentMax: 1850,
+              availableCount: 3,
+            },
+            {
+              unitType: 'B2',
+              bedrooms: 2,
+              bathrooms: 2,
+              sqftMin: 980,
+              sqftMax: 1100,
+              rentMin: 2300,
+              rentMax: 2500,
+              availableCount: 2,
+            },
+          ],
+        },
+      }
+    )
     expect(
       createCompetitorResponse.ok,
       `Competitor ingest failed: ${JSON.stringify(createCompetitorResponse)}`
@@ -1819,22 +1882,31 @@ test.describe('local smoke flows', () => {
       comparisons?: Array<{
         competitor?: { id?: string; name?: string }
         avgRent?: number
-        units?: Array<{ bedrooms?: number; rentMin?: number | null; availableCount?: number }>
+        units?: Array<{
+          bedrooms?: number
+          rentMin?: number | null
+          availableCount?: number
+        }>
       }>
     }
     const competitorComparison = (comparisonData.comparisons || []).find(
-      entry => entry.competitor?.id === competitorId
+      (entry) => entry.competitor?.id === competitorId
     )
     expect(competitorComparison).toBeTruthy()
     expect(competitorComparison?.competitor?.name).toBe(competitorName)
     expect((competitorComparison?.avgRent || 0) > 0).toBe(true)
-    expect((competitorComparison?.units || []).some(unit => unit.bedrooms === 1)).toBe(true)
+    expect(
+      (competitorComparison?.units || []).some((unit) => unit.bedrooms === 1)
+    ).toBe(true)
 
     const summaryResponse = await callAuthedApi(
       page,
       `/api/marketvision/analysis?propertyId=${propertyId}&type=summary`
     )
-    expect(summaryResponse.ok, `Summary insight generation failed: ${JSON.stringify(summaryResponse)}`).toBeTruthy()
+    expect(
+      summaryResponse.ok,
+      `Summary insight generation failed: ${JSON.stringify(summaryResponse)}`
+    ).toBeTruthy()
     const summaryData = summaryResponse.data as {
       summary?: {
         competitorCount?: number
@@ -1844,14 +1916,19 @@ test.describe('local smoke flows', () => {
     }
     expect((summaryData.summary?.competitorCount || 0) > 0).toBe(true)
     expect((summaryData.summary?.totalUnitsTracked || 0) > 0).toBe(true)
-    expect((summaryData.summary?.avgRentByBedroom?.['1BR']?.avg || 0) > 0).toBe(true)
+    expect((summaryData.summary?.avgRentByBedroom?.['1BR']?.avg || 0) > 0).toBe(
+      true
+    )
 
     const cleanupResponse = await callAuthedApi(
       page,
       `/api/marketvision/competitors?id=${competitorId as string}`,
       { method: 'DELETE' }
     )
-    expect(cleanupResponse.ok, `Competitor cleanup failed: ${JSON.stringify(cleanupResponse)}`).toBeTruthy()
+    expect(
+      cleanupResponse.ok,
+      `Competitor cleanup failed: ${JSON.stringify(cleanupResponse)}`
+    ).toBeTruthy()
   })
 
   test('multichannel bi connection import reporting and recurring sync stays deterministic locally', async ({
@@ -1867,23 +1944,35 @@ test.describe('local smoke flows', () => {
     let connectionId: string | null = null
 
     try {
-      const createConnectionResponse = await callAuthedApi(page, '/api/integrations/ad-connections', {
-        method: 'POST',
-        body: {
-          property_id: propertyId,
-          platform: 'google_ads',
-          account_id: accountId,
-          account_name: `Local Smoke Account ${suffix}`,
-        },
-      })
+      const createConnectionResponse = await callAuthedApi(
+        page,
+        '/api/integrations/ad-connections',
+        {
+          method: 'POST',
+          body: {
+            property_id: propertyId,
+            platform: 'google_ads',
+            account_id: accountId,
+            account_name: `Local Smoke Account ${suffix}`,
+          },
+        }
+      )
       expect(
         createConnectionResponse.ok,
         `Ad connection create failed: ${JSON.stringify(createConnectionResponse)}`
       ).toBeTruthy()
       const createConnectionData = createConnectionResponse.data as {
-        connection?: { id?: string; property_id?: string; platform?: string; account_id?: string }
+        connection?: {
+          id?: string
+          property_id?: string
+          platform?: string
+          account_id?: string
+        }
       }
-      connectionId = typeof createConnectionData.connection?.id === 'string' ? createConnectionData.connection.id : null
+      connectionId =
+        typeof createConnectionData.connection?.id === 'string'
+          ? createConnectionData.connection.id
+          : null
       expect(connectionId).toBeTruthy()
       expect(createConnectionData.connection?.property_id).toBe(propertyId)
       expect(createConnectionData.connection?.platform).toBe('google_ads')
@@ -1894,18 +1983,25 @@ test.describe('local smoke flows', () => {
         `${today},1200,64,$145.50,7`,
       ].join('\n')
 
-      const importResponse = await callAuthedApi(page, '/api/analytics/upload', {
-        method: 'POST',
-        body: {
-          csvContent,
-          filename: `local_smoke_${today}.csv`,
-          campaignName,
-          propertyId,
-          platform: 'google_ads',
-          preview: false,
-        },
-      })
-      expect(importResponse.ok, `CSV import failed: ${JSON.stringify(importResponse)}`).toBeTruthy()
+      const importResponse = await callAuthedApi(
+        page,
+        '/api/analytics/upload',
+        {
+          method: 'POST',
+          body: {
+            csvContent,
+            filename: `local_smoke_${today}.csv`,
+            campaignName,
+            propertyId,
+            platform: 'google_ads',
+            preview: false,
+          },
+        }
+      )
+      expect(
+        importResponse.ok,
+        `CSV import failed: ${JSON.stringify(importResponse)}`
+      ).toBeTruthy()
       const importData = importResponse.data as {
         success?: boolean
         imported?: { rowCount?: number; reportType?: string }
@@ -1923,7 +2019,12 @@ test.describe('local smoke flows', () => {
         `Performance reporting failed: ${JSON.stringify(performanceResponse)}`
       ).toBeTruthy()
       const performanceData = performanceResponse.data as {
-        totals?: { spend?: number; clicks?: number; impressions?: number; conversions?: number }
+        totals?: {
+          spend?: number
+          clicks?: number
+          impressions?: number
+          conversions?: number
+        }
         channels?: Array<{ channel?: string; spend?: number }>
       }
       expect((performanceData.totals?.spend || 0) > 0).toBe(true)
@@ -1931,15 +2032,21 @@ test.describe('local smoke flows', () => {
       expect((performanceData.totals?.impressions || 0) > 0).toBe(true)
       expect((performanceData.totals?.conversions || 0) > 0).toBe(true)
       expect(
-        (performanceData.channels || []).some(channel => channel.channel === 'google_ads')
+        (performanceData.channels || []).some(
+          (channel) => channel.channel === 'google_ads'
+        )
       ).toBe(true)
 
       const cronHeaders = process.env.CRON_SECRET
         ? { authorization: `Bearer ${process.env.CRON_SECRET}` }
         : undefined
-      const recurringSyncResponse = await callAuthedApi(page, '/api/cron/sync-ads', {
-        headers: cronHeaders,
-      })
+      const recurringSyncResponse = await callAuthedApi(
+        page,
+        '/api/cron/sync-ads',
+        {
+          headers: cronHeaders,
+        }
+      )
       expect(
         recurringSyncResponse.ok,
         `Recurring sync trigger failed: ${JSON.stringify(recurringSyncResponse)}`
@@ -1955,13 +2062,17 @@ test.describe('local smoke flows', () => {
       if (typeof recurringSyncData.success === 'boolean') {
         expect(recurringSyncData.success).toBe(true)
         expect((recurringSyncData.totalConnections || 0) > 0).toBe(true)
-        const accountResult = (recurringSyncData.results || []).find(result => result.accountId === accountId)
+        const accountResult = (recurringSyncData.results || []).find(
+          (result) => result.accountId === accountId
+        )
         expect(accountResult).toBeTruthy()
         if (process.env.GOOGLE_ADS_CLIENT_ID) {
           expect(accountResult?.error || null).toBeNull()
         } else {
           expect(typeof accountResult?.error).toBe('string')
-          expect((accountResult?.error || '').toLowerCase()).toContain('not configured')
+          expect((accountResult?.error || '').toLowerCase()).toContain(
+            'not configured'
+          )
         }
       } else {
         expect(recurringSyncData.message).toBe('No connections to sync')
@@ -1982,7 +2093,9 @@ test.describe('local smoke flows', () => {
     }
   })
 
-  test('siteforge confirmed plan produces an immutable artifact before staging', async ({ page }) => {
+  test('siteforge confirmed plan produces an immutable artifact before staging', async ({
+    page,
+  }) => {
     test.setTimeout(180_000)
     await login(page)
     const propertyId = await resolvePropertyIdForSmoke(page)
@@ -2000,7 +2113,8 @@ test.describe('local smoke flows', () => {
       180_000
     )
     expect(
-      generationStatus.status === 'ready_for_preview' || generationStatus.status === 'complete',
+      generationStatus.status === 'ready_for_preview' ||
+        generationStatus.status === 'complete',
       `Generation did not reach ready state: ${JSON.stringify(generationStatus)}`
     ).toBe(true)
 
@@ -2024,8 +2138,7 @@ test.describe('local smoke flows', () => {
     ).toBeTruthy()
     const artifactData = artifactResponse.data as Record<string, unknown>
     const currentArtifact = artifactData.currentArtifact as
-      | { id?: string; version?: number; content_hash?: string }
-      | undefined
+      { id?: string; version?: number; content_hash?: string } | undefined
     expect(typeof currentArtifact?.id).toBe('string')
     expect(typeof currentArtifact?.version).toBe('number')
     expect(currentArtifact?.content_hash).toMatch(/^[a-f0-9]{64}$/)
@@ -2058,7 +2171,9 @@ test.describe('local smoke flows', () => {
 
     await page.goto(`/dashboard/siteforge/${websiteId}`)
     await expect(
-      page.getByText(/Production promotion requires a separate, expiring manager launch approval/)
+      page.getByText(
+        /Production promotion requires a separate, expiring manager launch approval/
+      )
     ).toBeVisible()
     await expect(
       page.getByPlaceholder(/Describe any site-wide change/i)
@@ -2078,9 +2193,9 @@ test.describe('local smoke flows', () => {
 
     await page.getByRole('button', { name: 'WordPress preview' }).click()
     await page.getByRole('button', { name: 'Render exact revision' }).click()
-    await expect(
-      page.getByTitle('Exact WordPress preview')
-    ).toBeVisible({ timeout: 120_000 })
+    await expect(page.getByTitle('Exact WordPress preview')).toBeVisible({
+      timeout: 120_000,
+    })
 
     await page
       .getByLabel('Site edit request')
@@ -2091,21 +2206,23 @@ test.describe('local smoke flows', () => {
     await expect(page.getByRole('button', { name: 'Working…' })).toBeHidden({
       timeout: 120_000,
     })
-    await expect(
-      page.getByTitle('Exact WordPress preview')
-    ).toBeVisible({ timeout: 120_000 })
+    await expect(page.getByTitle('Exact WordPress preview')).toBeVisible({
+      timeout: 120_000,
+    })
 
     await page.getByRole('button', { name: 'Undo' }).click()
     await expect(page.getByText('WordPress preview stale')).toBeVisible({
       timeout: 60_000,
     })
     await page.getByRole('button', { name: 'Render exact revision' }).click()
-    await expect(
-      page.getByTitle('Exact WordPress preview')
-    ).toBeVisible({ timeout: 120_000 })
+    await expect(page.getByTitle('Exact WordPress preview')).toBeVisible({
+      timeout: 120_000,
+    })
   })
 
-  test('seeded LumaLeasing tour availability returns local fixture slots', async ({ request }) => {
+  test('seeded LumaLeasing tour availability returns local fixture slots', async ({
+    request,
+  }) => {
     const response = await request.get('/api/lumaleasing/tours', {
       headers: {
         'X-API-Key': 'local-luma-demo-key',
@@ -2130,7 +2247,10 @@ test.describe('local smoke flows', () => {
     })
   })
 
-  test('lumaleasing provider-backed status and booking flow (opt-in)', async ({ page, request }) => {
+  test('lumaleasing provider-backed status and booking flow (opt-in)', async ({
+    page,
+    request,
+  }) => {
     test.setTimeout(300_000)
     test.skip(
       process.env.LUMALEASING_REAL_SMOKE !== '1',
@@ -2138,7 +2258,10 @@ test.describe('local smoke flows', () => {
     )
 
     const apiKey = process.env.LUMALEASING_REAL_SMOKE_API_KEY
-    test.skip(!apiKey, 'Set LUMALEASING_REAL_SMOKE_API_KEY to run real LumaLeasing provider smoke.')
+    test.skip(
+      !apiKey,
+      'Set LUMALEASING_REAL_SMOKE_API_KEY to run real LumaLeasing provider smoke.'
+    )
     if (!apiKey) return
 
     await login(page)
@@ -2151,7 +2274,10 @@ test.describe('local smoke flows', () => {
       page,
       `/api/lumaleasing/calendar/status?propertyId=${propertyId}`
     )
-    expect(calendarStatus.ok, `Calendar status failed: ${JSON.stringify(calendarStatus)}`).toBeTruthy()
+    expect(
+      calendarStatus.ok,
+      `Calendar status failed: ${JSON.stringify(calendarStatus)}`
+    ).toBeTruthy()
     const calendarData = calendarStatus.data as {
       connected?: boolean
       token_status?: string
@@ -2161,8 +2287,14 @@ test.describe('local smoke flows', () => {
     expect(calendarData.token_status).toBe('healthy')
     expect(calendarData.calendar_sync?.degraded).not.toBe(true)
 
-    const emailStatus = await callAuthedApi(page, `/api/lumaleasing/email/status?propertyId=${propertyId}`)
-    expect(emailStatus.ok, `Email status failed: ${JSON.stringify(emailStatus)}`).toBeTruthy()
+    const emailStatus = await callAuthedApi(
+      page,
+      `/api/lumaleasing/email/status?propertyId=${propertyId}`
+    )
+    expect(
+      emailStatus.ok,
+      `Email status failed: ${JSON.stringify(emailStatus)}`
+    ).toBeTruthy()
     const emailData = emailStatus.data as {
       connected?: boolean
       token_status?: string
@@ -2171,8 +2303,12 @@ test.describe('local smoke flows', () => {
     expect(emailData.token_status).toBe('healthy')
 
     const now = new Date()
-    const startDate = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
-    const endDate = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+    const startDate = new Date(now.getTime() + 24 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 10)
+    const endDate = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 10)
     const availabilityResponse = await request.get('/api/lumaleasing/tours', {
       headers: {
         'X-API-Key': apiKey,
@@ -2187,12 +2323,23 @@ test.describe('local smoke flows', () => {
     const availabilityData = (await availabilityResponse.json()) as {
       slots?: Record<
         string,
-        Array<{ id: string; date: string; startTime: string; endTime: string; available: number }>
+        Array<{
+          id: string
+          date: string
+          startTime: string
+          endTime: string
+          available: number
+        }>
       >
     }
     const dayEntries = Object.entries(availabilityData.slots || {})
-    const firstDayWithSlots = dayEntries.find(([, slots]) => Array.isArray(slots) && slots.length > 0)
-    expect(firstDayWithSlots, `No available slots returned: ${JSON.stringify(availabilityData)}`).toBeTruthy()
+    const firstDayWithSlots = dayEntries.find(
+      ([, slots]) => Array.isArray(slots) && slots.length > 0
+    )
+    expect(
+      firstDayWithSlots,
+      `No available slots returned: ${JSON.stringify(availabilityData)}`
+    ).toBeTruthy()
     const firstSlot = firstDayWithSlots?.[1]?.[0]
     expect(firstSlot).toBeTruthy()
 
@@ -2212,7 +2359,10 @@ test.describe('local smoke flows', () => {
         },
       },
     })
-    expect(bookingResponse.ok(), `Booking failed: ${await bookingResponse.text()}`).toBeTruthy()
+    expect(
+      bookingResponse.ok(),
+      `Booking failed: ${await bookingResponse.text()}`
+    ).toBeTruthy()
     const bookingData = (await bookingResponse.json()) as {
       success?: boolean
       booking?: { id?: string; status?: string }
@@ -2312,11 +2462,18 @@ test.describe('local smoke flows', () => {
     const propertyId = await resolvePropertyIdForSmoke(page)
     await ensurePropertyAuditQueries(page, propertyId)
 
-    const purgeResponse = await callAuthedApi(page, '/api/propertyaudit/runs/purge', {
-      method: 'POST',
-      body: { propertyId, surfaces: ['openai'] },
-    })
-    expect(purgeResponse.ok, `PropertyAudit purge failed: ${JSON.stringify(purgeResponse)}`).toBeTruthy()
+    const purgeResponse = await callAuthedApi(
+      page,
+      '/api/propertyaudit/runs/purge',
+      {
+        method: 'POST',
+        body: { propertyId, surfaces: ['openai'] },
+      }
+    )
+    expect(
+      purgeResponse.ok,
+      `PropertyAudit purge failed: ${JSON.stringify(purgeResponse)}`
+    ).toBeTruthy()
 
     const runResponse = await callAuthedApi(page, '/api/propertyaudit/run', {
       method: 'POST',
@@ -2327,7 +2484,10 @@ test.describe('local smoke flows', () => {
         useLocalFixture: true,
       },
     })
-    expect(runResponse.ok, `PropertyAudit run request failed: ${JSON.stringify(runResponse)}`).toBeTruthy()
+    expect(
+      runResponse.ok,
+      `PropertyAudit run request failed: ${JSON.stringify(runResponse)}`
+    ).toBeTruthy()
 
     const runData = runResponse.data as {
       runs?: Array<{ id?: string; surface?: string }>
@@ -2341,7 +2501,11 @@ test.describe('local smoke flows', () => {
     const runId = runData.runs?.[0]?.id
     expect(typeof runId).toBe('string')
 
-    const completedRun = await waitForPropertyAuditRun(page, runId as string, 120_000)
+    const completedRun = await waitForPropertyAuditRun(
+      page,
+      runId as string,
+      120_000
+    )
     expect(
       completedRun.run?.status,
       `PropertyAudit fixture run did not complete successfully: ${JSON.stringify(completedRun)}`
@@ -2350,15 +2514,19 @@ test.describe('local smoke flows', () => {
     expect(completedRun.score).toBeTruthy()
     expect((completedRun.answers || []).length).toBeGreaterThan(0)
 
-    const reportResponse = await callAuthedTextApi(page, '/api/propertyaudit/generate-report', {
-      method: 'POST',
-      body: {
-        propertyId,
-        runId: runId as string,
-        template: 'executive',
-        includeSections: ['recommendations'],
-      },
-    })
+    const reportResponse = await callAuthedTextApi(
+      page,
+      '/api/propertyaudit/generate-report',
+      {
+        method: 'POST',
+        body: {
+          propertyId,
+          runId: runId as string,
+          template: 'executive',
+          includeSections: ['recommendations'],
+        },
+      }
+    )
     expect(
       reportResponse.ok,
       `PropertyAudit report generation failed: ${JSON.stringify(reportResponse)}`
@@ -2383,8 +2551,13 @@ test.describe('local smoke flows', () => {
   test('propertyaudit data-engine run reaches completion and supports deterministic report export (opt-in)', async ({
     page,
   }) => {
-    const propertyAuditTimeoutMs = Number(process.env.PROPERTYAUDIT_REAL_SMOKE_TIMEOUT_MS || 900_000)
-    const requestedSurface = process.env.PROPERTYAUDIT_REAL_SMOKE_SURFACE === 'claude' ? 'claude' : 'openai'
+    const propertyAuditTimeoutMs = Number(
+      process.env.PROPERTYAUDIT_REAL_SMOKE_TIMEOUT_MS || 900_000
+    )
+    const requestedSurface =
+      process.env.PROPERTYAUDIT_REAL_SMOKE_SURFACE === 'claude'
+        ? 'claude'
+        : 'openai'
 
     test.setTimeout(propertyAuditTimeoutMs + 120_000)
     test.skip(
@@ -2407,7 +2580,10 @@ test.describe('local smoke flows', () => {
         executionCount: 1,
       },
     })
-    expect(runResponse.ok, `PropertyAudit run request failed: ${JSON.stringify(runResponse)}`).toBeTruthy()
+    expect(
+      runResponse.ok,
+      `PropertyAudit run request failed: ${JSON.stringify(runResponse)}`
+    ).toBeTruthy()
 
     const runData = runResponse.data as {
       runs?: Array<{ id?: string; surface?: string }>
@@ -2420,7 +2596,11 @@ test.describe('local smoke flows', () => {
     const runId = runData.runs?.[0]?.id
     expect(typeof runId).toBe('string')
 
-    const completedRun = await waitForPropertyAuditRun(page, runId as string, propertyAuditTimeoutMs)
+    const completedRun = await waitForPropertyAuditRun(
+      page,
+      runId as string,
+      propertyAuditTimeoutMs
+    )
     expect(
       completedRun.run?.status,
       `PropertyAudit run did not complete successfully: ${JSON.stringify(completedRun)}`
@@ -2429,15 +2609,19 @@ test.describe('local smoke flows', () => {
     expect(completedRun.score).toBeTruthy()
     expect((completedRun.answers || []).length).toBeGreaterThan(0)
 
-    const reportResponse = await callAuthedTextApi(page, '/api/propertyaudit/generate-report', {
-      method: 'POST',
-      body: {
-        propertyId,
-        runId: runId as string,
-        template: 'executive',
-        includeSections: ['recommendations'],
-      },
-    })
+    const reportResponse = await callAuthedTextApi(
+      page,
+      '/api/propertyaudit/generate-report',
+      {
+        method: 'POST',
+        body: {
+          propertyId,
+          runId: runId as string,
+          template: 'executive',
+          includeSections: ['recommendations'],
+        },
+      }
+    )
     expect(
       reportResponse.ok,
       `PropertyAudit report generation failed: ${JSON.stringify(reportResponse)}`
@@ -2456,56 +2640,83 @@ test.describe('local smoke flows', () => {
     ).toBeTruthy()
     expect(exportResponse.contentType).toContain('text/markdown')
     expect(exportResponse.text).toContain('# GEO Visibility Report')
-    expect(exportResponse.text).toContain(`**Surface:** ${requestedSurface.toUpperCase()}`)
+    expect(exportResponse.text).toContain(
+      `**Surface:** ${requestedSurface.toUpperCase()}`
+    )
   })
 
-  test('reviewflow sync to approval to post tracking stays auditable locally', async ({ page }) => {
+  test('reviewflow sync to approval to post tracking stays auditable locally', async ({
+    page,
+  }) => {
     test.setTimeout(120_000)
     await login(page)
     const propertyId = await resolvePropertyIdForSmoke(page)
     const reviewSuffix = Date.now().toString(36)
     const platformReviewId = `local-smoke-review-${reviewSuffix}`
 
-    const createReviewResponse = await callAuthedApi(page, '/api/reviewflow/reviews', {
-      method: 'POST',
-      body: {
-        propertyId,
-        platform: 'google',
-        platformReviewId,
-        reviewerName: 'Local Smoke Reviewer',
-        rating: 4,
-        reviewText: 'Local smoke test review to validate approval and posting audit flow.',
-      },
-    })
-    expect(createReviewResponse.ok, `Review create failed: ${JSON.stringify(createReviewResponse)}`).toBeTruthy()
-    const createReviewData = createReviewResponse.data as { review?: { id?: string; response_status?: string } }
+    const createReviewResponse = await callAuthedApi(
+      page,
+      '/api/reviewflow/reviews',
+      {
+        method: 'POST',
+        body: {
+          propertyId,
+          platform: 'google',
+          platformReviewId,
+          reviewerName: 'Local Smoke Reviewer',
+          rating: 4,
+          reviewText:
+            'Local smoke test review to validate approval and posting audit flow.',
+        },
+      }
+    )
+    expect(
+      createReviewResponse.ok,
+      `Review create failed: ${JSON.stringify(createReviewResponse)}`
+    ).toBeTruthy()
+    const createReviewData = createReviewResponse.data as {
+      review?: { id?: string; response_status?: string }
+    }
     const reviewId = createReviewData.review?.id
     expect(typeof reviewId).toBe('string')
     expect(createReviewData.review?.response_status).toBe('pending')
 
-    const generateResponse = await callAuthedApi(page, '/api/reviewflow/respond', {
-      method: 'POST',
-      body: {
-        reviewId,
-        tone: 'professional',
-      },
-    })
+    const generateResponse = await callAuthedApi(
+      page,
+      '/api/reviewflow/respond',
+      {
+        method: 'POST',
+        body: {
+          reviewId,
+          tone: 'professional',
+        },
+      }
+    )
     expect(
       generateResponse.ok,
       `Review response generation failed (OPENAI key and model path must be configured locally): ${JSON.stringify(generateResponse)}`
     ).toBeTruthy()
-    const generatedData = generateResponse.data as { response?: { id?: string } }
+    const generatedData = generateResponse.data as {
+      response?: { id?: string }
+    }
     const responseId = generatedData.response?.id
     expect(typeof responseId).toBe('string')
 
-    const approveResponse = await callAuthedApi(page, '/api/reviewflow/respond', {
-      method: 'PATCH',
-      body: {
-        responseId,
-        action: 'approve',
-      },
-    })
-    expect(approveResponse.ok, `Review approve failed: ${JSON.stringify(approveResponse)}`).toBeTruthy()
+    const approveResponse = await callAuthedApi(
+      page,
+      '/api/reviewflow/respond',
+      {
+        method: 'PATCH',
+        body: {
+          responseId,
+          action: 'approve',
+        },
+      }
+    )
+    expect(
+      approveResponse.ok,
+      `Review approve failed: ${JSON.stringify(approveResponse)}`
+    ).toBeTruthy()
 
     const providerEvidenceUrl = `https://local-smoke.provider/review/${platformReviewId}`
     const postResponse = await callAuthedApi(page, '/api/reviewflow/respond', {
@@ -2517,7 +2728,10 @@ test.describe('local smoke flows', () => {
         providerPostUrl: providerEvidenceUrl,
       },
     })
-    expect(postResponse.ok, `Review post tracking failed: ${JSON.stringify(postResponse)}`).toBeTruthy()
+    expect(
+      postResponse.ok,
+      `Review post tracking failed: ${JSON.stringify(postResponse)}`
+    ).toBeTruthy()
 
     const reviewsResponse = await callAuthedApi(
       page,
@@ -2528,25 +2742,36 @@ test.describe('local smoke flows', () => {
       reviews?: Array<{
         id?: string
         response_status?: string
-        review_responses?: Array<{ id?: string; status?: string; posted_at?: string | null }>
-        review_tickets?: Array<{ title?: string; resolution_notes?: string | null }>
+        review_responses?: Array<{
+          id?: string
+          status?: string
+          posted_at?: string | null
+        }>
+        review_tickets?: Array<{
+          title?: string
+          resolution_notes?: string | null
+        }>
       }>
     }
-    const postedReview = (reviewsData.reviews || []).find(review => review.id === reviewId)
+    const postedReview = (reviewsData.reviews || []).find(
+      (review) => review.id === reviewId
+    )
     expect(postedReview).toBeTruthy()
     expect(postedReview?.response_status).toBe('posted')
 
     const postedResponseRecord = (postedReview?.review_responses || []).find(
-      candidate => candidate.id === responseId
+      (candidate) => candidate.id === responseId
     )
     expect(postedResponseRecord?.status).toBe('posted')
     expect(typeof postedResponseRecord?.posted_at).toBe('string')
 
-    const providerTicket = (postedReview?.review_tickets || []).find(ticket =>
+    const providerTicket = (postedReview?.review_tickets || []).find((ticket) =>
       (ticket.title || '').includes('Provider response posted')
     )
     expect(providerTicket).toBeTruthy()
-    expect(providerTicket?.resolution_notes || '').toContain(providerEvidenceUrl)
+    expect(providerTicket?.resolution_notes || '').toContain(
+      providerEvidenceUrl
+    )
   })
 
   test('forgestudio generate to approve transition stays explicit locally', async ({
@@ -2557,19 +2782,24 @@ test.describe('local smoke flows', () => {
     const propertyId = await resolvePropertyIdForSmoke(page)
     const draftSuffix = Date.now().toString(36)
 
-    const generateResponse = await callAuthedApi(page, '/api/forgestudio/generate', {
-      method: 'POST',
-      body: {
-        propertyId,
-        contentType: 'social_post',
-        platform: 'facebook',
-        variables: {
-          topic: `Local smoke social post ${draftSuffix}`,
-          details: 'Deterministic local smoke path for generate->approve->schedule->publish.',
+    const generateResponse = await callAuthedApi(
+      page,
+      '/api/forgestudio/generate',
+      {
+        method: 'POST',
+        body: {
+          propertyId,
+          contentType: 'social_post',
+          platform: 'facebook',
+          variables: {
+            topic: `Local smoke social post ${draftSuffix}`,
+            details:
+              'Deterministic local smoke path for generate->approve->schedule->publish.',
+          },
+          generateMedia: false,
         },
-        generateMedia: false,
-      },
-    })
+      }
+    )
     expect(
       generateResponse.ok,
       `ForgeStudio generate failed (OPENAI key and model path must be configured locally): ${JSON.stringify(generateResponse)}`
@@ -2584,26 +2814,41 @@ test.describe('local smoke flows', () => {
     expect(generateData.draftReadiness?.isReady).toBe(true)
     expect(generateData.draft?.status).toBe('pending_review')
 
-    const approveResponse = await callAuthedApi(page, '/api/forgestudio/drafts', {
-      method: 'PATCH',
-      body: {
-        draftId,
-        status: 'approved',
-      },
-    })
-    expect(approveResponse.ok, `ForgeStudio approve failed: ${JSON.stringify(approveResponse)}`).toBeTruthy()
+    const approveResponse = await callAuthedApi(
+      page,
+      '/api/forgestudio/drafts',
+      {
+        method: 'PATCH',
+        body: {
+          draftId,
+          status: 'approved',
+        },
+      }
+    )
+    expect(
+      approveResponse.ok,
+      `ForgeStudio approve failed: ${JSON.stringify(approveResponse)}`
+    ).toBeTruthy()
 
-    const draftsResponse = await callAuthedApi(page, `/api/forgestudio/drafts?propertyId=${propertyId}&limit=100`)
+    const draftsResponse = await callAuthedApi(
+      page,
+      `/api/forgestudio/drafts?propertyId=${propertyId}&limit=100`
+    )
     expect(draftsResponse.ok).toBeTruthy()
     const draftsData = draftsResponse.data as {
       drafts?: Array<{ id?: string; status?: string }>
     }
-    const finalDraft = (draftsData.drafts || []).find(draft => draft.id === draftId)
+    const finalDraft = (draftsData.drafts || []).find(
+      (draft) => draft.id === draftId
+    )
     expect(finalDraft).toBeTruthy()
     expect(finalDraft?.status).toBe('approved')
   })
 
-  test('forgestudio real-provider publish smoke per channel (opt-in)', async ({ page, request }) => {
+  test('forgestudio real-provider publish smoke per channel (opt-in)', async ({
+    page,
+    request,
+  }) => {
     // A channel is launch-ready only after this passes against a real account:
     // OAuth connection, generation, approval, scheduling, worker publish, and
     // a canonical remote post URL. Gated per channel:
@@ -2615,11 +2860,17 @@ test.describe('local smoke flows', () => {
     )
     const platform = process.env.FORGESTUDIO_REAL_SMOKE_PLATFORM
     test.skip(
-      !platform || !['instagram', 'facebook', 'linkedin', 'tiktok', 'x'].includes(platform),
+      !platform ||
+        !['instagram', 'facebook', 'linkedin', 'tiktok', 'x'].includes(
+          platform
+        ),
       'Set FORGESTUDIO_REAL_SMOKE_PLATFORM to one of instagram|facebook|linkedin|tiktok|x.'
     )
     const cronSecret = process.env.CRON_SECRET
-    test.skip(!cronSecret, 'Set CRON_SECRET so the smoke can trigger the publication worker.')
+    test.skip(
+      !cronSecret,
+      'Set CRON_SECRET so the smoke can trigger the publication worker.'
+    )
 
     await login(page)
     const propertyId = await resolvePropertyIdForSmoke(
@@ -2633,15 +2884,25 @@ test.describe('local smoke flows', () => {
       `/api/forgestudio/social/connections?propertyId=${propertyId}`
     )
     expect(connectionsResponse.ok).toBeTruthy()
-    const connections = (connectionsResponse.data as {
-      connections?: Array<{ id: string; platform: string; is_active: boolean }>
-    }).connections
+    const connections = (
+      connectionsResponse.data as {
+        connections?: Array<{
+          id: string
+          platform: string
+          is_active: boolean
+        }>
+      }
+    ).connections
     const connection = (connections || []).find(
       (candidate) =>
-        (candidate.platform === platform || (platform === 'x' && candidate.platform === 'twitter')) &&
+        (candidate.platform === platform ||
+          (platform === 'x' && candidate.platform === 'twitter')) &&
         candidate.is_active
     )
-    test.skip(!connection, `No active ${platform} connection for this property; connect it first.`)
+    test.skip(
+      !connection,
+      `No active ${platform} connection for this property; connect it first.`
+    )
 
     // Brief → generate → approve → schedule for "now".
     const suffix = Date.now().toString(36)
@@ -2650,14 +2911,19 @@ test.describe('local smoke flows', () => {
       body: {
         propertyId,
         title: `Real-provider smoke ${suffix}`,
-        objective: 'Verify the end-to-end publish path against a real provider account.',
+        objective:
+          'Verify the end-to-end publish path against a real provider account.',
         topic: `ForgeStudio launch check ${suffix}`,
         channels: [platform],
         connectionIds: [connection!.id],
       },
     })
-    expect(briefResponse.ok, `Brief creation failed: ${JSON.stringify(briefResponse)}`).toBeTruthy()
-    const briefId = (briefResponse.data as { brief?: { id?: string } }).brief?.id
+    expect(
+      briefResponse.ok,
+      `Brief creation failed: ${JSON.stringify(briefResponse)}`
+    ).toBeTruthy()
+    const briefId = (briefResponse.data as { brief?: { id?: string } }).brief
+      ?.id
     expect(typeof briefId).toBe('string')
 
     const generateResponse = await callAuthedApi(
@@ -2669,7 +2935,8 @@ test.describe('local smoke flows', () => {
       generateResponse.ok,
       `Generation failed (OPENAI/AI Gateway key required): ${JSON.stringify(generateResponse)}`
     ).toBeTruthy()
-    const revisionId = (generateResponse.data as { revision?: { id?: string } }).revision?.id
+    const revisionId = (generateResponse.data as { revision?: { id?: string } })
+      .revision?.id
     expect(typeof revisionId).toBe('string')
 
     const approveResponse = await callAuthedApi(
@@ -2677,42 +2944,72 @@ test.describe('local smoke flows', () => {
       `/api/forgestudio/revisions/${revisionId}/approval`,
       { method: 'POST', body: { decision: 'approved' } }
     )
-    expect(approveResponse.ok, `Approval failed: ${JSON.stringify(approveResponse)}`).toBeTruthy()
+    expect(
+      approveResponse.ok,
+      `Approval failed: ${JSON.stringify(approveResponse)}`
+    ).toBeTruthy()
 
-    const scheduleResponse = await callAuthedApi(page, '/api/forgestudio/publications', {
-      method: 'POST',
-      body: {
-        revisionId,
-        destinations: [
-          { connectionId: connection!.id, scheduledFor: new Date().toISOString(), timezone: 'UTC' },
-        ],
-      },
-    })
-    expect(scheduleResponse.ok, `Scheduling failed: ${JSON.stringify(scheduleResponse)}`).toBeTruthy()
-    const publicationId = (scheduleResponse.data as {
-      publications?: Array<{ id?: string }>
-    }).publications?.[0]?.id
+    const scheduleResponse = await callAuthedApi(
+      page,
+      '/api/forgestudio/publications',
+      {
+        method: 'POST',
+        body: {
+          revisionId,
+          destinations: [
+            {
+              connectionId: connection!.id,
+              scheduledFor: new Date().toISOString(),
+              timezone: 'UTC',
+            },
+          ],
+        },
+      }
+    )
+    expect(
+      scheduleResponse.ok,
+      `Scheduling failed: ${JSON.stringify(scheduleResponse)}`
+    ).toBeTruthy()
+    const publicationId = (
+      scheduleResponse.data as {
+        publications?: Array<{ id?: string }>
+      }
+    ).publications?.[0]?.id
     expect(typeof publicationId).toBe('string')
 
     // Duplicate scheduling must be refused before we ever hit the provider.
-    const duplicateResponse = await callAuthedApi(page, '/api/forgestudio/publications', {
-      method: 'POST',
-      body: {
-        revisionId,
-        destinations: [
-          { connectionId: connection!.id, scheduledFor: new Date().toISOString(), timezone: 'UTC' },
-        ],
-      },
-    })
-    expect(duplicateResponse.ok, 'Duplicate scheduling should be rejected').toBeFalsy()
+    const duplicateResponse = await callAuthedApi(
+      page,
+      '/api/forgestudio/publications',
+      {
+        method: 'POST',
+        body: {
+          revisionId,
+          destinations: [
+            {
+              connectionId: connection!.id,
+              scheduledFor: new Date().toISOString(),
+              timezone: 'UTC',
+            },
+          ],
+        },
+      }
+    )
+    expect(
+      duplicateResponse.ok,
+      'Duplicate scheduling should be rejected'
+    ).toBeFalsy()
 
     // Wake the worker (same path hosted cron uses) and poll for the outcome.
     let finalStatus: string | undefined
     let remoteUrl: string | null | undefined
     for (let attempt = 0; attempt < 20; attempt++) {
-      const workerResponse = await request.get('/api/cron/process-publications', {
-        headers: { Authorization: `Bearer ${cronSecret}` },
-      })
+      const workerResponse = await request.get(
+        '/api/cron/process-publications',
+        {
+          headers: { Authorization: `Bearer ${cronSecret}` },
+        }
+      )
       expect(workerResponse.ok()).toBeTruthy()
 
       const statusResponse = await callAuthedApi(
@@ -2720,17 +3017,25 @@ test.describe('local smoke flows', () => {
         `/api/forgestudio/publications/${publicationId}`
       )
       expect(statusResponse.ok).toBeTruthy()
-      const publication = (statusResponse.data as {
-        publication?: { status?: string; remote_post_url?: string | null }
-      }).publication
+      const publication = (
+        statusResponse.data as {
+          publication?: { status?: string; remote_post_url?: string | null }
+        }
+      ).publication
       finalStatus = publication?.status
       remoteUrl = publication?.remote_post_url
       if (finalStatus === 'published' || finalStatus === 'failed') break
       await page.waitForTimeout(10_000)
     }
 
-    expect(finalStatus, `Publication did not publish (status: ${finalStatus})`).toBe('published')
-    expect(remoteUrl, 'Published post should expose a canonical remote URL').toBeTruthy()
+    expect(
+      finalStatus,
+      `Publication did not publish (status: ${finalStatus})`
+    ).toBe('published')
+    expect(
+      remoteUrl,
+      'Published post should expose a canonical remote URL'
+    ).toBeTruthy()
   })
 
   test('brandforge analyze to generate edit export and embed flow stays deterministic locally', async ({
@@ -2745,36 +3050,50 @@ test.describe('local smoke flows', () => {
     await login(page)
     const propertyId = await resolvePropertyIdForSmoke(page)
 
-    const analyzeResponse = await callAuthedApi(page, '/api/brandforge/analyze', {
-      method: 'POST',
-      body: {
-        propertyId,
-        address: {
-          street: '123 Local Smoke Ave',
-          city: 'Austin',
-          state: 'TX',
-          zip: '78701',
+    const analyzeResponse = await callAuthedApi(
+      page,
+      '/api/brandforge/analyze',
+      {
+        method: 'POST',
+        body: {
+          propertyId,
+          address: {
+            street: '123 Local Smoke Ave',
+            city: 'Austin',
+            state: 'TX',
+            zip: '78701',
+          },
+          propertyType: 'multifamily',
+          radiusMiles: 1,
+          maxCompetitors: 3,
         },
-        propertyType: 'multifamily',
-        radiusMiles: 1,
-        maxCompetitors: 3,
-      },
-    })
-    expect(analyzeResponse.ok, `BrandForge analyze failed: ${JSON.stringify(analyzeResponse)}`).toBe(true)
-    const analysisData = analyzeResponse.data as { analysis?: Record<string, unknown> }
+      }
+    )
+    expect(
+      analyzeResponse.ok,
+      `BrandForge analyze failed: ${JSON.stringify(analyzeResponse)}`
+    ).toBe(true)
+    const analysisData = analyzeResponse.data as {
+      analysis?: Record<string, unknown>
+    }
     expect(typeof analysisData.analysis).toBe('object')
 
-    const startConversation = await callAuthedApi(page, '/api/brandforge/conversation', {
-      method: 'POST',
-      body: {
-        propertyId,
-        action: 'start',
-        competitiveContext: analysisData.analysis,
-      },
-    })
-    expect(startConversation.ok, `BrandForge conversation start failed: ${JSON.stringify(startConversation)}`).toBe(
-      true
+    const startConversation = await callAuthedApi(
+      page,
+      '/api/brandforge/conversation',
+      {
+        method: 'POST',
+        body: {
+          propertyId,
+          action: 'start',
+          competitiveContext: analysisData.analysis,
+        },
+      }
     )
+    expect(
+      startConversation.ok,
+      `BrandForge conversation start failed: ${JSON.stringify(startConversation)}`
+    ).toBe(true)
 
     const startData = startConversation.data as {
       brandAssetId?: string
@@ -2787,21 +3106,30 @@ test.describe('local smoke flows', () => {
     let conversationHistory = Array.isArray(startData.conversationHistory)
       ? startData.conversationHistory
       : []
-    let conversationStatus = typeof startData.status === 'string' ? startData.status : ''
+    let conversationStatus =
+      typeof startData.status === 'string' ? startData.status : ''
 
-    for (let attempt = 0; attempt < 8 && conversationStatus !== 'ready_to_generate'; attempt++) {
-      const nextConversation = await callAuthedApi(page, '/api/brandforge/conversation', {
-        method: 'POST',
-        body: {
-          propertyId,
-          brandAssetId,
-          action: 'message',
-          message:
-            'Finalize now. Return conversationComplete true with concise JSON brand strategy so generation can begin.',
-          conversationHistory,
-          competitiveContext: analysisData.analysis,
-        },
-      })
+    for (
+      let attempt = 0;
+      attempt < 8 && conversationStatus !== 'ready_to_generate';
+      attempt++
+    ) {
+      const nextConversation = await callAuthedApi(
+        page,
+        '/api/brandforge/conversation',
+        {
+          method: 'POST',
+          body: {
+            propertyId,
+            brandAssetId,
+            action: 'message',
+            message:
+              'Finalize now. Return conversationComplete true with concise JSON brand strategy so generation can begin.',
+            conversationHistory,
+            competitiveContext: analysisData.analysis,
+          },
+        }
+      )
       expect(
         nextConversation.ok,
         `BrandForge conversation message failed on attempt ${attempt + 1}: ${JSON.stringify(nextConversation)}`
@@ -2811,73 +3139,126 @@ test.describe('local smoke flows', () => {
         conversationHistory?: Array<{ role?: string; content?: string }>
         status?: string
       }
-      conversationHistory = Array.isArray(nextData.conversationHistory) ? nextData.conversationHistory : []
-      conversationStatus = typeof nextData.status === 'string' ? nextData.status : ''
+      conversationHistory = Array.isArray(nextData.conversationHistory)
+        ? nextData.conversationHistory
+        : []
+      conversationStatus =
+        typeof nextData.status === 'string' ? nextData.status : ''
     }
 
-    expect(conversationStatus, `Conversation did not reach ready_to_generate: ${conversationStatus}`).toBe(
-      'ready_to_generate'
-    )
+    expect(
+      conversationStatus,
+      `Conversation did not reach ready_to_generate: ${conversationStatus}`
+    ).toBe('ready_to_generate')
 
     for (let step = 1; step <= 12; step++) {
-      const generateSection = await callAuthedApi(page, '/api/brandforge/generate-next-section', {
-        method: 'POST',
-        body: { brandAssetId },
-      })
+      const generateSection = await callAuthedApi(
+        page,
+        '/api/brandforge/generate-next-section',
+        {
+          method: 'POST',
+          body: { brandAssetId },
+        }
+      )
       expect(
         generateSection.ok,
         `BrandForge generate-next-section failed at step ${step}: ${JSON.stringify(generateSection)}`
       ).toBe(true)
 
       if (step === 1) {
-        const generated = generateSection.data as { data?: Record<string, unknown> }
+        const generated = generateSection.data as {
+          data?: Record<string, unknown>
+        }
         const currentContent =
-          typeof generated.data?.content === 'string' ? generated.data.content : 'Local smoke intro'
-        const editSection = await callAuthedApi(page, '/api/brandforge/edit-section', {
-          method: 'POST',
-          body: {
-            brandAssetId,
-            updates: {
-              content: `${currentContent} [edited in local smoke flow]`,
+          typeof generated.data?.content === 'string'
+            ? generated.data.content
+            : 'Local smoke intro'
+        const editSection = await callAuthedApi(
+          page,
+          '/api/brandforge/edit-section',
+          {
+            method: 'POST',
+            body: {
+              brandAssetId,
+              updates: {
+                content: `${currentContent} [edited in local smoke flow]`,
+              },
             },
-          },
-        })
-        expect(editSection.ok, `BrandForge edit-section failed: ${JSON.stringify(editSection)}`).toBe(true)
+          }
+        )
+        expect(
+          editSection.ok,
+          `BrandForge edit-section failed: ${JSON.stringify(editSection)}`
+        ).toBe(true)
       }
 
-      const approveSection = await callAuthedApi(page, '/api/brandforge/approve-section', {
-        method: 'POST',
-        body: { brandAssetId },
-      })
+      const approveSection = await callAuthedApi(
+        page,
+        '/api/brandforge/approve-section',
+        {
+          method: 'POST',
+          body: { brandAssetId },
+        }
+      )
       expect(
         approveSection.ok,
         `BrandForge approve-section failed at step ${step}: ${JSON.stringify(approveSection)}`
       ).toBe(true)
     }
 
-    const exportResponse = await callAuthedApi(page, '/api/brandforge/generate-pdf', {
-      method: 'POST',
-      body: { brandAssetId },
-    })
-    expect(exportResponse.ok, `BrandForge generate-pdf failed: ${JSON.stringify(exportResponse)}`).toBe(true)
-    const exportData = exportResponse.data as { pdfUrl?: string; exportFormat?: string }
+    const exportResponse = await callAuthedApi(
+      page,
+      '/api/brandforge/generate-pdf',
+      {
+        method: 'POST',
+        body: { brandAssetId },
+      }
+    )
+    expect(
+      exportResponse.ok,
+      `BrandForge generate-pdf failed: ${JSON.stringify(exportResponse)}`
+    ).toBe(true)
+    const exportData = exportResponse.data as {
+      pdfUrl?: string
+      exportFormat?: string
+    }
     expect(typeof exportData.pdfUrl).toBe('string')
     expect(exportData.exportFormat).toBe('pdf')
 
-    const embedResponse = await callAuthedApi(page, '/api/brandforge/embed-to-kb', {
-      method: 'POST',
-      body: { brandAssetId, propertyId },
-    })
-    expect(embedResponse.ok, `BrandForge embed-to-kb failed: ${JSON.stringify(embedResponse)}`).toBe(true)
-    const embedData = embedResponse.data as { embeddedChunks?: number; totalChunks?: number }
+    const embedResponse = await callAuthedApi(
+      page,
+      '/api/brandforge/embed-to-kb',
+      {
+        method: 'POST',
+        body: { brandAssetId, propertyId },
+      }
+    )
+    expect(
+      embedResponse.ok,
+      `BrandForge embed-to-kb failed: ${JSON.stringify(embedResponse)}`
+    ).toBe(true)
+    const embedData = embedResponse.data as {
+      embeddedChunks?: number
+      totalChunks?: number
+    }
     expect((embedData.embeddedChunks || 0) > 0).toBe(true)
     expect((embedData.totalChunks || 0) > 0).toBe(true)
 
-    const statusResponse = await callAuthedApi(page, `/api/brandforge/status?propertyId=${propertyId}`)
-    expect(statusResponse.ok, `BrandForge status failed: ${JSON.stringify(statusResponse)}`).toBe(true)
+    const statusResponse = await callAuthedApi(
+      page,
+      `/api/brandforge/status?propertyId=${propertyId}`
+    )
+    expect(
+      statusResponse.ok,
+      `BrandForge status failed: ${JSON.stringify(statusResponse)}`
+    ).toBe(true)
     const statusData = statusResponse.data as {
       exists?: boolean
-      brandAsset?: { isComplete?: boolean; pdfUrl?: string | null; approvedSections?: number }
+      brandAsset?: {
+        isComplete?: boolean
+        pdfUrl?: string | null
+        approvedSections?: number
+      }
     }
     expect(statusData.exists).toBe(true)
     expect(statusData.brandAsset?.isComplete).toBe(true)
@@ -2894,7 +3275,9 @@ test.describe('local smoke flows', () => {
         approve: true,
         privacyPolicy: { text: 'Local smoke approved privacy policy.' },
         terms: { text: 'Local smoke approved website terms.' },
-        accessibility: { text: 'Local smoke approved accessibility statement.' },
+        accessibility: {
+          text: 'Local smoke approved accessibility statement.',
+        },
         fairHousing: { text: 'Local smoke approved Fair Housing statement.' },
         pricingDisclaimer: { text: 'Pricing and availability may change.' },
         analyticsConsent: { text: 'Analytics require consent.' },
@@ -2902,11 +3285,14 @@ test.describe('local smoke flows', () => {
         sourceReferences: [],
       },
     })
-    expect(legalResponse.ok, `Legal approval failed: ${JSON.stringify(legalResponse)}`).toBe(true)
+    expect(
+      legalResponse.ok,
+      `Legal approval failed: ${JSON.stringify(legalResponse)}`
+    ).toBe(true)
     const generation = await createApprovedSiteForgeGeneration(
       page,
       propertyId,
-      'Generate from the approved generated-brand onboarding snapshot.',
+      'Generate from the approved generated-brand onboarding snapshot.'
     )
     expect(generation.contentHash).toMatch(/^[a-f0-9]{64}$/)
   })
@@ -2917,90 +3303,151 @@ test.describe('local smoke flows', () => {
     test.setTimeout(180_000)
     await login(page)
     const propertyId = await resolvePropertyIdForSmoke(page)
-    const uploaded = await page.evaluate(async ({ propertyId: targetPropertyId }) => {
-      const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="120" viewBox="0 0 320 120"><rect width="320" height="120" fill="#123456"/><text x="160" y="70" text-anchor="middle" fill="white" font-size="32">Existing Brand</text></svg>'
-      const form = new FormData()
-      form.set('propertyId', targetPropertyId)
-      form.set('role', 'primary_logo')
-      form.set('rightsStatus', 'owned')
-      form.set('altText', 'Existing Brand logo')
-      form.set('file', new File([svg], 'existing-brand-logo.svg', { type: 'image/svg+xml' }))
-      const uploadResponse = await fetch('/api/brandforge/content-assets', {
-        method: 'POST',
-        body: form,
-      })
-      const uploadBody = await uploadResponse.json()
-      if (!uploadResponse.ok) return { ok: false, status: uploadResponse.status, data: uploadBody }
-      const reviewResponse = await fetch('/api/brandforge/content-assets', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          propertyId: targetPropertyId,
-          assetId: uploadBody.asset.id,
-          approvalStatus: 'approved',
-          rightsStatus: 'owned',
-          rightsMetadata: { operatorConfirmed: true },
-          altText: 'Existing Brand logo',
-        }),
-      })
-      return {
-        ok: reviewResponse.ok,
-        status: reviewResponse.status,
-        data: reviewResponse.ok ? uploadBody.asset : await reviewResponse.json(),
-      }
-    }, { propertyId })
-    expect(uploaded.ok, `Existing logo governance failed: ${JSON.stringify(uploaded)}`).toBe(true)
+    const uploaded = await page.evaluate(
+      async ({ propertyId: targetPropertyId }) => {
+        const svg =
+          '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="120" viewBox="0 0 320 120"><rect width="320" height="120" fill="#123456"/><text x="160" y="70" text-anchor="middle" fill="white" font-size="32">Existing Brand</text></svg>'
+        const form = new FormData()
+        form.set('propertyId', targetPropertyId)
+        form.set('role', 'primary_logo')
+        form.set('rightsStatus', 'owned')
+        form.set('altText', 'Existing Brand logo')
+        form.set(
+          'file',
+          new File([svg], 'existing-brand-logo.svg', { type: 'image/svg+xml' })
+        )
+        const uploadResponse = await fetch('/api/brandforge/content-assets', {
+          method: 'POST',
+          body: form,
+        })
+        const uploadBody = await uploadResponse.json()
+        if (!uploadResponse.ok)
+          return { ok: false, status: uploadResponse.status, data: uploadBody }
+        const reviewResponse = await fetch('/api/brandforge/content-assets', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            propertyId: targetPropertyId,
+            assetId: uploadBody.asset.id,
+            approvalStatus: 'approved',
+            rightsStatus: 'owned',
+            rightsMetadata: { operatorConfirmed: true },
+            altText: 'Existing Brand logo',
+          }),
+        })
+        return {
+          ok: reviewResponse.ok,
+          status: reviewResponse.status,
+          data: reviewResponse.ok
+            ? uploadBody.asset
+            : await reviewResponse.json(),
+        }
+      },
+      { propertyId }
+    )
+    expect(
+      uploaded.ok,
+      `Existing logo governance failed: ${JSON.stringify(uploaded)}`
+    ).toBe(true)
     const logo = uploaded.data as { id: string; file_url: string }
 
-    const previewResponse = await callAuthedApi(page, '/api/brandforge/import/preview', {
-      method: 'POST',
-      body: {
-        propertyId,
-        sourceType: 'manual',
-        idempotencyKey: `local-smoke-existing-${crypto.randomUUID()}`,
-        manual: {
-          identity: { name: 'Existing Brand Apartments', tagline: 'Already established' },
-          logos: {
-            variants: [{
-              role: 'primary',
-              assetId: logo.id,
-              url: logo.file_url,
-              alt: 'Existing Brand logo',
-              restrictions: ['Do not stretch'],
-            }],
-          },
-          typography: {
-            roles: [
-              { role: 'headline', family: 'Arial', weights: [700], usage: 'Headlines', fallback: 'Arial, sans-serif' },
-              { role: 'body', family: 'Georgia', weights: [400], usage: 'Body', fallback: 'Georgia, serif' },
-            ],
-          },
-          colors: {
-            roles: [
-              { role: 'primary', name: 'Existing Blue', hex: '#123456', usage: 'Primary' },
-              { role: 'secondary', name: 'White', hex: '#FFFFFF', usage: 'Background' },
-              { role: 'accent', name: 'Gold', hex: '#D4A72C', usage: 'Calls to action' },
-            ],
+    const previewResponse = await callAuthedApi(
+      page,
+      '/api/brandforge/import/preview',
+      {
+        method: 'POST',
+        body: {
+          propertyId,
+          sourceType: 'manual',
+          idempotencyKey: `local-smoke-existing-${crypto.randomUUID()}`,
+          manual: {
+            identity: {
+              name: 'Existing Brand Apartments',
+              tagline: 'Already established',
+            },
+            logos: {
+              variants: [
+                {
+                  role: 'primary',
+                  assetId: logo.id,
+                  url: logo.file_url,
+                  alt: 'Existing Brand logo',
+                  restrictions: ['Do not stretch'],
+                },
+              ],
+            },
+            typography: {
+              roles: [
+                {
+                  role: 'headline',
+                  family: 'Arial',
+                  weights: [700],
+                  usage: 'Headlines',
+                  fallback: 'Arial, sans-serif',
+                },
+                {
+                  role: 'body',
+                  family: 'Georgia',
+                  weights: [400],
+                  usage: 'Body',
+                  fallback: 'Georgia, serif',
+                },
+              ],
+            },
+            colors: {
+              roles: [
+                {
+                  role: 'primary',
+                  name: 'Existing Blue',
+                  hex: '#123456',
+                  usage: 'Primary',
+                },
+                {
+                  role: 'secondary',
+                  name: 'White',
+                  hex: '#FFFFFF',
+                  usage: 'Background',
+                },
+                {
+                  role: 'accent',
+                  name: 'Gold',
+                  hex: '#D4A72C',
+                  usage: 'Calls to action',
+                },
+              ],
+            },
           },
         },
-      },
-    })
-    expect(previewResponse.ok, `Existing brand preview failed: ${JSON.stringify(previewResponse)}`).toBe(true)
-    const preview = (previewResponse.data as {
-      preview?: { id?: string; extracted_contract?: Record<string, unknown> }
-    }).preview
+      }
+    )
+    expect(
+      previewResponse.ok,
+      `Existing brand preview failed: ${JSON.stringify(previewResponse)}`
+    ).toBe(true)
+    const preview = (
+      previewResponse.data as {
+        preview?: { id?: string; extracted_contract?: Record<string, unknown> }
+      }
+    ).preview
     expect(typeof preview?.id).toBe('string')
 
-    const confirmResponse = await callAuthedApi(page, '/api/brandforge/import/confirm', {
-      method: 'POST',
-      body: {
-        propertyId,
-        importId: preview?.id,
-        contract: preview?.extracted_contract,
-        resolutions: {},
-      },
-    })
-    expect(confirmResponse.ok, `Existing brand confirmation failed: ${JSON.stringify(confirmResponse)}`).toBe(true)
+    const confirmResponse = await callAuthedApi(
+      page,
+      '/api/brandforge/import/confirm',
+      {
+        method: 'POST',
+        body: {
+          propertyId,
+          importId: preview?.id,
+          contract: preview?.extracted_contract,
+          resolutions: {},
+        },
+      }
+    )
+    expect(
+      confirmResponse.ok,
+      `Existing brand confirmation failed: ${JSON.stringify(confirmResponse)}`
+    ).toBe(true)
     const legalResponse = await callAuthedApi(page, '/api/onboarding/legal', {
       method: 'PUT',
       body: {
@@ -3009,30 +3456,42 @@ test.describe('local smoke flows', () => {
         legalEntityName: 'Existing Brand Property LLC',
         effectiveAt: new Date().toISOString(),
         approve: true,
-        privacyPolicy: { text: 'Approved privacy policy for existing brand smoke.' },
+        privacyPolicy: {
+          text: 'Approved privacy policy for existing brand smoke.',
+        },
         terms: { text: 'Approved terms for existing brand smoke.' },
-        accessibility: { text: 'Approved accessibility statement for existing brand smoke.' },
-        fairHousing: { text: 'Approved Fair Housing statement for existing brand smoke.' },
+        accessibility: {
+          text: 'Approved accessibility statement for existing brand smoke.',
+        },
+        fairHousing: {
+          text: 'Approved Fair Housing statement for existing brand smoke.',
+        },
         pricingDisclaimer: { text: 'Pricing and availability may change.' },
         analyticsConsent: { text: 'Analytics require consent.' },
         communicationsConsent: { text: 'Communications require consent.' },
         sourceReferences: [],
       },
     })
-    expect(legalResponse.ok, `Existing-brand legal approval failed: ${JSON.stringify(legalResponse)}`).toBe(true)
+    expect(
+      legalResponse.ok,
+      `Existing-brand legal approval failed: ${JSON.stringify(legalResponse)}`
+    ).toBe(true)
 
     const generation = await createApprovedSiteForgeGeneration(
       page,
       propertyId,
-      'Generate from the approved existing-brand contract and frozen onboarding truth.',
+      'Generate from the approved existing-brand contract and frozen onboarding truth.'
     )
-    const status = await waitForWebsiteStatus(page, generation.websiteId, [
-      'ready_for_preview',
-      'complete',
-      'failed',
-    ], 90_000)
-    expect(status.status, `Existing-brand SiteForge generation failed: ${JSON.stringify(status)}`)
-      .not.toBe('failed')
+    const status = await waitForWebsiteStatus(
+      page,
+      generation.websiteId,
+      ['ready_for_preview', 'complete', 'failed'],
+      90_000
+    )
+    expect(
+      status.status,
+      `Existing-brand SiteForge generation failed: ${JSON.stringify(status)}`
+    ).not.toBe('failed')
     const artifactResponse = await callAuthedApi(
       page,
       `/api/siteforge/preview/${generation.websiteId}`
@@ -3048,7 +3507,7 @@ test.describe('local smoke flows', () => {
       }
     }
     const currentArtifact = artifactPayload.artifact?.history?.find(
-      artifact => artifact.id === artifactPayload.artifact?.currentId
+      (artifact) => artifact.id === artifactPayload.artifact?.currentId
     )
     expect(currentArtifact?.id).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -3065,7 +3524,10 @@ test.describe('local smoke flows', () => {
         },
       }
     )
-    expect(canonical.ok, `Canonical preview failed: ${JSON.stringify(canonical)}`).toBe(true)
+    expect(
+      canonical.ok,
+      `Canonical preview failed: ${JSON.stringify(canonical)}`
+    ).toBe(true)
     const canonicalData = canonical.data as {
       status?: string
       jobId?: string
@@ -3092,14 +3554,16 @@ test.describe('local smoke flows', () => {
       page,
       `/api/siteforge/preview/${generation.websiteId}`
     )
-    const exactArtifact = (exactPreview.data as {
-      artifact?: {
-        currentId?: string | null
-        canonicalPreviewArtifactId?: string | null
-        canonicalPreviewContentHash?: string | null
-        canonicalPreviewUrl?: string | null
+    const exactArtifact = (
+      exactPreview.data as {
+        artifact?: {
+          currentId?: string | null
+          canonicalPreviewArtifactId?: string | null
+          canonicalPreviewContentHash?: string | null
+          canonicalPreviewUrl?: string | null
+        }
       }
-    }).artifact
+    ).artifact
     expect(exactArtifact?.canonicalPreviewArtifactId).toBe(currentArtifact?.id)
     expect(exactArtifact?.canonicalPreviewContentHash).toBe(
       currentArtifact?.content_hash
