@@ -19,9 +19,16 @@
   // Configuration
   const WIDGET_VERSION = '1.0.0';
   
-  // API_BASE is read dynamically to handle async script loading
+  // Resolve the canonical API origin from the loaded embed script. This keeps
+  // external sites from accidentally sending API requests to their own host.
+  const loaderScript = document.currentScript;
+  const loaderOrigin = loaderScript && loaderScript.src
+    ? new URL(loaderScript.src, window.location.href).origin
+    : '';
+
+  // API_BASE remains overrideable for local demos and controlled proxies.
   function getApiBase() {
-    return window.LUMALEASING_API_BASE || '';
+    return (window.LUMALEASING_API_BASE || loaderOrigin || window.location.origin).replace(/\/+$/, '');
   }
   
   // State
@@ -34,6 +41,28 @@
   let leadPromptShown = false;
   let tourBooked = false;
   let teaserVisible = false;
+  let teaserSafetyAttached = false;
+
+  // Preserve navigation for legacy SiteForge content while older WordPress
+  // artifacts are awaiting their next canonical render.
+  function normalizeLegacySiteForgeLinks() {
+    document.querySelectorAll('a[href]').forEach(function(link) {
+      try {
+        const url = new URL(link.getAttribute('href'), window.location.href);
+        if (url.origin === window.location.origin && url.pathname === '/schedule-tour') {
+          url.pathname = '/schedule-a-tour/';
+          link.setAttribute('href', url.pathname + url.search + url.hash);
+        }
+      } catch (e) {
+        // Ignore malformed third-party links.
+      }
+    });
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', normalizeLegacySiteForgeLinks, { once: true });
+  } else {
+    normalizeLegacySiteForgeLinks();
+  }
 
   // Teaser dismissal is remembered for the browser session so the bubble
   // doesn't nag on every page view.
@@ -43,6 +72,31 @@
   }
   function markTeaserDismissed() {
     try { sessionStorage.setItem(TEASER_DISMISSED_KEY, '1'); } catch (e) { /* storage unavailable */ }
+  }
+  function teaserWouldObscureAction() {
+    const side = config && config.position === 'bottom-left' ? 'left' : 'right';
+    const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+    const protectedZone = {
+      left: side === 'left' ? 0 : Math.max(0, viewportWidth - 340),
+      right: side === 'left' ? 340 : viewportWidth,
+      top: Math.max(0, viewportHeight - 240),
+      bottom: viewportHeight
+    };
+    return Array.from(document.querySelectorAll(
+      'form button[type="submit"], form input[type="submit"], [data-siteforge-conversion-action]'
+    )).some(function(action) {
+      const rect = action.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0 &&
+        rect.left < protectedZone.right && rect.right > protectedZone.left &&
+        rect.top < protectedZone.bottom && rect.bottom > protectedZone.top;
+    });
+  }
+  function enforceTeaserSafety() {
+    if (teaserVisible && teaserWouldObscureAction()) {
+      teaserVisible = false;
+      renderWidget();
+    }
   }
 
   // Remember whether the chat window is open so it stays open when the
@@ -67,8 +121,6 @@
   let historyPollTimer = null;
   let serverMessageCount = 0;
 
-  // Cap on how much history is re-sent to the chat API (server schema max is 50).
-  const MAX_CHAT_CONTEXT_MESSAGES = 30;
   const HISTORY_POLL_INTERVAL_MS = 6000;
   
   // Calendar state
@@ -187,13 +239,19 @@
 
       // Global Esc-to-close keyboard handler.
       attachGlobalKeyHandler();
+      if (!teaserSafetyAttached) {
+        teaserSafetyAttached = true;
+        window.addEventListener('scroll', enforceTeaserSafety, { passive: true });
+        window.addEventListener('resize', enforceTeaserSafety);
+        document.addEventListener('focusin', enforceTeaserSafety);
+      }
 
       // After the configured delay, show a small teaser bubble next to the
       // launcher inviting the visitor to chat, instead of auto-opening the
       // full chat window.
       if (config.autoPopupDelay > 0) {
         setTimeout(function() {
-          if (!isOpen && !isTeaserDismissed()) {
+          if (!isOpen && !isTeaserDismissed() && !teaserWouldObscureAction()) {
             teaserVisible = true;
             renderWidget();
           }
@@ -1651,18 +1709,8 @@
     renderWidget();
 
     try {
-      // Cap context so long restored transcripts stay within the API's
-      // 50-message limit.
-      const chatMessages = messages
-        .filter(m => m.id !== 'welcome' && m.id !== 'waiting-for-human' && !m.tourCta)
-        .slice(-MAX_CHAT_CONTEXT_MESSAGES)
-        .map(m => ({
-          role: m.role,
-          content: m.content
-        }));
-
       let result = await postChat({
-        messages: chatMessages,
+        messages: [{ role: 'user', content: text }],
         sessionId: sessionId,
         leadInfo: leadCaptured ? leadInfo : (extractedInfo || undefined)
       });
@@ -1675,7 +1723,7 @@
         console.warn('LumaLeasing: retrying with a fresh session after 400:', result.data && result.data.error);
         setStoredSessionId(null);
         conversationId = null;
-        result = await postChat({ messages: chatMessages });
+        result = await postChat({ messages: [{ role: 'user', content: text }] });
         if (result.ok) {
           // The old lead state was part of the poisoned payload; the server
           // already has the lead and re-extracts contact info from the

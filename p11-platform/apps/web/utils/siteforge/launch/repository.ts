@@ -16,6 +16,66 @@ export class SiteForgeLaunchError extends Error {
   }
 }
 
+export function isLaunchChatbotContextReady(input: {
+  lumaEnabled: boolean
+  context: {
+    status: string
+    requires_review: boolean
+    context_markdown: string
+  } | null
+}): boolean {
+  if (!input.lumaEnabled) return true
+  return Boolean(
+    input.context?.status === 'current' &&
+      !input.context.requires_review &&
+      input.context.context_markdown.trim()
+  )
+}
+
+export function assertObservedRollbackIdentity(input: {
+  requestedArtifactId: string
+  requestedContentHash: string
+  productionArtifactId: string | null
+  productionContentHash: string | null
+  productionCertifiedAt: string | null
+  productionTargetId: string | null
+  certifiedDeployment:
+    | {
+        artifact_id: string
+        artifact_content_hash: string
+        remote_manifest_hash: string | null
+        certified_at: string | null
+      }
+    | null
+}): void {
+  if (
+    !input.productionArtifactId ||
+    !input.productionContentHash ||
+    !input.productionCertifiedAt ||
+    !input.productionTargetId ||
+    input.requestedArtifactId !== input.productionArtifactId ||
+    input.requestedContentHash !== input.productionContentHash
+  ) {
+    throw new SiteForgeLaunchError(
+      'Rollback identity must match the observed certified pre-promotion production artifact',
+      409
+    )
+  }
+  const deployment = input.certifiedDeployment
+  if (
+    !deployment ||
+    !deployment.certified_at ||
+    deployment.artifact_id !== input.productionArtifactId ||
+    deployment.artifact_content_hash !== input.productionContentHash ||
+    deployment.remote_manifest_hash !== input.productionContentHash
+  ) {
+    throw new SiteForgeLaunchError(
+      'Rollback is unavailable without an observed certified production manifest',
+      409
+    )
+  }
+}
+
 async function transition(
   release: LaunchRelease,
   toState: string,
@@ -111,7 +171,7 @@ export async function prepareLaunchRelease(
   const { data: website, error: websiteError } = await client
     .from('property_websites')
     .select(
-      'id, org_id, property_id, current_artifact_version_id, staging_artifact_id, staging_content_hash, staging_certified_at, staging_target_id'
+      'id, org_id, property_id, current_artifact_version_id, staging_artifact_id, staging_content_hash, staging_certified_at, staging_target_id, production_artifact_id, production_content_hash, production_certified_at, production_target_id'
     )
     .eq('id', input.websiteId)
     .eq('property_id', input.propertyId)
@@ -129,7 +189,13 @@ export async function prepareLaunchRelease(
     )
   }
 
-  const [{ data: artifact }, { data: rollbackArtifact }, { data: audit }] = await Promise.all([
+  const [
+    { data: artifact },
+    { data: rollbackArtifact },
+    { data: audit },
+    { data: lumaConfig, error: lumaConfigError },
+    { data: chatbotContext, error: chatbotContextError },
+  ] = await Promise.all([
     client
       .from('siteforge_blueprint_versions')
       .select('id, content_hash, asset_manifest_hash, base_theme_package_sha256, deployment_decision, confirmed_approval_id')
@@ -148,7 +214,34 @@ export async function prepareLaunchRelease(
       .eq('website_id', input.websiteId)
       .eq('artifact_id', input.artifactId)
       .single(),
+    client
+      .from('lumaleasing_config')
+      .select('is_active')
+      .eq('property_id', input.propertyId)
+      .maybeSingle(),
+    client
+      .from('property_chatbot_contexts')
+      .select('status, requires_review, context_markdown')
+      .eq('property_id', input.propertyId)
+      .maybeSingle(),
   ])
+  if (lumaConfigError || chatbotContextError) {
+    throw new SiteForgeLaunchError(
+      'Failed to verify LumaLeasing launch readiness',
+      500
+    )
+  }
+  if (
+    !isLaunchChatbotContextReady({
+      lumaEnabled: Boolean(lumaConfig?.is_active),
+      context: chatbotContext,
+    })
+  ) {
+    throw new SiteForgeLaunchError(
+      'Generate and approve the current property chatbot context before launching a LumaLeasing-enabled site',
+      409
+    )
+  }
   if (
     !artifact ||
     artifact.content_hash !== input.contentHash ||
@@ -166,6 +259,37 @@ export async function prepareLaunchRelease(
   ) {
     throw new SiteForgeLaunchError('Exact rollback artifact identity is required', 409)
   }
+
+  const { data: certifiedRollbackDeployment, error: rollbackDeploymentError } =
+    await client
+      .from('siteforge_artifact_deployments')
+      .select(
+        'artifact_id, artifact_content_hash, remote_manifest_hash, certified_at'
+      )
+      .eq('website_id', input.websiteId)
+      .eq('target_id', website.production_target_id || '')
+      .eq('artifact_id', input.rollbackArtifactId)
+      .eq('artifact_content_hash', input.rollbackContentHash)
+      .eq('status', 'live')
+      .not('certified_at', 'is', null)
+      .order('certified_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+  if (rollbackDeploymentError) {
+    throw new SiteForgeLaunchError(
+      `Failed to verify pre-promotion production manifest: ${rollbackDeploymentError.message}`,
+      500
+    )
+  }
+  assertObservedRollbackIdentity({
+    requestedArtifactId: input.rollbackArtifactId,
+    requestedContentHash: input.rollbackContentHash,
+    productionArtifactId: website.production_artifact_id,
+    productionContentHash: website.production_content_hash,
+    productionCertifiedAt: website.production_certified_at,
+    productionTargetId: website.production_target_id,
+    certifiedDeployment: certifiedRollbackDeployment,
+  })
 
   const { data: deployment, error: deploymentError } = await client
     .from('siteforge_artifact_deployments')

@@ -164,13 +164,16 @@ export async function updateEditorMessage(
     progress?: Json
     failureCode?: string | null
     failureMessage?: string | null
+    expectedStatuses?: Array<
+      'queued' | 'running' | 'complete' | 'failed' | 'cancelled'
+    >
   },
   client: SiteForgeClient = createServiceClient()
 ): Promise<void> {
   const terminal = update.status
     ? ['complete', 'failed', 'cancelled'].includes(update.status)
     : false
-  const { error } = await client
+  let query = client
     .from('siteforge_edit_messages')
     .update({
       status: update.status,
@@ -183,6 +186,10 @@ export async function updateEditorMessage(
       completed_at: terminal ? new Date().toISOString() : undefined,
     })
     .eq('id', messageId)
+  if (update.expectedStatuses?.length) {
+    query = query.in('status', update.expectedStatuses)
+  }
+  const { error } = await query
 
   if (error) {
     throw new Error(`Failed to update editor message: ${error.message}`)

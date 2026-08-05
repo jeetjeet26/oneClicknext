@@ -305,11 +305,15 @@ async function processJob(
 
   let adapterConnection: AdapterConnection
   try {
+    const accountId = connection.account_id
+    if (!accountId) {
+      throw new Error('Social connection is missing its provider account identity')
+    }
     adapterConnection = {
       id: connection.id,
       propertyId: connection.property_id ?? publication.property_id,
       platform: connection.platform,
-      accountId: connection.account_id,
+      accountId,
       accessToken: decryptNullable(connection.access_token),
       refreshToken: decryptNullable(connection.refresh_token),
       tokenExpiresAt: connection.token_expires_at,

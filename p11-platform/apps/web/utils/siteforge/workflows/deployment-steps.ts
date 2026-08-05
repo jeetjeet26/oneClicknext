@@ -1,8 +1,11 @@
 import { FatalError } from 'workflow'
 import type { GeneratedPage, SiteArchitecture } from '@/types/siteforge'
-import type { Json, TablesUpdate } from '@/types/supabase'
+import type { Json, Tables, TablesUpdate } from '@/types/supabase'
 import { createServiceClient } from '@/utils/supabase/admin'
-import { propertyContextFromOnboardingSnapshot } from '@/utils/siteforge/property-context'
+import {
+  propertyContextFromOnboardingSnapshot,
+  runtimePropertyProfile,
+} from '@/utils/siteforge/property-context'
 import { normalizeLegacyPages } from '@/utils/siteforge/blueprint'
 import { mapWebsiteAssetRow } from '@/utils/siteforge/assets/repository'
 import { validateWordPressThemeArtifact } from '@/utils/siteforge/wordpress/theme-artifact'
@@ -22,6 +25,7 @@ import {
 import { CloudwaysProviderClient } from '@/utils/siteforge/providers/cloudways-provider'
 import { getConfiguredDnsProvider } from '@/utils/siteforge/providers/dns-provider'
 import { loadSiteForgePublicRuntimeConfig } from '@/utils/siteforge/public-runtime'
+import { loadApprovedFloorPlanSnapshot } from '@/utils/siteforge/providers/floor-plan-repository'
 import {
   deployToExistingWordPress,
   deployToWordPress,
@@ -29,6 +33,12 @@ import {
   type DeploymentProgressReporter,
 } from '@/utils/siteforge/wordpress-client'
 import { brandForgeContractV1Schema } from '@/utils/brandforge/contracts'
+import {
+  loadVerifiedSiteForgeRelease,
+  type VerifiedSiteForgeRelease,
+} from '@/utils/siteforge/artifacts/release'
+import { deployArtifactBoundRuntimeV3 } from '@/utils/siteforge/workflows/runtime-deployment-v3'
+import { buildReleaseCertificationBinding } from '@/utils/siteforge/verification/certification-binding'
 
 export type SiteForgeDeploymentWorkflowInput = {
   sharedJobId: string
@@ -95,6 +105,12 @@ type DeploymentDiagnostics = {
   }
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {}
+}
+
 export async function assertSiteForgeDeploymentActive(
   input: SiteForgeDeploymentWorkflowInput
 ): Promise<void> {
@@ -106,7 +122,7 @@ export async function assertSiteForgeDeploymentActive(
   const supabase = createServiceClient()
   const { data, error } = await supabase
     .from('shared_jobs')
-    .select('lifecycle_status, cancel_requested')
+    .select('lifecycle_status, cancel_requested, lease_owner')
     .eq('id', input.sharedJobId)
     .eq('domain', 'siteforge.deployment')
     .single()
@@ -116,6 +132,28 @@ export async function assertSiteForgeDeploymentActive(
   }
   if (data.cancel_requested || data.lifecycle_status === 'cancelled') {
     throw new FatalError('SiteForge deployment was cancelled')
+  }
+  const leaseOwner = `siteforge-deployment:${input.sharedJobId}`
+  if (data.lease_owner !== leaseOwner) {
+    const now = new Date()
+    const { data: claimed, error: claimError } = await supabase
+      .from('shared_jobs')
+      .update({
+        lifecycle_status: 'running',
+        lease_owner: leaseOwner,
+        lease_expires_at: new Date(now.getTime() + 15 * 60_000).toISOString(),
+        heartbeat_at: now.toISOString(),
+        updated_at: now.toISOString(),
+      })
+      .eq('id', input.sharedJobId)
+      .eq('domain', 'siteforge.deployment')
+      .in('lifecycle_status', ['queued', 'running', 'retrying'])
+      .is('lease_owner', null)
+      .select('id')
+      .maybeSingle()
+    if (claimError || !claimed) {
+      throw new FatalError('SiteForge deployment is already claimed')
+    }
   }
 }
 
@@ -141,6 +179,7 @@ export async function updateSiteForgeDeploymentStage(
     progress,
     current_step: currentStep,
     heartbeat_at: now,
+    lease_expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
     started_at: progress === 5 ? now : undefined,
     error_message: null,
     error_details: null,
@@ -234,6 +273,19 @@ export async function runSiteForgeDeployment(
       'Exact artifact deployment approval is missing or stale'
     )
   }
+  const release = await loadVerifiedSiteForgeRelease(
+    {
+      artifactId: input.artifactId,
+      websiteId: input.websiteId,
+      propertyId: input.propertyId,
+      orgId: website.org_id,
+      contentHash: input.contentHash,
+    },
+    supabase
+  )
+  if (release.artifact.runtimeContractVersion === 3) {
+    return runLegacyWorkflowThroughRuntimeV3(input, website, release, supabase)
+  }
 
   const deploySource = resolveDeploySource(website as unknown as DeploymentWebsite)
   if (deploySource.pages.length === 0) {
@@ -269,11 +321,24 @@ export async function runSiteForgeDeployment(
   }
 
   const normalizedAssets = (assets || []).map(mapWebsiteAssetRow)
-  const architecture = {
-    pages: deploySource.pages,
-    navigation: (website as unknown as DeploymentWebsite).site_architecture?.navigation,
-    designDecisions: (website as unknown as DeploymentWebsite).site_architecture?.designDecisions,
-  } as unknown as SiteArchitecture
+  const floorPlanSnapshot = await loadApprovedFloorPlanSnapshot(
+    input.propertyId,
+    supabase
+  )
+  const approvedImageUrls = [
+    ...(assets || []).flatMap((asset) =>
+      [asset.file_url, asset.original_url].filter(
+        (value): value is string => typeof value === 'string'
+      )
+    ),
+    ...floorPlanSnapshot.rows.flatMap((row) =>
+      row.imageUrl ? [row.imageUrl] : []
+    ),
+  ]
+  const approvedImageDigests = (assets || []).flatMap((asset) => {
+    const digest = asset.byte_sha256 || asset.content_hash
+    return digest ? [digest] : []
+  })
   const provider: DeploymentProvider = input.localSimulation
     ? 'local_simulation'
     : resolveDeploymentProvider()
@@ -295,6 +360,7 @@ export async function runSiteForgeDeployment(
           progress: 50,
           current_step: currentStep,
           heartbeat_at: now,
+          lease_expires_at: new Date(nowMs + 15 * 60_000).toISOString(),
           updated_at: now,
         })
         .eq('id', input.sharedJobId),
@@ -341,20 +407,8 @@ export async function runSiteForgeDeployment(
     instance.ssh = stored.ssh
     instance.providerMetadata = stored.providerMetadata
   } else if (process.env.CLOUDWAYS_API_KEY && process.env.CLOUDWAYS_EMAIL) {
-    await progressReporter('Loading pinned property context for Cloudways provisioning...')
-    instance = await runWithTimeout(
-      deployToWordPress(
-        architecture,
-        propertyContext,
-        normalizedAssets,
-        {
-          apiKey: process.env.CLOUDWAYS_API_KEY,
-          email: process.env.CLOUDWAYS_EMAIL,
-        },
-        { onProgress: progressReporter, contentHash: input.contentHash }
-      ),
-      getDeploymentTimeoutMs(),
-      'SiteForge deployment timed out while provisioning/deploying to Cloudways'
+    throw new FatalError(
+      'SITEFORGE_PROVIDER_IDEMPOTENCY_UNAVAILABLE: automatic Cloudways application provisioning is disabled until a durable provider idempotency key is supported'
     )
   } else if (
     process.env.SITEFORGE_WP_URL &&
@@ -423,22 +477,28 @@ export async function runSiteForgeDeployment(
       themeArtifact,
       legal,
       analytics,
+      propertyProfile: runtimePropertyProfile(propertyContext),
       publicRuntime,
     })
     await progressReporter('Certifying rendered WordPress output...')
     certification = await certifyRenderedWordPressArtifact({
       artifactId: input.artifactId,
       contentHash: input.contentHash,
+      artifactBinding: buildReleaseCertificationBinding(release),
       targetUrl: instance.url,
       credentials: instance.credentials,
       pages: deploySource.pages,
+      environment: 'staging',
+      access: 'public',
+      requireIndexable: false,
       brandContract: brandContractResult.success
         ? brandContractResult.data
         : undefined,
       ...buildRenderedCertificationTruth(
         blueprint?.propertySnapshot,
-        normalizedAssets.map(asset => asset.fileUrl),
+        approvedImageUrls,
         publicRuntime.conversionEndpoint,
+        approvedImageDigests,
       ),
     })
     if (!certification.passed) {
@@ -492,16 +552,21 @@ export async function runSiteForgeDeployment(
       const domainCertification = await certifyRenderedWordPressArtifact({
         artifactId: input.artifactId,
         contentHash: input.contentHash,
+        artifactBinding: buildReleaseCertificationBinding(release),
         targetUrl: productionUrl,
         credentials: instance.credentials,
         pages: deploySource.pages,
+        environment: 'production',
+        access: 'public',
+        requireIndexable: false,
         brandContract: brandContractResult.success
           ? brandContractResult.data
           : undefined,
         ...buildRenderedCertificationTruth(
           blueprint?.propertySnapshot,
-          normalizedAssets.map(asset => asset.fileUrl),
+          approvedImageUrls,
           publicRuntime.conversionEndpoint,
+          approvedImageDigests,
         ),
       })
       if (!domainCertification.passed) {
@@ -608,6 +673,8 @@ export async function runSiteForgeDeployment(
       progress: 100,
       current_step: 'Deployment complete',
       heartbeat_at: completedAt,
+      lease_owner: null,
+      lease_expires_at: null,
       finished_at: completedAt,
       output: output as unknown as Json,
       error_message: null,
@@ -642,6 +709,167 @@ export async function runSiteForgeDeployment(
 // Cloudways provisioning is not safely repeatable. Durable retries happen through the
 // explicit job retry endpoint after persisted failure state is available to operators.
 runSiteForgeDeployment.maxRetries = 0
+
+async function runLegacyWorkflowThroughRuntimeV3(
+  input: SiteForgeDeploymentWorkflowInput,
+  website: Tables<'property_websites'>,
+  release: VerifiedSiteForgeRelease,
+  client: ReturnType<typeof createServiceClient>
+): Promise<{
+  provider: DeploymentProvider
+  url: string
+  adminUrl: string
+  instanceId: string
+  pagesAttempted: number
+  assetsAttempted: number
+}> {
+  if (input.localSimulation) {
+    throw new FatalError(
+      'Runtime v3 deployment cannot bypass the artifact-bound remote transaction engine'
+    )
+  }
+  if (!website.wordpress_credential_ref) {
+    throw new FatalError('Runtime v3 deployment requires a persisted WordPress target')
+  }
+  const credentials = await getWordPressCredentialReference(
+    website.wordpress_credential_ref
+  )
+  if (!credentials.ssh) {
+    throw new FatalError('Runtime v3 deployment requires exact WordPress SSH identity')
+  }
+  const { data: targets, error: targetError } = await client
+    .from('siteforge_wordpress_targets')
+    .select('*')
+    .eq('website_id', input.websiteId)
+    .eq('is_active', true)
+    .eq('site_url', credentials.url)
+  if (targetError) {
+    throw new Error(`Failed to load runtime v3 deployment target: ${targetError.message}`)
+  }
+  const target = targets?.find(item =>
+    ['canonical_preview', 'staging', 'production'].includes(item.target_type)
+  )
+  if (!target || !target.site_url) {
+    throw new FatalError(
+      'Runtime v3 deployment requires one exact active environment target'
+    )
+  }
+  const environment = target.target_type as
+    | 'canonical_preview'
+    | 'staging'
+    | 'production'
+  const publicRuntime = await loadSiteForgePublicRuntimeConfig(
+    input.websiteId,
+    input.propertyId,
+    client
+  )
+  const acfProLicenseKey = process.env.SITEFORGE_ACF_PRO_LICENSE_KEY?.trim()
+  if (!acfProLicenseKey) {
+    throw new FatalError('SITEFORGE_ACF_PRO_LICENSE_KEY is required')
+  }
+  const result = await deployArtifactBoundRuntimeV3({
+    release,
+    target,
+    sharedJobId: input.sharedJobId,
+    approvalId: input.approvalId,
+    environment,
+    siteUrl: target.site_url,
+    adminUrl: target.admin_url || `${target.site_url.replace(/\/$/, '')}/wp-admin`,
+    username: credentials.username,
+    applicationPassword: credentials.password,
+    ssh: credentials.ssh,
+    acfProLicenseKey,
+    publicRuntime,
+    protection: {
+      mode: target.protection_mode as 'noindex' | 'password_noindex' | 'public',
+      passwordReference:
+        target.protection_mode === 'password_noindex'
+          ? target.credential_ref
+          : null,
+    },
+    client,
+    assertActive: () => assertSiteForgeDeploymentActive(input),
+  })
+  const descriptor = asRecord(
+    asRecord(release.artifact.blueprint).runtimeV3Release ??
+      asRecord(release.artifact.blueprint).runtimeV3 ??
+      asRecord(release.artifact.blueprint).runtime_v3
+  )
+  const pagesAttempted = Array.isArray(asRecord(descriptor.resourceGraph).pages)
+    ? (asRecord(descriptor.resourceGraph).pages as unknown[]).length
+    : 0
+  const output = {
+    provider: (credentials.provider === 'cloudways'
+      ? 'cloudways'
+      : 'existing_wordpress') as DeploymentProvider,
+    url: target.site_url,
+    adminUrl:
+      target.admin_url || `${target.site_url.replace(/\/$/, '')}/wp-admin`,
+    instanceId: target.id,
+    pagesAttempted,
+    assetsAttempted: release.runtimeAssets.length,
+  }
+  const completedAt = new Date().toISOString()
+  const [websiteResult, sharedResult, legacyResult] = await Promise.all([
+    client
+      .from('property_websites')
+      .update({
+        generation_status: 'complete',
+        current_step: `Runtime v3 deployment complete (${pagesAttempted} pages, ${release.runtimeAssets.length} assets).`,
+        error_message: null,
+        wp_url: output.url,
+        wp_admin_url: output.adminUrl,
+        wp_instance_id: output.instanceId,
+        wp_credentials: null,
+        deployed_artifact_version_id: input.artifactId,
+        deployed_content_hash: input.contentHash,
+        deployed_at: completedAt,
+        updated_at: completedAt,
+      })
+      .eq('id', input.websiteId),
+    client
+      .from('shared_jobs')
+      .update({
+        lifecycle_status: 'succeeded',
+        status_reason: 'completed',
+        stage: 'deployed',
+        progress: 100,
+        current_step: 'Runtime v3 deployment complete',
+        heartbeat_at: completedAt,
+        lease_owner: null,
+        lease_expires_at: null,
+        finished_at: completedAt,
+        output: {
+          ...output,
+          runtimeEvidence: result.evidence,
+        } as unknown as Json,
+        error_message: null,
+        error_details: null,
+        updated_at: completedAt,
+      })
+      .eq('id', input.sharedJobId),
+    client
+      .from('siteforge_jobs')
+      .update({
+        status: 'complete',
+        completed_at: completedAt,
+        output_data: {
+          ...output,
+          runtimeEvidence: result.evidence,
+        } as unknown as Json,
+        error_details: null,
+      })
+      .eq('id', input.legacyJobId),
+  ])
+  const completionError =
+    websiteResult.error || sharedResult.error || legacyResult.error
+  if (completionError) {
+    throw new Error(
+      `Failed to persist runtime v3 deployment completion: ${completionError.message}`
+    )
+  }
+  return output
+}
 
 export async function failSiteForgeDeployment(
   input: SiteForgeDeploymentWorkflowInput,
@@ -704,6 +932,8 @@ export async function failSiteForgeDeployment(
           ? 'Deployment failed during verification'
           : 'Deployment failed',
         heartbeat_at: now,
+        lease_owner: null,
+        lease_expires_at: null,
         finished_at: now,
         error_message: message,
         error_details: { message, category } as Json,

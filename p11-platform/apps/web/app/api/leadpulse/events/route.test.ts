@@ -179,6 +179,53 @@ describe('LeadPulse events route', () => {
     })
   })
 
+  it('rejects a property assertion that does not match the lead', async () => {
+    authGetUserMock.mockResolvedValue({
+      data: { user: { id: 'user-1' } },
+      error: null,
+    })
+    createServiceClientMock.mockReturnValue({
+      from: vi.fn((table: string) => {
+        if (table === 'leads') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                single: vi.fn().mockResolvedValue(
+                  makeSingleResult({
+                    id: 'lead-1',
+                    property_id: 'property-owned-by-lead',
+                  })
+                ),
+              })),
+            })),
+          }
+        }
+        throw new Error(`Unexpected table ${table}`)
+      }),
+      rpc: rpcMock,
+    })
+
+    const { POST } = await import('./route')
+    const request = new Request('http://localhost/api/leadpulse/events', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        leadId: 'lead-1',
+        propertyId: 'attacker-controlled-property',
+        eventType: 'chat_started',
+      }),
+    }) as NextRequest
+
+    const response = await POST(request)
+
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toEqual({
+      error: 'propertyId does not match lead',
+    })
+    expect(validatePropertyAccessMock).not.toHaveBeenCalled()
+    expect(rpcMock).not.toHaveBeenCalled()
+  })
+
   it('returns events for an authorized lead', async () => {
     authGetUserMock.mockResolvedValue({
       data: { user: { id: 'user-1' } },

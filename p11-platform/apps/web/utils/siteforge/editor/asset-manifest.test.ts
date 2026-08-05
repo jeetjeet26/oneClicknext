@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { buildApprovedAssetManifest } from './asset-manifest'
+import {
+  assertApprovedAssetReferenceClosure,
+  buildApprovedAssetManifest,
+} from './asset-manifest'
 
 const DIGEST_A = 'a'.repeat(64)
 const DIGEST_B = 'b'.repeat(64)
@@ -104,5 +107,87 @@ describe('buildApprovedAssetManifest', () => {
         byteSha256: DIGEST_B,
       }),
     ])
+  })
+})
+
+describe('assertApprovedAssetReferenceClosure', () => {
+  const approvedAssets = [
+    {
+      id: '00000000-0000-4000-8000-000000000002',
+      asset_type: 'logo',
+      source: 'upload',
+      file_url: 'https://example.com/logo-b.png',
+      storage_path: 'sites/logo-b.png',
+      byte_sha256: DIGEST_B,
+      content_hash: DIGEST_B,
+      approval_status: 'approved',
+      rights_status: 'owned',
+    },
+  ]
+
+  it('accepts changed media only when ID, URL, rights, and digest close over an approved asset', () => {
+    expect(() =>
+      assertApprovedAssetReferenceClosure({
+        approvedAssets,
+        originalBlueprint: {
+          siteConfiguration: {
+            media: {
+              logoAssetId: '00000000-0000-4000-8000-000000000001',
+              logoUrl: 'https://example.com/logo-a.png',
+            },
+          },
+        },
+        updatedBlueprint: {
+          siteConfiguration: {
+            media: {
+              logoAssetId: '00000000-0000-4000-8000-000000000002',
+              logoUrl: 'https://example.com/logo-b.png',
+            },
+          },
+        },
+      })
+    ).not.toThrow()
+  })
+
+  it('rejects changed media with a missing ID or mismatched URL', () => {
+    expect(() =>
+      assertApprovedAssetReferenceClosure({
+        approvedAssets,
+        originalBlueprint: {},
+        updatedBlueprint: {
+          image: {
+            url: 'https://evil.example/hero.png',
+            alt: 'Hero',
+          },
+        },
+      })
+    ).toThrow('requires an approved asset ID')
+
+    expect(() =>
+      assertApprovedAssetReferenceClosure({
+        approvedAssets,
+        originalBlueprint: {},
+        updatedBlueprint: {
+          image: {
+            assetId: '00000000-0000-4000-8000-000000000002',
+            url: 'https://evil.example/logo.png',
+            alt: 'Logo',
+          },
+        },
+      })
+    ).toThrow('not closed over an approved immutable asset')
+  })
+
+  it('allows unchanged legacy media while blocking unsafe new edits', () => {
+    const legacy = {
+      image: { url: 'https://legacy.example/hero.png', alt: 'Hero' },
+    }
+    expect(() =>
+      assertApprovedAssetReferenceClosure({
+        approvedAssets,
+        originalBlueprint: legacy,
+        updatedBlueprint: legacy,
+      })
+    ).not.toThrow()
   })
 })

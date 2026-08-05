@@ -7,6 +7,7 @@ import {
 import { useCallback, useState } from 'react'
 import { useAddProperty, UploadedDocument } from '../AddPropertyProvider'
 import { BrandForgeWizard } from '@/components/brandforge/BrandForgeWizard'
+import { ExistingBrandImportWizard } from '@/components/brandforge/ExistingBrandImportWizard'
 
 const SUGGESTED_DOCUMENTS = [
   { name: 'Property Brochure', description: 'Floor plans, photos, and features', type: 'brochure' },
@@ -108,7 +109,7 @@ export function KnowledgeStep() {
   const { documents } = formData
   const [isDragging, setIsDragging] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
-  const [mode, setMode] = useState<'choose' | 'upload' | 'brandforge'>('choose')
+  const [mode, setMode] = useState<'choose' | 'upload' | 'brandforge' | 'existing-brand'>('choose')
   const [brandBookGenerated, setBrandBookGenerated] = useState(false)
 
   const validateFile = (file: File): string | null => {
@@ -151,6 +152,9 @@ export function KnowledgeStep() {
             : {}),
           ...(typeof result.originalFileUrl === 'string'
             ? { originalFileUrl: result.originalFileUrl }
+            : {}),
+          ...(Array.isArray(result.documentIds)
+            ? { documentIds: result.documentIds.filter((id: unknown): id is string => typeof id === 'string') }
             : {}),
         },
       })
@@ -240,6 +244,23 @@ export function KnowledgeStep() {
     setMode('upload') // Allow additional doc uploads after brand generation
   }
 
+  function handleExistingBrandComplete(result: { brandAssetId: string; contractHash: string }) {
+    addDocument({
+      id: generateId(),
+      name: 'Approved Existing Brand',
+      size: 0,
+      type: 'application/json',
+      status: 'completed',
+      metadata: {
+        source: 'BrandForgeImport',
+        brandAssetId: result.brandAssetId,
+        contractHash: result.contractHash,
+      },
+    })
+    setBrandBookGenerated(true)
+    setMode('upload')
+  }
+
   return (
     <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="text-center mb-8">
@@ -267,7 +288,7 @@ export function KnowledgeStep() {
         <div className="space-y-6">
           {/* Choice: Upload or Generate Brand */}
           {mode === 'choose' && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <button
                 onClick={() => setMode('upload')}
                 className="p-6 bg-slate-800/50 hover:bg-slate-800 border-2 border-slate-700 hover:border-indigo-500 rounded-xl transition-all text-left group"
@@ -276,6 +297,17 @@ export function KnowledgeStep() {
                 <h3 className="text-lg font-semibold text-white mb-2">Upload Documents</h3>
                 <p className="text-sm text-slate-400">
                   Upload existing brand guidelines, brochures, and property documents
+                </p>
+              </button>
+
+              <button
+                onClick={() => setMode('existing-brand')}
+                className="p-6 bg-slate-800/50 hover:bg-slate-800 border-2 border-emerald-500/40 hover:border-emerald-500 rounded-xl transition-all text-left group"
+              >
+                <FileText className="w-10 h-10 text-emerald-400 mb-4" />
+                <h3 className="text-lg font-semibold text-white mb-2">Use Existing Brand</h3>
+                <p className="text-sm text-slate-400">
+                  Import guidelines, website styles, logos, colors, and fonts for review
                 </p>
               </button>
               
@@ -293,6 +325,29 @@ export function KnowledgeStep() {
                   Powered by Gemini 3
                 </div>
               </button>
+            </div>
+          )}
+
+          {mode === 'existing-brand' && targetPropertyId && (
+            <>
+              <ExistingBrandImportWizard
+                propertyId={targetPropertyId}
+                onComplete={handleExistingBrandComplete}
+              />
+              <button
+                type="button"
+                onClick={() => setMode('choose')}
+                className="w-full px-4 py-2 text-sm text-slate-400 hover:text-white transition-colors"
+              >
+                ← Back to options
+              </button>
+            </>
+          )}
+
+          {mode === 'existing-brand' && !targetPropertyId && (
+            <div className="rounded-xl border border-slate-700 bg-slate-800/50 p-8 text-center">
+              <Loader2 className="mx-auto mb-4 h-12 w-12 animate-spin text-emerald-400" />
+              <p className="text-slate-400">Creating the property record before brand import…</p>
             </div>
           )}
 
@@ -347,7 +402,7 @@ export function KnowledgeStep() {
             <input
               type="file"
               multiple
-              accept=".pdf,.txt,.md,.doc,.docx"
+              accept=".pdf,.txt,.md"
               onChange={handleFileInput}
               className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
             />

@@ -75,6 +75,11 @@ describe('provider-neutral floor-plan adapters', () => {
           floor_plan_image_alt: 'Birch two-bedroom floor plan',
           availability_url: 'https://property.example.com/availability',
           apply_url: 'https://property.example.com/apply',
+          source: 'csv',
+          source_identity: 'inventory-feed:birch',
+          effective_at: '2026-07-31T11:00:00.000Z',
+          expires_at: '2026-08-01T11:00:00.000Z',
+          source_updated_at: '2026-07-31T10:30:00.000Z',
         },
         {
           canonical_key: 'a1',
@@ -91,14 +96,81 @@ describe('provider-neutral floor-plan adapters', () => {
           floor_plan_image_alt: null,
           availability_url: null,
           apply_url: null,
+          source: 'manual',
+          source_identity: 'approved-import:aspen',
+          effective_at: '2026-07-31T11:00:00.000Z',
+          expires_at: null,
+          source_updated_at: '2026-07-31T10:00:00.000Z',
         },
       ],
       '2026-07-31T12:00:00.000Z'
     )
 
     expect(snapshot.rows.map((row) => row.id)).toEqual(['a1', 'b2'])
+    expect(snapshot.rows[0]).toEqual(
+      expect.objectContaining({
+        source: 'manual',
+        sourceIdentity: 'approved-import:aspen',
+        effectiveAt: '2026-07-31T11:00:00.000Z',
+        sourceUpdatedAt: '2026-07-31T10:00:00.000Z',
+      })
+    )
     expect(snapshot.contentHash).toMatch(/^[a-f0-9]{64}$/)
     expect(Object.isFrozen(snapshot)).toBe(true)
     expect(Object.isFrozen(snapshot.rows[0])).toBe(true)
+
+    const changedProvenance = createApprovedFloorPlanSnapshot(
+      [
+        {
+          canonical_key: 'a1',
+          unit_type: 'Aspen',
+          bedrooms: 1,
+          bathrooms: 1,
+          sqft_min: 700,
+          sqft_max: null,
+          rent_min: 1_800,
+          rent_max: null,
+          available_count: 1,
+          move_in_specials: 'One month free',
+          floor_plan_image_url: null,
+          floor_plan_image_alt: null,
+          availability_url: null,
+          apply_url: null,
+          source: 'manual',
+          source_identity: 'different-approved-import',
+          effective_at: '2026-07-31T11:00:00.000Z',
+          expires_at: null,
+          source_updated_at: '2026-07-31T10:00:00.000Z',
+        },
+      ],
+      '2026-07-31T12:00:00.000Z'
+    )
+    const originalAspen = createApprovedFloorPlanSnapshot(
+      [
+        {
+          canonical_key: 'a1',
+          unit_type: 'Aspen',
+          bedrooms: 1,
+          bathrooms: 1,
+          sqft_min: 700,
+          sqft_max: null,
+          rent_min: 1_800,
+          rent_max: null,
+          available_count: 1,
+          move_in_specials: 'One month free',
+          floor_plan_image_url: null,
+          floor_plan_image_alt: null,
+          availability_url: null,
+          apply_url: null,
+          source: 'manual',
+          source_identity: 'approved-import:aspen',
+          effective_at: '2026-07-31T11:00:00.000Z',
+          expires_at: null,
+          source_updated_at: '2026-07-31T10:00:00.000Z',
+        },
+      ],
+      '2026-07-31T12:00:00.000Z'
+    )
+    expect(changedProvenance.contentHash).not.toBe(originalAspen.contentHash)
   })
 })

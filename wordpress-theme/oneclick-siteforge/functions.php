@@ -9,7 +9,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'ONECLICK_SITEFORGE_VERSION', '2.2.7' );
+define( 'ONECLICK_SITEFORGE_VERSION', '2.2.8' );
 define( 'ONECLICK_SITEFORGE_DIR', get_template_directory() );
 define( 'ONECLICK_SITEFORGE_URI', get_template_directory_uri() );
 
@@ -56,6 +56,20 @@ function oneclick_siteforge_setup() {
 	);
 }
 add_action( 'after_setup_theme', 'oneclick_siteforge_setup' );
+
+/**
+ * Keep every canonical WordPress menu link safe when it opens a new tab.
+ */
+function oneclick_siteforge_safe_menu_link_attributes( $atts ) {
+	if ( '_blank' !== ( $atts['target'] ?? '' ) ) {
+		return $atts;
+	}
+	$rel = preg_split( '/\s+/', trim( (string) ( $atts['rel'] ?? '' ) ) );
+	$rel = array_values( array_filter( array_unique( array_merge( $rel, array( 'noopener', 'noreferrer' ) ) ) ) );
+	$atts['rel'] = implode( ' ', $rel );
+	return $atts;
+}
+add_filter( 'nav_menu_link_attributes', 'oneclick_siteforge_safe_menu_link_attributes', 10, 1 );
 
 /**
  * Enqueue Theme Styles and Scripts
@@ -264,10 +278,15 @@ function oneclick_siteforge_enqueue_assets() {
 		'oneclick_siteforge_analytics',
 		array( 'consentMode' => 'required', 'events' => array() )
 	);
+	$siteforge_behavior = is_array( $siteforge_configuration['behavior'] ?? null ) ? $siteforge_configuration['behavior'] : array();
+	$cookie_consent = $siteforge_behavior['cookieConsent'] ?? 'required';
+	$cookie_consent = in_array( $cookie_consent, array( 'disabled', 'informational', 'required' ), true ) ? $cookie_consent : 'required';
+	$siteforge_analytics = is_array( $siteforge_analytics ) ? $siteforge_analytics : array();
+	$siteforge_analytics['consentMode'] = $cookie_consent;
 	$siteforge_runtime = oneclick_siteforge_lumaleasing_configuration();
 	$siteforge_manifest = get_option( 'oneclick_siteforge_content_manifest', array() );
 	$siteforge_analytics = array_merge(
-		is_array( $siteforge_analytics ) ? $siteforge_analytics : array(),
+		$siteforge_analytics,
 		array(
 			'endpoint'    => $siteforge_runtime['telemetryEndpoint'],
 			'publicKey'   => $siteforge_runtime['conversionKey'],
@@ -643,11 +662,140 @@ function oneclick_siteforge_register_floor_plan_fields() {
 add_action( 'acf/init', 'oneclick_siteforge_register_floor_plan_fields' );
 
 /**
+ * Read canonical SiteForge SEO state. Yoast fields are never a source.
+ */
+function oneclick_siteforge_canonical_seo( $post_id = 0 ) {
+	$post_id = $post_id ? absint( $post_id ) : get_queried_object_id();
+	if ( ! $post_id || '1' !== get_post_meta( $post_id, '_siteforge_seo_declared', true ) ) {
+		return null;
+	}
+	$title          = (string) get_post_meta( $post_id, '_siteforge_seo_title', true );
+	$description    = (string) get_post_meta( $post_id, '_siteforge_seo_description', true );
+	$canonical_path = (string) get_post_meta( $post_id, '_siteforge_seo_canonical_path', true );
+	$structured     = get_post_meta( $post_id, '_siteforge_seo_json_ld', true );
+	if ( '' === $title || ! preg_match( '#^/(?:[A-Za-z0-9._~!$&\'()*+,;=:@%\-]+/?)*$#', $canonical_path ) || ! is_array( $structured ) ) {
+		return null;
+	}
+	$json_ld = array();
+	foreach ( $structured as $entry ) {
+		$decoded = is_string( $entry ) ? json_decode( $entry ) : null;
+		if ( null === $decoded || JSON_ERROR_NONE !== json_last_error() ) {
+			return null;
+		}
+		$json_ld[] = $decoded;
+	}
+	$noindex = '1' === (string) get_post_meta( $post_id, '_siteforge_seo_noindex', true )
+		|| '0' === (string) get_option( 'blog_public', '0' );
+	return array(
+		'title'       => $title,
+		'description' => $description,
+		'canonical'   => home_url( $canonical_path ),
+		'robots'      => $noindex ? 'noindex, nofollow' : 'index, follow',
+		'jsonLd'      => $json_ld,
+	);
+}
+
+function oneclick_siteforge_document_title( $title ) {
+	$seo = is_singular( 'page' ) ? oneclick_siteforge_canonical_seo() : null;
+	return $seo ? $seo['title'] : $title;
+}
+add_filter( 'pre_get_document_title', 'oneclick_siteforge_document_title', PHP_INT_MAX );
+
+function oneclick_siteforge_wp_robots( $robots ) {
+	return is_singular( 'page' ) && oneclick_siteforge_canonical_seo() ? array() : $robots;
+}
+add_filter( 'wp_robots', 'oneclick_siteforge_wp_robots', PHP_INT_MAX );
+
+function oneclick_siteforge_yoast_presenters( $presenters ) {
+	return is_singular( 'page' ) && oneclick_siteforge_canonical_seo() ? array() : $presenters;
+}
+add_filter( 'wpseo_frontend_presenters', 'oneclick_siteforge_yoast_presenters', PHP_INT_MAX );
+
+function oneclick_siteforge_prepare_canonical_seo() {
+	if ( is_singular( 'page' ) && oneclick_siteforge_canonical_seo() ) {
+		remove_action( 'wp_head', 'rel_canonical' );
+	}
+}
+add_action( 'wp', 'oneclick_siteforge_prepare_canonical_seo' );
+
+/**
+ * Emit exact validated SiteForge metadata regardless of SEO plugins.
+ */
+function oneclick_siteforge_output_seo_metadata() {
+	$seo = is_singular( 'page' ) ? oneclick_siteforge_canonical_seo() : null;
+	if ( ! $seo ) {
+		return;
+	}
+	echo '<meta name="description" content="' . esc_attr( $seo['description'] ) . '">' . "\n";
+	echo '<link rel="canonical" href="' . esc_url( $seo['canonical'] ) . '">' . "\n";
+	echo '<meta name="robots" content="' . esc_attr( $seo['robots'] ) . '">' . "\n";
+	echo '<meta property="og:type" content="website">' . "\n";
+	echo '<meta property="og:title" content="' . esc_attr( $seo['title'] ) . '">' . "\n";
+	echo '<meta property="og:url" content="' . esc_url( $seo['canonical'] ) . '">' . "\n";
+	echo '<meta property="og:description" content="' . esc_attr( $seo['description'] ) . '">' . "\n";
+	foreach ( $seo['jsonLd'] as $json_ld ) {
+		echo '<script type="application/ld+json">' . wp_json_encode( $json_ld, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP ) . '</script>' . "\n";
+	}
+}
+add_action( 'wp_head', 'oneclick_siteforge_output_seo_metadata', 5 );
+
+/**
+ * Apply baseline public-site hardening without blocking authenticated REST use.
+ */
+function oneclick_siteforge_security_headers() {
+	if ( headers_sent() ) {
+		return;
+	}
+	header( 'X-Frame-Options: SAMEORIGIN' );
+	header( 'X-Content-Type-Options: nosniff' );
+	header( 'Referrer-Policy: strict-origin-when-cross-origin' );
+	if ( is_ssl() ) {
+		header( 'Strict-Transport-Security: max-age=31536000; includeSubDomains' );
+	}
+}
+add_action( 'send_headers', 'oneclick_siteforge_security_headers' );
+
+function oneclick_siteforge_block_public_user_enumeration( $result ) {
+	if ( $result || is_user_logged_in() ) {
+		return $result;
+	}
+	$request_uri = sanitize_text_field( wp_unslash( $_SERVER['REQUEST_URI'] ?? '' ) );
+	if ( preg_match( '#/wp-json/wp/v2/users(?:/|$|\?)#', $request_uri ) ) {
+		return new WP_Error(
+			'siteforge_user_enumeration_disabled',
+			'Not found.',
+			array( 'status' => 404 )
+		);
+	}
+	return $result;
+}
+add_filter( 'rest_authentication_errors', 'oneclick_siteforge_block_public_user_enumeration', 20 );
+remove_action( 'wp_head', 'wp_generator' );
+add_filter( 'the_generator', '__return_empty_string' );
+
+/**
  * Helper: Get field with fallback
  */
 function oneclick_get_field( $field_name, $empty_value = '' ) {
 	$value = get_field( $field_name, 'option' );
-	return $value ? $value : $empty_value;
+	if ( $value ) {
+		return $value;
+	}
+	$profile = get_option( 'oneclick_siteforge_property_profile', array() );
+	$profile = is_array( $profile ) ? $profile : array();
+	$profile_fields = array(
+		'property_name'    => $profile['name'] ?? '',
+		'property_address' => $profile['address'] ?? '',
+		'property_phone'   => $profile['phone'] ?? '',
+		'property_email'   => $profile['email'] ?? '',
+		'social_facebook'  => $profile['socialLinks']['facebook'] ?? '',
+		'social_instagram' => $profile['socialLinks']['instagram'] ?? '',
+		'social_twitter'   => $profile['socialLinks']['twitter'] ?? '',
+		'social_linkedin'  => $profile['socialLinks']['linkedin'] ?? '',
+	);
+	return ! empty( $profile_fields[ $field_name ] )
+		? $profile_fields[ $field_name ]
+		: $empty_value;
 }
 
 /**

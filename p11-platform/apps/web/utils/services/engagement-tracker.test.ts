@@ -28,11 +28,13 @@ describe('engagement tracker', () => {
     })
 
     const { trackEngagementEvent } = await import('./engagement-tracker')
-    await trackEngagementEvent({
-      leadId: 'lead-1',
-      propertyId: 'property-1',
-      eventType: 'tour_scheduled',
-    })
+    await expect(
+      trackEngagementEvent({
+        leadId: 'lead-1',
+        propertyId: 'property-1',
+        eventType: 'tour_scheduled',
+      })
+    ).rejects.toThrow('insert failed')
 
     expect(rpcMock).not.toHaveBeenCalled()
   })

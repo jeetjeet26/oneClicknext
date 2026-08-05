@@ -8,6 +8,7 @@
 class SiteForge_Runtime_Assets {
 	const REGISTRY_OPTION = 'oneclick_siteforge_runtime_asset_bindings_v2';
 	const PREPARATIONS_OPTION = 'oneclick_siteforge_runtime_asset_preparations_v2';
+	const PREPARATION_EFFECTS_OPTION = 'oneclick_siteforge_runtime_asset_effects_v2';
 	const META_ASSET_ID   = '_siteforge_asset_id';
 	const META_BYTE_HASH  = '_siteforge_byte_hash';
 	const META_SOURCE_URL = '_siteforge_source_url';
@@ -35,9 +36,13 @@ class SiteForge_Runtime_Assets {
 			return $existing_preparation;
 		}
 		$bindings = array();
-
-		foreach ( $input['assets'] as $asset ) {
-			$bindings[] = $this->prepare_one( $input['artifactId'], $asset );
+		try {
+			foreach ( $input['assets'] as $asset ) {
+				$bindings[] = $this->prepare_one( $input['artifactId'], $asset );
+			}
+		} catch ( Throwable $error ) {
+			$this->compensate_bindings( $input['artifactId'], $bindings );
+			throw $error;
 		}
 
 		$result = array(
@@ -63,10 +68,43 @@ class SiteForge_Runtime_Assets {
 			),
 			'preparedAt'      => gmdate( 'c' ),
 		);
+		$effects = get_option( self::PREPARATION_EFFECTS_OPTION, array() );
+		$effects = is_array( $effects ) ? $effects : array();
+		$effects[ $result['preparationId'] ] = array(
+			'artifactId' => $input['artifactId'],
+			'bindings'   => array_map(
+				static function ( $binding ) {
+					return array(
+						'assetId'          => $binding['assetId'],
+						'attachmentId'     => $binding['attachmentId'],
+						'created'          => empty( $binding['reused'] ),
+						'associationAdded' => ! empty( $binding['associationAdded'] ),
+					);
+				},
+				$bindings
+			),
+		);
+		if ( false === update_option( self::PREPARATION_EFFECTS_OPTION, $effects, false ) && $effects !== get_option( self::PREPARATION_EFFECTS_OPTION, array() ) ) {
+			$this->compensate_bindings( $input['artifactId'], $bindings );
+			throw new SiteForge_Runtime_Exception(
+				'siteforge_asset_effects_failed',
+				'WordPress could not persist the asset compensation ledger.',
+				500
+			);
+		}
 		$preparations = get_option( self::PREPARATIONS_OPTION, array() );
 		$preparations = is_array( $preparations ) ? $preparations : array();
 		$preparations[ $result['preparationId'] ] = $result;
-		update_option( self::PREPARATIONS_OPTION, $preparations, false );
+		if ( false === update_option( self::PREPARATIONS_OPTION, $preparations, false ) && $preparations !== get_option( self::PREPARATIONS_OPTION, array() ) ) {
+			unset( $effects[ $result['preparationId'] ] );
+			update_option( self::PREPARATION_EFFECTS_OPTION, $effects, false );
+			$this->compensate_bindings( $input['artifactId'], $bindings );
+			throw new SiteForge_Runtime_Exception(
+				'siteforge_asset_preparation_store_failed',
+				'WordPress could not persist the immutable asset preparation.',
+				500
+			);
+		}
 		return $result;
 	}
 
@@ -75,6 +113,54 @@ class SiteForge_Runtime_Assets {
 		return is_array( $preparations ) && isset( $preparations[ $preparation_id ] )
 			? $preparations[ $preparation_id ]
 			: null;
+	}
+
+	/**
+	 * Compensate only media side effects introduced by one failed release.
+	 */
+	public function rollback_preparation( $preparation_id, $artifact_id ) {
+		$preparation = $this->get_preparation( $preparation_id );
+		if ( ! is_array( $preparation ) || (string) $preparation['artifactId'] !== (string) $artifact_id ) {
+			return;
+		}
+		$effects = get_option( self::PREPARATION_EFFECTS_OPTION, array() );
+		$effects = is_array( $effects ) ? $effects : array();
+		$effect  = isset( $effects[ $preparation_id ] ) && is_array( $effects[ $preparation_id ] )
+			? $effects[ $preparation_id ]
+			: array( 'bindings' => array() );
+		$bindings = isset( $effect['bindings'] ) && is_array( $effect['bindings'] )
+			? $effect['bindings']
+			: array();
+
+		// Older v2 preparations predate the internal effects ledger. Their
+		// public disposition still identifies attachments created by SiteForge.
+		if ( empty( $bindings ) ) {
+			foreach ( $preparation['assets'] as $asset ) {
+				$bindings[] = array(
+					'assetId'          => $asset['assetId'],
+					'attachmentId'     => $asset['attachmentId'],
+					'created'          => 'created' === $asset['disposition'],
+					'associationAdded' => false,
+				);
+			}
+		}
+		$this->compensate_bindings( $artifact_id, $bindings );
+		$this->assert_bindings_compensated( $artifact_id, $bindings );
+
+		$preparations = get_option( self::PREPARATIONS_OPTION, array() );
+		$preparations = is_array( $preparations ) ? $preparations : array();
+		unset( $preparations[ $preparation_id ] );
+		update_option( self::PREPARATIONS_OPTION, $preparations, false );
+		unset( $effects[ $preparation_id ] );
+		update_option( self::PREPARATION_EFFECTS_OPTION, $effects, false );
+
+		if ( null !== $this->get_preparation( $preparation_id ) ) {
+			throw new SiteForge_Runtime_Exception(
+				'siteforge_rollback_asset_preparation_failed',
+				'Could not remove the failed release asset preparation.',
+				500
+			);
+		}
 	}
 
 	public function get_binding( $asset_id ) {
@@ -165,7 +251,7 @@ class SiteForge_Runtime_Assets {
 					)
 				);
 			}
-			$this->associate_artifact( $existing['attachmentId'], $artifact_id );
+			$existing['associationAdded'] = $this->associate_artifact( $existing['attachmentId'], $artifact_id );
 			$existing['reused'] = true;
 			return $existing;
 		}
@@ -188,7 +274,7 @@ class SiteForge_Runtime_Assets {
 			}
 			$binding = $this->binding_from_attachment( $attachment_id, $asset['assetId'], $stored_hash, true );
 			$this->store_binding( $binding );
-			$this->associate_artifact( $attachment_id, $artifact_id );
+			$binding['associationAdded'] = $this->associate_artifact( $attachment_id, $artifact_id );
 			return $binding;
 		}
 
@@ -293,10 +379,16 @@ class SiteForge_Runtime_Assets {
 					)
 				);
 			}
-			$this->associate_artifact( $attachment_id, $artifact_id );
+			$association_added = $this->associate_artifact( $attachment_id, $artifact_id );
 
 			$binding = $this->binding_from_attachment( $attachment_id, $asset['assetId'], $asset['byteHash'], false );
-			$this->store_binding( $binding );
+			$binding['associationAdded'] = $association_added;
+			try {
+				$this->store_binding( $binding );
+			} catch ( Throwable $error ) {
+				wp_delete_attachment( $attachment_id, true );
+				throw $error;
+			}
 			return $binding;
 		} finally {
 			if ( is_string( $temp_file ) && file_exists( $temp_file ) ) {
@@ -396,13 +488,103 @@ class SiteForge_Runtime_Assets {
 			$artifacts[] = $artifact_id;
 			sort( $artifacts, SORT_STRING );
 			update_post_meta( $attachment_id, self::META_ARTIFACTS, $artifacts );
+			return true;
+		}
+		return false;
+	}
+
+	private function compensate_bindings( $artifact_id, $bindings ) {
+		$registry = $this->registry();
+		foreach ( $bindings as $binding ) {
+			$attachment_id = absint( isset( $binding['attachmentId'] ) ? $binding['attachmentId'] : 0 );
+			$asset_id      = isset( $binding['assetId'] ) ? (string) $binding['assetId'] : '';
+			$created       = isset( $binding['created'] ) ? (bool) $binding['created'] : empty( $binding['reused'] );
+			$remove_association = $created || ! empty( $binding['associationAdded'] );
+			if ( ! $attachment_id || 'attachment' !== get_post_type( $attachment_id ) ) {
+				unset( $registry[ $asset_id ] );
+				continue;
+			}
+			if ( $asset_id !== (string) get_post_meta( $attachment_id, self::META_ASSET_ID, true ) ) {
+				throw new SiteForge_Runtime_Exception(
+					'siteforge_rollback_asset_identity_failed',
+					'Rollback refused to mutate an attachment with mismatched SiteForge identity.',
+					500,
+					array( 'attachmentId' => $attachment_id, 'assetId' => $asset_id )
+				);
+			}
+			$artifacts = get_post_meta( $attachment_id, self::META_ARTIFACTS, true );
+			$artifacts = is_array( $artifacts ) ? $artifacts : array();
+			if ( $remove_association ) {
+				$artifacts = array_values( array_diff( $artifacts, array( $artifact_id ) ) );
+				if ( empty( $artifacts ) ) {
+					delete_post_meta( $attachment_id, self::META_ARTIFACTS );
+				} else {
+					update_post_meta( $attachment_id, self::META_ARTIFACTS, $artifacts );
+				}
+			}
+			if ( $created && empty( $artifacts ) ) {
+				if ( ! wp_delete_attachment( $attachment_id, true ) ) {
+					throw new SiteForge_Runtime_Exception(
+						'siteforge_rollback_attachment_failed',
+						'Could not remove an attachment created by the failed release.',
+						500,
+						array( 'attachmentId' => $attachment_id, 'assetId' => $asset_id )
+					);
+				}
+				unset( $registry[ $asset_id ] );
+			}
+		}
+		ksort( $registry, SORT_STRING );
+		if ( false === update_option( self::REGISTRY_OPTION, $registry, false ) && $registry !== get_option( self::REGISTRY_OPTION, array() ) ) {
+			throw new SiteForge_Runtime_Exception(
+				'siteforge_rollback_asset_registry_failed',
+				'Could not restore the immutable asset registry.',
+				500
+			);
+		}
+	}
+
+	private function assert_bindings_compensated( $artifact_id, $bindings ) {
+		$registry = $this->registry();
+		foreach ( $bindings as $binding ) {
+			$attachment_id = absint( isset( $binding['attachmentId'] ) ? $binding['attachmentId'] : 0 );
+			$asset_id      = isset( $binding['assetId'] ) ? (string) $binding['assetId'] : '';
+			$created       = isset( $binding['created'] ) ? (bool) $binding['created'] : empty( $binding['reused'] );
+			$association_added = $created || ! empty( $binding['associationAdded'] );
+			if ( $attachment_id && 'attachment' === get_post_type( $attachment_id ) ) {
+				$artifacts = get_post_meta( $attachment_id, self::META_ARTIFACTS, true );
+				$artifacts = is_array( $artifacts ) ? $artifacts : array();
+				if ( $association_added && in_array( $artifact_id, $artifacts, true ) ) {
+					throw new SiteForge_Runtime_Exception(
+						'siteforge_rollback_asset_association_remains',
+						'A failed release remains associated with a prepared attachment.',
+						500,
+						array( 'attachmentId' => $attachment_id, 'assetId' => $asset_id )
+					);
+				}
+				if ( $created && empty( $artifacts ) ) {
+					throw new SiteForge_Runtime_Exception(
+						'siteforge_rollback_attachment_remains',
+						'An unreferenced attachment created by the failed release remains.',
+						500,
+						array( 'attachmentId' => $attachment_id, 'assetId' => $asset_id )
+					);
+				}
+			} elseif ( isset( $registry[ $asset_id ] ) && absint( $registry[ $asset_id ]['attachmentId'] ) === $attachment_id ) {
+				throw new SiteForge_Runtime_Exception(
+					'siteforge_rollback_asset_registry_remains',
+					'The asset registry still references a compensated attachment.',
+					500,
+					array( 'attachmentId' => $attachment_id, 'assetId' => $asset_id )
+				);
+			}
 		}
 	}
 
 	private function store_binding( $binding ) {
 		$registry = $this->registry();
 		$stored   = $binding;
-		unset( $stored['reused'] );
+		unset( $stored['reused'], $stored['associationAdded'] );
 		$registry[ $binding['assetId'] ] = $stored;
 		ksort( $registry, SORT_STRING );
 		if ( false === update_option( self::REGISTRY_OPTION, $registry, false ) && $registry !== get_option( self::REGISTRY_OPTION, array() ) ) {

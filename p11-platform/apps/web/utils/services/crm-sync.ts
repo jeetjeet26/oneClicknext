@@ -22,6 +22,7 @@ export interface LeadData {
   move_in_date?: string
   bedrooms?: string | number
   notes?: string
+  metadata?: Record<string, unknown>
 }
 
 export interface CRMSyncResult {

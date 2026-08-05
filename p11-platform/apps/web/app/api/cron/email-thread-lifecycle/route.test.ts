@@ -22,6 +22,7 @@ describe('cron email thread lifecycle route', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.unstubAllEnvs()
+    vi.stubEnv('CRON_SECRET', 'secret')
     startCronJobRunMock.mockResolvedValue({
       id: 'run-1',
       jobName: 'email-thread-lifecycle',

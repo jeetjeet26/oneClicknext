@@ -1,0 +1,16 @@
+{
+  "contractVersion": 2,
+  "requestId": "request-stale-1",
+  "error": {
+    "code": "stale_remote_state",
+    "message": "Remote content changed after this deployment was compiled.",
+    "retryable": false,
+    "stage": "preflight",
+    "operationHash": "be380a40eee27d6266a27afc0d7e5dc2cdafedcaff7fd0da0b6b4de31afe6f32",
+    "expectedRemoteContentHash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "actualRemoteContentHash": "9999999999999999999999999999999999999999999999999999999999999999",
+    "details": {
+      "siteId": "site-1"
+    }
+  }
+}

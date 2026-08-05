@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
         { status: 400, headers: ctx.responseHeaders }
       )
     }
-    const auth = await requireLaunchManager(parsed.data.propertyId)
+    const auth = await requireLaunchManager(parsed.data.propertyId, request)
     if (!auth.user) return auth.response
     const result = await restoreLaunchRelease({
       ...parsed.data,

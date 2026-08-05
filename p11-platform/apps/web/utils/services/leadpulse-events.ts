@@ -1,6 +1,7 @@
 export type EventType =
   | 'chat_started'
   | 'chat_message_sent'
+  | 'website_lead_submitted'
   | 'email_opened'
   | 'email_clicked'
   | 'sms_replied'
@@ -19,6 +20,7 @@ export type EventType =
 export const EVENT_WEIGHTS: Record<EventType, number> = {
   chat_started: 5,
   chat_message_sent: 3,
+  website_lead_submitted: 10,
   email_opened: 8,
   email_clicked: 15,
   sms_replied: 20,

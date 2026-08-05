@@ -75,6 +75,20 @@ describe('SiteForge runtime preview deployment', () => {
       username: 'operator',
       applicationPassword: 'application password',
       lastVerifiedContentHash: null,
+      target: {
+        mode: 'canonical_preview',
+        siteUrl: 'https://wordpress.example.com',
+      },
+      publicRuntime: {
+        enabled: true,
+        apiKey: 'runtime-key',
+        apiBaseUrl: 'https://app.example.com',
+        websiteId: WEBSITE_ID,
+        conversionEndpoint: 'https://app.example.com/api/conversions',
+        conversionKey: 'conversion-key',
+        telemetryEndpoint: 'https://app.example.com/api/telemetry',
+      },
+      protection: { mode: 'password_noindex' },
       runtimeClient,
     })
 
@@ -97,6 +111,18 @@ describe('SiteForge runtime preview deployment', () => {
         }
       ).siteConfiguration.design.colors
     )
+    expect(submittedRequest.plan.siteConfiguration).toEqual(
+      (
+        release.artifact.blueprint as {
+          siteConfiguration: typeof DEFAULT_SITE_CONFIGURATION
+        }
+      ).siteConfiguration
+    )
+    expect(submittedRequest.plan).toMatchObject({
+      target: { mode: 'canonical_preview' },
+      publicRuntime: { websiteId: WEBSITE_ID },
+      protection: { mode: 'password_noindex' },
+    })
   })
 
   it('stops before mutation when remote state drifted', async () => {
@@ -449,6 +475,7 @@ function makeRelease(): VerifiedSiteForgeRelease {
       operationSetHash: 'e'.repeat(64),
     },
     assets: [],
+    provenanceUrls: [],
     runtimeAssets,
     runtimeSelectedAssets: {
       logoAssetId: LOGO_ID,

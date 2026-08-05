@@ -10,19 +10,43 @@ import type { SiteForgePlan } from '@/utils/siteforge/contracts'
 import { hashBrandForgeContract } from '@/utils/brandforge/normalize'
 import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
 
+const approvedLegalPolicyBodiesSchema = z
+  .object({
+    privacyPolicy: z.string().trim().min(1).max(100_000),
+    terms: z.string().trim().min(1).max(100_000),
+    accessibility: z.string().trim().min(1).max(100_000),
+    fairHousing: z.string().trim().min(20).max(100_000),
+    pricingDisclaimer: z.string().trim().min(1).max(100_000),
+    analyticsConsent: z.string().trim().min(1).max(100_000),
+    communicationsConsent: z.string().trim().min(1).max(100_000),
+  })
+  .strict()
+
 export const siteForgeLegalConfigSchema = z
   .object({
+    schemaVersion: z.literal(1),
+    sourceConfigId: z.string().min(1),
+    sourceVersion: z.number().int().positive(),
+    sourceHash: z.string().regex(/^[a-f0-9]{64}$/),
+    effectiveAt: z.string().datetime(),
+    approvedAt: z.string().datetime(),
     equalHousingOpportunity: z.literal(true),
-    fairHousingDisclaimer: z.string().min(20).max(1_000),
+    fairHousingDisclaimer: z.string().trim().min(20).max(100_000),
     privacyPath: z.string().startsWith('/'),
     termsPath: z.string().startsWith('/'),
     accessibilityPath: z.string().startsWith('/'),
-    sourceConfigId: z.string().min(1).optional(),
-    sourceVersion: z.number().int().positive().optional(),
-    sourceHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
-    approvedAt: z.string().datetime().optional(),
+    policyBodies: approvedLegalPolicyBodiesSchema,
   })
   .strict()
+  .superRefine((legal, context) => {
+    if (legal.fairHousingDisclaimer !== legal.policyBodies.fairHousing) {
+      context.addIssue({
+        code: 'custom',
+        path: ['fairHousingDisclaimer'],
+        message: 'Fair Housing footer text must exactly match its approved policy body',
+      })
+    }
+  })
 
 export const siteForgeAnalyticsConfigSchema = z
   .object({
@@ -70,6 +94,15 @@ export type DeterministicQualityReport = z.infer<
   typeof deterministicQualityReportSchema
 >
 
+export function legalEvidenceId(legal: SiteForgeLegalConfig): string {
+  return [
+    'siteforge-legal',
+    legal.sourceConfigId,
+    legal.sourceVersion,
+    legal.sourceHash,
+  ].join(':')
+}
+
 const requiredAnalyticsEvents = [
   'page_view',
   'cta_click',
@@ -108,15 +141,50 @@ function collectStrings(
   return []
 }
 
-export function createDefaultSiteForgeLegalConfig(): SiteForgeLegalConfig {
-  return {
-    equalHousingOpportunity: true,
-    fairHousingDisclaimer:
-      'This community supports the principles of the Fair Housing Act and Equal Opportunity Housing.',
-    privacyPath: '/privacy',
-    termsPath: '/terms',
-    accessibilityPath: '/accessibility',
+function collectInternalLinks(
+  value: unknown,
+  path = 'pages'
+): Array<{ href: string; path: string }> {
+  if (Array.isArray(value)) {
+    return value.flatMap((item, index) =>
+      collectInternalLinks(item, `${path}[${index}]`)
+    )
   }
+  if (!value || typeof value !== 'object') return []
+  return Object.entries(value).flatMap(([key, child]) => {
+    const childPath = `${path}.${key}`
+    if (
+      typeof child === 'string' &&
+      /^(?:cta_link|redirect_url|link|url)$/i.test(key) &&
+      child.trim().startsWith('/')
+    ) {
+      return [{ href: child.trim(), path: childPath }]
+    }
+    return collectInternalLinks(child, childPath)
+  })
+}
+
+function normalizeInternalPath(href: string): string {
+  const path = href.split(/[?#]/, 1)[0] || '/'
+  return path === '/' ? '/' : path.replace(/\/+$/, '')
+}
+
+export function createDefaultSiteForgeLegalConfig(): SiteForgeLegalConfig {
+  throw new Error(
+    'SiteForge legal configuration must be derived from approved legal data'
+  )
+}
+
+function approvedLegalBody(
+  legal: Record<string, unknown>,
+  key: string
+): string | null {
+  const document = legal[key]
+  if (!document || typeof document !== 'object' || Array.isArray(document)) {
+    return null
+  }
+  const text = (document as Record<string, unknown>).text
+  return typeof text === 'string' && text.trim() ? text.trim() : null
 }
 
 export function createSiteForgeLegalConfigFromSnapshot(
@@ -134,33 +202,47 @@ export function createSiteForgeLegalConfigFromSnapshot(
     !Array.isArray(snapshot.legal)
       ? (snapshot.legal as Record<string, unknown>)
       : null
-  const fairHousing =
-    legal?.fair_housing &&
-    typeof legal.fair_housing === 'object' &&
-    !Array.isArray(legal.fair_housing)
-      ? (legal.fair_housing as Record<string, unknown>)
-      : {}
-  const disclaimer =
-    typeof fairHousing.text === 'string' ? fairHousing.text.trim() : ''
+  const policyBodies = legal
+    ? {
+        privacyPolicy: approvedLegalBody(legal, 'privacy_policy'),
+        terms: approvedLegalBody(legal, 'terms'),
+        accessibility: approvedLegalBody(legal, 'accessibility'),
+        fairHousing: approvedLegalBody(legal, 'fair_housing'),
+        pricingDisclaimer: approvedLegalBody(legal, 'pricing_disclaimer'),
+        analyticsConsent: approvedLegalBody(legal, 'analytics_consent'),
+        communicationsConsent: approvedLegalBody(
+          legal,
+          'communications_consent'
+        ),
+      }
+    : null
   if (
     !legal ||
+    legal.status !== 'approved' ||
     typeof legal.id !== 'string' ||
     typeof legal.version !== 'number' ||
     typeof legal.approved_at !== 'string' ||
     typeof legal.effective_at !== 'string' ||
-    disclaimer.length < 20
+    !policyBodies ||
+    Object.values(policyBodies).some(body => body === null)
   ) {
     throw new Error(
-      'Pinned onboarding snapshot is missing an approved legal version and Fair Housing text'
+      'Pinned onboarding snapshot is missing approved legal provenance or exact policy bodies'
     )
   }
   return siteForgeLegalConfigSchema.parse({
-    ...createDefaultSiteForgeLegalConfig(),
-    fairHousingDisclaimer: disclaimer,
+    schemaVersion: 1,
     sourceConfigId: legal.id,
     sourceVersion: legal.version,
     sourceHash: hashSiteForgeContent(legal),
+    effectiveAt: new Date(legal.effective_at).toISOString(),
     approvedAt: new Date(legal.approved_at).toISOString(),
+    equalHousingOpportunity: true,
+    fairHousingDisclaimer: policyBodies.fairHousing,
+    privacyPath: '/privacy',
+    termsPath: '/terms',
+    accessibilityPath: '/accessibility',
+    policyBodies,
   })
 }
 
@@ -174,6 +256,7 @@ export function createDefaultSiteForgeAnalyticsConfig(): SiteForgeAnalyticsConfi
 export function evaluateDeterministicSiteForgeQuality(input: {
   pages: GeneratedPage[]
   confirmedPlan?: SiteForgePlan
+  confirmedPlanTopologyPolicy?: 'enforce' | 'report-divergence'
   photoManifest: PhotoManifest
   legacyAssetBaseline?: PhotoManifest
   themeArtifact: WordPressThemeArtifact
@@ -201,14 +284,18 @@ export function evaluateDeterministicSiteForgeQuality(input: {
     }))
     const fidelityPassed =
       JSON.stringify(actualPageSignatures) === JSON.stringify(expectedPageSignatures)
+    const topologyIsBlocking =
+      input.confirmedPlanTopologyPolicy !== 'report-divergence'
     checks.push({
       id: 'confirmed_plan_fidelity',
       category: 'fidelity',
       passed: fidelityPassed,
-      severity: 'blocker',
+      severity: topologyIsBlocking ? 'blocker' : 'warning',
       message: fidelityPassed
         ? 'Generated page and section structure exactly matches the confirmed plan.'
-        : 'Generated page or section structure diverged from the confirmed plan.',
+        : topologyIsBlocking
+          ? 'Generated page or section structure diverged from the confirmed plan.'
+          : 'Post-generation structure diverges from the confirmed plan and is recorded for audit.',
       locations: fidelityPassed ? [] : ['pages'],
     })
 
@@ -318,6 +405,21 @@ export function evaluateDeterministicSiteForgeQuality(input: {
 
     const readinessCapabilities =
       input.confirmedPlan.onboardingSnapshot?.enabledCapabilities || []
+    const onboardingSnapshot = input.confirmedPlan.onboardingSnapshot
+    const onboardingIdentityPassed = Boolean(
+      onboardingSnapshot
+      && /^[a-f0-9]{64}$/.test(onboardingSnapshot.contentHash)
+    )
+    checks.push({
+      id: 'pinned_onboarding_identity',
+      category: 'fidelity',
+      passed: onboardingIdentityPassed,
+      severity: 'blocker',
+      message: onboardingIdentityPassed
+        ? 'The approved onboarding snapshot identity remains pinned.'
+        : 'The confirmed plan is missing its immutable onboarding snapshot identity.',
+      locations: onboardingIdentityPassed ? [] : ['onboardingSnapshot'],
+    })
     const missingCapabilities = input.confirmedPlan.enabledCapabilities.filter(
       capability => !readinessCapabilities.includes(capability),
     )
@@ -349,6 +451,35 @@ export function evaluateDeterministicSiteForgeQuality(input: {
   })
 
   const legal = siteForgeLegalConfigSchema.safeParse(input.legal)
+  const legalPageFailures = legal.success
+    ? [
+        {
+          path: legal.data.privacyPath,
+          body: legal.data.policyBodies.privacyPolicy,
+        },
+        {
+          path: legal.data.termsPath,
+          body: legal.data.policyBodies.terms,
+        },
+        {
+          path: legal.data.accessibilityPath,
+          body: legal.data.policyBodies.accessibility,
+        },
+      ].flatMap(({ path, body }) => {
+        const slug = normalizeInternalPath(path).replace(/^\/+/, '')
+        const matches = input.pages.filter(page => page.slug === slug)
+        if (matches.length !== 1) return [`pages.${slug}`]
+        const exactPolicySections = matches[0].sections.filter(
+          section =>
+            section.acfBlock === 'acf/text-section' &&
+            section.content.content === body &&
+            section.evidenceIds?.includes(
+              legalEvidenceId(legal.data)
+            )
+        )
+        return exactPolicySections.length === 1 ? [] : [`pages.${slug}.policy`]
+      })
+    : ['legal.provenance']
   const formsWithoutConsent = input.pages.flatMap((page) =>
     page.sections.flatMap((section) =>
       section.acfBlock === 'acf/form' &&
@@ -361,13 +492,18 @@ export function evaluateDeterministicSiteForgeQuality(input: {
   checks.push({
     id: 'legal_and_consent',
     category: 'legal',
-    passed: legal.success && formsWithoutConsent.length === 0,
+    passed:
+      legal.success &&
+      legalPageFailures.length === 0 &&
+      formsWithoutConsent.length === 0,
     severity: 'blocker',
     message:
-      legal.success && formsWithoutConsent.length === 0
-        ? 'Legal paths, Fair Housing disclosure, and form consent are present.'
-        : 'Legal configuration or explicit form consent is incomplete.',
-    locations: formsWithoutConsent,
+      legal.success &&
+      legalPageFailures.length === 0 &&
+      formsWithoutConsent.length === 0
+        ? 'Approved legal provenance, exact policy pages, and form consent are present.'
+        : 'Approved legal provenance, exact policy pages, or explicit form consent is incomplete.',
+    locations: [...legalPageFailures, ...formsWithoutConsent],
   })
 
   const invalidImages = input.photoManifest.photos.flatMap((photo) =>
@@ -446,6 +582,29 @@ export function evaluateDeterministicSiteForgeQuality(input: {
     locations: [...invalidSeo, ...duplicateSlugs],
   })
 
+  const generatedPaths = new Set(
+    input.pages.map((page) =>
+      normalizeInternalPath(page.slug === 'home' ? '/' : `/${page.slug}`)
+    )
+  )
+  const brokenInternalLinks = collectInternalLinks(input.pages).flatMap(
+    ({ href, path }) =>
+      generatedPaths.has(normalizeInternalPath(href))
+        ? []
+        : [`${path}=${href}`]
+  )
+  checks.push({
+    id: 'internal_link_integrity',
+    category: 'fidelity',
+    passed: brokenInternalLinks.length === 0,
+    severity: 'blocker',
+    message:
+      brokenInternalLinks.length === 0
+        ? 'Every generated internal link resolves to a generated page slug.'
+        : 'One or more generated internal links targets a missing page slug.',
+    locations: brokenInternalLinks,
+  })
+
   const analytics = siteForgeAnalyticsConfigSchema.safeParse(input.analytics)
   const missingEvents = requiredAnalyticsEvents.filter(
     (event) => !input.analytics.events.includes(event)
@@ -469,6 +628,17 @@ export function evaluateDeterministicSiteForgeQuality(input: {
     'acf/plans-availability',
     'acf/poi',
   ])
+  const trustedEvidenceIds = input.confirmedPlan
+    ? new Set([
+        ...(input.confirmedPlan.evidence || []).map(evidence => evidence.id),
+        ...(input.confirmedPlan.knownFacts || []).flatMap(
+          fact => fact.evidenceIds
+        ),
+        ...input.confirmedPlan.pages.flatMap(page =>
+          page.sections.flatMap(section => section.evidenceIds || [])
+        ),
+      ])
+    : null
   const ungroundedSections = input.pages.flatMap((page) =>
     page.sections.flatMap((section) => {
       if (!factualBlocks.has(section.acfBlock)) return []
@@ -479,7 +649,13 @@ export function evaluateDeterministicSiteForgeQuality(input: {
       const hasValidEvidence =
         evidenceIds.length > 0 &&
         (!usesPlaceholderPolicy ||
-          isEvidenceSafePlaceholder(section.acfBlock, section.content))
+          isEvidenceSafePlaceholder(section.acfBlock, section.content)) &&
+        evidenceIds.every(
+          evidenceId =>
+            evidenceId === SITEFORGE_PLACEHOLDER_EVIDENCE_ID ||
+            trustedEvidenceIds === null ||
+            trustedEvidenceIds.has(evidenceId)
+        )
       return hasValidEvidence
         ? []
         : [`${page.slug}.${section.id || section.type}`]

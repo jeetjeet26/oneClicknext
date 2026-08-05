@@ -7,6 +7,10 @@ import type { Database, Json } from '@/types/supabase'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { certifyBrowserEvidence } from '@/utils/siteforge/verification/browser-certification'
 import type { BrowserCertificationReport } from '@/utils/siteforge/verification/browser-evidence'
+import {
+  buildCertificationBindingHash,
+  type CertificationArtifactBinding,
+} from '@/utils/siteforge/verification/certification-binding'
 
 const ARTIFACT_BUCKET = 'siteforge-artifacts'
 
@@ -52,6 +56,9 @@ export async function captureOverlayRenderCertification(
   input: {
     overlayId: string
     websiteId: string
+    artifactId: string
+    contentHash: string
+    artifactBinding: CertificationArtifactBinding
     url: string
     correctionAttempt?: 0 | 1
     browserEvidence?: unknown
@@ -99,9 +106,21 @@ export async function captureOverlayRenderCertification(
     const capturedAt = new Date().toISOString()
     const browserReport = certifyBrowserEvidence({
       evidence: input.browserEvidence,
+      targetUrl: target.toString(),
       expectedUrls: [target.toString()],
       criticalUrls: [target.toString()],
       evaluatedAt: capturedAt,
+      environment: 'protected_preview',
+      access: 'protected',
+      requireIndexable: false,
+      artifact: input.artifactBinding,
+      bindingHash: buildCertificationBindingHash({
+        artifact: input.artifactBinding,
+        targetUrl: target.toString(),
+        environment: 'protected_preview',
+        access: 'protected',
+        requireIndexable: false,
+      }),
     })
     const certification: OverlayRenderCertification = {
       url: target.toString(),

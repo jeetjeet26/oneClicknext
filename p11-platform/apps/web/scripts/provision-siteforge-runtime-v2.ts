@@ -1,4 +1,6 @@
 import { loadEnvConfig } from '@next/env'
+import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
 import { loadVerifiedSiteForgeRelease } from '@/utils/siteforge/artifacts/release'
 import { createServiceClient } from '@/utils/supabase/admin'
@@ -8,7 +10,22 @@ import type { Json } from '@/types/supabase'
 
 loadEnvConfig(process.cwd())
 
-async function main() {
+type ServiceClient = ReturnType<typeof createServiceClient>
+
+export function selectLatestPublishedRuntimeV2Package(client: ServiceClient) {
+  return client
+    .from('siteforge_runtime_packages')
+    .select('version, package_sha256')
+    .eq('package_type', 'runtime_plugin')
+    .eq('runtime_contract_version', 2)
+    .eq('publication_status', 'published')
+    .is('revoked_at', null)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .single()
+}
+
+export async function main() {
   const targetId = process.argv[2]
   if (!targetId) {
     throw new Error('Usage: provision-siteforge-runtime-v2.ts <target-id>')
@@ -56,13 +73,8 @@ async function main() {
       }`
     )
   }
-  const { data: runtimePackage, error: packageError } = await client
-    .from('siteforge_runtime_packages')
-    .select('version, package_sha256')
-    .eq('package_type', 'runtime_plugin')
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .single()
+  const { data: runtimePackage, error: packageError } =
+    await selectLatestPublishedRuntimeV2Package(client)
   if (packageError || !runtimePackage) {
     throw new Error('Publish an immutable SiteForge runtime package first')
   }
@@ -173,7 +185,12 @@ async function main() {
   )
 }
 
-main().catch(error => {
-  console.error(error)
-  process.exitCode = 1
-})
+if (
+  process.argv[1] &&
+  pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url
+) {
+  main().catch(error => {
+    console.error(error)
+    process.exitCode = 1
+  })
+}

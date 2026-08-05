@@ -176,6 +176,8 @@ describe('google calendar service', () => {
       dateTime: '2026-03-21T10:45:00',
       timeZone: 'America/Chicago',
     })
+    expect(body.description).toBe('Property Tour with Jane Doe\n\nContact: jane@example.com')
+    expect(body.description).not.toContain('LumaLeasing')
   })
 
   it('reads remote Google Calendar event timing for mutation ingestion', async () => {

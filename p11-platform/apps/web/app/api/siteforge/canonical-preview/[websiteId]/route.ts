@@ -7,6 +7,11 @@ import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { createRequestContext } from '@/utils/services/request-context'
 import { siteForgeCanonicalPreviewWorkflow } from '@/workflows/siteforge-canonical-preview'
 import type { Json } from '@/types/supabase'
+import {
+  assertActiveAuroraLifecycleLease,
+  auroraOwnedMetadata,
+  AuroraLifecycleControlError,
+} from '@/utils/siteforge/testing/aurora-lifecycle-control'
 
 const requestSchema = z.object({
   artifactId: z.string().uuid(),
@@ -171,6 +176,14 @@ export async function POST(
         { status: 403, headers: ctx.responseHeaders }
       )
     }
+    const lifecycleIdentity = await assertActiveAuroraLifecycleLease(
+      request,
+      {
+        propertyId: website.property_id,
+        websiteId: website.id,
+      },
+      service
+    )
     if (website.current_artifact_version_id !== parsed.data.artifactId) {
       return NextResponse.json(
         { error: 'Only the current immutable artifact can be previewed' },
@@ -212,7 +225,7 @@ export async function POST(
       )
     }
     if (
-      !process.env.SITEFORGE_PREVIEW_WP_URL ||
+      !process.env.SITEFORGE_PREVIEW_WP_URL?.trim() ||
       !process.env.SITEFORGE_PREVIEW_WP_USERNAME ||
       !process.env.SITEFORGE_PREVIEW_WP_APP_PASSWORD
     ) {
@@ -221,9 +234,13 @@ export async function POST(
         { status: 503, headers: ctx.responseHeaders }
       )
     }
+    const previewWordPressUrl = process.env.SITEFORGE_PREVIEW_WP_URL
+      .replace(/\\n/g, '')
+      .trim()
+      .replace(/\/+$/, '')
     const { data: existingTarget, error: targetLookupError } = await service
       .from('siteforge_wordpress_targets')
-      .select('id')
+      .select('id, metadata')
       .eq('website_id', website.id)
       .eq('target_type', 'canonical_preview')
       .eq('is_active', true)
@@ -234,14 +251,39 @@ export async function POST(
       )
     }
     let targetId = existingTarget?.id
+    const existingMetadata =
+      existingTarget?.metadata &&
+      typeof existingTarget.metadata === 'object' &&
+      !Array.isArray(existingTarget.metadata)
+        ? existingTarget.metadata
+        : {}
+    if (
+      lifecycleIdentity &&
+      existingMetadata.lifecycleOwnerId &&
+      existingMetadata.lifecycleOwnerId !== lifecycleIdentity.ownerId
+    ) {
+      throw new AuroraLifecycleControlError(
+        'Canonical preview target belongs to another lifecycle owner',
+        409,
+        'target_owner_conflict'
+      )
+    }
     if (targetId) {
       const { error: targetUpdateError } = await service
         .from('siteforge_wordpress_targets')
         .update({
-          site_url: process.env.SITEFORGE_PREVIEW_WP_URL,
-          admin_url: `${process.env.SITEFORGE_PREVIEW_WP_URL.replace(/\/$/, '')}/wp-admin`,
+          site_url: previewWordPressUrl,
+          admin_url: `${previewWordPressUrl}/wp-admin`,
           status: 'ready',
           protection_mode: 'noindex',
+          ...(lifecycleIdentity
+            ? {
+                metadata: auroraOwnedMetadata(
+                  lifecycleIdentity,
+                  existingTarget?.metadata
+                ),
+              }
+            : {}),
           updated_at: new Date().toISOString(),
         })
         .eq('id', targetId)
@@ -255,12 +297,15 @@ export async function POST(
           website_id: website.id,
           target_type: 'canonical_preview',
           provider: 'existing_wordpress',
-          site_url: process.env.SITEFORGE_PREVIEW_WP_URL,
-          admin_url: `${process.env.SITEFORGE_PREVIEW_WP_URL.replace(/\/$/, '')}/wp-admin`,
+          site_url: previewWordPressUrl,
+          admin_url: `${previewWordPressUrl}/wp-admin`,
           credential_ref: 'env:SITEFORGE_PREVIEW_WP_APP_PASSWORD',
           protection_mode: 'noindex',
           status: 'ready',
           is_active: true,
+          ...(lifecycleIdentity
+            ? { metadata: auroraOwnedMetadata(lifecycleIdentity) }
+            : {}),
         })
         .select('id')
         .single()
@@ -346,6 +391,13 @@ export async function POST(
       artifactId: artifact.id,
       contentHash: artifact.content_hash,
       targetId,
+      ...(lifecycleIdentity
+        ? {
+            lifecycleOwnerId: lifecycleIdentity.ownerId,
+            lifecycleRunId: lifecycleIdentity.ownerId,
+            lifecycleExpiresAt: lifecycleIdentity.expiresAt,
+          }
+        : {}),
     }
     const queuedJob = {
       lifecycle_status: 'queued',
@@ -507,10 +559,17 @@ export async function POST(
       { status: 202, headers: ctx.responseHeaders }
     )
   } catch (error) {
-    ctx.logError(500, error)
+    const status =
+      error instanceof AuroraLifecycleControlError ? error.statusCode : 500
+    ctx.logError(status, error)
     return NextResponse.json(
-      { error: 'Failed to start canonical WordPress preview' },
-      { status: 500, headers: ctx.responseHeaders }
+      {
+        error:
+          status === 500
+            ? 'Failed to start canonical WordPress preview'
+            : (error as Error).message,
+      },
+      { status, headers: ctx.responseHeaders }
     )
   }
 }

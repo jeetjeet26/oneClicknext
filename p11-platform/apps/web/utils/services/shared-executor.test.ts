@@ -155,6 +155,35 @@ describe('runSharedExecutorJob', () => {
     )
   })
 
+  it('creates an approval proposal without executing the side effect', async () => {
+    const { proposeSharedAction } = await import('./shared-executor')
+
+    const proposal = await proposeSharedAction({
+      orgId: 'org-1',
+      propertyId: 'property-1',
+      domain: 'siteforge',
+      subjectType: 'plan_confirmation',
+      subjectId: 'plan-1',
+      dedupeKey: 'siteforge-plan:plan-1:1:hash',
+      action: {
+        actionType: 'siteforge.plan:generate_website',
+        executionPayload: { planVersionId: 'version-1' },
+      },
+    })
+
+    expect(proposal).toEqual({
+      sharedJobId: 'shared-job-1',
+      sharedActionAttemptId: 'action-1',
+    })
+    expect(sharedActionInsertMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        proposal_decision_status: 'proposed',
+        execution_status: 'pending_approval',
+      })
+    )
+    expect(sharedJobsUpdateMock).not.toHaveBeenCalled()
+  })
+
   it('marks action ledger execution as failed when execution throws', async () => {
     const { runSharedExecutorJob } = await import('./shared-executor')
 

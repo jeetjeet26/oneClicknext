@@ -1,8 +1,15 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { validatePropertyManagerAccess } from '@/utils/services/auth-guard'
+import {
+  assertActiveAuroraLifecycleLease,
+  AuroraLifecycleControlError,
+} from '@/utils/siteforge/testing/aurora-lifecycle-control'
 
-export async function requireLaunchManager(propertyId: string) {
+export async function requireLaunchManager(
+  propertyId: string,
+  lifecycleRequest?: Request
+) {
   const supabase = await createClient()
   const {
     data: { user },
@@ -22,6 +29,22 @@ export async function requireLaunchManager(propertyId: string) {
         { error: 'SiteForge launch manager permission required' },
         { status: 403 }
       ),
+    }
+  }
+  if (lifecycleRequest) {
+    try {
+      await assertActiveAuroraLifecycleLease(lifecycleRequest, { propertyId })
+    } catch (error) {
+      if (error instanceof AuroraLifecycleControlError) {
+        return {
+          user: null,
+          response: NextResponse.json(
+            { error: error.message, code: error.code },
+            { status: error.statusCode }
+          ),
+        }
+      }
+      throw error
     }
   }
   return { user, response: null }

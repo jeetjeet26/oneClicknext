@@ -1,5 +1,13 @@
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
+import { ACACIA_REGRESSION_BASELINE_V1 as acacia } from '@/fixtures/acacia-regression.v1'
+import {
+  auroraMutationHeaders,
+  formatAuroraPreflightFailure,
+  inspectAuroraLifecycleEnv,
+  type AuroraLifecycleConfig,
+} from '@/utils/siteforge/testing/aurora-lifecycle-e2e'
+import { SITEFORGE_CERTIFICATION_POLICY_VERSION } from '@/utils/siteforge/verification/browser-evidence'
 
 const seededUser = {
   email: 'local-admin@p11.test',
@@ -15,6 +23,13 @@ async function signInWithSeededUser() {
 
 async function login(page: Page) {
   const user = await signInWithSeededUser()
+  await loginWithUser(page, user)
+}
+
+async function loginWithUser(
+  page: Page,
+  user: { email: string; password: string }
+) {
   await page.goto('/auth/login')
   await page.getByLabel('Email address').fill(user.email)
   await page.getByLabel('Password').fill(user.password)
@@ -66,6 +81,38 @@ async function callAuthedApi(
   )
 }
 
+async function callAuroraMutation(
+  page: Page,
+  config: AuroraLifecycleConfig,
+  url: string,
+  init: {
+    method: string
+    body?: Record<string, unknown>
+    headers?: Record<string, string>
+  }
+) {
+  return callAuthedApi(page, url, {
+    ...init,
+    headers: {
+      ...auroraMutationHeaders(config),
+      ...(init.headers || {}),
+    },
+  })
+}
+
+function expectApiOk(
+  response: { ok: boolean; status: number; data: unknown },
+  label: string
+) {
+  expect(
+    response.ok,
+    `${label} failed: ${JSON.stringify({
+      status: response.status,
+      data: response.data,
+    })}`
+  ).toBe(true)
+}
+
 async function callAuthedTextApi(
   page: Page,
   url: string,
@@ -97,7 +144,8 @@ async function callAuthedTextApi(
 }
 
 async function resolvePropertyIdForSmoke(
-  page: Page
+  page: Page,
+  explicitPropertyEnv?: string
 ): Promise<string> {
   const propertiesResponse = await callAuthedApi(page, '/api/properties')
   expect(propertiesResponse.ok).toBeTruthy()
@@ -108,6 +156,21 @@ async function resolvePropertyIdForSmoke(
   let properties = Array.isArray(propertiesData.properties)
     ? propertiesData.properties
     : []
+
+  if (explicitPropertyEnv) {
+    const explicitPropertyId = process.env[explicitPropertyEnv]?.trim()
+    expect(
+      explicitPropertyId,
+      `Set ${explicitPropertyEnv}; hosted mutation cannot select an accessible property implicitly.`
+    ).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+    )
+    expect(
+      properties.some(property => property.id === explicitPropertyId),
+      `${explicitPropertyEnv} does not identify a property accessible to this operator.`
+    ).toBe(true)
+    return explicitPropertyId as string
+  }
 
   if (properties.length === 0) {
     const onboardingStatus = await callAuthedApi(page, '/api/onboarding')
@@ -159,9 +222,6 @@ async function resolvePropertyIdForSmoke(
     property => property.name === 'P11 Smoke Property' && typeof property.id === 'string'
   )
   if (smokeProperty?.id) return smokeProperty.id
-
-  const fallback = properties.find(property => typeof property.id === 'string')?.id
-  if (fallback) return fallback
 
   return seededPropertyId
 }
@@ -470,15 +530,1064 @@ async function waitForPropertyAuditRun(
   throw new Error(`Timed out waiting for PropertyAudit run ${runId}: ${JSON.stringify(lastResponse)}`)
 }
 
-function hasRealWordPressDeployTarget(): boolean {
-  const hasCloudways = Boolean(process.env.CLOUDWAYS_API_KEY && process.env.CLOUDWAYS_EMAIL)
-  const hasExistingWp = Boolean(
-    process.env.SITEFORGE_WP_URL &&
-      process.env.SITEFORGE_WP_USERNAME &&
-      process.env.SITEFORGE_WP_APP_PASSWORD
-  )
-  return hasCloudways || hasExistingWp
+test.describe('Acacia public read-only regression', () => {
+  // Run only this external check without starting the local stack:
+  // ACACIA_READONLY_EXTERNAL_ONLY=1 ACACIA_READONLY_SMOKE=1 \
+  //   npx playwright test --grep "Acacia public read-only regression"
+  test('verifies public identity without permitting any write request', async ({
+    page,
+  }) => {
+    test.skip(
+      process.env.ACACIA_READONLY_SMOKE !== '1',
+      'Set ACACIA_READONLY_SMOKE=1 to run the public, non-mutating Acacia check.'
+    )
+
+    const publicUrl =
+      process.env.ACACIA_READONLY_PUBLIC_URL || acacia.property.publicUrl
+    const blockedWrites: string[] = []
+    await page.route('**/*', async route => {
+      const request = route.request()
+      const method = request.method().toUpperCase()
+      if (['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+        await route.continue()
+        return
+      }
+      blockedWrites.push(`${method} ${request.url()}`)
+      await route.abort('blockedbyclient')
+    })
+
+    await page.goto(publicUrl, { waitUntil: 'domcontentloaded' })
+    await expect(page).toHaveTitle(/Acacia/i)
+    await expect(
+      page.getByRole('heading', {
+        name: /New Townhomes For Sale in Palo Alto, CA/i,
+      })
+    ).toBeVisible()
+    await expect(page.getByText(acacia.property.address, { exact: true })).toBeVisible()
+    await expect(
+      page.getByRole('link', { name: acacia.property.phone }).first()
+    ).toBeVisible()
+    await expect(page.getByText(/final (three )?homes/i).first()).toBeVisible()
+    await expect(page.getByRole('heading', { name: /3 Beds • 2\.5 Baths/i })).toBeVisible()
+    await expect(
+      page.locator(`a[href="${acacia.publicSiteLinks.availability}"]`).first()
+    ).toBeVisible()
+    await expect(
+      page
+        .locator(
+          `a[href*="${new URL(acacia.publicSiteLinks.featuredFloorPlan).pathname}"]`
+        )
+        .first()
+    ).toBeVisible()
+
+    const nativeLauncher = page.getByRole('button', {
+      name: /Open .* chat/i,
+    })
+    if (await nativeLauncher.isVisible().catch(() => false)) {
+      await nativeLauncher.click()
+      await expect(page.getByRole('dialog')).toBeVisible()
+    }
+
+    expect(
+      blockedWrites,
+      'The Acacia read-only lane attempted an unexpected non-GET/HEAD/OPTIONS request.'
+    ).toEqual([])
+  })
+})
+
+type AuroraArtifact = {
+  id: string
+  contentHash: string
+  immutable?: boolean
+  remoteVerified?: boolean
+  runtimeContractVersion?: number
+  runtimePackageSha256?: string
+  runtimeManifestSha256?: string
+  baseThemePackageSha256?: string
 }
+
+type AuroraResources = {
+  identity?: {
+    propertyId?: string
+    websiteId?: string
+    targetId?: string
+    rolloutAssignmentId?: string
+  }
+  currentArtifact?: AuroraArtifact
+  rollbackArtifacts?: AuroraArtifact[]
+  extensionRequests?: Array<{
+    id?: string
+    status?: string
+    artifactId?: string
+  }>
+  baselineCandidates?: Array<{
+    id?: string
+    status?: string
+    artifactId?: string
+  }>
+  certifications?: Array<{
+    id?: string
+    artifactId?: string
+    environment?: string
+    access?: string
+    status?: string
+    policyVersion?: string
+  }>
+  releases?: Array<{
+    id?: string
+    state?: string
+    artifactId?: string
+    contentHash?: string
+  }>
+  cleanup?: {
+    verified?: boolean
+    remainingOwnedResourceIds?: string[]
+  }
+  ownedResourceIds?: string[]
+  mutationLeaseViolations?: string[]
+  artifactLineage?: string[]
+  semanticCoverage?: {
+    copy?: boolean
+    topology?: boolean
+    navigation?: boolean
+    footer?: boolean
+    forms?: boolean
+    seo?: boolean
+    redirects?: boolean
+    media?: boolean
+    knowledge?: boolean
+    responsive?: boolean
+    accessibility?: boolean
+    customInteraction?: boolean
+  }
+}
+
+async function loadAuroraResources(
+  page: Page,
+  config: AuroraLifecycleConfig
+): Promise<AuroraResources> {
+  const separator = config.resourcesUrl.includes('?') ? '&' : '?'
+  const response = await callAuthedApi(
+    page,
+    `${config.resourcesUrl}${separator}ownerId=${encodeURIComponent(config.ownerId)}&websiteId=${encodeURIComponent(config.websiteId)}`
+  )
+  expectApiOk(response, 'Aurora owned-resource inspection')
+  return response.data as AuroraResources
+}
+
+async function waitForAuroraResources(
+  page: Page,
+  config: AuroraLifecycleConfig,
+  predicate: (resources: AuroraResources) => boolean,
+  label: string,
+  timeoutMs = 600_000
+) {
+  const deadline = Date.now() + timeoutMs
+  let last: AuroraResources | null = null
+  while (Date.now() < deadline) {
+    last = await loadAuroraResources(page, config)
+    if (predicate(last)) return last
+    await page.waitForTimeout(2_000)
+  }
+  throw new Error(
+    `Timed out waiting for ${label}: ${JSON.stringify({
+      identity: last?.identity,
+      currentArtifact: last?.currentArtifact,
+      extensions: last?.extensionRequests?.map(item => ({
+        id: item.id,
+        status: item.status,
+      })),
+      baselines: last?.baselineCandidates?.map(item => ({
+        id: item.id,
+        status: item.status,
+      })),
+      certifications: last?.certifications?.map(item => ({
+        id: item.id,
+        environment: item.environment,
+        access: item.access,
+        status: item.status,
+        policyVersion: item.policyVersion,
+      })),
+      releases: last?.releases,
+      cleanup: last?.cleanup,
+    })}`
+  )
+}
+
+async function waitForAuroraEditorJob(
+  page: Page,
+  jobId: string,
+  timeoutMs = 600_000
+) {
+  const deadline = Date.now() + timeoutMs
+  let last: unknown = null
+  while (Date.now() < deadline) {
+    const response = await callAuthedApi(
+      page,
+      `/api/siteforge/editor/jobs/${jobId}`
+    )
+    expectApiOk(response, `Aurora semantic editor job ${jobId}`)
+    last = response.data
+    const data = response.data as {
+      job?: { lifecycle_status?: string; error_message?: string | null }
+      message?: {
+        status?: string
+        resulting_artifact_id?: string | null
+        failure_message?: string | null
+      }
+    }
+    const status = data.job?.lifecycle_status
+    if (status === 'succeeded') return data
+    if (['failed', 'cancelled'].includes(status || '')) {
+      throw new Error(
+        `Aurora semantic edit ${status}: ${
+          data.job?.error_message || data.message?.failure_message || 'unknown failure'
+        }`
+      )
+    }
+    await page.waitForTimeout(2_000)
+  }
+  throw new Error(
+    `Timed out waiting for Aurora semantic editor job ${jobId}: ${JSON.stringify(last)}`
+  )
+}
+
+async function openAuroraEditorSession(
+  page: Page,
+  config: AuroraLifecycleConfig
+) {
+  const response = await callAuroraMutation(
+    page,
+    config,
+    '/api/siteforge/editor/sessions',
+    {
+      method: 'POST',
+      body: {
+        websiteId: config.websiteId,
+        title: `Aurora lifecycle ${config.ownerId}`,
+      },
+    }
+  )
+  expectApiOk(response, 'Open Aurora semantic editor session')
+  const data = response.data as {
+    session?: { id?: string }
+    currentArtifact?: { id?: string; content_hash?: string }
+  }
+  expect(data.session?.id).toMatch(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+  )
+  expect(data.currentArtifact?.id).toBeTruthy()
+  expect(data.currentArtifact?.content_hash).toMatch(/^[a-f0-9]{64}$/)
+  return {
+    sessionId: data.session?.id as string,
+    artifact: {
+      id: data.currentArtifact?.id as string,
+      contentHash: data.currentArtifact?.content_hash as string,
+    },
+  }
+}
+
+async function submitAuroraSemanticEdit(
+  page: Page,
+  config: AuroraLifecycleConfig,
+  sessionId: string,
+  artifact: AuroraArtifact,
+  userIntent: string
+): Promise<AuroraArtifact> {
+  const response = await callAuroraMutation(
+    page,
+    config,
+    `/api/siteforge/editor/sessions/${sessionId}/turns`,
+    {
+      method: 'POST',
+      body: {
+        userIntent,
+        expectedArtifactId: artifact.id,
+        expectedContentHash: artifact.contentHash,
+        clientRequestId: `${config.ownerId}:${crypto.randomUUID()}`,
+      },
+    }
+  )
+  expectApiOk(response, `Aurora semantic edit: ${userIntent}`)
+  const jobId = (response.data as { jobId?: string }).jobId
+  expect(jobId).toMatch(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+  )
+  await waitForAuroraEditorJob(page, jobId as string)
+  return (await openAuroraEditorSession(page, config)).artifact
+}
+
+async function runCanonicalPreview(
+  page: Page,
+  config: AuroraLifecycleConfig,
+  artifact: AuroraArtifact,
+  retry = false
+) {
+  const response = await callAuroraMutation(
+    page,
+    config,
+    `/api/siteforge/canonical-preview/${config.websiteId}`,
+    {
+      method: 'POST',
+      body: {
+        artifactId: artifact.id,
+        contentHash: artifact.contentHash,
+        ...(retry ? { retry: true } : {}),
+      },
+    }
+  )
+  if (response.status === 202) {
+    const jobId = (response.data as { jobId?: string }).jobId
+    expect(jobId).toBeTruthy()
+    return waitForCanonicalPreviewJob(
+      page,
+      config.websiteId,
+      jobId as string,
+      900_000
+    )
+  }
+  return response.data as { status?: string; previewUrl?: string; error?: string }
+}
+
+test.describe.serial('Aurora same-website runtime-v3 lifecycle', () => {
+  test('edits, certifies, promotes, rolls back, restores, and cleans up', async ({
+    browser,
+    page,
+  }) => {
+    test.setTimeout(
+      Number(process.env.AURORA_LIFECYCLE_TIMEOUT_MS || 7_200_000)
+    )
+    test.skip(
+      process.env.AURORA_LIFECYCLE_E2E !== '1',
+      'Set AURORA_LIFECYCLE_E2E=1 only after the explicit fail-closed preflight is complete.'
+    )
+
+    const preflight = inspectAuroraLifecycleEnv(process.env)
+    expect(preflight.ready, formatAuroraPreflightFailure(preflight)).toBe(true)
+    if (!preflight.ready) throw new Error(formatAuroraPreflightFailure(preflight))
+    const config = preflight.config
+    const mutationHeaders = auroraMutationHeaders(config)
+    await page.setExtraHTTPHeaders(mutationHeaders)
+    await loginWithUser(page, config.operator)
+
+    const reviewerContext = await browser.newContext({
+      baseURL:
+        process.env.PLAYWRIGHT_BASE_URL || 'http://127.0.0.1:3000',
+      extraHTTPHeaders: mutationHeaders,
+    })
+    const reviewerPage = await reviewerContext.newPage()
+    let primaryError: unknown = null
+
+    try {
+      await loginWithUser(reviewerPage, config.reviewer)
+
+      const leaseResponse = await callAuroraMutation(
+        page,
+        config,
+        config.leaseUrl,
+        {
+          method: 'POST',
+          body: {
+            operation: 'acquire',
+            propertyId: config.propertyId,
+            websiteId: config.websiteId,
+            targetId: config.targetId,
+            rolloutAssignmentId: config.rolloutAssignmentId,
+            ownerId: config.ownerId,
+            expiresAt: config.expiresAt,
+          },
+        }
+      )
+      expectApiOk(leaseResponse, 'Acquire exclusive Aurora lifecycle lease')
+
+      const importResponse = await callAuroraMutation(
+        page,
+        config,
+        config.importUrl,
+        {
+          method: 'POST',
+          body: {
+            operation: 'import_immutable_rollback_baseline',
+            propertyId: config.propertyId,
+            websiteId: config.websiteId,
+            targetId: config.targetId,
+            rolloutAssignmentId: config.rolloutAssignmentId,
+            runtimePackageSha256: config.runtimePackageSha256,
+            runtimeManifestSha256: config.runtimeManifestSha256,
+            baseThemePackageSha256: config.baseThemePackageSha256,
+            runtimeSigningKeyId: config.runtimeSigningKeyId,
+            ownerId: config.ownerId,
+            expiresAt: config.expiresAt,
+          },
+        }
+      )
+      expectApiOk(importResponse, 'Import Aurora immutable rollback baseline')
+      const importedArtifacts = importResponse.data as {
+        currentArtifact: { id: string; contentHash: string }
+        rollbackBaseline: { id: string; contentHash: string }
+      }
+      config.startArtifactId = importedArtifacts.currentArtifact.id
+      config.startContentHash = importedArtifacts.currentArtifact.contentHash
+      config.rollbackArtifactId = importedArtifacts.rollbackBaseline.id
+      config.rollbackContentHash =
+        importedArtifacts.rollbackBaseline.contentHash
+
+      const provisionResponse = await callAuroraMutation(
+        page,
+        config,
+        config.resourcesUrl,
+        {
+          method: 'POST',
+          body: {
+            operation: 'provision_verified_targets',
+            propertyId: config.propertyId,
+            websiteId: config.websiteId,
+            stagingApplicationId: config.stagingApplicationId,
+            stagingOperationId: config.stagingOperationId,
+          },
+        }
+      )
+      expectApiOk(
+        provisionResponse,
+        'Register exact verified Aurora Cloudways targets'
+      )
+
+      const backupStart = await callAuroraMutation(
+        page,
+        config,
+        config.providerOperationsUrl,
+        {
+          method: 'POST',
+          body: {
+            operation: 'start_backup',
+            propertyId: config.propertyId,
+            websiteId: config.websiteId,
+          },
+        }
+      )
+      expectApiOk(backupStart, 'Start owned Aurora bootstrap backup')
+      const backupIdentity = backupStart.data as {
+        operationId: string
+        backupId: string
+      }
+      config.backupOperationId = backupIdentity.operationId
+      config.backupId = backupIdentity.backupId
+      const backupPoll = await callAuroraMutation(
+        page,
+        config,
+        config.providerOperationsUrl,
+        {
+          method: 'POST',
+          body: {
+            operation: 'poll_backup',
+            propertyId: config.propertyId,
+            websiteId: config.websiteId,
+          },
+        }
+      )
+      expectApiOk(backupPoll, 'Verify owned Aurora bootstrap backup')
+
+      const activation = await callAuroraMutation(
+        page,
+        config,
+        config.leaseUrl,
+        {
+          method: 'POST',
+          body: {
+            operation: 'activate_mutation',
+            propertyId: config.propertyId,
+            websiteId: config.websiteId,
+            targetId: config.targetId,
+            rolloutAssignmentId: config.rolloutAssignmentId,
+            ownerId: config.ownerId,
+            expiresAt: config.expiresAt,
+          },
+        }
+      )
+      expectApiOk(activation, 'Activate verified Aurora mutation lease')
+
+      const imported = await loadAuroraResources(page, config)
+      expect(imported.identity).toMatchObject({
+        propertyId: config.propertyId,
+        websiteId: config.websiteId,
+        targetId: config.targetId,
+        rolloutAssignmentId: config.rolloutAssignmentId,
+      })
+      expect(imported.currentArtifact).toMatchObject({
+        id: config.startArtifactId,
+        contentHash: config.startContentHash,
+        runtimeContractVersion: 3,
+        runtimePackageSha256: config.runtimePackageSha256,
+        runtimeManifestSha256: config.runtimeManifestSha256,
+        baseThemePackageSha256: config.baseThemePackageSha256,
+      })
+      expect(imported.rollbackArtifacts).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: config.rollbackArtifactId,
+            contentHash: config.rollbackContentHash,
+            immutable: true,
+            remoteVerified: true,
+          }),
+        ])
+      )
+
+      const editor = await openAuroraEditorSession(page, config)
+      expect(editor.artifact).toEqual({
+        id: config.startArtifactId,
+        contentHash: config.startContentHash,
+      })
+      let artifact: AuroraArtifact = editor.artifact
+      const editIntents = [
+        'Copy: revise the homepage hero and supporting copy using only approved property facts and knowledge evidence.',
+        'Topology: add a clearly named amenities page and preserve all existing required pages.',
+        'Navigation and footer: expose the amenities page in both global navigation and footer without removing legal links.',
+        'Forms: improve the contact and tour forms while preserving verified destinations, labels, validation, and consent.',
+        'SEO and redirects: add exact canonical metadata, Open Graph fields, JSON-LD, sitemap coverage, and a loop-free redirect for the prior amenities path.',
+        'Media: use only approved governed property media, preserve rights metadata, alt text, dimensions, and immutable asset identities.',
+        'Knowledge: add a concise neighborhood section derived only from approved knowledge sources and cite the source identities in the artifact.',
+        'Responsive: improve tablet and mobile layout without horizontal overflow or changing approved content.',
+        'Accessibility: improve landmarks, heading order, labels, keyboard order, visible focus, contrast, and reduced-motion behavior.',
+      ]
+      const consecutiveArtifacts: string[] = []
+      for (const intent of editIntents) {
+        const prior = artifact
+        artifact = await submitAuroraSemanticEdit(
+          page,
+          config,
+          editor.sessionId,
+          prior,
+          intent
+        )
+        expect(artifact.id).not.toBe(prior.id)
+        expect(artifact.contentHash).not.toBe(prior.contentHash)
+        consecutiveArtifacts.push(artifact.id)
+      }
+      expect(new Set(consecutiveArtifacts).size).toBe(editIntents.length)
+
+      artifact = await submitAuroraSemanticEdit(
+        page,
+        config,
+        editor.sessionId,
+        artifact,
+        'Custom interaction: propose a governed extension for an accessible floor-plan comparison control; do not emulate it with unsupported semantic operations.'
+      )
+      const firstExtensionResources = await waitForAuroraResources(
+        page,
+        config,
+        resources =>
+          Boolean(
+            resources.extensionRequests?.some(item => item.status === 'proposed')
+          ),
+        'first custom interaction extension request'
+      )
+      const deniedExtension = firstExtensionResources.extensionRequests?.find(
+        item => item.status === 'proposed'
+      )
+      expect(deniedExtension?.id).toBeTruthy()
+      const denyResponse = await callAuroraMutation(
+        reviewerPage,
+        config,
+        `/api/siteforge/extensions/${deniedExtension?.id}/decision`,
+        {
+          method: 'POST',
+          body: {
+            decision: 'rejected',
+            reason:
+              'Independent reviewer denies the first custom interaction package to prove fail-closed extension review.',
+          },
+        }
+      )
+      expectApiOk(denyResponse, 'Deny Aurora runtime extension')
+
+      artifact = (await openAuroraEditorSession(page, config)).artifact
+      artifact = await submitAuroraSemanticEdit(
+        page,
+        config,
+        editor.sessionId,
+        artifact,
+        'Custom interaction: propose a new governed extension for an accessible, keyboard-operable floor-plan comparison control with exact package and validation evidence.'
+      )
+      const secondExtensionResources = await waitForAuroraResources(
+        page,
+        config,
+        resources =>
+          Boolean(
+            resources.extensionRequests?.some(
+              item =>
+                item.status === 'proposed' && item.id !== deniedExtension?.id
+            )
+          ),
+        'second custom interaction extension request'
+      )
+      const approvedExtension = secondExtensionResources.extensionRequests?.find(
+        item => item.status === 'proposed' && item.id !== deniedExtension?.id
+      )
+      expect(approvedExtension?.id).toBeTruthy()
+      const approveExtensionResponse = await callAuroraMutation(
+        reviewerPage,
+        config,
+        `/api/siteforge/extensions/${approvedExtension?.id}/decision`,
+        {
+          method: 'POST',
+          body: {
+            decision: 'approved',
+            reason:
+              'Independent reviewer verified the exact extension package, responsive behavior, keyboard behavior, and sandbox report.',
+          },
+        }
+      )
+      expectApiOk(approveExtensionResponse, 'Approve Aurora runtime extension')
+      artifact = (await openAuroraEditorSession(page, config)).artifact
+      expect(artifact.id).not.toBe(approvedExtension?.artifactId)
+      const semanticEvidence = await loadAuroraResources(page, config)
+      expect(semanticEvidence.semanticCoverage).toEqual({
+        copy: true,
+        topology: true,
+        navigation: true,
+        footer: true,
+        forms: true,
+        seo: true,
+        redirects: true,
+        media: true,
+        knowledge: true,
+        responsive: true,
+        accessibility: true,
+        customInteraction: true,
+      })
+      expect(semanticEvidence.artifactLineage).toEqual(
+        expect.arrayContaining(consecutiveArtifacts)
+      )
+      expect(semanticEvidence.mutationLeaseViolations || []).toEqual([])
+
+      const firstPreview = await runCanonicalPreview(
+        page,
+        config,
+        artifact
+      )
+      expect(
+        firstPreview.status,
+        `First-use preview must stop after creating baseline candidates: ${JSON.stringify(firstPreview)}`
+      ).toBe('failed')
+      const candidateResources = await waitForAuroraResources(
+        page,
+        config,
+        resources =>
+          Boolean(
+            resources.baselineCandidates?.length &&
+              resources.baselineCandidates.every(
+                item =>
+                  item.status === 'candidate' &&
+                  item.artifactId === artifact.id
+              )
+          ),
+        'policy-v4 visual baseline candidates'
+      )
+      for (const baseline of candidateResources.baselineCandidates || []) {
+        const baselineDecision = await callAuroraMutation(
+          reviewerPage,
+          config,
+          `/api/siteforge/certification/baselines/${baseline.id}/decision`,
+          {
+            method: 'POST',
+            body: {
+              propertyId: config.propertyId,
+              operation: 'approve',
+              reason:
+                'Independent reviewer approved the exact Aurora policy-v4 page and viewport screenshot identity.',
+            },
+          }
+        )
+        expectApiOk(
+          baselineDecision,
+          `Approve Aurora visual baseline ${baseline.id}`
+        )
+      }
+
+      const exactPreview = await runCanonicalPreview(
+        page,
+        config,
+        artifact,
+        true
+      )
+      expect(exactPreview.status).toBe('succeeded')
+      const previewResponse = await callAuthedApi(
+        page,
+        `/api/siteforge/preview/${config.websiteId}`
+      )
+      expectApiOk(previewResponse, 'Load Aurora exact preview identity')
+      const previewArtifact = (previewResponse.data as {
+        artifact?: {
+          canonicalPreviewArtifactId?: string
+          canonicalPreviewContentHash?: string
+          canonicalPreviewUrl?: string
+        }
+      }).artifact
+      expect(previewArtifact).toMatchObject({
+        canonicalPreviewArtifactId: artifact.id,
+        canonicalPreviewContentHash: artifact.contentHash,
+      })
+      expect(previewArtifact?.canonicalPreviewUrl).toMatch(/^https:\/\//)
+
+      const certifiedPreview = await waitForAuroraResources(
+        page,
+        config,
+        resources =>
+          Boolean(
+            resources.certifications?.some(
+              item =>
+                item.artifactId === artifact.id &&
+                item.environment === 'preview' &&
+                item.access === 'protected' &&
+                item.status === 'passed' &&
+                item.policyVersion ===
+                  SITEFORGE_CERTIFICATION_POLICY_VERSION
+            )
+          ),
+        'policy-v4 protected preview certification'
+      )
+      expect(
+        certifiedPreview.certifications?.some(
+          item =>
+            item.artifactId === artifact.id &&
+            item.environment === 'preview' &&
+            item.access === 'protected' &&
+            item.status === 'passed'
+        )
+      ).toBe(true)
+
+      const artifactApproval = await callAuroraMutation(
+        reviewerPage,
+        config,
+        `/api/siteforge/artifacts/${artifact.id}/decision`,
+        {
+          method: 'POST',
+          body: {
+            propertyId: config.propertyId,
+            contentHash: artifact.contentHash,
+            decisionStatus: 'approved',
+            decisionReason:
+              'Independent reviewer approved the exact policy-v4 certified Aurora preview for v3 staging.',
+          },
+        }
+      )
+      expectApiOk(artifactApproval, 'Approve exact Aurora artifact')
+
+      const deployResponse = await callAuroraMutation(
+        page,
+        config,
+        `/api/siteforge/deploy/${config.websiteId}`,
+        { method: 'POST' }
+      )
+      expectApiOk(deployResponse, 'Deploy Aurora runtime v3 staging')
+      const stagingResources = await waitForAuroraResources(
+        page,
+        config,
+        resources =>
+          Boolean(
+            resources.certifications?.some(
+              item =>
+                item.artifactId === artifact.id &&
+                item.environment === 'staging' &&
+                item.access === 'public' &&
+                item.status === 'passed' &&
+                item.policyVersion ===
+                  SITEFORGE_CERTIFICATION_POLICY_VERSION
+            )
+          ),
+        'public policy-v4 v3 staging certification',
+        1_800_000
+      )
+      expect(stagingResources.currentArtifact?.runtimeContractVersion).toBe(3)
+
+      const prepareResponse = await callAuroraMutation(
+        page,
+        config,
+        '/api/siteforge/launch/prepare',
+        {
+          method: 'POST',
+          body: {
+            propertyId: config.propertyId,
+            websiteId: config.websiteId,
+            artifactId: artifact.id,
+            contentHash: artifact.contentHash,
+            rollbackArtifactId: config.rollbackArtifactId,
+            rollbackContentHash: config.rollbackContentHash,
+          },
+        }
+      )
+      expectApiOk(prepareResponse, 'Prepare Aurora launch release')
+      const releaseId = (
+        prepareResponse.data as { release?: { id?: string } }
+      ).release?.id
+      expect(releaseId).toBeTruthy()
+
+      const launchApproval = await callAuroraMutation(
+        reviewerPage,
+        config,
+        '/api/siteforge/launch/approve',
+        {
+          method: 'POST',
+          body: {
+            propertyId: config.propertyId,
+            releaseId,
+            artifactId: artifact.id,
+            contentHash: artifact.contentHash,
+            rollbackArtifactId: config.rollbackArtifactId,
+            rollbackContentHash: config.rollbackContentHash,
+            rationale:
+              'Independent launch manager approved the exact Aurora v3 release and immutable rollback baseline.',
+            legalRightsSnapshot: {
+              confirmed: true,
+              ownerId: config.ownerId,
+              expiresAt: config.expiresAt,
+            },
+            expiresAt: config.expiresAt,
+          },
+        }
+      )
+      expectApiOk(launchApproval, 'Approve Aurora launch release')
+      const promotionToken = (
+        launchApproval.data as { promotionToken?: string }
+      ).promotionToken
+      expect(promotionToken).toBeTruthy()
+
+      expect(
+        config.promotionOperationId,
+        'AURORA_LIFECYCLE_PROMOTION_OPERATION_ID must be supplied only after the exact Cloudways promotion is performed'
+      ).toBeTruthy()
+
+      const promotion = await callAuroraMutation(
+        reviewerPage,
+        config,
+        '/api/siteforge/launch/promote',
+        {
+          method: 'POST',
+          body: {
+            propertyId: config.propertyId,
+            releaseId,
+            promotionToken,
+            backupConfirmation: {
+              operationId: config.backupOperationId,
+              backupId: config.backupId,
+            },
+            manualConfirmation: {
+              operationId: config.promotionOperationId,
+            },
+          },
+        }
+      )
+      expectApiOk(promotion, 'Promote Aurora production release')
+      const promotionVerification = await callAuroraMutation(
+        reviewerPage,
+        config,
+        config.providerOperationsUrl,
+        {
+          method: 'POST',
+          body: {
+            operation: 'verify_promotion',
+            propertyId: config.propertyId,
+            websiteId: config.websiteId,
+            releaseId,
+          },
+        }
+      )
+      expectApiOk(
+        promotionVerification,
+        'Verify persisted Aurora Cloudways promotion operation'
+      )
+
+      const productionCertification = await callAuroraMutation(
+        reviewerPage,
+        config,
+        `/api/siteforge/production/${config.websiteId}/certify`,
+        {
+          method: 'POST',
+          body: {
+            releaseId,
+            promotedArtifactId: artifact.id,
+            promotedContentHash: artifact.contentHash,
+          },
+        }
+      )
+      expectApiOk(
+        productionCertification,
+        'Start Aurora production certification'
+      )
+      await waitForAuroraResources(
+        page,
+        config,
+        resources =>
+          Boolean(
+            resources.certifications?.some(
+              item =>
+                item.artifactId === artifact.id &&
+                item.environment === 'production' &&
+                item.access === 'public' &&
+                item.status === 'passed' &&
+                item.policyVersion ===
+                  SITEFORGE_CERTIFICATION_POLICY_VERSION
+            ) &&
+              resources.releases?.some(
+                item =>
+                  item.id === releaseId &&
+                  ['production_certified', 'live'].includes(item.state || '')
+              )
+          ),
+        'public policy-v4 production certification',
+        1_800_000
+      )
+
+      const rollbackPreview = await callAuthedApi(
+        page,
+        `/api/siteforge/rollback/${config.websiteId}`
+      )
+      expectApiOk(rollbackPreview, 'Load Aurora immutable rollback history')
+      expect(rollbackPreview.data).toMatchObject({
+        canRollback: true,
+        currentArtifact: { id: artifact.id },
+        rollbackToArtifactId: config.rollbackArtifactId,
+        rollbackToContentHash: config.rollbackContentHash,
+      })
+      const rollback = await callAuroraMutation(
+        reviewerPage,
+        config,
+        `/api/siteforge/rollback/${config.websiteId}`,
+        {
+          method: 'POST',
+          body: {
+            expectedCurrentArtifactId: artifact.id,
+            targetArtifactId: config.rollbackArtifactId,
+            targetContentHash: config.rollbackContentHash,
+            decisionReason:
+              'Independent reviewer creates an immutable rollback revision from the imported, remotely verified Aurora baseline.',
+          },
+        }
+      )
+      expectApiOk(rollback, 'Create Aurora immutable rollback revision')
+      expect(rollback.data).toMatchObject({
+        rolledBackFromArtifactId: artifact.id,
+        rolledBackToArtifactId: config.rollbackArtifactId,
+        requiresCanonicalPreview: true,
+        requiresDeploymentApproval: true,
+      })
+
+      const restoreRequest = await callAuroraMutation(
+        reviewerPage,
+        config,
+        '/api/siteforge/launch/restore',
+        {
+          method: 'POST',
+          body: {
+            propertyId: config.propertyId,
+            releaseId,
+            rationale:
+              'Supervised Aurora restore returns the disposable production target to the imported immutable baseline.',
+          },
+        }
+      )
+      expectApiOk(restoreRequest, 'Request supervised Aurora restore')
+      expect(restoreRequest.data).toMatchObject({ manualRequired: true })
+
+      const restoreStart = await callAuroraMutation(
+        reviewerPage,
+        config,
+        config.providerOperationsUrl,
+        {
+          method: 'POST',
+          body: {
+            operation: 'start_restore',
+            propertyId: config.propertyId,
+            websiteId: config.websiteId,
+            releaseId,
+          },
+        }
+      )
+      expectApiOk(restoreStart, 'Start owned Aurora Cloudways restore')
+      config.restoreOperationId = (
+        restoreStart.data as { operationId: string }
+      ).operationId
+      const restoreVerification = await callAuroraMutation(
+        reviewerPage,
+        config,
+        config.providerOperationsUrl,
+        {
+          method: 'POST',
+          body: {
+            operation: 'poll_restore',
+            propertyId: config.propertyId,
+            websiteId: config.websiteId,
+            releaseId,
+          },
+        }
+      )
+      expectApiOk(
+        restoreVerification,
+        'Verify exact Aurora Cloudways restore operation'
+      )
+
+      const restore = await callAuroraMutation(
+        reviewerPage,
+        config,
+        '/api/siteforge/launch/restore',
+        {
+          method: 'POST',
+          body: {
+            propertyId: config.propertyId,
+            releaseId,
+            rationale:
+              'Supervised Aurora restore returns the disposable production target to the imported immutable baseline.',
+            manualConfirmation: {
+              operationId: config.restoreOperationId,
+            },
+          },
+        }
+      )
+      expectApiOk(restore, 'Complete supervised Aurora restore')
+      expect(restore.data).toMatchObject({ manualRequired: false })
+    } catch (error) {
+      primaryError = error
+      throw error
+    } finally {
+      try {
+        const cleanup = await callAuroraMutation(
+          page,
+          config,
+          config.cleanupUrl,
+          {
+            method: 'DELETE',
+            body: {
+              propertyId: config.propertyId,
+              websiteId: config.websiteId,
+              targetId: config.targetId,
+              ownerId: config.ownerId,
+              expiresAt: config.expiresAt,
+              confirmation: 'DELETE_OWNED_AURORA_RESOURCES',
+            },
+          }
+        )
+        expectApiOk(cleanup, 'Clean up owned Aurora lifecycle resources')
+        const verification = await loadAuroraResources(page, config)
+        expect(verification.cleanup).toEqual({
+          verified: true,
+          remainingOwnedResourceIds: [],
+        })
+        expect(verification.ownedResourceIds || []).toEqual([])
+        expect(verification.mutationLeaseViolations || []).toEqual([])
+      } catch (cleanupError) {
+        if (!primaryError) throw cleanupError
+        console.error('Aurora cleanup also failed after lifecycle failure', {
+          message:
+            cleanupError instanceof Error
+              ? cleanupError.message
+              : 'unknown cleanup failure',
+        })
+      } finally {
+        await reviewerContext.close()
+      }
+    }
+  })
+})
 
 test.describe('local smoke flows', () => {
   test('redirects unauthenticated users to login', async ({ page }) => {
@@ -913,96 +2022,6 @@ test.describe('local smoke flows', () => {
     ).toBeVisible({ timeout: 120_000 })
   })
 
-  test('siteforge real target deploy and rollback flow (opt-in)', async ({ page }) => {
-    const realDeployTimeoutMs = Number(process.env.SITEFORGE_REAL_DEPLOY_TIMEOUT_MS || 1_800_000)
-    test.setTimeout(realDeployTimeoutMs + 120_000)
-    test.skip(
-      process.env.SITEFORGE_REAL_DEPLOY_SMOKE !== '1',
-      'Set SITEFORGE_REAL_DEPLOY_SMOKE=1 to run real WordPress deploy smoke.'
-    )
-    test.skip(
-      !hasRealWordPressDeployTarget(),
-      'Requires Cloudways credentials or existing WordPress env vars.'
-    )
-
-    await login(page)
-    const propertyId = await resolvePropertyIdForSmoke(page)
-
-    const firstGeneration = await createApprovedSiteForgeGeneration(
-      page,
-      propertyId,
-      'Real deploy smoke first generated version'
-    )
-    const secondGeneration = await createApprovedSiteForgeGeneration(
-      page,
-      propertyId,
-      'Real deploy smoke second generated version'
-    )
-    const secondWebsiteId = secondGeneration.websiteId
-    expect(secondGeneration.planId).not.toBe(firstGeneration.planId)
-    expect(secondWebsiteId).not.toBe(firstGeneration.websiteId)
-
-    await waitForWebsiteStatus(
-      page,
-      secondWebsiteId,
-      ['ready_for_preview', 'complete', 'failed'],
-      60_000
-    )
-
-    const deployResponse = await callAuthedApi(page, `/api/siteforge/deploy/${secondWebsiteId}`, {
-      method: 'POST',
-    })
-    expect(deployResponse.ok, `Real deploy request failed: ${JSON.stringify(deployResponse)}`).toBe(
-      true
-    )
-
-    const deployedStatus = await waitForWebsiteStatus(
-      page,
-      secondWebsiteId,
-      ['complete', 'deploy_failed'],
-      realDeployTimeoutMs
-    )
-    expect(
-      deployedStatus.status === 'complete',
-      `Real deploy failed: ${JSON.stringify(deployedStatus)}`
-    ).toBe(true)
-    const deployedDiagnostics = deployedStatus.deploymentDiagnostics as
-      | Record<string, unknown>
-      | undefined
-    expect(deployedDiagnostics?.status).toBe('success')
-    expect(deployedDiagnostics?.provider).not.toBe('local_simulation')
-
-    const rollbackPreviewResponse = await callAuthedApi(
-      page,
-      `/api/siteforge/rollback/${secondWebsiteId}`
-    )
-    expect(rollbackPreviewResponse.ok).toBeTruthy()
-    const rollbackPreviewData = rollbackPreviewResponse.data as Record<string, unknown>
-    expect(rollbackPreviewData.canRollback).toBe(true)
-    expect(typeof rollbackPreviewData.rollbackToArtifactId).toBe('string')
-    expect(typeof rollbackPreviewData.rollbackToContentHash).toBe('string')
-    const currentArtifact = rollbackPreviewData.currentArtifact as
-      | { id?: string; version?: number }
-      | undefined
-    expect(typeof currentArtifact?.id).toBe('string')
-
-    const rollbackResponse = await callAuthedApi(page, `/api/siteforge/rollback/${secondWebsiteId}`, {
-      method: 'POST',
-      body: {
-        expectedCurrentArtifactId: currentArtifact?.id,
-        targetArtifactId: rollbackPreviewData.rollbackToArtifactId,
-        targetContentHash: rollbackPreviewData.rollbackToContentHash,
-        decisionReason: 'Real deploy smoke verifies immutable artifact rollback.',
-      },
-    })
-    expect(rollbackResponse.ok).toBeTruthy()
-
-    const rolledBackStatus = await waitForWebsiteStatus(page, secondWebsiteId, ['ready_for_preview'], 60_000)
-    expect(rolledBackStatus.status).toBe('ready_for_preview')
-    expect(rolledBackStatus.wpUrl).toBeUndefined()
-    expect(rolledBackStatus.wpAdminUrl).toBeUndefined()
-  })
-
   test('seeded LumaLeasing tour availability returns local fixture slots', async ({ request }) => {
     const response = await request.get('/api/lumaleasing/tours', {
       headers: {
@@ -1040,7 +2059,10 @@ test.describe('local smoke flows', () => {
     if (!apiKey) return
 
     await login(page)
-    const propertyId = await resolvePropertyIdForSmoke(page)
+    const propertyId = await resolvePropertyIdForSmoke(
+      page,
+      'LUMALEASING_REAL_SMOKE_PROPERTY_ID'
+    )
 
     const calendarStatus = await callAuthedApi(
       page,
@@ -1288,7 +2310,10 @@ test.describe('local smoke flows', () => {
     )
 
     await login(page)
-    const propertyId = await resolvePropertyIdForSmoke(page)
+    const propertyId = await resolvePropertyIdForSmoke(
+      page,
+      'PROPERTYAUDIT_REAL_SMOKE_PROPERTY_ID'
+    )
     await ensurePropertyAuditQueries(page, propertyId)
 
     const runResponse = await callAuthedApi(page, '/api/propertyaudit/run', {
@@ -1514,7 +2539,10 @@ test.describe('local smoke flows', () => {
     test.skip(!cronSecret, 'Set CRON_SECRET so the smoke can trigger the publication worker.')
 
     await login(page)
-    const propertyId = await resolvePropertyIdForSmoke(page)
+    const propertyId = await resolvePropertyIdForSmoke(
+      page,
+      'FORGESTUDIO_REAL_SMOKE_PROPERTY_ID'
+    )
 
     // The channel must already be connected through its real OAuth flow.
     const connectionsResponse = await callAuthedApi(

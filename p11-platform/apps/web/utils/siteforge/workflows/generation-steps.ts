@@ -15,7 +15,10 @@ import { QualityAgent, type QualityReport } from '@/utils/siteforge/agents/quali
 import { WordPressMcpClient } from '@/utils/mcp/wordpress-client'
 import { persistSiteForgeAssets } from '@/utils/siteforge/assets/repository'
 import { publishSiteForgeArtifact } from '@/utils/siteforge/artifacts/repository'
-import { finalizeSiteForgePages } from '@/utils/siteforge/generation/finalize-pages'
+import {
+  extractSourcedMapLocation,
+  finalizeSiteForgePages,
+} from '@/utils/siteforge/generation/finalize-pages'
 import { loadApprovedFloorPlanSnapshot } from '@/utils/siteforge/providers/floor-plan-repository'
 import {
   buildWordPressThemeArtifact,
@@ -25,6 +28,7 @@ import {
   createDefaultSiteForgeAnalyticsConfig,
   createSiteForgeLegalConfigFromSnapshot,
   evaluateDeterministicSiteForgeQuality,
+  type SiteForgeLegalConfig,
 } from '@/utils/siteforge/quality/deterministic-gates'
 import type { GeneratedPage, GenerationPreferences } from '@/types/siteforge'
 import type { Json, TablesUpdate } from '@/types/supabase'
@@ -48,6 +52,42 @@ export type SiteForgeGenerationWorkflowInput = {
   preferences: GenerationPreferences
   prompt: string
   startedAt: string
+}
+
+export const SITEFORGE_LEGAL_REMEDIATION =
+  'Complete and approve every Legal section in property onboarding, then reconfirm the SiteForge plan before generating a new artifact.'
+
+export function resolveApprovedLegalContractForGeneration(
+  confirmedPlan: Pick<SiteForgePlan, 'onboardingSnapshot'>,
+  pinnedSnapshot:
+    | {
+        snapshot_payload: unknown
+        content_hash: string
+      }
+    | null
+): SiteForgeLegalConfig {
+  if (!confirmedPlan.onboardingSnapshot) {
+    throw new FatalError(
+      `New SiteForge generation requires a pinned onboarding snapshot with approved legal source data. ${SITEFORGE_LEGAL_REMEDIATION}`
+    )
+  }
+  if (
+    !pinnedSnapshot ||
+    pinnedSnapshot.content_hash !== confirmedPlan.onboardingSnapshot.contentHash
+  ) {
+    throw new FatalError(
+      `The pinned onboarding legal source is unavailable or changed. ${SITEFORGE_LEGAL_REMEDIATION}`
+    )
+  }
+  try {
+    return createSiteForgeLegalConfigFromSnapshot(
+      pinnedSnapshot.snapshot_payload
+    )
+  } catch {
+    throw new FatalError(
+      `The pinned onboarding snapshot does not contain a complete approved legal contract. ${SITEFORGE_LEGAL_REMEDIATION}`
+    )
+  }
 }
 
 export async function assertSiteForgeJobActive(
@@ -379,15 +419,54 @@ export async function persistSiteForgeGenerationArtifact(
     Date.now() - new Date(input.startedAt).getTime()
   )
   const now = new Date().toISOString()
+  const supabase = createServiceClient()
+  if (!confirmedPlan.onboardingSnapshot) {
+    resolveApprovedLegalContractForGeneration(confirmedPlan, null)
+  }
+  const { data: onboardingSnapshot, error: onboardingError } = await supabase
+    .from('property_onboarding_snapshots')
+    .select('snapshot_payload, content_hash')
+    .eq('id', confirmedPlan.onboardingSnapshot!.id)
+    .eq('property_id', input.propertyId)
+    .single()
+  const legal = resolveApprovedLegalContractForGeneration(
+    confirmedPlan,
+    onboardingError ? null : onboardingSnapshot
+  )
+  const propertySnapshot = onboardingSnapshot!.snapshot_payload
   const durablePhotoManifest = await persistSiteForgeAssets(
     input.websiteId,
     photoManifest
   )
   const floorPlanSnapshot = await loadApprovedFloorPlanSnapshot(input.propertyId)
+  const { data: approvedPointsOfInterest, error: pointsOfInterestError } =
+    await supabase
+      .from('property_points_of_interest')
+      .select(
+        'name, category, address, distance_miles, travel_time_minutes, source_url'
+      )
+      .eq('property_id', input.propertyId)
+      .eq('approval_status', 'approved')
+      .order('category', { ascending: true })
+      .order('name', { ascending: true })
+  if (pointsOfInterestError) {
+    throw new FatalError(
+      `Failed to load approved neighborhood points of interest: ${pointsOfInterestError.message}`
+    )
+  }
   const finalizedPages = finalizeSiteForgePages(
     pages,
     durablePhotoManifest,
-    floorPlanSnapshot
+    legal,
+    floorPlanSnapshot,
+    approvedPointsOfInterest || [],
+    {
+      mapLocation: extractSourcedMapLocation(propertySnapshot),
+      formProviders: {
+        lead: confirmedPlan.conversionStrategy.leadDestination,
+        tour: confirmedPlan.conversionStrategy.tourDestination,
+      },
+    }
   )
   if (!qualityReport.passed) {
     console.warn('[siteforge_workflow] advisory AI quality score below target', {
@@ -456,25 +535,6 @@ export async function persistSiteForgeGenerationArtifact(
     undefined,
     wordpressFontAssets,
   )
-  if (!confirmedPlan.onboardingSnapshot) {
-    throw new FatalError('Confirmed plan is missing its onboarding snapshot')
-  }
-  const supabase = createServiceClient()
-  const { data: onboardingSnapshot, error: onboardingError } = await supabase
-    .from('property_onboarding_snapshots')
-    .select('snapshot_payload, content_hash')
-    .eq('id', confirmedPlan.onboardingSnapshot.id)
-    .eq('property_id', input.propertyId)
-    .single()
-  if (
-    onboardingError
-    || !onboardingSnapshot
-    || onboardingSnapshot.content_hash !== confirmedPlan.onboardingSnapshot.contentHash
-  ) {
-    throw new FatalError('Pinned onboarding snapshot is unavailable or changed')
-  }
-  const propertySnapshot = onboardingSnapshot.snapshot_payload
-  const legal = createSiteForgeLegalConfigFromSnapshot(propertySnapshot)
   const analytics = createDefaultSiteForgeAnalyticsConfig()
   const deterministicQualityReport = evaluateDeterministicSiteForgeQuality({
     pages: finalizedPages,

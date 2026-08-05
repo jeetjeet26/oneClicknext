@@ -158,6 +158,7 @@ export async function POST(
       confirmedPlan: blueprintRecord.confirmedPlan
         ? siteForgePlanSchema.parse(blueprintRecord.confirmedPlan)
         : undefined,
+      confirmedPlanTopologyPolicy: 'report-divergence',
       photoManifest: photoManifest as unknown as PhotoManifest,
       themeArtifact: validateWordPressThemeArtifact(
         blueprintRecord.wordpressThemeArtifact

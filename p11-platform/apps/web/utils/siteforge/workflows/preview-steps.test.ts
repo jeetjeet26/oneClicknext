@@ -37,6 +37,17 @@ describe('canonical WordPress preview workflow steps', () => {
     )
   })
 
+  it('normalizes escaped newlines from provider credentials', async () => {
+    const { normalizeSiteForgePreviewCredential } = await import(
+      './preview-steps'
+    )
+
+    expect(
+      normalizeSiteForgePreviewCredential(' https://wordpress.example.com\\n ')
+    ).toBe('https://wordpress.example.com')
+    expect(normalizeSiteForgePreviewCredential('')).toBeUndefined()
+  })
+
   it('maps persisted asset columns into the WordPress client contract', async () => {
     const { mapWebsiteAssetRow } = await import(
       '@/utils/siteforge/assets/repository'

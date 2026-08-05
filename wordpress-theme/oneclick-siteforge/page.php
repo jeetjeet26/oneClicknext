@@ -18,6 +18,7 @@ get_header();
 		the_post();
 		?>
 		<article id="post-<?php the_ID(); ?>" <?php post_class( 'siteforge-page' ); ?>>
+			<h1 class="screen-reader-text"><?php the_title(); ?></h1>
 			<div class="page-content siteforge-page-content">
 				<?php the_content(); ?>
 			</div>

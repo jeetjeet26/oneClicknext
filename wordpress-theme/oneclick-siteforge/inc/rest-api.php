@@ -158,6 +158,21 @@ function oneclick_siteforge_rest_update_content_manifest( WP_REST_Request $reque
 }
 
 /**
+ * Keep generated page-level robots metadata aligned with target protection.
+ */
+function oneclick_siteforge_set_manifest_indexability( $indexable ) {
+	$manifest = get_option( 'oneclick_siteforge_content_manifest', array() );
+	$page_ids = isset( $manifest['page_ids'] ) && is_array( $manifest['page_ids'] )
+		? array_map( 'absint', $manifest['page_ids'] )
+		: array();
+	foreach ( $page_ids as $page_id ) {
+		if ( 'page' === get_post_type( $page_id ) ) {
+			update_post_meta( $page_id, '_yoast_wpseo_meta-robots-noindex', $indexable ? '0' : '1' );
+		}
+	}
+}
+
+/**
  * Make an exact certified artifact indexable only after P11 verifies that the
  * operator-promoted production site still carries the approved manifest.
  */
@@ -175,6 +190,8 @@ function oneclick_siteforge_rest_activate_production( WP_REST_Request $request )
 	}
 
 	update_option( 'blog_public', '1' );
+	oneclick_siteforge_set_manifest_indexability( true );
+	flush_rewrite_rules( false );
 	update_option( 'oneclick_siteforge_target_mode', 'production', false );
 	update_option(
 		'oneclick_siteforge_production_activation',
@@ -205,6 +222,7 @@ function oneclick_siteforge_rest_update_settings( WP_REST_Request $request ) {
 	$motion = $request->get_param( 'motion' );
 	$overlay = $request->get_param( 'theme_overlay' );
 	$lumaleasing = $request->get_param( 'lumaleasing' );
+	$property_profile = $request->get_param( 'property_profile' );
 	$target_mode = sanitize_key( (string) $request->get_param( 'target_mode' ) );
 	$hash   = sanitize_text_field( (string) $request->get_param( 'content_hash' ) );
 	if ( ! is_array( $tokens ) || ! is_array( $legal ) || ! is_array( $analytics ) || ! is_array( $configuration ) || ! is_array( $motion ) || ! is_array( $overlay ) || ! preg_match( '/^[a-f0-9]{64}$/', $hash ) ) {
@@ -298,6 +316,26 @@ function oneclick_siteforge_rest_update_settings( WP_REST_Request $request ) {
 		false
 	);
 	update_option( 'oneclick_siteforge_legal', $safe_legal, false );
+	if ( is_array( $property_profile ) ) {
+		$social_links = array();
+		foreach ( is_array( $property_profile['socialLinks'] ?? null ) ? $property_profile['socialLinks'] : array() as $platform => $url ) {
+			$safe_url = esc_url_raw( (string) $url, array( 'http', 'https' ) );
+			if ( $safe_url ) {
+				$social_links[ sanitize_key( $platform ) ] = $safe_url;
+			}
+		}
+		update_option(
+			'oneclick_siteforge_property_profile',
+			array(
+				'name'        => sanitize_text_field( $property_profile['name'] ?? '' ),
+				'address'     => sanitize_textarea_field( $property_profile['address'] ?? '' ),
+				'phone'       => sanitize_text_field( $property_profile['phone'] ?? '' ),
+				'email'       => sanitize_email( $property_profile['email'] ?? '' ),
+				'socialLinks' => $social_links,
+			),
+			false
+		);
+	}
 	update_option(
 		'oneclick_siteforge_analytics',
 		array(
@@ -348,6 +386,7 @@ function oneclick_siteforge_rest_update_settings( WP_REST_Request $request ) {
 		return new WP_Error( 'siteforge_invalid_target_mode', 'A non-production SiteForge target mode is required.', array( 'status' => 400 ) );
 	}
 	update_option( 'blog_public', '0' );
+	oneclick_siteforge_set_manifest_indexability( false );
 	update_option( 'oneclick_siteforge_target_mode', $target_mode, false );
 	return rest_ensure_response( array( 'updated' => true, 'content_hash' => $hash ) );
 }
@@ -429,7 +468,7 @@ function oneclick_siteforge_sanitize_configuration( $configuration ) {
 			'smoothScroll'          => ! empty( $behavior['smoothScroll'] ),
 			'externalLinksNewTab'   => ! empty( $behavior['externalLinksNewTab'] ),
 			'backToTop'             => ! empty( $behavior['backToTop'] ),
-			'cookieConsent'         => sanitize_key( $behavior['cookieConsent'] ?? 'required' ),
+			'cookieConsent'         => in_array( $behavior['cookieConsent'] ?? '', array( 'disabled', 'informational', 'required' ), true ) ? $behavior['cookieConsent'] : 'required',
 		),
 	);
 }

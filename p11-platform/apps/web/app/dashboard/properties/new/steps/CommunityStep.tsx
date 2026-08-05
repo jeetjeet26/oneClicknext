@@ -40,6 +40,7 @@ export function CommunityStep() {
             address: community.address.street ? community.address : null,
             propertyType: community.type || null,
             websiteUrl: community.websiteUrl || null,
+            additionalUrls: community.additionalUrls.filter(url => url.trim()),
             unitCount: community.unitCount ? parseInt(community.unitCount) : null,
             yearBuilt: community.yearBuilt ? parseInt(community.yearBuilt) : null
           })

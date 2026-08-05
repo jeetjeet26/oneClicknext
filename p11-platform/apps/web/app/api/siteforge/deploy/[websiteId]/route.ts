@@ -8,6 +8,11 @@ import { createRequestContext } from '@/utils/services/request-context'
 import { getWordPressCredentialReference } from '@/utils/siteforge/wordpress/credential-vault'
 import { siteForgeStagingDeploymentWorkflow } from '@/workflows/siteforge-staging-deployment'
 import type { Json } from '@/types/supabase'
+import {
+  assertActiveAuroraLifecycleLease,
+  auroraOwnedMetadata,
+  AuroraLifecycleControlError,
+} from '@/utils/siteforge/testing/aurora-lifecycle-control'
 
 export async function POST(
   request: NextRequest,
@@ -55,6 +60,14 @@ export async function POST(
         { status: 403, headers: ctx.responseHeaders }
       )
     }
+    const lifecycleIdentity = await assertActiveAuroraLifecycleLease(
+      request,
+      {
+        propertyId: website.property_id,
+        websiteId: website.id,
+      },
+      client
+    )
     if (!website.current_artifact_version_id) {
       return NextResponse.json(
         { error: 'Website is missing a current immutable artifact' },
@@ -146,13 +159,43 @@ export async function POST(
 
     const { data: existingTarget, error: targetLookupError } = await client
       .from('siteforge_wordpress_targets')
-      .select('id')
+      .select('id, metadata')
       .eq('website_id', website.id)
       .eq('target_type', 'staging')
       .eq('is_active', true)
       .maybeSingle()
     if (targetLookupError) throw new Error(targetLookupError.message)
+    const existingMetadata =
+      existingTarget?.metadata &&
+      typeof existingTarget.metadata === 'object' &&
+      !Array.isArray(existingTarget.metadata)
+        ? existingTarget.metadata
+        : {}
+    if (
+      lifecycleIdentity &&
+      existingMetadata.lifecycleOwnerId &&
+      existingMetadata.lifecycleOwnerId !== lifecycleIdentity.ownerId
+    ) {
+      throw new AuroraLifecycleControlError(
+        'Staging target belongs to another lifecycle owner',
+        409,
+        'target_owner_conflict'
+      )
+    }
     let targetId = existingTarget?.id
+    if (targetId && lifecycleIdentity) {
+      const { error } = await client
+        .from('siteforge_wordpress_targets')
+        .update({
+          metadata: auroraOwnedMetadata(
+            lifecycleIdentity,
+            existingTarget?.metadata
+          ),
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', targetId)
+      if (error) throw new Error(error.message)
+    }
     if (!targetId) {
       const { data: createdTarget, error: targetCreateError } = await client
         .from('siteforge_wordpress_targets')
@@ -173,6 +216,13 @@ export async function POST(
           metadata: {
             parentPublicIp: parentMetadata?.publicIp || null,
             promotionPolicy: 'siteforge_launch_release_v1',
+            ...(lifecycleIdentity
+              ? {
+                  lifecycleOwnerId: lifecycleIdentity.ownerId,
+                  lifecycleRunId: lifecycleIdentity.ownerId,
+                  lifecycleExpiresAt: lifecycleIdentity.expiresAt,
+                }
+              : {}),
           } as Json,
         })
         .select('id')
@@ -281,6 +331,13 @@ export async function POST(
         approvalId: artifact.confirmed_approval_id,
         localSimulation,
         startedAt: now,
+        ...(lifecycleIdentity
+          ? {
+              lifecycleOwnerId: lifecycleIdentity.ownerId,
+              lifecycleRunId: lifecycleIdentity.ownerId,
+              lifecycleExpiresAt: lifecycleIdentity.expiresAt,
+            }
+          : {}),
       } as Json,
       workflow_run_id: null,
       error_message: null,
@@ -448,15 +505,19 @@ export async function POST(
       { status: 202, headers: ctx.responseHeaders }
     )
   } catch (error) {
-    ctx.logError(500, error)
+    const status =
+      error instanceof AuroraLifecycleControlError ? error.statusCode : 500
+    ctx.logError(status, error)
     return NextResponse.json(
       {
         error:
-          error instanceof Error
-            ? error.message
+          status !== 500
+            ? (error as Error).message
+            : error instanceof Error
+              ? error.message
             : 'Failed to start Cloudways staging deployment',
       },
-      { status: 500, headers: ctx.responseHeaders }
+      { status, headers: ctx.responseHeaders }
     )
   }
 }

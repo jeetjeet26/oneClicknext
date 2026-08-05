@@ -1,0 +1,30 @@
+{
+  "contractVersion": 3,
+  "runtimeVersion": "3.0.0",
+  "provider": "wordpress",
+  "authentication": "wordpress_application_password",
+  "features": {
+    "completeResourceGraph": true,
+    "exactPackageIdentity": true,
+    "immutableAssetPreparation": true,
+    "optimisticConcurrency": true,
+    "idempotentTransactions": true,
+    "transactionalRollback": true,
+    "v2RollbackProjection": true,
+    "scopedIntegrations": true,
+    "targetProtection": true,
+    "publicRuntime": true
+  },
+  "limits": {
+    "maxAssetsPerPreparation": 2000,
+    "maxAssetBytes": 25000000,
+    "maxResourcesPerDeployment": 20000,
+    "maxOperationsPerDeployment": 20000,
+    "acceptedAssetMimeTypes": [
+      "image/jpeg",
+      "image/png",
+      "image/svg+xml",
+      "image/webp"
+    ]
+  }
+}

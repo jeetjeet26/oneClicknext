@@ -4,9 +4,9 @@ import type { PhotoManifest } from '@/utils/siteforge/agents/photo-agent'
 import type { WordPressThemeArtifact } from '@/utils/siteforge/wordpress/theme-artifact'
 import {
   createDefaultSiteForgeAnalyticsConfig,
-  createDefaultSiteForgeLegalConfig,
   createSiteForgeLegalConfigFromSnapshot,
   evaluateDeterministicSiteForgeQuality,
+  legalEvidenceId,
 } from './deterministic-gates'
 import {
   createEvidenceSafePlaceholder,
@@ -26,10 +26,19 @@ describe('approved legal projection', () => {
       legal: {
         id: '11111111-1111-4111-8111-111111111111',
         version: 3,
+        status: 'approved',
         approved_at: '2026-07-31T20:00:00+00:00',
         effective_at: '2026-08-01T00:00:00+00:00',
+        privacy_policy: { text: 'Exact approved privacy policy.' },
+        terms: { text: 'Exact approved terms of use.' },
+        accessibility: { text: 'Exact approved accessibility statement.' },
         fair_housing: {
           text: 'This property is committed to Equal Housing Opportunity.',
+        },
+        pricing_disclaimer: { text: 'Exact approved pricing disclaimer.' },
+        analytics_consent: { text: 'Exact approved analytics consent.' },
+        communications_consent: {
+          text: 'Exact approved communications consent.',
         },
       },
     })
@@ -37,8 +46,14 @@ describe('approved legal projection', () => {
     expect(legal).toMatchObject({
       sourceConfigId: '11111111-1111-4111-8111-111111111111',
       sourceVersion: 3,
+      schemaVersion: 1,
+      effectiveAt: '2026-08-01T00:00:00.000Z',
       fairHousingDisclaimer:
         'This property is committed to Equal Housing Opportunity.',
+      policyBodies: {
+        privacyPolicy: 'Exact approved privacy policy.',
+        terms: 'Exact approved terms of use.',
+      },
     })
     expect(legal.sourceHash).toMatch(/^[a-f0-9]{64}$/)
     expect(legal.approvedAt).toBe('2026-07-31T20:00:00.000Z')
@@ -46,10 +61,32 @@ describe('approved legal projection', () => {
 
   it('fails closed without approved legal evidence', () => {
     expect(() => createSiteForgeLegalConfigFromSnapshot({ legal: null })).toThrow(
-      'approved legal version'
+      'approved legal provenance'
     )
   })
 })
+
+const approvedLegal = createSiteForgeLegalConfigFromSnapshot({
+  legal: {
+    id: '55555555-5555-4555-8555-555555555555',
+    version: 4,
+    status: 'approved',
+    approved_at: '2026-07-31T20:00:00.000Z',
+    effective_at: '2026-08-01T00:00:00.000Z',
+    privacy_policy: { text: 'Exact approved privacy policy.' },
+    terms: { text: 'Exact approved terms of use.' },
+    accessibility: { text: 'Exact approved accessibility statement.' },
+    fair_housing: {
+      text: 'This property is committed to Equal Housing Opportunity.',
+    },
+    pricing_disclaimer: { text: 'Exact approved pricing disclaimer.' },
+    analytics_consent: { text: 'Exact approved analytics consent.' },
+    communications_consent: {
+      text: 'Exact approved communications consent.',
+    },
+  },
+})
+
 const brandContract = normalizeBrandForgeContract({
   identity: { name: 'Example Apartments' },
   logos: {
@@ -106,6 +143,42 @@ const pages: GeneratedPage[] = [
       },
     ],
   },
+  ...[
+    ['privacy', 'Privacy', approvedLegal.policyBodies.privacyPolicy],
+    ['terms', 'Terms', approvedLegal.policyBodies.terms],
+    [
+      'accessibility',
+      'Accessibility',
+      approvedLegal.policyBodies.accessibility,
+    ],
+  ].map(([slug, title, body]) => ({
+    slug,
+    title,
+    purpose: `Publish the approved ${title.toLowerCase()} policy.`,
+    seo: {
+      title,
+      description: `Read the exact approved ${title.toLowerCase()} policy for this apartment community and its website.`,
+      canonicalPath: `/${slug}`,
+      noIndex: false,
+      structuredData: ['WebPage', 'BreadcrumbList'],
+    },
+    sections: [
+      {
+        id: `${slug}-policy`,
+        type: 'legal',
+        acfBlock: 'acf/text-section' as const,
+        content: {
+          headline: title,
+          content: body,
+          layout: 'center',
+          background: 'white',
+        },
+        reasoning: 'Publish the exact approved policy body',
+        order: 0,
+        evidenceIds: [legalEvidenceId(approvedLegal)],
+      },
+    ],
+  })),
 ]
 
 const photo = {
@@ -161,16 +234,23 @@ const confirmedPlan = {
     origin: 'imported',
     contract: brandContract,
   },
+  onboardingSnapshot: {
+    id: '44444444-4444-4444-8444-444444444444',
+    contentHash: 'c'.repeat(64),
+    enabledCapabilities: [],
+  },
   enabledCapabilities: [],
   analyticsStrategy: { enabled: false },
   conversionStrategy: { primaryAction: 'contact' },
-  pages: [
-    {
-      slug: 'home',
-      title: 'Home',
-      sections: [{ id: 'intro', block: 'acf/text-section' }],
-    },
-  ],
+  pages: pages.map(page => ({
+    slug: page.slug,
+    title: page.title,
+    sections: page.sections.map(section => ({
+      id: section.id,
+      block: section.acfBlock,
+      evidenceIds: section.evidenceIds,
+    })),
+  })),
 } as unknown as SiteForgePlan
 
 function evaluate(
@@ -184,7 +264,7 @@ function evaluate(
     confirmedPlan,
     photoManifest,
     themeArtifact,
-    legal: createDefaultSiteForgeLegalConfig(),
+    legal: approvedLegal,
     analytics: createDefaultSiteForgeAnalyticsConfig(),
     evaluatedAt: '2026-07-30T18:00:00.000Z',
     ...overrides,
@@ -196,6 +276,41 @@ describe('deterministic SiteForge quality gates', () => {
     const report = evaluate()
     expect(report.passed).toBe(true)
     expect(report.checks.every((check) => check.passed)).toBe(true)
+  })
+
+  it('blocks legal data without approved provenance', () => {
+    const report = evaluate(pages, {
+      legal: {
+        equalHousingOpportunity: true,
+        fairHousingDisclaimer:
+          'This property is committed to Equal Housing Opportunity.',
+        privacyPath: '/privacy',
+        termsPath: '/terms',
+        accessibilityPath: '/accessibility',
+      } as never,
+    })
+
+    expect(
+      report.checks.find(check => check.id === 'legal_and_consent')
+    ).toEqual(
+      expect.objectContaining({
+        passed: false,
+        severity: 'blocker',
+        locations: ['legal.provenance'],
+      })
+    )
+  })
+
+  it('blocks legal pages that alter an approved policy body', () => {
+    const modified = structuredClone(pages)
+    const privacy = modified.find(page => page.slug === 'privacy')
+    privacy!.sections[0].content.content = 'Generic replacement privacy copy.'
+
+    expect(
+      evaluate(modified, {
+        confirmedPlanTopologyPolicy: 'report-divergence',
+      }).checks.find(check => check.id === 'legal_and_consent')
+    ).toEqual(expect.objectContaining({ passed: false, severity: 'blocker' }))
   })
 
   it('blocks discriminatory audience language deterministically', () => {
@@ -219,6 +334,33 @@ describe('deterministic SiteForge quality gates', () => {
     ).toEqual(expect.objectContaining({ passed: false }))
   })
 
+  it('blocks substituted evidence identities after structural editing', () => {
+    const modified = structuredClone(pages)
+    modified[0].sections[0].evidenceIds = ['invented-evidence']
+    const report = evaluate(modified, {
+      confirmedPlanTopologyPolicy: 'report-divergence',
+    })
+    expect(
+      report.checks.find(check => check.id === 'factual_evidence')
+    ).toEqual(expect.objectContaining({ passed: false, severity: 'blocker' }))
+  })
+
+  it('blocks internal links that do not match generated page slugs', () => {
+    const modified = structuredClone(pages)
+    modified[0].sections[0].content.cta_link = '/schedule-tour'
+    const report = evaluate(modified)
+
+    expect(
+      report.checks.find((check) => check.id === 'internal_link_integrity')
+    ).toEqual(
+      expect.objectContaining({
+        passed: false,
+        severity: 'blocker',
+        locations: [expect.stringContaining('/schedule-tour')],
+      })
+    )
+  })
+
   it('blocks output that changes the confirmed page or section structure', () => {
     const modified = structuredClone(pages)
     modified[0].sections[0].acfBlock = 'acf/content-grid'
@@ -227,6 +369,34 @@ describe('deterministic SiteForge quality gates', () => {
     expect(report.passed).toBe(false)
     expect(
       report.checks.find((check) => check.id === 'confirmed_plan_fidelity')
+    ).toEqual(expect.objectContaining({ passed: false, severity: 'blocker' }))
+  })
+
+  it('records post-generation topology divergence without weakening evidence gates', () => {
+    const structurallyEdited = structuredClone(pages)
+    structurallyEdited[0].sections[0].acfBlock = 'acf/content-grid'
+    const divergence = evaluate(structurallyEdited, {
+      confirmedPlanTopologyPolicy: 'report-divergence',
+    })
+
+    expect(divergence.passed).toBe(true)
+    expect(
+      divergence.checks.find(check => check.id === 'confirmed_plan_fidelity')
+    ).toEqual(
+      expect.objectContaining({
+        passed: false,
+        severity: 'warning',
+        locations: ['pages'],
+      })
+    )
+
+    structurallyEdited[0].sections[0].evidenceIds = []
+    const ungrounded = evaluate(structurallyEdited, {
+      confirmedPlanTopologyPolicy: 'report-divergence',
+    })
+    expect(ungrounded.passed).toBe(false)
+    expect(
+      ungrounded.checks.find(check => check.id === 'factual_evidence')
     ).toEqual(expect.objectContaining({ passed: false, severity: 'blocker' }))
   })
 

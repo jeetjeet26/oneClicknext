@@ -12,8 +12,8 @@ import {
 import { getWordPressCredentialReference } from '@/utils/siteforge/wordpress/credential-vault'
 import { WordPressAPIClient } from '@/utils/siteforge/wordpress-client'
 import { brandForgeContractV1Schema } from '@/utils/brandforge/contracts'
-import { mapWebsiteAssetRow } from '@/utils/siteforge/assets/repository'
 import { loadSiteForgePublicRuntimeConfig } from '@/utils/siteforge/public-runtime'
+import { loadApprovedFloorPlanSnapshot } from '@/utils/siteforge/providers/floor-plan-repository'
 import { validateWordPressThemeArtifact } from '@/utils/siteforge/wordpress/theme-artifact'
 import {
   siteForgeAnalyticsConfigSchema,
@@ -23,8 +23,11 @@ import {
   getLaunchRelease,
   transitionLaunchRelease,
 } from '@/utils/siteforge/launch/repository'
-import { restoreLaunchRelease } from '@/utils/siteforge/launch/service'
+import { requestLaunchRestore } from '@/utils/siteforge/launch/service'
 import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
+import { loadVerifiedSiteForgeRelease } from '@/utils/siteforge/artifacts/release'
+import { deployArtifactBoundRuntimeV3 } from '@/utils/siteforge/workflows/runtime-deployment-v3'
+import { buildReleaseCertificationBinding } from '@/utils/siteforge/verification/certification-binding'
 
 export interface SiteForgeProductionCertificationInput {
   sharedJobId: string
@@ -66,6 +69,7 @@ async function setStage(
           progress,
           current_step: currentStep,
           heartbeat_at: now,
+          lease_expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
           started_at: progress <= 5 ? now : undefined,
           updated_at: now,
         })
@@ -101,7 +105,7 @@ async function assertProductionNotCancelled(
 ) {
   const { data: job, error } = await client
     .from('shared_jobs')
-    .select('cancel_requested, lifecycle_status')
+    .select('cancel_requested, lifecycle_status, lease_owner')
     .eq('id', input.sharedJobId)
     .single()
   if (
@@ -111,6 +115,28 @@ async function assertProductionNotCancelled(
     job.lifecycle_status === 'cancelled'
   ) {
     throw new FatalError('Production certification was cancelled')
+  }
+  const leaseOwner = `siteforge-production:${input.sharedJobId}`
+  if (job.lease_owner !== leaseOwner) {
+    const now = new Date()
+    const { data: claimed, error: claimError } = await client
+      .from('shared_jobs')
+      .update({
+        lifecycle_status: 'running',
+        lease_owner: leaseOwner,
+        lease_expires_at: new Date(now.getTime() + 15 * 60_000).toISOString(),
+        heartbeat_at: now.toISOString(),
+        updated_at: now.toISOString(),
+      })
+      .eq('id', input.sharedJobId)
+      .eq('domain', 'siteforge.production-certification')
+      .in('lifecycle_status', ['queued', 'running', 'retrying'])
+      .is('lease_owner', null)
+      .select('id')
+      .maybeSingle()
+    if (claimError || !claimed) {
+      throw new FatalError('Production certification is already claimed')
+    }
   }
 }
 
@@ -181,12 +207,29 @@ export async function certifySiteForgeProduction(
   const credentials = await getWordPressCredentialReference(
     website.wordpress_credential_ref
   )
+  const release = await loadVerifiedSiteForgeRelease(input, client)
+  const runtimeV3 = release.artifact.runtimeContractVersion === 3
+  const { data: target, error: targetError } = await client
+    .from('siteforge_wordpress_targets')
+    .select('*')
+    .eq('id', input.targetId)
+    .eq('website_id', input.websiteId)
+    .eq('target_type', 'production')
+    .eq('is_active', true)
+    .single()
+  if (targetError || !target) {
+    throw new FatalError('Exact production WordPress target is unavailable')
+  }
   const blueprint = asRecord(artifact.blueprint)
-  const themeArtifact = validateWordPressThemeArtifact(
-    blueprint.wordpressThemeArtifact
-  )
-  const legal = siteForgeLegalConfigSchema.parse(blueprint.legal)
-  const analytics = siteForgeAnalyticsConfigSchema.parse(blueprint.analytics)
+  const themeArtifact = runtimeV3
+    ? null
+    : validateWordPressThemeArtifact(blueprint.wordpressThemeArtifact)
+  const legal = runtimeV3
+    ? null
+    : siteForgeLegalConfigSchema.parse(blueprint.legal)
+  const analytics = runtimeV3
+    ? null
+    : siteForgeAnalyticsConfigSchema.parse(blueprint.analytics)
   const brandContractResult = brandForgeContractV1Schema.safeParse(
     asRecord(blueprint.brandSnapshot).contract,
   )
@@ -201,9 +244,24 @@ export async function certifySiteForgeProduction(
     .select('*')
     .eq('website_id', input.websiteId)
   if (assetError) throw new Error(`Failed to load production asset manifest: ${assetError.message}`)
-  const approvedImageUrls = (assetRows || [])
-    .map(mapWebsiteAssetRow)
-    .map(asset => asset.fileUrl)
+  const floorPlanSnapshot = await loadApprovedFloorPlanSnapshot(
+    input.propertyId,
+    client
+  )
+  const approvedImageUrls = [
+    ...(assetRows || []).flatMap((asset) =>
+      [asset.file_url, asset.original_url].filter(
+        (value): value is string => typeof value === 'string'
+      )
+    ),
+    ...floorPlanSnapshot.rows.flatMap((row) =>
+      row.imageUrl ? [row.imageUrl] : []
+    ),
+  ]
+  const approvedImageDigests = (assetRows || []).flatMap((asset) => {
+    const digest = asset.byte_sha256 || asset.content_hash
+    return digest ? [digest] : []
+  })
   const publicRuntime = await loadSiteForgePublicRuntimeConfig(
     input.websiteId,
     input.propertyId,
@@ -213,6 +271,7 @@ export async function certifySiteForgeProduction(
     blueprint.propertySnapshot,
     approvedImageUrls,
     publicRuntime.conversionEndpoint,
+    approvedImageDigests,
   )
 
   if (website.target_domain) {
@@ -252,27 +311,35 @@ export async function certifySiteForgeProduction(
     if (error) throw new Error(`Failed to persist production DNS state: ${error.message}`)
   }
 
-  const wp = new WordPressAPIClient(input.productionUrl, {
-    username: credentials.username,
-    password: credentials.password,
-  })
-  await wp.verifyReadiness({
-    timeoutMs: Number(process.env.SITEFORGE_WP_READY_TIMEOUT_MS || 180_000),
-    pollIntervalMs: Number(process.env.SITEFORGE_WP_READY_POLL_MS || 5_000),
-    requireNamespaces: ['wp/v2', 'siteforge/v1'],
-  })
+  const wp = runtimeV3
+    ? null
+    : new WordPressAPIClient(input.productionUrl, {
+        username: credentials.username,
+        password: credentials.password,
+      })
+  if (wp) {
+    await wp.verifyReadiness({
+      timeoutMs: Number(process.env.SITEFORGE_WP_READY_TIMEOUT_MS || 180_000),
+      pollIntervalMs: Number(process.env.SITEFORGE_WP_READY_POLL_MS || 5_000),
+      requireNamespaces: ['wp/v2', 'siteforge/v1'],
+    })
+  }
 
   await setStage(input, 'certifying_exact_artifact', 50, 'Certifying exact production render')
   await assertProductionNotCancelled(input, client)
   const protectedCertification = await certifyRenderedWordPressArtifact({
     artifactId: input.artifactId,
     contentHash: input.contentHash,
+    artifactBinding: buildReleaseCertificationBinding(release),
     targetUrl: input.productionUrl,
     credentials: {
       username: credentials.username,
       password: credentials.password,
     },
     pages,
+    environment: 'production',
+    access: 'protected',
+    requireIndexable: false,
     brandContract: brandContractResult.success
       ? brandContractResult.data
       : undefined,
@@ -293,10 +360,14 @@ export async function certifySiteForgeProduction(
       evidence_manifest: {
         phase: 'protected',
         targetUrl: input.productionUrl,
+        bindingHash: protectedCertification.bindingHash,
+        evidenceHash: protectedCertification.evidenceHash,
         browserEvidenceHash: hashSiteForgeContent(
           protectedCertification.browser
         ),
       },
+      binding_hash: protectedCertification.bindingHash,
+      evidence_hash: protectedCertification.evidenceHash,
       report_hash: hashSiteForgeContent(protectedCertification),
     })
   if (protectedEvidenceError) {
@@ -310,19 +381,55 @@ export async function certifySiteForgeProduction(
 
   await setStage(input, 'activating_indexing', 75, 'Clearing production noindex protection')
   await assertProductionNotCancelled(input, client)
-  await wp.activateProduction(input.contentHash)
+  let runtimeEvidence: Json | null = null
+  if (runtimeV3) {
+    const acfProLicenseKey = process.env.SITEFORGE_ACF_PRO_LICENSE_KEY?.trim()
+    if (!credentials.ssh || !acfProLicenseKey) {
+      throw new FatalError(
+        'Runtime v3 production activation requires exact SSH and ACF package installation'
+      )
+    }
+    const runtimeResult = await deployArtifactBoundRuntimeV3({
+      release,
+      target,
+      deploymentId: input.deploymentId,
+      sharedJobId: input.sharedJobId,
+      environment: 'production',
+      siteUrl: input.productionUrl,
+      adminUrl: `${input.productionUrl.replace(/\/$/, '')}/wp-admin`,
+      username: credentials.username,
+      applicationPassword: credentials.password,
+      ssh: credentials.ssh,
+      acfProLicenseKey,
+      publicRuntime,
+      protection: { mode: 'public' },
+      expectedRemoteContentHash: input.contentHash,
+      client,
+      assertActive: () => assertProductionNotCancelled(input, client),
+      onProgress: async (_stage, detail) => {
+        await setStage(input, 'activating_indexing', 80, detail)
+        await assertProductionNotCancelled(input, client)
+      },
+    })
+    runtimeEvidence = runtimeResult.evidence
+  } else {
+    await wp!.activateProduction(input.contentHash)
+  }
   let certification
   try {
     await assertProductionNotCancelled(input, client)
     certification = await certifyRenderedWordPressArtifact({
       artifactId: input.artifactId,
       contentHash: input.contentHash,
+      artifactBinding: buildReleaseCertificationBinding(release),
       targetUrl: input.productionUrl,
       credentials: {
         username: credentials.username,
         password: credentials.password,
       },
       pages,
+      environment: 'production',
+      access: 'public',
       requireIndexable: true,
       brandContract: brandContractResult.success
         ? brandContractResult.data
@@ -344,8 +451,12 @@ export async function certifySiteForgeProduction(
         evidence_manifest: {
           phase: 'public',
           targetUrl: input.productionUrl,
+          bindingHash: certification.bindingHash,
+          evidenceHash: certification.evidenceHash,
           browserEvidenceHash: hashSiteForgeContent(certification.browser),
         },
+        binding_hash: certification.bindingHash,
+        evidence_hash: certification.evidenceHash,
         report_hash: hashSiteForgeContent(certification),
       })
     if (publicEvidenceError) {
@@ -357,11 +468,14 @@ export async function certifySiteForgeProduction(
       throw new FatalError('Production activation failed indexability certification')
     }
   } catch (cause) {
+    if (runtimeV3) {
+      throw cause
+    }
     try {
-      await restoreProductionProtection(wp, {
-        themeArtifact,
-        legal,
-        analytics,
+      await restoreProductionProtection(wp!, {
+        themeArtifact: themeArtifact!,
+        legal: legal!,
+        analytics: analytics!,
         publicRuntime,
       })
     } catch (protectionError) {
@@ -377,7 +491,10 @@ export async function certifySiteForgeProduction(
   }
 
   const completedAt = new Date().toISOString()
-  const report = certification as unknown as Json
+  const report = {
+    ...asRecord(certification),
+    ...(runtimeEvidence ? { runtimeEvidence } : {}),
+  } as Json
   const [
     { error: deploymentCompleteError },
     { error: targetCompleteError },
@@ -447,6 +564,8 @@ export async function certifySiteForgeProduction(
           certification,
         } as unknown as Json,
         heartbeat_at: completedAt,
+        lease_owner: null,
+        lease_expires_at: null,
         finished_at: completedAt,
         updated_at: completedAt,
       })
@@ -528,6 +647,8 @@ export async function failSiteForgeProductionCertification(
         current_step: 'Production certification failed',
         error_message: message,
         error_details: { message } as Json,
+        lease_owner: null,
+        lease_expires_at: null,
         finished_at: now,
         updated_at: now,
       })
@@ -551,39 +672,19 @@ export async function failSiteForgeProductionCertification(
       .eq('id', input.websiteId),
   ])
   try {
-    const restore = await restoreLaunchRelease(
+    await requestLaunchRestore(
       {
         releaseId: input.releaseId,
         propertyId: input.propertyId,
-        rationale: `Automatic safety restore after post-promotion certification failure: ${message}`,
+        rationale: `Operator restore required after post-promotion certification failure: ${message}`,
         actorId: input.actorId,
         requestId: input.sharedJobId,
+        source: 'production_failure',
       },
       client
     )
-    if (restore.manualRequired) {
-      const release = restore.release
-      if (release.backup_id) {
-        await client.from('siteforge_restore_drills').insert({
-          org_id: input.orgId,
-          property_id: input.propertyId,
-          website_id: input.websiteId,
-          release_id: release.id,
-          backup_id: release.backup_id,
-          expected_artifact_id: release.rollback_artifact_id || release.artifact_id,
-          expected_content_hash:
-            release.rollback_content_hash || release.artifact_content_hash,
-          status: 'queued',
-          verification_report: {
-            requestType: 'automatic_safety_restore_manual_provider_fallback',
-            executionRequiresOperator: true,
-            reason: message,
-          } as Json,
-        })
-      }
-    }
   } catch (restoreError) {
-    console.error('[siteforge_production_certification] automatic restore failed', {
+    console.error('[siteforge_production_certification] restore request failed', {
       releaseId: input.releaseId,
       error: restoreError instanceof Error ? restoreError.message : String(restoreError),
     })

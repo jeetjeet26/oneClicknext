@@ -12,6 +12,11 @@ import {
   compileSiteForgeRuntimeRelease,
   createSiteForgeDeploymentSubmission,
 } from '@/utils/siteforge/wordpress/runtime-compiler'
+import {
+  propertyContextFromOnboardingSnapshot,
+  runtimePropertyProfile,
+} from '@/utils/siteforge/property-context'
+import type { SiteForgePublicRuntimeConfig } from '@/utils/siteforge/public-runtime'
 
 function record(value: Json | undefined): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -29,6 +34,14 @@ export async function deployVerifiedReleaseThroughRuntime(input: {
   username: string
   applicationPassword: string
   lastVerifiedContentHash: string | null
+  target?: {
+    mode: 'canonical_preview' | 'staging' | 'production'
+    siteUrl: string
+  }
+  publicRuntime?: SiteForgePublicRuntimeConfig
+  protection?: {
+    mode: 'noindex' | 'password_noindex' | 'public'
+  }
   onProgress?: (stage: string, detail: string) => Promise<void> | void
   runtimeClient?: Pick<
     SiteForgeRuntimeClient,
@@ -89,6 +102,22 @@ export async function deployVerifiedReleaseThroughRuntime(input: {
 
   const blueprint = record(input.release.artifact.blueprint)
   const propertySnapshot = record(blueprint.propertySnapshot as Json | undefined)
+  const snapshotProperty = record(propertySnapshot.property as Json | undefined)
+  const snapshotName = text(snapshotProperty.name, text(propertySnapshot.name))
+  const propertyContext =
+    Object.keys(propertySnapshot).length > 0 && snapshotName
+      ? propertyContextFromOnboardingSnapshot({
+          ...propertySnapshot,
+          property: {
+            ...snapshotProperty,
+            id: text(
+              snapshotProperty.id,
+              text(propertySnapshot.id, input.release.artifact.propertyId)
+            ),
+            name: snapshotName,
+          },
+        })
+      : null
   const pages = Array.isArray(blueprint.pages)
     ? (blueprint.pages as Array<Record<string, unknown>>)
     : []
@@ -118,8 +147,14 @@ export async function deployVerifiedReleaseThroughRuntime(input: {
       artifactId: input.release.artifact.id,
       artifactContentHash: input.release.artifact.contentHash,
       assetManifestHash: assetBindingHash,
-      siteName: text(propertySnapshot.name, 'SiteForge website'),
-      tagline: text(propertySnapshot.tagline),
+      siteName: propertyContext?.name || text(propertySnapshot.name, 'SiteForge website'),
+      tagline: text(
+        record(propertySnapshot.property as Json | undefined).tagline ??
+          propertySnapshot.tagline
+      ),
+      propertyProfile: propertyContext
+        ? runtimePropertyProfile(propertyContext)
+        : undefined,
       blueprint: input.release.artifact.blueprint,
       assets: input.release.runtimeAssets,
       selectedAssets: input.release.runtimeSelectedAssets,
@@ -132,6 +167,9 @@ export async function deployVerifiedReleaseThroughRuntime(input: {
       },
       legal: record(blueprint.legal as Json | undefined),
       analytics: record(blueprint.analytics as Json | undefined),
+      target: input.target,
+      publicRuntime: input.publicRuntime,
+      protection: input.protection,
     },
     expectedRemoteContentHash: state.artifactContentHash,
   })

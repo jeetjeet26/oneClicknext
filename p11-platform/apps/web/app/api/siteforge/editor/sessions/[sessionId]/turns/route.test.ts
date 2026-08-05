@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NextRequest } from 'next/server'
 
@@ -55,5 +56,15 @@ describe('semantic editor turn route', () => {
     })
     expect(response.status).toBe(404)
     expect(start).not.toHaveBeenCalled()
+  })
+
+  it('uses the durable job identity for replay and terminalizes startup failures', async () => {
+    const source = await readFile(new URL('./route.ts', import.meta.url), 'utf8')
+
+    expect(source).toContain(".eq('dedupe_key', dedupeKey)")
+    expect(source).toContain(".eq('shared_job_id', duplicateJob.id)")
+    expect(source.match(/sharedJobId: job\.id/g)).toHaveLength(3)
+    expect(source).toContain("status_reason: 'workflow_start_failed'")
+    expect(source).toContain('Failed to link semantic edit workflow')
   })
 })

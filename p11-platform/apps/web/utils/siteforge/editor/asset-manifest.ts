@@ -53,6 +53,101 @@ function collectReferenceStrings(value: unknown, references: Set<string>): void 
   }
 }
 
+type MediaReference = {
+  path: string
+  assetId: string | null
+  url: string
+}
+
+function collectMediaReferences(
+  value: unknown,
+  path = '$',
+  references: MediaReference[] = []
+): MediaReference[] {
+  if (Array.isArray(value)) {
+    value.forEach((item, index) =>
+      collectMediaReferences(item, `${path}[${index}]`, references)
+    )
+    return references
+  }
+  if (!value || typeof value !== 'object') return references
+
+  const record = value as Record<string, unknown>
+  if (
+    typeof record.url === 'string' &&
+    (typeof record.alt === 'string' || typeof record.assetId === 'string')
+  ) {
+    references.push({
+      path,
+      assetId: typeof record.assetId === 'string' ? record.assetId : null,
+      url: record.url,
+    })
+  }
+  if (typeof record.image_url === 'string') {
+    references.push({
+      path: `${path}.image_url`,
+      assetId:
+        typeof record.image_asset_id === 'string'
+          ? record.image_asset_id
+          : null,
+      url: record.image_url,
+    })
+  }
+  for (const [key, assetId] of Object.entries(record)) {
+    if (!key.endsWith('AssetId') || typeof assetId !== 'string') continue
+    const prefix = key.slice(0, -'AssetId'.length)
+    const url = record[`${prefix}Url`]
+    if (typeof url === 'string') {
+      references.push({ path: `${path}.${prefix}`, assetId, url })
+    }
+  }
+  Object.entries(record).forEach(([key, item]) =>
+    collectMediaReferences(item, `${path}.${key}`, references)
+  )
+  return references
+}
+
+export function assertApprovedAssetReferenceClosure(input: {
+  approvedAssets: Json
+  updatedBlueprint: Json
+  originalBlueprint: Json
+}): void {
+  const assets = z.array(approvedAssetRowSchema).parse(input.approvedAssets)
+  const originalByPath = new Map(
+    collectMediaReferences(input.originalBlueprint).map(reference => [
+      reference.path,
+      reference,
+    ])
+  )
+
+  for (const reference of collectMediaReferences(input.updatedBlueprint)) {
+    const original = originalByPath.get(reference.path)
+    if (
+      original?.assetId === reference.assetId &&
+      original.url === reference.url
+    ) {
+      continue
+    }
+    if (!reference.assetId) {
+      throw new Error(
+        `Changed SiteForge media reference requires an approved asset ID: ${reference.path}`
+      )
+    }
+    const asset = assets.find(candidate => candidate.id === reference.assetId)
+    if (
+      !asset ||
+      ![asset.file_url, asset.original_url].includes(reference.url) ||
+      asset.approval_status !== 'approved' ||
+      !['owned', 'licensed', 'generated'].includes(asset.rights_status || '') ||
+      !(asset.byte_sha256 || asset.content_hash)
+    ) {
+      throw new Error(
+        `Changed SiteForge media reference is not closed over an approved immutable asset: ${reference.path}`
+      )
+    }
+  }
+}
+
 export function buildApprovedAssetManifest(
   rows: Json,
   referencedBy?: Json

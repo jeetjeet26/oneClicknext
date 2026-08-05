@@ -19,7 +19,7 @@ describe('Gmail callback route', () => {
     vi.resetModules()
     vi.stubEnv('GOOGLE_CLIENT_ID', 'google-client-id')
     vi.stubEnv('GOOGLE_CLIENT_SECRET', 'google-client-secret')
-    vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://app.example.com')
+    vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://app.example.com')
     vi.stubGlobal('fetch', fetchMock)
   })
 

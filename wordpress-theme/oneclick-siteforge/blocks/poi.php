@@ -12,11 +12,13 @@ if ( ! defined( 'ABSPATH' ) ) {
 $categories = get_field( 'categories' ) ?: array();
 $intro_text = get_field( 'intro_text' );
 $radius_miles = get_field( 'radius_miles' ) ?: 1;
+$points = get_field( 'points' ) ?: array();
 $property_lat = oneclick_get_field( 'property_latitude' );
 $property_lng = oneclick_get_field( 'property_longitude' );
 $api_key = oneclick_get_field( 'google_maps_api_key' );
+$has_map = ! empty( $categories ) && ! empty( $property_lat ) && ! empty( $property_lng ) && ! empty( $api_key );
 
-if ( empty( $categories ) || empty( $property_lat ) || empty( $property_lng ) ) {
+if ( ! $has_map && empty( $points ) ) {
 	return;
 }
 
@@ -25,7 +27,7 @@ $categories_json = wp_json_encode( $categories );
 $radius_meters = intval( $radius_miles ) * 1609.34;
 ?>
 
-<section <?php echo oneclick_get_block_wrapper_attributes( array( 'class' => 'block-poi' ) ); ?>>
+<section <?php echo oneclick_get_block_wrapper_attributes( $block, array( 'class' => 'block-poi' ) ); ?>>
 	<div class="site-container">
 		<?php
 		if ( ! empty( $intro_text ) ) {
@@ -35,6 +37,7 @@ $radius_meters = intval( $radius_miles ) * 1609.34;
 		}
 		?>
 
+		<?php if ( $has_map ) { ?>
 		<div class="poi-container">
 			<div id="<?php echo esc_attr( $unique_id ); ?>" class="poi-map" data-lat="<?php echo esc_attr( $property_lat ); ?>" data-lng="<?php echo esc_attr( $property_lng ); ?>" data-radius="<?php echo esc_attr( $radius_meters ); ?>" data-categories="<?php echo esc_attr( $categories_json ); ?>"></div>
 
@@ -63,9 +66,33 @@ $radius_meters = intval( $radius_miles ) * 1609.34;
 				</ul>
 			</div>
 		</div>
+		<?php } else { ?>
+		<div class="poi-list" aria-label="<?php esc_attr_e( 'Nearby places', 'oneclick-siteforge' ); ?>">
+			<?php foreach ( $points as $point ) { ?>
+				<article class="poi-list-item">
+					<h3><?php echo esc_html( $point['name'] ?? '' ); ?></h3>
+					<?php if ( ! empty( $point['category'] ) ) { ?>
+						<p class="poi-category"><?php echo esc_html( $point['category'] ); ?></p>
+					<?php } ?>
+					<?php if ( ! empty( $point['address'] ) ) { ?>
+						<p><?php echo esc_html( $point['address'] ); ?></p>
+					<?php } ?>
+					<?php if ( isset( $point['distance_miles'] ) && '' !== $point['distance_miles'] ) { ?>
+						<p><?php echo esc_html( number_format_i18n( (float) $point['distance_miles'], 1 ) ); ?> <?php esc_html_e( 'miles away', 'oneclick-siteforge' ); ?></p>
+					<?php } elseif ( ! empty( $point['travel_time_minutes'] ) ) { ?>
+						<p><?php echo esc_html( absint( $point['travel_time_minutes'] ) ); ?> <?php esc_html_e( 'minutes away', 'oneclick-siteforge' ); ?></p>
+					<?php } ?>
+					<?php if ( ! empty( $point['source_url'] ) ) { ?>
+						<a href="<?php echo esc_url( $point['source_url'] ); ?>" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Learn more', 'oneclick-siteforge' ); ?></a>
+					<?php } ?>
+				</article>
+			<?php } ?>
+		</div>
+		<?php } ?>
 	</div>
 </section>
 
+<?php if ( $has_map ) { ?>
 <script>
 	document.addEventListener( 'DOMContentLoaded', function() {
 		const poiElement = document.getElementById( '<?php echo esc_js( $unique_id ); ?>' );
@@ -145,3 +172,4 @@ $radius_meters = intval( $radius_miles ) * 1609.34;
 		document.head.appendChild( script );
 	});
 </script>
+<?php } ?>

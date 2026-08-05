@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
+import { ACACIA_REGRESSION_BASELINE_V1 as acacia } from '@/fixtures/acacia-regression.v1'
 import {
   P11ConversionAdapter,
   ingestPublicSiteForgeConversion,
+  isAllowedPublicWebsiteOrigin,
   normalizedLeadSubmissionSchema,
+  resolvePublicWebsiteConversionContext,
   siteForgePublicConversionSchema,
 } from './conversions'
 
@@ -43,7 +46,104 @@ function insertionClient() {
   }
 }
 
+function publicContextClient() {
+  const rows: Record<string, unknown> = {
+    property_websites: {
+      id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      org_id: '11111111-1111-4111-8111-111111111111',
+      property_id: '22222222-2222-4222-8222-222222222222',
+      siteforge_public_key: 'sf_public_test',
+      current_artifact_version_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      target_domain: null,
+      wp_url: null,
+      staging_url: null,
+      production_url: 'https://production.example.com',
+      canonical_preview_url: null,
+    },
+    properties: {
+      id: '22222222-2222-4222-8222-222222222222',
+      org_id: '11111111-1111-4111-8111-111111111111',
+      name: 'Aspen House',
+      address: null,
+      website_url: null,
+    },
+    lumaleasing_config: { is_active: true, tours_enabled: false },
+    siteforge_wordpress_targets: [
+      { site_url: '  https://preview.example.com/path\n' },
+    ],
+  }
+
+  return {
+    from: vi.fn((table: string) => {
+      const builder: Record<string, unknown> = {}
+      builder.select = vi.fn(() => builder)
+      builder.eq = vi.fn(() => builder)
+      builder.maybeSingle = vi.fn().mockResolvedValue({
+        data: rows[table] ?? null,
+        error: null,
+      })
+      builder.then = (
+        resolve: (value: { data: unknown; error: null }) => unknown
+      ) => Promise.resolve(resolve({ data: rows[table] ?? null, error: null }))
+      return builder
+    }),
+  }
+}
+
 describe('provider-neutral conversion adapters', () => {
+  it('accepts legacy Postgres UUID identifiers resolved from trusted rows', () => {
+    expect(
+      normalizedLeadSubmissionSchema.safeParse({
+        ...lead,
+        orgId: '11111111-1111-1111-1111-111111111111',
+        propertyId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+      }).success
+    ).toBe(true)
+  })
+
+  it('trusts durable active targets and production URLs after preview invalidation', async () => {
+    const context = await resolvePublicWebsiteConversionContext(
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      publicContextClient() as never
+    )
+
+    expect(context?.allowedOrigins).toEqual([
+      'https://production.example.com',
+      'https://preview.example.com',
+    ])
+    expect(
+      context &&
+        isAllowedPublicWebsiteOrigin(context, 'https://preview.example.com')
+    ).toBe(true)
+  })
+
+  it('keeps the Acacia origin exact and rejects lookalike or insecure origins', () => {
+    const context = {
+      websiteId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      publicKey: 'sanitized-public-test-key',
+      artifactId: null,
+      orgId: '11111111-1111-4111-8111-111111111111',
+      propertyId: '22222222-2222-4222-8222-222222222222',
+      propertyName: acacia.property.name,
+      provider: 'lumaleasing' as const,
+      toursEnabled: false,
+      allowedOrigins: acacia.siteForge.allowedOrigins,
+    }
+
+    expect(
+      isAllowedPublicWebsiteOrigin(context, acacia.property.publicUrl)
+    ).toBe(true)
+    expect(
+      isAllowedPublicWebsiteOrigin(
+        context,
+        'https://www.dividendhomes.com.evil.example'
+      )
+    ).toBe(false)
+    expect(
+      isAllowedPublicWebsiteOrigin(context, 'http://www.dividendhomes.com')
+    ).toBe(false)
+  })
+
   it('requires explicit consent before a lead can be submitted', () => {
     expect(
       normalizedLeadSubmissionSchema.safeParse({ ...lead, consent: false }).success
@@ -87,6 +187,46 @@ describe('provider-neutral conversion adapters', () => {
     expect(parsed.consent).toBe(true)
     expect(parsed).not.toHaveProperty('orgId')
     expect(parsed).not.toHaveProperty('propertyId')
+  })
+
+  it('accepts only the versioned Acacia consent and telemetry-state contract', () => {
+    for (const consent of acacia.siteForge.conversionConsent.accepted) {
+      const parsed = siteForgePublicConversionSchema.safeParse({
+        name: 'Regression Visitor',
+        email: 'regression@example.test',
+        form_type: 'contact',
+        submission_id: 'acacia-regression-123',
+        consent,
+        consent_text: 'I agree to receive leasing communications.',
+        analytics_consent: 'denied',
+      })
+      expect(parsed.success).toBe(true)
+    }
+
+    for (const consent of acacia.siteForge.conversionConsent.rejected) {
+      const parsed = siteForgePublicConversionSchema.safeParse({
+        name: 'Regression Visitor',
+        email: 'regression@example.test',
+        form_type: 'contact',
+        submission_id: 'acacia-regression-123',
+        consent,
+        consent_text: 'I agree to receive leasing communications.',
+      })
+      expect(parsed.success).toBe(false)
+    }
+
+    for (const analyticsConsent of acacia.siteForge.analyticsConsentStates) {
+      const parsed = siteForgePublicConversionSchema.safeParse({
+        name: 'Regression Visitor',
+        email: 'regression@example.test',
+        form_type: 'contact',
+        submission_id: `acacia-${analyticsConsent}`,
+        consent: true,
+        consent_text: 'I agree to receive leasing communications.',
+        analytics_consent: analyticsConsent,
+      })
+      expect(parsed.success).toBe(true)
+    }
   })
 
   it('rejects public submissions without consent evidence or a contact method', () => {

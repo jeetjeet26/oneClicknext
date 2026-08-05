@@ -57,6 +57,7 @@ type EditorSessionPayload = {
     stagingCertifiedAt: string | null
     cloudwaysDashboard: string | null
   }
+  runtimeExtensionsEnabled?: boolean
   extensionRequests?: Array<{
     id: string
     capability: string
@@ -64,7 +65,48 @@ type EditorSessionPayload = {
     requested_behavior: string
     status: string
     created_at: string
+    review: {
+      sourceArtifact: {
+        id: string
+        version: number
+        content_hash: string
+        created_at: string
+      } | null
+      packageSha256: string | null
+      manifest: {
+        manifestVersion: number
+        contentHash: string
+        files: Array<{
+          path: string
+          contentHash: string
+          bytes: number
+          mediaType: string
+        }>
+      } | null
+      validationReport: unknown
+      screenshotReport: unknown
+      files: Array<{
+        path: string
+        content: string
+        contentHash: string
+        bytes: number
+        mediaType: string
+        contentDigestVerified: boolean
+      }>
+      sourceIsCurrent: boolean
+      reviewComplete: boolean
+      reviewError: string | null
+    }
   }>
+}
+
+type ExtensionDecision = 'approved' | 'rejected'
+
+type EditJobFailure = {
+  jobId: string
+  status: 'failed' | 'cancelled'
+  statusReason: string | null
+  errorMessage: string | null
 }
 
 type PropertyAsset = {
@@ -99,6 +141,18 @@ export function SiteForgeEditorWorkspace({ websiteId }: { websiteId: string }) {
   const [previewStep, setPreviewStep] = useState<string | null>(null)
   const [deployingStaging, setDeployingStaging] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [editJobFailure, setEditJobFailure] =
+    useState<EditJobFailure | null>(null)
+  const [extensionDecisionReasons, setExtensionDecisionReasons] = useState<
+    Record<string, string>
+  >({})
+  const [pendingExtensionDecision, setPendingExtensionDecision] = useState<{
+    requestId: string
+    decision: ExtensionDecision
+  } | null>(null)
+  const [extensionDecisionErrors, setExtensionDecisionErrors] = useState<
+    Record<string, string>
+  >({})
   const [previewRevision, setPreviewRevision] = useState(0)
   const chatEndRef = useRef<HTMLDivElement>(null)
   const previewingWordPressRef = useRef(false)
@@ -257,6 +311,17 @@ export function SiteForgeEditorWorkspace({ websiteId }: { websiteId: string }) {
             data.job.lifecycle_status
           )
         ) {
+          const terminalStatus = data.job.lifecycle_status
+          if (terminalStatus === 'failed' || terminalStatus === 'cancelled') {
+            setEditJobFailure({
+              jobId: activeJobId,
+              status: terminalStatus,
+              statusReason: data.job.status_reason || null,
+              errorMessage: data.job.error_message || null,
+            })
+          } else {
+            setEditJobFailure(null)
+          }
           setActiveJobId(null)
           setSubmitting(false)
           const refreshed = await openSession()
@@ -296,6 +361,7 @@ export function SiteForgeEditorWorkspace({ websiteId }: { websiteId: string }) {
     if (!payload || !artifact || !userIntent || submitting) return
     setSubmitting(true)
     setError(null)
+    setEditJobFailure(null)
     const contextualIntent = elementContext.trim()
       ? `${userIntent}\n\nOptional page/element context: ${elementContext.trim()}`
       : userIntent
@@ -315,6 +381,17 @@ export function SiteForgeEditorWorkspace({ websiteId }: { websiteId: string }) {
       )
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || 'Failed to submit edit')
+      if (data.duplicate) {
+        await openSession()
+        setIntent('')
+        setElementContext('')
+        if (['succeeded', 'failed', 'cancelled'].includes(data.status)) {
+          setSubmitting(false)
+        } else {
+          setActiveJobId(data.jobId)
+        }
+        return
+      }
       setIntent('')
       setElementContext('')
       setPayload((current) =>
@@ -442,6 +519,67 @@ export function SiteForgeEditorWorkspace({ websiteId }: { websiteId: string }) {
     }
   }
 
+  async function decideExtension(
+    requestId: string,
+    decision: ExtensionDecision
+  ) {
+    if (pendingExtensionDecision) return
+    const reason = extensionDecisionReasons[requestId]?.trim() || ''
+    if (!reason) {
+      setExtensionDecisionErrors((current) => ({
+        ...current,
+        [requestId]: 'Enter a decision reason before approving or rejecting.',
+      }))
+      return
+    }
+
+    setPendingExtensionDecision({ requestId, decision })
+    setExtensionDecisionErrors((current) => {
+      const next = { ...current }
+      delete next[requestId]
+      return next
+    })
+    let decisionSaved = false
+    try {
+      const response = await fetch(
+        `/api/siteforge/extensions/${requestId}/decision`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ decision, reason }),
+        }
+      )
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            `Failed to ${
+              decision === 'approved' ? 'approve' : 'reject'
+            } extension`
+        )
+      }
+      decisionSaved = true
+      await openSession()
+      setExtensionDecisionReasons((current) => {
+        const next = { ...current }
+        delete next[requestId]
+        return next
+      })
+    } catch (cause) {
+      setExtensionDecisionErrors((current) => ({
+        ...current,
+        [requestId]:
+          decisionSaved
+            ? 'Decision saved, but the editor could not refresh. Reload to see the updated request status.'
+            : cause instanceof Error
+            ? cause.message
+            : 'Failed to review runtime extension request',
+      }))
+    } finally {
+      setPendingExtensionDecision(null)
+    }
+  }
+
   function referenceAsset(asset: PropertyAsset) {
     setElementContext(
       `Use approved asset ${asset.id} (${asset.filename})${
@@ -548,17 +686,6 @@ export function SiteForgeEditorWorkspace({ websiteId }: { websiteId: string }) {
             approval. Cloudways dashboard confirmation is used only when
             provider automation is unavailable.
           </p>
-          {payload.extensionRequests?.map((request) => (
-            <div
-              key={request.id}
-              className="rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-950"
-            >
-              <p className="font-medium">
-                Runtime extension {request.status}: {request.capability}
-              </p>
-              <p>{request.reason}</p>
-            </div>
-          ))}
         </CardHeader>
         <CardContent className="flex min-h-0 flex-1 flex-col gap-3 p-0">
           <div
@@ -571,7 +698,245 @@ export function SiteForgeEditorWorkspace({ websiteId }: { websiteId: string }) {
                 never required.
               </div>
             ) : null}
-            {payload.messages.map((message) => (
+            {payload.extensionRequests?.length ? (
+              <section
+                aria-labelledby="runtime-extension-review-heading"
+                className="space-y-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-amber-950"
+              >
+                <div>
+                  <h2
+                    id="runtime-extension-review-heading"
+                    className="text-sm font-semibold"
+                  >
+                    Runtime extension review
+                  </h2>
+                  <p className="mt-1 text-xs">
+                    Exact WordPress preview and certification are required
+                    before custom behavior can release.
+                  </p>
+                </div>
+                {payload.extensionRequests.map((request) => {
+                  const reasonId = `extension-decision-reason-${request.id}`
+                  const errorId = `extension-decision-error-${request.id}`
+                  const isPending =
+                    pendingExtensionDecision?.requestId === request.id
+                  const isProposed = request.status === 'proposed'
+                  const canApprove =
+                    isProposed && request.review.reviewComplete
+
+                  return (
+                    <article
+                      key={request.id}
+                      aria-busy={isPending}
+                      className="space-y-2 rounded border border-amber-300 bg-background/80 p-3 text-xs"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <p className="font-semibold">
+                            Capability: {request.capability}
+                          </p>
+                          <p className="mt-1 text-muted-foreground">
+                            Source request{' '}
+                            <span className="break-all font-mono">
+                              {request.id}
+                            </span>
+                          </p>
+                          <p className="text-muted-foreground">
+                            Submitted{' '}
+                            {new Date(request.created_at).toLocaleString()}
+                          </p>
+                        </div>
+                        <Badge variant="outline">{request.status}</Badge>
+                      </div>
+                      <div>
+                        <p className="font-medium">Proposed change</p>
+                        <p className="mt-1 whitespace-pre-wrap">
+                          {request.requested_behavior}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="font-medium">Request rationale</p>
+                        <p className="mt-1 whitespace-pre-wrap">
+                          {request.reason}
+                        </p>
+                      </div>
+                      <div className="space-y-1 rounded border bg-muted/30 p-2">
+                        <p className="font-medium">Exact source revision</p>
+                        {request.review.sourceArtifact ? (
+                          <>
+                            <p>
+                              Version {request.review.sourceArtifact.version}{' '}
+                              {request.review.sourceIsCurrent
+                                ? '· current'
+                                : '· stale'}
+                            </p>
+                            <p className="break-all font-mono">
+                              {request.review.sourceArtifact.id}
+                            </p>
+                            <p className="break-all font-mono">
+                              Content {request.review.sourceArtifact.content_hash}
+                            </p>
+                          </>
+                        ) : (
+                          <p>Source identity unavailable</p>
+                        )}
+                        <p className="break-all font-mono">
+                          Package {request.review.packageSha256 || 'unverified'}
+                        </p>
+                        <p className="break-all font-mono">
+                          Manifest{' '}
+                          {request.review.manifest?.contentHash || 'unverified'}
+                        </p>
+                      </div>
+                      {request.review.files.length ? (
+                        <div className="space-y-2">
+                          <p className="font-medium">
+                            Generated file review
+                          </p>
+                          {request.review.files.map(file => (
+                            <details
+                              key={file.path}
+                              className="rounded border bg-background p-2"
+                            >
+                              <summary className="cursor-pointer font-mono">
+                                New file · {file.path} · {file.bytes} bytes
+                              </summary>
+                              <p className="mt-2 break-all font-mono text-[10px]">
+                                SHA-256 {file.contentHash}{' '}
+                                {file.contentDigestVerified
+                                  ? '· verified'
+                                  : '· mismatch'}
+                              </p>
+                              <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded bg-muted p-2 text-[11px]">
+                                {file.content}
+                              </pre>
+                            </details>
+                          ))}
+                        </div>
+                      ) : null}
+                      <details className="rounded border bg-background p-2">
+                        <summary className="cursor-pointer font-medium">
+                          Sandbox validation checks
+                        </summary>
+                        <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words text-[11px]">
+                          {JSON.stringify(
+                            request.review.validationReport,
+                            null,
+                            2
+                          )}
+                        </pre>
+                      </details>
+                      <details className="rounded border bg-background p-2">
+                        <summary className="cursor-pointer font-medium">
+                          Screenshot certification report
+                        </summary>
+                        <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words text-[11px]">
+                          {JSON.stringify(
+                            request.review.screenshotReport,
+                            null,
+                            2
+                          )}
+                        </pre>
+                      </details>
+                      {!request.review.reviewComplete ? (
+                        <p role="alert" className="font-medium text-red-700">
+                          Approval blocked:{' '}
+                          {request.review.reviewError ||
+                            'package or validation data is incomplete'}
+                        </p>
+                      ) : null}
+                      {isProposed ? (
+                        <>
+                          <div>
+                            <label
+                              htmlFor={reasonId}
+                              className="font-medium"
+                            >
+                              Decision reason
+                            </label>
+                            <Textarea
+                              id={reasonId}
+                              className="mt-1 min-h-20 bg-background"
+                              value={
+                                extensionDecisionReasons[request.id] || ''
+                              }
+                              onChange={(event) => {
+                                const value = event.target.value
+                                setExtensionDecisionReasons((current) => ({
+                                  ...current,
+                                  [request.id]: value,
+                                }))
+                                if (extensionDecisionErrors[request.id]) {
+                                  setExtensionDecisionErrors((current) => {
+                                    const next = { ...current }
+                                    delete next[request.id]
+                                    return next
+                                  })
+                                }
+                              }}
+                              disabled={isPending}
+                              aria-describedby={
+                                extensionDecisionErrors[request.id]
+                                  ? errorId
+                                  : undefined
+                              }
+                              placeholder="Explain why this custom behavior should or should not proceed…"
+                            />
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={() =>
+                                void decideExtension(request.id, 'approved')
+                              }
+                              disabled={
+                                Boolean(pendingExtensionDecision) || !canApprove
+                              }
+                              aria-label={`Approve ${request.capability} extension request`}
+                            >
+                              {isPending &&
+                              pendingExtensionDecision?.decision === 'approved'
+                                ? 'Approving…'
+                                : 'Approve'}
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="destructive"
+                              onClick={() =>
+                                void decideExtension(request.id, 'rejected')
+                              }
+                              disabled={Boolean(pendingExtensionDecision)}
+                              aria-label={`Reject ${request.capability} extension request`}
+                            >
+                              {isPending &&
+                              pendingExtensionDecision?.decision === 'rejected'
+                                ? 'Rejecting…'
+                                : 'Reject'}
+                            </Button>
+                          </div>
+                        </>
+                      ) : (
+                        <p className="font-medium">
+                          This request has already been {request.status}.
+                        </p>
+                      )}
+                      {extensionDecisionErrors[request.id] ? (
+                        <p
+                          id={errorId}
+                          role="alert"
+                          className="text-red-700"
+                        >
+                          {extensionDecisionErrors[request.id]}
+                        </p>
+                      ) : null}
+                    </article>
+                  )
+                })}
+              </section>
+            ) : null}
+            {payload.messages.map((message, messageIndex) => (
               <div
                 key={message.id}
                 className={`rounded-lg p-3 text-sm ${
@@ -589,8 +954,50 @@ export function SiteForgeEditorWorkspace({ websiteId }: { websiteId: string }) {
                     Revision {message.resulting_artifact_id}
                   </p>
                 ) : null}
+                {message.role === 'assistant' &&
+                message.status === 'failed' &&
+                payload.messages[messageIndex - 1]?.role === 'user' ? (
+                  <Button
+                    className="mt-2"
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      setIntent(payload.messages[messageIndex - 1].content)
+                    }
+                  >
+                    Retry as a new turn
+                  </Button>
+                ) : null}
               </div>
             ))}
+            {editJobFailure ? (
+              <div
+                role="alert"
+                className="mr-6 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-950"
+              >
+                <p className="font-semibold">
+                  Edit {editJobFailure.status}
+                </p>
+                {editJobFailure.errorMessage ? (
+                  <p className="mt-1 whitespace-pre-wrap font-medium">
+                    {editJobFailure.errorMessage}
+                  </p>
+                ) : null}
+                {editJobFailure.statusReason ? (
+                  <p className="mt-1 whitespace-pre-wrap text-xs">
+                    Status reason: {editJobFailure.statusReason}
+                  </p>
+                ) : null}
+                <p className="mt-2 text-xs">
+                  {editJobFailure.status === 'cancelled'
+                    ? 'The edit stopped before producing a revision. Update the request if needed, then send it again.'
+                    : 'No revision was applied. Correct the request or its context, then send it again. If this repeats, share the preserved error code and job ID with support.'}
+                </p>
+                <p className="mt-1 break-all font-mono text-xs">
+                  Job {editJobFailure.jobId}
+                </p>
+              </div>
+            ) : null}
             <div ref={chatEndRef} />
           </div>
 

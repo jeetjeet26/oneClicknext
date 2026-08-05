@@ -1,5 +1,10 @@
 import { z } from 'zod'
-import type { GeneratedPage } from '@/types/siteforge'
+import {
+  isSiteForgeBlockVariant,
+  siteForgeCssClassSchema,
+  type ACFBlockType,
+  type GeneratedPage,
+} from '@/types/siteforge'
 
 const safeLinkSchema = z
   .string()
@@ -68,7 +73,7 @@ export const siteForgeBlockContentSchemas = {
     .object({
       headline: z.string().trim().min(1).max(160),
       subheading: z.string().trim().max(300).optional(),
-      content: z.string().trim().min(1).max(12_000),
+      content: z.string().trim().min(1).max(100_000),
       layout: z.enum(['center', 'left']).default('center'),
       background: z.enum(['white', 'light', 'dark']).default('white'),
     })
@@ -130,16 +135,36 @@ export const siteForgeBlockContentSchemas = {
       subheading: z.string().trim().max(300).optional(),
       form_type: z.enum(['contact', 'tour', 'register']),
       redirect_url: safeLinkSchema.optional(),
-      provider: z.enum(['p11_lumaleasing', 'csv_export', 'unconfigured']),
+      provider: z.literal('p11_lumaleasing'),
       consent_text: z.string().trim().min(1).max(1_000),
     })
     .strict(),
   'acf/map': z
     .object({
+      address: z.string().trim().min(1).max(1_000).optional(),
+      latitude: z.number().min(-90).max(90).optional(),
+      longitude: z.number().min(-180).max(180).optional(),
       zoom_level: z.number().int().min(1).max(21).default(15),
       show_directions: z.boolean().default(true),
     })
-    .strict(),
+    .strict()
+    .superRefine((map, context) => {
+      const hasLatitude = map.latitude !== undefined
+      const hasLongitude = map.longitude !== undefined
+      if (hasLatitude !== hasLongitude) {
+        context.addIssue({
+          code: 'custom',
+          path: hasLatitude ? ['longitude'] : ['latitude'],
+          message: 'Map coordinates require both latitude and longitude',
+        })
+      }
+      if (!map.address && !(hasLatitude && hasLongitude)) {
+        context.addIssue({
+          code: 'custom',
+          message: 'Map requires a sourced address or coordinate pair',
+        })
+      }
+    }),
   'acf/html-section': z
     .object({
       html_content: z
@@ -190,10 +215,16 @@ export const siteForgeBlockContentSchemas = {
               rent_max: z.number().nonnegative().optional(),
               available_count: z.number().int().nonnegative().optional(),
               specials: z.string().trim().max(2_000).optional(),
+              image_asset_id: z.string().uuid().optional(),
               image_url: z.string().url().optional(),
               image_alt: z.string().trim().min(1).max(500).optional(),
               availability_url: safeLinkSchema.optional(),
               apply_url: safeLinkSchema.optional(),
+              source: z.string().trim().min(1).max(100).optional(),
+              source_identity: z.string().trim().min(1).max(500).optional(),
+              effective_at: z.string().datetime().optional(),
+              expires_at: z.string().datetime().optional(),
+              source_updated_at: z.string().datetime().optional(),
             })
             .strict()
         )
@@ -218,6 +249,21 @@ export const siteForgeBlockContentSchemas = {
   'acf/poi': z
     .object({
       intro_text: z.string().trim().max(2_000).optional(),
+      points: z
+        .array(
+          z
+            .object({
+              name: z.string().trim().min(1).max(200),
+              category: z.string().trim().min(1).max(100),
+              address: z.string().trim().max(500).optional(),
+              distance_miles: z.number().nonnegative().max(100).optional(),
+              travel_time_minutes: z.number().int().nonnegative().max(1_000).optional(),
+              source_url: z.string().url().optional(),
+            })
+            .strict()
+        )
+        .max(50)
+        .optional(),
       categories: z
         .array(z.enum(['restaurants', 'shopping', 'entertainment', 'transit']))
         .min(1)
@@ -234,7 +280,7 @@ const sectionBaseSchema = z.object({
   order: z.number().int().nonnegative(),
   label: z.string().min(1).max(160).optional(),
   variant: z.string().min(1).max(120).optional(),
-  cssClasses: z.array(z.string().max(120)).max(20).optional(),
+  cssClasses: z.array(siteForgeCssClassSchema).max(20).optional(),
   purpose: z.string().min(1).max(1_000).optional(),
   evidenceIds: z.array(z.string().min(1)).default([]),
 })
@@ -247,7 +293,7 @@ const strictSectionSchemas = Object.entries(siteForgeBlockContentSchemas).map(
     })
 )
 
-export const strictSiteForgePageSectionSchema = z.discriminatedUnion(
+const strictSiteForgePageSectionUnion = z.discriminatedUnion(
   'acfBlock',
   strictSectionSchemas as [
     (typeof strictSectionSchemas)[number],
@@ -255,6 +301,22 @@ export const strictSiteForgePageSectionSchema = z.discriminatedUnion(
     ...(typeof strictSectionSchemas)[number][],
   ]
 )
+export const strictSiteForgePageSectionSchema =
+  strictSiteForgePageSectionUnion.superRefine((section, context) => {
+    if (
+      section.variant &&
+      !isSiteForgeBlockVariant(
+        section.acfBlock as ACFBlockType,
+        section.variant
+      )
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['variant'],
+        message: `Unsupported ${section.acfBlock} variant "${section.variant}"`,
+      })
+    }
+  })
 
 export const strictGeneratedPageSchema = z
   .object({

@@ -13,12 +13,16 @@ $heading = oneclick_get_block_field( 'heading', $block );
 $subheading = oneclick_get_block_field( 'subheading', $block );
 $form_type = oneclick_get_block_field( 'form_type', $block, 'contact' );
 $redirect_url = oneclick_get_block_field( 'redirect_url', $block );
+$provider = oneclick_get_block_field( 'provider', $block, 'unconfigured' );
 $consent_text = oneclick_get_block_field( 'consent_text', $block, __( 'I consent to be contacted about this property.', 'oneclick-siteforge' ) );
 $lumaleasing = oneclick_siteforge_lumaleasing_configuration();
-$api_endpoint = $lumaleasing['conversionEndpoint'] ?: oneclick_get_field( 'lead_capture_endpoint' );
+$provider_supported = 'p11_lumaleasing' === $provider;
+$api_endpoint = $provider_supported ? $lumaleasing['conversionEndpoint'] : '';
+$block_identity = isset( $block['id'] ) ? (string) $block['id'] : wp_unique_id( 'siteforge-form-' );
+$field_id_prefix = 'form-' . sanitize_html_class( $block_identity );
 ?>
 
-<section <?php echo oneclick_get_block_wrapper_attributes( array( 'class' => 'block-form' ) ); ?>>
+<section <?php echo oneclick_get_block_wrapper_attributes( $block, array( 'class' => 'block-form' ) ); ?>>
 	<div class="site-container">
 		<div class="form-wrapper">
 			<div class="form-intro">
@@ -37,61 +41,62 @@ $api_endpoint = $lumaleasing['conversionEndpoint'] ?: oneclick_get_field( 'lead_
 				?>
 			</div>
 
-			<form class="lead-form" data-type="<?php echo esc_attr( $form_type ); ?>" data-form-type="<?php echo esc_attr( $form_type ); ?>" data-endpoint="<?php echo esc_attr( $api_endpoint ); ?>" data-public-key="<?php echo esc_attr( $lumaleasing['conversionKey'] ); ?>">
+			<?php if ( $provider_supported ) { ?>
+			<form class="lead-form" data-type="<?php echo esc_attr( $form_type ); ?>" data-form-type="<?php echo esc_attr( $form_type ); ?>" data-provider="<?php echo esc_attr( $provider ); ?>" data-endpoint="<?php echo esc_attr( $api_endpoint ); ?>" data-public-key="<?php echo esc_attr( $lumaleasing['conversionKey'] ); ?>">
 				<div class="form-group form-name">
-					<label for="form-name">
+					<label for="<?php echo esc_attr( $field_id_prefix . '-name' ); ?>">
 						<?php esc_html_e( 'Name', 'oneclick-siteforge' ); ?>
 						<span class="required">*</span>
 					</label>
-					<input type="text" id="form-name" name="name" required aria-required="true">
+					<input type="text" id="<?php echo esc_attr( $field_id_prefix . '-name' ); ?>" name="name" required aria-required="true">
 				</div>
 
 				<div class="form-group form-email">
-					<label for="form-email">
+					<label for="<?php echo esc_attr( $field_id_prefix . '-email' ); ?>">
 						<?php esc_html_e( 'Email', 'oneclick-siteforge' ); ?>
 						<span class="required">*</span>
 					</label>
-					<input type="email" id="form-email" name="email" required aria-required="true">
+					<input type="email" id="<?php echo esc_attr( $field_id_prefix . '-email' ); ?>" name="email" required aria-required="true">
 				</div>
 
 				<div class="form-group form-phone">
-					<label for="form-phone">
+					<label for="<?php echo esc_attr( $field_id_prefix . '-phone' ); ?>">
 						<?php esc_html_e( 'Phone', 'oneclick-siteforge' ); ?>
 						<span class="required">*</span>
 					</label>
-					<input type="tel" id="form-phone" name="phone" required aria-required="true">
+					<input type="tel" id="<?php echo esc_attr( $field_id_prefix . '-phone' ); ?>" name="phone" required aria-required="true">
 				</div>
 
 				<?php
 				if ( 'tour' === $form_type ) {
 					?>
 					<div class="form-group form-tour-date">
-						<label for="form-tour-date">
+						<label for="<?php echo esc_attr( $field_id_prefix . '-tour-date' ); ?>">
 							<?php esc_html_e( 'Preferred Tour Date', 'oneclick-siteforge' ); ?>
 						</label>
-						<input type="date" id="form-tour-date" name="tour_date">
+						<input type="date" id="<?php echo esc_attr( $field_id_prefix . '-tour-date' ); ?>" name="tour_date">
 					</div>
 
 					<div class="form-group form-tour-time">
-						<label for="form-tour-time">
+						<label for="<?php echo esc_attr( $field_id_prefix . '-tour-time' ); ?>">
 							<?php esc_html_e( 'Preferred Tour Time', 'oneclick-siteforge' ); ?>
 						</label>
-						<input type="time" id="form-tour-time" name="tour_time">
+						<input type="time" id="<?php echo esc_attr( $field_id_prefix . '-tour-time' ); ?>" name="tour_time">
 					</div>
 					<?php
 				}
 				?>
 
 				<div class="form-group form-message-field">
-					<label for="form-message">
+					<label for="<?php echo esc_attr( $field_id_prefix . '-message' ); ?>">
 						<?php esc_html_e( 'Message', 'oneclick-siteforge' ); ?>
 					</label>
-					<textarea id="form-message" name="message" rows="5"></textarea>
+					<textarea id="<?php echo esc_attr( $field_id_prefix . '-message' ); ?>" name="message" rows="5"></textarea>
 				</div>
 
 				<div class="form-group form-checkbox">
-					<label for="form-consent">
-						<input type="checkbox" id="form-consent" name="consent" required aria-required="true">
+					<label for="<?php echo esc_attr( $field_id_prefix . '-consent' ); ?>">
+						<input type="checkbox" id="<?php echo esc_attr( $field_id_prefix . '-consent' ); ?>" name="consent" required aria-required="true">
 						<?php echo esc_html( $consent_text ); ?>
 					</label>
 				</div>
@@ -115,6 +120,11 @@ $api_endpoint = $lumaleasing['conversionEndpoint'] ?: oneclick_get_field( 'lead_
 				}
 				?>
 			</form>
+			<?php } else { ?>
+				<div class="form-message form-unavailable" role="status" data-provider="<?php echo esc_attr( $provider ); ?>">
+					<?php esc_html_e( 'This form is unavailable because its conversion provider is not supported by this artifact.', 'oneclick-siteforge' ); ?>
+				</div>
+			<?php } ?>
 		</div>
 	</div>
 </section>

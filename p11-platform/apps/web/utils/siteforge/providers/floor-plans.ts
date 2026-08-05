@@ -30,6 +30,7 @@ export const floorPlanInputRowSchema = z
     availabilityUrl: optionalUrl,
     applyUrl: optionalUrl,
     effectiveAt: z.string().datetime().optional(),
+    expiresAt: z.string().datetime().optional(),
     sourceUpdatedAt: z.string().datetime().optional(),
   })
   .superRefine((row, context) => {
@@ -76,6 +77,7 @@ export interface NormalizedFloorPlan {
   availability_url?: string
   apply_url?: string
   effective_at: string
+  expires_at?: string
   source_updated_at?: string
   confidence: number
   review_status: 'pending' | 'approved'
@@ -96,6 +98,11 @@ export interface PublishedFloorPlanRow {
   imageAlt?: string
   availabilityUrl?: string
   applyUrl?: string
+  source?: string
+  sourceIdentity?: string
+  effectiveAt?: string
+  expiresAt?: string
+  sourceUpdatedAt?: string
 }
 
 export interface ApprovedFloorPlanSnapshot {
@@ -192,6 +199,7 @@ abstract class BaseFloorPlanAdapter<Input>
         availability_url: parsed.availabilityUrl,
         apply_url: parsed.applyUrl,
         effective_at: parsed.effectiveAt || now,
+        expires_at: parsed.expiresAt,
         source_updated_at: parsed.sourceUpdatedAt,
         confidence: this.sourceType === 'manual' ? 1 : 0.95,
         review_status: 'approved',
@@ -251,6 +259,7 @@ const csvHeaders: Record<string, keyof ValidFloorPlanInputRow> = {
   availability_url: 'availabilityUrl',
   apply_url: 'applyUrl',
   effective_at: 'effectiveAt',
+  expires_at: 'expiresAt',
   source_updated_at: 'sourceUpdatedAt',
 }
 
@@ -339,6 +348,11 @@ type ApprovedPropertyUnit = {
   floor_plan_image_alt: string | null
   availability_url: string | null
   apply_url: string | null
+  source: string
+  source_identity: string
+  effective_at: string | null
+  expires_at: string | null
+  source_updated_at: string | null
 }
 
 function defined<T>(value: T | null): T | undefined {
@@ -365,6 +379,11 @@ export function createApprovedFloorPlanSnapshot(
       imageAlt: defined(unit.floor_plan_image_alt),
       availabilityUrl: defined(unit.availability_url),
       applyUrl: defined(unit.apply_url),
+      source: unit.source,
+      sourceIdentity: unit.source_identity,
+      effectiveAt: defined(unit.effective_at),
+      expiresAt: defined(unit.expires_at),
+      sourceUpdatedAt: defined(unit.source_updated_at),
     }))
     .sort((left, right) => left.id.localeCompare(right.id))
   const contentHash = hashSiteForgeContent(rows)

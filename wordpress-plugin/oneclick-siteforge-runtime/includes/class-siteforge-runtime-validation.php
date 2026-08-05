@@ -65,6 +65,22 @@ class SiteForge_Runtime_Validation {
 	const HASH_PATTERN = '/^[a-f0-9]{64}$/';
 	const UUID_PATTERN = '/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i';
 	const KEY_PATTERN  = '/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/';
+	const BLOCK_VARIANTS = array(
+		'acf/menu'               => array( 'standard', 'sticky-cta' ),
+		'acf/top-slides'         => array( 'cinematic', 'editorial', 'split' ),
+		'acf/text-section'       => array( 'editorial', 'contained', 'lead' ),
+		'acf/feature-section'    => array( 'alternating', 'bleed', 'framed' ),
+		'acf/image'              => array( 'full-bleed', 'contained' ),
+		'acf/links'              => array( 'inline', 'banner', 'sticky' ),
+		'acf/content-grid'       => array( 'amenity-grid', 'tabs', 'editorial' ),
+		'acf/form'               => array( 'card', 'split', 'minimal' ),
+		'acf/map'                => array( 'standard', 'immersive' ),
+		'acf/html-section'       => array( 'contained', 'full-width' ),
+		'acf/gallery'            => array( 'categorized', 'masonry', 'lightbox' ),
+		'acf/accordion-section'  => array( 'bordered', 'minimal' ),
+		'acf/plans-availability' => array( 'cards', 'details', 'preleasing' ),
+		'acf/poi'                => array( 'narrative', 'map-list', 'editorial' ),
+	);
 
 	/**
 	 * Validate a prepare-assets request without mutating the supplied payload.
@@ -237,17 +253,15 @@ class SiteForge_Runtime_Validation {
 			'siteSettings',
 			'legal',
 			'analytics',
+			'siteConfiguration',
+			'target',
+			'publicRuntime',
+			'protection',
 		);
 		self::reject_unknown_keys( $plan, $allowed, 'plan' );
-		foreach ( $allowed as $required_key ) {
+		foreach ( array( 'pages', 'removals', 'navigation', 'designTokens', 'siteSettings', 'legal', 'analytics' ) as $required_key ) {
 			if ( ! array_key_exists( $required_key, $plan ) ) {
 				self::invalid( 'plan.' . $required_key, $required_key . ' is required.' );
-			}
-		}
-
-		foreach ( $allowed as $required ) {
-			if ( ! array_key_exists( $required, $plan ) ) {
-				self::invalid( 'plan.' . $required, $required . ' is required.' );
 			}
 		}
 
@@ -293,7 +307,7 @@ class SiteForge_Runtime_Validation {
 			foreach ( $sections as $section_index => $section ) {
 				$section_path = 'plan.pages[' . $index . '].sections[' . $section_index . ']';
 				self::assert_object( $section, $section_path );
-				self::reject_unknown_keys( $section, array( 'sectionId', 'blockName', 'order', 'variant', 'data' ), $section_path );
+				self::reject_unknown_keys( $section, array( 'sectionId', 'blockName', 'order', 'variant', 'cssClasses', 'anchor', 'align', 'data' ), $section_path );
 				foreach ( array( 'sectionId', 'blockName', 'order', 'variant', 'data' ) as $required ) {
 					if ( ! array_key_exists( $required, $section ) ) {
 						self::invalid( $section_path . '.' . $required, $required . ' is required.' );
@@ -301,21 +315,35 @@ class SiteForge_Runtime_Validation {
 				}
 				$section_id = self::required_key( $section, 'sectionId', $section_path . '.' );
 				$block_name = self::required_string( $section, 'blockName', 200, $section_path . '.' );
-				if ( ! preg_match( '#^acf/[a-z0-9-]+$#', $block_name ) ) {
-					self::invalid( $section_path . '.blockName', 'Only normalized ACF block names are supported.' );
+				if ( ! isset( self::BLOCK_VARIANTS[ $block_name ] ) ) {
+					self::invalid( $section_path . '.blockName', 'Only registered SiteForge ACF blocks are supported.' );
 				}
 				$order = self::bounded_integer( $section['order'], 0, PHP_INT_MAX, $section_path . '.order' );
 				if ( null !== $section['variant'] && ( ! is_string( $section['variant'] ) || '' === $section['variant'] ) ) {
 					self::invalid( $section_path . '.variant', 'variant must be a non-empty string or null.' );
 				}
+				if ( null !== $section['variant'] && ! in_array( $section['variant'], self::BLOCK_VARIANTS[ $block_name ], true ) ) {
+					self::invalid( $section_path . '.variant', 'variant is not supported by the selected block.' );
+				}
 				self::assert_object( $section['data'], $section_path . '.data' );
-				$normalized_sections[] = array(
+				$normalized_section = array(
 					'sectionId' => $section_id,
 					'blockName' => $block_name,
 					'order'     => $order,
 					'variant'   => null === $section['variant'] ? null : self::plain_string( $section['variant'], 100000, $section_path . '.variant' ),
 					'data'      => self::normalize_json_value( $section['data'], $section_path . '.data', 0 ),
 				);
+				if ( array_key_exists( 'cssClasses', $section ) ) {
+					$normalized_section['cssClasses'] = self::css_class_list( $section['cssClasses'], $section_path . '.cssClasses' );
+				}
+				if ( array_key_exists( 'anchor', $section ) ) {
+					$normalized_section['anchor'] = self::required_key( $section, 'anchor', $section_path . '.' );
+				}
+				if ( array_key_exists( 'align', $section ) ) {
+					self::enum( $section['align'], array( 'wide', 'full' ), $section_path . '.align' );
+					$normalized_section['align'] = $section['align'];
+				}
+				$normalized_sections[] = $normalized_section;
 			}
 			$normalized_pages[] = array(
 				'pageKey'   => $key,
@@ -352,6 +380,26 @@ class SiteForge_Runtime_Validation {
 		self::validate_site_settings( $normalized['siteSettings'] );
 		self::validate_design_tokens( $normalized['designTokens'] );
 		self::validate_navigation( $normalized['navigation'] );
+		if ( array_key_exists( 'siteConfiguration', $plan ) ) {
+			self::assert_object( $plan['siteConfiguration'], 'plan.siteConfiguration' );
+			$normalized['siteConfiguration'] = self::normalize_json_value( $plan['siteConfiguration'], 'plan.siteConfiguration', 0 );
+			self::validate_site_configuration( $normalized['siteConfiguration'] );
+		}
+		if ( array_key_exists( 'target', $plan ) ) {
+			self::assert_object( $plan['target'], 'plan.target' );
+			$normalized['target'] = self::normalize_json_value( $plan['target'], 'plan.target', 0 );
+			self::validate_target_state( $normalized['target'] );
+		}
+		if ( array_key_exists( 'publicRuntime', $plan ) ) {
+			self::assert_object( $plan['publicRuntime'], 'plan.publicRuntime' );
+			$normalized['publicRuntime'] = self::normalize_json_value( $plan['publicRuntime'], 'plan.publicRuntime', 0 );
+			self::validate_public_runtime( $normalized['publicRuntime'] );
+		}
+		if ( array_key_exists( 'protection', $plan ) ) {
+			self::assert_object( $plan['protection'], 'plan.protection' );
+			$normalized['protection'] = self::normalize_json_value( $plan['protection'], 'plan.protection', 0 );
+			self::validate_protection_state( $normalized['protection'] );
+		}
 		if ( empty( $normalized['siteSettings']['homepagePageKey'] ) || ! isset( $seen_pages[ $normalized['siteSettings']['homepagePageKey'] ] ) ) {
 			self::invalid( 'plan.siteSettings.homepagePageKey', 'homepagePageKey must reference a desired page.' );
 		}
@@ -531,13 +579,22 @@ class SiteForge_Runtime_Validation {
 				self::invalid( $path . '.' . $required, $required . ' is required.' );
 			}
 		}
-		foreach ( array( 'title', 'description', 'canonicalPath' ) as $key ) {
-			self::plain_string( $seo[ $key ], 100000, $path . '.' . $key );
+		self::required_string( $seo, 'title', 500, $path . '.' );
+		self::plain_string( $seo['description'], 10000, $path . '.description' );
+		$canonical_path = self::plain_string( $seo['canonicalPath'], 2048, $path . '.canonicalPath' );
+		if ( ! preg_match( '#^/(?:[A-Za-z0-9._~!$&\'()*+,;=:@%\-]+/?)*$#', $canonical_path ) ) {
+			self::invalid( $path . '.canonicalPath', 'canonicalPath must be root-relative without a query or fragment.' );
 		}
 		if ( ! is_bool( $seo['noIndex'] ) ) {
 			self::invalid( $path . '.noIndex', 'noIndex must be boolean.' );
 		}
-		self::string_list( $seo['structuredData'], PHP_INT_MAX, $path . '.structuredData', 'text', true );
+		$structured_data = self::string_list( $seo['structuredData'], 100, $path . '.structuredData', 'text', true );
+		foreach ( $structured_data as $index => $json_ld ) {
+			$decoded = json_decode( $json_ld, true );
+			if ( JSON_ERROR_NONE !== json_last_error() || ! is_array( $decoded ) ) {
+				self::invalid( $path . '.structuredData[' . $index . ']', 'Structured data must contain a JSON object or array.' );
+			}
+		}
 	}
 
 	private static function validate_operation( $operation, $index ) {
@@ -680,7 +737,7 @@ class SiteForge_Runtime_Validation {
 	}
 
 	private static function validate_site_settings( $settings ) {
-		$allowed = array( 'siteName', 'tagline', 'homepagePageKey', 'logoAssetId', 'faviconAssetId' );
+		$allowed = array( 'siteName', 'tagline', 'homepagePageKey', 'logoAssetId', 'faviconAssetId', 'propertyProfile' );
 		self::reject_unknown_keys( $settings, $allowed, 'plan.siteSettings' );
 		self::required_string( $settings, 'siteName', 500, 'plan.siteSettings.' );
 		if ( ! array_key_exists( 'tagline', $settings ) || ! is_string( $settings['tagline'] ) || strlen( $settings['tagline'] ) > 2000 ) {
@@ -694,6 +751,21 @@ class SiteForge_Runtime_Validation {
 			if ( null !== $settings[ $key ] ) {
 				self::required_uuid( $settings, $key, 'plan.siteSettings.' );
 			}
+		}
+		if ( isset( $settings['propertyProfile'] ) ) {
+			self::assert_object( $settings['propertyProfile'], 'plan.siteSettings.propertyProfile' );
+			self::reject_unknown_keys(
+				$settings['propertyProfile'],
+				array( 'name', 'address', 'phone', 'email', 'socialLinks' ),
+				'plan.siteSettings.propertyProfile'
+			);
+			self::required_string( $settings['propertyProfile'], 'name', 500, 'plan.siteSettings.propertyProfile.' );
+			foreach ( array( 'address' => 2000, 'phone' => 100, 'email' => 320 ) as $key => $maximum ) {
+				if ( ! array_key_exists( $key, $settings['propertyProfile'] ) || ! is_string( $settings['propertyProfile'][ $key ] ) || strlen( $settings['propertyProfile'][ $key ] ) > $maximum ) {
+					self::invalid( 'plan.siteSettings.propertyProfile.' . $key, $key . ' must be a bounded string.' );
+				}
+			}
+			self::assert_object( $settings['propertyProfile']['socialLinks'], 'plan.siteSettings.propertyProfile.socialLinks' );
 		}
 	}
 
@@ -742,6 +814,7 @@ class SiteForge_Runtime_Validation {
 		if ( ! is_array( $items ) || ( ! empty( $items ) && self::is_associative( $items ) ) || count( $items ) > 200 ) {
 			self::invalid( 'plan.navigation.items', 'Navigation items must be a list containing no more than 200 entries.' );
 		}
+		$item_keys = array();
 		foreach ( $items as $index => $item ) {
 			self::assert_object( $item, 'plan.navigation.items[' . $index . ']' );
 			self::reject_unknown_keys( $item, array( 'itemKey', 'label', 'pageKey', 'url', 'parentItemKey', 'target' ), 'plan.navigation.items[' . $index . ']' );
@@ -750,7 +823,11 @@ class SiteForge_Runtime_Validation {
 					self::invalid( 'plan.navigation.items[' . $index . '].' . $required, $required . ' is required.' );
 				}
 			}
-			self::required_key( $item, 'itemKey', 'plan.navigation.items[' . $index . '].' );
+			$item_key = self::required_key( $item, 'itemKey', 'plan.navigation.items[' . $index . '].' );
+			if ( isset( $item_keys[ $item_key ] ) ) {
+				self::invalid( 'plan.navigation.items[' . $index . '].itemKey', 'Navigation item keys must be unique.' );
+			}
+			$item_keys[ $item_key ] = $index;
 			self::required_string( $item, 'label', 500, 'plan.navigation.items[' . $index . '].' );
 			$has_page = null !== $item['pageKey'];
 			$has_url  = null !== $item['url'];
@@ -761,7 +838,10 @@ class SiteForge_Runtime_Validation {
 				self::required_key( $item, 'pageKey', 'plan.navigation.items[' . $index . '].' );
 			}
 			if ( $has_url ) {
-				self::required_string( $item, 'url', 2048, 'plan.navigation.items[' . $index . '].' );
+				$url = self::required_string( $item, 'url', 2048, 'plan.navigation.items[' . $index . '].' );
+				if ( 0 !== strpos( $url, '/' ) && ( false === filter_var( $url, FILTER_VALIDATE_URL ) || ! in_array( strtolower( (string) parse_url( $url, PHP_URL_SCHEME ) ), array( 'http', 'https' ), true ) ) ) {
+					self::invalid( 'plan.navigation.items[' . $index . '].url', 'Navigation URLs must be root-relative or HTTP(S).' );
+				}
 			}
 			if ( ! array_key_exists( 'parentItemKey', $item ) || ( null !== $item['parentItemKey'] && ( ! is_string( $item['parentItemKey'] ) || ! preg_match( self::KEY_PATTERN, $item['parentItemKey'] ) ) ) ) {
 				self::invalid( 'plan.navigation.items[' . $index . '].parentItemKey', 'parentItemKey must be a runtime ID or null.' );
@@ -769,6 +849,187 @@ class SiteForge_Runtime_Validation {
 			if ( ! isset( $item['target'] ) || ! in_array( $item['target'], array( '_self', '_blank' ), true ) ) {
 				self::invalid( 'plan.navigation.items[' . $index . '].target', 'Navigation target is invalid.' );
 			}
+		}
+		$parents = array();
+		foreach ( $items as $index => $item ) {
+			$item_key  = $item['itemKey'];
+			$parent_key = $item['parentItemKey'];
+			if ( null !== $parent_key && ! isset( $item_keys[ $parent_key ] ) ) {
+				self::invalid( 'plan.navigation.items[' . $index . '].parentItemKey', 'Navigation parents must reference another item.' );
+			}
+			$parents[ $item_key ] = $parent_key;
+		}
+		foreach ( $items as $index => $item ) {
+			$visited = array();
+			$cursor  = $item['itemKey'];
+			while ( null !== $cursor ) {
+				if ( isset( $visited[ $cursor ] ) ) {
+					self::invalid( 'plan.navigation.items[' . $index . '].parentItemKey', 'Navigation hierarchy must not contain cycles.' );
+				}
+				$visited[ $cursor ] = true;
+				$cursor = isset( $parents[ $cursor ] ) ? $parents[ $cursor ] : null;
+			}
+		}
+	}
+
+	private static function validate_site_configuration( $configuration ) {
+		$path = 'plan.siteConfiguration';
+		self::exact_keys( $configuration, array( 'design', 'header', 'navigation', 'footer', 'media', 'motion', 'behavior' ), $path );
+		self::assert_object( $configuration['design'], $path . '.design' );
+		self::validate_design_tokens( $configuration['design'] );
+
+		$header = $configuration['header'];
+		self::exact_keys( $header, array( 'layout', 'position', 'announcement', 'cta' ), $path . '.header' );
+		self::enum( $header['layout'], array( 'logo-left', 'logo-center', 'split' ), $path . '.header.layout' );
+		self::enum( $header['position'], array( 'static', 'sticky', 'overlay' ), $path . '.header.position' );
+		self::assert_object( $header['announcement'], $path . '.header.announcement' );
+		self::reject_unknown_keys( $header['announcement'], array( 'enabled', 'text', 'link' ), $path . '.header.announcement' );
+		if ( ! array_key_exists( 'enabled', $header['announcement'] ) || ! is_bool( $header['announcement']['enabled'] ) ) {
+			self::invalid( $path . '.header.announcement.enabled', 'enabled must be boolean.' );
+		}
+		if ( ! array_key_exists( 'text', $header['announcement'] ) ) {
+			self::invalid( $path . '.header.announcement.text', 'text is required.' );
+		}
+		self::plain_string( $header['announcement']['text'], 10000, $path . '.header.announcement.text' );
+		if ( isset( $header['announcement']['link'] ) ) {
+			self::url_or_path( $header['announcement']['link'], $path . '.header.announcement.link' );
+		}
+		self::exact_keys( $header['cta'], array( 'enabled', 'label', 'href' ), $path . '.header.cta' );
+		if ( ! is_bool( $header['cta']['enabled'] ) ) {
+			self::invalid( $path . '.header.cta.enabled', 'enabled must be boolean.' );
+		}
+		self::required_string( $header['cta'], 'label', 500, $path . '.header.cta.' );
+		self::url_or_path( $header['cta']['href'], $path . '.header.cta.href' );
+
+		$navigation = $configuration['navigation'];
+		self::exact_keys( $navigation, array( 'style', 'items' ), $path . '.navigation' );
+		self::enum( $navigation['style'], array( 'horizontal', 'mega', 'drawer' ), $path . '.navigation.style' );
+		self::list_value( $navigation['items'], $path . '.navigation.items' );
+		foreach ( $navigation['items'] as $index => $item ) {
+			$item_path = $path . '.navigation.items[' . $index . ']';
+			self::assert_object( $item, $item_path );
+			self::reject_unknown_keys( $item, array( 'id', 'label', 'href', 'parentId', 'external' ), $item_path );
+			self::required_string( $item, 'id', 200, $item_path . '.' );
+			self::required_string( $item, 'label', 500, $item_path . '.' );
+			self::url_or_path( isset( $item['href'] ) ? $item['href'] : null, $item_path . '.href' );
+			if ( isset( $item['parentId'] ) ) {
+				self::required_string( $item, 'parentId', 200, $item_path . '.' );
+			}
+			if ( isset( $item['external'] ) && ! is_bool( $item['external'] ) ) {
+				self::invalid( $item_path . '.external', 'external must be boolean.' );
+			}
+		}
+
+		$footer = $configuration['footer'];
+		self::assert_object( $footer, $path . '.footer' );
+		self::reject_unknown_keys( $footer, array( 'layout', 'showNavigation', 'showContact', 'showSocial', 'tagline' ), $path . '.footer' );
+		foreach ( array( 'layout', 'showNavigation', 'showContact', 'showSocial' ) as $required ) {
+			if ( ! array_key_exists( $required, $footer ) ) {
+				self::invalid( $path . '.footer.' . $required, $required . ' is required.' );
+			}
+		}
+		self::enum( $footer['layout'], array( 'compact', 'columns', 'editorial' ), $path . '.footer.layout' );
+		foreach ( array( 'showNavigation', 'showContact', 'showSocial' ) as $boolean ) {
+			if ( ! is_bool( $footer[ $boolean ] ) ) {
+				self::invalid( $path . '.footer.' . $boolean, $boolean . ' must be boolean.' );
+			}
+		}
+		if ( isset( $footer['tagline'] ) ) {
+			self::plain_string( $footer['tagline'], 2000, $path . '.footer.tagline' );
+		}
+
+		$media = $configuration['media'];
+		self::assert_object( $media, $path . '.media' );
+		self::reject_unknown_keys( $media, array( 'logoAssetId', 'logoUrl', 'logoAlt', 'faviconAssetId', 'faviconUrl', 'defaultImageUrl', 'imageTreatment' ), $path . '.media' );
+		if ( ! isset( $media['imageTreatment'] ) ) {
+			self::invalid( $path . '.media.imageTreatment', 'imageTreatment is required.' );
+		}
+		self::enum( $media['imageTreatment'], array( 'natural', 'rounded', 'editorial', 'full-bleed' ), $path . '.media.imageTreatment' );
+		foreach ( array( 'logoAssetId', 'faviconAssetId' ) as $asset_key ) {
+			if ( isset( $media[ $asset_key ] ) && ( ! is_string( $media[ $asset_key ] ) || ! preg_match( self::UUID_PATTERN, $media[ $asset_key ] ) ) ) {
+				self::invalid( $path . '.media.' . $asset_key, $asset_key . ' must be a UUID.' );
+			}
+		}
+		foreach ( array( 'logoUrl', 'faviconUrl', 'defaultImageUrl' ) as $url_key ) {
+			if ( isset( $media[ $url_key ] ) ) {
+				self::url_or_path( $media[ $url_key ], $path . '.media.' . $url_key );
+			}
+		}
+		if ( isset( $media['logoAlt'] ) ) {
+			self::plain_string( $media['logoAlt'], 2000, $path . '.media.logoAlt' );
+		}
+
+		$motion = $configuration['motion'];
+		self::exact_keys( $motion, array( 'level', 'reducedMotion', 'reveal', 'durationMs', 'easing' ), $path . '.motion' );
+		self::enum( $motion['level'], array( 'none', 'subtle', 'prominent' ), $path . '.motion.level' );
+		self::enum( $motion['reducedMotion'], array( 'respect', 'disable' ), $path . '.motion.reducedMotion' );
+		self::enum( $motion['reveal'], array( 'none', 'fade', 'slide', 'scale' ), $path . '.motion.reveal' );
+		self::bounded_integer( $motion['durationMs'], 0, 5000, $path . '.motion.durationMs' );
+		self::enum( $motion['easing'], array( 'linear', 'ease', 'ease-in', 'ease-out', 'ease-in-out' ), $path . '.motion.easing' );
+
+		$behavior = $configuration['behavior'];
+		self::exact_keys( $behavior, array( 'smoothScroll', 'externalLinksNewTab', 'backToTop', 'cookieConsent' ), $path . '.behavior' );
+		foreach ( array( 'smoothScroll', 'externalLinksNewTab', 'backToTop' ) as $boolean ) {
+			if ( ! is_bool( $behavior[ $boolean ] ) ) {
+				self::invalid( $path . '.behavior.' . $boolean, $boolean . ' must be boolean.' );
+			}
+		}
+		self::enum( $behavior['cookieConsent'], array( 'disabled', 'informational', 'required' ), $path . '.behavior.cookieConsent' );
+	}
+
+	private static function validate_target_state( $target ) {
+		self::exact_keys( $target, array( 'mode', 'siteUrl' ), 'plan.target' );
+		self::enum( $target['mode'], array( 'canonical_preview', 'staging', 'production' ), 'plan.target.mode' );
+		self::url( $target['siteUrl'], 'plan.target.siteUrl' );
+	}
+
+	private static function validate_public_runtime( $runtime ) {
+		self::exact_keys( $runtime, array( 'enabled', 'apiKey', 'apiBaseUrl', 'websiteId', 'conversionEndpoint', 'conversionKey', 'telemetryEndpoint' ), 'plan.publicRuntime' );
+		if ( ! is_bool( $runtime['enabled'] ) ) {
+			self::invalid( 'plan.publicRuntime.enabled', 'enabled must be boolean.' );
+		}
+		foreach ( array( 'apiKey', 'conversionKey' ) as $key ) {
+			if ( ! is_string( $runtime[ $key ] ) || strlen( $runtime[ $key ] ) > 2000 ) {
+				self::invalid( 'plan.publicRuntime.' . $key, $key . ' must be a bounded string.' );
+			}
+		}
+		if ( '' === $runtime['conversionKey'] || ( $runtime['enabled'] && '' === $runtime['apiKey'] ) ) {
+			self::invalid( 'plan.publicRuntime', 'Public runtime identity is incomplete.' );
+		}
+		if ( ! is_string( $runtime['websiteId'] ) || ! preg_match( self::UUID_PATTERN, $runtime['websiteId'] ) ) {
+			self::invalid( 'plan.publicRuntime.websiteId', 'websiteId must be a UUID.' );
+		}
+		foreach ( array( 'apiBaseUrl', 'conversionEndpoint', 'telemetryEndpoint' ) as $key ) {
+			self::url( $runtime[ $key ], 'plan.publicRuntime.' . $key );
+			if ( 'https' !== strtolower( (string) parse_url( $runtime[ $key ], PHP_URL_SCHEME ) ) ) {
+				self::invalid( 'plan.publicRuntime.' . $key, 'Public runtime URLs must use HTTPS.' );
+			}
+		}
+	}
+
+	private static function validate_protection_state( $protection ) {
+		self::exact_keys( $protection, array( 'mode' ), 'plan.protection' );
+		self::enum( $protection['mode'], array( 'noindex', 'password_noindex', 'public' ), 'plan.protection.mode' );
+	}
+
+	private static function css_class_list( $value, $path ) {
+		self::list_value( $value, $path );
+		if ( count( $value ) > 20 ) {
+			self::invalid( $path, 'No more than 20 CSS classes are allowed.' );
+		}
+		$output = array();
+		foreach ( $value as $index => $class_name ) {
+			if ( ! is_string( $class_name ) || strlen( $class_name ) > 120 || ! preg_match( '/^-?[_a-zA-Z]+[_a-zA-Z0-9-]*$/', $class_name ) ) {
+				self::invalid( $path . '[' . $index . ']', 'CSS classes must be plain class identifiers.' );
+			}
+			$output[] = $class_name;
+		}
+		return $output;
+	}
+
+	private static function url_or_path( $value, $path ) {
+		if ( ! is_string( $value ) || '' === $value || ( 0 !== strpos( $value, '/' ) && ! preg_match( '#^https?://#i', $value ) ) ) {
+			self::invalid( $path, 'Value must be an absolute URL or root-relative path.' );
 		}
 	}
 

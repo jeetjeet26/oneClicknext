@@ -16,7 +16,7 @@ if ( empty( $menu_items ) ) {
 }
 ?>
 
-<section <?php echo oneclick_get_block_wrapper_attributes( array( 'class' => 'block-menu' ) ); ?>>
+<section <?php echo oneclick_get_block_wrapper_attributes( $block, array( 'class' => 'block-menu' ) ); ?>>
 	<div class="site-container">
 		<nav class="submenu-nav" aria-label="<?php esc_attr_e( 'Section Navigation', 'oneclick-siteforge' ); ?>">
 			<ul class="submenu-list">

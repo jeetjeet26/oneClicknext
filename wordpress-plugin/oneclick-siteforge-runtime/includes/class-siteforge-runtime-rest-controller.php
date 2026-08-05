@@ -143,7 +143,14 @@ class SiteForge_Runtime_REST_Controller {
 
 		$database_ok = isset( $wpdb ) && (string) $wpdb->get_var( 'SELECT 1' ) === '1';
 		$manifest    = get_option( SiteForge_Runtime_Transactions::MANIFEST_OPTION, array() );
-		$verification= $this->transactions->verify_active_manifest();
+		try {
+			$verification = $this->transactions->verify_active_manifest();
+		} catch ( Throwable $error ) {
+			$verification = array(
+				'verified' => false,
+				'checks'   => array(),
+			);
+		}
 		$verified    = isset( $verification['verified'] ) && true === $verification['verified'];
 		$healthy     = $database_ok && ( empty( $manifest ) || $verified );
 

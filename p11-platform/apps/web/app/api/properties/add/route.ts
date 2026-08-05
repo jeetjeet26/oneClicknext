@@ -23,6 +23,7 @@ interface AddPropertyRequest {
   } | null
   propertyType?: string | null
   websiteUrl?: string | null
+  additionalUrls?: string[]
   unitCount?: number | null
   yearBuilt?: number | null
   copyFromPropertyId?: string | null // Template: copy settings from existing property
@@ -35,10 +36,15 @@ interface AddPropertyRequest {
 async function scrapeWebsiteForProperty(
   propertyId: string,
   websiteUrl: string | null | undefined,
+  additionalUrls: string[] = [],
   forwardedCookie?: string | null
 ): Promise<{ success: boolean; error?: string }> {
   const canonicalWebsiteUrl = normalizePublicWebsiteUrl(websiteUrl)
-  if (!canonicalWebsiteUrl) return { success: true }
+  const urls = [
+    canonicalWebsiteUrl,
+    ...additionalUrls.map(normalizePublicWebsiteUrl),
+  ].filter((url): url is string => Boolean(url))
+  if (!urls.length) return { success: true }
 
   try {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }
@@ -54,7 +60,7 @@ async function scrapeWebsiteForProperty(
       headers,
       body: JSON.stringify({
         propertyId,
-        websiteUrl: canonicalWebsiteUrl,
+        urls,
       }),
     })
 
@@ -125,6 +131,9 @@ export async function POST(request: NextRequest) {
         } : null,
         settings: {
           timezone: 'America/Los_Angeles',
+          additionalUrls: body.additionalUrls
+            ?.map(normalizePublicWebsiteUrl)
+            .filter((url): url is string => Boolean(url)) || [],
         },
         // Profile data now directly on properties table
         property_type: propertyType,
@@ -239,6 +248,7 @@ export async function POST(request: NextRequest) {
         const scrapeResult = await scrapeWebsiteForProperty(
           property.id,
           websiteUrl,
+          body.additionalUrls || [],
           forwardedCookie
         )
         if (!scrapeResult.success) {

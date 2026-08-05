@@ -1,34 +1,25 @@
-import { createHash, createHmac } from 'node:crypto'
 import { dirname, posix } from 'node:path'
 import { Sandbox } from '@vercel/sandbox'
-import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
+import { strToU8, zipSync } from 'fflate'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { z } from 'zod'
 import type { Database, Json } from '@/types/supabase'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
-
-const OVERLAY_BUCKET = 'siteforge-artifacts'
-const MAX_FILES = 20
-const MAX_FILE_BYTES = 100_000
-const MAX_PACKAGE_BYTES = 1_000_000
-const ALLOWED_PATH =
-  /^(assets\/(css|js)\/[a-z0-9][a-z0-9._/-]*|partials\/[a-z0-9][a-z0-9._/-]*\.php)$/
-
-const themeOverlayProposalSchema = z.object({
-  reason: z.string().min(1).max(2_000),
-  files: z
-    .array(
-      z.object({
-        path: z.string().min(1).max(240).regex(ALLOWED_PATH),
-        content: z.string().max(MAX_FILE_BYTES),
-      })
-    )
-    .min(1)
-    .max(MAX_FILES),
-})
-
-type ThemeOverlayProposal = z.infer<typeof themeOverlayProposalSchema>
+import {
+  computeOverlayContentHash,
+  computeOverlaySignature,
+  inspectStoredOverlayPackage,
+  MAX_OVERLAY_FILE_BYTES,
+  MAX_OVERLAY_FILES,
+  MAX_OVERLAY_PACKAGE_BYTES,
+  overlayManifestSchema,
+  sha256OverlayValue,
+  SITEFORGE_OVERLAY_ALLOWED_PATH,
+  SITEFORGE_OVERLAY_BUCKET,
+  themeOverlayProposalSchema,
+  type OverlayManifest,
+  type ThemeOverlayProposal,
+} from '@/utils/siteforge/editor/overlay-contract'
 
 const FORBIDDEN_PHP = [
   /\b(eval|assert)\s*\(/i,
@@ -70,37 +61,59 @@ ${jsFiles
 `
 }
 
+function buildOverlayStyleCss(sourceHash: string): string {
+  return [
+    '/*',
+    `Theme Name: SiteForge Overlay ${sourceHash.slice(0, 12)}`,
+    'Template: oneclick-siteforge',
+    `Version: 1.0.${sourceHash.slice(0, 6)}`,
+    `Text Domain: oneclick-siteforge-overlay-${sourceHash.slice(0, 12)}`,
+    '*/',
+  ].join('\n')
+}
+
 export function buildOverlayPackageManifest(
   proposal: ThemeOverlayProposal
 ): {
   functionsPhp: string
-  manifest: OverlayValidationResult['manifest']
+  styleCss: string
+  manifest: OverlayManifest
 } {
   const cssFiles = proposal.files
     .filter(file => file.path.endsWith('.css'))
     .map(file => file.path)
+    .sort()
   const jsFiles = proposal.files
     .filter(file => file.path.endsWith('.js'))
     .map(file => file.path)
+    .sort()
   const functionsPhp = buildOverlayFunctionsPhp(cssFiles, jsFiles)
+  const sourceHash = hashSiteForgeContent(
+    [...proposal.files]
+      .map(file => ({ path: file.path, contentHash: sha256OverlayValue(file.content) }))
+      .sort((a, b) => a.path.localeCompare(b.path))
+  )
+  const styleCss = buildOverlayStyleCss(sourceHash)
   const manifestFiles = [
     ...proposal.files,
+    { path: 'style.css', content: styleCss },
     { path: 'functions.php', content: functionsPhp },
   ]
     .map(file => ({
       path: file.path,
       mediaType: mediaType(file.path),
-      contentHash: sha256(file.content),
+      contentHash: sha256OverlayValue(file.content),
       bytes: Buffer.byteLength(file.content, 'utf8'),
     }))
     .sort((a, b) => a.path.localeCompare(b.path))
   return {
     functionsPhp,
-    manifest: {
+    styleCss,
+    manifest: overlayManifestSchema.parse({
       manifestVersion: 1,
       contentHash: hashSiteForgeContent(manifestFiles),
       files: manifestFiles,
-    },
+    }),
   }
 }
 
@@ -110,17 +123,9 @@ export interface OverlayValidationResult {
   packageSha256: string
   signature: string
   storagePath: string
-  manifest: {
-    manifestVersion: 1
-    contentHash: string
-    files: Array<{
-      path: string
-      mediaType: 'text/css' | 'application/javascript' | 'text/x-php'
-      contentHash: string
-      bytes: number
-    }>
-  }
+  manifest: OverlayManifest
   validationReport: Json
+  validationReportSha256: string
 }
 
 interface SandboxLike {
@@ -137,43 +142,15 @@ interface SandboxLike {
   stop(): Promise<unknown>
 }
 
-function sha256(value: string | Uint8Array): string {
-  return createHash('sha256').update(value).digest('hex')
-}
-
 export function validateStoredOverlayPackage(
   archive: Uint8Array,
-  expectedManifest: OverlayValidationResult['manifest']
+  expected: {
+    contentHash: string
+    manifest: OverlayManifest
+    packageSha256?: string
+  }
 ): string {
-  const entries = unzipSync(archive)
-  const descriptorEntry = entries['siteforge-overlay.json']
-  if (!descriptorEntry) {
-    throw new Error('Stored theme overlay package has no manifest descriptor')
-  }
-  const descriptor = JSON.parse(strFromU8(descriptorEntry)) as {
-    manifest?: OverlayValidationResult['manifest']
-  }
-  if (
-    !descriptor.manifest ||
-    descriptor.manifest.contentHash !== expectedManifest.contentHash ||
-    hashSiteForgeContent(descriptor.manifest.files) !==
-      expectedManifest.contentHash
-  ) {
-    throw new Error('Stored theme overlay package manifest does not match')
-  }
-  for (const file of expectedManifest.files) {
-    const entry = entries[file.path]
-    if (
-      !entry ||
-      entry.byteLength !== file.bytes ||
-      sha256(entry) !== file.contentHash
-    ) {
-      throw new Error(
-        `Stored theme overlay package file does not match: ${file.path}`
-      )
-    }
-  }
-  return sha256(archive)
+  return inspectStoredOverlayPackage(archive, expected).packageSha256
 }
 
 function mediaType(path: string) {
@@ -184,7 +161,7 @@ function mediaType(path: string) {
 
 function assertSafePath(path: string): void {
   if (
-    !ALLOWED_PATH.test(path) ||
+    !SITEFORGE_OVERLAY_ALLOWED_PATH.test(path) ||
     path.startsWith('/') ||
     path.includes('..') ||
     posix.normalize(path) !== path
@@ -211,7 +188,8 @@ export function validateOverlayProposalStatic(
   proposalValue: ThemeOverlayProposal
 ): ThemeOverlayProposal {
   const proposal = themeOverlayProposalSchema.parse(proposalValue)
-  if (proposal.files.length > MAX_FILES) throw new Error('Overlay has too many files')
+  if (proposal.files.length > MAX_OVERLAY_FILES)
+    throw new Error('Overlay has too many files')
   const seen = new Set<string>()
   let totalBytes = 0
 
@@ -221,7 +199,8 @@ export function validateOverlayProposalStatic(
     seen.add(file.path)
     const bytes = Buffer.byteLength(file.content, 'utf8')
     totalBytes += bytes
-    if (bytes > MAX_FILE_BYTES) throw new Error(`Overlay file is too large: ${file.path}`)
+    if (bytes > MAX_OVERLAY_FILE_BYTES)
+      throw new Error(`Overlay file is too large: ${file.path}`)
 
     if (file.path.endsWith('.php')) {
       for (const pattern of FORBIDDEN_PHP) {
@@ -241,7 +220,8 @@ export function validateOverlayProposalStatic(
       throw new Error(`Overlay file type is not supported: ${file.path}`)
     }
   }
-  if (totalBytes > MAX_PACKAGE_BYTES) throw new Error('Overlay package is too large')
+  if (totalBytes > MAX_OVERLAY_PACKAGE_BYTES)
+    throw new Error('Overlay package is too large')
   return proposal
 }
 
@@ -286,7 +266,7 @@ async function runSandboxValidation(
       networkPolicy: 'deny-all',
       checks,
       passed: true,
-      validatedAt: new Date().toISOString(),
+      validator: 'siteforge-static-sandbox-v1',
     }
   } finally {
     await sandbox.stop()
@@ -321,32 +301,39 @@ export async function validateAndStoreThemeOverlay(
     proposal,
     options.sandboxFactory || defaultSandboxFactory
   )
-  const { functionsPhp, manifest } = buildOverlayPackageManifest(proposal)
-  const contentHash = manifest.contentHash
-  const zipEntries = Object.fromEntries(
-    proposal.files.map(file => [file.path, strToU8(file.content)])
-  )
-  const overlaySlug = `oneclick-siteforge-overlay-${contentHash.slice(0, 12)}`
-  zipEntries['style.css'] = strToU8(
-    [
-      '/*',
-      `Theme Name: SiteForge Overlay ${contentHash.slice(0, 12)}`,
-      'Template: oneclick-siteforge',
-      `Version: 1.0.${contentHash.slice(0, 6)}`,
-      `Text Domain: ${overlaySlug}`,
-      '*/',
-    ].join('\n')
-  )
+  const { functionsPhp, styleCss, manifest } =
+    buildOverlayPackageManifest(proposal)
+  const contentHash = computeOverlayContentHash(proposal.reason, manifest)
+  const zipEntries: Record<string, Uint8Array> = {}
+  for (const file of [...proposal.files].sort((a, b) =>
+    a.path.localeCompare(b.path)
+  )) {
+    zipEntries[file.path] = strToU8(file.content)
+  }
   zipEntries['functions.php'] = strToU8(functionsPhp)
+  zipEntries['style.css'] = strToU8(styleCss)
   zipEntries['siteforge-overlay.json'] = strToU8(
-    JSON.stringify({ manifest, reason: proposal.reason }, null, 2)
+    JSON.stringify(
+      {
+        descriptorVersion: 1,
+        overlayContentHash: contentHash,
+        manifest,
+        reason: proposal.reason,
+      },
+      null,
+      2
+    )
   )
   const zip = zipSync(zipEntries, { level: 9 })
+  let packageSha256 = validateStoredOverlayPackage(zip, {
+    contentHash,
+    manifest,
+  })
   const storagePath = `overlays/${input.websiteId}/${contentHash}.zip`
   const client = options.client || createServiceClient()
 
   const { error: uploadError } = await client.storage
-    .from(OVERLAY_BUCKET)
+    .from(SITEFORGE_OVERLAY_BUCKET)
     .upload(storagePath, zip, {
       contentType: 'application/zip',
       upsert: false,
@@ -356,10 +343,11 @@ export async function validateAndStoreThemeOverlay(
   if (uploadError && !alreadyExists) {
     throw new Error(`Failed to store theme overlay: ${uploadError.message}`)
   }
-  let packageSha256 = sha256(zip)
   if (alreadyExists) {
     const { data: storedPackage, error: storedPackageError } =
-      await client.storage.from(OVERLAY_BUCKET).download(storagePath)
+      await client.storage
+        .from(SITEFORGE_OVERLAY_BUCKET)
+        .download(storagePath)
     if (storedPackageError || !storedPackage) {
       throw new Error(
         `Failed to verify stored theme overlay: ${
@@ -369,7 +357,7 @@ export async function validateAndStoreThemeOverlay(
     }
     packageSha256 = validateStoredOverlayPackage(
       new Uint8Array(await storedPackage.arrayBuffer()),
-      manifest
+      { contentHash, manifest, packageSha256 }
     )
   }
   const signingSecret =
@@ -377,34 +365,76 @@ export async function validateAndStoreThemeOverlay(
   if (!signingSecret) {
     throw new Error('SITEFORGE_OVERLAY_SIGNING_SECRET is required')
   }
-  const signature = createHmac('sha256', signingSecret)
-    .update(`${input.websiteId}:${contentHash}:${packageSha256}`)
-    .digest('hex')
-
-  const { data: overlay, error: overlayError } = await client
+  const signature = computeOverlaySignature({
+    websiteId: input.websiteId,
+    contentHash,
+    packageSha256,
+    signingSecret,
+  })
+  const validationReportSha256 = hashSiteForgeContent(validationReport)
+  const immutableOverlay = {
+    org_id: input.orgId,
+    property_id: input.propertyId,
+    website_id: input.websiteId,
+    content_hash: contentHash,
+    manifest: manifest as unknown as Json,
+    storage_path: storagePath,
+    package_sha256: packageSha256,
+    signature,
+    validation_report: validationReport,
+    created_by: input.userId,
+  }
+  const { data: insertedOverlay, error: insertError } = await client
     .from('siteforge_theme_overlays')
-    .upsert(
-      {
-        org_id: input.orgId,
-        property_id: input.propertyId,
-        website_id: input.websiteId,
-        content_hash: contentHash,
-        manifest: manifest as unknown as Json,
-        storage_path: storagePath,
-        package_sha256: packageSha256,
-        signature,
-        validation_report: validationReport,
-        screenshot_manifest: {},
-        created_by: input.userId,
-      },
-      { onConflict: 'website_id,content_hash', ignoreDuplicates: false }
-    )
+    .insert({ ...immutableOverlay, screenshot_manifest: {} })
     .select('id')
-    .single()
-  if (overlayError || !overlay) {
+    .maybeSingle()
+  let overlay = insertedOverlay
+  const isIdentityConflict =
+    insertError?.code === '23505' ||
+    insertError?.message.toLowerCase().includes('duplicate') === true
+  if (insertError && !isIdentityConflict) {
     throw new Error(
-      `Failed to persist theme overlay: ${overlayError?.message || 'missing row'}`
+      `Failed to persist theme overlay: ${insertError.message}`
     )
+  }
+  if (!overlay) {
+    const { data: existing, error: existingError } = await client
+      .from('siteforge_theme_overlays')
+      .select(
+        'id, org_id, property_id, website_id, content_hash, manifest, storage_path, package_sha256, signature, validation_report, created_by'
+      )
+      .eq('website_id', input.websiteId)
+      .eq('content_hash', contentHash)
+      .single()
+    if (existingError || !existing) {
+      throw new Error(
+        `Failed to resolve immutable theme overlay conflict: ${
+          existingError?.message || 'missing row'
+        }`
+      )
+    }
+    const existingIdentity = {
+      org_id: existing.org_id,
+      property_id: existing.property_id,
+      website_id: existing.website_id,
+      content_hash: existing.content_hash,
+      manifest: existing.manifest,
+      storage_path: existing.storage_path,
+      package_sha256: existing.package_sha256,
+      signature: existing.signature,
+      validation_report: existing.validation_report,
+      created_by: existing.created_by,
+    }
+    if (
+      hashSiteForgeContent(existingIdentity) !==
+      hashSiteForgeContent(immutableOverlay)
+    ) {
+      throw new Error(
+        'Immutable theme overlay identity conflict; existing overlay was not modified'
+      )
+    }
+    overlay = { id: existing.id }
   }
 
   return {
@@ -415,5 +445,6 @@ export async function validateAndStoreThemeOverlay(
     storagePath,
     manifest,
     validationReport,
+    validationReportSha256,
   }
 }

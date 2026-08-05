@@ -38,7 +38,11 @@ function arrange(currentArtifactId = input.artifactId) {
   from.mockImplementation((table: string) => {
     if (table === 'shared_jobs') {
       return query({
-        data: { lifecycle_status: 'running', cancel_requested: false },
+        data: {
+          lifecycle_status: 'running',
+          cancel_requested: false,
+          lease_owner: `siteforge-staging:${input.sharedJobId}`,
+        },
       })
     }
     if (table === 'property_websites') {

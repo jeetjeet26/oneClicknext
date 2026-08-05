@@ -68,6 +68,55 @@ describe('SiteForge exact block schemas', () => {
     ).toThrow('Executable and embedded HTML is not allowed')
   })
 
+  it('accepts maps backed by either a sourced address or coordinate pair', () => {
+    expect(
+      siteForgeBlockContentSchemas['acf/map'].parse({
+        address: '120 Juniper Street, Portland, OR 97205',
+        zoom_level: 15,
+        show_directions: true,
+      })
+    ).toEqual(
+      expect.objectContaining({
+        address: '120 Juniper Street, Portland, OR 97205',
+      })
+    )
+    expect(() =>
+      siteForgeBlockContentSchemas['acf/map'].parse({
+        latitude: 45.5231,
+        longitude: -122.6765,
+        zoom_level: 15,
+        show_directions: true,
+      })
+    ).not.toThrow()
+  })
+
+  it('rejects maps without sourced location data or with partial coordinates', () => {
+    expect(() =>
+      siteForgeBlockContentSchemas['acf/map'].parse({
+        zoom_level: 15,
+        show_directions: true,
+      })
+    ).toThrow('Map requires a sourced address or coordinate pair')
+    expect(() =>
+      siteForgeBlockContentSchemas['acf/map'].parse({
+        latitude: 45.5231,
+        zoom_level: 15,
+        show_directions: true,
+      })
+    ).toThrow('Map coordinates require both latitude and longitude')
+  })
+
+  it('fails readiness for form providers unsupported by the artifact', () => {
+    expect(() =>
+      siteForgeBlockContentSchemas['acf/form'].parse({
+        heading: 'Contact us',
+        form_type: 'contact',
+        provider: 'csv_export',
+        consent_text: 'I consent to be contacted.',
+      })
+    ).toThrow()
+  })
+
   it('accepts immutable floor-plan inventory metadata and rows', () => {
     expect(
       siteForgeBlockContentSchemas['acf/plans-availability'].parse({
@@ -82,6 +131,11 @@ describe('SiteForge exact block schemas', () => {
             available_count: 2,
             image_url: 'https://cdn.example.com/aspen.png',
             image_alt: 'Aspen one-bedroom floor plan',
+            source: 'manual',
+            source_identity: 'approved-import:aspen',
+            effective_at: '2026-07-31T11:00:00.000Z',
+            expires_at: '2026-08-01T11:00:00.000Z',
+            source_updated_at: '2026-07-31T10:00:00.000Z',
           },
         ],
         inventory_snapshot: {

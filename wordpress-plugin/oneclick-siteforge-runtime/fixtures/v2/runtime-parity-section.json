@@ -1,0 +1,17 @@
+{
+  "sectionId": "section:hero",
+  "blockName": "acf/text-section",
+  "order": 0,
+  "variant": "editorial",
+  "cssClasses": [
+    "editorial-copy",
+    "theme-dark"
+  ],
+  "anchor": "section:hero",
+  "align": "wide",
+  "data": {
+    "headline": "Welcome home",
+    "variant": "editorial",
+    "align": "wide"
+  }
+}

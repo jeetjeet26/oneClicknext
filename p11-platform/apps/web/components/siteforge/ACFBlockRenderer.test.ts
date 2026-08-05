@@ -3,10 +3,39 @@ import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import {
   ACFBlockRenderer,
+  EXPLICIT_ACF_PREVIEW_BLOCK_TYPES,
   getCriticalPreviewState,
 } from './ACFBlockRenderer'
+import { ACF_BLOCK_TYPES } from '@/types/siteforge'
+import {
+  maliciousHtmlPreviewFixtures,
+  registeredBlockPreviewFixtures,
+} from './fixtures/preview-parity.fixture'
 
 describe('ACFBlockRenderer critical preview state', () => {
+  it('keeps explicit renderer coverage aligned with every registered ACF block', () => {
+    expect([...EXPLICIT_ACF_PREVIEW_BLOCK_TYPES].sort()).toEqual(
+      [...ACF_BLOCK_TYPES].sort()
+    )
+  })
+
+  it.each(ACF_BLOCK_TYPES)(
+    'renders an explicit approximation or degraded state for %s',
+    blockType => {
+      const markup = renderToStaticMarkup(
+        React.createElement(ACFBlockRenderer, {
+          blockType,
+          blockIdentity: `fixture-${blockType}`,
+          content: registeredBlockPreviewFixtures[blockType],
+        })
+      )
+
+      expect(markup).toContain(`data-acf-block="${blockType}"`)
+      expect(markup).not.toContain('Unsupported block type')
+      expect(markup.length).toBeGreaterThan(80)
+    }
+  )
+
   it('marks hero degraded when slides are missing', () => {
     expect(getCriticalPreviewState('acf/top-slides', {})).toEqual({
       degraded: true,
@@ -19,6 +48,70 @@ describe('ACFBlockRenderer critical preview state', () => {
       degraded: true,
       reason: 'missing_map_location',
     })
+  })
+
+  it('keeps a map healthy with a sourced address and renders keyless directions', () => {
+    const content = {
+      address: '120 Juniper Street, Portland, OR 97205',
+      show_directions: true,
+      zoom_level: 15,
+    }
+    expect(getCriticalPreviewState('acf/map', content)).toEqual({
+      degraded: false,
+    })
+
+    const markup = renderToStaticMarkup(
+      React.createElement(ACFBlockRenderer, {
+        blockType: 'acf/map',
+        blockIdentity: 'neighborhood-map',
+        content,
+      })
+    )
+
+    expect(markup).toContain('120 Juniper Street, Portland, OR 97205')
+    expect(markup).toContain('Get directions')
+    expect(markup).toContain('https://www.google.com/maps/dir/?api=1')
+    expect(markup).toContain('keyless location fallback')
+  })
+
+  it('marks unsupported form providers degraded', () => {
+    expect(
+      getCriticalPreviewState('acf/form', {
+        provider: 'csv_export',
+      })
+    ).toEqual({
+      degraded: true,
+      reason: 'unsupported_form_provider',
+    })
+  })
+
+  it('derives duplicate-safe form control IDs from each section identity', () => {
+    const content = registeredBlockPreviewFixtures['acf/form']
+    const markup = renderToStaticMarkup(
+      React.createElement(
+        React.Fragment,
+        null,
+        React.createElement(ACFBlockRenderer, {
+          blockType: 'acf/form',
+          blockIdentity: 'contact-primary',
+          content,
+        }),
+        React.createElement(ACFBlockRenderer, {
+          blockType: 'acf/form',
+          blockIdentity: 'contact-secondary',
+          content,
+        })
+      )
+    )
+    const ids = [...markup.matchAll(/id="([^"]+-(?:name|email|phone|message))"/g)].map(
+      match => match[1]
+    )
+
+    expect(ids).toHaveLength(8)
+    expect(new Set(ids).size).toBe(8)
+    for (const id of ids) {
+      expect(markup).toContain(`for="${id}"`)
+    }
   })
 
   it('marks plans degraded when floor-plan inventory is missing', () => {
@@ -40,6 +133,7 @@ describe('ACFBlockRenderer critical preview state', () => {
     const markup = renderToStaticMarkup(
       React.createElement(ACFBlockRenderer, {
         blockType: 'acf/plans-availability',
+        blockIdentity: 'floor-plans',
         content: {
           floor_plans: [
             {
@@ -117,9 +211,61 @@ describe('ACFBlockRenderer critical preview state', () => {
     },
   ])('renders approved asset URLs for $blockType', ({ blockType, content, expectedUrl }) => {
     const markup = renderToStaticMarkup(
-      React.createElement(ACFBlockRenderer, { blockType, content })
+      React.createElement(ACFBlockRenderer, {
+        blockType,
+        blockIdentity: `asset-${blockType}`,
+        content,
+      })
     )
 
     expect(markup).toContain(`src="${expectedUrl}"`)
+  })
+
+  it('preserves external links with safe new-tab attributes', () => {
+    const markup = renderToStaticMarkup(
+      React.createElement(ACFBlockRenderer, {
+        blockType: 'acf/links',
+        blockIdentity: 'apply-links',
+        content: {
+          links: [
+            {
+              text: 'Apply',
+              url: 'https://leasing.example.com/apply',
+              style: 'primary',
+            },
+          ],
+        },
+      })
+    )
+
+    expect(markup).toContain('href="https://leasing.example.com/apply"')
+    expect(markup).toContain('target="_blank"')
+    expect(markup).toContain('rel="noopener noreferrer"')
+  })
+
+  it('sanitizes every HTML-bearing preview field with the shared allowlist', () => {
+    const markup = [
+      ['acf/text-section', maliciousHtmlPreviewFixtures.text],
+      ['acf/feature-section', maliciousHtmlPreviewFixtures.feature],
+      ['acf/accordion-section', maliciousHtmlPreviewFixtures.accordion],
+    ]
+      .map(([blockType, content], index) =>
+        renderToStaticMarkup(
+          React.createElement(ACFBlockRenderer, {
+            blockType: String(blockType),
+            blockIdentity: `malicious-${index}`,
+            content,
+          })
+        )
+      )
+      .join('')
+
+    expect(markup).toContain('<strong>home</strong>')
+    expect(markup).toContain('Learn more')
+    expect(markup).toContain('Reviewed answer.')
+    expect(markup).not.toMatch(/<script|<iframe|<img/i)
+    expect(markup).not.toMatch(/\son[a-z]+\s*=/i)
+    expect(markup).not.toMatch(/javascript:/i)
+    expect(markup).not.toContain('alert(&quot;unsafe&quot;)')
   })
 })

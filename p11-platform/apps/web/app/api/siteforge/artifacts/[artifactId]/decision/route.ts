@@ -8,6 +8,11 @@ import {
 } from '@/utils/siteforge/artifacts/approval'
 import { SharedApprovalError } from '@/utils/services/shared-approvals'
 import { createRequestContext } from '@/utils/services/request-context'
+import { createServiceClient } from '@/utils/supabase/admin'
+import {
+  assertActiveAuroraLifecycleLease,
+  AuroraLifecycleControlError,
+} from '@/utils/siteforge/testing/aurora-lifecycle-control'
 
 const requestSchema = z.object({
   propertyId: z.guid(),
@@ -73,6 +78,27 @@ export async function POST(
         { status: 403, headers: ctx.responseHeaders }
       )
     }
+    const service = createServiceClient()
+    const { data: artifactIdentity } = await service
+      .from('siteforge_blueprint_versions')
+      .select('property_id, website_id')
+      .eq('id', artifactId)
+      .eq('property_id', parsed.data.propertyId)
+      .maybeSingle()
+    if (!artifactIdentity) {
+      return NextResponse.json(
+        { error: 'Artifact not found' },
+        { status: 404, headers: ctx.responseHeaders }
+      )
+    }
+    await assertActiveAuroraLifecycleLease(
+      request,
+      {
+        propertyId: artifactIdentity.property_id,
+        websiteId: artifactIdentity.website_id,
+      },
+      service
+    )
 
     const result = await decideSiteForgeArtifactDeployment({
       artifactId,
@@ -93,7 +119,8 @@ export async function POST(
   } catch (error) {
     const status =
       error instanceof SiteForgeArtifactApprovalError ||
-      error instanceof SharedApprovalError
+      error instanceof SharedApprovalError ||
+      error instanceof AuroraLifecycleControlError
         ? error.statusCode
         : 500
     ctx.logError(status, error)

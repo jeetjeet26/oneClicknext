@@ -258,8 +258,21 @@ async function saveExtractedUnits(
   units: ExtractedUnit[]
 ) {
   const savedUnits = []
+  const { data: property, error: propertyError } = await supabase
+    .from('properties')
+    .select('org_id')
+    .eq('id', propertyId)
+    .single()
+  if (propertyError || !property?.org_id) {
+    throw new Error('Property organization is required to save floor plans')
+  }
 
   for (const unit of units) {
+    const canonicalKey = [
+      unit.unitType.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''),
+      `${unit.bedrooms}br`,
+      `${unit.bathrooms}ba`,
+    ].join('-')
     // Check if unit type already exists for this property
     const { data: existingUnit } = await supabase
       .from('property_units')
@@ -282,6 +295,8 @@ async function saveExtractedUnits(
           available_count: unit.availableCount,
           move_in_specials: unit.moveInSpecials,
           source: 'manual',
+          source_identity: 'manual-extraction',
+          canonical_key: canonicalKey,
           last_updated_at: new Date().toISOString()
         })
         .eq('id', existingUnit.id)
@@ -311,6 +326,7 @@ async function saveExtractedUnits(
       const { data: newUnit, error } = await supabase
         .from('property_units')
         .insert({
+          org_id: property.org_id,
           property_id: propertyId,
           unit_type: unit.unitType,
           bedrooms: unit.bedrooms,
@@ -321,7 +337,9 @@ async function saveExtractedUnits(
           rent_max: unit.rentMax,
           available_count: unit.availableCount,
           move_in_specials: unit.moveInSpecials,
-          source: 'manual'
+          source: 'manual',
+          source_identity: 'manual-extraction',
+          canonical_key: canonicalKey
         })
         .select()
         .single()

@@ -72,7 +72,7 @@ describe('SiteForge first-party telemetry ingress', () => {
     const { POST } = await import('./route')
     const response = await POST(
       request({
-        eventType: 'page_view',
+        eventType: 'lead_submit',
         idempotencyKey: 'telemetry-12345678',
         sessionId: 'session-12345678',
         consentState: 'granted',
@@ -87,6 +87,7 @@ describe('SiteForge first-party telemetry ingress', () => {
       expect.objectContaining({
         website_id: websiteId,
         artifact_id: '44444444-4444-4444-8444-444444444444',
+        event_type: 'lead_submit',
         page_path: '/floor-plans/',
         consent_state: 'granted',
       }),

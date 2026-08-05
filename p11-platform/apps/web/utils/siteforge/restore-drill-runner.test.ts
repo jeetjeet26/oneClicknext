@@ -1,13 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { restoreMock, healthMock } = vi.hoisted(() => ({
-  restoreMock: vi.fn(),
+const { healthMock } = vi.hoisted(() => ({
   healthMock: vi.fn(),
 }))
 
-vi.mock('@/utils/siteforge/launch/service', () => ({
-  restoreLaunchRelease: restoreMock,
-}))
 vi.mock('@/utils/siteforge/production-health', () => ({
   runSiteForgeHealth: healthMock,
 }))
@@ -40,7 +36,7 @@ describe('SiteForge restore drill runner', () => {
     vi.clearAllMocks()
   })
 
-  it('executes and verifies a queued automatic restore', async () => {
+  it('never executes a queued restore and marks it awaiting operator', async () => {
     const drill = {
       id: '11111111-1111-4111-8111-111111111111',
       org_id: '22222222-2222-4222-8222-222222222222',
@@ -55,73 +51,33 @@ describe('SiteForge restore drill runner', () => {
     }
     const load = resolvedChain({ data: [drill], error: null })
     const claim = resolvedChain({ data: { id: drill.id }, error: null })
-    const setVerifying = resolvedChain({ data: null, error: null })
-    const complete = resolvedChain({ data: null, error: null })
     let drillCalls = 0
     const client = {
       from: vi.fn((table: string) => {
         if (table === 'siteforge_restore_drills') {
           drillCalls += 1
-          return [load, claim, setVerifying, complete][drillCalls - 1]
-        }
-        if (table === 'siteforge_launch_releases') {
-          return resolvedChain({
-            data: {
-              state: 'live',
-              approved_by: '77777777-7777-4777-8777-777777777777',
-              created_by: '88888888-8888-4888-8888-888888888888',
-            },
-            error: null,
-          })
-        }
-        if (table === 'property_websites') {
-          return resolvedChain({
-            data: {
-              production_artifact_id: drill.expected_artifact_id,
-              production_content_hash: drill.expected_content_hash,
-              production_url: 'https://example.com',
-            },
-            error: null,
-          })
+          return [load, claim][drillCalls - 1]
         }
         throw new Error(`Unexpected table ${table}`)
       }),
     }
-    restoreMock.mockResolvedValue({
-      release: { id: drill.release_id },
-      manualRequired: false,
-    })
-    healthMock.mockResolvedValue({
-      runId: '99999999-9999-4999-8999-999999999999',
-      status: 'healthy',
-      checks: {
-        identity: { passed: true },
-        reachability: { passed: true },
-      },
-    })
 
     const result = await processSiteForgeRestoreDrills({}, client as never)
 
     expect(result).toMatchObject({
       processed: 1,
-      succeeded: 1,
+      succeeded: 0,
       failed: 0,
+      awaitingOperator: 1,
     })
-    expect(restoreMock).toHaveBeenCalledWith(
+    expect(claim.update).toHaveBeenCalledWith(
       expect.objectContaining({
-        releaseId: drill.release_id,
-        actorId: '77777777-7777-4777-8777-777777777777',
-      }),
-      client
-    )
-    expect(complete.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        status: 'succeeded',
         verification_report: expect.objectContaining({
-          identityVerified: true,
-          reachabilityVerified: true,
+          executionRequiresOperator: true,
+          restoreCompleted: false,
         }),
       })
     )
+    expect(healthMock).not.toHaveBeenCalled()
   })
 })

@@ -6,6 +6,11 @@ import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { createRequestContext } from '@/utils/services/request-context'
 import type { Json } from '@/types/supabase'
 import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
+import {
+  assertActiveAuroraLifecycleLease,
+  AuroraLifecycleControlError,
+  registerAuroraOwnedResource,
+} from '@/utils/siteforge/testing/aurora-lifecycle-control'
 
 const rollbackRequestSchema = z.object({
   expectedCurrentArtifactId: z.string().uuid(),
@@ -151,6 +156,14 @@ export async function POST(
         { status: auth.status, headers: ctx.responseHeaders }
       )
     }
+    const lifecycleIdentity = await assertActiveAuroraLifecycleLease(
+      request,
+      {
+        propertyId: auth.website.property_id,
+        websiteId,
+      },
+      auth.service
+    )
     if (
       auth.website.current_artifact_version_id !==
       parsed.data.expectedCurrentArtifactId
@@ -248,6 +261,11 @@ export async function POST(
       },
       success: true,
     })
+    await registerAuroraOwnedResource(
+      lifecycleIdentity,
+      { kind: 'artifact', id: revision.id },
+      auth.service
+    )
 
     ctx.logSuccess(200, {
       websiteId,
@@ -270,10 +288,17 @@ export async function POST(
       { headers: ctx.responseHeaders }
     )
   } catch (error) {
-    ctx.logError(500, error)
+    const status =
+      error instanceof AuroraLifecycleControlError ? error.statusCode : 500
+    ctx.logError(status, error)
     return NextResponse.json(
-      { error: 'Failed to create verified rollback artifact' },
-      { status: 500, headers: ctx.responseHeaders }
+      {
+        error:
+          status === 500
+            ? 'Failed to create verified rollback artifact'
+            : (error as Error).message,
+      },
+      { status, headers: ctx.responseHeaders }
     )
   }
 }

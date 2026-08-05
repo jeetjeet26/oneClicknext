@@ -1,6 +1,11 @@
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
-import { siteConfigurationSchema } from '@/types/siteforge'
+import {
+  acfBlockTypeSchema,
+  isSiteForgeBlockVariant,
+  siteConfigurationSchema,
+  siteForgeCssClassSchema,
+} from '@/types/siteforge'
 import {
   canonicalizeSiteForgeContent,
   hashSiteForgeContent,
@@ -213,20 +218,46 @@ export const assetPreparationResultSchema = z
 export const runtimeSectionSchema = z
   .object({
     sectionId: runtimeIdSchema,
-    blockName: z.string().regex(/^acf\/[a-z0-9-]+$/),
+    blockName: acfBlockTypeSchema,
     order: z.number().int().nonnegative(),
     variant: z.string().min(1).nullable(),
+    cssClasses: z.array(siteForgeCssClassSchema).max(20).optional(),
+    anchor: runtimeIdSchema.optional(),
+    align: z.enum(['wide', 'full']).optional(),
     data: z.record(z.string(), z.unknown()),
   })
   .strict()
+  .superRefine((section, context) => {
+    if (
+      section.variant &&
+      !isSiteForgeBlockVariant(section.blockName, section.variant)
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['variant'],
+        message: `Unsupported ${section.blockName} variant "${section.variant}"`,
+      })
+    }
+  })
 
 export const runtimeSeoSchema = z
   .object({
-    title: z.string(),
-    description: z.string(),
-    canonicalPath: z.string(),
+    title: z.string().min(1).max(500),
+    description: z.string().max(10_000),
+    canonicalPath: z
+      .string()
+      .regex(
+        /^\/(?:[A-Za-z0-9._~!$&'()*+,;=:@%-]+\/?)*$/,
+        'canonicalPath must be a root-relative path without query or fragment'
+      ),
     noIndex: z.boolean(),
-    structuredData: z.array(z.string()),
+    structuredData: z
+      .array(
+        z.string().refine(isRuntimeJsonLd, {
+          message: 'structuredData entries must contain JSON objects or arrays',
+        })
+      )
+      .max(100),
   })
   .strict()
 
@@ -259,7 +290,15 @@ export const runtimeNavigationItemSchema = z
     itemKey: runtimeIdSchema,
     label: z.string().min(1).max(500),
     pageKey: runtimeIdSchema.nullable(),
-    url: z.string().min(1).max(2_048).nullable(),
+    url: z
+      .string()
+      .min(1)
+      .max(2_048)
+      .refine(
+        value => value.startsWith('/') || /^https?:\/\//i.test(value),
+        'Navigation URLs must be root-relative or HTTP(S)'
+      )
+      .nullable(),
     parentItemKey: runtimeIdSchema.nullable(),
     target: z.enum(['_self', '_blank']),
   })
@@ -275,8 +314,59 @@ export const runtimeNavigationSchema = z
     items: z.array(runtimeNavigationItemSchema).max(200),
   })
   .strict()
+  .superRefine((navigation, context) => {
+    const keys = new Set<string>()
+    navigation.items.forEach((item, index) => {
+      if (keys.has(item.itemKey)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['items', index, 'itemKey'],
+          message: 'Navigation item keys must be unique',
+        })
+      }
+      keys.add(item.itemKey)
+    })
+
+    const parentByKey = new Map(
+      navigation.items.map(item => [item.itemKey, item.parentItemKey] as const)
+    )
+    navigation.items.forEach((item, index) => {
+      if (item.parentItemKey && !keys.has(item.parentItemKey)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['items', index, 'parentItemKey'],
+          message: 'Navigation parents must reference another item',
+        })
+        return
+      }
+      const visited = new Set<string>()
+      let cursor: string | null = item.itemKey
+      while (cursor !== null) {
+        if (visited.has(cursor)) {
+          context.addIssue({
+            code: 'custom',
+            path: ['items', index, 'parentItemKey'],
+            message: 'Navigation hierarchy must not contain cycles',
+          })
+          break
+        }
+        visited.add(cursor)
+        cursor = parentByKey.get(cursor) ?? null
+      }
+    })
+  })
 
 export const runtimeDesignTokensSchema = siteConfigurationSchema.shape.design
+
+export const runtimePropertyProfileSchema = z
+  .object({
+    name: z.string().min(1).max(500),
+    address: z.string().max(2_000),
+    phone: z.string().max(100),
+    email: z.string().email().or(z.literal('')),
+    socialLinks: z.record(z.string(), z.string().url()),
+  })
+  .strict()
 
 export const runtimeSiteSettingsSchema = z
   .object({
@@ -285,6 +375,48 @@ export const runtimeSiteSettingsSchema = z
     homepagePageKey: runtimeIdSchema,
     logoAssetId: z.string().uuid().nullable(),
     faviconAssetId: z.string().uuid().nullable(),
+    propertyProfile: runtimePropertyProfileSchema.optional(),
+  })
+  .strict()
+
+const httpsRuntimeUrlSchema = z
+  .string()
+  .url()
+  .refine(value => new URL(value).protocol === 'https:', {
+    message: 'Public runtime URLs must use HTTPS',
+  })
+
+export const runtimeTargetStateSchema = z
+  .object({
+    mode: z.enum(['canonical_preview', 'staging', 'production']),
+    siteUrl: z.string().url(),
+  })
+  .strict()
+
+export const runtimePublicRuntimeSchema = z
+  .object({
+    enabled: z.boolean(),
+    apiKey: z.string().max(2_000),
+    apiBaseUrl: httpsRuntimeUrlSchema,
+    websiteId: z.string().uuid(),
+    conversionEndpoint: httpsRuntimeUrlSchema,
+    conversionKey: z.string().min(1).max(2_000),
+    telemetryEndpoint: httpsRuntimeUrlSchema,
+  })
+  .strict()
+  .superRefine((runtime, context) => {
+    if (runtime.enabled && runtime.apiKey.length === 0) {
+      context.addIssue({
+        code: 'custom',
+        path: ['apiKey'],
+        message: 'Enabled public runtime requires an API key',
+      })
+    }
+  })
+
+export const runtimeProtectionStateSchema = z
+  .object({
+    mode: z.enum(['noindex', 'password_noindex', 'public']),
   })
   .strict()
 
@@ -297,6 +429,10 @@ export const compiledMutationPlanSchema = z
     siteSettings: runtimeSiteSettingsSchema,
     legal: z.record(z.string(), z.unknown()),
     analytics: z.record(z.string(), z.unknown()),
+    siteConfiguration: siteConfigurationSchema.optional(),
+    target: runtimeTargetStateSchema.optional(),
+    publicRuntime: runtimePublicRuntimeSchema.optional(),
+    protection: runtimeProtectionStateSchema.optional(),
   })
   .strict()
   .superRefine((plan, context) => {
@@ -593,4 +729,13 @@ function addAssetIssues(
     }
     ids.add(asset.assetId)
   })
+}
+
+function isRuntimeJsonLd(value: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(value)
+    return parsed !== null && typeof parsed === 'object'
+  } catch {
+    return false
+  }
 }

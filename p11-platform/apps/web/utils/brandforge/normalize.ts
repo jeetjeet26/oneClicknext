@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { sha256Hex } from '@/utils/sha256'
 import {
   BRAND_FORGE_CONTRACT_VERSION,
   brandForgeContractV1Schema,
@@ -348,9 +348,7 @@ function normalizeForHash(value: unknown): unknown {
 }
 
 export function hashBrandForgeContract(contract: BrandForgeContractV1): string {
-  return createHash('sha256')
-    .update(JSON.stringify(normalizeForHash(contract)))
-    .digest('hex')
+  return sha256Hex(JSON.stringify(normalizeForHash(contract)))
 }
 
 export function brandContractToStorageSections(contract: BrandForgeContractV1) {

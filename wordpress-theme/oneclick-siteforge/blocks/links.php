@@ -16,7 +16,7 @@ if ( empty( $links ) ) {
 }
 ?>
 
-<section <?php echo oneclick_get_block_wrapper_attributes( array( 'class' => 'block-links' ) ); ?>>
+<section <?php echo oneclick_get_block_wrapper_attributes( $block, array( 'class' => 'block-links' ) ); ?>>
 	<div class="site-container">
 		<div class="links-wrapper">
 			<?php

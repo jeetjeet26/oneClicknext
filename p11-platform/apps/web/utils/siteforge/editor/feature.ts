@@ -2,6 +2,12 @@ export function isSiteForgeSemanticEditorEnabled(): boolean {
   return process.env.SITEFORGE_SEMANTIC_EDITOR_ENABLED === 'true'
 }
 
+export function isSiteForgeRuntimeExtensionsEnabled(
+  value = process.env.SITEFORGE_RUNTIME_EXTENSIONS_ENABLED
+): boolean {
+  return value?.trim().toLowerCase() === 'true'
+}
+
 export function isTrustedCertificationRequired(
   value = process.env.SITEFORGE_REQUIRE_TRUSTED_CERTIFICATION
 ): boolean {

@@ -5,6 +5,8 @@
 // Created: December 11, 2025
 
 import React from 'react'
+import type { ACFBlockType } from '@/types/siteforge'
+import { sanitizeSiteForgePreviewHtml } from '@/utils/siteforge/preview-html-sanitizer'
 
 export interface DesignSystem {
   colorSystem?: {
@@ -33,6 +35,7 @@ export interface DesignSystem {
 
 interface BlockRendererProps {
   blockType: string
+  blockIdentity: string
   content: unknown
   className?: string
   designSystem?: DesignSystem
@@ -40,6 +43,7 @@ interface BlockRendererProps {
 
 type BlockContent = Record<string, unknown>
 type BlockComponentProps = {
+  blockIdentity: string
   content: BlockContent
   designSystem?: DesignSystem
 }
@@ -52,6 +56,26 @@ function asRecord(value: unknown): BlockContent {
 
 function getString(content: BlockContent, key: string, fallback = ''): string {
   return typeof content[key] === 'string' ? content[key] : fallback
+}
+
+function getSanitizedHtml(content: BlockContent, key: string): string {
+  return sanitizeSiteForgePreviewHtml(getString(content, key))
+}
+
+function domIdPrefix(blockIdentity: string): string {
+  const normalized =
+    blockIdentity
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 48) || 'block'
+  let hash = 2_166_136_261
+  for (let index = 0; index < blockIdentity.length; index += 1) {
+    hash ^= blockIdentity.charCodeAt(index)
+    hash = Math.imul(hash, 16_777_619)
+  }
+  return `siteforge-${normalized}-${(hash >>> 0).toString(36)}`
 }
 
 function getNumber(content: BlockContent, key: string, fallback = 0): number {
@@ -83,8 +107,37 @@ function getImage(
   if (!url) return null
   return {
     url,
-    alt: getString(image, 'alt', 'Property photography'),
+    alt: getString(image, 'alt'),
   }
+}
+
+function isExternalHref(href: string): boolean {
+  return /^https?:\/\//i.test(href)
+}
+
+function externalLinkProps(href: string) {
+  return isExternalHref(href)
+    ? { target: '_blank' as const, rel: 'noopener noreferrer' }
+    : {}
+}
+
+function DegradedBlock({
+  title,
+  detail,
+}: {
+  title: string
+  detail: string
+}) {
+  return (
+    <div
+      className="rounded-lg border border-amber-200 bg-amber-50 p-6 dark:border-amber-800 dark:bg-amber-900/20"
+      data-preview-state="degraded"
+      role="status"
+    >
+      <p className="font-semibold text-amber-900 dark:text-amber-100">{title}</p>
+      <p className="mt-2 text-sm text-amber-800 dark:text-amber-200">{detail}</p>
+    </div>
+  )
 }
 
 type CriticalPreviewState = {
@@ -141,6 +194,13 @@ export function getCriticalPreviewState(
     }
   }
 
+  if (
+    normalized === 'acf/form' &&
+    content?.provider !== 'p11_lumaleasing'
+  ) {
+    return { degraded: true, reason: 'unsupported_form_provider' }
+  }
+
   if (normalized === 'acf/plans-availability') {
     const floorPlans = Array.isArray(content?.floor_plans) ? content.floor_plans : []
     if (floorPlans.length === 0) {
@@ -176,49 +236,28 @@ function getDesignSystemStyles(designSystem?: DesignSystem): React.CSSProperties
 /**
  * Main renderer that delegates to specific block renderers
  */
-export function ACFBlockRenderer({ blockType, content, className = '', designSystem }: BlockRendererProps) {
+export function ACFBlockRenderer({
+  blockType,
+  blockIdentity,
+  content,
+  className = '',
+  designSystem,
+}: BlockRendererProps) {
   const blockContent = asRecord(content)
   if (Object.keys(blockContent).length === 0) {
     return (
-      <div className={`p-6 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg ${className}`}>
-        <div className="flex items-start gap-3">
-          <span className="text-yellow-600 dark:text-yellow-400 text-xl">⚠️</span>
-          <div>
-            <p className="text-yellow-800 dark:text-yellow-200 font-medium">
-              Content not generated for this section
-            </p>
-            <p className="text-yellow-700 dark:text-yellow-300 text-sm mt-1">
-              Click this section and describe what content you&apos;d like to add.
-            </p>
-            <p className="text-yellow-600 dark:text-yellow-400 text-xs mt-2">
-              Block type: {blockType}
-            </p>
-          </div>
-        </div>
+      <div className={className} data-acf-block={blockType}>
+        <DegradedBlock
+          title="Content not generated for this section"
+          detail={`The P11 approximation cannot render ${blockType} without source content.`}
+        />
       </div>
     )
   }
 
-  const renderers: Record<string, React.FC<BlockComponentProps>> = {
-    'acf/top-slides': HeroSlides,
-    'acf/text-section': TextSection,
-    'acf/content-grid': ContentGrid,
-    'acf/feature-section': FeatureSection,
-    'acf/gallery': Gallery,
-    'acf/form': FormSection,
-    'acf/map': MapSection,
-    'acf/links': LinksSection,
-    'acf/accordion-section': AccordionSection,
-    'acf/image': ImageSection,
-    'acf/html-section': HtmlSection,
-    'acf/menu': MenuSection,
-    'acf/plans-availability': PlansAvailability,
-    'acf/poi': PointsOfInterest
-  }
-
   // Try direct match first, then fall back to semantic type mapping
   let resolvedBlockType = blockType
-  if (!renderers[blockType]) {
+  if (!(blockType in REGISTERED_BLOCK_RENDERERS)) {
     // Try semantic type mapping
     const mappedType = semanticTypeToBlock[blockType?.toLowerCase()]
     if (mappedType) {
@@ -226,13 +265,18 @@ export function ACFBlockRenderer({ blockType, content, className = '', designSys
     }
   }
   
-  const Renderer = renderers[resolvedBlockType]
+  const Renderer =
+    REGISTERED_BLOCK_RENDERERS[
+      resolvedBlockType as keyof typeof REGISTERED_BLOCK_RENDERERS
+    ]
   
   if (!Renderer) {
     return (
-      <div className={`p-4 bg-yellow-50 dark:bg-yellow-900/20 rounded border border-yellow-200 dark:border-yellow-800 ${className}`}>
-        <p className="text-yellow-700 dark:text-yellow-300 text-sm">Unknown block type: {blockType}</p>
-        <pre className="text-xs mt-2 text-gray-600">{JSON.stringify(blockContent, null, 2)}</pre>
+      <div className={className} data-acf-block={blockType}>
+        <DegradedBlock
+          title={`Unsupported block type: ${blockType}`}
+          detail="This block is preserved in the artifact but has no P11 approximation. Review it in the exact WordPress preview."
+        />
       </div>
     )
   }
@@ -241,8 +285,12 @@ export function ACFBlockRenderer({ blockType, content, className = '', designSys
   const brandStyles = getDesignSystemStyles(designSystem)
 
   return (
-    <div className={className} style={brandStyles}>
-      <Renderer content={blockContent} designSystem={designSystem} />
+    <div className={className} style={brandStyles} data-acf-block={resolvedBlockType}>
+      <Renderer
+        blockIdentity={blockIdentity}
+        content={blockContent}
+        designSystem={designSystem}
+      />
     </div>
   )
 }
@@ -258,21 +306,10 @@ function HeroSlides({ content, designSystem }: BlockComponentProps) {
   // Do not fake complete hero output when content is missing.
   if (slides.length === 0) {
     return (
-      <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 p-6">
-        <h2
-          className="text-lg font-semibold text-amber-900 dark:text-amber-100"
-          style={{ fontFamily: typography.headingFont ? `'${typography.headingFont}', serif` : undefined }}
-        >
-          Hero block is missing structured slide content
-        </h2>
-        <p className="mt-2 text-sm text-amber-800 dark:text-amber-200">
-          Preview intentionally avoids placeholder headline/CTA rendering for this critical section.
-          Edit this section to add real hero slides before deploy.
-        </p>
-        <div className="mt-3 text-xs text-amber-700 dark:text-amber-300">
-          Required: slides[headline, subheadline, cta_text, cta_link]
-        </div>
-      </div>
+      <DegradedBlock
+        title="Hero block is missing structured slide content"
+        detail="P11 intentionally avoids placeholder headlines and calls to action. Add reviewed slides or inspect the exact WordPress preview."
+      />
     )
   }
   
@@ -314,16 +351,19 @@ function HeroSlides({ content, designSystem }: BlockComponentProps) {
             >
               {getString(slide, 'subheadline')}
             </p>
-            <a 
-              href={getString(slide, 'cta_link', '#')}
-              className="inline-block text-white font-semibold px-6 py-3 rounded-lg transition hover:opacity-90"
-              style={{ 
-                backgroundColor: colors.accent || colors.primary || '#4F46E5',
-                fontFamily: typography.bodyFont ? `'${typography.bodyFont}', sans-serif` : undefined
-              }}
-            >
-              {getString(slide, 'cta_text')}
-            </a>
+            {getString(slide, 'cta_text') && getString(slide, 'cta_link') ? (
+              <a
+                href={getString(slide, 'cta_link')}
+                {...externalLinkProps(getString(slide, 'cta_link'))}
+                className="inline-block rounded-lg px-6 py-3 font-semibold text-white transition hover:opacity-90"
+                style={{
+                  backgroundColor: colors.accent || colors.primary || '#4F46E5',
+                  fontFamily: typography.bodyFont ? `'${typography.bodyFont}', sans-serif` : undefined
+                }}
+              >
+                {getString(slide, 'cta_text')}
+              </a>
+            ) : null}
           </div>
         </div>
         )
@@ -364,7 +404,7 @@ function TextSection({ content, designSystem }: BlockComponentProps) {
         <div 
           className="prose dark:prose-invert max-w-none text-gray-600 dark:text-gray-300"
           style={{ fontFamily: typography.bodyFont ? `'${typography.bodyFont}', sans-serif` : undefined }}
-          dangerouslySetInnerHTML={{ __html: getString(content, 'content') }}
+          dangerouslySetInnerHTML={{ __html: getSanitizedHtml(content, 'content') }}
         />
       </div>
     </div>
@@ -463,11 +503,12 @@ function FeatureSection({ content, designSystem }: BlockComponentProps) {
         <div 
           className="prose dark:prose-invert max-w-none text-gray-600 dark:text-gray-300 mb-6"
           style={{ fontFamily: typography.bodyFont ? `'${typography.bodyFont}', sans-serif` : undefined }}
-          dangerouslySetInnerHTML={{ __html: getString(content, 'content') }}
+          dangerouslySetInnerHTML={{ __html: getSanitizedHtml(content, 'content') }}
         />
-        {getString(content, 'cta_text') && (
+        {getString(content, 'cta_text') && getString(content, 'cta_link') && (
           <a 
-            href={getString(content, 'cta_link', '#')}
+            href={getString(content, 'cta_link')}
+            {...externalLinkProps(getString(content, 'cta_link'))}
             className="inline-block text-white font-medium px-5 py-2 rounded-lg transition hover:opacity-90"
             style={{ backgroundColor: colors.primary || '#4F46E5' }}
           >
@@ -523,9 +564,25 @@ function Gallery({ content }: BlockComponentProps) {
 /**
  * Form Section - Contact/inquiry form
  */
-function FormSection({ content, designSystem }: BlockComponentProps) {
+function FormSection({ blockIdentity, content, designSystem }: BlockComponentProps) {
   const colors = designSystem?.colors || {}
   const typography = designSystem?.typography || {}
+  const idPrefix = domIdPrefix(blockIdentity)
+  const fieldIds = {
+    email: `${idPrefix}-email`,
+    message: `${idPrefix}-message`,
+    name: `${idPrefix}-name`,
+    phone: `${idPrefix}-phone`,
+  }
+
+  if (content.provider !== 'p11_lumaleasing') {
+    return (
+      <DegradedBlock
+        title="Form provider is not publishable"
+        detail="This artifact does not target the supported P11 LumaLeasing conversion provider. Update the confirmed conversion contract before launch."
+      />
+    )
+  }
   
   return (
     <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-8 max-w-xl mx-auto">
@@ -542,31 +599,41 @@ function FormSection({ content, designSystem }: BlockComponentProps) {
         {getString(content, 'subheading')}
       </p>
       <div className="space-y-4">
+        <label className="sr-only" htmlFor={fieldIds.name}>Name</label>
         <input 
+          id={fieldIds.name}
           type="text" 
           placeholder="Your Name" 
           className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700"
           disabled
         />
+        <label className="sr-only" htmlFor={fieldIds.email}>Email</label>
         <input 
+          id={fieldIds.email}
           type="email" 
           placeholder="Email Address" 
           className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700"
           disabled
         />
+        <label className="sr-only" htmlFor={fieldIds.phone}>Phone</label>
         <input 
+          id={fieldIds.phone}
           type="tel" 
           placeholder="Phone Number" 
           className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700"
           disabled
         />
+        <label className="sr-only" htmlFor={fieldIds.message}>Message</label>
         <textarea 
+          id={fieldIds.message}
           placeholder="Message" 
           rows={3}
           className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700"
           disabled
         />
         <button 
+          type="button"
+          disabled
           className="w-full text-white font-semibold py-3 rounded-lg transition hover:opacity-90"
           style={{ backgroundColor: colors.primary || '#4F46E5' }}
         >
@@ -581,24 +648,20 @@ function FormSection({ content, designSystem }: BlockComponentProps) {
  * Map Section - explicit degraded state, no fake live map rendering
  */
 function MapSection({ content }: BlockComponentProps) {
-  const address = typeof content.address === 'string' ? content.address : ''
+  const address = typeof content.address === 'string' ? content.address.trim() : ''
   const latitude = typeof content.latitude === 'number' ? content.latitude : null
   const longitude = typeof content.longitude === 'number' ? content.longitude : null
   const hasCoordinates =
     latitude !== null && longitude !== null
   const hasLocation = address.trim().length > 0 || hasCoordinates
+  const destination = address || (hasCoordinates ? `${latitude},${longitude}` : '')
 
   if (!hasLocation) {
     return (
-      <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 p-6">
-        <h4 className="text-sm font-semibold text-amber-900 dark:text-amber-100">
-          Map location not configured
-        </h4>
-        <p className="mt-2 text-sm text-amber-800 dark:text-amber-200">
-          Preview skips map placeholders for this critical block. Provide address or coordinates to
-          render a trustworthy location summary.
-        </p>
-      </div>
+      <DegradedBlock
+        title="Map location not configured"
+        detail="P11 does not fabricate map tiles or a location. Review the exact WordPress preview after a sourced address or coordinates are available."
+      />
     )
   }
 
@@ -613,11 +676,18 @@ function MapSection({ content }: BlockComponentProps) {
           </p>
         )}
         <p>Zoom: {typeof content.zoom_level === 'number' ? content.zoom_level : 15}</p>
-        {content.show_directions === true && (
-          <p className="text-xs text-gray-500 dark:text-gray-400">Directions enabled</p>
+        {content.show_directions === true && destination && (
+          <a
+            href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-block text-sm font-medium text-blue-700 underline dark:text-blue-300"
+          >
+            Get directions
+          </a>
         )}
         <div className="pt-1 text-xs text-gray-500 dark:text-gray-400">
-          Live map tiles are intentionally omitted in preview.
+          Live map tiles are intentionally omitted; this keyless location fallback uses only sourced data.
         </div>
       </div>
     </div>
@@ -636,7 +706,8 @@ function LinksSection({ content, designSystem }: BlockComponentProps) {
       {links.map((link, idx) => (
         <a
           key={idx}
-          href={getString(link, 'url', '#')}
+          href={getString(link, 'url')}
+          {...externalLinkProps(getString(link, 'url'))}
           className={`px-6 py-3 rounded-lg font-medium transition hover:opacity-90 ${
             getString(link, 'style') !== 'primary'
               ? 'bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-900 dark:text-white'
@@ -661,20 +732,19 @@ function AccordionSection({ content, designSystem }: BlockComponentProps) {
   return (
     <div className="space-y-3 p-4">
       {items.map((item, idx) => (
-        <div key={idx} className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
-          <div 
-            className="bg-gray-50 dark:bg-gray-800 px-4 py-3 font-medium text-gray-900 dark:text-white flex justify-between items-center"
+        <details key={idx} className="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
+          <summary
+            className="cursor-pointer bg-gray-50 px-4 py-3 font-medium text-gray-900 dark:bg-gray-800 dark:text-white"
             style={{ fontFamily: typography.headingFont ? `'${typography.headingFont}', serif` : undefined }}
           >
             {getString(item, 'title')}
-            <span className="text-gray-400">▼</span>
-          </div>
+          </summary>
           <div 
             className="px-4 py-3 text-gray-600 dark:text-gray-300 prose dark:prose-invert max-w-none"
             style={{ fontFamily: typography.bodyFont ? `'${typography.bodyFont}', sans-serif` : undefined }}
-            dangerouslySetInnerHTML={{ __html: getString(item, 'content') }}
+            dangerouslySetInnerHTML={{ __html: getSanitizedHtml(item, 'content') }}
           />
-        </div>
+        </details>
       ))}
     </div>
   )
@@ -727,9 +797,13 @@ function ImageSection({ content, designSystem }: BlockComponentProps) {
  */
 function HtmlSection({ content }: BlockComponentProps) {
   return (
-    <div 
-      className="p-4"
-      dangerouslySetInnerHTML={{ __html: getString(content, 'html_content') }}
+    <DegradedBlock
+      title="Custom HTML is not rendered in P11"
+      detail={
+        getString(content, 'html_content')
+          ? 'The custom HTML remains in the artifact. Open the exact WordPress preview to inspect its theme-rendered output safely.'
+          : 'No custom HTML content is available for this block.'
+      }
     />
   )
 }
@@ -761,6 +835,7 @@ function MenuSection({ content, designSystem }: BlockComponentProps) {
         <a
           key={`${label}-${idx}`}
           href={link}
+          {...(link ? externalLinkProps(link) : {})}
           className="px-4 py-2 bg-white dark:bg-gray-700 rounded-full text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600 cursor-pointer transition"
           style={{ fontFamily: typography.bodyFont ? `'${typography.bodyFont}', sans-serif` : undefined }}
         >
@@ -918,6 +993,7 @@ function PlansAvailability({ content, designSystem }: BlockComponentProps) {
  */
 function PointsOfInterest({ content, designSystem }: BlockComponentProps) {
   const categories = getStringArray(content, 'categories')
+  const points = getRecordArray(content, 'points')
   const colors = designSystem?.colors || {}
   const typography = designSystem?.typography || {}
   
@@ -933,14 +1009,33 @@ function PointsOfInterest({ content, designSystem }: BlockComponentProps) {
       >
         {getString(content, 'intro_text')}
       </p>
-      <div className="bg-gray-200 dark:bg-gray-700 rounded-lg aspect-video flex items-center justify-center mb-4">
-        <div className="text-center">
-          <span className="text-4xl mb-2 block">📍</span>
-          <span className="text-gray-500 dark:text-gray-400">
-            Points of Interest Map ({typeof content.radius_miles === 'number' ? content.radius_miles : 2} mile radius)
-          </span>
-        </div>
-      </div>
+      {points.length > 0 ? (
+        <ul className="mb-4 grid gap-3 sm:grid-cols-2">
+          {points.map((point, index) => (
+            <li
+              key={`${getString(point, 'name')}-${index}`}
+              className="rounded-lg border border-gray-200 p-4 dark:border-gray-700"
+            >
+              <p className="font-medium">{getString(point, 'name')}</p>
+              {getString(point, 'category') ? (
+                <p className="text-sm capitalize text-gray-600 dark:text-gray-400">
+                  {getString(point, 'category')}
+                </p>
+              ) : null}
+              {getString(point, 'address') ? (
+                <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+                  {getString(point, 'address')}
+                </p>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <DegradedBlock
+          title="Points of interest are not available"
+          detail="P11 does not draw a placeholder map. Add sourced places or inspect the exact WordPress preview."
+        />
+      )}
       <div className="flex flex-wrap gap-2 justify-center">
         {categories.map((cat, idx) => (
           <span 
@@ -955,6 +1050,27 @@ function PointsOfInterest({ content, designSystem }: BlockComponentProps) {
     </div>
   )
 }
+
+const REGISTERED_BLOCK_RENDERERS = {
+  'acf/menu': MenuSection,
+  'acf/top-slides': HeroSlides,
+  'acf/text-section': TextSection,
+  'acf/feature-section': FeatureSection,
+  'acf/image': ImageSection,
+  'acf/links': LinksSection,
+  'acf/content-grid': ContentGrid,
+  'acf/form': FormSection,
+  'acf/map': MapSection,
+  'acf/html-section': HtmlSection,
+  'acf/gallery': Gallery,
+  'acf/accordion-section': AccordionSection,
+  'acf/plans-availability': PlansAvailability,
+  'acf/poi': PointsOfInterest,
+} satisfies Record<ACFBlockType, React.FC<BlockComponentProps>>
+
+export const EXPLICIT_ACF_PREVIEW_BLOCK_TYPES = Object.freeze(
+  Object.keys(REGISTERED_BLOCK_RENDERERS) as ACFBlockType[]
+)
 
 /**
  * Helper: Convert Font Awesome class to emoji

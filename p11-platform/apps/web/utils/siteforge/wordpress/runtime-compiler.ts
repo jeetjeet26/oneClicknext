@@ -23,11 +23,33 @@ import {
   runtimeArtifactIdSchema,
   runtimeHashSchema,
   runtimeIdSchema,
+  runtimeProtectionStateSchema,
+  runtimePropertyProfileSchema,
+  runtimePublicRuntimeSchema,
+  runtimeTargetStateSchema,
   type AssetPreparationRequest,
   type AssetPreparationResult,
   type CompiledMutationPlan,
   type DeploymentSubmission,
 } from '@/utils/siteforge/runtime-contract'
+import {
+  legalEvidenceId,
+  siteForgeLegalConfigSchema,
+  type SiteForgeLegalConfig,
+} from '@/utils/siteforge/quality/deterministic-gates'
+
+const runtimeLegalConfigSchema = z
+  .record(z.string(), z.unknown())
+  .superRefine((legal, context) => {
+    if (!Object.hasOwn(legal, 'schemaVersion')) return
+    const approved = siteForgeLegalConfigSchema.safeParse(legal)
+    if (!approved.success) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Versioned SiteForge legal data must match the approved legal contract',
+      })
+    }
+  })
 
 export const immutableSiteForgeRuntimeReleaseSchema = z
   .object({
@@ -38,6 +60,7 @@ export const immutableSiteForgeRuntimeReleaseSchema = z
     assetManifestHash: runtimeHashSchema,
     siteName: z.string().min(1).max(500),
     tagline: z.string().max(2_000),
+    propertyProfile: runtimePropertyProfileSchema.optional(),
     blueprint: siteBlueprintSchema,
     assets: z.array(immutableRuntimeAssetSchema).max(100),
     selectedAssets: z
@@ -56,8 +79,11 @@ export const immutableSiteForgeRuntimeReleaseSchema = z
       })
       .strict()
       .default({ pageKeys: [], pageSlugs: [] }),
-    legal: z.record(z.string(), z.unknown()),
+    legal: runtimeLegalConfigSchema,
     analytics: z.record(z.string(), z.unknown()),
+    target: runtimeTargetStateSchema.optional(),
+    publicRuntime: runtimePublicRuntimeSchema.optional(),
+    protection: runtimeProtectionStateSchema.optional(),
   })
   .strict()
 
@@ -91,6 +117,10 @@ export function compileSiteForgeRuntimeRelease(input: {
     )
   }
   const release = immutableSiteForgeRuntimeReleaseSchema.parse(input.release)
+  const approvedLegal = siteForgeLegalConfigSchema.safeParse(release.legal)
+  if (approvedLegal.success) {
+    assertApprovedLegalPages(release.blueprint.pages, approvedLegal.data)
+  }
   const expectedRemoteContentHash =
     input.expectedRemoteContentHash === null
       ? null
@@ -148,9 +178,14 @@ export function compileSiteForgeRuntimeRelease(input: {
       homepagePageKey: homepage.pageKey,
       logoAssetId: release.selectedAssets.logoAssetId,
       faviconAssetId: release.selectedAssets.faviconAssetId,
+      propertyProfile: release.propertyProfile,
     },
-    legal: release.legal,
+    legal: approvedLegal.success ? approvedLegal.data : release.legal,
     analytics: release.analytics,
+    siteConfiguration: release.blueprint.siteConfiguration,
+    ...(release.target ? { target: release.target } : {}),
+    ...(release.publicRuntime ? { publicRuntime: release.publicRuntime } : {}),
+    ...(release.protection ? { protection: release.protection } : {}),
   })
   const operationHash = deriveRuntimeOperationHash(plan)
   const assetPreparation = assetPreparationRequestSchema.parse({
@@ -261,6 +296,35 @@ function compilePage(
   }
 }
 
+function assertApprovedLegalPages(
+  pages: GeneratedPage[],
+  legal: SiteForgeLegalConfig
+): void {
+  const expected = [
+    [legal.privacyPath, legal.policyBodies.privacyPolicy],
+    [legal.termsPath, legal.policyBodies.terms],
+    [legal.accessibilityPath, legal.policyBodies.accessibility],
+  ] as const
+  const evidenceId = legalEvidenceId(legal)
+  for (const [path, body] of expected) {
+    const slug = normalizePageSlug(path)
+    const matchingPages = pages.filter(page => normalizePageSlug(page.slug) === slug)
+    const exactSections = matchingPages.flatMap(page =>
+      page.sections.filter(
+        section =>
+          section.acfBlock === 'acf/text-section' &&
+          section.content.content === body &&
+          section.evidenceIds?.includes(evidenceId)
+      )
+    )
+    if (matchingPages.length !== 1 || exactSections.length !== 1) {
+      throw new Error(
+        `Approved legal page ${path} does not match its exact policy body and provenance`
+      )
+    }
+  }
+}
+
 function compileSection(
   section: PageSection,
   order: number
@@ -270,11 +334,17 @@ function compileSection(
       `SiteForge runtime compilation requires immutable section ids (${section.acfBlock})`
     )
   }
+  const align = runtimeBlockAlignment(section.content.align)
   return {
     sectionId: section.id,
     blockName: section.acfBlock,
     order,
     variant: section.variant ?? null,
+    anchor: section.id,
+    ...(section.cssClasses !== undefined
+      ? { cssClasses: [...section.cssClasses] }
+      : {}),
+    ...(align !== undefined ? { align } : {}),
     data: flattenAcfRepeaterFields(
       applyBlockFieldAliases(
         section.acfBlock,
@@ -284,6 +354,12 @@ function compileSection(
       )
     ),
   }
+}
+
+function runtimeBlockAlignment(
+  value: unknown
+): 'wide' | 'full' | undefined {
+  return value === 'wide' || value === 'full' ? value : undefined
 }
 
 function compileNavigation(
@@ -307,6 +383,7 @@ function compileNavigation(
           external: false,
         }))
   const keys = new Set(configured.map(item => item.id))
+  assertNavigationHierarchy(configured, keys)
   return {
     location: 'primary',
     name: 'SiteForge Primary',
@@ -318,11 +395,36 @@ function compileNavigation(
         label: item.label,
         pageKey: page?.pageKey ?? null,
         url: page ? null : normalizeNavigationHref(item.href),
-        parentItemKey:
-          item.parentId && keys.has(item.parentId) ? item.parentId : null,
+        parentItemKey: item.parentId ?? null,
         target: item.external ? ('_blank' as const) : ('_self' as const),
       }
     }),
+  }
+}
+
+function assertNavigationHierarchy(
+  items: ReadonlyArray<{ id: string; parentId?: string }>,
+  keys: ReadonlySet<string>
+): void {
+  if (keys.size !== items.length) {
+    throw new Error('SiteForge navigation item ids must be unique')
+  }
+  const parentById = new Map(items.map(item => [item.id, item.parentId] as const))
+  for (const item of items) {
+    if (item.parentId && !keys.has(item.parentId)) {
+      throw new Error(
+        `SiteForge navigation parent ${item.parentId} does not exist`
+      )
+    }
+    const visited = new Set<string>()
+    let cursor: string | undefined = item.id
+    while (cursor !== undefined) {
+      if (visited.has(cursor)) {
+        throw new Error('SiteForge navigation hierarchy contains a cycle')
+      }
+      visited.add(cursor)
+      cursor = parentById.get(cursor)
+    }
   }
 }
 

@@ -11,7 +11,13 @@ export interface ConsentPolicyDecision {
 }
 
 export function evaluateConsentPolicy(
-  consent: BrowserCertificationEvidence['consent']
+  consent: Pick<
+    BrowserCertificationEvidence['consent'],
+    | 'defaultState'
+    | 'bannerVisible'
+    | 'preferenceControlsUsable'
+    | 'scripts'
+  >
 ): ConsentPolicyDecision {
   const prematurelyLoaded = consent.scripts.filter(
     script => script.category !== 'essential' && script.loadedBeforeConsent

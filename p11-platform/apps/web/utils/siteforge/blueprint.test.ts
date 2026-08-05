@@ -159,4 +159,73 @@ describe('semantic blueprint operations', () => {
       content: { headline: 'Legacy edit' },
     }).success).toBe(true)
   })
+
+  it.each([
+    {
+      version: 2,
+      op: 'section.update',
+      sectionId: 'missing',
+      value: { label: 'Missing' },
+    },
+    { version: 2, op: 'section.remove', sectionId: 'missing' },
+    {
+      version: 2,
+      op: 'section.move',
+      sectionId: 'missing',
+      toOrder: 1,
+    },
+    { version: 2, op: 'page.remove', pageSlug: 'missing' },
+    {
+      version: 2,
+      op: 'section.upsert',
+      pageSlug: 'missing',
+      section: {
+        type: 'text',
+        acfBlock: 'acf/text-section',
+        content: {},
+        reasoning: 'Test',
+      },
+    },
+  ] as const)('throws when $op targets missing structure', operation => {
+    expect(() =>
+      applyBlueprintPatch(legacyBlueprint, [operation])
+    ).toThrow(/target .* was not found/)
+  })
+
+  it('rejects empty and no-effect updates explicitly', () => {
+    expect(() =>
+      applyBlueprintPatch(legacyBlueprint, [
+        {
+          version: 2,
+          op: 'section.update',
+          sectionId: 'hero',
+          value: {},
+        },
+      ])
+    ).toThrow(/requires at least one field/)
+
+    expect(() =>
+      applyBlueprintPatch(legacyBlueprint, [
+        {
+          version: 2,
+          op: 'section.update',
+          sectionId: 'hero',
+          value: { content: { headline: 'Welcome' } },
+        },
+      ])
+    ).toThrow('had no effect')
+  })
+
+  it('rejects unsupported variants after applying a section update', () => {
+    expect(() =>
+      applyBlueprintPatch(legacyBlueprint, [
+        {
+          version: 2,
+          op: 'section.update',
+          sectionId: 'hero',
+          value: { variant: 'invented-layout' },
+        },
+      ])
+    ).toThrow(/Unsupported acf\/top-slides variant/)
+  })
 })

@@ -16,7 +16,7 @@ if ( empty( $html_content ) ) {
 }
 ?>
 
-<section <?php echo oneclick_get_block_wrapper_attributes( array( 'class' => 'block-html' ) ); ?>>
+<section <?php echo oneclick_get_block_wrapper_attributes( $block, array( 'class' => 'block-html' ) ); ?>>
 	<div class="site-container">
 		<div class="html-content">
 			<?php echo wp_kses_post( $html_content ); ?>

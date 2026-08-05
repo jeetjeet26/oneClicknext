@@ -2,19 +2,23 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { AlertCircle, Bot, Check, CheckCircle2, Clock, Copy, Edit3, FileText, Maximize2, RefreshCw, X } from 'lucide-react'
+import {
+  presentChatbotContext,
+  presentRevisionIdentity,
+  type ChatbotContextRecord,
+  type ChatbotContextRevisionRecord,
+} from './knowledge-presentation'
 
-type ChatbotContext = {
-  status: string
-  requires_review: boolean
+type ChatbotContext = ChatbotContextRecord & {
   last_generated_at: string | null
-  stale_at: string | null
   last_change_summary: string | null
   error_message: string | null
   context_markdown: string
+  model?: string | null
+  updated_at?: string | null
 }
 
-type Revision = {
-  id: string
+type Revision = ChatbotContextRevisionRecord & {
   change_summary: string | null
   created_at: string
 }
@@ -140,6 +144,7 @@ export function ChatbotContextStatusCard({ propertyId }: ChatbotContextStatusCar
 
   const status = getStatusLabel(context)
   const StatusIcon = status.icon
+  const contextPresentation = presentChatbotContext(context)
   const systemPrompt = context?.context_markdown
     ? context.context_markdown
     : 'No generated chatbot context exists yet. Regenerate to build one from active property setup, uploads, pricing, and website sources.'
@@ -152,10 +157,14 @@ export function ChatbotContextStatusCard({ propertyId }: ChatbotContextStatusCar
   }
 
   return (
-    <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
+    <section
+      className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm"
+      aria-labelledby="chatbot-context-heading"
+      aria-busy={loading}
+    >
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h3 className="font-semibold text-slate-900 flex items-center gap-2">
+          <h3 id="chatbot-context-heading" className="font-semibold text-slate-900 flex items-center gap-2">
             <Bot className="h-5 w-5 text-indigo-500" />
             Chatbot Context
           </h3>
@@ -165,7 +174,10 @@ export function ChatbotContextStatusCard({ propertyId }: ChatbotContextStatusCar
         </div>
         <div className="flex items-center gap-2">
           <span className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium ${status.className}`}>
-            <StatusIcon className={`h-3.5 w-3.5 ${context?.status === 'generating' ? 'animate-spin' : ''}`} />
+            <StatusIcon
+              className={`h-3.5 w-3.5 ${context?.status === 'generating' ? 'animate-spin' : ''}`}
+              aria-hidden="true"
+            />
             {status.label}
           </span>
           <button
@@ -173,6 +185,7 @@ export function ChatbotContextStatusCard({ propertyId }: ChatbotContextStatusCar
             onClick={regenerate}
             disabled={regenerating || loading}
             className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            aria-label={regenerating ? 'Regenerating chatbot context' : 'Regenerate chatbot context'}
           >
             <RefreshCw className={`h-4 w-4 ${regenerating ? 'animate-spin' : ''}`} />
             Regenerate
@@ -181,22 +194,39 @@ export function ChatbotContextStatusCard({ propertyId }: ChatbotContextStatusCar
       </div>
 
       {error && (
-        <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+        <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert">
           {error}
         </div>
       )}
 
-      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
+      {contextPresentation.availabilityExplanation && (
+        <p className="mt-4 rounded-lg border border-indigo-100 bg-indigo-50 p-3 text-sm text-indigo-800">
+          {contextPresentation.availabilityExplanation}
+        </p>
+      )}
+
+      <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="rounded-lg bg-slate-50 p-4">
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Context state</p>
+          <p className="mt-1 text-sm font-medium text-slate-900">
+            {contextPresentation.lifecycleLabel}
+          </p>
+          {context?.stale_at && contextPresentation.lifecycleLabel === 'Stale' && (
+            <p className="mt-1 text-xs text-slate-500">
+              Since <time dateTime={context.stale_at}>{new Date(context.stale_at).toLocaleString()}</time>
+            </p>
+          )}
+        </div>
+        <div className="rounded-lg bg-slate-50 p-4">
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Review state</p>
+          <p className="mt-1 text-sm font-medium text-slate-900">
+            {contextPresentation.reviewLabel}
+          </p>
+        </div>
         <div className="rounded-lg bg-slate-50 p-4">
           <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Last generated</p>
           <p className="mt-1 text-sm font-medium text-slate-900">
             {context?.last_generated_at ? new Date(context.last_generated_at).toLocaleString() : 'Never'}
-          </p>
-        </div>
-        <div className="rounded-lg bg-slate-50 p-4">
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Latest change</p>
-          <p className="mt-1 text-sm font-medium text-slate-900">
-            {context?.last_change_summary || 'No changes recorded yet'}
           </p>
         </div>
         <div className="rounded-lg bg-slate-50 p-4">
@@ -206,6 +236,80 @@ export function ChatbotContextStatusCard({ propertyId }: ChatbotContextStatusCar
           </p>
         </div>
       </div>
+
+      {context && (
+        <div className="mt-4 rounded-lg border border-slate-200 p-4">
+          <h4 className="text-sm font-medium text-slate-800">Context identity and sources</h4>
+          <dl className="mt-2 space-y-2 text-xs text-slate-600">
+            {contextPresentation.identity && (
+              <div className="flex flex-col gap-0.5 sm:flex-row sm:gap-2">
+                <dt className="font-medium text-slate-700">Context:</dt>
+                <dd className="break-all font-mono">{contextPresentation.identity}</dd>
+              </div>
+            )}
+            {contextPresentation.documentCount !== null && (
+              <div className="flex gap-2">
+                <dt className="font-medium text-slate-700">Context document records:</dt>
+                <dd>{contextPresentation.documentCount}</dd>
+              </div>
+            )}
+            {context.model && (
+              <div className="flex flex-col gap-0.5 sm:flex-row sm:gap-2">
+                <dt className="font-medium text-slate-700">Generator:</dt>
+                <dd className="break-all font-mono">{context.model}</dd>
+              </div>
+            )}
+          </dl>
+          {contextPresentation.sourceIds.length > 0 ? (
+            <details className="mt-3">
+              <summary className="cursor-pointer text-xs font-medium text-indigo-700">
+                {contextPresentation.sourceIds.length} source ID{contextPresentation.sourceIds.length === 1 ? '' : 's'}
+              </summary>
+              <ul className="mt-2 space-y-1" aria-label="Chatbot context source IDs">
+                {contextPresentation.sourceIds.map(sourceId => (
+                  <li key={sourceId} className="break-all font-mono text-xs text-slate-600">{sourceId}</li>
+                ))}
+              </ul>
+            </details>
+          ) : (
+            <p className="mt-3 text-xs text-slate-500">No knowledge source IDs are recorded for this context.</p>
+          )}
+        </div>
+      )}
+
+      {revisions.length > 0 && (
+        <div className="mt-4 rounded-lg border border-slate-200 p-4">
+          <h4 className="text-sm font-medium text-slate-800">Recent revision identities</h4>
+          <ol className="mt-3 space-y-3" aria-label="Recent chatbot context revisions">
+            {revisions.map(revision => {
+              const identity = presentRevisionIdentity(revision)
+              return (
+                <li key={revision.id} className="rounded-md bg-slate-50 p-3 text-xs text-slate-600">
+                  <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                    <code className="break-all text-slate-800">{identity.id}</code>
+                    <time dateTime={revision.created_at}>{new Date(revision.created_at).toLocaleString()}</time>
+                  </div>
+                  {revision.change_summary && <p className="mt-1 text-slate-700">{revision.change_summary}</p>}
+                  {identity.model && <p className="mt-1">Generator: <code>{identity.model}</code></p>}
+                  {identity.changedSourceIds.length > 0 && (
+                    <p className="mt-1 break-all">Changed sources: <code>{identity.changedSourceIds.join(', ')}</code></p>
+                  )}
+                  {identity.removedSourceIds.length > 0 && (
+                    <p className="mt-1 break-all">Removed sources: <code>{identity.removedSourceIds.join(', ')}</code></p>
+                  )}
+                </li>
+              )
+            })}
+          </ol>
+        </div>
+      )}
+
+      {context?.last_change_summary && (
+        <div className="mt-4 rounded-lg bg-slate-50 p-4">
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Latest change</p>
+          <p className="mt-1 text-sm font-medium text-slate-900">{context.last_change_summary}</p>
+        </div>
+      )}
 
       <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
         <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -285,11 +389,16 @@ export function ChatbotContextStatusCard({ propertyId }: ChatbotContextStatusCar
       </div>
 
       {showFullPrompt && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="full-system-prompt-heading"
+        >
           <div className="flex max-h-[90vh] w-full max-w-5xl flex-col rounded-xl bg-white shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-200 p-4">
               <div>
-                <h3 className="font-semibold text-slate-900">Full System Prompt</h3>
+                <h3 id="full-system-prompt-heading" className="font-semibold text-slate-900">Full System Prompt</h3>
                 <p className="text-sm text-slate-500">
                   This is the generated property-specific context used by Luma for this property.
                 </p>
@@ -321,6 +430,6 @@ export function ChatbotContextStatusCard({ propertyId }: ChatbotContextStatusCar
           </div>
         </div>
       )}
-    </div>
+    </section>
   )
 }

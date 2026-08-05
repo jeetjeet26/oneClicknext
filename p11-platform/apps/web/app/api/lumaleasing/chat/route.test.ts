@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NextRequest } from 'next/server'
+import { ACACIA_REGRESSION_BASELINE_V1 as acacia } from '@/fixtures/acacia-regression.v1'
 
 const createServiceClientMock = vi.fn()
 const validateBodyMock = vi.fn()
@@ -11,6 +12,7 @@ const getRequestIpMock = vi.fn()
 const openAiChatCreateMock = vi.fn()
 const openAiEmbeddingsCreateMock = vi.fn()
 const syncLeadToCRMMock = vi.fn()
+const recordLeadNoteAndSyncToCRMMock = vi.fn()
 const getCalendarConfigMock = vi.fn()
 const createCalendarEventMock = vi.fn()
 const startWorkflowMock = vi.fn()
@@ -48,6 +50,7 @@ vi.mock('@/utils/services/audit-logger', () => ({
 
 vi.mock('@/utils/services/crm-sync', () => ({
   syncLeadToCRM: syncLeadToCRMMock,
+  recordLeadNoteAndSyncToCRM: recordLeadNoteAndSyncToCRMMock,
 }))
 
 vi.mock('@/utils/services/google-calendar', () => ({
@@ -83,6 +86,7 @@ describe('LumaLeasing chat route', () => {
     openAiEmbeddingsCreateMock.mockReset()
     openAiCtorMock.mockClear()
     syncLeadToCRMMock.mockReset()
+    recordLeadNoteAndSyncToCRMMock.mockReset()
     getCalendarConfigMock.mockReset()
     createCalendarEventMock.mockReset()
     startWorkflowMock.mockReset()
@@ -92,8 +96,7 @@ describe('LumaLeasing chat route', () => {
     loadPropertyChatbotContextMock.mockResolvedValue({
       contextMarkdown: 'CLIENT PROPERTY CONTEXT\nAcacia includes rooftop decks, solar, and verified floorplan facts.',
       contextJson: {},
-      status: 'current',
-      requiresReview: false,
+      ...acacia.chatbot.reviewedContext,
     })
     getRateLimitKeyMock.mockReturnValue('chat-key')
     chatLimiterCheckMock.mockReturnValue({
@@ -105,6 +108,7 @@ describe('LumaLeasing chat route', () => {
     auditLogMock.mockImplementation(() => {})
     getRequestIpMock.mockReturnValue('127.0.0.1')
     syncLeadToCRMMock.mockResolvedValue({ action: 'skipped' })
+    recordLeadNoteAndSyncToCRMMock.mockResolvedValue({ action: 'skipped' })
     getCalendarConfigMock.mockResolvedValue(null)
     createCalendarEventMock.mockResolvedValue({ eventId: 'event-1' })
     startWorkflowMock.mockResolvedValue(undefined)
@@ -687,6 +691,67 @@ describe('LumaLeasing chat route', () => {
     expect(openAiEmbeddingsCreateMock).not.toHaveBeenCalled()
   })
 
+  it('does not serve review-required property facts to the model', async () => {
+    validateBodyMock.mockReturnValue({
+      success: true,
+      data: {
+        messages: [{ role: 'user', content: 'What is the rent?' }],
+        sessionId: null,
+        leadInfo: null,
+      },
+    })
+    loadPropertyChatbotContextMock.mockResolvedValue({
+      contextMarkdown: 'PROPERTY FACTS ARE TEMPORARILY WITHHELD PENDING OPERATOR REVIEW.',
+      contextJson: {},
+      ...acacia.chatbot.reviewRequiredContext,
+    })
+    createServiceClientMock.mockReturnValue({
+      from: vi.fn((table: string) => {
+        if (table === 'lumaleasing_config') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                eq: vi.fn(() => ({
+                  single: vi.fn().mockResolvedValue({
+                    data: {
+                      property_id: 'property-1',
+                      widget_name: 'Luma',
+                      collect_email: true,
+                      properties: { name: 'Acacia', property_type: 'multifamily' },
+                    },
+                    error: null,
+                  }),
+                })),
+              })),
+            })),
+          }
+        }
+        throw new Error(`Unexpected table ${table}`)
+      }),
+    })
+
+    const { POST } = await import('./route')
+    const request = new Request('http://localhost/api/lumaleasing/chat', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': 'test-key',
+      },
+      body: JSON.stringify({
+        messages: [{ role: 'user', content: 'What is the rent?' }],
+      }),
+    }) as NextRequest
+
+    const response = await POST(request)
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      content: expect.stringContaining('being reviewed'),
+      wantsTour: false,
+    })
+    expect(openAiChatCreateMock).not.toHaveBeenCalled()
+  })
+
   it('injects configured floor plans and availability links into the system prompt', async () => {
     validateBodyMock.mockReturnValue({
       success: true,
@@ -713,8 +778,8 @@ describe('LumaLeasing chat route', () => {
                       widget_name: 'Luma',
                       collect_email: true,
                       lead_capture_prompt: 'share your email',
-                      floor_plans_url: 'https://www.dividendhomes.com/communities/acacia/floor-plans/',
-                      availability_url: 'https://www.dividendhomes.com/communities/acacia/site-plan/',
+                      floor_plans_url: acacia.chatbot.configuredLinks.floorPlans,
+                      availability_url: acacia.chatbot.configuredLinks.availability,
                       properties: { name: 'Acacia', property_type: 'master_planned' },
                     },
                     error: null,
@@ -746,8 +811,8 @@ describe('LumaLeasing chat route', () => {
     const firstCompletionArgs = openAiChatCreateMock.mock.calls[0][0]
     const systemPrompt = firstCompletionArgs.messages[0].content
     expect(systemPrompt).toContain('PROPERTY LINKS')
-    expect(systemPrompt).toContain('https://www.dividendhomes.com/communities/acacia/floor-plans/')
-    expect(systemPrompt).toContain('https://www.dividendhomes.com/communities/acacia/site-plan/')
+    expect(systemPrompt).toContain(acacia.chatbot.configuredLinks.floorPlans)
+    expect(systemPrompt).toContain(acacia.chatbot.configuredLinks.availability)
   })
 
   it('omits the property links section when no links are configured', async () => {
@@ -866,7 +931,7 @@ describe('LumaLeasing chat route', () => {
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toMatchObject({
       wantsTour: false,
-      tourCta: true,
+      tourCta: acacia.chatbot.handoff.tourIsCallToActionOnly,
     })
   })
 
@@ -994,10 +1059,7 @@ describe('LumaLeasing chat route', () => {
     validateBodyMock.mockReturnValue({
       success: true,
       data: {
-        messages: [
-          { role: 'assistant', content: 'Before we continue, can I get your contact info so we can follow up?' },
-          { role: 'user', content: 'sure jesse gill jesse55555@gmail.com' },
-        ],
+        messages: [{ role: 'user', content: 'sure jesse gill jesse55555@gmail.com' }],
         sessionId: null,
         leadInfo: {
           first_name: 'jesse',
@@ -1079,10 +1141,7 @@ describe('LumaLeasing chat route', () => {
         'x-api-key': 'test-key',
       },
       body: JSON.stringify({
-        messages: [
-          { role: 'assistant', content: 'Before we continue, can I get your contact info so we can follow up?' },
-          { role: 'user', content: 'sure jesse gill jesse55555@gmail.com' },
-        ],
+        messages: [{ role: 'user', content: 'sure jesse gill jesse55555@gmail.com' }],
         leadInfo: {
           first_name: 'jesse',
           last_name: 'gill',
@@ -1226,6 +1285,20 @@ describe('LumaLeasing chat route', () => {
 
         if (table === 'messages') {
           return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                order: vi.fn(() => ({
+                  limit: vi.fn().mockResolvedValue({
+                    data: [{
+                      role: 'assistant',
+                      content: 'Server-trusted prior reply',
+                      created_at: '2026-07-31T12:00:00.000Z',
+                    }],
+                    error: null,
+                  }),
+                })),
+              })),
+            })),
             insert: messagesInsertMock,
           }
         }
@@ -1309,5 +1382,27 @@ describe('LumaLeasing chat route', () => {
     expect(leadNotesUpdateEqMock).toHaveBeenCalledWith('id', 'lead-existing')
     expect(syncLeadToCRMMock).not.toHaveBeenCalled()
     expect(startWorkflowMock).not.toHaveBeenCalled()
+    expect(openAiChatCreateMock.mock.calls[0][0].messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: 'assistant',
+          content: 'Server-trusted prior reply',
+        }),
+        expect.objectContaining({
+          role: 'user',
+          content: 'You can call me at 5551112222',
+        }),
+      ])
+    )
+    expect(trackEngagementEventMock).toHaveBeenCalledWith({
+      leadId: 'lead-existing',
+      propertyId: 'property-1',
+      eventType: 'chat_started',
+      metadata: {
+        conversation_id: 'conv-1',
+        source: 'lumaleasing_widget_conversion',
+        backfilled: true,
+      },
+    })
   })
 })

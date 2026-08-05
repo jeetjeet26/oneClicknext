@@ -47,6 +47,8 @@ type WebsitePreviewData = {
   designSystem?: DesignSystem
   siteBlueprint?: {
     siteConfiguration?: SiteConfiguration
+    propertySnapshot?: unknown
+    legal?: unknown
   } | null
   pagesGenerated?: GeneratedPage[]
   assets?: unknown[]
@@ -94,6 +96,476 @@ type RollbackPreview = {
   rollbackToArtifactId?: string
   rollbackToContentHash?: string
   message?: string
+}
+
+type PreviewLink = {
+  label: string
+  href: string
+  external: boolean
+}
+
+export type PreviewNavigationNode = SiteConfiguration['navigation']['items'][number] & {
+  children: PreviewNavigationNode[]
+}
+
+export type SiteChromeModel = {
+  brandName?: string
+  phone?: string
+  email?: string
+  address?: string
+  socialLinks: PreviewLink[]
+  legalLinks: PreviewLink[]
+  footerText?: string
+}
+
+function previewRecord(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {}
+}
+
+function previewString(...values: unknown[]): string | undefined {
+  return values.find(
+    (value): value is string => typeof value === 'string' && value.trim().length > 0
+  )?.trim()
+}
+
+function humanizeLinkLabel(value: string): string {
+  return value
+    .replace(/(?:Path|Url|URL|Link)$/i, '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .trim()
+    .replace(/\b\w/g, character => character.toUpperCase())
+}
+
+function isExternalLink(href: string): boolean {
+  return /^https?:\/\//i.test(href)
+}
+
+function normalizePreviewLinks(value: unknown): PreviewLink[] {
+  if (Array.isArray(value)) {
+    return value.flatMap(entry => {
+      const record = previewRecord(entry)
+      const href = previewString(record.href, record.url, record.path)
+      const label = previewString(record.label, record.text, record.name)
+      if (!href || !label) return []
+      return [
+        {
+          href,
+          label,
+          external:
+            typeof record.external === 'boolean'
+              ? record.external
+              : isExternalLink(href),
+        },
+      ]
+    })
+  }
+
+  return Object.entries(previewRecord(value)).flatMap(([key, entry]) => {
+    const record = previewRecord(entry)
+    const href =
+      typeof entry === 'string'
+        ? previewString(entry)
+        : previewString(record.href, record.url, record.path)
+    if (!href) return []
+    return [
+      {
+        href,
+        label: previewString(record.label, record.text) || humanizeLinkLabel(key),
+        external: isExternalLink(href),
+      },
+    ]
+  })
+}
+
+function formatPreviewAddress(value: unknown): string | undefined {
+  if (typeof value === 'string') return previewString(value)
+  const address = previewRecord(value)
+  const parts = [
+    previewString(address.street, address.address1, address.line1),
+    previewString(address.street2, address.address2, address.line2),
+    previewString(address.city),
+    previewString(address.state, address.region),
+    previewString(address.zip, address.postalCode),
+    previewString(address.country),
+  ].filter((part): part is string => Boolean(part))
+  return parts.length > 0 ? parts.join(', ') : undefined
+}
+
+export function buildSiteChromeModel(
+  configuration: SiteConfiguration,
+  fallbackProfile?: unknown,
+  legalSource?: unknown
+): SiteChromeModel {
+  const raw = configuration as SiteConfiguration & Record<string, unknown>
+  const brand = previewRecord(raw.brand)
+  const identity = previewRecord(raw.identity)
+  const contact = previewRecord(raw.contact)
+  const configuredProfile = previewRecord(raw.propertyProfile)
+  const profile = {
+    ...previewRecord(fallbackProfile),
+    ...configuredProfile,
+    ...contact,
+  }
+  const footer = raw.footer as SiteConfiguration['footer'] &
+    Record<string, unknown>
+  const legal = {
+    ...previewRecord(legalSource),
+    ...previewRecord(raw.legal),
+  }
+  const legalPaths =
+    previewRecord(legal.paths)
+  const legalLinks =
+    normalizePreviewLinks(raw.legalLinks).length > 0
+      ? normalizePreviewLinks(raw.legalLinks)
+      : normalizePreviewLinks(footer.legalLinks).length > 0
+        ? normalizePreviewLinks(footer.legalLinks)
+        : normalizePreviewLinks(
+            Object.keys(legalPaths).length > 0 ? legalPaths : legal.links
+          )
+
+  return {
+    brandName: previewString(
+      raw.brandName,
+      brand.name,
+      identity.name,
+      configuredProfile.name,
+      previewRecord(fallbackProfile).name
+    ),
+    phone: previewString(profile.phone),
+    email: previewString(profile.email),
+    address: formatPreviewAddress(profile.address),
+    socialLinks: normalizePreviewLinks(
+      raw.socialLinks || configuredProfile.socialLinks || profile.socialLinks
+    ),
+    legalLinks,
+    footerText: previewString(
+      footer.text,
+      footer.footerText,
+      footer.copyrightText,
+      raw.footerText,
+      legal.fairHousingDisclaimer
+    ),
+  }
+}
+
+export function buildPreviewNavigation(
+  items: SiteConfiguration['navigation']['items']
+): PreviewNavigationNode[] {
+  const childrenByParent = new Map<string, SiteConfiguration['navigation']['items']>()
+  const knownIds = new Set(items.map(item => item.id))
+  const visited = new Set<string>()
+
+  items.forEach(item => {
+    if (!item.parentId || item.parentId === item.id || !knownIds.has(item.parentId)) {
+      return
+    }
+    const siblings = childrenByParent.get(item.parentId) || []
+    siblings.push(item)
+    childrenByParent.set(item.parentId, siblings)
+  })
+
+  const buildNode = (
+    item: SiteConfiguration['navigation']['items'][number],
+    ancestors: Set<string>
+  ): PreviewNavigationNode => {
+    visited.add(item.id)
+    const nextAncestors = new Set(ancestors).add(item.id)
+    return {
+      ...item,
+      children: (childrenByParent.get(item.id) || [])
+        .filter(child => !nextAncestors.has(child.id) && !visited.has(child.id))
+        .map(child => buildNode(child, nextAncestors)),
+    }
+  }
+
+  const roots = items
+    .filter(
+      item =>
+        !item.parentId ||
+        item.parentId === item.id ||
+        !knownIds.has(item.parentId)
+    )
+    .map(item => buildNode(item, new Set()))
+
+  items.forEach(item => {
+    if (!visited.has(item.id)) {
+      roots.push(buildNode(item, new Set()))
+    }
+  })
+
+  return roots
+}
+
+function previewAnchorProps(
+  href: string,
+  external: boolean,
+  externalLinksNewTab: boolean
+) {
+  return external && externalLinksNewTab
+    ? { target: '_blank' as const, rel: 'noopener noreferrer' }
+    : {}
+}
+
+function PreviewNavigationList({
+  nodes,
+  externalLinksNewTab,
+  className,
+}: {
+  nodes: PreviewNavigationNode[]
+  externalLinksNewTab: boolean
+  className?: string
+}) {
+  return (
+    <ul className={className}>
+      {nodes.map(node => (
+        <li key={node.id}>
+          <a
+            href={node.href}
+            {...previewAnchorProps(
+              node.href,
+              node.external ?? isExternalLink(node.href),
+              externalLinksNewTab
+            )}
+            className="underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+          >
+            {node.label}
+          </a>
+          {node.children.length > 0 ? (
+            <PreviewNavigationList
+              nodes={node.children}
+              externalLinksNewTab={externalLinksNewTab}
+              className="mt-2 space-y-2 border-l border-current/25 pl-3"
+            />
+          ) : null}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+export function SitePreviewHeader({
+  configuration,
+  chrome,
+}: {
+  configuration: SiteConfiguration
+  chrome: SiteChromeModel
+}) {
+  const navigation = buildPreviewNavigation(configuration.navigation.items)
+  const announcement = configuration.header.announcement
+  const cta = configuration.header.cta
+  const openExternal = configuration.behavior.externalLinksNewTab
+
+  return (
+    <header
+      className="border-b border-current/15"
+      data-layout={configuration.header.layout}
+      data-requested-position={configuration.header.position}
+    >
+      {announcement.enabled && announcement.text ? (
+        <div
+          className="px-4 py-2 text-center text-xs font-semibold uppercase tracking-widest"
+          style={{
+            color: configuration.design.colors.background,
+            background: configuration.design.colors.primary,
+          }}
+        >
+          {announcement.link ? (
+            <a
+              href={announcement.link}
+              {...previewAnchorProps(
+                announcement.link,
+                isExternalLink(announcement.link),
+                openExternal
+              )}
+              className="underline-offset-4 hover:underline"
+            >
+              {announcement.text}
+            </a>
+          ) : (
+            announcement.text
+          )}
+        </div>
+      ) : null}
+      <div className="flex flex-wrap items-center justify-between gap-5 px-5 py-4">
+        <div className="flex min-w-0 items-center gap-3">
+          {configuration.media.logoUrl ? (
+            // The preview supports user-managed asset URLs.
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={configuration.media.logoUrl}
+              alt={configuration.media.logoAlt || ''}
+              className="max-h-12 max-w-48 object-contain"
+              decoding="async"
+            />
+          ) : null}
+          {chrome.brandName ? (
+            <span
+              className="text-lg font-semibold"
+              style={{
+                fontFamily: configuration.design.typography.headingFont,
+              }}
+            >
+              {chrome.brandName}
+            </span>
+          ) : null}
+        </div>
+        {navigation.length > 0 ? (
+          <nav aria-label="Primary preview navigation">
+            <PreviewNavigationList
+              nodes={navigation}
+              externalLinksNewTab={openExternal}
+              className="flex flex-wrap items-start gap-x-4 gap-y-2 text-sm"
+            />
+          </nav>
+        ) : null}
+        {cta.enabled ? (
+          <a
+            href={cta.href}
+            {...previewAnchorProps(cta.href, isExternalLink(cta.href), openExternal)}
+            className="rounded px-3 py-2 text-xs font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+            style={{
+              color: configuration.design.colors.background,
+              background: configuration.design.colors.primary,
+            }}
+          >
+            {cta.label}
+          </a>
+        ) : null}
+      </div>
+    </header>
+  )
+}
+
+export function SitePreviewFooter({
+  configuration,
+  chrome,
+}: {
+  configuration: SiteConfiguration
+  chrome: SiteChromeModel
+}) {
+  const navigation = buildPreviewNavigation(configuration.navigation.items)
+  const openExternal = configuration.behavior.externalLinksNewTab
+  const phoneHref = chrome.phone?.replace(/[^\d+]/g, '')
+
+  return (
+    <footer
+      className="px-6 py-8"
+      data-layout={configuration.footer.layout}
+      style={{
+        color: configuration.design.colors.background,
+        background: configuration.design.colors.primary,
+      }}
+    >
+      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+        {(configuration.media.logoUrl ||
+          chrome.brandName ||
+          chrome.address ||
+          configuration.footer.tagline) && (
+          <div>
+            {configuration.media.logoUrl ? (
+              // The preview supports user-managed asset URLs.
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={configuration.media.logoUrl}
+                alt={configuration.media.logoAlt || ''}
+                className="mb-3 max-h-12 max-w-48 object-contain"
+                loading="lazy"
+                decoding="async"
+              />
+            ) : null}
+            {chrome.brandName ? (
+              <p style={{ fontFamily: configuration.design.typography.headingFont }}>
+                {chrome.brandName}
+              </p>
+            ) : null}
+            {configuration.footer.tagline ? (
+              <p className="mt-2 text-sm opacity-80">
+                {configuration.footer.tagline}
+              </p>
+            ) : null}
+            {chrome.address ? (
+              <address className="mt-2 whitespace-pre-line text-sm not-italic opacity-80">
+                {chrome.address}
+              </address>
+            ) : null}
+          </div>
+        )}
+        {configuration.footer.showContact && (chrome.phone || chrome.email) ? (
+          <div>
+            <p className="font-semibold">Contact</p>
+            <ul className="mt-2 space-y-2 text-sm">
+              {chrome.phone ? (
+                <li>
+                  {phoneHref ? <a href={`tel:${phoneHref}`}>{chrome.phone}</a> : chrome.phone}
+                </li>
+              ) : null}
+              {chrome.email ? (
+                <li>
+                  <a href={`mailto:${chrome.email}`}>{chrome.email}</a>
+                </li>
+              ) : null}
+            </ul>
+          </div>
+        ) : null}
+        {configuration.footer.showNavigation && navigation.length > 0 ? (
+          <nav aria-label="Footer preview navigation">
+            <PreviewNavigationList
+              nodes={navigation}
+              externalLinksNewTab={openExternal}
+              className="space-y-2 text-sm"
+            />
+          </nav>
+        ) : null}
+        {configuration.footer.showSocial && chrome.socialLinks.length > 0 ? (
+          <nav aria-label="Social links">
+            <ul className="space-y-2 text-sm">
+              {chrome.socialLinks.map(link => (
+                <li key={`${link.label}-${link.href}`}>
+                  <a
+                    href={link.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={`${link.label} (opens in a new tab)`}
+                  >
+                    {link.label}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </nav>
+        ) : null}
+      </div>
+      {(chrome.legalLinks.length > 0 || chrome.footerText) && (
+        <div className="mt-8 border-t border-current/25 pt-4 text-sm">
+          {chrome.legalLinks.length > 0 ? (
+            <nav aria-label="Legal links">
+              <ul className="flex flex-wrap gap-x-4 gap-y-2">
+                {chrome.legalLinks.map(link => (
+                  <li key={`${link.label}-${link.href}`}>
+                    <a
+                      href={link.href}
+                      {...previewAnchorProps(
+                        link.href,
+                        link.external,
+                        openExternal
+                      )}
+                      className="underline-offset-4 hover:underline"
+                    >
+                      {link.label}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </nav>
+          ) : null}
+          {chrome.footerText ? <p className="mt-3">{chrome.footerText}</p> : null}
+        </div>
+      )}
+    </footer>
+  )
 }
 
 function getDeterministicQualityChecks(value: unknown): Array<{
@@ -636,6 +1108,13 @@ export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewPr
   
   // Get design system from website data (can be at top level or in siteArchitecture)
   const siteConfiguration = website.siteBlueprint?.siteConfiguration
+  const siteChrome = siteConfiguration
+    ? buildSiteChromeModel(
+        siteConfiguration,
+        website.siteBlueprint?.propertySnapshot || website.property,
+        website.siteBlueprint?.legal
+      )
+    : null
   const designSystem: DesignSystem | undefined =
     siteConfiguration
       ? {
@@ -941,24 +1420,47 @@ export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewPr
       {/* Page Preview */}
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle>Site Preview</CardTitle>
-            {website.wpUrl && (
-              <div className="flex space-x-2">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <CardTitle>P11 Approximate Preview</CardTitle>
+              <CardDescription className="mt-1 max-w-3xl">
+                This in-app rendering approximates the shared theme chrome and
+                registered ACF blocks. It is not the exact WordPress output and
+                does not render custom overlays.
+              </CardDescription>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {canonicalPreviewMatches &&
+              website.artifact?.canonicalPreviewUrl ? (
+                <Button variant="default" size="sm" asChild>
+                  <a
+                    href={website.artifact.canonicalPreviewUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Open Exact WordPress Preview →
+                  </a>
+                </Button>
+              ) : null}
+              {website.wpUrl ? (
                 <Button variant="outline" size="sm" asChild>
                   <a href={website.wpUrl} target="_blank" rel="noopener noreferrer">
                     View Live Site →
                   </a>
                 </Button>
-                {website.wpAdminUrl && (
-                  <Button variant="outline" size="sm" asChild>
-                    <a href={website.wpAdminUrl} target="_blank" rel="noopener noreferrer">
-                      WP Admin →
-                    </a>
-                  </Button>
-                )}
-              </div>
-            )}
+              ) : null}
+              {website.wpAdminUrl ? (
+                <Button variant="outline" size="sm" asChild>
+                  <a
+                    href={website.wpAdminUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    WP Admin →
+                  </a>
+                </Button>
+              ) : null}
+            </div>
           </div>
         </CardHeader>
         <CardContent>
@@ -980,7 +1482,7 @@ export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewPr
                 value={page.slug}
                 className="space-y-4"
               >
-                {siteConfiguration && (
+                {siteConfiguration && siteChrome && (
                   <div
                     className="overflow-hidden rounded-lg border bg-white text-gray-900"
                     data-motion-level={siteConfiguration.motion.level}
@@ -990,43 +1492,10 @@ export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewPr
                       background: siteConfiguration.design.colors.background,
                     }}
                   >
-                    {siteConfiguration.header.announcement.enabled && (
-                      <div
-                        className="px-4 py-2 text-center text-xs font-semibold uppercase tracking-widest"
-                        style={{
-                          color: siteConfiguration.design.colors.background,
-                          background: siteConfiguration.design.colors.primary,
-                        }}
-                      >
-                        {siteConfiguration.header.announcement.text}
-                      </div>
-                    )}
-                    <div className="flex items-center justify-between gap-4 px-5 py-4">
-                      <span
-                        className="text-lg font-semibold"
-                        style={{ fontFamily: siteConfiguration.design.typography.headingFont }}
-                      >
-                        {website.property?.name || 'Property Website'}
-                      </span>
-                      <nav className="flex flex-wrap items-center gap-4 text-sm" aria-label="Preview navigation">
-                        {siteConfiguration.navigation.items.map(item => (
-                          <a key={item.id} href={item.href} onClick={event => event.preventDefault()}>
-                            {item.label}
-                          </a>
-                        ))}
-                      </nav>
-                      {siteConfiguration.header.cta.enabled && (
-                        <span
-                          className="rounded px-3 py-2 text-xs font-semibold"
-                          style={{
-                            color: siteConfiguration.design.colors.background,
-                            background: siteConfiguration.design.colors.primary,
-                          }}
-                        >
-                          {siteConfiguration.header.cta.label}
-                        </span>
-                      )}
-                    </div>
+                    <SitePreviewHeader
+                      configuration={siteConfiguration}
+                      chrome={siteChrome}
+                    />
                   </div>
                 )}
                 <div className="bg-gray-100 dark:bg-gray-800 rounded-lg p-4 space-y-2">
@@ -1040,18 +1509,12 @@ export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewPr
                       <div
                         key={section.id || idx}
                         className={`border rounded-lg overflow-hidden transition ${
-                          readOnly ? 'cursor-default' : 'cursor-pointer'
+                          readOnly ? 'cursor-default' : ''
                         } ${
                           selectedSectionId === section.id
                             ? 'border-indigo-500 ring-2 ring-indigo-200 dark:ring-indigo-900/30'
                             : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
                         }`}
-                        onClick={() => {
-                          if (readOnly) return
-                          if (section.id) setSelectedSectionId(section.id)
-                          setEditError(null)
-                          setEditSummary(null)
-                        }}
                       >
                         {/* Section Header */}
                         <div className="bg-gray-50 dark:bg-gray-800 px-4 py-2 flex items-center justify-between border-b border-gray-200 dark:border-gray-700">
@@ -1075,9 +1538,22 @@ export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewPr
                                 : 's'}
                             </span>
                           </div>
-                          <div className="text-xs text-gray-500">
-                            {selectedSectionId === section.id ? 'Selected' : 'Click to edit'}
-                          </div>
+                          {!readOnly ? (
+                            <button
+                              type="button"
+                              className="rounded px-2 py-1 text-xs text-gray-600 hover:bg-gray-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500 dark:text-gray-300 dark:hover:bg-gray-700"
+                              aria-pressed={selectedSectionId === section.id}
+                              onClick={() => {
+                                if (section.id) setSelectedSectionId(section.id)
+                                setEditError(null)
+                                setEditSummary(null)
+                              }}
+                            >
+                              {selectedSectionId === section.id
+                                ? 'Selected for editing'
+                                : 'Select for editing'}
+                            </button>
+                          ) : null}
                         </div>
 
                         {/* Inline Edit UI */}
@@ -1087,6 +1563,7 @@ export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewPr
                               Ask AI to change this section
                             </div>
                             <textarea
+                              aria-label={`Edit instruction for ${section.label || section.type}`}
                               value={editInstruction}
                               onChange={(e) => setEditInstruction(e.target.value)}
                               placeholder="Example: Make this feel more luxury, shorten the headline, and emphasize the pool + fitness center."
@@ -1134,6 +1611,7 @@ export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewPr
                         <div className="bg-white dark:bg-gray-900">
                           <ACFBlockRenderer
                             blockType={section.acfBlock || section.type}
+                            blockIdentity={section.id || `${page.slug}-${idx + 1}`}
                             content={section.content}
                             designSystem={designSystem}
                           />
@@ -1142,23 +1620,12 @@ export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewPr
                     ))}
                   </div>
                 )}
-                {siteConfiguration && (
-                  <div
-                    className="rounded-lg px-6 py-8"
-                    data-layout={siteConfiguration.footer.layout}
-                    style={{
-                      color: siteConfiguration.design.colors.background,
-                      background: siteConfiguration.design.colors.primary,
-                    }}
-                  >
-                    <p style={{ fontFamily: siteConfiguration.design.typography.headingFont }}>
-                      {website.property?.name || 'Property Website'}
-                    </p>
-                    {siteConfiguration.footer.tagline && (
-                      <p className="mt-2 text-sm opacity-80">{siteConfiguration.footer.tagline}</p>
-                    )}
-                  </div>
-                )}
+                {siteConfiguration && siteChrome ? (
+                  <SitePreviewFooter
+                    configuration={siteConfiguration}
+                    chrome={siteChrome}
+                  />
+                ) : null}
               </TabsContent>
             ))}
           </Tabs>

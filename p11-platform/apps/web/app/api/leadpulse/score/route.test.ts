@@ -107,6 +107,50 @@ describe('LeadPulse score route', () => {
     })
   })
 
+  it('rejects a single-lead property mismatch before authorization or scoring', async () => {
+    authGetUserMock.mockResolvedValue({
+      data: { user: { id: 'user-1' } },
+      error: null,
+    })
+    createServiceClientMock.mockReturnValue({
+      from: vi.fn((table: string) => {
+        if (table === 'leads') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                single: vi.fn().mockResolvedValue({
+                  data: { property_id: 'property-owned-by-lead' },
+                  error: null,
+                }),
+              })),
+            })),
+          }
+        }
+        throw new Error(`Unexpected table ${table}`)
+      }),
+      rpc: serviceRpcMock,
+    })
+
+    const { POST } = await import('./route')
+    const request = new Request('http://localhost/api/leadpulse/score', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        leadId: 'lead-1',
+        propertyId: 'attacker-controlled-property',
+      }),
+    }) as NextRequest
+
+    const response = await POST(request)
+
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toEqual({
+      error: 'propertyId does not match lead',
+    })
+    expect(validatePropertyAccessMock).not.toHaveBeenCalled()
+    expect(serviceRpcMock).not.toHaveBeenCalled()
+  })
+
   it('returns score with workflow outcome explanations for a lead', async () => {
     authGetUserMock.mockResolvedValue({
       data: { user: { id: 'user-1' } },

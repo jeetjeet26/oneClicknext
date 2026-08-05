@@ -27,6 +27,7 @@ describe('loadApprovedFloorPlanSnapshot', () => {
           expires_at: '2026-08-01T11:00:00.000Z',
           source_updated_at: '2026-07-31T11:00:00.000Z',
           source: 'manual',
+          source_identity: 'approved-import:aspen',
         },
       ],
       error: null,
@@ -43,7 +44,15 @@ describe('loadApprovedFloorPlanSnapshot', () => {
     expect(query.eq).toHaveBeenCalledWith('active', true)
     expect(query.eq).toHaveBeenCalledWith('review_status', 'approved')
     expect(snapshot.rows).toEqual([
-      expect.objectContaining({ id: 'aspen-a1', rentMin: 1_895 }),
+      expect.objectContaining({
+        id: 'aspen-a1',
+        rentMin: 1_895,
+        source: 'manual',
+        sourceIdentity: 'approved-import:aspen',
+        effectiveAt: '2026-07-31T11:00:00.000Z',
+        expiresAt: '2026-08-01T11:00:00.000Z',
+        sourceUpdatedAt: '2026-07-31T11:00:00.000Z',
+      }),
     ])
     expect(Object.isFrozen(snapshot.rows)).toBe(true)
   })

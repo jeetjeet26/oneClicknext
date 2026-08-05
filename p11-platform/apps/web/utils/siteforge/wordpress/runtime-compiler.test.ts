@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { ACACIA_REGRESSION_BASELINE_V1 as acacia } from '@/fixtures/acacia-regression.v1'
 import { DEFAULT_SITE_CONFIGURATION } from '@/utils/siteforge/blueprint'
 import {
   deriveAssetManifestHash,
@@ -10,6 +11,10 @@ import {
   createSiteForgeDeploymentSubmission,
   type ImmutableSiteForgeRuntimeRelease,
 } from './runtime-compiler'
+import {
+  createSiteForgeLegalConfigFromSnapshot,
+  legalEvidenceId,
+} from '@/utils/siteforge/quality/deterministic-gates'
 
 describe('SiteForge WordPress runtime v2 compiler', () => {
   it('compiles the complete immutable desired state deterministically', () => {
@@ -48,7 +53,18 @@ describe('SiteForge WordPress runtime v2 compiler', () => {
       analytics: {
         consentMode: 'required',
       },
+      target: {
+        mode: 'canonical_preview',
+        siteUrl: 'https://wordpress.example.com',
+      },
+      protection: {
+        mode: 'password_noindex',
+      },
     })
+    expect(first.plan.siteConfiguration).toEqual(
+      release.blueprint.siteConfiguration
+    )
+    expect(first.plan.publicRuntime).toEqual(release.publicRuntime)
     expect(first.plan.designTokens).toEqual(
       release.blueprint.siteConfiguration?.design
     )
@@ -59,6 +75,14 @@ describe('SiteForge WordPress runtime v2 compiler', () => {
         pageKey: 'page:home',
         url: null,
         parentItemKey: null,
+        target: '_self',
+      },
+      {
+        itemKey: 'nav-amenities',
+        label: 'Amenities',
+        pageKey: 'page:amenities',
+        url: null,
+        parentItemKey: 'nav-home',
         target: '_self',
       },
       {
@@ -76,13 +100,18 @@ describe('SiteForge WordPress runtime v2 compiler', () => {
       sectionId: 'form-1',
       blockName: 'acf/form',
       order: 0,
-      variant: null,
+      variant: 'card',
+      cssClasses: ['conversion-card', 'theme-dark'],
+      anchor: 'form-1',
+      align: 'wide',
       data: {
         heading: 'Schedule a Tour',
         subheading: 'See your next home',
         benefits: 2,
         benefits_0_label: 'Fast',
         benefits_1_label: 'Easy',
+        variant: 'card',
+        align: 'wide',
       },
     })
   })
@@ -128,6 +157,83 @@ describe('SiteForge WordPress runtime v2 compiler', () => {
     ).toThrow('has immutable role favicon')
   })
 
+  it('rejects unsupported block variants instead of normalizing them', () => {
+    const release = makeRelease()
+    release.blueprint.pages[0].sections[0].variant = 'invented-layout'
+    release.artifactContentHash = hashRuntimeValue(release.blueprint)
+
+    expect(() =>
+      compileSiteForgeRuntimeRelease({
+        release,
+        expectedRemoteContentHash: null,
+      })
+    ).toThrow(/Unsupported acf\/form variant/)
+  })
+
+  it('rejects broken navigation hierarchy before deployment', () => {
+    const release = makeRelease()
+    release.blueprint.siteConfiguration!.navigation.items[0].parentId =
+      'missing-parent'
+    release.artifactContentHash = hashRuntimeValue(release.blueprint)
+
+    expect(() =>
+      compileSiteForgeRuntimeRelease({
+        release,
+        expectedRemoteContentHash: null,
+      })
+    ).toThrow(/navigation parent missing-parent does not exist/)
+  })
+
+  it('compiles exact approved legal data while retaining legacy rows', () => {
+    const release = makeRelease()
+    const legal = approvedLegal()
+    release.legal = legal
+    const evidenceId = legalEvidenceId(legal)
+    release.blueprint.pages.push(
+      ...[
+        ['privacy', 'Privacy', legal.policyBodies.privacyPolicy],
+        ['terms', 'Terms', legal.policyBodies.terms],
+        [
+          'accessibility',
+          'Accessibility',
+          legal.policyBodies.accessibility,
+        ],
+      ].map(([slug, title, body], index) => ({
+        slug,
+        title,
+        purpose: `Publish approved ${title.toLowerCase()} policy`,
+        sections: [
+          {
+            id: `${slug}-policy`,
+            type: 'legal',
+            acfBlock: 'acf/text-section' as const,
+            content: { headline: title, content: body },
+            reasoning: 'Publish exact approved legal policy body',
+            order: index,
+            evidenceIds: [evidenceId],
+          },
+        ],
+      }))
+    )
+    release.artifactContentHash = hashRuntimeValue(release.blueprint)
+
+    const compiled = compileSiteForgeRuntimeRelease({
+      release,
+      expectedRemoteContentHash: null,
+    })
+    expect(compiled.plan.legal).toEqual(legal)
+
+    release.blueprint.pages.find(page => page.slug === 'privacy')!
+      .sections[0].content.content = 'Substituted generic privacy body.'
+    release.artifactContentHash = hashRuntimeValue(release.blueprint)
+    expect(() =>
+      compileSiteForgeRuntimeRelease({
+        release,
+        expectedRemoteContentHash: null,
+      })
+    ).toThrow('does not match its exact policy body and provenance')
+  })
+
   it('creates an exact artifact deployment submission', () => {
     const expectedRemoteContentHash = '1'.repeat(64)
     const compiled = compileSiteForgeRuntimeRelease({
@@ -162,6 +268,38 @@ describe('SiteForge WordPress runtime v2 compiler', () => {
       })
     ).toThrow('do not belong to the compiled SiteForge artifact')
   })
+
+  it('keeps existing schema-v1 Acacia artifacts compatible with runtime v2 and new public runtime off', () => {
+    const release = makeRelease()
+    release.schemaVersion =
+      acacia.siteForge.compatibility.artifactSchemaVersion
+    release.siteName = acacia.property.name
+    release.analytics = { enabled: false, events: [] }
+    delete release.publicRuntime
+    delete release.target
+    delete release.protection
+
+    const compiled = compileSiteForgeRuntimeRelease({
+      release,
+      expectedRemoteContentHash: null,
+    })
+    const submission = createSiteForgeDeploymentSubmission({
+      compiled,
+      assetPreparation: preparedAssets(compiled),
+      expectedRemoteContentHash: null,
+    })
+
+    expect(compiled.assetPreparation.contractVersion).toBe(
+      acacia.siteForge.compatibility.runtimeContractVersion
+    )
+    expect(submission.contractVersion).toBe(
+      acacia.siteForge.compatibility.runtimeContractVersion
+    )
+    expect(compiled.plan.publicRuntime).toBeUndefined()
+    expect(
+      acacia.siteForge.existingArtifactFeatureDefaults.publicRuntime
+    ).toBe(false)
+  })
 })
 
 const ARTIFACT_ID = '11111111-1111-4111-8111-111111111111'
@@ -175,6 +313,12 @@ function makeRelease(): ImmutableSiteForgeRuntimeRelease {
       id: 'nav-home',
       label: 'Home',
       href: '/',
+    },
+    {
+      id: 'nav-amenities',
+      label: 'Amenities',
+      href: '/amenities/',
+      parentId: 'nav-home',
     },
     {
       id: 'nav-contact',
@@ -201,9 +345,12 @@ function makeRelease(): ImmutableSiteForgeRuntimeRelease {
               headline: 'Schedule a Tour',
               subheadline: 'See your next home',
               benefits: [{ label: 'Fast' }, { label: 'Easy' }],
+              align: 'wide',
             },
             reasoning: 'Primary conversion',
             order: 1,
+            variant: 'card',
+            cssClasses: ['conversion-card', 'theme-dark'],
           },
         ],
       },
@@ -275,7 +422,46 @@ function makeRelease(): ImmutableSiteForgeRuntimeRelease {
       consentMode: 'required',
       measurementId: 'G-TEST',
     },
+    target: {
+      mode: 'canonical_preview',
+      siteUrl: 'https://wordpress.example.com',
+    },
+    publicRuntime: {
+      enabled: true,
+      apiKey: 'luma-key',
+      apiBaseUrl: 'https://app.example.com',
+      websiteId: ARTIFACT_ID,
+      conversionEndpoint: 'https://app.example.com/api/conversions',
+      conversionKey: 'conversion-key',
+      telemetryEndpoint: 'https://app.example.com/api/telemetry',
+    },
+    protection: {
+      mode: 'password_noindex',
+    },
   }
+}
+
+function approvedLegal() {
+  return createSiteForgeLegalConfigFromSnapshot({
+    legal: {
+      id: '44444444-4444-4444-8444-444444444444',
+      version: 2,
+      status: 'approved',
+      approved_at: '2026-08-03T17:00:00.000Z',
+      effective_at: '2026-08-03T18:00:00.000Z',
+      privacy_policy: { text: 'Exact approved privacy policy.' },
+      terms: { text: 'Exact approved terms.' },
+      accessibility: { text: 'Exact approved accessibility statement.' },
+      fair_housing: {
+        text: 'Exact approved Equal Housing Opportunity statement.',
+      },
+      pricing_disclaimer: { text: 'Exact approved pricing disclaimer.' },
+      analytics_consent: { text: 'Exact approved analytics consent.' },
+      communications_consent: {
+        text: 'Exact approved communications consent.',
+      },
+    },
+  })
 }
 
 function preparedAssets(

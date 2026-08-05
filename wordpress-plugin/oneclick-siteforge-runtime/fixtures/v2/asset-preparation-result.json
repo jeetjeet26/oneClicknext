@@ -1,0 +1,20 @@
+{
+  "contractVersion": 2,
+  "preparationId": "prep:fixture",
+  "siteId": "site-1",
+  "artifactId": "11111111-1111-4111-8111-111111111111",
+  "artifactContentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "assetManifestHash": "8d105f7738e0121dc658acacb565df84aaf73fe65ad37e1640bb9ee81c809e74",
+  "idempotencyKey": "a446da09d893794919c386a54f1ac9a8a05b3a1552574368d34546a113a2246c",
+  "assets": [
+    {
+      "assetId": "22222222-2222-4222-8222-222222222222",
+      "byteHash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "attachmentId": 201,
+      "url": "https://wordpress.example.com/wp-content/uploads/2026/01/logo.png",
+      "mimeType": "image/png",
+      "disposition": "created"
+    }
+  ],
+  "preparedAt": "2026-01-15T12:01:00+00:00"
+}

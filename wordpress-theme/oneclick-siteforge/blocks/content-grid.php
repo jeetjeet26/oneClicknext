@@ -19,7 +19,7 @@ if ( empty( $items ) ) {
 $col_class = oneclick_get_column_class( $columns );
 ?>
 
-<section <?php echo oneclick_get_block_wrapper_attributes( array( 'class' => 'block-content-grid' ) ); ?>>
+<section <?php echo oneclick_get_block_wrapper_attributes( $block, array( 'class' => 'block-content-grid' ) ); ?>>
 	<div class="site-container">
 		<div class="grid-layout <?php echo esc_attr( $col_class ); ?>">
 			<?php

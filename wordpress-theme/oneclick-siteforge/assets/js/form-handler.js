@@ -35,7 +35,24 @@ document.addEventListener('DOMContentLoaded', function() {
       data.page_url = window.location.href;
       data.referrer = document.referrer || undefined;
       data.session_id = window.localStorage.getItem('siteforge_analytics_session') || undefined;
-      data.analytics_consent = window.localStorage.getItem('siteforge_analytics_consent') || 'unknown';
+      data.analytics_consent = 'unknown';
+      if (window.SiteForgeConsent && typeof window.SiteForgeConsent.state === 'function') {
+        data.analytics_consent = window.SiteForgeConsent.state();
+      } else {
+        try {
+          const storedConsent = JSON.parse(
+            window.localStorage.getItem('siteforge_analytics_consent') || 'null'
+          );
+          if (
+            storedConsent &&
+            ['granted', 'denied', 'not_required'].includes(storedConsent.state)
+          ) {
+            data.analytics_consent = storedConsent.state;
+          }
+        } catch (_error) {
+          data.analytics_consent = 'unknown';
+        }
+      }
       const campaignParams = new URLSearchParams(window.location.search);
       data.campaign = {
         source: campaignParams.get('utm_source') || undefined,

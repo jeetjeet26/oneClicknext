@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-import { start } from 'workflow/api'
+import { getRun, start } from 'workflow/api'
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
@@ -9,6 +9,10 @@ import { isSiteForgeSemanticEditorEnabled } from '@/utils/siteforge/editor/featu
 import { createEditorMessage } from '@/utils/siteforge/editor/repository'
 import { siteForgeSemanticEditWorkflow } from '@/workflows/siteforge-semantic-edit'
 import type { Json } from '@/types/supabase'
+import {
+  assertActiveAuroraLifecycleLease,
+  AuroraLifecycleControlError,
+} from '@/utils/siteforge/testing/aurora-lifecycle-control'
 
 const turnSchema = z.object({
   userIntent: z.string().trim().min(1).max(8_000),
@@ -82,21 +86,42 @@ export async function POST(
         { status: 403, headers: ctx.responseHeaders }
       )
     }
+    const lifecycleIdentity = await assertActiveAuroraLifecycleLease(
+      request,
+      {
+        propertyId: session.property_id,
+        websiteId: session.website_id,
+      },
+      serviceClient
+    )
 
-    const { data: duplicate } = await serviceClient
-      .from('siteforge_edit_messages')
-      .select('id, shared_job_id, status, resulting_artifact_id')
-      .eq('session_id', session.id)
-      .eq('client_request_id', parsed.data.clientRequestId)
+    const dedupeKey = `${session.id}:${parsed.data.clientRequestId}`
+    const { data: duplicateJob } = await serviceClient
+      .from('shared_jobs')
+      .select('id, lifecycle_status')
+      .eq('domain', 'siteforge.semantic_edit')
+      .eq('dedupe_key', dedupeKey)
       .maybeSingle()
-    if (duplicate) {
+    if (duplicateJob) {
+      const { data: duplicateMessages } = await serviceClient
+        .from('siteforge_edit_messages')
+        .select('id, role, status, resulting_artifact_id')
+        .eq('session_id', session.id)
+        .eq('shared_job_id', duplicateJob.id)
+      const userMessage = duplicateMessages?.find(
+        message => message.role === 'user'
+      )
+      const assistantMessage = duplicateMessages?.find(
+        message => message.role === 'assistant'
+      )
       return NextResponse.json(
         {
           duplicate: true,
-          messageId: duplicate.id,
-          jobId: duplicate.shared_job_id,
-          status: duplicate.status,
-          artifactId: duplicate.resulting_artifact_id,
+          userMessageId: userMessage?.id || null,
+          assistantMessageId: assistantMessage?.id || null,
+          jobId: duplicateJob.id,
+          status: duplicateJob.lifecycle_status,
+          artifactId: assistantMessage?.resulting_artifact_id || null,
         },
         { headers: ctx.responseHeaders }
       )
@@ -146,11 +171,18 @@ export async function POST(
         subject_id: session.website_id,
         lifecycle_status: 'queued',
         status_reason: 'workflow_starting',
-        dedupe_key: `${session.id}:${parsed.data.clientRequestId}`,
+        dedupe_key: dedupeKey,
         payload: {
           sessionId: session.id,
           expectedArtifactId: artifact.id,
           expectedContentHash: artifact.content_hash,
+          ...(lifecycleIdentity
+            ? {
+                lifecycleOwnerId: lifecycleIdentity.ownerId,
+                lifecycleRunId: lifecycleIdentity.ownerId,
+                lifecycleExpiresAt: lifecycleIdentity.expiresAt,
+              }
+            : {}),
         } as Json,
         stage: 'queued',
         progress: 0,
@@ -167,80 +199,150 @@ export async function POST(
       )
     }
 
-    const userMessage = await createEditorMessage(
-      {
-        sessionId: session.id,
-        orgId: session.org_id,
-        propertyId: session.property_id,
-        websiteId: session.website_id,
-        role: 'user',
-        content: parsed.data.userIntent,
-        clientRequestId: parsed.data.clientRequestId,
-        parentArtifactId: artifact.id,
-        parentContentHash: artifact.content_hash,
-        createdBy: user.id,
-      },
-      serviceClient
-    )
-    const assistantMessage = await createEditorMessage(
-      {
-        sessionId: session.id,
-        orgId: session.org_id,
-        propertyId: session.property_id,
-        websiteId: session.website_id,
-        role: 'assistant',
-        status: 'queued',
-        content: 'Preparing your edit…',
-        parentArtifactId: artifact.id,
-        parentContentHash: artifact.content_hash,
-        sharedJobId: job.id,
-      },
-      serviceClient
-    )
-
-    const run = await start(siteForgeSemanticEditWorkflow, [
-      {
-        sharedJobId: job.id,
-        sessionId: session.id,
-        userMessageId: userMessage.id,
-        assistantMessageId: assistantMessage.id,
-        websiteId: session.website_id,
-        propertyId: session.property_id,
-        orgId: session.org_id,
-        userId: user.id,
-        userIntent: parsed.data.userIntent,
-        expectedArtifactId: artifact.id,
-        expectedContentHash: artifact.content_hash,
-      },
-    ])
-    await serviceClient
-      .from('shared_jobs')
-      .update({
-        workflow_run_id: run.runId,
-        workflow_name: 'siteforge-semantic-edit',
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', job.id)
+    let userMessageId: string | null = null
+    let assistantMessageId: string | null = null
+    let workflowRunId: string | null = null
+    try {
+      const userMessage = await createEditorMessage(
+        {
+          sessionId: session.id,
+          orgId: session.org_id,
+          propertyId: session.property_id,
+          websiteId: session.website_id,
+          role: 'user',
+          content: parsed.data.userIntent,
+          clientRequestId: parsed.data.clientRequestId,
+          parentArtifactId: artifact.id,
+          parentContentHash: artifact.content_hash,
+          sharedJobId: job.id,
+          createdBy: user.id,
+        },
+        serviceClient
+      )
+      userMessageId = userMessage.id
+      const assistantMessage = await createEditorMessage(
+        {
+          sessionId: session.id,
+          orgId: session.org_id,
+          propertyId: session.property_id,
+          websiteId: session.website_id,
+          role: 'assistant',
+          status: 'queued',
+          content: 'Preparing your edit…',
+          parentArtifactId: artifact.id,
+          parentContentHash: artifact.content_hash,
+          sharedJobId: job.id,
+        },
+        serviceClient
+      )
+      assistantMessageId = assistantMessage.id
+      const run = await start(siteForgeSemanticEditWorkflow, [
+        {
+          sharedJobId: job.id,
+          sessionId: session.id,
+          userMessageId,
+          assistantMessageId,
+          websiteId: session.website_id,
+          propertyId: session.property_id,
+          orgId: session.org_id,
+          userId: user.id,
+          userIntent: parsed.data.userIntent,
+          expectedArtifactId: artifact.id,
+          expectedContentHash: artifact.content_hash,
+        },
+      ])
+      workflowRunId = run.runId
+      const { data: linkedJob, error: linkError } = await serviceClient
+        .from('shared_jobs')
+        .update({
+          workflow_run_id: run.runId,
+          workflow_name: 'siteforge-semantic-edit',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', job.id)
+        .eq('lifecycle_status', 'queued')
+        .select('id')
+        .maybeSingle()
+      if (linkError || !linkedJob) {
+        throw new Error(
+          `Failed to link semantic edit workflow: ${
+            linkError?.message || 'job changed'
+          }`
+        )
+      }
+    } catch (startupError) {
+      const failedAt = new Date().toISOString()
+      if (workflowRunId) {
+        await getRun(workflowRunId).cancel().catch(() => undefined)
+      }
+      const cleanup: Array<Promise<unknown>> = [
+        Promise.resolve(
+          serviceClient
+          .from('shared_jobs')
+          .update({
+            lifecycle_status: 'failed',
+            status_reason: 'workflow_start_failed',
+            stage: 'failed',
+            current_step: 'Semantic edit workflow failed to start',
+            error_message:
+              startupError instanceof Error
+                ? startupError.message
+                : 'Semantic edit workflow failed to start',
+            finished_at: failedAt,
+            updated_at: failedAt,
+          })
+          .eq('id', job.id)
+          .eq('lifecycle_status', 'queued')
+        ),
+      ]
+      if (assistantMessageId) {
+        cleanup.push(
+          Promise.resolve(
+            serviceClient
+            .from('siteforge_edit_messages')
+            .update({
+              status: 'failed',
+              content:
+                'The edit workflow could not start. Retry this request after checking the current revision.',
+              failure_code: 'workflow_start_failed',
+              failure_message:
+                startupError instanceof Error
+                  ? startupError.message
+                  : 'Semantic edit workflow failed to start',
+              completed_at: failedAt,
+            })
+            .eq('id', assistantMessageId)
+            .eq('status', 'queued')
+          )
+        )
+      }
+      await Promise.all(cleanup)
+      throw startupError
+    }
 
     return NextResponse.json(
       {
         sessionId: session.id,
-        userMessageId: userMessage.id,
-        assistantMessageId: assistantMessage.id,
+        userMessageId,
+        assistantMessageId,
         jobId: job.id,
-        workflowRunId: run.runId,
+        workflowRunId,
         status: 'queued',
       },
       { status: 202, headers: ctx.responseHeaders }
     )
   } catch (error) {
-    ctx.logError(500, error)
+    const status =
+      error instanceof AuroraLifecycleControlError ? error.statusCode : 500
+    ctx.logError(status, error)
     return NextResponse.json(
       {
         error:
-          error instanceof Error ? error.message : 'Failed to submit semantic edit',
+          status === 500
+            ? 'Failed to submit semantic edit'
+            : (error as Error).message,
       },
-      { status: 500, headers: ctx.responseHeaders }
+      { status, headers: ctx.responseHeaders }
     )
   }
 }

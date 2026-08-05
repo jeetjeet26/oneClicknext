@@ -16,6 +16,11 @@ import {
   unauthorized,
 } from '@/utils/services/api-helpers'
 import { createRequestContext } from '@/utils/services/request-context'
+import {
+  leadPulseEventRequestSchema,
+  validateBody,
+} from '@/utils/services/validation'
+import type { Json } from '@/types/supabase'
 
 // POST: Record an engagement event
 export async function POST(req: NextRequest) {
@@ -31,13 +36,12 @@ export async function POST(req: NextRequest) {
       return unauthorized(ctx.responseHeaders)
     }
 
-    const body = await req.json()
-    const { leadId, eventType, metadata, propertyId } = body
-
-    if (!leadId || !eventType) {
-      ctx.logSuccess(400, { reason: 'missing_lead_or_event_type' })
-      return badRequest('leadId and eventType required', ctx.responseHeaders)
+    const validation = validateBody(await req.json(), leadPulseEventRequestSchema)
+    if (!validation.success) {
+      ctx.logSuccess(400, { reason: 'validation_failed' })
+      return badRequest(validation.error, ctx.responseHeaders)
     }
+    const { leadId, eventType, metadata, propertyId } = validation.data
 
     // Validate event type
     if (!Object.keys(EVENT_WEIGHTS).includes(eventType)) {
@@ -59,7 +63,17 @@ export async function POST(req: NextRequest) {
       return notFound('Lead', ctx.responseHeaders)
     }
 
-    const effectivePropertyId = propertyId || lead.property_id
+    if (propertyId && propertyId !== lead.property_id) {
+      ctx.logSuccess(400, {
+        reason: 'property_lead_mismatch',
+        assertedPropertyId: propertyId,
+        leadPropertyId: lead.property_id,
+        leadId,
+      })
+      return badRequest('propertyId does not match lead', ctx.responseHeaders)
+    }
+
+    const effectivePropertyId = lead.property_id
     if (!effectivePropertyId) {
       ctx.logSuccess(404, { reason: 'property_not_found', leadId })
       return notFound('Property', ctx.responseHeaders)
@@ -81,7 +95,7 @@ export async function POST(req: NextRequest) {
         lead_id: leadId,
         property_id: effectivePropertyId,
         event_type: eventType,
-        metadata: metadata || {},
+        metadata: (metadata ?? {}) as Json,
         score_weight: EVENT_WEIGHTS[eventType as EventType],
       })
       .select()

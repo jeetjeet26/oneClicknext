@@ -1,5 +1,7 @@
 import {
   blueprintPatchOperationsSchema,
+  generatedPageSchema,
+  pageSectionSchema,
   siteConfigurationSchema,
   type GeneratedPage,
   type PageSection,
@@ -105,22 +107,23 @@ export function applyBlueprintPatch(blueprint: SiteBlueprint, ops: BlueprintPatc
   }
 
   for (const op of validatedOps) {
+    const before = comparableBlueprintState(next)
+
     if (op.op === 'page.upsert') {
       const page = ensureSectionIds([op.page])[0]
       const index = next.pages.findIndex(candidate => candidate.slug === page.slug)
       if (index >= 0) next.pages[index] = page
       else next.pages.push(page)
-      continue
-    }
-
-    if (op.op === 'page.remove') {
+    } else if (op.op === 'page.remove') {
+      if (!next.pages.some(page => page.slug === op.pageSlug)) {
+        throw operationTargetError(op.op, `page "${op.pageSlug}"`)
+      }
       next.pages = next.pages.filter(page => page.slug !== op.pageSlug)
-      continue
-    }
-
-    if (op.op === 'section.upsert') {
+    } else if (op.op === 'section.upsert') {
       const page = next.pages.find(candidate => candidate.slug === op.pageSlug)
-      if (!page) continue
+      if (!page) {
+        throw operationTargetError(op.op, `page "${op.pageSlug}"`)
+      }
       const existing = op.sectionId
         ? page.sections.find(candidate => candidate.id === op.sectionId)
         : undefined
@@ -133,82 +136,99 @@ export function applyBlueprintPatch(blueprint: SiteBlueprint, ops: BlueprintPatc
           order: 9999,
         }, op.afterSectionId)
       }
-      continue
-    }
-
-    if (op.op === 'section.update') {
+    } else if (op.op === 'section.update') {
       const hit = findSection(next.pages, op.sectionId)
-      if (hit) Object.assign(hit.section, op.value)
-      continue
-    }
-
-    if (op.op === 'section.remove') {
-      for (const page of next.pages) {
-        page.sections = page.sections.filter(section => section.id !== op.sectionId)
+      if (!hit) {
+        throw operationTargetError(op.op, `section "${op.sectionId}"`)
       }
-      continue
-    }
-
-    if (op.op === 'section.move') {
+      Object.assign(hit.section, op.value)
+    } else if (op.op === 'section.remove') {
       const hit = findSection(next.pages, op.sectionId)
-      if (!hit) continue
-      if (op.pageSlug && hit.page.slug !== op.pageSlug) {
-        const destination = next.pages.find(page => page.slug === op.pageSlug)
-        if (destination) {
-          hit.page.sections = hit.page.sections.filter(section => section.id !== op.sectionId)
-          destination.sections.push(hit.section)
-        }
+      if (!hit) {
+        throw operationTargetError(op.op, `section "${op.sectionId}"`)
       }
-      hit.section.order = op.toOrder
-      continue
-    }
-
-    const configurationKey = semanticConfigurationKey(op.op)
-    if (configurationKey && 'value' in op) {
-      const current = next.siteConfiguration?.[configurationKey]
-      next.siteConfiguration = {
-        ...(next.siteConfiguration || DEFAULT_SITE_CONFIGURATION),
-        [configurationKey]: deepMerge(current, op.value),
-      }
-      continue
-    }
-
-    if (op.op === 'update_section') {
+      hit.page.sections = hit.page.sections.filter(
+        section => section.id !== op.sectionId
+      )
+    } else if (op.op === 'section.move') {
       const hit = findSection(next.pages, op.sectionId)
-      if (hit) {
-        if (op.content) hit.section.content = op.content
-        if (op.variant) hit.section.variant = op.variant
-        if (op.cssClasses) hit.section.cssClasses = op.cssClasses
-        if (op.reasoning) hit.section.reasoning = op.reasoning
+      if (!hit) {
+        throw operationTargetError(op.op, `section "${op.sectionId}"`)
       }
-      continue
-    }
-
-    if (op.op === 'remove_section') {
-      for (const page of next.pages) {
-        page.sections = (page.sections || []).filter(s => s.id !== op.sectionId)
+      const destination = op.pageSlug
+        ? next.pages.find(page => page.slug === op.pageSlug)
+        : hit.page
+      if (!destination) {
+        throw operationTargetError(op.op, `page "${op.pageSlug}"`)
       }
-      continue
-    }
-
-    if (op.op === 'move_section') {
+      hit.page.sections = hit.page.sections.filter(
+        section => section.id !== op.sectionId
+      )
+      destination.sections.splice(
+        Math.min(op.toOrder - 1, destination.sections.length),
+        0,
+        hit.section
+      )
+    } else if (op.op === 'update_section') {
       const hit = findSection(next.pages, op.sectionId)
-      if (hit) {
-        hit.section.order = op.toOrder
+      if (!hit) {
+        throw operationTargetError(op.op, `section "${op.sectionId}"`)
       }
-      continue
-    }
-
-    if (op.op === 'add_section') {
+      if (op.content !== undefined) hit.section.content = op.content
+      if (op.variant !== undefined) hit.section.variant = op.variant
+      if (op.cssClasses !== undefined) hit.section.cssClasses = op.cssClasses
+      if (op.reasoning !== undefined) hit.section.reasoning = op.reasoning
+    } else if (op.op === 'remove_section') {
+      const hit = findSection(next.pages, op.sectionId)
+      if (!hit) {
+        throw operationTargetError(op.op, `section "${op.sectionId}"`)
+      }
+      hit.page.sections = hit.page.sections.filter(
+        section => section.id !== op.sectionId
+      )
+    } else if (op.op === 'move_section') {
+      const hit = findSection(next.pages, op.sectionId)
+      if (!hit) {
+        throw operationTargetError(op.op, `section "${op.sectionId}"`)
+      }
+      hit.page.sections = hit.page.sections.filter(
+        section => section.id !== op.sectionId
+      )
+      hit.page.sections.splice(
+        Math.min(op.toOrder - 1, hit.page.sections.length),
+        0,
+        hit.section
+      )
+    } else if (op.op === 'add_section') {
       const page = next.pages.find(p => p.slug === op.pageSlug)
-      if (!page) continue
+      if (!page) {
+        throw operationTargetError(op.op, `page "${op.pageSlug}"`)
+      }
       const newSection: PageSection = {
         ...op.section,
         id: globalThis.crypto?.randomUUID?.() || fallbackId(),
         order: 9999, // normalized later
       }
       insertSection(page, newSection, op.afterSectionId)
-      continue
+    } else {
+      const configurationKey = semanticConfigurationKey(op.op)
+      if (!configurationKey || !('value' in op)) {
+        throw new Error(`Unsupported blueprint operation "${op.op}"`)
+      }
+      const current = next.siteConfiguration?.[configurationKey]
+      next.siteConfiguration = {
+        ...(next.siteConfiguration || DEFAULT_SITE_CONFIGURATION),
+        [configurationKey]: deepMerge(current, op.value),
+      }
+    }
+
+    next.pages = next.pages.map(page => ({
+      ...page,
+      sections: normalizeOrder(page.sections || []),
+    }))
+    validatePatchedBlueprint(next)
+    if (comparableBlueprintState(next) === before) {
+      throw new Error(`Blueprint operation "${op.op}" had no effect`)
     }
   }
 
@@ -229,6 +249,12 @@ function insertSection(page: GeneratedPage, section: PageSection, afterSectionId
   const index = afterSectionId
     ? sections.findIndex(candidate => candidate.id === afterSectionId)
     : -1
+  if (afterSectionId && index < 0) {
+    throw operationTargetError(
+      'section.upsert',
+      `section "${afterSectionId}" on page "${page.slug}"`
+    )
+  }
   if (index >= 0) sections.splice(index + 1, 0, section)
   else sections.push(section)
   page.sections = sections
@@ -283,5 +309,24 @@ function findSection(pages: GeneratedPage[], sectionId: string): { page: Generat
 
 function fallbackId(): string {
   return `sec_${Math.random().toString(16).slice(2)}_${Date.now().toString(16)}`
+}
+
+function operationTargetError(operation: string, target: string): Error {
+  return new Error(`Blueprint operation "${operation}" target ${target} was not found`)
+}
+
+function comparableBlueprintState(blueprint: SiteBlueprint): string {
+  return JSON.stringify({
+    pages: blueprint.pages,
+    siteConfiguration: blueprint.siteConfiguration,
+  })
+}
+
+function validatePatchedBlueprint(blueprint: SiteBlueprint): void {
+  generatedPageSchema.array().parse(blueprint.pages)
+  for (const page of blueprint.pages) {
+    pageSectionSchema.array().parse(page.sections)
+  }
+  siteConfigurationSchema.parse(blueprint.siteConfiguration)
 }
 

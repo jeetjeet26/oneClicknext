@@ -14,6 +14,12 @@ class SiteForge_Runtime_Transactions {
 	const PAGE_ARTIFACT_META = '_siteforge_artifact_id';
 	const PAGE_HASH_META     = '_siteforge_page_content_hash';
 	const PAGE_PURPOSE_META  = '_siteforge_page_purpose';
+	const SEO_DECLARED_META  = '_siteforge_seo_declared';
+	const SEO_TITLE_META     = '_siteforge_seo_title';
+	const SEO_DESCRIPTION_META = '_siteforge_seo_description';
+	const SEO_CANONICAL_META = '_siteforge_seo_canonical_path';
+	const SEO_NOINDEX_META   = '_siteforge_seo_noindex';
+	const SEO_JSON_LD_META   = '_siteforge_seo_json_ld';
 
 	/** @var SiteForge_Runtime_Assets */
 	private $assets;
@@ -95,6 +101,7 @@ class SiteForge_Runtime_Transactions {
 			$status['phase'] = 'settings';
 			$this->store_transaction( $status );
 			$this->apply_design_tokens( $input );
+			$this->apply_runtime_configuration( $input );
 			$this->apply_site_settings( $input, $page_ids );
 			$this->apply_legal_and_analytics( $input );
 
@@ -160,16 +167,34 @@ class SiteForge_Runtime_Transactions {
 			$status['status']      = 'failed';
 			$status['completedAt'] = gmdate( 'c' );
 
-			if ( null !== $snapshot ) {
-				$status['rollback']['attempted'] = true;
-				try {
-					$this->rollback( $snapshot );
-					$status['rollback']['succeeded']           = true;
-					$status['rollback']['restoredContentHash'] = $prior_hash;
-				} catch ( Throwable $rollback_error ) {
-					$status['rollback']['succeeded'] = false;
-					$status['rollback']['failure']   = $this->contract_failure( $rollback_error, 'rollback', $input );
+			$status['rollback']['attempted'] = true;
+			try {
+				$rollback_error = null;
+				if ( null !== $snapshot ) {
+					try {
+						$this->rollback( $snapshot );
+					} catch ( Throwable $content_rollback_error ) {
+						$rollback_error = $content_rollback_error;
+					}
 				}
+				try {
+					$this->assets->rollback_preparation( $input['assetPreparationId'], $input['artifactId'] );
+				} catch ( Throwable $asset_rollback_error ) {
+					if ( null === $rollback_error ) {
+						$rollback_error = $asset_rollback_error;
+					}
+				}
+				if ( null !== $rollback_error ) {
+					throw $rollback_error;
+				}
+				if ( null !== $snapshot ) {
+					$this->assert_rollback_readback( $snapshot );
+				}
+				$status['rollback']['succeeded']           = true;
+				$status['rollback']['restoredContentHash'] = $prior_hash;
+			} catch ( Throwable $rollback_error ) {
+				$status['rollback']['succeeded'] = false;
+				$status['rollback']['failure']   = $this->contract_failure( $rollback_error, 'rollback', $input );
 			}
 			$status['failure'] = $this->contract_failure( $error, $status['phase'], $input );
 			$status['failure']['details']['rollback'] = $status['rollback'];
@@ -302,6 +327,9 @@ class SiteForge_Runtime_Transactions {
 				'name'      => $section['blockName'],
 				'order'     => $section['order'],
 				'variant'   => $section['variant'],
+				'cssClasses'=> isset( $section['cssClasses'] ) ? $section['cssClasses'] : array(),
+				'anchor'    => isset( $section['anchor'] ) ? $section['anchor'] : $section['sectionId'],
+				'align'     => isset( $section['align'] ) ? $section['align'] : null,
 				'data'      => $section['data'],
 			);
 		}
@@ -340,6 +368,15 @@ class SiteForge_Runtime_Transactions {
 				'data' => $data,
 				'mode' => 'preview',
 			);
+			if ( ! empty( $block['anchor'] ) ) {
+				$attrs['anchor'] = $block['anchor'];
+			}
+			if ( in_array( $block['align'], array( 'wide', 'full' ), true ) ) {
+				$attrs['align'] = $block['align'];
+			}
+			if ( ! empty( $block['cssClasses'] ) ) {
+				$attrs['className'] = implode( ' ', $block['cssClasses'] );
+			}
 			$json = wp_json_encode( $attrs, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE );
 			$json = str_replace( '--', '\\u002d\\u002d', $json );
 			$output[] = '<!-- wp:' . $block['name'] . ' ' . $json . ' /-->';
@@ -735,14 +772,20 @@ class SiteForge_Runtime_Transactions {
 			update_post_meta( $page_id, self::PAGE_PURPOSE_META, $page['purpose'] );
 			update_post_meta( $page_id, self::PAGE_HASH_META, $this->page_hash( $page, $content ) );
 			if ( isset( $page['seo'] ) && is_array( $page['seo'] ) ) {
-				update_post_meta( $page_id, '_siteforge_seo_declared', '1' );
+				update_post_meta( $page_id, self::SEO_DECLARED_META, '1' );
+				update_post_meta( $page_id, self::SEO_TITLE_META, $page['seo']['title'] );
+				update_post_meta( $page_id, self::SEO_DESCRIPTION_META, $page['seo']['description'] );
+				update_post_meta( $page_id, self::SEO_CANONICAL_META, $page['seo']['canonicalPath'] );
+				update_post_meta( $page_id, self::SEO_NOINDEX_META, ! empty( $page['seo']['noIndex'] ) ? '1' : '0' );
+				update_post_meta( $page_id, self::SEO_JSON_LD_META, $page['seo']['structuredData'] );
+				delete_post_meta( $page_id, '_siteforge_canonical_path' );
+				delete_post_meta( $page_id, '_siteforge_structured_data' );
+				// Yoast is an adapter only; SiteForge metadata above remains canonical.
 				update_post_meta( $page_id, '_yoast_wpseo_title', $page['seo']['title'] );
 				update_post_meta( $page_id, '_yoast_wpseo_metadesc', $page['seo']['description'] );
 				update_post_meta( $page_id, '_yoast_wpseo_meta-robots-noindex', ! empty( $page['seo']['noIndex'] ) ? '1' : '0' );
-				update_post_meta( $page_id, '_siteforge_canonical_path', $page['seo']['canonicalPath'] );
-				update_post_meta( $page_id, '_siteforge_structured_data', $page['seo']['structuredData'] );
 			} else {
-				foreach ( array( '_siteforge_seo_declared', '_yoast_wpseo_title', '_yoast_wpseo_metadesc', '_yoast_wpseo_meta-robots-noindex', '_siteforge_canonical_path', '_siteforge_structured_data' ) as $meta_key ) {
+				foreach ( array( self::SEO_DECLARED_META, self::SEO_TITLE_META, self::SEO_DESCRIPTION_META, self::SEO_CANONICAL_META, self::SEO_NOINDEX_META, self::SEO_JSON_LD_META, '_yoast_wpseo_title', '_yoast_wpseo_metadesc', '_yoast_wpseo_meta-robots-noindex', '_siteforge_canonical_path', '_siteforge_structured_data' ) as $meta_key ) {
 					delete_post_meta( $page_id, $meta_key );
 				}
 			}
@@ -783,22 +826,74 @@ class SiteForge_Runtime_Transactions {
 		}
 	}
 
+	private function apply_runtime_configuration( $input ) {
+		$plan = $input['plan'];
+		if ( isset( $plan['siteConfiguration'] ) ) {
+			$this->persist_option( 'oneclick_siteforge_configuration', $plan['siteConfiguration'], 'site configuration' );
+			$this->persist_option( 'oneclick_siteforge_motion', $plan['siteConfiguration']['motion'], 'motion configuration' );
+		}
+		if ( isset( $plan['target'] ) ) {
+			$this->persist_option( 'oneclick_siteforge_target', $plan['target'], 'target state' );
+			$this->persist_option( 'oneclick_siteforge_target_mode', $plan['target']['mode'], 'target mode' );
+		}
+		if ( isset( $plan['publicRuntime'] ) ) {
+			$this->persist_option( 'oneclick_siteforge_public_runtime', $plan['publicRuntime'], 'public runtime state' );
+			$legacy_runtime = $plan['publicRuntime'];
+			$legacy_runtime['certifiedContentHash'] = $input['artifactContentHash'];
+			$this->persist_option( 'oneclick_siteforge_lumaleasing', $legacy_runtime, 'LumaLeasing public runtime state' );
+		}
+		if ( isset( $plan['protection'] ) ) {
+			$this->persist_option( 'oneclick_siteforge_protection', $plan['protection'], 'protection state' );
+			$this->persist_option(
+				'blog_public',
+				'public' === $plan['protection']['mode'] ? '1' : '0',
+				'search-engine visibility'
+			);
+		}
+	}
+
+	private function persist_option( $option, $value, $label ) {
+		if ( false === update_option( $option, $value, false ) && $value !== get_option( $option ) ) {
+			throw new SiteForge_Runtime_Exception(
+				'siteforge_runtime_configuration_failed',
+				'Could not persist SiteForge ' . $label . '.',
+				500,
+				array( 'option' => $option )
+			);
+		}
+	}
+
 	private function apply_site_settings( $input, $page_ids ) {
 		if ( ! isset( $input['plan']['siteSettings'] ) ) {
 			return;
 		}
 		$settings = $input['plan']['siteSettings'];
-		if ( isset( $input['plan']['siteConfiguration'] ) ) {
-			update_option( 'oneclick_siteforge_configuration', $input['plan']['siteConfiguration'], false );
-			if ( isset( $input['plan']['siteConfiguration']['motion'] ) ) {
-				update_option( 'oneclick_siteforge_motion', $input['plan']['siteConfiguration']['motion'], false );
-			}
-		}
 		if ( isset( $settings['siteName'] ) ) {
 			update_option( 'blogname', $settings['siteName'], false );
 		}
 		if ( isset( $settings['tagline'] ) ) {
 			update_option( 'blogdescription', $settings['tagline'], false );
+		}
+		if ( isset( $settings['propertyProfile'] ) && is_array( $settings['propertyProfile'] ) ) {
+			$profile      = $settings['propertyProfile'];
+			$social_links = array();
+			foreach ( isset( $profile['socialLinks'] ) && is_array( $profile['socialLinks'] ) ? $profile['socialLinks'] : array() as $platform => $url ) {
+				$safe_url = esc_url_raw( (string) $url, array( 'http', 'https' ) );
+				if ( $safe_url ) {
+					$social_links[ sanitize_key( $platform ) ] = $safe_url;
+				}
+			}
+			update_option(
+				'oneclick_siteforge_property_profile',
+				array(
+					'name'        => sanitize_text_field( isset( $profile['name'] ) ? $profile['name'] : '' ),
+					'address'     => sanitize_textarea_field( isset( $profile['address'] ) ? $profile['address'] : '' ),
+					'phone'       => sanitize_text_field( isset( $profile['phone'] ) ? $profile['phone'] : '' ),
+					'email'       => sanitize_email( isset( $profile['email'] ) ? $profile['email'] : '' ),
+					'socialLinks' => $social_links,
+				),
+				false
+			);
 		}
 		if ( ! empty( $settings['logoAssetId'] ) ) {
 			$binding = $this->assets->get_binding( $settings['logoAssetId'] );
@@ -860,6 +955,10 @@ class SiteForge_Runtime_Transactions {
 
 		$item_ids = array();
 		$pending  = $navigation['items'];
+		$positions = array();
+		foreach ( array_values( $navigation['items'] ) as $position => $item ) {
+			$positions[ $item['itemKey'] ] = $position + 1;
+		}
 		while ( ! empty( $pending ) ) {
 			$progress = false;
 			foreach ( $pending as $index => $item ) {
@@ -870,7 +969,7 @@ class SiteForge_Runtime_Transactions {
 				$args = array(
 					'menu-item-title'     => $item['label'],
 					'menu-item-status'    => 'publish',
-					'menu-item-position'  => count( $item_ids ) + 1,
+					'menu-item-position'  => $positions[ $item['itemKey'] ],
 					'menu-item-parent-id' => '' === $parent_key ? 0 : $item_ids[ $parent_key ],
 					'menu-item-target'    => isset( $item['target'] ) ? $item['target'] : '',
 				);
@@ -961,6 +1060,11 @@ class SiteForge_Runtime_Transactions {
 			'homepagePageKey'   => isset( $settings['homepagePageKey'] ) ? $settings['homepagePageKey'] : null,
 			'legalHash'         => SiteForge_Runtime_Validation::hash( $input['plan']['legal'] ),
 			'analyticsHash'     => SiteForge_Runtime_Validation::hash( $input['plan']['analytics'] ),
+			'siteConfigurationHash' => isset( $input['plan']['siteConfiguration'] ) ? SiteForge_Runtime_Validation::hash( $input['plan']['siteConfiguration'] ) : null,
+			'targetHash'        => isset( $input['plan']['target'] ) ? SiteForge_Runtime_Validation::hash( $input['plan']['target'] ) : null,
+			'publicRuntimeHash' => isset( $input['plan']['publicRuntime'] ) ? SiteForge_Runtime_Validation::hash( $input['plan']['publicRuntime'] ) : null,
+			'protectionHash'    => isset( $input['plan']['protection'] ) ? SiteForge_Runtime_Validation::hash( $input['plan']['protection'] ) : null,
+			'blogPublic'        => isset( $input['plan']['protection'] ) ? ( 'public' === $input['plan']['protection']['mode'] ? '1' : '0' ) : null,
 			'navigation'        => $navigation,
 			'navigationItems'   => isset( $input['plan']['navigation']['items'] ) ? $input['plan']['navigation']['items'] : array(),
 		);
@@ -983,14 +1087,14 @@ class SiteForge_Runtime_Transactions {
 						'menuOrder' => (int) $post->menu_order,
 						'template'  => (string) get_page_template_slug( $post->ID ),
 						'excerpt'   => $post->post_excerpt,
-						'seo'       => '1' !== get_post_meta( $post->ID, '_siteforge_seo_declared', true )
+						'seo'       => '1' !== get_post_meta( $post->ID, self::SEO_DECLARED_META, true )
 							? null
 							: array(
-								'title'          => (string) get_post_meta( $post->ID, '_yoast_wpseo_title', true ),
-								'description'    => (string) get_post_meta( $post->ID, '_yoast_wpseo_metadesc', true ),
-								'canonicalPath'  => (string) get_post_meta( $post->ID, '_siteforge_canonical_path', true ),
-								'noIndex'        => '1' === (string) get_post_meta( $post->ID, '_yoast_wpseo_meta-robots-noindex', true ),
-								'structuredData' => (array) get_post_meta( $post->ID, '_siteforge_structured_data', true ),
+								'title'          => (string) get_post_meta( $post->ID, self::SEO_TITLE_META, true ),
+								'description'    => (string) get_post_meta( $post->ID, self::SEO_DESCRIPTION_META, true ),
+								'canonicalPath'  => (string) get_post_meta( $post->ID, self::SEO_CANONICAL_META, true ),
+								'noIndex'        => '1' === (string) get_post_meta( $post->ID, self::SEO_NOINDEX_META, true ),
+								'structuredData' => (array) get_post_meta( $post->ID, self::SEO_JSON_LD_META, true ),
 							),
 					)
 				)
@@ -1075,6 +1179,24 @@ class SiteForge_Runtime_Transactions {
 			hash_equals( $spec['analyticsHash'], SiteForge_Runtime_Validation::hash( get_option( 'oneclick_siteforge_analytics', array() ) ) ),
 			'Analytics settings readback completed.'
 		);
+		foreach (
+			array(
+				'site_configuration' => array( 'hash' => 'siteConfigurationHash', 'option' => 'oneclick_siteforge_configuration' ),
+				'target'             => array( 'hash' => 'targetHash', 'option' => 'oneclick_siteforge_target' ),
+				'public_runtime'     => array( 'hash' => 'publicRuntimeHash', 'option' => 'oneclick_siteforge_public_runtime' ),
+				'protection'         => array( 'hash' => 'protectionHash', 'option' => 'oneclick_siteforge_protection' ),
+			) as $name => $state
+		) {
+			if ( ! empty( $spec[ $state['hash'] ] ) ) {
+				$actual = SiteForge_Runtime_Validation::hash( get_option( $state['option'], array() ) );
+				$passed = hash_equals( $spec[ $state['hash'] ], $actual );
+				$checks[] = $this->check( $name, $passed, $passed ? 'Runtime state matches.' : 'Runtime-state hash mismatch.' );
+			}
+		}
+		if ( array_key_exists( 'blogPublic', $spec ) && null !== $spec['blogPublic'] ) {
+			$passed = (string) get_option( 'blog_public', '' ) === $spec['blogPublic'];
+			$checks[] = $this->check( 'protection_visibility', $passed, $passed ? 'Protection visibility matches.' : 'Protection visibility mismatch.' );
+		}
 		if ( ! empty( $spec['navigation'] ) ) {
 			$locations = get_theme_mod( 'nav_menu_locations', array() );
 			$menu_id   = isset( $locations[ $spec['navigation']['location'] ] ) ? absint( $locations[ $spec['navigation']['location'] ] ) : 0;
@@ -1082,11 +1204,22 @@ class SiteForge_Runtime_Transactions {
 			$passed    = $menu_id === absint( $spec['navigation']['menuId'] ) && count( $items ) === count( $spec['navigationItems'] );
 			if ( $passed ) {
 				$items_by_id = array();
+				$items_by_key = array();
 				foreach ( $items as $menu_item ) {
 					$items_by_id[ absint( $menu_item->ID ) ] = $menu_item;
+					$item_key = get_post_meta( $menu_item->ID, '_siteforge_nav_item_key', true );
+					if ( ! is_string( $item_key ) || '' === $item_key || isset( $items_by_key[ $item_key ] ) ) {
+						$passed = false;
+						break;
+					}
+					$items_by_key[ $item_key ] = $menu_item;
 				}
-				foreach ( $items as $index => $item ) {
-					$expected = $spec['navigationItems'][ $index ];
+				foreach ( $passed ? $spec['navigationItems'] : array() as $expected_position => $expected ) {
+					if ( ! isset( $items_by_key[ $expected['itemKey'] ] ) ) {
+						$passed = false;
+						break;
+					}
+					$item = $items_by_key[ $expected['itemKey'] ];
 					$actual_parent_key = null;
 					if ( absint( $item->menu_item_parent ) > 0 && isset( $items_by_id[ absint( $item->menu_item_parent ) ] ) ) {
 						$actual_parent_key = get_post_meta( absint( $item->menu_item_parent ), '_siteforge_nav_item_key', true );
@@ -1096,9 +1229,9 @@ class SiteForge_Runtime_Transactions {
 						: null;
 					$actual_url = 'custom' === $item->type ? $item->url : null;
 					if (
-						$expected['itemKey'] !== get_post_meta( $item->ID, '_siteforge_nav_item_key', true ) ||
 						$expected['label'] !== $item->title ||
 						$expected['target'] !== ( '' === $item->target ? '_self' : $item->target ) ||
+						$expected_position + 1 !== absint( $item->menu_order ) ||
 						$expected['parentItemKey'] !== $actual_parent_key ||
 						$expected['pageKey'] !== $actual_page_key ||
 						$expected['url'] !== $actual_url
@@ -1234,12 +1367,18 @@ class SiteForge_Runtime_Transactions {
 		return array(
 			'blogname',
 			'blogdescription',
+			'blog_public',
 			'show_on_front',
 			'page_on_front',
 			'site_icon',
 			'oneclick_siteforge_design_tokens',
 			'oneclick_siteforge_configuration',
 			'oneclick_siteforge_motion',
+			'oneclick_siteforge_target',
+			'oneclick_siteforge_target_mode',
+			'oneclick_siteforge_public_runtime',
+			'oneclick_siteforge_lumaleasing',
+			'oneclick_siteforge_protection',
 			'oneclick_siteforge_legal',
 			'oneclick_siteforge_analytics',
 		);
@@ -1329,6 +1468,100 @@ class SiteForge_Runtime_Transactions {
 		$this->restore_navigation( $snapshot['navigation'] );
 	}
 
+	private function assert_rollback_readback( $snapshot ) {
+		$current_managed = new WP_Query(
+			array(
+				'post_type'      => 'page',
+				'post_status'    => array( 'publish', 'draft', 'private', 'trash' ),
+				'posts_per_page' => -1,
+				'fields'         => 'ids',
+				'no_found_rows'  => true,
+				'meta_key'       => self::PAGE_KEY_META,
+			)
+		);
+		$actual_ids   = array_values( array_map( 'absint', $current_managed->posts ) );
+		$expected_ids = array_values( array_map( 'absint', $snapshot['allManagedPageIds'] ) );
+		sort( $actual_ids, SORT_NUMERIC );
+		sort( $expected_ids, SORT_NUMERIC );
+		if ( $actual_ids !== $expected_ids ) {
+			throw new SiteForge_Runtime_Exception( 'siteforge_rollback_page_set_mismatch', 'Rollback page-set verification failed.', 500 );
+		}
+		foreach ( $this->created_page_ids as $page_id ) {
+			if ( get_post( $page_id ) ) {
+				throw new SiteForge_Runtime_Exception( 'siteforge_rollback_created_page_remains', 'A release-created page remains after rollback.', 500, array( 'pageId' => $page_id ) );
+			}
+		}
+		foreach ( $snapshot['pages'] as $page_id => $saved ) {
+			$post = get_post( $page_id, ARRAY_A );
+			$fields = array( 'post_title', 'post_name', 'post_content', 'post_excerpt', 'post_status', 'menu_order' );
+			foreach ( $fields as $field ) {
+				if ( ! is_array( $post ) || (string) $post[ $field ] !== (string) $saved['post'][ $field ] ) {
+					throw new SiteForge_Runtime_Exception( 'siteforge_rollback_page_mismatch', 'Rollback page verification failed.', 500, array( 'pageId' => absint( $page_id ), 'field' => $field ) );
+				}
+			}
+			if ( SiteForge_Runtime_Validation::hash( get_post_meta( $page_id ) ) !== SiteForge_Runtime_Validation::hash( $saved['meta'] ) ) {
+				throw new SiteForge_Runtime_Exception( 'siteforge_rollback_page_meta_mismatch', 'Rollback page metadata verification failed.', 500, array( 'pageId' => absint( $page_id ) ) );
+			}
+		}
+		foreach ( $snapshot['options'] as $option => $saved ) {
+			$sentinel = '__siteforge_rollback_missing_' . wp_generate_uuid4();
+			$actual   = get_option( $option, $sentinel );
+			if ( (bool) $saved['exists'] !== ( $sentinel !== $actual ) || ( $saved['exists'] && $actual !== $saved['value'] ) ) {
+				throw new SiteForge_Runtime_Exception( 'siteforge_rollback_option_mismatch', 'Rollback option verification failed.', 500, array( 'option' => $option ) );
+			}
+		}
+		if (
+			get_theme_mod( 'custom_logo', null ) !== $snapshot['customLogo'] ||
+			get_theme_mod( 'nav_menu_locations', array() ) !== $snapshot['navMenuLocations'] ||
+			! $this->navigation_snapshot_matches( $snapshot['navigation'] )
+		) {
+			throw new SiteForge_Runtime_Exception( 'siteforge_rollback_theme_mismatch', 'Rollback theme and navigation verification failed.', 500 );
+		}
+	}
+
+	private function navigation_snapshot_matches( $snapshot ) {
+		if ( null === $snapshot ) {
+			return true;
+		}
+		$menu = wp_get_nav_menu_object( $snapshot['name'] );
+		if ( ! $snapshot['existed'] ) {
+			return ! $menu;
+		}
+		if ( ! $menu ) {
+			return false;
+		}
+		$actual = wp_get_nav_menu_items( $menu->term_id, array( 'post_status' => 'any' ) ) ?: array();
+		if ( count( $actual ) !== count( $snapshot['items'] ) ) {
+			return false;
+		}
+		$snapshot_parent_positions = array();
+		foreach ( $snapshot['items'] as $item ) {
+			$snapshot_parent_positions[ $item['dbId'] ] = $item['position'];
+		}
+		$actual_parent_positions = array();
+		foreach ( $actual as $item ) {
+			$actual_parent_positions[ absint( $item->ID ) ] = absint( $item->menu_order );
+		}
+		foreach ( array_values( $snapshot['items'] ) as $index => $expected ) {
+			$item = $actual[ $index ];
+			$expected_parent_position = isset( $snapshot_parent_positions[ $expected['parentDbId'] ] ) ? $snapshot_parent_positions[ $expected['parentDbId'] ] : 0;
+			$actual_parent_position   = isset( $actual_parent_positions[ absint( $item->menu_item_parent ) ] ) ? $actual_parent_positions[ absint( $item->menu_item_parent ) ] : 0;
+			if (
+				(string) $expected['title'] !== (string) $item->title ||
+				(string) $expected['url'] !== (string) $item->url ||
+				(string) $expected['object'] !== (string) $item->object ||
+				(string) $expected['type'] !== (string) $item->type ||
+				(int) $expected['objectId'] !== absint( $item->object_id ) ||
+				(int) $expected['position'] !== absint( $item->menu_order ) ||
+				(string) $expected['target'] !== (string) $item->target ||
+				(int) $expected_parent_position !== (int) $actual_parent_position
+			) {
+				return false;
+			}
+		}
+		return true;
+	}
+
 	private function restore_post_meta( $post_id, $metadata ) {
 		$current = get_post_meta( $post_id );
 		foreach ( array_keys( $current ) as $meta_key ) {
@@ -1360,25 +1593,36 @@ class SiteForge_Runtime_Transactions {
 			wp_delete_post( $item->ID, true );
 		}
 		$new_ids = array();
-		foreach ( $snapshot['items'] as $item ) {
-			$parent_id = isset( $new_ids[ $item['parentDbId'] ] ) ? $new_ids[ $item['parentDbId'] ] : 0;
-			$args = array(
-				'menu-item-title'     => $item['title'],
-				'menu-item-status'    => 'publish',
-				'menu-item-position'  => $item['position'],
-				'menu-item-parent-id' => $parent_id,
-				'menu-item-target'    => $item['target'],
-				'menu-item-classes'   => implode( ' ', $item['classes'] ),
-				'menu-item-object-id' => $item['objectId'],
-				'menu-item-object'    => $item['object'],
-				'menu-item-type'      => $item['type'],
-				'menu-item-url'       => $item['url'],
-			);
-			$result = wp_update_nav_menu_item( $menu_id, 0, $args );
-			if ( is_wp_error( $result ) ) {
-				throw new SiteForge_Runtime_Exception( 'siteforge_rollback_navigation_failed', $result->get_error_message(), 500 );
+		$pending = $snapshot['items'];
+		while ( ! empty( $pending ) ) {
+			$progress = false;
+			foreach ( $pending as $index => $item ) {
+				if ( $item['parentDbId'] && ! isset( $new_ids[ $item['parentDbId'] ] ) ) {
+					continue;
+				}
+				$args = array(
+					'menu-item-title'     => $item['title'],
+					'menu-item-status'    => 'publish',
+					'menu-item-position'  => $item['position'],
+					'menu-item-parent-id' => $item['parentDbId'] ? $new_ids[ $item['parentDbId'] ] : 0,
+					'menu-item-target'    => $item['target'],
+					'menu-item-classes'   => implode( ' ', $item['classes'] ),
+					'menu-item-object-id' => $item['objectId'],
+					'menu-item-object'    => $item['object'],
+					'menu-item-type'      => $item['type'],
+					'menu-item-url'       => $item['url'],
+				);
+				$result = wp_update_nav_menu_item( $menu_id, 0, $args );
+				if ( is_wp_error( $result ) ) {
+					throw new SiteForge_Runtime_Exception( 'siteforge_rollback_navigation_failed', $result->get_error_message(), 500 );
+				}
+				$new_ids[ $item['dbId'] ] = absint( $result );
+				unset( $pending[ $index ] );
+				$progress = true;
 			}
-			$new_ids[ $item['dbId'] ] = absint( $result );
+			if ( ! $progress ) {
+				throw new SiteForge_Runtime_Exception( 'siteforge_rollback_navigation_failed', 'Saved navigation hierarchy is invalid.', 500 );
+			}
 		}
 	}
 

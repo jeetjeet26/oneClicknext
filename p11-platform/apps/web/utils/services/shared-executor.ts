@@ -77,6 +77,15 @@ export type SharedExecutorInput<T> = {
   execute: () => Promise<T>
 }
 
+export type SharedActionProposalInput = Omit<
+  SharedExecutorInput<never>,
+  'execute' | 'action'
+> & {
+  action: SharedActionLedgerInput & {
+    proposalDecisionStatus?: 'proposed'
+  }
+}
+
 type ExistingSharedExecutionInput<T> = {
   sharedJobId: string
   sharedActionAttemptId?: string | null
@@ -388,5 +397,33 @@ export async function runSharedExecutorJob<T>(input: SharedExecutorInput<T>): Pr
     sharedActionAttemptId,
     execute: input.execute,
   })
+}
+
+export async function proposeSharedAction(
+  input: SharedActionProposalInput
+): Promise<{ sharedJobId: string; sharedActionAttemptId: string }> {
+  const result = await startSharedExecutorJob({
+    ...input,
+    action: {
+      ...input.action,
+      proposalDecisionStatus: 'proposed',
+    },
+    execute: async () => {
+      throw new SharedExecutorLedgerError('Proposed actions cannot execute before approval')
+    },
+  })
+
+  if (
+    !result.requiresApproval ||
+    !result.sharedJobId ||
+    !result.sharedActionAttemptId
+  ) {
+    throw new SharedExecutorLedgerError('Shared approval proposal was not created')
+  }
+
+  return {
+    sharedJobId: result.sharedJobId,
+    sharedActionAttemptId: result.sharedActionAttemptId,
+  }
 }
 

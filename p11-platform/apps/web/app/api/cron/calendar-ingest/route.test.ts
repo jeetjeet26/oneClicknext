@@ -34,6 +34,7 @@ describe('cron calendar ingest route', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.unstubAllEnvs()
+    vi.stubEnv('CRON_SECRET', 'secret')
     startCronJobRunMock.mockResolvedValue({
       id: 'run-1',
       jobName: 'lumaleasing-calendar-ingest',

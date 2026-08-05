@@ -1,6 +1,11 @@
 import { Client, type SFTPWrapper } from 'ssh2'
+import { createHash } from 'node:crypto'
 import { readFile, readdir } from 'node:fs/promises'
 import path from 'node:path'
+import {
+  inspectSiteForgeRuntimeV3Package,
+  type VerifiedRuntimeV3PackageIdentity,
+} from '@/utils/siteforge/artifacts/release'
 
 export interface WordPressSshCredentials {
   host: string
@@ -14,11 +19,96 @@ export interface WordPressSshCredentials {
 
 export interface WordPressInstallerInput {
   ssh: WordPressSshCredentials
+  runtimeContractVersion?: 1 | 2 | 3
+  themeArchive?: Buffer
   themeArchivePath?: string
+  runtimePluginArchive?: Buffer
   runtimePluginArchivePath?: string
+  runtimePluginIdentity?: VerifiedRuntimeV3PackageIdentity
   acfProArchivePath?: string
   acfProLicenseKey: string
   onProgress?: (step: string) => void | Promise<void>
+}
+
+export interface PreparedWordPressInstallerArchives {
+  themeArchive: Buffer
+  acfProArchive: Buffer
+  runtimePluginArchive: Buffer
+  themeArchiveSha256: string
+  runtimePluginArchiveSha256: string
+}
+
+function sha256(value: Uint8Array): string {
+  return createHash('sha256').update(value).digest('hex')
+}
+
+function assertZipArchive(archive: Buffer, label: string): void {
+  if (
+    archive.length < 100 ||
+    archive[0] !== 0x50 ||
+    archive[1] !== 0x4b
+  ) {
+    throw new Error(`${label} archive is missing or invalid`)
+  }
+}
+
+export async function prepareWordPressInstallerArchives(
+  input: Omit<WordPressInstallerInput, 'ssh' | 'acfProLicenseKey' | 'onProgress'>
+): Promise<PreparedWordPressInstallerArchives> {
+  const themeArchivePath =
+    input.themeArchivePath ||
+    path.resolve(process.cwd(), 'runtime-assets/oneclick-siteforge.zip')
+  const acfProArchivePath =
+    input.acfProArchivePath ||
+    path.resolve(
+      process.cwd(),
+      'runtime-assets/advanced-custom-fields-pro.zip'
+    )
+  const runtimePluginArchivePath =
+    input.runtimePluginArchivePath ||
+    path.resolve(
+      process.cwd(),
+      'runtime-assets/oneclick-siteforge-runtime.zip'
+    )
+  if (
+    input.runtimeContractVersion === 3 &&
+    (!input.runtimePluginArchive || !input.runtimePluginIdentity)
+  ) {
+    throw new Error(
+      'SiteForge runtime v3 installation requires exact verified package bytes and identity'
+    )
+  }
+  const [themeArchive, acfProArchive, runtimePluginArchive] =
+    await Promise.all([
+      input.themeArchive
+        ? Promise.resolve(Buffer.from(input.themeArchive))
+        : readFile(themeArchivePath),
+      readFile(acfProArchivePath),
+      input.runtimePluginArchive
+        ? Promise.resolve(Buffer.from(input.runtimePluginArchive))
+        : readFile(runtimePluginArchivePath),
+    ])
+  assertZipArchive(themeArchive, 'SiteForge theme')
+  assertZipArchive(acfProArchive, 'ACF Pro')
+  assertZipArchive(runtimePluginArchive, 'SiteForge runtime plugin')
+
+  if (input.runtimePluginIdentity) {
+    inspectSiteForgeRuntimeV3Package(runtimePluginArchive, {
+      packageId: input.runtimePluginIdentity.packageId,
+      packageVersion: input.runtimePluginIdentity.packageVersion,
+      archiveSha256: input.runtimePluginIdentity.archiveSha256,
+      manifestSha256: input.runtimePluginIdentity.manifestSha256,
+      manifest: input.runtimePluginIdentity.manifest,
+      signingKeyId: input.runtimePluginIdentity.signingKeyId,
+    })
+  }
+  return {
+    themeArchive,
+    acfProArchive,
+    runtimePluginArchive,
+    themeArchiveSha256: sha256(themeArchive),
+    runtimePluginArchiveSha256: sha256(runtimePluginArchive),
+  }
 }
 
 function shellQuote(value: string): string {
@@ -252,50 +342,15 @@ add_action( 'plugins_loaded', function () {
   }
 
   async ensureInstalled(input: WordPressInstallerInput): Promise<void> {
-    const themeArchivePath =
-      input.themeArchivePath ||
-      path.resolve(process.cwd(), 'runtime-assets/oneclick-siteforge.zip')
-    const acfProArchivePath =
-      input.acfProArchivePath ||
-      path.resolve(
-        process.cwd(),
-        'runtime-assets/advanced-custom-fields-pro.zip'
-      )
-    const runtimePluginArchivePath =
-      input.runtimePluginArchivePath ||
-      path.resolve(
-        process.cwd(),
-        'runtime-assets/oneclick-siteforge-runtime.zip'
-      )
     const applicationRoot = input.ssh.applicationRoot || 'public_html'
     const sftpApplicationRoot = input.ssh.sftpApplicationRoot || applicationRoot
-    const [themeArchive, acfProArchive, runtimePluginArchive] =
-      await Promise.all([
-        readFile(themeArchivePath),
-        readFile(acfProArchivePath),
-        readFile(runtimePluginArchivePath),
-      ])
-    if (
-      themeArchive.length < 100 ||
-      themeArchive[0] !== 0x50 ||
-      themeArchive[1] !== 0x4b
-    ) {
-      throw new Error('SiteForge theme archive is missing or invalid')
-    }
-    if (
-      acfProArchive.length < 100 ||
-      acfProArchive[0] !== 0x50 ||
-      acfProArchive[1] !== 0x4b
-    ) {
-      throw new Error('ACF Pro archive is missing or invalid')
-    }
-    if (
-      runtimePluginArchive.length < 100 ||
-      runtimePluginArchive[0] !== 0x50 ||
-      runtimePluginArchive[1] !== 0x4b
-    ) {
-      throw new Error('SiteForge runtime plugin archive is missing or invalid')
-    }
+    const {
+      themeArchive,
+      acfProArchive,
+      runtimePluginArchive,
+      themeArchiveSha256,
+      runtimePluginArchiveSha256,
+    } = await prepareWordPressInstallerArchives(input)
     const remoteThemeArchivePath = `${sftpApplicationRoot}/oneclick-siteforge.zip`
     const remoteAcfArchivePath = `${sftpApplicationRoot}/advanced-custom-fields-pro.zip`
     const remoteRuntimePluginArchivePath = `${sftpApplicationRoot}/oneclick-siteforge-runtime.zip`
@@ -332,6 +387,8 @@ add_action( 'plugins_loaded', function () {
         [
           `cd ${wpRoot}`,
           'wp core is-installed',
+          `printf '%s  %s\\n' ${shellQuote(themeArchiveSha256)} ${themeArchiveName} | sha256sum -c -`,
+          `printf '%s  %s\\n' ${shellQuote(runtimePluginArchiveSha256)} ${runtimePluginArchiveName} | sha256sum -c -`,
           `wp plugin install ${acfArchive} --force`,
           'wp plugin activate advanced-custom-fields-pro',
           `wp plugin install ${runtimePluginArchiveName} --force`,

@@ -9,7 +9,6 @@ import {
   Upload,
   RefreshCw,
   Loader2,
-  ChevronRight,
   Check,
   AlertCircle,
   Clock,
@@ -22,29 +21,24 @@ import {
   Link,
   Type
 } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import { ManualPricingModal } from './ManualPricingModal'
 import { AddWebsiteUrlsModal } from './AddWebsiteUrlsModal'
 import { PasteTextModal } from './PasteTextModal'
+import {
+  presentKnowledgeSource,
+  type KnowledgeSourceRecord,
+} from './knowledge-presentation'
 
-type KnowledgeSource = {
-  id: string
-  property_id: string
-  source_type: 'intake_form' | 'document' | 'website' | 'integration' | 'manual' | 'brand_book' | 'competitor_intelligence'
-  source_name: string
-  source_url: string | null
-  file_name: string | null
-  file_type: string | null
-  status: 'pending' | 'processing' | 'completed' | 'failed'
-  documents_created: number
-  extracted_data: Record<string, unknown>
-  last_synced_at: string | null
-  error_message: string | null
-  created_at: string
+type SourceTypeConfig = {
+  icon: LucideIcon
+  label: string
+  color: string
 }
 
 type Props = {
-  sources: KnowledgeSource[]
+  sources: KnowledgeSourceRecord[]
   documentsCount: number
   uniqueDocuments: number
   categories: Record<string, number>
@@ -54,7 +48,16 @@ type Props = {
   onUploadClick?: () => void
 }
 
-const SOURCE_TYPE_CONFIG = {
+type ScrapeResult = {
+  success: boolean
+  error?: string
+  units_found?: number
+  property_name?: string
+  floor_plans_found?: number
+  amenities_found?: number
+}
+
+const SOURCE_TYPE_CONFIG: Record<string, SourceTypeConfig> = {
   intake_form: { icon: FormInput, label: 'Intake Form', color: 'text-purple-500' },
   document: { icon: FileText, label: 'Document', color: 'text-blue-500' },
   website: { icon: Globe, label: 'Website', color: 'text-emerald-500' },
@@ -65,7 +68,12 @@ const SOURCE_TYPE_CONFIG = {
 }
 const DEFAULT_SOURCE_TYPE_CONFIG = { icon: FileText, label: 'Other Source', color: 'text-slate-500' }
 
-const STATUS_CONFIG = {
+const STATUS_CONFIG: Record<string, {
+  label: string
+  color: string
+  bgColor: string
+  icon: LucideIcon
+}> = {
   pending: { label: 'Pending', color: 'text-slate-400', bgColor: 'bg-slate-100', icon: Clock },
   processing: { label: 'Processing', color: 'text-blue-500', bgColor: 'bg-blue-50', icon: Loader2 },
   completed: { label: 'Processed', color: 'text-emerald-500', bgColor: 'bg-emerald-50', icon: Check },
@@ -80,6 +88,13 @@ const CATEGORY_CONFIG = {
   other: { icon: FolderOpen, label: 'Other', color: 'text-slate-500', bgColor: 'bg-slate-50' },
 }
 
+function formatRelativeTimestamp(value: string): string {
+  const timestamp = new Date(value)
+  return Number.isNaN(timestamp.getTime())
+    ? value
+    : formatDistanceToNow(timestamp, { addSuffix: true })
+}
+
 export function KnowledgeSourcesList({ 
   sources, 
   documentsCount, 
@@ -92,7 +107,7 @@ export function KnowledgeSourcesList({
 }: Props) {
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [isScrapingPricing, setIsScrapingPricing] = useState(false)
-  const [scrapeResult, setScrapeResult] = useState<any>(null)
+  const [scrapeResult, setScrapeResult] = useState<ScrapeResult | null>(null)
   const [showManualPricingModal, setShowManualPricingModal] = useState(false)
   const [showAddWebsiteUrlsModal, setShowAddWebsiteUrlsModal] = useState(false)
   const [showPasteTextModal, setShowPasteTextModal] = useState(false)
@@ -122,7 +137,7 @@ export function KnowledgeSourcesList({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ propertyId }),
       })
-      const result = await response.json()
+      const result: ScrapeResult = await response.json()
       setScrapeResult(result)
       
       if (result.success) {
@@ -243,15 +258,18 @@ export function KnowledgeSourcesList({
           <div className="flex items-center gap-2 flex-wrap">
             {hasWebsiteSource && (
               <button
+                type="button"
                 onClick={handleRefresh}
                 disabled={isRefreshing}
                 className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors disabled:opacity-50"
+                aria-label={isRefreshing ? 'Refreshing website knowledge sources' : 'Refresh website knowledge sources'}
               >
                 <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
                 Refresh
               </button>
             )}
             <button
+              type="button"
               onClick={() => setShowAddWebsiteUrlsModal(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors"
               title="Add new website URLs to scrape"
@@ -260,6 +278,7 @@ export function KnowledgeSourcesList({
               Add URLs
             </button>
             <button
+              type="button"
               onClick={() => setShowPasteTextModal(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 rounded-lg transition-colors"
               title="Paste text content directly"
@@ -268,6 +287,7 @@ export function KnowledgeSourcesList({
               Paste Text
             </button>
             <button
+              type="button"
               onClick={handleScrapePricing}
               disabled={isScrapingPricing}
               className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-purple-600 hover:text-purple-700 hover:bg-purple-50 rounded-lg transition-colors disabled:opacity-50"
@@ -277,6 +297,7 @@ export function KnowledgeSourcesList({
               {isScrapingPricing ? 'Scraping...' : 'Scrape Pricing'}
             </button>
             <button
+              type="button"
               onClick={() => setShowManualPricingModal(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-amber-600 hover:text-amber-700 hover:bg-amber-50 rounded-lg transition-colors"
               title="Extract pricing from pasted text using AI"
@@ -285,6 +306,7 @@ export function KnowledgeSourcesList({
               Paste Pricing
             </button>
             <button
+              type="button"
               onClick={onUploadClick}
               className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-slate-600 hover:text-slate-700 hover:bg-slate-50 rounded-lg transition-colors"
             >
@@ -297,20 +319,20 @@ export function KnowledgeSourcesList({
         {/* Scrape result notification */}
         {scrapeResult && (
           <div className={`mx-6 mt-4 p-3 rounded-lg ${
-            scrapeResult.success 
-              ? 'bg-emerald-50 border border-emerald-200' 
+            scrapeResult.success
+              ? 'bg-emerald-50 border border-emerald-200'
               : 'bg-red-50 border border-red-200'
           }`}>
             <p className={`text-sm font-medium ${
               scrapeResult.success ? 'text-emerald-700' : 'text-red-700'
             }`}>
-              {scrapeResult.success 
-                ? `✓ Successfully scraped ${scrapeResult.units_found} floor plans from ${scrapeResult.property_name}` 
+              {scrapeResult.success
+                ? `✓ Successfully scraped ${scrapeResult.units_found ?? 0} floor plans from ${scrapeResult.property_name ?? 'the property website'}`
                 : `✗ ${scrapeResult.error}`}
             </p>
-            {scrapeResult.success && scrapeResult.floor_plans_found > 0 && (
+            {scrapeResult.success && (scrapeResult.floor_plans_found ?? 0) > 0 && (
               <p className="text-xs text-emerald-600 mt-1">
-                Found {scrapeResult.floor_plans_found} floor plans, {scrapeResult.amenities_found} amenities
+                Found {scrapeResult.floor_plans_found} floor plans, {scrapeResult.amenities_found ?? 0} amenities
               </p>
             )}
           </div>
@@ -322,6 +344,7 @@ export function KnowledgeSourcesList({
               <Database className="h-10 w-10 text-slate-300 mx-auto mb-3" />
               <p className="text-slate-500 text-sm">No knowledge sources yet</p>
               <button
+                type="button"
                 onClick={onUploadClick}
                 className="mt-3 text-sm text-indigo-600 hover:text-indigo-700 font-medium"
               >
@@ -329,64 +352,143 @@ export function KnowledgeSourcesList({
               </button>
             </div>
           ) : (
-            <div className="space-y-2">
+            <ul className="space-y-3" aria-label="Knowledge sources">
               {sources.map((source) => {
                 const typeConfig = SOURCE_TYPE_CONFIG[source.source_type] ?? DEFAULT_SOURCE_TYPE_CONFIG
                 const statusConfig = STATUS_CONFIG[source.status] ?? DEFAULT_STATUS_CONFIG
                 const TypeIcon = typeConfig.icon
                 const StatusIcon = statusConfig.icon
-                const sourceBrandOrigin = source.extracted_data?.brand_origin
-                const brandOriginLabel =
-                  sourceBrandOrigin === 'generated_brandforge'
-                    ? 'AI generated'
-                    : sourceBrandOrigin === 'client_provided_material'
-                      ? 'Client provided'
-                      : null
+                const presentation = presentKnowledgeSource(source)
 
                 return (
-                  <div
+                  <li
                     key={source.id}
-                    className="flex items-center justify-between p-4 bg-slate-50 rounded-lg hover:bg-slate-100 transition-colors"
+                    className="flex flex-col gap-4 rounded-lg bg-slate-50 p-4 transition-colors hover:bg-slate-100 md:flex-row md:items-start md:justify-between"
                   >
-                    <div className="flex items-center gap-3">
-                      <div className="h-10 w-10 bg-white rounded-lg flex items-center justify-center border border-slate-200">
+                    <div className="flex min-w-0 items-start gap-3">
+                      <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white">
                         <TypeIcon className={`h-5 w-5 ${typeConfig.color}`} />
                       </div>
-                      <div>
-                        <p className="font-medium text-slate-900 text-sm">{source.source_name}</p>
-                        <div className="flex items-center gap-2 mt-0.5">
-                          <span className="text-xs text-slate-500">{typeConfig.label}</span>
-                          {brandOriginLabel && (
-                            <>
-                              <span className="text-slate-300">•</span>
-                              <span className="text-xs text-slate-500">{brandOriginLabel}</span>
-                            </>
-                          )}
-                          {source.documents_created > 0 && (
-                            <>
-                              <span className="text-slate-300">•</span>
-                              <span className="text-xs text-slate-500">{source.documents_created} chunks</span>
-                            </>
-                          )}
-                          {source.last_synced_at && (
-                            <>
-                              <span className="text-slate-300">•</span>
-                              <span className="text-xs text-slate-400">
-                                {formatDistanceToNow(new Date(source.last_synced_at), { addSuffix: true })}
-                              </span>
-                            </>
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-sm font-medium text-slate-900">{source.source_name}</p>
+                          {presentation.origin && (
+                            <span
+                              className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                                presentation.origin === 'generated'
+                                  ? 'bg-indigo-100 text-indigo-700'
+                                  : 'bg-blue-100 text-blue-700'
+                              }`}
+                              aria-label={`Source origin: ${presentation.origin}`}
+                            >
+                              {presentation.origin === 'generated' ? 'Generated' : 'Uploaded'}
+                            </span>
                           )}
                         </div>
+                        <p className="mt-1 text-xs text-slate-500">
+                          Source type: {presentation.sourceTypeLabel}
+                        </p>
+
+                        {(source.file_name || source.source_url) && (
+                          <div className="mt-2 space-y-1 text-xs text-slate-600">
+                            {source.file_name && (
+                              <p className="break-all">
+                                <span className="font-medium text-slate-700">File:</span> {source.file_name}
+                                {source.file_type ? ` (${source.file_type})` : ''}
+                              </p>
+                            )}
+                            {source.source_url && (
+                              <p className="break-all">
+                                <span className="font-medium text-slate-700">URL:</span>{' '}
+                                {presentation.sourceUrlHref ? (
+                                  <a
+                                    href={presentation.sourceUrlHref}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="text-indigo-600 underline decoration-indigo-200 underline-offset-2 hover:text-indigo-700"
+                                  >
+                                    {source.source_url}
+                                  </a>
+                                ) : source.source_url}
+                              </p>
+                            )}
+                          </div>
+                        )}
+
+                        <dl className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
+                          {presentation.documentCount !== null && (
+                            <div className="flex gap-1">
+                              <dt className="font-medium text-slate-600">Document chunks:</dt>
+                              <dd>{presentation.documentCount}</dd>
+                            </div>
+                          )}
+                          {presentation.ingestionVersion && (
+                            <div className="flex gap-1">
+                              <dt className="font-medium text-slate-600">Ingestion version:</dt>
+                              <dd>{presentation.ingestionVersion}</dd>
+                            </div>
+                          )}
+                          {presentation.lastSuccessfulAt && (
+                            <div className="flex gap-1">
+                              <dt className="font-medium text-slate-600">Last successful:</dt>
+                              <dd>
+                                <time
+                                  dateTime={presentation.lastSuccessfulAt}
+                                  title={new Date(presentation.lastSuccessfulAt).toLocaleString()}
+                                >
+                                  {formatRelativeTimestamp(presentation.lastSuccessfulAt)}
+                                </time>
+                              </dd>
+                            </div>
+                          )}
+                          {presentation.lastAttemptAt && (
+                            <div className="flex gap-1">
+                              <dt className="font-medium text-slate-600">Last attempt:</dt>
+                              <dd>
+                                <time
+                                  dateTime={presentation.lastAttemptAt}
+                                  title={new Date(presentation.lastAttemptAt).toLocaleString()}
+                                >
+                                  {formatRelativeTimestamp(presentation.lastAttemptAt)}
+                                </time>
+                              </dd>
+                            </div>
+                          )}
+                        </dl>
+
+                        {presentation.identities.length > 0 && (
+                          <dl className="mt-2 space-y-1 text-xs text-slate-500" aria-label="Source provenance identities">
+                            {presentation.identities.map(identity => (
+                              <div key={`${identity.label}:${identity.value}`} className="flex min-w-0 gap-1">
+                                <dt className="flex-shrink-0 font-medium text-slate-600">{identity.label}:</dt>
+                                <dd className="break-all font-mono">{identity.value}</dd>
+                              </div>
+                            ))}
+                          </dl>
+                        )}
+
+                        {source.error_message && (
+                          <p className="mt-2 flex items-start gap-1.5 text-xs text-red-700" role="alert">
+                            <AlertCircle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
+                            <span>{source.error_message}</span>
+                          </p>
+                        )}
                       </div>
                     </div>
-                    <span className={`flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full ${statusConfig.bgColor} ${statusConfig.color}`}>
-                      <StatusIcon className={`h-3 w-3 ${source.status === 'processing' ? 'animate-spin' : ''}`} />
+                    <span
+                      className={`inline-flex w-fit flex-shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${statusConfig.bgColor} ${statusConfig.color}`}
+                      aria-label={`Source status: ${statusConfig.label}`}
+                    >
+                      <StatusIcon
+                        className={`h-3 w-3 ${source.status === 'processing' ? 'animate-spin' : ''}`}
+                        aria-hidden="true"
+                      />
                       {statusConfig.label}
                     </span>
-                  </div>
+                  </li>
                 )
               })}
-            </div>
+            </ul>
           )}
         </div>
       </div>

@@ -2,6 +2,7 @@ import { lookup } from 'node:dns/promises'
 import { isIP } from 'node:net'
 import type { Json } from '@/types/supabase'
 import { createServiceClient } from '@/utils/supabase/admin'
+import { requestLaunchRestore } from '@/utils/siteforge/launch/service'
 
 export const SITEFORGE_HEALTH_CHECKS = [
   'dns',
@@ -428,8 +429,16 @@ export async function runSiteForgeHealth(
   const requiresSafetyRestore = failed.some(
     ([check]) => check === 'identity' || check === 'reachability'
   )
-  if (requiresSafetyRestore) {
-    await requestSafetyRestore(target, run.id, failed.map(([check]) => check))
+  if (requiresSafetyRestore && options.trigger !== 'restore') {
+    try {
+      await requestSafetyRestore(target, run.id, failed.map(([check]) => check))
+    } catch (error) {
+      console.error('[siteforge_production_health] restore request failed', {
+        websiteId: target.websiteId,
+        healthRunId: run.id,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
   }
 
   return { runId: run.id, status, checks, requiresSafetyRestore }
@@ -444,38 +453,24 @@ async function requestSafetyRestore(
   const { data: release } = await service
     .from('siteforge_launch_releases')
     .select(
-      'id, backup_id, rollback_artifact_id, rollback_content_hash, artifact_id, artifact_content_hash, state'
+      'id, backup_id, rollback_artifact_id, rollback_content_hash, artifact_id, artifact_content_hash, state, approved_by, created_by'
     )
     .eq('website_id', target.websiteId)
     .in('state', ['promoted', 'production_certified', 'live'])
     .order('release_version', { ascending: false })
     .limit(1)
     .maybeSingle()
-  if (!release?.backup_id) return
-  const expectedArtifactId = release.rollback_artifact_id || release.artifact_id
-  const expectedContentHash =
-    release.rollback_content_hash || release.artifact_content_hash
-  const { data: pending } = await service
-    .from('siteforge_restore_drills')
-    .select('id')
-    .eq('website_id', target.websiteId)
-    .in('status', ['queued', 'restoring', 'verifying'])
-    .maybeSingle()
-  if (pending) return
-  await service.from('siteforge_restore_drills').insert({
-    org_id: target.orgId,
-    property_id: target.propertyId,
-    website_id: target.websiteId,
-    release_id: release.id,
-    backup_id: release.backup_id,
-    expected_artifact_id: expectedArtifactId,
-    expected_content_hash: expectedContentHash,
-    status: 'queued',
-    verification_report: {
-      requestType: 'automatic_safety_restore_request',
-      executionRequiresOperator: true,
-      healthRunId,
-      failedChecks,
-    } as Json,
-  })
+  const actorId = release?.approved_by || release?.created_by
+  if (!release?.backup_id || !actorId) return
+  await requestLaunchRestore(
+    {
+      releaseId: release.id,
+      propertyId: target.propertyId,
+      rationale: `Operator restore required after production health failed: ${failedChecks.join(', ')}`,
+      actorId,
+      requestId: healthRunId,
+      source: 'production_health',
+    },
+    service
+  )
 }

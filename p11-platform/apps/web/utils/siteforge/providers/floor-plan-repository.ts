@@ -16,7 +16,7 @@ export async function loadFreshApprovedFloorPlanInventory(
   const { data, error } = await client
     .from('property_units')
     .select(
-      'canonical_key, unit_type, bedrooms, bathrooms, sqft_min, sqft_max, rent_min, rent_max, available_count, move_in_specials, floor_plan_image_url, floor_plan_image_alt, availability_url, apply_url, effective_at, expires_at, source_updated_at, source'
+      'canonical_key, unit_type, bedrooms, bathrooms, sqft_min, sqft_max, rent_min, rent_max, available_count, move_in_specials, floor_plan_image_url, floor_plan_image_alt, availability_url, apply_url, effective_at, expires_at, source_updated_at, source, source_identity'
     )
     .eq('property_id', propertyId)
     .eq('active', true)

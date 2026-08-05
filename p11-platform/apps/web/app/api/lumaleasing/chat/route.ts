@@ -150,37 +150,12 @@ async function incrementSessionMessageCount(
   return null;
 }
 
-async function findRecentDuplicateReply(
-  supabase: ReturnType<typeof createServiceClient>,
-  conversationId: string,
+function findRecentDuplicateReply(
+  recentMessages: RecentMessageRow[],
   userMessage: string
-): Promise<DuplicateReplyResult | null> {
+): DuplicateReplyResult | null {
   try {
-    const messagesTable = supabase.from('messages') as unknown as {
-      select?: (columns: string) => {
-        eq: (column: string, value: string) => {
-          order: (column: string, options: { ascending: boolean }) => {
-            limit: (count: number) => Promise<{ data: unknown[] | null; error: unknown }>
-          }
-        }
-      }
-    }
-    if (typeof messagesTable.select !== 'function') {
-      return null
-    }
-
-    const { data, error } = await messagesTable
-      .select('role, content, created_at')
-      .eq('conversation_id', conversationId)
-      .order('created_at', { ascending: false })
-      .limit(12)
-
-    if (error || !data || data.length === 0) {
-      return null
-    }
-
     const nowMs = Date.now()
-    const recentMessages = (data as RecentMessageRow[]).slice().reverse()
 
     for (let index = recentMessages.length - 1; index >= 0; index -= 1) {
       const row = recentMessages[index]
@@ -205,6 +180,43 @@ async function findRecentDuplicateReply(
   }
 
   return null
+}
+
+async function loadTrustedConversationHistory(
+  supabase: ReturnType<typeof createServiceClient>,
+  conversationId: string
+): Promise<RecentMessageRow[]> {
+  try {
+    const messagesTable = supabase.from('messages') as unknown as {
+      select?: (columns: string) => {
+        eq: (column: string, value: string) => {
+          order: (column: string, options: { ascending: boolean }) => {
+            limit: (count: number) => Promise<{ data: unknown[] | null; error: unknown }>
+          }
+        }
+      }
+    }
+    if (typeof messagesTable.select !== 'function') return []
+
+    const { data, error } = await messagesTable
+      .select('role, content, created_at')
+      .eq('conversation_id', conversationId)
+      .order('created_at', { ascending: false })
+      .limit(12)
+
+    if (error || !data) return []
+    return (data as RecentMessageRow[])
+      .filter(row => (
+        (row.role === 'user' || row.role === 'assistant') &&
+        typeof row.content === 'string' &&
+        row.content.length > 0
+      ))
+      .slice()
+      .reverse()
+  } catch (error) {
+    console.error('[LumaLeasing] Trusted history lookup failed:', error)
+    return []
+  }
 }
 
 // LLM-based extraction of lead info and tour requests from conversation
@@ -467,31 +479,42 @@ Write a professional CRM note (no bullet points, just flowing text):`;
             )
           }
 
-          // Update session and conversation with lead
-          if (sessionId) {
-            const { error: sessionError } = await supabase
-              .from('widget_sessions')
-              .update({ lead_id: leadId, converted_at: new Date().toISOString() })
-            .eq('id', sessionId)
-            .eq('property_id', propertyId);
-            if (sessionError) {
-              console.error('[LumaLeasing] Failed to update session:', sessionError);
-            } else {
-              console.log('[LumaLeasing] session_lead_linked', { sessionId, leadId });
-            }
-          } else {
-            console.warn('[LumaLeasing] No sessionId to update with lead');
-          }
-          if (conversationId) {
-            const { error: convError } = await supabase
-              .from('conversations')
-              .update({ lead_id: leadId })
-              .eq('id', conversationId)
-              .eq('property_id', propertyId);
-            if (convError) {
-              console.error('[LumaLeasing] Failed to update conversation:', convError);
-            }
-          }
+        }
+      }
+    }
+
+    if (leadId && !existingLeadId) {
+      if (sessionId) {
+        const { error: sessionError } = await supabase
+          .from('widget_sessions')
+          .update({ lead_id: leadId, converted_at: new Date().toISOString() })
+          .eq('id', sessionId)
+          .eq('property_id', propertyId);
+        if (sessionError) {
+          console.error('[LumaLeasing] Failed to update session:', sessionError);
+        } else {
+          console.log('[LumaLeasing] session_lead_linked', { sessionId, leadId });
+        }
+      }
+      if (conversationId) {
+        const { error: convError } = await supabase
+          .from('conversations')
+          .update({ lead_id: leadId })
+          .eq('id', conversationId)
+          .eq('property_id', propertyId);
+        if (convError) {
+          console.error('[LumaLeasing] Failed to update conversation:', convError);
+        } else {
+          trackEngagementEvent({
+            leadId,
+            propertyId,
+            eventType: 'chat_started',
+            metadata: {
+              conversation_id: conversationId,
+              source: 'lumaleasing_widget_conversion',
+              backfilled: true,
+            },
+          }).catch(e => console.error('[LumaLeasing Chat] Converted chat tracking failed (non-blocking):', e))
         }
       }
     }
@@ -595,7 +618,7 @@ export async function POST(req: NextRequest) {
 
     const { messages, sessionId, leadInfo } = validation.data;
 
-    const lastMessage = messages[messages.length - 1]?.content;
+    const lastMessage = messages[0]?.content;
     if (!lastMessage) {
       ctx.logSuccess(400, { reason: 'missing_message' })
       return NextResponse.json(
@@ -679,6 +702,7 @@ export async function POST(req: NextRequest) {
 
     // 3. Handle lead capture if info provided
     let leadId: string | null = widgetSession?.lead_id ?? null;
+    let leadConvertedThisRequest = false;
 
     if (leadInfo && !leadId) {
       leadId = await findExistingLeadIdByContact(supabase, propertyId, {
@@ -750,11 +774,14 @@ export async function POST(req: NextRequest) {
           .update({ lead_id: leadId, converted_at: new Date().toISOString() })
           .eq('id', activeSessionId)
           .eq('property_id', propertyId);
+        leadConvertedThisRequest = true;
       }
     }
 
     // 4. Get or create conversation
     let conversationId: string | null = null;
+    let conversationCreated = false;
+    let trustedHistory: RecentMessageRow[] = [];
 
     if (widgetSession && activeSessionId) {
       // Check for existing conversation
@@ -809,22 +836,32 @@ export async function POST(req: NextRequest) {
           .single();
 
         conversationId = newConv?.id || null;
-
-        // Track chat_started engagement event for new conversations (non-blocking)
-        if (leadId && conversationId) {
-          trackEngagementEvent({
-            leadId,
-            propertyId,
-            eventType: 'chat_started',
-            metadata: { conversation_id: conversationId, source: 'lumaleasing_widget' },
-          }).catch(e => console.error('[LumaLeasing Chat] Chat started tracking failed (non-blocking):', e))
-        }
+        conversationCreated = Boolean(conversationId);
       }
+    }
+
+    if (conversationId) {
+      trustedHistory = await loadTrustedConversationHistory(supabase, conversationId)
+    }
+
+    if (leadId && conversationId && (conversationCreated || leadConvertedThisRequest)) {
+      trackEngagementEvent({
+        leadId,
+        propertyId,
+        eventType: 'chat_started',
+        metadata: {
+          conversation_id: conversationId,
+          source: leadConvertedThisRequest
+            ? 'lumaleasing_widget_conversion'
+            : 'lumaleasing_widget',
+          backfilled: leadConvertedThisRequest,
+        },
+      }).catch(e => console.error('[LumaLeasing Chat] Chat started tracking failed (non-blocking):', e))
     }
 
     // 5. Save user message
     if (conversationId) {
-      const duplicateReply = await findRecentDuplicateReply(supabase, conversationId, lastMessage)
+      const duplicateReply = findRecentDuplicateReply(trustedHistory, lastMessage)
       if (duplicateReply) {
         const messageCount = widgetSession?.message_count || 0
         const shouldPromptLeadCapture = !leadId && config.collect_email && messageCount >= 3
@@ -858,6 +895,14 @@ export async function POST(req: NextRequest) {
         content: lastMessage,
       });
     }
+
+    const trustedMessages = [
+      ...trustedHistory.map(message => ({
+        role: message.role as 'user' | 'assistant',
+        content: message.content as string,
+      })),
+      { role: 'user' as const, content: lastMessage },
+    ]
 
     if (!isPropertyChatInScope(lastMessage, propertyName)) {
       const reply = buildPropertyOnlyResponse(propertyName);
@@ -925,10 +970,37 @@ export async function POST(req: NextRequest) {
       }, { headers: responseHeaders });
     }
 
+    if (generatedContext.servingMode === 'degraded') {
+      const reply = `${propertyName}'s latest property details are being reviewed. I can have someone from the team follow up with verified information.`;
+      if (conversationId) {
+        await supabase.from('messages').insert({
+          conversation_id: conversationId,
+          role: 'assistant',
+          content: reply,
+        });
+      }
+      const messageCount = activeSessionId
+        ? await incrementSessionMessageCount(supabase, activeSessionId)
+        : widgetSession?.message_count ?? null;
+      ctx.logSuccess(200, {
+        conversationId,
+        sessionId: activeSessionId,
+        degradedContext: true,
+      })
+      return NextResponse.json({
+        content: reply,
+        sessionId: activeSessionId,
+        conversationId,
+        shouldPromptLeadCapture: !leadId && config.collect_email && (messageCount ?? 0) >= 3,
+        leadCapturePrompt: null,
+        wantsTour: false,
+      }, { headers: responseHeaders });
+    }
+
     // 6. Detect intent for tour booking. Affirmative or scheduling follow-ups
     // ("I would love to", "is there availability next week?") count when the
     // assistant's previous message brought up a tour.
-    const previousAssistantMessage = [...messages]
+    const previousAssistantMessage = [...trustedMessages]
       .slice(0, -1)
       .reverse()
       .find((m: { role: string; content: string }) => m.role === 'assistant')?.content ?? null;
@@ -1030,7 +1102,7 @@ Remember: You represent ${propertyName}. Provide exceptional customer service wi
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: (() => {
-        const recent = messages.slice(-10).map((m: { role: string; content: string }) => ({
+        const recent = trustedMessages.slice(-10).map((m: { role: string; content: string }) => ({
           role: m.role as 'user' | 'assistant',
           content: m.content,
         }));
@@ -1077,7 +1149,7 @@ Remember: You represent ${propertyName}. Provide exceptional customer service wi
         await extractAndProcessConversation(
           openai,
           supabase,
-          messages,
+          trustedMessages,
           propertyId,
           activeSessionId ? activeSessionId : null,
           conversationId,

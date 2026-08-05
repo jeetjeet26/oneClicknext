@@ -1,0 +1,83 @@
+{
+  "siteConfiguration": {
+    "design": {
+      "colors": {
+        "primary": "#111111",
+        "secondary": "#222222",
+        "accent": "#333333",
+        "background": "#ffffff",
+        "text": "#111111"
+      },
+      "typography": {
+        "headingFont": "Inter, sans-serif",
+        "bodyFont": "Inter, sans-serif",
+        "headingWeight": 600
+      },
+      "spacing": {
+        "containerMaxWidth": "1200px",
+        "sectionPadding": "4rem"
+      }
+    },
+    "header": {
+      "layout": "logo-left",
+      "position": "sticky",
+      "announcement": {
+        "enabled": true,
+        "text": "Now leasing"
+      },
+      "cta": {
+        "enabled": true,
+        "label": "Schedule a tour",
+        "href": "/schedule-a-tour/"
+      }
+    },
+    "navigation": {
+      "style": "horizontal",
+      "items": [
+        {
+          "id": "home",
+          "label": "Home",
+          "href": "/"
+        }
+      ]
+    },
+    "footer": {
+      "layout": "columns",
+      "showNavigation": true,
+      "showContact": true,
+      "showSocial": true
+    },
+    "media": {
+      "imageTreatment": "natural"
+    },
+    "motion": {
+      "level": "subtle",
+      "reducedMotion": "respect",
+      "reveal": "fade",
+      "durationMs": 300,
+      "easing": "ease-out"
+    },
+    "behavior": {
+      "smoothScroll": true,
+      "externalLinksNewTab": false,
+      "backToTop": false,
+      "cookieConsent": "required"
+    }
+  },
+  "target": {
+    "mode": "canonical_preview",
+    "siteUrl": "https://wordpress.example.com"
+  },
+  "publicRuntime": {
+    "enabled": true,
+    "apiKey": "luma-key",
+    "apiBaseUrl": "https://app.example.com",
+    "websiteId": "11111111-1111-4111-8111-111111111111",
+    "conversionEndpoint": "https://app.example.com/api/conversions",
+    "conversionKey": "conversion-key",
+    "telemetryEndpoint": "https://app.example.com/api/telemetry"
+  },
+  "protection": {
+    "mode": "password_noindex"
+  }
+}

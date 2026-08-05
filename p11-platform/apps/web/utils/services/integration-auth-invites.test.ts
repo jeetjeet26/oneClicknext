@@ -22,7 +22,7 @@ describe('integration auth invite helpers', () => {
   })
 
   it('builds the external connect link', () => {
-    vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://app.example.com')
+    vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://app.example.com')
 
     expect(buildExternalIntegrationLink('token-1')).toBe(
       'https://app.example.com/lumaleasing/integrations/connect?token=token-1'

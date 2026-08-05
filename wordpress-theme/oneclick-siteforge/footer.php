@@ -10,6 +10,17 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 $siteforge_configuration = get_option( 'oneclick_siteforge_configuration', array() );
 $siteforge_footer = is_array( $siteforge_configuration['footer'] ?? null ) ? $siteforge_configuration['footer'] : array();
+$property_name = oneclick_get_field( 'property_name', get_bloginfo( 'name' ) );
+$property_address = oneclick_get_field( 'property_address' );
+$phone = oneclick_get_field( 'property_phone' );
+$email = oneclick_get_field( 'property_email' );
+$social_links = array(
+	'facebook'  => oneclick_get_field( 'social_facebook' ),
+	'instagram' => oneclick_get_field( 'social_instagram' ),
+	'twitter'   => oneclick_get_field( 'social_twitter' ),
+	'linkedin'  => oneclick_get_field( 'social_linkedin' ),
+);
+$has_social_links = (bool) array_filter( $social_links );
 ?>
 
 		</div>
@@ -20,13 +31,11 @@ $siteforge_footer = is_array( $siteforge_configuration['footer'] ?? null ) ? $si
 					<div class="footer-section footer-about">
 						<h3>
 							<?php
-							$property_name = oneclick_get_field( 'property_name', get_bloginfo( 'name' ) );
 							echo esc_html( $property_name );
 							?>
 						</h3>
 						<p>
 							<?php
-							$property_address = oneclick_get_field( 'property_address' );
 							if ( $property_address ) {
 								echo wp_kses_post( nl2br( $property_address ) );
 							}
@@ -37,12 +46,11 @@ $siteforge_footer = is_array( $siteforge_configuration['footer'] ?? null ) ? $si
 						<?php } ?>
 					</div>
 
-					<?php if ( ! isset( $siteforge_footer['showContact'] ) || $siteforge_footer['showContact'] ) { ?>
+					<?php if ( ( ! isset( $siteforge_footer['showContact'] ) || $siteforge_footer['showContact'] ) && ( $phone || $email ) ) { ?>
 					<div class="footer-section footer-contact">
 						<h4><?php esc_html_e( 'Contact', 'oneclick-siteforge' ); ?></h4>
 						<ul>
 							<?php
-							$phone = oneclick_get_field( 'property_phone' );
 							if ( $phone ) {
 								?>
 								<li>
@@ -53,7 +61,6 @@ $siteforge_footer = is_array( $siteforge_configuration['footer'] ?? null ) ? $si
 								<?php
 							}
 
-							$email = oneclick_get_field( 'property_email' );
 							if ( $email ) {
 								?>
 								<li>
@@ -86,35 +93,23 @@ $siteforge_footer = is_array( $siteforge_configuration['footer'] ?? null ) ? $si
 					</div>
 					<?php } ?>
 
-					<?php if ( ! isset( $siteforge_footer['showSocial'] ) || $siteforge_footer['showSocial'] ) { ?>
+					<?php if ( ( ! isset( $siteforge_footer['showSocial'] ) || $siteforge_footer['showSocial'] ) && $has_social_links ) { ?>
 					<div class="footer-section footer-social">
 						<h4><?php esc_html_e( 'Follow Us', 'oneclick-siteforge' ); ?></h4>
 						<div class="social-links">
 							<?php
-							$social_links = array(
-								'facebook'  => array(
-									'icon' => 'fab fa-facebook-f',
-									'url'  => oneclick_get_field( 'social_facebook' ),
-								),
-								'instagram' => array(
-									'icon' => 'fab fa-instagram',
-									'url'  => oneclick_get_field( 'social_instagram' ),
-								),
-								'twitter'   => array(
-									'icon' => 'fab fa-twitter',
-									'url'  => oneclick_get_field( 'social_twitter' ),
-								),
-								'linkedin'  => array(
-									'icon' => 'fab fa-linkedin-in',
-									'url'  => oneclick_get_field( 'social_linkedin' ),
-								),
+							$social_icons = array(
+								'facebook'  => 'fab fa-facebook-f',
+								'instagram' => 'fab fa-instagram',
+								'twitter'   => 'fab fa-twitter',
+								'linkedin'  => 'fab fa-linkedin-in',
 							);
 
-							foreach ( $social_links as $platform => $data ) {
-								if ( ! empty( $data['url'] ) ) {
+							foreach ( $social_links as $platform => $url ) {
+								if ( ! empty( $url ) ) {
 									?>
-									<a href="<?php echo esc_url( $data['url'] ); ?>" target="_blank" rel="noopener noreferrer" aria-label="<?php echo esc_attr( ucfirst( $platform ) ); ?>">
-										<i class="<?php echo esc_attr( $data['icon'] ); ?>"></i>
+									<a href="<?php echo esc_url( $url ); ?>" target="_blank" rel="noopener noreferrer" aria-label="<?php echo esc_attr( ucfirst( $platform ) ); ?>">
+										<i class="<?php echo esc_attr( $social_icons[ $platform ] ); ?>"></i>
 									</a>
 									<?php
 								}
@@ -127,14 +122,24 @@ $siteforge_footer = is_array( $siteforge_configuration['footer'] ?? null ) ? $si
 
 				<div class="footer-bottom">
 					<?php $siteforge_legal = get_option( 'oneclick_siteforge_legal', array() ); ?>
-					<?php if ( ! empty( $siteforge_legal['paths'] ) ) { ?>
+					<?php
+					$siteforge_legal_policies = is_array( $siteforge_legal['policyBodies'] ?? null ) ? $siteforge_legal['policyBodies'] : array();
+					$siteforge_legal_paths = is_array( $siteforge_legal['paths'] ?? null ) ? $siteforge_legal['paths'] : array();
+					$privacy_path = $siteforge_legal['privacyPath'] ?? ( $siteforge_legal_paths['privacyPath'] ?? '' );
+					$terms_path = $siteforge_legal['termsPath'] ?? ( $siteforge_legal_paths['termsPath'] ?? '' );
+					$accessibility_path = $siteforge_legal['accessibilityPath'] ?? ( $siteforge_legal_paths['accessibilityPath'] ?? '' );
+					$fair_housing_disclaimer = $siteforge_legal_policies['fairHousing'] ?? ( $siteforge_legal['fairHousingDisclaimer'] ?? '' );
+					?>
+					<?php if ( $privacy_path && $terms_path && $accessibility_path ) { ?>
 						<nav class="footer-legal-navigation" aria-label="<?php esc_attr_e( 'Legal', 'oneclick-siteforge' ); ?>">
-							<a href="<?php echo esc_url( $siteforge_legal['paths']['privacyPath'] ); ?>"><?php esc_html_e( 'Privacy', 'oneclick-siteforge' ); ?></a>
-							<a href="<?php echo esc_url( $siteforge_legal['paths']['termsPath'] ); ?>"><?php esc_html_e( 'Terms', 'oneclick-siteforge' ); ?></a>
-							<a href="<?php echo esc_url( $siteforge_legal['paths']['accessibilityPath'] ); ?>"><?php esc_html_e( 'Accessibility', 'oneclick-siteforge' ); ?></a>
+							<a href="<?php echo esc_url( $privacy_path ); ?>"><?php esc_html_e( 'Privacy', 'oneclick-siteforge' ); ?></a>
+							<a href="<?php echo esc_url( $terms_path ); ?>"><?php esc_html_e( 'Terms', 'oneclick-siteforge' ); ?></a>
+							<a href="<?php echo esc_url( $accessibility_path ); ?>"><?php esc_html_e( 'Accessibility', 'oneclick-siteforge' ); ?></a>
 						</nav>
+					<?php } ?>
+					<?php if ( $fair_housing_disclaimer ) { ?>
 						<p class="fair-housing-disclaimer">
-							<?php echo esc_html( $siteforge_legal['fairHousingDisclaimer'] ); ?>
+							<?php echo esc_html( $fair_housing_disclaimer ); ?>
 						</p>
 					<?php } ?>
 					<div class="footer-credits">

@@ -31,7 +31,7 @@ switch ( $size ) {
 }
 ?>
 
-<figure <?php echo oneclick_get_block_wrapper_attributes( array( 'class' => 'block-image ' . $size_class ) ); ?>>
+<figure <?php echo oneclick_get_block_wrapper_attributes( $block, array( 'class' => 'block-image ' . $size_class ) ); ?>>
 	<?php
 	$image_html = oneclick_get_image_html(
 		$image,

@@ -36,6 +36,9 @@ function activeJobQuery(cancelRequested: boolean) {
     data: {
       lifecycle_status: cancelRequested ? 'cancelled' : 'running',
       cancel_requested: cancelRequested,
+      lease_owner: cancelRequested
+        ? null
+        : `siteforge-deployment:${input.sharedJobId}`,
     },
     error: null,
   })

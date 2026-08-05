@@ -5,7 +5,7 @@ import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import type { Json } from '@/types/supabase'
-import { restoreLaunchRelease } from '@/utils/siteforge/launch/service'
+import { requestLaunchRestore } from '@/utils/siteforge/launch/service'
 
 export async function POST(
   _request: NextRequest,
@@ -29,7 +29,7 @@ export async function POST(
     const serviceSupabase = createServiceClient()
     const { data: job, error: jobError } = await serviceSupabase
       .from('shared_jobs')
-      .select('id, domain, property_id, subject_id, lifecycle_status, workflow_run_id, payload')
+      .select('id, domain, property_id, subject_id, lifecycle_status, status_reason, workflow_run_id, payload')
       .eq('id', jobId)
       .in('domain', [
         'siteforge.generation',
@@ -95,12 +95,18 @@ export async function POST(
       })
       .eq('id', job.id)
       .in('lifecycle_status', ['queued', 'running', 'retrying'])
+      .or('status_reason.is.null,status_reason.neq.publication_claimed')
       .select('id')
       .maybeSingle()
 
     if (cancelError || !cancelledJob) {
       return NextResponse.json(
-        { error: 'Job changed before cancellation completed' },
+        {
+          error:
+            job.status_reason === 'publication_claimed'
+              ? 'Revision publication has already been claimed; reload the editor to verify the immutable result'
+              : 'Job changed before cancellation completed',
+        },
         { status: 409 }
       )
     }
@@ -149,17 +155,19 @@ export async function POST(
         isProduction &&
         typeof payload.releaseId === 'string'
       ) {
-        await restoreLaunchRelease(
+        await requestLaunchRestore(
           {
             releaseId: payload.releaseId,
             propertyId: job.property_id,
-            rationale: 'Automatic safety restore after operator cancelled post-promotion certification',
+            rationale:
+              'Operator restore required after post-promotion certification was cancelled',
             actorId: user.id,
             requestId: job.id,
+            source: 'production_cancel',
           },
           serviceSupabase
         ).catch(error =>
-          console.error('Post-cancellation safety restore failed:', error)
+          console.error('Post-cancellation restore request failed:', error)
         )
       }
     } else if (job.subject_id && !isPreview) {

@@ -8,6 +8,10 @@ import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { createRequestContext } from '@/utils/services/request-context'
 import { getWordPressCredentialReference } from '@/utils/siteforge/wordpress/credential-vault'
 import { siteForgeProductionCertificationWorkflow } from '@/workflows/siteforge-production-certification'
+import {
+  assertActiveAuroraLifecycleLease,
+  AuroraLifecycleControlError,
+} from '@/utils/siteforge/testing/aurora-lifecycle-control'
 
 const requestSchema = z
   .object({
@@ -84,6 +88,14 @@ export async function POST(
         { status: 403, headers: ctx.responseHeaders }
       )
     }
+    const lifecycleIdentity = await assertActiveAuroraLifecycleLease(
+      request,
+      {
+        propertyId: website.property_id,
+        websiteId: website.id,
+      },
+      client
+    )
     if (
       !website.staging_certified_at ||
       website.staging_artifact_id !== parsed.data.promotedArtifactId ||
@@ -249,6 +261,13 @@ export async function POST(
         contentHash: artifact.content_hash,
         releaseId: release.id,
         productionUrl,
+        ...(lifecycleIdentity
+          ? {
+              lifecycleOwnerId: lifecycleIdentity.ownerId,
+              lifecycleRunId: lifecycleIdentity.ownerId,
+              lifecycleExpiresAt: lifecycleIdentity.expiresAt,
+            }
+          : {}),
       } as Json,
       error_message: null,
       error_details: null,
@@ -337,6 +356,13 @@ export async function POST(
       actorId: user.id,
       productionUrl,
       startedAt: now,
+      ...(lifecycleIdentity
+        ? {
+            lifecycleOwnerId: lifecycleIdentity.ownerId,
+            lifecycleRunId: lifecycleIdentity.ownerId,
+            lifecycleExpiresAt: lifecycleIdentity.expiresAt,
+          }
+        : {}),
     }
     const run = await start(siteForgeProductionCertificationWorkflow, [
       workflowInput,
@@ -372,15 +398,19 @@ export async function POST(
       { status: 202, headers: ctx.responseHeaders }
     )
   } catch (error) {
-    ctx.logError(500, error)
+    const status =
+      error instanceof AuroraLifecycleControlError ? error.statusCode : 500
+    ctx.logError(status, error)
     return NextResponse.json(
       {
         error:
-          error instanceof Error
+          status !== 500
+            ? (error as Error).message
+            : error instanceof Error
             ? error.message
             : 'Failed to start production certification',
       },
-      { status: 500, headers: ctx.responseHeaders }
+      { status, headers: ctx.responseHeaders }
     )
   }
 }

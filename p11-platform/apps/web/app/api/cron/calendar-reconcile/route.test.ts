@@ -34,6 +34,7 @@ describe('cron calendar reconcile route', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.unstubAllEnvs()
+    vi.stubEnv('CRON_SECRET', 'secret')
     startCronJobRunMock.mockResolvedValue({ id: 'run-1', jobName: 'lumaleasing-calendar-reconcile', startedAtMs: 1 })
     finishCronJobRunMock.mockResolvedValue(undefined)
   })
@@ -129,7 +130,7 @@ describe('cron calendar reconcile route', () => {
     reconcileCalendarForPropertyMock.mockResolvedValue({
       propertyId: 'property-9',
       activeBookings: 3,
-      created: 2,
+      created: 1,
       repaired: 1,
       alreadySynced: 0,
       skipped: 0,
@@ -148,7 +149,7 @@ describe('cron calendar reconcile route', () => {
     await expect(response.json()).resolves.toMatchObject({
       success: true,
       processed: 1,
-      created: 2,
+      created: 1,
       repaired: 1,
     })
     expect(createServiceClientMock).not.toHaveBeenCalled()

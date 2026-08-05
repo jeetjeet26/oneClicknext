@@ -1,9 +1,11 @@
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { DEFAULT_SITE_CONFIGURATION } from '@/utils/siteforge/blueprint'
 import {
   assetPreparationResultSchema,
   assetPreparationRequestSchema,
+  compiledMutationPlanSchema,
   deploymentSubmissionSchema,
   deploymentStatusSchema,
   deriveAssetManifestHash,
@@ -109,6 +111,92 @@ describe('SiteForge runtime v2 contract', () => {
 
     expect(current).toMatch(/^[a-f0-9]{64}$/)
     expect(stale).not.toBe(current)
+  })
+
+  it('accepts strict optional runtime state while preserving legacy plans', () => {
+    expect(compiledMutationPlanSchema.parse(mutationPlan())).toEqual(
+      mutationPlan()
+    )
+
+    const extended = {
+      ...mutationPlan(),
+      siteConfiguration: structuredClone(DEFAULT_SITE_CONFIGURATION),
+      target: {
+        mode: 'canonical_preview',
+        siteUrl: 'https://wordpress.example.com',
+      },
+      publicRuntime: {
+        enabled: true,
+        apiKey: 'runtime-key',
+        apiBaseUrl: 'https://app.example.com',
+        websiteId: ARTIFACT_ID,
+        conversionEndpoint: 'https://app.example.com/api/conversions',
+        conversionKey: 'conversion-key',
+        telemetryEndpoint: 'https://app.example.com/api/telemetry',
+      },
+      protection: { mode: 'password_noindex' },
+    } as const
+    expect(compiledMutationPlanSchema.parse(extended)).toMatchObject({
+      siteConfiguration: DEFAULT_SITE_CONFIGURATION,
+      target: { mode: 'canonical_preview' },
+      publicRuntime: { enabled: true },
+      protection: { mode: 'password_noindex' },
+    })
+
+    expect(
+      compiledMutationPlanSchema.safeParse({
+        ...extended,
+        protection: { mode: 'secret-preview' },
+      }).success
+    ).toBe(false)
+    expect(
+      compiledMutationPlanSchema.safeParse({
+        ...extended,
+        siteConfiguration: {
+          ...DEFAULT_SITE_CONFIGURATION,
+          unexpected: true,
+        },
+      }).success
+    ).toBe(false)
+  })
+
+  it('validates block variants and CSS classes as runtime capabilities', () => {
+    const valid = mutationPlan()
+    valid.pages[0].sections[0] = {
+      ...valid.pages[0].sections[0],
+      variant: 'editorial',
+      cssClasses: ['editorial-copy', 'theme-dark'],
+      anchor: 'section:hero',
+      align: 'wide',
+    }
+    expect(compiledMutationPlanSchema.parse(valid).pages[0].sections[0])
+      .toMatchObject({
+        variant: 'editorial',
+        cssClasses: ['editorial-copy', 'theme-dark'],
+        anchor: 'section:hero',
+        align: 'wide',
+      })
+
+    valid.pages[0].sections[0].variant = 'invented-layout'
+    expect(compiledMutationPlanSchema.safeParse(valid).success).toBe(false)
+  })
+
+  it('rejects unsafe SEO and broken navigation hierarchy', () => {
+    const invalidSeo = mutationPlan()
+    invalidSeo.pages[0].seo = {
+      title: 'Home',
+      description: 'Welcome home',
+      canonicalPath: 'https://attacker.example/home',
+      noIndex: false,
+      structuredData: ['not-json'],
+    }
+    expect(compiledMutationPlanSchema.safeParse(invalidSeo).success).toBe(false)
+
+    const invalidNavigation = mutationPlan()
+    invalidNavigation.navigation.items[0].parentItemKey = 'nav:missing'
+    expect(
+      compiledMutationPlanSchema.safeParse(invalidNavigation).success
+    ).toBe(false)
   })
 })
 

@@ -18,7 +18,7 @@ if ( empty( $items ) ) {
 $unique_id = 'accordion-' . uniqid();
 ?>
 
-<section <?php echo oneclick_get_block_wrapper_attributes( array( 'class' => 'block-accordion' ) ); ?>>
+<section <?php echo oneclick_get_block_wrapper_attributes( $block, array( 'class' => 'block-accordion' ) ); ?>>
 	<div class="site-container">
 		<div class="accordion" id="<?php echo esc_attr( $unique_id ); ?>" role="region" aria-label="<?php esc_attr_e( 'Expandable content', 'oneclick-siteforge' ); ?>">
 			<?php

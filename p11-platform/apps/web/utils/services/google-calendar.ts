@@ -674,7 +674,6 @@ export async function createCalendarEvent(
   if (tourDetails.specialRequests) {
     description += `\n\nSpecial Requests: ${tourDetails.specialRequests}`
   }
-  description += `\n\nBooked via LumaLeasing widget`
 
   if (config.provider === 'microsoft') {
     const createOnlineMeeting = config.provider_metadata?.teams_meeting_enabled === true
@@ -823,7 +822,6 @@ export async function updateCalendarEvent(
   if (tourDetails.specialRequests) {
     description += `\n\nSpecial Requests: ${tourDetails.specialRequests}`
   }
-  description += `\n\nBooked via LumaLeasing widget`
 
   if (config.provider === 'microsoft') {
     const response = await fetch(`${MICROSOFT_GRAPH_API}/me/events/${googleEventId}`, {

@@ -166,6 +166,9 @@ export async function POST(request: Request) {
       } : null,
       settings: {
         timezone: 'America/Los_Angeles',
+        additionalUrls: (property.additionalUrls || [])
+          .map(normalizePublicWebsiteUrl)
+          .filter((url): url is string => Boolean(url)),
       },
       property_type: propertyType,
       website_url: normalizePublicWebsiteUrl(property.websiteUrl),

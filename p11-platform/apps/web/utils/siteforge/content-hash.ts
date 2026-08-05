@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { sha256Hex } from '@/utils/sha256'
 
 function normalizeForHash(value: unknown): unknown {
   if (Array.isArray(value)) {
@@ -25,7 +25,5 @@ export function canonicalizeSiteForgeContent(value: unknown): string {
 }
 
 export function hashSiteForgeContent(value: unknown): string {
-  return createHash('sha256')
-    .update(canonicalizeSiteForgeContent(value))
-    .digest('hex')
+  return sha256Hex(canonicalizeSiteForgeContent(value))
 }

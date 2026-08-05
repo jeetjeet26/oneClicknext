@@ -22,7 +22,7 @@ export const conversionAttributionSchema = siteForgeAttributionSchema
 
 export const normalizedLeadSubmissionSchema = z
   .object({
-    orgId: z.string().uuid(),
+    orgId: z.guid(),
     propertyId: z.guid(),
     submissionId: z.string().trim().min(1).max(200),
     firstName: z.string().trim().min(1).max(100),
@@ -45,9 +45,9 @@ export const normalizedLeadSubmissionSchema = z
 
 export const normalizedTourSubmissionSchema = z
   .object({
-    orgId: z.string().uuid(),
+    orgId: z.guid(),
     propertyId: z.guid(),
-    leadId: z.string().uuid(),
+    leadId: z.guid(),
     submissionId: z.string().trim().min(1).max(200),
     date: z.string().date(),
     time: z.string().regex(/^\d{2}:\d{2}(?::\d{2})?$/),
@@ -338,10 +338,13 @@ export interface PublicWebsiteConversionContext {
 }
 
 function originFromUrl(value: string | null | undefined): string | null {
-  if (!value?.trim()) return null
+  const normalizedValue = value?.trim()
+  if (!normalizedValue) return null
   try {
     const url = new URL(
-      value.includes('://') ? value : `https://${value}`
+      normalizedValue.includes('://')
+        ? normalizedValue
+        : `https://${normalizedValue}`
     )
     return url.origin
   } catch {
@@ -364,7 +367,7 @@ export async function resolvePublicWebsiteConversionContext(
   const { data: website, error: websiteError } = await client
     .from('property_websites')
     .select(
-      'id, org_id, property_id, siteforge_public_key, current_artifact_version_id, target_domain, wp_url, staging_url, canonical_preview_url'
+      'id, org_id, property_id, siteforge_public_key, current_artifact_version_id, target_domain, wp_url, staging_url, production_url, canonical_preview_url'
     )
     .eq('id', websiteId)
     .maybeSingle()
@@ -373,7 +376,11 @@ export async function resolvePublicWebsiteConversionContext(
   }
   if (!website) return null
 
-  const [{ data: property, error: propertyError }, { data: lumaConfig }] =
+  const [
+    { data: property, error: propertyError },
+    { data: lumaConfig },
+    { data: activeTargets, error: targetsError },
+  ] =
     await Promise.all([
       client
         .from('properties')
@@ -386,9 +393,17 @@ export async function resolvePublicWebsiteConversionContext(
         .select('is_active, tours_enabled')
         .eq('property_id', website.property_id)
         .maybeSingle(),
+      client
+        .from('siteforge_wordpress_targets')
+        .select('site_url')
+        .eq('website_id', website.id)
+        .eq('is_active', true),
     ])
   if (propertyError) {
     throw new Error(`Failed to resolve website property: ${propertyError.message}`)
+  }
+  if (targetsError) {
+    throw new Error(`Failed to resolve website targets: ${targetsError.message}`)
   }
   if (!property) return null
 
@@ -396,8 +411,10 @@ export async function resolvePublicWebsiteConversionContext(
     website.target_domain,
     website.wp_url,
     website.staging_url,
+    website.production_url,
     website.canonical_preview_url,
     property.website_url,
+    ...(activeTargets || []).map((target) => target.site_url),
   ]
     .map(originFromUrl)
     .filter((origin): origin is string => Boolean(origin))

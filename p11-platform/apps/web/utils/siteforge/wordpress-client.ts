@@ -9,6 +9,8 @@ import type {
   WebsiteAsset,
 } from '@/types/siteforge'
 import { SshWordPressInstaller } from '@/utils/siteforge/wordpress/wordpress-installer'
+import { SiteForgeRuntimeV3Client } from '@/utils/siteforge/wordpress/runtime-client-v3'
+import type { VerifiedRuntimeV3PackageIdentity } from '@/utils/siteforge/artifacts/release'
 
 export interface CloudwaysCredentials {
   apiKey: string
@@ -93,6 +95,14 @@ interface WordPressApiRootResponse {
 }
 
 export type DeploymentProgressReporter = (step: string) => void | Promise<void>
+
+export interface ExactSiteForgeRuntimeInstallation {
+  runtimeContractVersion: 1 | 2 | 3
+  themeArchive: Buffer
+  runtimePluginArchive: Buffer
+  runtimePluginIdentity?: VerifiedRuntimeV3PackageIdentity
+  siteId?: string
+}
 
 /**
  * Cloudways API Client
@@ -313,7 +323,10 @@ export class CloudwaysClient {
    * Cloudways does not expose first-party theme/plugin install APIs, so we
    * enforce deployment readiness by waiting for wp-json + required namespaces.
    */
-  async deployThemeAndPlugins(instance: WordPressInstance): Promise<void> {
+  async deployThemeAndPlugins(
+    instance: WordPressInstance,
+    exactRelease?: ExactSiteForgeRuntimeInstallation
+  ): Promise<void> {
     if (!instance.ssh) {
       throw new Error('Cloudways did not return application SSH credentials')
     }
@@ -325,6 +338,10 @@ export class CloudwaysClient {
     }
     await new SshWordPressInstaller().ensureInstalled({
       ssh: instance.ssh,
+      runtimeContractVersion: exactRelease?.runtimeContractVersion,
+      themeArchive: exactRelease?.themeArchive,
+      runtimePluginArchive: exactRelease?.runtimePluginArchive,
+      runtimePluginIdentity: exactRelease?.runtimePluginIdentity,
       acfProLicenseKey,
       onProgress: this.progressReporter,
     })
@@ -335,6 +352,24 @@ export class CloudwaysClient {
       pollIntervalMs: Number(process.env.SITEFORGE_WP_READY_POLL_MS || 5000),
       requireNamespaces: getRequiredWordPressNamespaces(),
     })
+    if (exactRelease?.runtimeContractVersion === 3) {
+      if (!exactRelease.runtimePluginIdentity) {
+        throw new Error(
+          'SiteForge runtime v3 installation is missing its verified package identity'
+        )
+      }
+      await this.reportProgress(
+        'Verifying exact SiteForge runtime v3 archive and manifest identity...'
+      )
+      await new SiteForgeRuntimeV3Client({
+        baseUrl: instance.url,
+        username: instance.credentials.username,
+        applicationPassword: instance.credentials.password,
+      }).verifyInstalledPackageIdentity(
+        exactRelease.runtimePluginIdentity,
+        exactRelease.siteId
+      )
+    }
   }
 
   async deployThemeOverlay(
@@ -638,6 +673,13 @@ export class WordPressAPIClient {
     }
     legal: unknown
     analytics: unknown
+    propertyProfile?: {
+      name: string
+      address: string
+      phone: string
+      email: string
+      socialLinks: Record<string, string>
+    }
     publicRuntime?: {
       enabled: boolean
       apiKey: string
@@ -667,6 +709,7 @@ export class WordPressAPIClient {
         theme_overlay: input.themeArtifact.themeOverlay,
         legal: input.legal,
         analytics: input.analytics,
+        property_profile: input.propertyProfile,
         lumaleasing: input.publicRuntime,
         target_mode: input.targetMode || 'staging',
       }),

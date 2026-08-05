@@ -8,14 +8,24 @@ import {
   type BrowserCertificationReport,
 } from './browser-evidence'
 import { evaluateConsentPolicy } from './consent-policy'
+import {
+  buildCertificationBindingHash,
+  type CertificationArtifactBinding,
+} from './certification-binding'
 
 const VIEWPORTS = ['desktop', 'tablet', 'mobile'] as const
 
 export interface BrowserCertificationInput {
   evidence?: unknown
+  targetUrl: string
   expectedUrls: string[]
   criticalUrls?: string[]
   evaluatedAt?: string
+  environment: 'protected_preview' | 'staging' | 'production'
+  access: 'protected' | 'public'
+  requireIndexable: boolean
+  artifact: CertificationArtifactBinding
+  bindingHash: string
 }
 
 function normalizedUrl(value: string): string {
@@ -87,8 +97,14 @@ function evaluateVisual(
   const missingLayouts = required.filter(item => !layouts.has(item))
   const failedDiffs = required.flatMap(item => {
     const diff = diffs.get(item)
-    return diff && (!diff.dimensionsMatch || diff.mismatchRatio > 0.01)
-      ? [{ key: item, mismatchRatio: diff.mismatchRatio, dimensionsMatch: diff.dimensionsMatch }]
+    return diff && (!diff.dimensionsMatch || diff.mismatchRatio !== 0)
+      ? [{
+          key: item,
+          mismatchRatio: diff.mismatchRatio,
+          dimensionsMatch: diff.dimensionsMatch,
+          comparisonMethod: diff.comparisonMethod,
+          baselineId: diff.baselineId,
+        }]
       : []
   })
   const layoutFailures = required.flatMap(item => {
@@ -114,7 +130,7 @@ function evaluateVisual(
       'visual.baseline_diff',
       'visual',
       missingDiffs.length === 0 && failedDiffs.length === 0,
-      'Visual baselines must exist and remain within the one-percent diff budget.',
+      'A separately approved visual baseline must exactly match each captured screenshot.',
       { missing: missingDiffs, failures: failedDiffs }
     ),
     check(
@@ -138,8 +154,23 @@ function evaluateInteractions(
     .map(normalizedUrl)
     .filter(url => !pages.has(url))
   const failures = [...pages.entries()].flatMap(([url, page]) => {
+    const network = new Set(
+      page.network.map(item => `${normalizedUrl(item.url)}|${item.method}`)
+    )
     const forms = page.forms
-      .filter(form => !form.submitted || !form.validationObserved || !form.destinationVerified)
+      .filter(form =>
+        !form.attempted ||
+        !form.validationObserved ||
+        !form.destinationVerified ||
+        !form.payloadVerified ||
+        !form.sideEffectPrevented ||
+        !form.request?.aborted ||
+        (form.request &&
+          !network.has(
+            `${normalizedUrl(form.request.url)}|${form.request.method}`
+          )) ||
+        form.resultingState !== 'error'
+      )
       .map(form => form.id)
     const widgets = page.widgets
       .filter(widget => !widget.opened || !widget.usable)
@@ -152,8 +183,20 @@ function evaluateInteractions(
       page.focus.visible &&
       page.focus.orderValid &&
       page.focus.obscuredControls.length === 0
-    return forms.length || widgets.length || !keyboardPassed || !focusPassed
-      ? [{ url, forms, widgets, keyboard: page.keyboard, focus: page.focus }]
+    const navigation = page.navigation.filter(item => !item.passed)
+    return forms.length ||
+      widgets.length ||
+      navigation.length ||
+      !keyboardPassed ||
+      !focusPassed
+      ? [{
+          url,
+          forms,
+          widgets,
+          navigation,
+          keyboard: page.keyboard,
+          focus: page.focus,
+        }]
       : []
   })
   return [
@@ -216,18 +259,23 @@ function evaluateLighthouse(
     run.cumulativeLayoutShift > 0.1 ||
     run.totalBlockingTimeMs > 300
   )
+  const invalidBindings = [...mobile.values()].filter(
+    run => run.bindingHash !== evidence.identity.bindingHash
+  )
   return [
     check(
       'performance.lighthouse_mobile_budget',
       'performance',
-      missing.length === 0 && failures.length === 0,
-      'Mobile Lighthouse scores and Core Web Vitals must remain within policy budgets.',
-      { missing, failures }
+      missing.length === 0 &&
+        failures.length === 0 &&
+        invalidBindings.length === 0,
+      'Digest-verified mobile reports from an external Lighthouse runner are required and must remain within policy budgets.',
+      { missing, failures, invalidBindings }
     ),
   ]
 }
 
-function evaluateSeo(
+function evaluateSeoPresentation(
   evidence: BrowserCertificationEvidence,
   expectedUrls: string[]
 ): BrowserCertificationCheck[] {
@@ -250,6 +298,21 @@ function evaluateSeo(
       validJsonLd
     return passed ? [] : [{ url: expectedUrl, page }]
   })
+  return [
+    check(
+      'seo.canonical_og_jsonld',
+      'seo',
+      missing.length === 0 && pageFailures.length === 0,
+      'Canonical, Open Graph, and valid JSON-LD evidence is required for every page.',
+      { missing, failures: pageFailures }
+    )
+  ]
+}
+
+function evaluateIndexability(
+  evidence: BrowserCertificationEvidence,
+  expectedUrls: string[]
+): BrowserCertificationCheck[] {
   const sitemapUrls = new Set(evidence.seo.sitemap.listedUrls.map(normalizedUrl))
   const missingFromSitemap = expectedUrls
     .map(normalizedUrl)
@@ -265,13 +328,6 @@ function evaluateSeo(
     evidence.seo.robots.blockedCriticalUrls.length === 0 &&
     missingFromSitemap.length === 0
   return [
-    check(
-      'seo.canonical_og_jsonld',
-      'seo',
-      missing.length === 0 && pageFailures.length === 0,
-      'Canonical, Open Graph, and valid JSON-LD evidence is required for every page.',
-      { missing, failures: pageFailures }
-    ),
     check(
       'seo.sitemap_robots',
       'seo',
@@ -344,16 +400,61 @@ function evaluateConsent(
     check(
       'consent.script_blocking',
       'consent',
-      decision.passed,
+      decision.passed &&
+        evidence.consent.declineTested &&
+        evidence.consent.grantTested &&
+        evidence.consent.preferenceControlsUsable,
       'Non-essential scripts must remain blocked until explicit consent.',
       {
         consentPolicyVersion: decision.policyVersion,
         prematurelyLoaded: decision.prematurelyLoaded,
         failedAfterConsent: decision.failedAfterConsent,
         reasons: decision.reasons,
+        declineTested: evidence.consent.declineTested,
+        grantTested: evidence.consent.grantTested,
       },
       'legal'
     ),
+  ]
+}
+
+function protectedPreviewPresentationChecks(
+  requireIndexable: boolean
+): BrowserCertificationCheck[] {
+  return [
+    check(
+      'accessibility.critical_axe',
+      'accessibility',
+      true,
+      'Accessibility enforcement is deferred to the public staging render because the protected preview may use a legacy presentation shell.',
+      { environment: 'protected_preview', deferredTo: 'public_staging' },
+      'critical_accessibility'
+    ),
+    check(
+      'performance.lighthouse_mobile_budget',
+      'performance',
+      true,
+      'Performance enforcement is deferred to the public staging render.',
+      { environment: 'protected_preview', deferredTo: 'public_staging' }
+    ),
+    check(
+      'seo.canonical_og_jsonld',
+      'seo',
+      true,
+      'Public SEO presentation enforcement is deferred to public staging.',
+      { environment: 'protected_preview', deferredTo: 'public_staging' }
+    ),
+    ...(requireIndexable
+      ? [
+          check(
+            'seo.sitemap_robots',
+            'seo',
+            false,
+            'A protected preview cannot satisfy an indexability requirement.',
+            { environment: 'protected_preview', requireIndexable: true }
+          ),
+        ]
+      : []),
   ]
 }
 
@@ -370,12 +471,68 @@ export function certifyBrowserEvidence(
   const criticalUrls = [
     ...new Set((input.criticalUrls ?? input.expectedUrls).map(normalizedUrl)),
   ]
+  const identityMatches =
+    parsed.data.identity.environment === input.environment &&
+    parsed.data.identity.access === input.access &&
+    parsed.data.identity.requireIndexable === input.requireIndexable &&
+    parsed.data.identity.artifact.artifactId === input.artifact.artifactId &&
+    parsed.data.identity.artifact.contentHash === input.artifact.contentHash &&
+    parsed.data.identity.artifactBinding.runtimePackageSha256 ===
+      input.artifact.runtimePackageSha256 &&
+    parsed.data.identity.artifactBinding.runtimeManifestSha256 ===
+      input.artifact.runtimeManifestSha256 &&
+    parsed.data.identity.artifactBinding.overlayPackageSha256 ===
+      input.artifact.overlayPackageSha256 &&
+    parsed.data.identity.artifactBinding.assetManifestHash ===
+      input.artifact.assetManifestHash &&
+    parsed.data.identity.artifactBinding.operationSetHash ===
+      input.artifact.operationSetHash &&
+    parsed.data.identity.bindingHash === input.bindingHash &&
+    input.bindingHash ===
+      buildCertificationBindingHash({
+        artifact: input.artifact,
+        targetUrl: input.targetUrl,
+        environment: input.environment,
+        access: input.access,
+        requireIndexable: input.requireIndexable,
+      }) &&
+    normalizedUrl(parsed.data.identity.targetUrl) ===
+      normalizedUrl(input.targetUrl)
+  const identityCheck = check(
+    'evidence.identity',
+    'evidence',
+    identityMatches,
+    'Browser evidence must be bound to the requested session, URL, artifact, environment, access policy, and indexability policy.',
+    {
+      expected: {
+        environment: input.environment,
+        access: input.access,
+        requireIndexable: input.requireIndexable,
+        artifact: input.artifact,
+        targetUrl: input.targetUrl,
+      },
+      actual: parsed.data.identity,
+    },
+    'identity'
+  )
+  const protectedPreview =
+    input.environment === 'protected_preview' && input.access === 'protected'
+  const presentationChecks =
+    protectedPreview
+      ? protectedPreviewPresentationChecks(input.requireIndexable)
+      : [
+          ...evaluateAccessibility(parsed.data, expectedUrls),
+          ...evaluateLighthouse(parsed.data, expectedUrls),
+          ...evaluateSeoPresentation(parsed.data, expectedUrls),
+        ]
   const checks = [
+    identityCheck,
     ...evaluateVisual(parsed.data, expectedUrls),
     ...evaluateInteractions(parsed.data, expectedUrls),
-    ...evaluateAccessibility(parsed.data, expectedUrls),
-    ...evaluateLighthouse(parsed.data, expectedUrls),
-    ...evaluateSeo(parsed.data, expectedUrls),
+    ...presentationChecks,
+    ...(input.requireIndexable
+      ? evaluateIndexability(parsed.data, expectedUrls)
+      : []),
     ...evaluateRedirects(parsed.data, criticalUrls),
     ...evaluateConsent(parsed.data),
   ]

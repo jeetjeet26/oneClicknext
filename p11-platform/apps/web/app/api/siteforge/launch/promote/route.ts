@@ -9,6 +9,10 @@ const requestSchema = z.object({
   propertyId: z.string().uuid(),
   releaseId: z.string().uuid(),
   promotionToken: z.string().min(40).max(4_096),
+  backupConfirmation: z.object({
+    operationId: z.string().trim().min(1).max(500),
+    backupId: z.string().trim().min(1).max(500),
+  }).strict().optional(),
   manualConfirmation: z.object({
     operationId: z.string().trim().min(1).max(500),
   }).strict().optional(),
@@ -25,7 +29,7 @@ export async function POST(request: NextRequest) {
         { status: 400, headers: ctx.responseHeaders }
       )
     }
-    const auth = await requireLaunchManager(parsed.data.propertyId)
+    const auth = await requireLaunchManager(parsed.data.propertyId, request)
     if (!auth.user) return auth.response
     const result = await promoteLaunchRelease({
       ...parsed.data,

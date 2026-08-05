@@ -118,4 +118,110 @@ describe('SiteForge durable generation steps', () => {
       }),
     ])
   })
+
+  it('resolves the exact approved legal contract from pinned plan evidence', async () => {
+    const { resolveApprovedLegalContractForGeneration } = await import(
+      './generation-steps'
+    )
+    const legal = resolveApprovedLegalContractForGeneration(
+      {
+        onboardingSnapshot: {
+          id: '66666666-6666-4666-8666-666666666666',
+          contentHash: 'a'.repeat(64),
+          enabledCapabilities: [],
+        },
+      },
+      {
+        content_hash: 'a'.repeat(64),
+        snapshot_payload: approvedOnboardingSnapshot(),
+      }
+    )
+
+    expect(legal).toMatchObject({
+      schemaVersion: 1,
+      sourceConfigId: '77777777-7777-4777-8777-777777777777',
+      policyBodies: {
+        privacyPolicy: 'Exact approved privacy policy.',
+        terms: 'Exact approved terms.',
+      },
+    })
+  })
+
+  it('fails early with remediation when pinned legal evidence is unavailable', async () => {
+    const { resolveApprovedLegalContractForGeneration } = await import(
+      './generation-steps'
+    )
+
+    expect(() =>
+      resolveApprovedLegalContractForGeneration(
+        { onboardingSnapshot: undefined },
+        null
+      )
+    ).toThrow(
+      'Complete and approve every Legal section in property onboarding, then reconfirm the SiteForge plan'
+    )
+    expect(() =>
+      resolveApprovedLegalContractForGeneration(
+        {
+          onboardingSnapshot: {
+            id: '66666666-6666-4666-8666-666666666666',
+            contentHash: 'a'.repeat(64),
+            enabledCapabilities: [],
+          },
+        },
+        {
+          content_hash: 'b'.repeat(64),
+          snapshot_payload: approvedOnboardingSnapshot(),
+        }
+      )
+    ).toThrow('pinned onboarding legal source is unavailable or changed')
+  })
+
+  it('fails early when the pinned snapshot legal body is incomplete', async () => {
+    const { resolveApprovedLegalContractForGeneration } = await import(
+      './generation-steps'
+    )
+
+    expect(() =>
+      resolveApprovedLegalContractForGeneration(
+        {
+          onboardingSnapshot: {
+            id: '66666666-6666-4666-8666-666666666666',
+            contentHash: 'a'.repeat(64),
+            enabledCapabilities: [],
+          },
+        },
+        {
+          content_hash: 'a'.repeat(64),
+          snapshot_payload: {
+            ...approvedOnboardingSnapshot(),
+            legal: null,
+          },
+        }
+      )
+    ).toThrow('does not contain a complete approved legal contract')
+  })
 })
+
+function approvedOnboardingSnapshot() {
+  return {
+    legal: {
+      id: '77777777-7777-4777-8777-777777777777',
+      version: 5,
+      status: 'approved',
+      approved_at: '2026-08-04T17:00:00.000Z',
+      effective_at: '2026-08-04T18:00:00.000Z',
+      privacy_policy: { text: 'Exact approved privacy policy.' },
+      terms: { text: 'Exact approved terms.' },
+      accessibility: { text: 'Exact approved accessibility statement.' },
+      fair_housing: {
+        text: 'Exact approved Equal Housing Opportunity statement.',
+      },
+      pricing_disclaimer: { text: 'Exact approved pricing disclaimer.' },
+      analytics_consent: { text: 'Exact approved analytics consent.' },
+      communications_consent: {
+        text: 'Exact approved communications consent.',
+      },
+    },
+  }
+}

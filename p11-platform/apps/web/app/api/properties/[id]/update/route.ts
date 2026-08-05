@@ -66,7 +66,7 @@ export async function PUT(
     // Verify property belongs to user's org
     const { data: existingProperty, error: propertyError } = await supabase
       .from('properties')
-      .select('id, name')
+      .select('id, name, settings')
       .eq('id', propertyId)
       .eq('org_id', profile.org_id)
       .single()
@@ -74,6 +74,12 @@ export async function PUT(
     if (propertyError || !existingProperty) {
       return NextResponse.json({ error: 'Property not found' }, { status: 404 })
     }
+    const existingSettings =
+      existingProperty.settings
+      && typeof existingProperty.settings === 'object'
+      && !Array.isArray(existingProperty.settings)
+        ? existingProperty.settings
+        : {}
 
     // Update the property with all profile data consolidated
     const { data: property, error: updateError } = await supabase
@@ -94,6 +100,14 @@ export async function PUT(
         target_audience: propertyData.targetAudience || null,
         office_hours: propertyData.officeHours || {},
         social_media: propertyData.socialMedia || {},
+        settings: {
+          ...existingSettings,
+          additionalUrls: Array.isArray(propertyData.additionalUrls)
+            ? propertyData.additionalUrls
+              .map(normalizePublicWebsiteUrl)
+              .filter((url: string | null): url is string => Boolean(url))
+            : (existingSettings as Record<string, unknown>).additionalUrls || [],
+        },
         updated_at: new Date().toISOString()
       })
       .eq('id', propertyId)

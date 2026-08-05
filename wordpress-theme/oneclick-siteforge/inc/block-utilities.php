@@ -12,27 +12,33 @@ if ( ! defined( 'ABSPATH' ) ) {
 /**
  * Get block wrapper attributes
  */
-function oneclick_get_block_wrapper_attributes( $extra_attrs = array() ) {
+function oneclick_get_block_wrapper_attributes( $block, $extra_attrs = array() ) {
+	$block = is_array( $block ) ? $block : array();
 	$attrs = array(
 		'class' => 'oneclick-block',
 	);
 
-	if ( isset( $GLOBALS['block'] ) ) {
-		$block = $GLOBALS['block'];
-		$block_name = isset( $block['name'] ) ? $block['name'] : '';
-		$variant = function_exists( 'get_field' ) ? get_field( 'variant' ) : '';
-		$catalog = oneclick_siteforge_variant_catalog();
-		if ( isset( $catalog[ $block_name ] ) ) {
-			$allowed = $catalog[ $block_name ];
-			$variant = in_array( $variant, $allowed, true ) ? $variant : $allowed[0];
-			$attrs['class'] .= ' variant-' . sanitize_html_class( $variant );
+	$block_name = isset( $block['name'] ) ? $block['name'] : '';
+	$variant    = oneclick_get_block_field( 'variant', $block, '' );
+	$catalog    = oneclick_siteforge_variant_catalog();
+	if ( isset( $catalog[ $block_name ] ) && in_array( $variant, $catalog[ $block_name ], true ) ) {
+		$attrs['class'] .= ' variant-' . sanitize_html_class( $variant );
+	}
+	if ( ! empty( $block['className'] ) ) {
+		foreach ( preg_split( '/\s+/', (string) $block['className'] ) as $class_name ) {
+			$sanitized = sanitize_html_class( $class_name );
+			if ( '' !== $sanitized ) {
+				$attrs['class'] .= ' ' . $sanitized;
+			}
 		}
-		if ( isset( $block['align'] ) && in_array( $block['align'], array( 'full', 'wide' ), true ) ) {
-			$attrs['class'] .= ' align' . $block['align'];
-		}
-		if ( isset( $block['anchor'] ) ) {
-			$attrs['id'] = $block['anchor'];
-		}
+	}
+	if ( isset( $block['align'] ) && in_array( $block['align'], array( 'full', 'wide' ), true ) ) {
+		$attrs['class'] .= ' align' . $block['align'];
+	}
+	if ( ! empty( $block['anchor'] ) ) {
+		$attrs['id'] = $block['anchor'];
+	} elseif ( ! empty( $block['id'] ) ) {
+		$attrs['id'] = $block['id'];
 	}
 
 	if ( isset( $extra_attrs['class'] ) ) {
@@ -40,6 +46,7 @@ function oneclick_get_block_wrapper_attributes( $extra_attrs = array() ) {
 		unset( $extra_attrs['class'] );
 	}
 	$attrs = array_merge( $attrs, $extra_attrs );
+	$attrs['class'] = implode( ' ', array_unique( preg_split( '/\s+/', trim( $attrs['class'] ) ) ) );
 
 	$output = '';
 	foreach ( $attrs as $key => $value ) {

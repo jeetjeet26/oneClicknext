@@ -1,5 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NextRequest } from 'next/server'
+import { strToU8, zipSync } from 'fflate'
+import { buildOverlayPackageManifest } from '@/utils/siteforge/editor/overlay'
+import {
+  computeOverlayContentHash,
+  computeOverlaySignature,
+  sha256OverlayValue,
+} from '@/utils/siteforge/editor/overlay-contract'
+import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
 
 const { createClient, createServiceClient, getUser } = vi.hoisted(() => ({
   createClient: vi.fn(),
@@ -37,5 +45,143 @@ describe('semantic editor session route', () => {
     const { POST } = await import('./route')
     expect((await POST(request())).status).toBe(401)
     expect(createServiceClient).not.toHaveBeenCalled()
+  })
+
+  it('exposes only a strictly verified private overlay review package', async () => {
+    vi.stubEnv('SITEFORGE_OVERLAY_SIGNING_SECRET', 'session-test-secret')
+    const website = {
+      id: '11111111-1111-4111-8111-111111111111',
+      property_id: '22222222-2222-4222-8222-222222222222',
+      org_id: '33333333-3333-4333-8333-333333333333',
+      current_artifact_version_id: '44444444-4444-4444-8444-444444444444',
+    }
+    const proposal = {
+      reason: 'Review exact generated files',
+      files: [
+        {
+          path: 'assets/css/review.css',
+          content: '.review { color: rebeccapurple; }',
+        },
+      ],
+    }
+    const { functionsPhp, styleCss, manifest } =
+      buildOverlayPackageManifest(proposal)
+    const contentHash = computeOverlayContentHash(proposal.reason, manifest)
+    const archive = zipSync({
+      'assets/css/review.css': strToU8(proposal.files[0].content),
+      'functions.php': strToU8(functionsPhp),
+      'style.css': strToU8(styleCss),
+      'siteforge-overlay.json': strToU8(
+        JSON.stringify({
+          descriptorVersion: 1,
+          overlayContentHash: contentHash,
+          manifest,
+          reason: proposal.reason,
+        })
+      ),
+    })
+    const packageSha256 = sha256OverlayValue(archive)
+    const signature = computeOverlaySignature({
+      websiteId: website.id,
+      contentHash,
+      packageSha256,
+      signingSecret: 'session-test-secret',
+    })
+    const validationReport = {
+      passed: true,
+      validator: 'siteforge-static-sandbox-v1',
+      checks: [{ path: 'assets/css/review.css', passed: true }],
+    }
+    const extension = {
+      id: '55555555-5555-4555-8555-555555555555',
+      artifact_id: website.current_artifact_version_id,
+      immutable_package_sha256: packageSha256,
+      runtime_compatibility: JSON.stringify({
+        contractVersion: 1,
+        overlayId: '66666666-6666-4666-8666-666666666666',
+        contentHash,
+        sourceArtifactId: website.current_artifact_version_id,
+        sourceContentHash: 'a'.repeat(64),
+        packageSha256,
+        signature,
+        storage: {
+          bucket: 'siteforge-artifacts',
+          path: `overlays/${website.id}/${contentHash}.zip`,
+        },
+        validation: {
+          validator: 'siteforge-static-sandbox-v1',
+          reportSha256: hashSiteForgeContent(validationReport),
+        },
+      }),
+    }
+    const service = {
+      from: (table: string) => {
+        const query = {
+          select: () => query,
+          eq: () => query,
+          single: async () => ({
+            data:
+              table === 'siteforge_blueprint_versions'
+                ? {
+                    id: website.current_artifact_version_id,
+                    version: 7,
+                    content_hash: 'a'.repeat(64),
+                    created_at: '2026-08-04T12:00:00.000Z',
+                  }
+                : {
+                    id: '66666666-6666-4666-8666-666666666666',
+                    content_hash: contentHash,
+                    manifest,
+                    storage_path: `overlays/${website.id}/${contentHash}.zip`,
+                    package_sha256: packageSha256,
+                    signature,
+                    validation_report: validationReport,
+                    screenshot_manifest: {
+                      browserReport: { passed: true },
+                    },
+                  },
+            error: null,
+          }),
+        }
+        return query
+      },
+      storage: {
+        from: () => ({
+          download: async () => ({
+            data: new Blob([archive]),
+            error: null,
+          }),
+        }),
+      },
+    }
+    const { loadExtensionReview } = await import('./route')
+    const review = await loadExtensionReview(
+      extension,
+      website,
+      service as never
+    )
+
+    expect(review.reviewComplete).toBe(true)
+    expect(review.sourceArtifact).toEqual(
+      expect.objectContaining({
+        id: website.current_artifact_version_id,
+        version: 7,
+      })
+    )
+    expect(review.files).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: 'assets/css/review.css',
+          content: proposal.files[0].content,
+          contentDigestVerified: true,
+        }),
+        expect.objectContaining({ path: 'functions.php' }),
+        expect.objectContaining({ path: 'style.css' }),
+      ])
+    )
+    expect(review.validationReport).toEqual(validationReport)
+    expect(review.screenshotReport).toEqual({
+      browserReport: { passed: true },
+    })
   })
 })

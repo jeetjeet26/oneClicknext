@@ -35,8 +35,34 @@ describe('generated WordPress customer journey', () => {
     ])
 
     expect(template).toContain('name="consent_text"')
+    expect(template).toContain("$provider_supported = 'p11_lumaleasing' === $provider")
+    expect(template).toContain("$field_id_prefix = 'form-'")
+    expect(template).toContain("$field_id_prefix . '-name'")
+    expect(template).toContain("$field_id_prefix . '-consent'")
+    expect(template).not.toContain('id="form-name"')
     expect(handler).toContain('data.submission_id = submissionId')
     expect(handler).toContain("data.consent = formData.has('consent')")
     expect(handler).toContain('data.page_url = window.location.href')
+    expect(handler).toContain('window.SiteForgeConsent.state()')
+    expect(handler).toContain(
+      "['granted', 'denied', 'not_required'].includes(storedConsent.state)"
+    )
+    expect(handler).not.toContain(
+      "data.analytics_consent = window.localStorage.getItem"
+    )
+  })
+
+  it('renders sourced map details without requiring a Google Maps key', async () => {
+    const template = await readFile(path.join(themeRoot, 'blocks/map.php'), 'utf8')
+
+    expect(template).toContain("oneclick_get_block_field( 'address', $block )")
+    expect(template).toContain("oneclick_get_block_field( 'latitude', $block )")
+    expect(template).toContain("oneclick_get_block_field( 'longitude', $block )")
+    expect(template).toContain('data-map-state="keyless"')
+    expect(template).toContain('https://www.google.com/maps/dir/?api=1&destination=')
+    expect(template).toContain('Property location details are not available.')
+    expect(template).not.toContain(
+      'empty( $property_address ) || empty( $property_lat ) || empty( $property_lng ) || empty( $api_key )'
+    )
   })
 })

@@ -1,0 +1,88 @@
+{
+  "contractVersion": 2,
+  "siteId": "site-1",
+  "artifactId": "11111111-1111-4111-8111-111111111111",
+  "artifactContentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "assetManifestHash": "8d105f7738e0121dc658acacb565df84aaf73fe65ad37e1640bb9ee81c809e74",
+  "operationHash": "be380a40eee27d6266a27afc0d7e5dc2cdafedcaff7fd0da0b6b4de31afe6f32",
+  "idempotencyKey": "fa30004fe627dfa12583d8766708ec54fd465e5ad80babec4a357b247011f253",
+  "expectedRemoteContentHash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+  "assetPreparationId": "prep:fixture",
+  "plan": {
+    "pages": [
+      {
+        "pageKey": "page:home",
+        "slug": "home",
+        "title": "Home",
+        "purpose": "Convert visitors",
+        "status": "publish",
+        "menuOrder": 0,
+        "template": "",
+        "excerpt": "",
+        "seo": null,
+        "sections": [
+          {
+            "sectionId": "section:hero",
+            "blockName": "acf/text-section",
+            "order": 0,
+            "variant": null,
+            "data": {
+              "headline": "Welcome home"
+            }
+          }
+        ]
+      }
+    ],
+    "removals": {
+      "pageKeys": [],
+      "pageSlugs": [
+        "legacy"
+      ]
+    },
+    "navigation": {
+      "location": "primary",
+      "name": "SiteForge Primary",
+      "items": [
+        {
+          "itemKey": "nav:home",
+          "label": "Home",
+          "pageKey": "page:home",
+          "url": null,
+          "parentItemKey": null,
+          "target": "_self"
+        }
+      ]
+    },
+    "designTokens": {
+      "colors": {
+        "primary": "#111111",
+        "secondary": "#222222",
+        "accent": "#333333",
+        "background": "#ffffff",
+        "text": "#111111"
+      },
+      "typography": {
+        "headingFont": "Inter, sans-serif",
+        "bodyFont": "Inter, sans-serif",
+        "headingWeight": 600
+      },
+      "spacing": {
+        "containerMaxWidth": "1200px",
+        "sectionPadding": "4rem"
+      }
+    },
+    "siteSettings": {
+      "siteName": "Sunset Apartments",
+      "tagline": "Welcome home",
+      "homepagePageKey": "page:home",
+      "logoAssetId": "22222222-2222-4222-8222-222222222222",
+      "faviconAssetId": null
+    },
+    "legal": {
+      "fairHousingDisclaimer": "Equal Housing Opportunity"
+    },
+    "analytics": {
+      "consentMode": "required"
+    }
+  }
+}

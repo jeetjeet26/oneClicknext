@@ -4,6 +4,7 @@ import {
   isTrustedCertificationRequired,
   shouldBlockUncertifiedPreview,
 } from './feature'
+import { selectRenderedEditorEvidence } from './context'
 
 describe('isTrustedCertificationRequired', () => {
   it('keeps trusted certification opt-in', () => {
@@ -33,5 +34,75 @@ describe('isTrustedCertificationRequired', () => {
         acfLicenseKey: 'b'.repeat(24),
       })
     ).toBe(true)
+  })
+})
+
+describe('selectRenderedEditorEvidence', () => {
+  const certification = (artifactId: string, id: string) => ({
+    id,
+    artifact_id: artifactId,
+    policy_version: 'siteforge-certification-v3',
+    environment: 'preview',
+    status: 'passed',
+    report_hash: 'a'.repeat(64),
+    report: { passed: true },
+  })
+
+  it('uses exact current-artifact evidence when available', () => {
+    const evidence = selectRenderedEditorEvidence({
+      certifications: [
+        certification('current-artifact', 'current-certification'),
+        certification('parent-artifact', 'parent-certification'),
+      ],
+      revisionIds: ['current-artifact', 'parent-artifact'],
+      currentArtifactId: 'current-artifact',
+      currentContentHash: 'b'.repeat(64),
+      certificationRequired: true,
+    })
+
+    expect(evidence).toEqual(
+      expect.objectContaining({
+        source: 'server_certification',
+        certificationId: 'current-certification',
+        artifactId: 'current-artifact',
+      })
+    )
+  })
+
+  it('allows consecutive edits using clearly marked ancestor evidence', () => {
+    const evidence = selectRenderedEditorEvidence({
+      certifications: [
+        certification('parent-artifact', 'parent-certification'),
+      ],
+      revisionIds: ['current-artifact', 'parent-artifact'],
+      currentArtifactId: 'current-artifact',
+      currentContentHash: 'b'.repeat(64),
+      certificationRequired: true,
+    })
+
+    expect(evidence).toEqual(
+      expect.objectContaining({
+        source: 'ancestor_certification',
+        certificationId: 'parent-certification',
+        artifactId: 'parent-artifact',
+      })
+    )
+  })
+
+  it('does not block drafting when no rendered evidence exists', () => {
+    const evidence = selectRenderedEditorEvidence({
+      certifications: [],
+      revisionIds: ['current-artifact'],
+      currentArtifactId: 'current-artifact',
+      currentContentHash: 'b'.repeat(64),
+      certificationRequired: true,
+    })
+
+    expect(evidence).toEqual(
+      expect.objectContaining({
+        source: 'certification_unavailable',
+        artifactId: 'current-artifact',
+      })
+    )
   })
 })

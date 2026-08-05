@@ -15,6 +15,10 @@ import {
   unauthorized,
 } from '@/utils/services/api-helpers'
 import { createRequestContext } from '@/utils/services/request-context'
+import {
+  leadPulseScoreRequestSchema,
+  validateBody,
+} from '@/utils/services/validation'
 
 function chunkArray<T>(items: T[], size: number): T[][] {
   const chunks: T[][] = []
@@ -352,22 +356,36 @@ export async function POST(req: NextRequest) {
       return unauthorized(ctx.responseHeaders)
     }
 
-    const body = await req.json()
-    const { leadId, leadIds, propertyId } = body
+    const validation = validateBody(await req.json(), leadPulseScoreRequestSchema)
+    if (!validation.success) {
+      ctx.logSuccess(400, { reason: 'validation_failed' })
+      return badRequest(validation.error, ctx.responseHeaders)
+    }
+    const { leadId, leadIds, propertyId: assertedPropertyId } = validation.data
 
     const serviceClient = createServiceClient()
 
     // Single lead scoring
     if (leadId) {
-      const { propertyId, exists } = await getLeadPropertyId(leadId)
-      if (!exists || !propertyId) {
+      const { propertyId: leadPropertyId, exists } = await getLeadPropertyId(leadId)
+      if (!exists || !leadPropertyId) {
         ctx.logSuccess(404, { reason: 'lead_not_found', leadId })
         return notFound('Lead', ctx.responseHeaders)
       }
 
-      const access = await validatePropertyAccess(user.id, propertyId)
+      if (assertedPropertyId && assertedPropertyId !== leadPropertyId) {
+        ctx.logSuccess(400, {
+          reason: 'property_lead_mismatch',
+          assertedPropertyId,
+          leadPropertyId,
+          leadId,
+        })
+        return badRequest('propertyId does not match lead', ctx.responseHeaders)
+      }
+
+      const access = await validatePropertyAccess(user.id, leadPropertyId)
       if (!access.authorized) {
-        ctx.logSuccess(403, { reason: 'forbidden', leadId, propertyId })
+        ctx.logSuccess(403, { reason: 'forbidden', leadId, propertyId: leadPropertyId })
         return forbidden(ctx.responseHeaders)
       }
 
@@ -411,13 +429,39 @@ export async function POST(req: NextRequest) {
         return serverError(batchLeadError, ctx.responseHeaders)
       }
 
+      const resolvedLeads = leadsForBatch || []
+      if (resolvedLeads.length !== leadIds.length) {
+        ctx.logSuccess(404, { reason: 'batch_lead_not_found' })
+        return notFound('Lead', ctx.responseHeaders)
+      }
+      if (resolvedLeads.some(lead => !lead.property_id)) {
+        ctx.logSuccess(404, { reason: 'property_not_found', batch: true })
+        return notFound('Property', ctx.responseHeaders)
+      }
+
+      if (
+        assertedPropertyId &&
+        resolvedLeads.some(lead => lead.property_id !== assertedPropertyId)
+      ) {
+        ctx.logSuccess(400, {
+          reason: 'property_lead_mismatch',
+          assertedPropertyId,
+          batch: true,
+        })
+        return badRequest('propertyId does not match every lead', ctx.responseHeaders)
+      }
+
       const uniquePropertyIds = [
         ...new Set(
-          (leadsForBatch || [])
+          resolvedLeads
             .map(lead => lead.property_id)
             .filter((id): id is string => Boolean(id))
         ),
       ]
+      if (uniquePropertyIds.length === 0) {
+        ctx.logSuccess(404, { reason: 'property_not_found', batch: true })
+        return notFound('Property', ctx.responseHeaders)
+      }
       for (const propertyId of uniquePropertyIds) {
         const access = await validatePropertyAccess(user.id, propertyId)
         if (!access.authorized) {
@@ -459,10 +503,10 @@ export async function POST(req: NextRequest) {
     }
 
     // Score all leads for a property
-    if (propertyId) {
-      const access = await validatePropertyAccess(user.id, propertyId)
+    if (assertedPropertyId) {
+      const access = await validatePropertyAccess(user.id, assertedPropertyId)
       if (!access.authorized) {
-        ctx.logSuccess(403, { reason: 'forbidden', propertyId, propertyBatch: true })
+        ctx.logSuccess(403, { reason: 'forbidden', propertyId: assertedPropertyId, propertyBatch: true })
         return forbidden(ctx.responseHeaders)
       }
 
@@ -470,12 +514,12 @@ export async function POST(req: NextRequest) {
       const { data: leads, error: leadsError } = await serviceClient
         .from('leads')
         .select('id')
-        .eq('property_id', propertyId)
+        .eq('property_id', assertedPropertyId)
         .order('created_at', { ascending: false })
         .limit(500) // Safety limit
 
       if (leadsError) {
-        ctx.logError(500, leadsError, { operation: 'fetch_property_leads', propertyId })
+        ctx.logError(500, leadsError, { operation: 'fetch_property_leads', propertyId: assertedPropertyId })
         return serverError(leadsError, ctx.responseHeaders)
       }
 
@@ -494,7 +538,7 @@ export async function POST(req: NextRequest) {
       const { successful, failed } = summarizeScoreResults(results)
 
       ctx.logSuccess(200, {
-        propertyId,
+        propertyId: assertedPropertyId,
         processed: leads.length,
         successful,
         failed,

@@ -23,7 +23,7 @@ if ( empty( $image ) && empty( $headline ) && empty( $content ) ) {
 $layout_class = 'image-right' === $layout ? 'layout-image-right' : 'layout-image-left';
 ?>
 
-<section <?php echo oneclick_get_block_wrapper_attributes( array( 'class' => 'block-feature-section ' . $layout_class ) ); ?>>
+<section <?php echo oneclick_get_block_wrapper_attributes( $block, array( 'class' => 'block-feature-section ' . $layout_class ) ); ?>>
 	<div class="site-container">
 		<div class="feature-grid">
 			<?php

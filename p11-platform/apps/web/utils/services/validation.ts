@@ -20,12 +20,16 @@ const safeString = (maxLen: number) => z.string().max(maxLen).trim()
 // ─── LumaLeasing Chat ────────────────────────────────────────────────────
 
 export const chatMessageSchema = z.object({
-  role: z.enum(['user', 'assistant', 'system']),
+  role: z.literal('user'),
   content: safeString(5000),
-})
+}).strict()
 
 export const chatRequestSchema = z.object({
-  messages: z.array(chatMessageSchema).min(1, 'At least one message required').max(50, 'Too many messages'),
+  // The public client is only authoritative for its newest user turn.
+  // Conversation history is rebuilt from the property-scoped server session.
+  messages: z.tuple([chatMessageSchema], {
+    error: 'Exactly one user message is required',
+  }),
   sessionId: safeString(100).optional().nullable(),
   // leadInfo rides along with chat messages from the widget's client-side
   // contact extraction, which is looser than our validators. A malformed
@@ -34,13 +38,41 @@ export const chatRequestSchema = z.object({
   // field instead and let the server-side extraction re-derive contact info
   // from the transcript.
   leadInfo: z.object({
-    leadId: safeString(100).optional().nullable(),
     first_name: safeString(100).optional().nullable(),
     last_name: safeString(100).optional().nullable(),
     email: emailField.optional().nullable().catch(null),
     phone: optionalPhoneField.optional().nullable().catch(null),
   }).optional().nullable().catch(null),
-  conversationId: safeString(100).optional().nullable(),
+}).strict()
+
+// ─── LeadPulse ────────────────────────────────────────────────────────────
+
+export const leadPulseEventRequestSchema = z.object({
+  leadId: safeString(100).min(1),
+  eventType: safeString(100).min(1),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+  propertyId: safeString(100).min(1).optional(),
+}).strict()
+
+export const leadPulseScoreRequestSchema = z.object({
+  leadId: safeString(100).min(1).optional(),
+  leadIds: z.array(safeString(100).min(1)).min(1).max(500).optional(),
+  propertyId: safeString(100).min(1).optional(),
+}).strict().superRefine((data, ctx) => {
+  const targets = Number(Boolean(data.leadId)) + Number(Boolean(data.leadIds)) + Number(Boolean(data.propertyId && !data.leadId && !data.leadIds))
+  if (targets !== 1) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Provide exactly one scoring target',
+    })
+  }
+  if (data.leadIds && new Set(data.leadIds).size !== data.leadIds.length) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'leadIds must be unique',
+      path: ['leadIds'],
+    })
+  }
 })
 
 // ─── LumaLeasing Tour Booking ─────────────────────────────────────────────

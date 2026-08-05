@@ -1,6 +1,3 @@
-import { createHash } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
-import path from 'node:path'
 import { FatalError } from 'workflow'
 import { z } from 'zod'
 import type { GeneratedPage, SiteBlueprint } from '@/types/siteforge'
@@ -14,14 +11,23 @@ import {
 import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
 import {
   buildSiteForgeEditorSnapshot,
+  SiteForgeEditorContextError,
   type SiteForgeEditorSnapshot,
 } from '@/utils/siteforge/editor/context'
 import {
+  assertSiteForgeEditorAgentOutcome,
   runSiteForgeEditorAgent,
   type SiteForgeEditorAgentResult,
 } from '@/utils/siteforge/editor/agent'
+import { isSiteForgeRuntimeExtensionsEnabled } from '@/utils/siteforge/editor/feature'
+import { validateAndStoreThemeOverlay } from '@/utils/siteforge/editor/overlay'
+import { overlayRuntimeCompatibilitySchema } from '@/utils/siteforge/editor/overlay-contract'
 import { immutableSnapshotChanged } from '@/utils/siteforge/editor/immutable-snapshot'
-import { buildApprovedAssetManifest } from '@/utils/siteforge/editor/asset-manifest'
+import { assertFactualSemanticEditGrounding } from '@/utils/siteforge/editor/factual-guard'
+import {
+  assertApprovedAssetReferenceClosure,
+  buildApprovedAssetManifest,
+} from '@/utils/siteforge/editor/asset-manifest'
 import { updateEditorMessage } from '@/utils/siteforge/editor/repository'
 import {
   evaluateDeterministicSiteForgeQuality,
@@ -114,14 +120,22 @@ export async function assembleSemanticEditContext(
   input: SiteForgeSemanticEditWorkflowInput
 ): Promise<SiteForgeEditorSnapshot> {
   'use step'
-  return buildSiteForgeEditorSnapshot(
-    {
-      websiteId: input.websiteId,
-      expectedArtifactId: input.expectedArtifactId,
-      expectedContentHash: input.expectedContentHash,
-    },
-    createServiceClient()
-  )
+  try {
+    return await buildSiteForgeEditorSnapshot(
+      {
+        websiteId: input.websiteId,
+        sessionId: input.sessionId,
+        expectedArtifactId: input.expectedArtifactId,
+        expectedContentHash: input.expectedContentHash,
+      },
+      createServiceClient()
+    )
+  } catch (error) {
+    if (error instanceof SiteForgeEditorContextError) {
+      throw new FatalError(`[${error.code}] ${error.message}`)
+    }
+    throw error
+  }
 }
 
 export async function proposeSemanticEdit(
@@ -149,6 +163,7 @@ export async function validateAndPublishSemanticEdit(
 }> {
   'use step'
   const client = createServiceClient()
+  assertSiteForgeEditorAgentOutcome(proposal)
 
   if (proposal.clarification) {
     return {
@@ -161,17 +176,56 @@ export async function validateAndPublishSemanticEdit(
     }
   }
   if (proposal.extensionRequest) {
+    if (!isSiteForgeRuntimeExtensionsEnabled()) {
+      throw new FatalError(
+        '[runtime_extensions_disabled] SiteForge runtime extensions are disabled'
+      )
+    }
+    if (
+      snapshot.artifact.id !== input.expectedArtifactId ||
+      snapshot.artifact.contentHash !== input.expectedContentHash
+    ) {
+      throw new FatalError(
+        '[extension_source_mismatch] Runtime extension source artifact is not exact'
+      )
+    }
+    const overlay = await validateAndStoreThemeOverlay({
+      orgId: input.orgId,
+      propertyId: input.propertyId,
+      websiteId: input.websiteId,
+      userId: input.userId,
+      proposal: proposal.extensionRequest.overlay,
+    })
+    const runtimeCompatibility = overlayRuntimeCompatibilitySchema.parse({
+      contractVersion: 1,
+      overlayId: overlay.overlayId,
+      contentHash: overlay.contentHash,
+      sourceArtifactId: snapshot.artifact.id,
+      sourceContentHash: snapshot.artifact.contentHash,
+      packageSha256: overlay.packageSha256,
+      signature: overlay.signature,
+      storage: {
+        bucket: 'siteforge-artifacts',
+        path: overlay.storagePath,
+      },
+      validation: {
+        validator: 'siteforge-static-sandbox-v1',
+        reportSha256: overlay.validationReportSha256,
+      },
+    })
     const { data: extension, error: extensionError } = await client
       .from('siteforge_runtime_extension_requests')
       .insert({
         org_id: input.orgId,
         property_id: input.propertyId,
         website_id: input.websiteId,
-        artifact_id: input.expectedArtifactId,
+        artifact_id: snapshot.artifact.id,
         requested_by: input.userId,
         capability: proposal.extensionRequest.capability,
         reason: proposal.extensionRequest.reason,
         requested_behavior: proposal.extensionRequest.requestedBehavior,
+        immutable_package_sha256: overlay.packageSha256,
+        runtime_compatibility: JSON.stringify(runtimeCompatibility),
       })
       .select('id')
       .single()
@@ -262,6 +316,11 @@ export async function validateAndPublishSemanticEdit(
   const confirmedPlan = blueprintRecord.confirmedPlan
     ? siteForgePlanSchema.parse(blueprintRecord.confirmedPlan)
     : undefined
+  assertFactualSemanticEditGrounding({
+    originalBlueprint: snapshot.artifact.blueprint as unknown as SiteBlueprint,
+    updatedBlueprint,
+    confirmedPlan,
+  })
   const legacyPhotoManifest =
     originalBlueprint.photoManifest &&
     typeof originalBlueprint.photoManifest === 'object' &&
@@ -274,6 +333,7 @@ export async function validateAndPublishSemanticEdit(
   const deterministic = evaluateDeterministicSiteForgeQuality({
     pages: pages as unknown as GeneratedPage[],
     confirmedPlan,
+    confirmedPlanTopologyPolicy: 'report-divergence',
     photoManifest: photoManifest as PhotoManifest,
     legacyAssetBaseline: legacyPhotoManifest,
     themeArtifact,
@@ -301,21 +361,46 @@ export async function validateAndPublishSemanticEdit(
   const qualityReport = {
     deterministic,
     semanticEditor: {
-      model: process.env.SITEFORGE_EDITOR_MODEL || 'anthropic/claude-fable-5',
+      model: proposal.model,
       toolSummary: proposal.toolSummary,
     },
   }
-  const baseThemePackage = await readFile(
-    path.resolve(process.cwd(), 'runtime-assets/oneclick-siteforge.zip')
-  )
-  const baseThemePackageSha256 = createHash('sha256')
-    .update(baseThemePackage)
-    .digest('hex')
+  assertApprovedAssetReferenceClosure({
+    approvedAssets: snapshot.approvedAssets,
+    updatedBlueprint: blueprintRecord as unknown as Json,
+    originalBlueprint: snapshot.artifact.blueprint,
+  })
   const { assetManifest, assetManifestHash } = buildApprovedAssetManifest(
     snapshot.approvedAssets,
     blueprintRecord as unknown as Json
   )
   const operationSetHash = hashSiteForgeContent(proposal.operations)
+
+  const { data: publicationClaim, error: publicationClaimError } = await client
+    .from('shared_jobs')
+    .update({
+      status_reason: 'publication_claimed',
+      stage: 'publishing',
+      current_step: 'Publishing immutable SiteForge revision',
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', input.sharedJobId)
+    .eq('domain', 'siteforge.semantic_edit')
+    .eq('cancel_requested', false)
+    .or('status_reason.is.null,status_reason.neq.publication_claimed')
+    .in('lifecycle_status', ['running', 'retrying'])
+    .select('id')
+    .maybeSingle()
+  if (publicationClaimError) {
+    throw new Error(
+      `Failed to claim semantic edit publication: ${publicationClaimError.message}`
+    )
+  }
+  if (!publicationClaim) {
+    throw new FatalError(
+      '[publication_not_claimed] Semantic edit was cancelled or changed before publication'
+    )
+  }
 
   const { data: revision, error } = await client.rpc(
     'publish_siteforge_artifact_revision',
@@ -331,8 +416,14 @@ export async function validateAndPublishSemanticEdit(
       p_quality_report: qualityReport as unknown as Json,
       p_quality_score: 100,
       p_created_by: input.userId,
-      p_base_theme_package_id: `${themeArtifact.theme.slug}@${themeArtifact.theme.version}`,
-      p_base_theme_package_sha256: baseThemePackageSha256,
+      ...(snapshot.artifact.baseThemePackageId &&
+      snapshot.artifact.baseThemePackageSha256
+        ? {
+            p_base_theme_package_id: snapshot.artifact.baseThemePackageId,
+            p_base_theme_package_sha256:
+              snapshot.artifact.baseThemePackageSha256,
+          }
+        : {}),
       p_asset_manifest: assetManifest,
       p_asset_manifest_hash: assetManifestHash,
       p_operation_set: proposal.operations as unknown as Json,
@@ -390,6 +481,7 @@ export async function completeSemanticEdit(
           progress: 100,
         },
       ] as unknown as Json,
+      expectedStatuses: ['queued', 'running'],
     },
     client
   )
@@ -419,6 +511,7 @@ export async function completeSemanticEdit(
       updated_at: now,
     })
     .eq('id', input.sharedJobId)
+    .in('lifecycle_status', ['running', 'retrying'])
   if (jobError)
     throw new Error(`Failed to complete semantic edit job: ${jobError.message}`)
 
@@ -454,7 +547,8 @@ export async function failSemanticEdit(
           ? 'artifact_conflict'
           : 'semantic_edit_failed',
         failureMessage: errorMessage,
-        content: `The edit could not be completed. No revision was published.${publicDetail}`,
+        content: `The edit could not be completed or confirmed. Reload the editor before retrying so the current immutable revision can be verified.${publicDetail}`,
+        expectedStatuses: ['queued', 'running'],
       },
       client
     ),
@@ -470,6 +564,7 @@ export async function failSemanticEdit(
         finished_at: now,
         updated_at: now,
       })
-      .eq('id', input.sharedJobId),
+      .eq('id', input.sharedJobId)
+      .in('lifecycle_status', ['queued', 'running', 'retrying']),
   ])
 }

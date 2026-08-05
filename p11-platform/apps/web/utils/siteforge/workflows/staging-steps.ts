@@ -5,6 +5,7 @@ import type { Json } from '@/types/supabase'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { normalizeLegacyPages } from '@/utils/siteforge/blueprint'
 import { loadVerifiedSiteForgeRelease } from '@/utils/siteforge/artifacts/release'
+import { loadApprovedFloorPlanSnapshot } from '@/utils/siteforge/providers/floor-plan-repository'
 import { CloudwaysProviderClient } from '@/utils/siteforge/providers/cloudways-provider'
 import {
   getWordPressCredentialReference,
@@ -26,6 +27,12 @@ import {
   certifyRenderedWordPressArtifact,
 } from '@/utils/siteforge/verification/rendered-certification'
 import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
+import {
+  propertyContextFromOnboardingSnapshot,
+  runtimePropertyProfile,
+} from '@/utils/siteforge/property-context'
+import { deployArtifactBoundRuntimeV3 } from '@/utils/siteforge/workflows/runtime-deployment-v3'
+import { buildReleaseCertificationBinding } from '@/utils/siteforge/verification/certification-binding'
 
 export interface SiteForgeStagingWorkflowInput {
   sharedJobId: string
@@ -80,6 +87,7 @@ async function updateStage(
         progress,
         current_step: currentStep,
         heartbeat_at: now,
+        lease_expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
         started_at: progress <= 5 ? now : undefined,
         updated_at: now,
       })
@@ -129,7 +137,7 @@ export async function assertStagingDeploymentActive(
   const [{ data: job }, { data: website }, { data: artifact }] = await Promise.all([
     client
       .from('shared_jobs')
-      .select('lifecycle_status, cancel_requested')
+      .select('lifecycle_status, cancel_requested, lease_owner')
       .eq('id', input.sharedJobId)
       .eq('domain', 'siteforge.deployment')
       .single(),
@@ -151,6 +159,28 @@ export async function assertStagingDeploymentActive(
   ])
   if (!job || job.cancel_requested || job.lifecycle_status === 'cancelled') {
     throw new FatalError('SiteForge staging deployment is cancelled or unavailable')
+  }
+  const leaseOwner = `siteforge-staging:${input.sharedJobId}`
+  if (job.lease_owner !== leaseOwner) {
+    const now = new Date()
+    const { data: claimed, error: claimError } = await client
+      .from('shared_jobs')
+      .update({
+        lifecycle_status: 'running',
+        lease_owner: leaseOwner,
+        lease_expires_at: new Date(now.getTime() + 15 * 60_000).toISOString(),
+        heartbeat_at: now.toISOString(),
+        updated_at: now.toISOString(),
+      })
+      .eq('id', input.sharedJobId)
+      .eq('domain', 'siteforge.deployment')
+      .in('lifecycle_status', ['queued', 'running', 'retrying'])
+      .is('lease_owner', null)
+      .select('id')
+      .maybeSingle()
+    if (claimError || !claimed) {
+      throw new FatalError('SiteForge staging deployment is already claimed')
+    }
   }
   if (
     !website ||
@@ -178,6 +208,7 @@ export async function runSiteForgeStagingDeployment(
   await assertStagingNotCancelled(input, client)
   await updateStage(input, 'preparing_staging', 5, 'Preparing linked Cloudways staging')
   const release = await loadVerifiedSiteForgeRelease(input, client)
+  const runtimeV3 = release.artifact.runtimeContractVersion === 3
   const blueprint = asRecord(release.artifact.blueprint)
   const pages = normalizeLegacyPages(
     Array.isArray(blueprint.pages)
@@ -185,22 +216,25 @@ export async function runSiteForgeStagingDeployment(
       : []
   )
   if (!pages.length) throw new FatalError('Artifact contains no staging pages')
-  const themeArtifact = validateWordPressThemeArtifact(
-    blueprint.wordpressThemeArtifact
-  )
-  const legal = siteForgeLegalConfigSchema.parse(blueprint.legal)
-  const analytics = siteForgeAnalyticsConfigSchema.parse(blueprint.analytics)
+  const themeArtifact = runtimeV3
+    ? null
+    : validateWordPressThemeArtifact(blueprint.wordpressThemeArtifact)
+  const legal = runtimeV3
+    ? null
+    : siteForgeLegalConfigSchema.parse(blueprint.legal)
+  const analytics = runtimeV3
+    ? null
+    : siteForgeAnalyticsConfigSchema.parse(blueprint.analytics)
   const propertySnapshot = asRecord(blueprint.propertySnapshot)
-  const snapshotProperty = asRecord(propertySnapshot.property)
   const brandSnapshot = asRecord(blueprint.brandSnapshot)
   const brandContractResult = brandForgeContractV1Schema.safeParse(
     brandSnapshot.contract,
   )
+  const fullPropertyContext =
+    propertyContextFromOnboardingSnapshot(propertySnapshot)
+  const snapshotProperty = asRecord(propertySnapshot.property)
   const propertyContext = {
-    name:
-      typeof snapshotProperty.name === 'string'
-        ? snapshotProperty.name
-        : 'Property Website',
+    ...fullPropertyContext,
     tagline:
       typeof snapshotProperty.tagline === 'string'
         ? snapshotProperty.tagline
@@ -208,6 +242,11 @@ export async function runSiteForgeStagingDeployment(
   }
 
   if (input.localSimulation) {
+    if (runtimeV3) {
+      throw new FatalError(
+        'Runtime v3 staging cannot bypass the artifact-bound remote transaction engine'
+      )
+    }
     const base =
       process.env.NEXT_PUBLIC_BASE_URL ||
       process.env.PLAYWRIGHT_BASE_URL ||
@@ -284,44 +323,16 @@ export async function runSiteForgeStagingDeployment(
       apiKey: process.env.CLOUDWAYS_API_KEY,
       email: process.env.CLOUDWAYS_EMAIL,
     })
-    let operationId = checkpointOperationId
+    const operationId = checkpointOperationId
     if (!stagingApplicationId && !operationId) {
-      const provision = await cloudways.createStagingApplication({
-        serverId: parentCredentials.providerMetadata.serverId,
-        parentApplicationId: parentCredentials.providerMetadata.applicationId,
-        label: `siteforge-${input.websiteId.slice(0, 8)}-staging`,
-      })
-      operationId = provision.operationId
-      stagingApplicationId = provision.applicationId
-      const checkpointAt = new Date().toISOString()
-      const { data: checkpointed, error: checkpointError } = await client
-        .from('siteforge_wordpress_targets')
-        .update({
-          provider_application_id: stagingApplicationId,
-          status: 'provisioning',
-          metadata: {
-            ...targetMetadata,
-            provisioningCheckpoint: {
-              operationId,
-              applicationId: stagingApplicationId,
-              parentApplicationId:
-                parentCredentials.providerMetadata.applicationId,
-              serverId: parentCredentials.providerMetadata.serverId,
-              checkpointedAt: checkpointAt,
-            },
-          } as Json,
-          updated_at: checkpointAt,
-        })
-        .eq('id', target.id)
-        .select('id')
-        .maybeSingle()
-      if (checkpointError || !checkpointed) {
-        throw new Error(
-          `Cloudways staging was requested but its retry checkpoint could not be persisted: ${
-            checkpointError?.message || 'target row was not updated'
-          }`
-        )
-      }
+      throw new FatalError(
+        'SITEFORGE_PROVIDER_IDEMPOTENCY_UNAVAILABLE: create the exact Cloudways staging child outside the workflow and persist its application/operation checkpoint before retrying'
+      )
+    }
+    if (!stagingApplicationId || !operationId) {
+      throw new FatalError(
+        'A complete Cloudways staging application and operation checkpoint is required'
+      )
     }
     if (operationId) {
       await cloudways.waitForOperation(operationId)
@@ -330,7 +341,6 @@ export async function runSiteForgeStagingDeployment(
     const application = await cloudways.getApplication({
       serverId: parentCredentials.providerMetadata.serverId,
       applicationId: stagingApplicationId,
-      parentApplicationId: parentCredentials.providerMetadata.applicationId,
     })
     stagingApplicationId = String(application.id)
     stagingUrl = /^https?:\/\//.test(application.app_fqdn)
@@ -406,63 +416,124 @@ export async function runSiteForgeStagingDeployment(
 
   await updateStage(input, 'deploying_staging', 45, 'Deploying exact release to Cloudways staging')
   await assertStagingNotCancelled(input, client)
-  const installer = new SshWordPressInstaller()
   const acfProLicenseKey = process.env.SITEFORGE_ACF_PRO_LICENSE_KEY
   if (!acfProLicenseKey) throw new FatalError('SITEFORGE_ACF_PRO_LICENSE_KEY is required')
-  await installer.ensureInstalled({
-    ssh: stagingCredentials.ssh,
-    acfProLicenseKey,
-  })
-  if (release.overlayPackage && release.overlayContentHash) {
-    await installer.installThemeOverlay({
-      ssh: stagingCredentials.ssh,
-      archive: release.overlayPackage,
-      contentHash: release.overlayContentHash,
-    })
-  }
-  await assertStagingNotCancelled(input, client)
-  const instance = await deployToExistingWordPress({
-    wpUrl: stagingUrl,
-    credentials: {
-      username: stagingCredentials.username,
-      password: stagingCredentials.password,
-    },
-    pages,
-    propertyContext,
-    assets: release.assets,
-    contentHash: input.contentHash,
-    siteConfiguration: themeArtifact.siteConfiguration,
-    requireContentManifest: true,
-  })
   const publicRuntime = await loadSiteForgePublicRuntimeConfig(
     input.websiteId,
     input.propertyId,
     client
   )
-  await assertStagingNotCancelled(input, client)
-  await new WordPressAPIClient(instance.url, instance.credentials).applySiteForgeSettings({
-    themeArtifact,
-    legal,
-    analytics,
-    publicRuntime,
-    targetMode: 'staging',
-  })
+  let instance: {
+    url: string
+    adminUrl: string
+    credentials: { username: string; password: string }
+  }
+  let runtimeEvidence: Json | null = null
+  if (runtimeV3) {
+    const runtimeResult = await deployArtifactBoundRuntimeV3({
+      release,
+      target,
+      deploymentId: input.deploymentId,
+      sharedJobId: input.sharedJobId,
+      approvalId: input.approvalId,
+      environment: 'staging',
+      siteUrl: stagingUrl,
+      adminUrl: stagingAdminUrl,
+      username: stagingCredentials.username,
+      applicationPassword: stagingCredentials.password,
+      ssh: stagingCredentials.ssh,
+      acfProLicenseKey,
+      publicRuntime,
+      protection: { mode: 'noindex' },
+      client,
+      assertActive: () => assertStagingNotCancelled(input, client),
+      onProgress: async (_stage, detail) => {
+        await updateStage(input, 'deploying_staging', 65, detail)
+        await assertStagingNotCancelled(input, client)
+      },
+    })
+    runtimeEvidence = runtimeResult.evidence
+    instance = {
+      url: stagingUrl,
+      adminUrl: stagingAdminUrl,
+      credentials: {
+        username: stagingCredentials.username,
+        password: stagingCredentials.password,
+      },
+    }
+  } else {
+    if (!themeArtifact || !legal || !analytics) {
+      throw new FatalError('Legacy staging release configuration is incomplete')
+    }
+    const installer = new SshWordPressInstaller()
+    await installer.ensureInstalled({
+      ssh: stagingCredentials.ssh,
+      acfProLicenseKey,
+    })
+    if (release.overlayPackage && release.overlayContentHash) {
+      await installer.installThemeOverlay({
+        ssh: stagingCredentials.ssh,
+        archive: release.overlayPackage,
+        contentHash: release.overlayContentHash,
+      })
+    }
+    await assertStagingNotCancelled(input, client)
+    instance = await deployToExistingWordPress({
+      wpUrl: stagingUrl,
+      credentials: {
+        username: stagingCredentials.username,
+        password: stagingCredentials.password,
+      },
+      pages,
+      propertyContext,
+      assets: release.assets,
+      contentHash: input.contentHash,
+      siteConfiguration: themeArtifact.siteConfiguration,
+      requireContentManifest: true,
+    })
+    await assertStagingNotCancelled(input, client)
+    await new WordPressAPIClient(
+      instance.url,
+      instance.credentials
+    ).applySiteForgeSettings({
+      themeArtifact,
+      legal,
+      analytics,
+      propertyProfile: runtimePropertyProfile(propertyContext),
+      publicRuntime,
+      targetMode: 'staging',
+    })
+  }
 
   await updateStage(input, 'certifying', 85, 'Certifying exact Cloudways staging render')
   await assertStagingNotCancelled(input, client)
+  const floorPlanSnapshot = await loadApprovedFloorPlanSnapshot(
+    input.propertyId,
+    client
+  )
   const certification = await certifyRenderedWordPressArtifact({
     artifactId: input.artifactId,
     contentHash: input.contentHash,
+    artifactBinding: buildReleaseCertificationBinding(release),
     targetUrl: instance.url,
     credentials: instance.credentials,
     pages,
+    environment: 'staging',
+    access: 'public',
+    requireIndexable: false,
     brandContract: brandContractResult.success
       ? brandContractResult.data
       : undefined,
     ...buildRenderedCertificationTruth(
       propertySnapshot,
-      release.assets.map(asset => asset.fileUrl),
+      [
+        ...release.provenanceUrls,
+        ...floorPlanSnapshot.rows.flatMap((row) =>
+          row.imageUrl ? [row.imageUrl] : []
+        ),
+      ],
       publicRuntime.conversionEndpoint,
+      release.runtimeAssets.map((asset) => asset.byteHash),
     ),
   })
   const { error: evidenceError } = await client
@@ -478,8 +549,12 @@ export async function runSiteForgeStagingDeployment(
       report: certification as unknown as Json,
       evidence_manifest: {
         targetUrl: instance.url,
+        bindingHash: certification.bindingHash,
+        evidenceHash: certification.evidenceHash,
         browserEvidenceHash: hashSiteForgeContent(certification.browser),
       },
+      binding_hash: certification.bindingHash,
+      evidence_hash: certification.evidenceHash,
       report_hash: hashSiteForgeContent(certification),
     })
   if (evidenceError) {
@@ -498,7 +573,10 @@ export async function runSiteForgeStagingDeployment(
     url: instance.url,
     adminUrl: instance.adminUrl,
     dashboardUrl: stagingDashboardUrl,
-    certification: certification as unknown as Json,
+    certification: {
+      ...asRecord(certification),
+      ...(runtimeEvidence ? { runtimeEvidence } : {}),
+    } as Json,
     pages: pages.length,
     assets: release.assets.length,
   })

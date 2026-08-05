@@ -1,9 +1,13 @@
+import { createHash } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
+import path from 'node:path'
 import { createServiceClient } from '@/utils/supabase/admin'
 import {
   getSupabasePublishableKey,
   getSupabaseServiceRoleKey,
   getSupabaseUrl,
 } from '@/utils/supabase/config'
+import { isCloudwaysThemeInstallationConfigured } from '@/utils/siteforge/editor/feature'
 
 export type HealthStatus = 'healthy' | 'degraded' | 'unhealthy'
 
@@ -23,6 +27,7 @@ export interface HealthReport {
     database: HealthCheckResult
     openai: HealthCheckResult
     dataEngine: HealthCheckResult
+    siteforge: HealthCheckResult
   }
 }
 
@@ -85,6 +90,120 @@ export function getStaticHealthChecks(): Omit<HealthReport['checks'], 'database'
         : 'Data engine URL is not configured',
       details: dataEngineUrl ? { url: dataEngineUrl } : undefined,
     },
+    siteforge: {
+      status: 'degraded',
+      required: true,
+      message: 'SiteForge runtime dependencies have not been checked yet',
+    },
+  }
+}
+
+const SITEFORGE_RUNTIME_ARCHIVES = [
+  'oneclick-siteforge.zip',
+  'advanced-custom-fields-pro.zip',
+] as const
+
+async function verifyArchiveDigest(
+  runtimeAssetsDir: string,
+  filename: string
+): Promise<boolean> {
+  try {
+    const [archive, digestFile] = await Promise.all([
+      readFile(path.join(runtimeAssetsDir, filename)),
+      readFile(path.join(runtimeAssetsDir, `${filename}.sha256`), 'utf8'),
+    ])
+    const match = digestFile
+      .trim()
+      .match(/^([a-f0-9]{64})\s+\*?([^\s]+)$/i)
+    if (
+      archive.length < 100 ||
+      archive[0] !== 0x50 ||
+      archive[1] !== 0x4b ||
+      !match ||
+      match[2] !== filename
+    ) {
+      return false
+    }
+    return createHash('sha256').update(archive).digest('hex') === match[1].toLowerCase()
+  } catch {
+    return false
+  }
+}
+
+export async function runSiteForgeReadinessCheck({
+  runtimeAssetsDir = path.resolve(process.cwd(), 'runtime-assets'),
+  env = process.env,
+}: {
+  runtimeAssetsDir?: string
+  env?: Record<string, string | undefined>
+} = {}): Promise<HealthCheckResult> {
+  const artifactChecks = await Promise.all(
+    SITEFORGE_RUNTIME_ARCHIVES.map(async filename => [
+      filename,
+      await verifyArchiveDigest(runtimeAssetsDir, filename),
+    ] as const)
+  )
+  const artifacts = Object.fromEntries(artifactChecks)
+  const artifactsReady = artifactChecks.every(([, ready]) => ready)
+  const hasAcfLicense = hasValue(env.SITEFORGE_ACF_PRO_LICENSE_KEY)
+  const semanticEditorEnabled =
+    env.SITEFORGE_SEMANTIC_EDITOR_ENABLED === 'true'
+  const hasOverlaySigningSecret = hasValue(
+    env.SITEFORGE_OVERLAY_SIGNING_SECRET
+  )
+  const anthropicConfigured = hasValue(env.ANTHROPIC_API_KEY)
+  const cloudwaysValuesPresent = [
+    env.CLOUDWAYS_API_KEY,
+    env.CLOUDWAYS_EMAIL,
+  ].filter(hasValue).length
+  const cloudwaysConfigured = isCloudwaysThemeInstallationConfigured({
+    apiKey: env.CLOUDWAYS_API_KEY,
+    email: env.CLOUDWAYS_EMAIL,
+    acfLicenseKey: env.SITEFORGE_ACF_PRO_LICENSE_KEY,
+  })
+  const wordpressConfigured = [
+    env.SITEFORGE_WP_URL,
+    env.SITEFORGE_WP_USERNAME,
+    env.SITEFORGE_WP_APP_PASSWORD,
+  ].filter(hasValue).length
+  const previewWordPressConfigured = [
+    env.SITEFORGE_PREVIEW_WP_URL,
+    env.SITEFORGE_PREVIEW_WP_USERNAME,
+    env.SITEFORGE_PREVIEW_WP_APP_PASSWORD,
+  ].filter(hasValue).length
+  const optionalProviderConfigComplete =
+    (cloudwaysValuesPresent === 0 || cloudwaysConfigured) &&
+    (wordpressConfigured === 0 || wordpressConfigured === 3)
+  const requiredConfigReady =
+    hasAcfLicense && (!semanticEditorEnabled || hasOverlaySigningSecret)
+
+  const status: HealthStatus =
+    !artifactsReady || !requiredConfigReady
+      ? 'unhealthy'
+      : optionalProviderConfigComplete
+        ? 'healthy'
+        : 'degraded'
+
+  return {
+    status,
+    required: true,
+    message:
+      status === 'healthy'
+        ? 'SiteForge runtime artifacts and required configuration are ready'
+        : status === 'degraded'
+          ? 'SiteForge is ready, but an optional provider is partially configured'
+          : 'SiteForge runtime artifacts or required configuration are missing',
+    details: {
+      artifacts,
+      hasAcfLicense,
+      semanticEditorEnabled,
+      hasOverlaySigningSecret,
+      anthropicConfigured,
+      cloudwaysConfigured,
+      cloudwaysCredentialsPresent: cloudwaysValuesPresent === 2,
+      wordpressConfigured: wordpressConfigured === 3,
+      previewWordPressConfigured: previewWordPressConfigured === 3,
+    },
   }
 }
 
@@ -134,11 +253,15 @@ export async function runDatabaseHealthCheck(): Promise<HealthCheckResult> {
 
 export async function buildHealthReport(): Promise<HealthReport> {
   const staticChecks = getStaticHealthChecks()
-  const database = await runDatabaseHealthCheck()
+  const [database, siteforge] = await Promise.all([
+    runDatabaseHealthCheck(),
+    runSiteForgeReadinessCheck(),
+  ])
 
   const checks: HealthReport['checks'] = {
     ...staticChecks,
     database,
+    siteforge,
   }
 
   return {

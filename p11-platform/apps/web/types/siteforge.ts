@@ -98,6 +98,9 @@ export interface PropertyContext {
     zip?: string
     country?: string
   }
+  phone?: string
+  email?: string
+  socialLinks?: Record<string, string>
   amenities: string[]
   floorplans?: Array<{
     name: string
@@ -180,9 +183,48 @@ export const ACF_BLOCK_TYPES = [
 export const acfBlockTypeSchema = z.enum(ACF_BLOCK_TYPES)
 export type ACFBlockType = z.infer<typeof acfBlockTypeSchema>
 
+export const SITEFORGE_BLOCK_CAPABILITIES = {
+  'acf/menu': { variants: ['standard', 'sticky-cta'] },
+  'acf/top-slides': { variants: ['cinematic', 'editorial', 'split'] },
+  'acf/text-section': { variants: ['editorial', 'contained', 'lead'] },
+  'acf/feature-section': { variants: ['alternating', 'bleed', 'framed'] },
+  'acf/image': { variants: ['full-bleed', 'contained'] },
+  'acf/links': { variants: ['inline', 'banner', 'sticky'] },
+  'acf/content-grid': { variants: ['amenity-grid', 'tabs', 'editorial'] },
+  'acf/form': { variants: ['card', 'split', 'minimal'] },
+  'acf/map': { variants: ['standard', 'immersive'] },
+  'acf/html-section': { variants: ['contained', 'full-width'] },
+  'acf/gallery': { variants: ['categorized', 'masonry', 'lightbox'] },
+  'acf/accordion-section': { variants: ['bordered', 'minimal'] },
+  'acf/plans-availability': { variants: ['cards', 'details', 'preleasing'] },
+  'acf/poi': { variants: ['narrative', 'map-list', 'editorial'] },
+} as const satisfies Record<
+  ACFBlockType,
+  { readonly variants: readonly string[] }
+>
+
+export function isSiteForgeBlockVariant(
+  block: ACFBlockType,
+  variant: string
+): boolean {
+  return (SITEFORGE_BLOCK_CAPABILITIES[block].variants as readonly string[]).includes(
+    variant
+  )
+}
+
+export const siteForgeCssClassSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(120)
+  .regex(
+    /^-?[_a-zA-Z]+[_a-zA-Z0-9-]*$/,
+    'CSS classes must be plain class identifiers'
+  )
+
 // Section in a page (canonical: generation, preview, edit, and deploy all
 // consume this shape; `acfBlock` is the single source of block identity)
-export const pageSectionSchema = z.object({
+const pageSectionObjectSchema = z.object({
   id: z.string().optional(), // stable identifier for click-to-edit in dashboard
   type: z.string(), // semantic type like 'hero', 'value_proposition', etc.
   acfBlock: acfBlockTypeSchema,
@@ -190,13 +232,33 @@ export const pageSectionSchema = z.object({
   reasoning: z.string(), // Why this section is here (for debugging/refinement)
   order: z.number(),
   label: z.string().optional(), // user-facing label
-  variant: z.string().optional(), // library variant key
-  cssClasses: z.array(z.string()).optional(),
+  variant: z.string().trim().min(1).max(120).optional(), // library variant key
+  cssClasses: z.array(siteForgeCssClassSchema).max(20).optional(),
   purpose: z.string().optional(), // section goal from architecture planning
   fields: z.record(z.string(), z.unknown()).optional(), // structured ACF field hints
   photoRequirement: z.unknown().optional(), // photo needs from architecture planning
   evidenceIds: z.array(z.string()).optional(), // trusted source records supporting factual copy
 })
+
+function addSectionCapabilityIssues(
+  section: { acfBlock: ACFBlockType; variant?: string },
+  context: z.RefinementCtx
+): void {
+  if (
+    section.variant &&
+    !isSiteForgeBlockVariant(section.acfBlock, section.variant)
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['variant'],
+      message: `Unsupported ${section.acfBlock} variant "${section.variant}"`,
+    })
+  }
+}
+
+export const pageSectionSchema = pageSectionObjectSchema.superRefine(
+  addSectionCapabilityIssues
+)
 export type PageSection = z.infer<typeof pageSectionSchema>
 
 // Generated page structure
@@ -219,8 +281,10 @@ export const generatedPageSchema = z.object({
 export type GeneratedPage = z.infer<typeof generatedPageSchema>
 
 const urlOrPathSchema = z.string().min(1).refine(
-  value => value.startsWith('/') || /^https?:\/\//i.test(value),
-  'Expected an absolute URL or root-relative path'
+  value =>
+    (value.startsWith('/') && !value.startsWith('//')) ||
+    /^https:\/\//i.test(value),
+  'Expected an HTTPS URL or safe root-relative path'
 )
 
 export const navigationItemSchema = z.object({
@@ -410,6 +474,7 @@ export const siteBlueprintSchema = z.object({
   pages: z.array(generatedPageSchema),
   updatedAt: z.string().optional(),
   propertyId: z.string().optional(),
+  propertySnapshot: z.unknown().optional(),
   // Agent outputs (metadata carried alongside the deployable pages)
   brandContext: z.unknown().optional(),
   architecture: z.unknown().optional(),
@@ -553,18 +618,46 @@ export interface RefineRequest {
 // Versioned semantic operations are shared by LLM output, P11 preview, and
 // WordPress publication. Partial objects are intentional update payloads.
 const semanticOperationBase = { version: z.literal(2), reasoning: z.string().optional() }
-const sectionInputSchema = pageSectionSchema.omit({ id: true, order: true })
+const sectionInputSchema = pageSectionObjectSchema
+  .omit({ id: true, order: true })
+  .superRefine(addSectionCapabilityIssues)
 const designUpdateSchema = z.object({
   colors: siteConfigurationSchema.shape.design.shape.colors.partial().optional(),
   typography: siteConfigurationSchema.shape.design.shape.typography.partial().optional(),
   spacing: siteConfigurationSchema.shape.design.shape.spacing.partial().optional(),
-}).strict()
+}).strict().refine(value => Object.keys(value).length > 0, {
+  message: 'design.update requires at least one field',
+})
 const headerUpdateSchema = z.object({
   layout: siteConfigurationSchema.shape.header.shape.layout.optional(),
   position: siteConfigurationSchema.shape.header.shape.position.optional(),
   announcement: siteConfigurationSchema.shape.header.shape.announcement.partial().optional(),
   cta: siteConfigurationSchema.shape.header.shape.cta.partial().optional(),
-}).strict()
+}).strict().refine(value => Object.keys(value).length > 0, {
+  message: 'header.update requires at least one field',
+})
+const sectionUpdateSchema = z.object({
+  type: z.string().optional(),
+  acfBlock: acfBlockTypeSchema.optional(),
+  content: z.record(z.string(), z.unknown()).optional(),
+  label: z.string().optional(),
+  variant: z.string().trim().min(1).max(120).optional(),
+  cssClasses: z.array(siteForgeCssClassSchema).max(20).optional(),
+  purpose: z.string().optional(),
+  fields: z.record(z.string(), z.unknown()).optional(),
+  evidenceIds: z.array(z.string()).optional(),
+}).strict().refine(value => Object.keys(value).length > 0, {
+  message: 'section.update requires at least one field',
+})
+
+function requireUpdate<T extends z.ZodRawShape>(
+  schema: z.ZodObject<T>,
+  operation: string
+) {
+  return schema.refine(value => Object.keys(value).length > 0, {
+    message: `${operation} requires at least one field`,
+  })
+}
 
 export const semanticBlueprintPatchOperationSchema = z.discriminatedUnion('op', [
   z.object({
@@ -589,17 +682,7 @@ export const semanticBlueprintPatchOperationSchema = z.discriminatedUnion('op', 
     ...semanticOperationBase,
     op: z.literal('section.update'),
     sectionId: z.string().min(1),
-    value: z.object({
-      type: z.string().optional(),
-      acfBlock: acfBlockTypeSchema.optional(),
-      content: z.record(z.string(), z.unknown()).optional(),
-      label: z.string().optional(),
-      variant: z.string().optional(),
-      cssClasses: z.array(z.string()).optional(),
-      purpose: z.string().optional(),
-      fields: z.record(z.string(), z.unknown()).optional(),
-      evidenceIds: z.array(z.string()).optional(),
-    }).strict(),
+    value: sectionUpdateSchema,
   }).strict(),
   z.object({
     ...semanticOperationBase,
@@ -626,27 +709,42 @@ export const semanticBlueprintPatchOperationSchema = z.discriminatedUnion('op', 
   z.object({
     ...semanticOperationBase,
     op: z.literal('navigation.update'),
-    value: siteConfigurationSchema.shape.navigation.partial(),
+    value: requireUpdate(
+      siteConfigurationSchema.shape.navigation.partial(),
+      'navigation.update'
+    ),
   }).strict(),
   z.object({
     ...semanticOperationBase,
     op: z.literal('footer.update'),
-    value: siteConfigurationSchema.shape.footer.partial(),
+    value: requireUpdate(
+      siteConfigurationSchema.shape.footer.partial(),
+      'footer.update'
+    ),
   }).strict(),
   z.object({
     ...semanticOperationBase,
     op: z.literal('media.update'),
-    value: siteConfigurationSchema.shape.media.partial(),
+    value: requireUpdate(
+      siteConfigurationSchema.shape.media.partial(),
+      'media.update'
+    ),
   }).strict(),
   z.object({
     ...semanticOperationBase,
     op: z.literal('motion.update'),
-    value: siteConfigurationSchema.shape.motion.partial(),
+    value: requireUpdate(
+      siteConfigurationSchema.shape.motion.partial(),
+      'motion.update'
+    ),
   }).strict(),
   z.object({
     ...semanticOperationBase,
     op: z.literal('behavior.update'),
-    value: siteConfigurationSchema.shape.behavior.partial(),
+    value: requireUpdate(
+      siteConfigurationSchema.shape.behavior.partial(),
+      'behavior.update'
+    ),
   }).strict(),
 ])
 
@@ -655,10 +753,17 @@ const legacyBlueprintPatchOperationSchema = z.discriminatedUnion('op', [
     op: z.literal('update_section'),
     sectionId: z.string().min(1),
     content: z.record(z.string(), z.unknown()).optional(),
-    variant: z.string().optional(),
-    cssClasses: z.array(z.string()).optional(),
+    variant: z.string().trim().min(1).max(120).optional(),
+    cssClasses: z.array(siteForgeCssClassSchema).max(20).optional(),
     reasoning: z.string().optional(),
-  }).strict(),
+  }).strict().refine(
+    value =>
+      value.content !== undefined ||
+      value.variant !== undefined ||
+      value.cssClasses !== undefined ||
+      value.reasoning !== undefined,
+    { message: 'update_section requires at least one field' }
+  ),
   z.object({
     op: z.literal('add_section'),
     pageSlug: z.string().min(1),

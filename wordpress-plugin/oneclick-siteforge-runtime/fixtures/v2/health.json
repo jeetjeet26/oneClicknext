@@ -1,0 +1,17 @@
+{
+  "contractVersion": 2,
+  "runtimeVersion": "2.0.0",
+  "status": "ok",
+  "checkedAt": "2026-01-15T12:00:00+00:00",
+  "dependencies": [
+    {
+      "name": "wordpress_database",
+      "status": "ok"
+    },
+    {
+      "name": "active_manifest",
+      "status": "ok",
+      "message": "No drift detected."
+    }
+  ]
+}

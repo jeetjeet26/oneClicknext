@@ -161,13 +161,19 @@ export async function recordSharedApprovalDecision(
     actionUpdate.confidence_score = input.policyDecision.confidenceScore
   }
 
-  const { error: updateError } = await supabase
+  const { data: claimedAction, error: updateError } = await supabase
     .from('shared_action_attempts')
     .update(actionUpdate)
     .eq('id', input.actionAttemptId)
+    .eq('proposal_decision_status', 'proposed')
+    .select('id')
+    .maybeSingle()
 
   if (updateError) {
     throw new SharedApprovalError('Failed to update approval candidate', 500)
+  }
+  if (!claimedAction) {
+    throw new SharedApprovalError('Approval candidate was decided concurrently', 409)
   }
 
   const approvalInsert: TablesInsert<'shared_approvals'> = {

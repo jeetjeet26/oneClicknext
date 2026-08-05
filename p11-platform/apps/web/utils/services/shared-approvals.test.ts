@@ -78,7 +78,14 @@ describe('shared approvals service', () => {
     const idEqMock = vi.fn(() => ({ eq: propertyEqMock }))
     const selectMock = vi.fn(() => ({ eq: idEqMock }))
 
-    const updateEqMock = vi.fn().mockResolvedValue({ error: null })
+    const claimMaybeSingleMock = vi.fn().mockResolvedValue({
+      data: { id: 'action-1' },
+      error: null,
+    })
+    const decisionEqMock = vi.fn(() => ({
+      select: vi.fn(() => ({ maybeSingle: claimMaybeSingleMock })),
+    }))
+    const updateEqMock = vi.fn(() => ({ eq: decisionEqMock }))
     const updateMock = vi.fn(() => ({ eq: updateEqMock }))
 
     const approvalSingleMock = vi.fn().mockResolvedValue({
@@ -194,6 +201,59 @@ describe('shared approvals service', () => {
       message: 'Approval candidate has already been decided',
       statusCode: 409,
     } satisfies Partial<SharedApprovalError>)
+  })
+
+  it('loses a concurrent approval claim before writing decision records', async () => {
+    const action = {
+      id: 'action-1',
+      job_id: 'job-1',
+      org_id: 'org-1',
+      property_id: 'property-1',
+      action_type: 'publish_post',
+      proposal_decision_status: 'proposed',
+      request_payload: {},
+      execution_payload: {},
+    }
+    const selectSingle = vi.fn().mockResolvedValue({ data: action, error: null })
+    const select = vi.fn(() => ({
+      eq: vi.fn(() => ({
+        eq: vi.fn(() => ({ single: selectSingle })),
+      })),
+    }))
+    const claimMaybeSingle = vi.fn().mockResolvedValue({
+      data: null,
+      error: null,
+    })
+    const update = vi.fn(() => ({
+      eq: vi.fn(() => ({
+        eq: vi.fn(() => ({
+          select: vi.fn(() => ({ maybeSingle: claimMaybeSingle })),
+        })),
+      })),
+    }))
+    const approvalInsert = vi.fn()
+    fromMock.mockImplementation((table: string) => {
+      if (table === 'shared_action_attempts') return { select, update }
+      if (table === 'shared_approvals') return { insert: approvalInsert }
+      return {}
+    })
+
+    await expect(
+      recordSharedApprovalDecision(
+        {
+          propertyId: 'property-1',
+          actionAttemptId: 'action-1',
+          reviewerProfileId: 'reviewer-1',
+          decisionStatus: 'approved',
+          decisionReason: 'looks good',
+        },
+        buildMockSupabase()
+      )
+    ).rejects.toMatchObject({
+      message: 'Approval candidate was decided concurrently',
+      statusCode: 409,
+    })
+    expect(approvalInsert).not.toHaveBeenCalled()
   })
 })
 

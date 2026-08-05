@@ -1,4 +1,4 @@
-// schema_migration_version: 20260803190500
+// schema_migration_version: 20260804235605
 export type Json =
   | string
   | number
@@ -8513,6 +8513,7 @@ export type Database = {
           failure_phase: string | null
           final_verified_asset_manifest_hash: string | null
           final_verified_content_hash: string | null
+          final_verified_runtime_manifest_sha256: string | null
           id: string
           operation_set_hash: string | null
           org_id: string
@@ -8521,6 +8522,7 @@ export type Database = {
           remote_manifest_hash: string | null
           remote_transaction_id: string | null
           runtime_contract_version: number
+          runtime_manifest_sha256: string | null
           runtime_package_sha256: string | null
           runtime_version: string | null
           shared_job_id: string | null
@@ -8547,6 +8549,7 @@ export type Database = {
           failure_phase?: string | null
           final_verified_asset_manifest_hash?: string | null
           final_verified_content_hash?: string | null
+          final_verified_runtime_manifest_sha256?: string | null
           id?: string
           operation_set_hash?: string | null
           org_id: string
@@ -8555,6 +8558,7 @@ export type Database = {
           remote_manifest_hash?: string | null
           remote_transaction_id?: string | null
           runtime_contract_version?: number
+          runtime_manifest_sha256?: string | null
           runtime_package_sha256?: string | null
           runtime_version?: string | null
           shared_job_id?: string | null
@@ -8581,6 +8585,7 @@ export type Database = {
           failure_phase?: string | null
           final_verified_asset_manifest_hash?: string | null
           final_verified_content_hash?: string | null
+          final_verified_runtime_manifest_sha256?: string | null
           id?: string
           operation_set_hash?: string | null
           org_id?: string
@@ -8589,6 +8594,7 @@ export type Database = {
           remote_manifest_hash?: string | null
           remote_transaction_id?: string | null
           runtime_contract_version?: number
+          runtime_manifest_sha256?: string | null
           runtime_package_sha256?: string | null
           runtime_version?: string | null
           shared_job_id?: string | null
@@ -8638,6 +8644,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "vw_property_marketing_setup"
             referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "siteforge_artifact_deployments_runtime_package_fkey"
+            columns: ["runtime_package_sha256"]
+            isOneToOne: false
+            referencedRelation: "siteforge_runtime_packages"
+            referencedColumns: ["package_sha256"]
           },
           {
             foreignKeyName: "siteforge_artifact_deployments_shared_job_id_fkey"
@@ -9058,6 +9071,13 @@ export type Database = {
             referencedColumns: ["property_id"]
           },
           {
+            foreignKeyName: "siteforge_blueprint_versions_runtime_package_fkey"
+            columns: ["runtime_package_sha256"]
+            isOneToOne: false
+            referencedRelation: "siteforge_runtime_packages"
+            referencedColumns: ["package_sha256"]
+          },
+          {
             foreignKeyName: "siteforge_blueprint_versions_shared_job_id_fkey"
             columns: ["shared_job_id"]
             isOneToOne: false
@@ -9097,8 +9117,10 @@ export type Database = {
       siteforge_certification_evidence: {
         Row: {
           artifact_id: string
+          binding_hash: string | null
           created_at: string
           environment: string
+          evidence_hash: string | null
           evidence_manifest: Json
           id: string
           org_id: string
@@ -9112,8 +9134,10 @@ export type Database = {
         }
         Insert: {
           artifact_id: string
+          binding_hash?: string | null
           created_at?: string
           environment: string
+          evidence_hash?: string | null
           evidence_manifest?: Json
           id?: string
           org_id: string
@@ -9127,8 +9151,10 @@ export type Database = {
         }
         Update: {
           artifact_id?: string
+          binding_hash?: string | null
           created_at?: string
           environment?: string
+          evidence_hash?: string | null
           evidence_manifest?: Json
           id?: string
           org_id?: string
@@ -10376,6 +10402,131 @@ export type Database = {
           },
         ]
       }
+      siteforge_lighthouse_evidence: {
+        Row: {
+          access_mode: string
+          artifact_content_hash: string
+          artifact_id: string
+          binding_hash: string
+          created_at: string
+          environment: string
+          form_factor: string
+          generated_at: string
+          id: string
+          org_id: string
+          page_url: string
+          page_url_sha256: string
+          policy_version: string
+          property_id: string
+          provider: string
+          provider_run_id: string
+          report_sha256: string
+          report_storage_path: string
+          runner_binary_sha256: string
+          runner_config_sha256: string
+          tool_manifest_sha256: string
+          website_id: string
+        }
+        Insert: {
+          access_mode: string
+          artifact_content_hash: string
+          artifact_id: string
+          binding_hash: string
+          created_at?: string
+          environment: string
+          form_factor: string
+          generated_at: string
+          id?: string
+          org_id: string
+          page_url: string
+          page_url_sha256: string
+          policy_version: string
+          property_id: string
+          provider: string
+          provider_run_id: string
+          report_sha256: string
+          report_storage_path: string
+          runner_binary_sha256: string
+          runner_config_sha256: string
+          tool_manifest_sha256: string
+          website_id: string
+        }
+        Update: {
+          access_mode?: string
+          artifact_content_hash?: string
+          artifact_id?: string
+          binding_hash?: string
+          created_at?: string
+          environment?: string
+          form_factor?: string
+          generated_at?: string
+          id?: string
+          org_id?: string
+          page_url?: string
+          page_url_sha256?: string
+          policy_version?: string
+          property_id?: string
+          provider?: string
+          provider_run_id?: string
+          report_sha256?: string
+          report_storage_path?: string
+          runner_binary_sha256?: string
+          runner_config_sha256?: string
+          tool_manifest_sha256?: string
+          website_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "siteforge_lighthouse_evidence_artifact_id_fkey"
+            columns: ["artifact_id"]
+            isOneToOne: false
+            referencedRelation: "siteforge_blueprint_versions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_lighthouse_evidence_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_lighthouse_evidence_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_lighthouse_evidence_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "siteforge_lighthouse_evidence_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "siteforge_lighthouse_evidence_website_id_fkey"
+            columns: ["website_id"]
+            isOneToOne: false
+            referencedRelation: "property_websites"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_lighthouse_evidence_website_id_fkey"
+            columns: ["website_id"]
+            isOneToOne: false
+            referencedRelation: "website_summary"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       siteforge_outbox_attempts: {
         Row: {
           attempt_number: number
@@ -11145,9 +11296,16 @@ export type Database = {
           created_by: string | null
           id: string
           manifest: Json
+          manifest_sha256: string | null
           package_sha256: string
           package_type: string
+          publication_status: string
+          revocation_reason: string | null
+          revoked_at: string | null
+          runtime_contract_version: number | null
           signature: string | null
+          signature_algorithm: string | null
+          signing_key_id: string | null
           storage_path: string
           version: string
         }
@@ -11156,9 +11314,16 @@ export type Database = {
           created_by?: string | null
           id?: string
           manifest?: Json
+          manifest_sha256?: string | null
           package_sha256: string
           package_type: string
+          publication_status?: string
+          revocation_reason?: string | null
+          revoked_at?: string | null
+          runtime_contract_version?: number | null
           signature?: string | null
+          signature_algorithm?: string | null
+          signing_key_id?: string | null
           storage_path: string
           version: string
         }
@@ -11167,13 +11332,140 @@ export type Database = {
           created_by?: string | null
           id?: string
           manifest?: Json
+          manifest_sha256?: string | null
           package_sha256?: string
           package_type?: string
+          publication_status?: string
+          revocation_reason?: string | null
+          revoked_at?: string | null
+          runtime_contract_version?: number | null
           signature?: string | null
+          signature_algorithm?: string | null
+          signing_key_id?: string | null
           storage_path?: string
           version?: string
         }
         Relationships: []
+      }
+      siteforge_runtime_target_rollouts: {
+        Row: {
+          activated_at: string | null
+          assigned_by: string | null
+          created_at: string
+          id: string
+          org_id: string
+          previous_runtime_contract_version: number | null
+          previous_runtime_manifest_sha256: string | null
+          previous_runtime_package_sha256: string | null
+          previous_runtime_version: string | null
+          property_id: string
+          reason: string | null
+          requested_contract_version: number
+          rolled_back_at: string | null
+          runtime_package_sha256: string
+          status: string
+          target_id: string
+          updated_at: string
+          website_id: string
+        }
+        Insert: {
+          activated_at?: string | null
+          assigned_by?: string | null
+          created_at?: string
+          id?: string
+          org_id: string
+          previous_runtime_contract_version?: number | null
+          previous_runtime_manifest_sha256?: string | null
+          previous_runtime_package_sha256?: string | null
+          previous_runtime_version?: string | null
+          property_id: string
+          reason?: string | null
+          requested_contract_version: number
+          rolled_back_at?: string | null
+          runtime_package_sha256: string
+          status?: string
+          target_id: string
+          updated_at?: string
+          website_id: string
+        }
+        Update: {
+          activated_at?: string | null
+          assigned_by?: string | null
+          created_at?: string
+          id?: string
+          org_id?: string
+          previous_runtime_contract_version?: number | null
+          previous_runtime_manifest_sha256?: string | null
+          previous_runtime_package_sha256?: string | null
+          previous_runtime_version?: string | null
+          property_id?: string
+          reason?: string | null
+          requested_contract_version?: number
+          rolled_back_at?: string | null
+          runtime_package_sha256?: string
+          status?: string
+          target_id?: string
+          updated_at?: string
+          website_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "siteforge_runtime_target_rollouts_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_runtime_target_rollouts_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_runtime_target_rollouts_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "siteforge_runtime_target_rollouts_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "siteforge_runtime_target_rollouts_runtime_package_sha256_fkey"
+            columns: ["runtime_package_sha256"]
+            isOneToOne: false
+            referencedRelation: "siteforge_runtime_packages"
+            referencedColumns: ["package_sha256"]
+          },
+          {
+            foreignKeyName: "siteforge_runtime_target_rollouts_target_tenant_fkey"
+            columns: ["target_id", "org_id", "property_id", "website_id"]
+            isOneToOne: false
+            referencedRelation: "siteforge_wordpress_targets"
+            referencedColumns: ["id", "org_id", "property_id", "website_id"]
+          },
+          {
+            foreignKeyName: "siteforge_runtime_target_rollouts_website_id_fkey"
+            columns: ["website_id"]
+            isOneToOne: false
+            referencedRelation: "property_websites"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_runtime_target_rollouts_website_id_fkey"
+            columns: ["website_id"]
+            isOneToOne: false
+            referencedRelation: "website_summary"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       siteforge_telemetry_events: {
         Row: {
@@ -11390,6 +11682,247 @@ export type Database = {
           },
         ]
       }
+      siteforge_visual_baselines: {
+        Row: {
+          access_mode: string
+          approval_action_attempt_id: string | null
+          approval_id: string | null
+          approved_at: string | null
+          approved_by: string | null
+          artifact_content_hash: string
+          artifact_id: string
+          asset_manifest_hash: string
+          binding_hash: string
+          captured_at: string
+          captured_by_profile_id: string | null
+          captured_session_id: string
+          created_at: string
+          environment: string
+          evidence_digest: string
+          id: string
+          operation_set_hash: string | null
+          org_id: string
+          overlay_package_sha256: string | null
+          page_url: string
+          page_url_sha256: string
+          policy_version: string
+          property_id: string
+          require_indexable: boolean
+          revocation_action_attempt_id: string | null
+          revocation_approval_id: string | null
+          revocation_reason: string | null
+          revoked_at: string | null
+          revoked_by: string | null
+          runtime_manifest_sha256: string | null
+          runtime_package_sha256: string | null
+          screenshot_bytes: number
+          screenshot_content_type: string
+          screenshot_sha256: string
+          screenshot_storage_path: string
+          status: string
+          superseded_at: string | null
+          superseded_by: string | null
+          viewport: string
+          viewport_height: number
+          viewport_width: number
+          website_id: string
+        }
+        Insert: {
+          access_mode: string
+          approval_action_attempt_id?: string | null
+          approval_id?: string | null
+          approved_at?: string | null
+          approved_by?: string | null
+          artifact_content_hash: string
+          artifact_id: string
+          asset_manifest_hash: string
+          binding_hash: string
+          captured_at: string
+          captured_by_profile_id?: string | null
+          captured_session_id: string
+          created_at?: string
+          environment: string
+          evidence_digest: string
+          id?: string
+          operation_set_hash?: string | null
+          org_id: string
+          overlay_package_sha256?: string | null
+          page_url: string
+          page_url_sha256: string
+          policy_version: string
+          property_id: string
+          require_indexable: boolean
+          revocation_action_attempt_id?: string | null
+          revocation_approval_id?: string | null
+          revocation_reason?: string | null
+          revoked_at?: string | null
+          revoked_by?: string | null
+          runtime_manifest_sha256?: string | null
+          runtime_package_sha256?: string | null
+          screenshot_bytes: number
+          screenshot_content_type: string
+          screenshot_sha256: string
+          screenshot_storage_path: string
+          status?: string
+          superseded_at?: string | null
+          superseded_by?: string | null
+          viewport: string
+          viewport_height: number
+          viewport_width: number
+          website_id: string
+        }
+        Update: {
+          access_mode?: string
+          approval_action_attempt_id?: string | null
+          approval_id?: string | null
+          approved_at?: string | null
+          approved_by?: string | null
+          artifact_content_hash?: string
+          artifact_id?: string
+          asset_manifest_hash?: string
+          binding_hash?: string
+          captured_at?: string
+          captured_by_profile_id?: string | null
+          captured_session_id?: string
+          created_at?: string
+          environment?: string
+          evidence_digest?: string
+          id?: string
+          operation_set_hash?: string | null
+          org_id?: string
+          overlay_package_sha256?: string | null
+          page_url?: string
+          page_url_sha256?: string
+          policy_version?: string
+          property_id?: string
+          require_indexable?: boolean
+          revocation_action_attempt_id?: string | null
+          revocation_approval_id?: string | null
+          revocation_reason?: string | null
+          revoked_at?: string | null
+          revoked_by?: string | null
+          runtime_manifest_sha256?: string | null
+          runtime_package_sha256?: string | null
+          screenshot_bytes?: number
+          screenshot_content_type?: string
+          screenshot_sha256?: string
+          screenshot_storage_path?: string
+          status?: string
+          superseded_at?: string | null
+          superseded_by?: string | null
+          viewport?: string
+          viewport_height?: number
+          viewport_width?: number
+          website_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "siteforge_visual_baselines_approval_action_attempt_id_fkey"
+            columns: ["approval_action_attempt_id"]
+            isOneToOne: false
+            referencedRelation: "shared_action_attempts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_visual_baselines_approval_id_fkey"
+            columns: ["approval_id"]
+            isOneToOne: false
+            referencedRelation: "shared_approvals"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_visual_baselines_approved_by_fkey"
+            columns: ["approved_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_visual_baselines_artifact_id_fkey"
+            columns: ["artifact_id"]
+            isOneToOne: false
+            referencedRelation: "siteforge_blueprint_versions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_visual_baselines_captured_by_profile_id_fkey"
+            columns: ["captured_by_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_visual_baselines_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_visual_baselines_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_visual_baselines_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "siteforge_visual_baselines_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "siteforge_visual_baselines_revocation_action_attempt_id_fkey"
+            columns: ["revocation_action_attempt_id"]
+            isOneToOne: false
+            referencedRelation: "shared_action_attempts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_visual_baselines_revocation_approval_id_fkey"
+            columns: ["revocation_approval_id"]
+            isOneToOne: false
+            referencedRelation: "shared_approvals"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_visual_baselines_revoked_by_fkey"
+            columns: ["revoked_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_visual_baselines_superseded_by_fkey"
+            columns: ["superseded_by"]
+            isOneToOne: false
+            referencedRelation: "siteforge_visual_baselines"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_visual_baselines_website_id_fkey"
+            columns: ["website_id"]
+            isOneToOne: false
+            referencedRelation: "property_websites"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_visual_baselines_website_id_fkey"
+            columns: ["website_id"]
+            isOneToOne: false
+            referencedRelation: "website_summary"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       siteforge_wordpress_targets: {
         Row: {
           admin_url: string | null
@@ -11403,6 +11936,7 @@ export type Database = {
           last_verified_asset_manifest_hash: string | null
           last_verified_content_hash: string | null
           last_verified_operation_hash: string | null
+          last_verified_runtime_manifest_sha256: string | null
           metadata: Json
           org_id: string
           property_id: string
@@ -11412,6 +11946,7 @@ export type Database = {
           provider_parent_application_id: string | null
           provider_server_id: string | null
           runtime_contract_version: number
+          runtime_manifest_sha256: string | null
           runtime_package_sha256: string | null
           runtime_version: string | null
           site_url: string | null
@@ -11432,6 +11967,7 @@ export type Database = {
           last_verified_asset_manifest_hash?: string | null
           last_verified_content_hash?: string | null
           last_verified_operation_hash?: string | null
+          last_verified_runtime_manifest_sha256?: string | null
           metadata?: Json
           org_id: string
           property_id: string
@@ -11441,6 +11977,7 @@ export type Database = {
           provider_parent_application_id?: string | null
           provider_server_id?: string | null
           runtime_contract_version?: number
+          runtime_manifest_sha256?: string | null
           runtime_package_sha256?: string | null
           runtime_version?: string | null
           site_url?: string | null
@@ -11461,6 +11998,7 @@ export type Database = {
           last_verified_asset_manifest_hash?: string | null
           last_verified_content_hash?: string | null
           last_verified_operation_hash?: string | null
+          last_verified_runtime_manifest_sha256?: string | null
           metadata?: Json
           org_id?: string
           property_id?: string
@@ -11470,6 +12008,7 @@ export type Database = {
           provider_parent_application_id?: string | null
           provider_server_id?: string | null
           runtime_contract_version?: number
+          runtime_manifest_sha256?: string | null
           runtime_package_sha256?: string | null
           runtime_version?: string | null
           site_url?: string | null
@@ -11513,6 +12052,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "vw_property_marketing_setup"
             referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "siteforge_wordpress_targets_runtime_package_fkey"
+            columns: ["runtime_package_sha256"]
+            isOneToOne: false
+            referencedRelation: "siteforge_runtime_packages"
+            referencedColumns: ["package_sha256"]
           },
           {
             foreignKeyName: "siteforge_wordpress_targets_website_id_fkey"
@@ -13125,6 +13671,64 @@ export type Database = {
         Args: { p_confirmed_by: string; p_import_id: string }
         Returns: number
       }
+      approve_siteforge_visual_baseline: {
+        Args: {
+          p_action_attempt_id: string
+          p_approval_id: string
+          p_baseline_id: string
+          p_reviewer_profile_id: string
+        }
+        Returns: {
+          access_mode: string
+          approval_action_attempt_id: string | null
+          approval_id: string | null
+          approved_at: string | null
+          approved_by: string | null
+          artifact_content_hash: string
+          artifact_id: string
+          asset_manifest_hash: string
+          binding_hash: string
+          captured_at: string
+          captured_by_profile_id: string | null
+          captured_session_id: string
+          created_at: string
+          environment: string
+          evidence_digest: string
+          id: string
+          operation_set_hash: string | null
+          org_id: string
+          overlay_package_sha256: string | null
+          page_url: string
+          page_url_sha256: string
+          policy_version: string
+          property_id: string
+          require_indexable: boolean
+          revocation_action_attempt_id: string | null
+          revocation_approval_id: string | null
+          revocation_reason: string | null
+          revoked_at: string | null
+          revoked_by: string | null
+          runtime_manifest_sha256: string | null
+          runtime_package_sha256: string | null
+          screenshot_bytes: number
+          screenshot_content_type: string
+          screenshot_sha256: string
+          screenshot_storage_path: string
+          status: string
+          superseded_at: string | null
+          superseded_by: string | null
+          viewport: string
+          viewport_height: number
+          viewport_width: number
+          website_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "siteforge_visual_baselines"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       calculate_lead_score: {
         Args: { p_lead_id: string }
         Returns: {
@@ -13400,7 +14004,141 @@ export type Database = {
         }
         Returns: undefined
       }
+      register_siteforge_runtime_package: {
+        Args: {
+          p_created_by?: string
+          p_manifest: Json
+          p_manifest_sha256?: string
+          p_package_sha256: string
+          p_package_type: string
+          p_runtime_contract_version?: number
+          p_signature?: string
+          p_signature_algorithm?: string
+          p_signing_key_id?: string
+          p_storage_path: string
+          p_version: string
+        }
+        Returns: {
+          created_at: string
+          created_by: string | null
+          id: string
+          manifest: Json
+          manifest_sha256: string | null
+          package_sha256: string
+          package_type: string
+          publication_status: string
+          revocation_reason: string | null
+          revoked_at: string | null
+          runtime_contract_version: number | null
+          signature: string | null
+          signature_algorithm: string | null
+          signing_key_id: string | null
+          storage_path: string
+          version: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "siteforge_runtime_packages"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      revoke_siteforge_visual_baseline: {
+        Args: {
+          p_action_attempt_id: string
+          p_approval_id: string
+          p_baseline_id: string
+          p_reason: string
+          p_reviewer_profile_id: string
+        }
+        Returns: {
+          access_mode: string
+          approval_action_attempt_id: string | null
+          approval_id: string | null
+          approved_at: string | null
+          approved_by: string | null
+          artifact_content_hash: string
+          artifact_id: string
+          asset_manifest_hash: string
+          binding_hash: string
+          captured_at: string
+          captured_by_profile_id: string | null
+          captured_session_id: string
+          created_at: string
+          environment: string
+          evidence_digest: string
+          id: string
+          operation_set_hash: string | null
+          org_id: string
+          overlay_package_sha256: string | null
+          page_url: string
+          page_url_sha256: string
+          policy_version: string
+          property_id: string
+          require_indexable: boolean
+          revocation_action_attempt_id: string | null
+          revocation_approval_id: string | null
+          revocation_reason: string | null
+          revoked_at: string | null
+          revoked_by: string | null
+          runtime_manifest_sha256: string | null
+          runtime_package_sha256: string | null
+          screenshot_bytes: number
+          screenshot_content_type: string
+          screenshot_sha256: string
+          screenshot_storage_path: string
+          status: string
+          superseded_at: string | null
+          superseded_by: string | null
+          viewport: string
+          viewport_height: number
+          viewport_width: number
+          website_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "siteforge_visual_baselines"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       score_lead: { Args: { p_lead_id: string }; Returns: string }
+      set_siteforge_runtime_target_rollout: {
+        Args: {
+          p_assigned_by?: string
+          p_reason?: string
+          p_requested_contract_version: number
+          p_runtime_package_sha256: string
+          p_status: string
+          p_target_id: string
+        }
+        Returns: {
+          activated_at: string | null
+          assigned_by: string | null
+          created_at: string
+          id: string
+          org_id: string
+          previous_runtime_contract_version: number | null
+          previous_runtime_manifest_sha256: string | null
+          previous_runtime_package_sha256: string | null
+          previous_runtime_version: string | null
+          property_id: string
+          reason: string | null
+          requested_contract_version: number
+          rolled_back_at: string | null
+          runtime_package_sha256: string
+          status: string
+          target_id: string
+          updated_at: string
+          website_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "siteforge_runtime_target_rollouts"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       store_siteforge_credential_secret: {
         Args: { p_description?: string; p_name: string; p_secret: string }
         Returns: string

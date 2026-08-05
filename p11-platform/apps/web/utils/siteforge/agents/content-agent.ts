@@ -38,7 +38,14 @@ export class ContentAgent extends BaseAgent {
     // Generate all pages in parallel
     const pages = await Promise.all(
       architecture.pages.map(page => 
-        this.generatePage(page, brandContext, architecture.conversionStrategy)
+        this.generatePage(
+          page,
+          brandContext,
+          architecture.conversionStrategy,
+          architecture.pages.map(candidate =>
+            candidate.slug === 'home' ? '/' : `/${candidate.slug}`
+          )
+        )
       )
     )
     
@@ -56,13 +63,20 @@ export class ContentAgent extends BaseAgent {
   private async generatePage(
     page: ArchitectureProposal['pages'][number],
     brandContext: BrandContext,
-    conversionStrategy: ArchitectureProposal['conversionStrategy']
+    conversionStrategy: ArchitectureProposal['conversionStrategy'],
+    availablePaths: string[]
   ): Promise<GeneratedPage> {
     
     // Generate all sections in parallel
     const sections = await Promise.all(
       page.sections.map(section =>
-        this.generateSection(section, brandContext, page.purpose, conversionStrategy)
+        this.generateSection(
+          section,
+          brandContext,
+          page.purpose,
+          conversionStrategy,
+          availablePaths
+        )
       )
     )
     
@@ -82,7 +96,8 @@ export class ContentAgent extends BaseAgent {
     section: ArchitectureProposal['pages'][number]['sections'][number],
     brandContext: BrandContext,
     pagePurpose: string,
-    conversionStrategy: ArchitectureProposal['conversionStrategy']
+    conversionStrategy: ArchitectureProposal['conversionStrategy'],
+    availablePaths: string[]
   ): Promise<GeneratedSection> {
     
     // Get relevant facts via vector search
@@ -141,7 +156,7 @@ Write content that:
   "subheadline": "Supporting message",
   "content": "Body copy using relevant facts",
   "cta_text": "${conversionStrategy.primaryCTA}" if section needs CTA,
-  "cta_link": "/contact or /schedule-tour",
+  "cta_link": "Choose exactly one existing path from: ${availablePaths.join(', ')}",
   "reasoning": "Why this copy achieves section purpose and matches brand voice"
 }
 
@@ -168,7 +183,8 @@ Match this level of clarity and polish without copying the example phrasing.
 3. Every fact must come from relevantFacts (cite similarity score mentally)
 4. If no relevant facts, keep content general but on-brand
 5. CTAs must match primaryCTA unless section specifies otherwise
-6. Reasoning must explain how copy achieves purpose
+6. CTA links must use one of the existing page paths listed in the output contract
+7. Reasoning must explain how copy achieves purpose
 `
     
     const response = await this.callClaude(prompt, {

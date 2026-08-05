@@ -58,6 +58,7 @@ export interface BookLumaLeasingTourParams {
   durationMinutes?: number
   specialRequests?: string | null
   source: TourBookingSource
+  attributionMetadata?: Record<string, unknown>
   conversationId?: string | null
   slot?: TourBookingSlot | null
   /**
@@ -249,6 +250,7 @@ export async function bookLumaLeasingTour(
     bookingDate,
     specialRequests,
     source,
+    attributionMetadata,
     conversationId,
     slot,
     skipAvailabilityCheck,
@@ -378,14 +380,14 @@ export async function bookLumaLeasingTour(
       lead_id: leadId,
       type: 'tour_booked',
       description: `Tour booked for ${bookingDate} at ${bookingTime}`,
-      metadata: { booking_id: bookingRow.id, source },
+      metadata: { booking_id: bookingRow.id, source, ...attributionMetadata },
     })
 
     trackEngagementEvent({
       leadId,
       propertyId,
       eventType: 'tour_scheduled',
-      metadata: { booking_id: bookingRow.id, source },
+      metadata: { booking_id: bookingRow.id, source, ...attributionMetadata },
     }).catch((engagementError) =>
       console.error(
         '[LumaLeasingTourBooking] engagement tracking failed (non-blocking):',

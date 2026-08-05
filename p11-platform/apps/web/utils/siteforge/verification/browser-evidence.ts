@@ -1,37 +1,112 @@
 import { z } from 'zod'
+import { certificationArtifactBindingSchema } from './certification-binding'
 
 export const SITEFORGE_CERTIFICATION_POLICY_VERSION =
-  'siteforge-browser-certification-v3' as const
+  'siteforge-browser-certification-v4' as const
 export const SITEFORGE_BROWSER_EVIDENCE_VERSION =
+  'siteforge-browser-evidence-v2' as const
+export const SITEFORGE_LEGACY_BROWSER_EVIDENCE_VERSION =
   'siteforge-browser-evidence-v1' as const
 
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/)
 const urlSchema = z.string().url()
 const viewportSchema = z.enum(['desktop', 'tablet', 'mobile'])
+export const browserCertificationEnvironmentSchema = z.enum([
+  'protected_preview',
+  'staging',
+  'production',
+])
+export const browserCertificationAccessSchema = z.enum(['protected', 'public'])
+
+const durableStoragePathSchema = z
+  .string()
+  .min(1)
+  .refine(
+    value => !value.startsWith('browserbase://'),
+    'Browserbase session URLs are not durable artifact storage paths'
+  )
 
 const pageViewportSchema = z.object({
   url: urlSchema,
   viewport: viewportSchema,
 })
 
+const artifactIdentitySchema = z.object({
+  artifactId: z.string().uuid(),
+  contentHash: sha256Schema,
+})
+
+export const lighthouseArtifactSchema = z.object({
+  url: urlSchema,
+  formFactor: z.enum(['desktop', 'mobile']),
+  storagePath: durableStoragePathSchema,
+  sha256: sha256Schema,
+  provider: z.string().min(1),
+  providerRunId: z.string().min(1),
+  runnerBinarySha256: sha256Schema,
+  runnerConfigSha256: sha256Schema,
+  toolManifestSha256: sha256Schema,
+  environment: browserCertificationEnvironmentSchema,
+  access: browserCertificationAccessSchema,
+  bindingHash: sha256Schema,
+  generatedAt: z.string().datetime(),
+})
+
+export const approvedVisualBaselineSchema = pageViewportSchema.extend({
+  baselineId: z.string().uuid(),
+  storagePath: durableStoragePathSchema,
+  sha256: sha256Schema,
+  artifact: artifactIdentitySchema,
+  environment: browserCertificationEnvironmentSchema,
+  access: browserCertificationAccessSchema,
+  requireIndexable: z.boolean(),
+  policyVersion: z.literal(SITEFORGE_CERTIFICATION_POLICY_VERSION),
+  bindingHash: sha256Schema,
+  evidenceDigest: sha256Schema,
+  approvalId: z.string().uuid(),
+  approvedAt: z.string().datetime(),
+  approvedBy: z.string().uuid(),
+})
+
 export const browserCertificationEvidenceSchema = z.object({
   evidenceVersion: z.literal(SITEFORGE_BROWSER_EVIDENCE_VERSION),
   capturedAt: z.string().datetime(),
+  identity: z.object({
+    sessionId: z.string().min(1),
+    targetUrl: urlSchema,
+    environment: browserCertificationEnvironmentSchema,
+    access: browserCertificationAccessSchema,
+    requireIndexable: z.boolean(),
+    artifact: artifactIdentitySchema,
+    artifactBinding: certificationArtifactBindingSchema,
+    bindingHash: sha256Schema,
+  }),
   screenshots: z.array(
     pageViewportSchema.extend({
       width: z.number().int().positive(),
       height: z.number().int().positive(),
-      storagePath: z.string().min(1),
+      storagePath: durableStoragePathSchema,
       sha256: sha256Schema,
+      bytes: z.number().int().positive(),
+      contentType: z.literal('image/png'),
+      identityDigest: sha256Schema,
     })
   ),
   baselineDiffs: z.array(
     pageViewportSchema.extend({
+      baselineStoragePath: durableStoragePathSchema,
+      baselineId: z.string().uuid(),
       baselineSha256: sha256Schema,
+      baselineBindingHash: sha256Schema,
+      baselineEvidenceDigest: sha256Schema,
+      baselineApprovalId: z.string().uuid(),
+      baselineApprovedAt: z.string().datetime(),
+      baselineApprovedBy: z.string().uuid(),
+      actualStoragePath: durableStoragePathSchema,
       actualSha256: sha256Schema,
-      mismatchRatio: z.number().min(0).max(1),
+      comparisonMethod: z.literal('sha256-exact'),
+      mismatchRatio: z.union([z.literal(0), z.literal(1)]),
       dimensionsMatch: z.boolean(),
-      diffStoragePath: z.string().min(1),
     })
   ),
   layout: z.array(
@@ -46,12 +121,40 @@ export const browserCertificationEvidenceSchema = z.object({
         url: urlSchema,
         linksTested: z.number().int().min(0),
         buttonsTested: z.number().int().min(0),
+        navigation: z.array(
+          z.object({
+            requestedUrl: urlSchema,
+            finalUrl: urlSchema,
+            status: z.number().int(),
+            passed: z.boolean(),
+          })
+        ),
+        network: z.array(
+          z.object({
+            url: urlSchema,
+            method: z.string().min(1),
+            resourceType: z.string().min(1),
+            status: z.number().int().optional(),
+            aborted: z.boolean(),
+          })
+        ),
         forms: z.array(
           z.object({
             id: z.string().min(1),
-            submitted: z.boolean(),
+            attempted: z.boolean(),
             validationObserved: z.boolean(),
             destinationVerified: z.boolean(),
+            payloadVerified: z.boolean(),
+            sideEffectPrevented: z.boolean(),
+            request: z
+              .object({
+                url: urlSchema,
+                method: z.string().min(1),
+                payload: z.record(z.string(), z.unknown()),
+                aborted: z.boolean(),
+              })
+              .optional(),
+            resultingState: z.enum(['validation', 'error', 'success', 'none']),
           })
         ),
         widgets: z.array(
@@ -102,7 +205,19 @@ export const browserCertificationEvidenceSchema = z.object({
     runs: z.array(
       z.object({
         url: urlSchema,
+        finalUrl: urlSchema,
         formFactor: z.enum(['desktop', 'mobile']),
+        source: z.literal('lighthouse'),
+        lighthouseVersion: z.string().min(1),
+        generatedAt: z.string().datetime(),
+        reportStoragePath: durableStoragePathSchema,
+        reportSha256: sha256Schema,
+        provider: z.string().min(1),
+        providerRunId: z.string().min(1),
+        runnerBinarySha256: sha256Schema,
+        runnerConfigSha256: sha256Schema,
+        toolManifestSha256: sha256Schema,
+        bindingHash: sha256Schema,
         performance: z.number().min(0).max(1),
         accessibility: z.number().min(0).max(1),
         bestPractices: z.number().min(0).max(1),
@@ -166,6 +281,8 @@ export const browserCertificationEvidenceSchema = z.object({
     defaultState: z.enum(['denied', 'granted']),
     bannerVisible: z.boolean(),
     preferenceControlsUsable: z.boolean(),
+    declineTested: z.boolean(),
+    grantTested: z.boolean(),
     scripts: z.array(
       z.object({
         src: z.string().min(1),
@@ -175,7 +292,90 @@ export const browserCertificationEvidenceSchema = z.object({
       })
     ),
   }),
+}).superRefine((evidence, context) => {
+  if (
+    evidence.identity.artifact.artifactId !==
+      evidence.identity.artifactBinding.artifactId ||
+    evidence.identity.artifact.contentHash !==
+      evidence.identity.artifactBinding.contentHash
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['identity', 'artifactBinding'],
+      message: 'Artifact and release binding identities must match',
+    })
+  }
+  const screenshots = new Map(
+    evidence.screenshots.map(item => [
+      `${item.url}|${item.viewport}`,
+      item,
+    ])
+  )
+  for (const diff of evidence.baselineDiffs) {
+    const actual = screenshots.get(`${diff.url}|${diff.viewport}`)
+    if (!actual) continue
+    if (
+      diff.actualStoragePath === diff.baselineStoragePath ||
+      actual.storagePath === diff.baselineStoragePath
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['baselineDiffs'],
+        message: 'A current screenshot cannot be used as its own approved baseline',
+      })
+    }
+    if (
+      actual.storagePath !== diff.actualStoragePath ||
+      actual.sha256 !== diff.actualSha256
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['baselineDiffs'],
+        message: 'Visual diff actual identity does not match the captured screenshot',
+      })
+    }
+    if (new Date(diff.baselineApprovedAt) >= new Date(evidence.capturedAt)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['baselineDiffs'],
+        message: 'A visual baseline must be approved before current evidence capture',
+      })
+    }
+    if (
+      diff.baselineBindingHash !== evidence.identity.bindingHash ||
+      diff.baselineStoragePath === diff.actualStoragePath
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['baselineDiffs'],
+        message: 'Visual baseline must use the exact approved binding identity',
+      })
+    }
+    const expectedRatio =
+      diff.baselineSha256 === diff.actualSha256 && diff.dimensionsMatch ? 0 : 1
+    if (diff.mismatchRatio !== expectedRatio) {
+      context.addIssue({
+        code: 'custom',
+        path: ['baselineDiffs'],
+        message: 'Exact SHA-256 comparison result is inconsistent with artifact bytes',
+      })
+    }
+  }
 })
+
+// Read-only callers may still recognize archived v1 payloads. Certification uses
+// browserCertificationEvidenceSchema directly and therefore never accepts them.
+export const legacyBrowserCertificationEvidenceSchema = z
+  .object({
+    evidenceVersion: z.literal(SITEFORGE_LEGACY_BROWSER_EVIDENCE_VERSION),
+    capturedAt: z.string().datetime(),
+  })
+  .passthrough()
+
+export const browserCertificationEvidenceReaderSchema = z.union([
+  browserCertificationEvidenceSchema,
+  legacyBrowserCertificationEvidenceSchema,
+])
 
 export type BrowserCertificationEvidence = z.infer<
   typeof browserCertificationEvidenceSchema

@@ -19,7 +19,7 @@ if ( empty( $images ) ) {
 $layout_class = 'masonry' === $layout ? 'layout-masonry' : 'layout-grid';
 ?>
 
-<section <?php echo oneclick_get_block_wrapper_attributes( array( 'class' => 'block-gallery ' . $layout_class ) ); ?>>
+<section <?php echo oneclick_get_block_wrapper_attributes( $block, array( 'class' => 'block-gallery ' . $layout_class ) ); ?>>
 	<div class="site-container">
 		<div class="gallery-grid" id="gallery-<?php echo uniqid( 'gallery-' ); ?>">
 			<?php

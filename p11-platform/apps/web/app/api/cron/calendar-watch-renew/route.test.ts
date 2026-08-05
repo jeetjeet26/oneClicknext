@@ -29,6 +29,7 @@ describe('cron calendar watch renew route', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.unstubAllEnvs()
+    vi.stubEnv('CRON_SECRET', 'secret')
     startCronJobRunMock.mockResolvedValue({
       id: 'run-1',
       jobName: 'calendar-watch-renew',

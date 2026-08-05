@@ -1,0 +1,28 @@
+{
+  "contractVersion": 2,
+  "runtimeVersion": "2.0.0",
+  "provider": "wordpress",
+  "authentication": "wordpress_application_password",
+  "features": {
+    "immutableAssetPreparation": true,
+    "optimisticConcurrency": true,
+    "idempotentDeployments": true,
+    "transactionalRollback": true,
+    "pageRemovals": true,
+    "navigationMutation": true,
+    "designTokenMutation": true,
+    "siteSettingsMutation": true,
+    "legalMutation": true,
+    "analyticsMutation": true
+  },
+  "limits": {
+    "maxAssetsPerPreparation": 100,
+    "maxAssetBytes": 10485760,
+    "maxPagesPerDeployment": 200,
+    "acceptedAssetMimeTypes": [
+      "image/jpeg",
+      "image/png",
+      "image/webp"
+    ]
+  }
+}

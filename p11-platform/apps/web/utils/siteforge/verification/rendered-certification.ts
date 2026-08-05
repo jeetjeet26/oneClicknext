@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import type { GeneratedPage } from '@/types/siteforge'
 import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
@@ -9,6 +10,10 @@ import {
   SITEFORGE_CERTIFICATION_POLICY_VERSION,
 } from './browser-evidence'
 import { collectBrowserCertificationEvidence } from './browser-evidence-provider'
+import {
+  buildCertificationBindingHash,
+  type CertificationArtifactBinding,
+} from './certification-binding'
 
 const verificationCheckSchema = z.object({
   id: z.string(),
@@ -24,6 +29,8 @@ export const renderedCertificationReportSchema = z.object({
   policyVersion: z.literal(SITEFORGE_CERTIFICATION_POLICY_VERSION),
   artifactId: z.string().uuid(),
   contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+  bindingHash: z.string().regex(/^[a-f0-9]{64}$/),
+  evidenceHash: z.string().regex(/^[a-f0-9]{64}$/),
   targetUrl: z.string().url(),
   verifiedAt: z.string().datetime(),
   checks: z.array(verificationCheckSchema),
@@ -48,6 +55,7 @@ export function buildRenderedCertificationTruth(
   onboardingSnapshot: unknown,
   approvedImageUrls: string[],
   conversionDestination?: string,
+  approvedImageDigests: string[] = [],
 ) {
   const snapshot = onboardingSnapshot && typeof onboardingSnapshot === 'object' && !Array.isArray(onboardingSnapshot)
     ? onboardingSnapshot as Record<string, unknown>
@@ -77,11 +85,17 @@ export function buildRenderedCertificationTruth(
     },
     conversionDestination,
     approvedImageUrls,
+    approvedImageDigests,
   }
 }
 
 function pageUrl(baseUrl: string, slug: string): string {
   return new URL(slug === 'home' ? '/' : `/${slug}/`, baseUrl).toString()
+}
+
+function renderedBlockClass(acfBlock: string): string {
+  if (acfBlock === 'acf/accordion-section') return 'block-accordion'
+  return acfBlock.replace('acf/', 'block-')
 }
 
 function extractInternalLinks(html: string, baseUrl: string): string[] {
@@ -116,17 +130,34 @@ function invalidImageLocations(html: string): string[] {
 export async function certifyRenderedWordPressArtifact(input: {
   artifactId: string
   contentHash: string
+  artifactBinding: CertificationArtifactBinding
   targetUrl: string
   credentials: { username: string; password: string }
   pages: GeneratedPage[]
   verifiedAt?: string
-  requireIndexable?: boolean
+  environment: 'protected_preview' | 'staging' | 'production'
+  access: 'protected' | 'public'
+  requireIndexable: boolean
   brandContract?: BrandForgeContractV1
   legalVersion?: { effectiveAt?: string; requiredText?: string[] }
   conversionDestination?: string
   approvedImageUrls?: string[]
+  approvedImageDigests?: string[]
   browserEvidence?: unknown
 }): Promise<RenderedCertificationReport> {
+  if (
+    input.artifactBinding.artifactId !== input.artifactId ||
+    input.artifactBinding.contentHash !== input.contentHash
+  ) {
+    throw new Error('Certification artifact binding does not match the artifact')
+  }
+  const bindingHash = buildCertificationBindingHash({
+    artifact: input.artifactBinding,
+    targetUrl: input.targetUrl,
+    environment: input.environment,
+    access: input.access,
+    requireIndexable: input.requireIndexable,
+  })
   const checks: z.infer<typeof verificationCheckSchema>[] = []
   const manifest = await new WordPressAPIClient(
     input.targetUrl,
@@ -193,7 +224,7 @@ export async function certifyRenderedWordPressArtifact(input: {
     const missingBlocks = [
       ...new Set(
         page.sections
-          .map((section) => section.acfBlock.replace('acf/', 'block-'))
+          .map((section) => renderedBlockClass(section.acfBlock))
           .filter((className) => !html.includes(className))
       ),
     ]
@@ -286,13 +317,33 @@ export async function certifyRenderedWordPressArtifact(input: {
     const renderedSources = renderedHtml.flatMap(html =>
       [...html.matchAll(/<img\b[^>]*\bsrc=["']([^"']+)["']/gi)].map(match => match[1])
     )
-    const unapprovedImages = renderedSources.filter(value => {
+    const unapprovedCandidates = renderedSources.filter(value => {
       try {
         return !approvedPaths.has(new URL(value, input.targetUrl).pathname)
       } catch {
         return true
       }
     })
+    const approvedDigests = new Set(input.approvedImageDigests || [])
+    const unapprovedImages: string[] = []
+    for (const value of [...new Set(unapprovedCandidates)]) {
+      try {
+        const response = await fetch(new URL(value, input.targetUrl), {
+          redirect: 'follow',
+          signal: AbortSignal.timeout(30_000),
+        })
+        const digest = response.ok
+          ? createHash('sha256')
+              .update(new Uint8Array(await response.arrayBuffer()))
+              .digest('hex')
+          : null
+        if (!digest || !approvedDigests.has(digest)) {
+          unapprovedImages.push(value)
+        }
+      } catch {
+        unapprovedImages.push(value)
+      }
+    }
     checks.push({
       id: 'rendered_image_provenance',
       passed: unapprovedImages.length === 0,
@@ -449,13 +500,23 @@ export async function certifyRenderedWordPressArtifact(input: {
       targetUrl: input.targetUrl,
       expectedUrls,
       credentials: input.credentials,
-      phase: input.requireIndexable ? 'public' : 'protected',
+      environment: input.environment,
+      access: input.access,
+      requireIndexable: input.requireIndexable,
+      artifact: input.artifactBinding,
+      bindingHash,
     })
   const browser = certifyBrowserEvidence({
     evidence: browserEvidence,
+    targetUrl: input.targetUrl,
     expectedUrls,
     criticalUrls: expectedUrls,
     evaluatedAt: input.verifiedAt,
+    environment: input.environment,
+    access: input.access,
+    requireIndexable: input.requireIndexable,
+    artifact: input.artifactBinding,
+    bindingHash,
   })
   checks.push(
     ...browser.checks.map(browserCheck => ({
@@ -478,6 +539,8 @@ export async function certifyRenderedWordPressArtifact(input: {
     policyVersion: SITEFORGE_CERTIFICATION_POLICY_VERSION,
     artifactId: input.artifactId,
     contentHash: input.contentHash,
+    bindingHash,
+    evidenceHash: hashSiteForgeContent(browserEvidence ?? null),
     targetUrl: input.targetUrl,
     verifiedAt: input.verifiedAt || new Date().toISOString(),
     checks,

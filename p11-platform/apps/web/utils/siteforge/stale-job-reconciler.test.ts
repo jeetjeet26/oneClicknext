@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import { reconcileStaleSiteForgeJobs } from './stale-job-reconciler'
+import {
+  decideStaleJobOutcome,
+  reconcileStaleSiteForgeJobs,
+} from './stale-job-reconciler'
 
 function resolvedChain<T>(result: T) {
   const chain: Record<string, unknown> = {}
@@ -35,6 +38,10 @@ describe('stale SiteForge job reconciliation', () => {
       lifecycle_status: 'running',
       heartbeat_at: '2026-07-31T19:00:00.000Z',
       lease_expires_at: '2026-07-31T19:05:00.000Z',
+      attempt_count: 3,
+      max_attempts: 3,
+      cancel_requested: false,
+      updated_at: '2026-07-31T19:05:00.000Z',
       payload: {},
     }
     const load = resolvedChain({ data: [staleJob], error: null })
@@ -61,6 +68,14 @@ describe('stale SiteForge job reconciliation', () => {
     )
 
     expect(result).toMatchObject({ examined: 1, recovered: 1 })
+    expect(load.in).toHaveBeenCalledWith('lifecycle_status', [
+      'queued',
+      'running',
+      'retrying',
+    ])
+    expect(load.or).toHaveBeenCalledWith(
+      expect.stringContaining('heartbeat_at.is.null')
+    )
     expect(update.update).toHaveBeenCalledWith(
       expect.objectContaining({
         lifecycle_status: 'failed',
@@ -75,5 +90,37 @@ describe('stale SiteForge job reconciliation', () => {
         category: 'workflow_stalled',
       })
     )
+  })
+
+  it('honors retry budgets and cancellation deterministically', () => {
+    expect(
+      decideStaleJobOutcome({
+        cancelRequested: false,
+        attemptCount: 0,
+        maxAttempts: 3,
+      })
+    ).toBe('retrying')
+    expect(
+      decideStaleJobOutcome({
+        cancelRequested: false,
+        attemptCount: 3,
+        maxAttempts: 3,
+      })
+    ).toBe('failed')
+    expect(
+      decideStaleJobOutcome({
+        cancelRequested: true,
+        attemptCount: 0,
+        maxAttempts: 3,
+      })
+    ).toBe('cancelled')
+    expect(
+      decideStaleJobOutcome({
+        cancelRequested: false,
+        attemptCount: 0,
+        maxAttempts: 3,
+        publicationClaimed: true,
+      })
+    ).toBe('failed')
   })
 })

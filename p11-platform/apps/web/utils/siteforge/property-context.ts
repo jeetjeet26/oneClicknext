@@ -18,6 +18,12 @@ export function propertyContextFromOnboardingSnapshot(
   const address = record(property.address)
   const assets = Array.isArray(snapshot.assets) ? snapshot.assets.map(record) : []
   const units = Array.isArray(snapshot.units) ? snapshot.units.map(record) : []
+  const contacts = Array.isArray(snapshot.contacts)
+    ? snapshot.contacts.map(record)
+    : []
+  const primaryContact =
+    contacts.find((contact) => contact.is_primary === true) || contacts[0] || {}
+  const socialMedia = record(property.social_media)
 
   const id = string(property.id)
   const name = string(property.name)
@@ -35,6 +41,14 @@ export function propertyContextFromOnboardingSnapshot(
       zip: string(address.zip || address.postalCode),
       country: string(address.country) || 'USA',
     },
+    phone: string(primaryContact.phone),
+    email: string(primaryContact.email),
+    socialLinks: Object.fromEntries(
+      Object.entries(socialMedia).flatMap(([platform, url]) => {
+        const normalizedUrl = string(url)
+        return normalizedUrl ? [[platform, normalizedUrl]] : []
+      })
+    ),
     amenities: Array.isArray(property.amenities)
       ? property.amenities.filter((item): item is string => typeof item === 'string')
       : [],
@@ -71,5 +85,24 @@ export function propertyContextFromOnboardingSnapshot(
       : [],
     unitCount: typeof property.unit_count === 'number' ? property.unit_count : undefined,
     yearBuilt: typeof property.year_built === 'number' ? property.year_built : undefined,
+  }
+}
+
+export function runtimePropertyProfile(context: PropertyContext) {
+  const locality = [context.address.city, context.address.state]
+    .filter(Boolean)
+    .join(', ')
+  return {
+    name: context.name,
+    address: [
+      context.address.street,
+      [locality, context.address.zip].filter(Boolean).join(' '),
+      context.address.country,
+    ]
+      .filter(Boolean)
+      .join('\n'),
+    phone: context.phone || '',
+    email: context.email || '',
+    socialLinks: context.socialLinks || {},
   }
 }

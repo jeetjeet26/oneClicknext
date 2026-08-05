@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { certifyRenderedWordPressArtifact } from './rendered-certification'
 
@@ -24,21 +25,33 @@ describe('remote WordPress artifact certification', () => {
       )
       .mockResolvedValueOnce(
         new Response(
-          '<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>Home</title></head><body><section class="block-text-section"><h1>Welcome</h1></section></body></html>',
+          '<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>Home</title></head><body><section class="block-text-section"><h1>Welcome</h1></section><section class="block-accordion"></section><img src="https://apartments.example.com/wp-content/uploads/logo.png" alt="Property logo"></body></html>',
           {
             status: 200,
             headers: { 'Content-Type': 'text/html; charset=utf-8' },
           }
         )
       )
+      .mockResolvedValueOnce(new Response('approved-logo', { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
 
     const report = await certifyRenderedWordPressArtifact({
       artifactId: '11111111-1111-4111-8111-111111111111',
       contentHash,
+      artifactBinding: {
+        artifactId: '11111111-1111-4111-8111-111111111111',
+        contentHash,
+        runtimePackageSha256: 'b'.repeat(64),
+        runtimeManifestSha256: 'c'.repeat(64),
+        overlayPackageSha256: null,
+        assetManifestHash: 'd'.repeat(64),
+        operationSetHash: 'e'.repeat(64),
+      },
       targetUrl: 'https://apartments.example.com',
       credentials: { username: 'admin', password: 'app-password' },
       verifiedAt: '2026-07-30T18:00:00.000Z',
+      environment: 'production',
+      access: 'public',
       requireIndexable: true,
       pages: [
         {
@@ -60,8 +73,20 @@ describe('remote WordPress artifact certification', () => {
                 background: 'white',
               },
             },
+            {
+              id: 'faq',
+              type: 'faq',
+              acfBlock: 'acf/accordion-section',
+              reasoning: 'Answer common questions',
+              order: 1,
+              content: { items: [] },
+            },
           ],
         },
+      ],
+      approvedImageUrls: ['https://assets.example.com/logo.png'],
+      approvedImageDigests: [
+        createHash('sha256').update('approved-logo').digest('hex'),
       ],
     })
 
@@ -79,6 +104,10 @@ describe('remote WordPress artifact certification', () => {
         }),
         expect.objectContaining({
           id: 'production_indexable:home',
+          passed: true,
+        }),
+        expect.objectContaining({
+          id: 'rendered_image_provenance',
           passed: true,
         }),
         expect.objectContaining({

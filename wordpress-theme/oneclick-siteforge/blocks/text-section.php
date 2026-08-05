@@ -23,7 +23,7 @@ $layout_class = 'center' === $layout ? 'text-center' : 'text-left';
 $bg_class = oneclick_get_background_class( $background );
 ?>
 
-<section <?php echo oneclick_get_block_wrapper_attributes( array( 'class' => 'block-text-section ' . $bg_class . ' ' . $layout_class ) ); ?>>
+<section <?php echo oneclick_get_block_wrapper_attributes( $block, array( 'class' => 'block-text-section ' . $bg_class . ' ' . $layout_class ) ); ?>>
 	<div class="site-container">
 		<?php
 		if ( ! empty( $headline ) ) {

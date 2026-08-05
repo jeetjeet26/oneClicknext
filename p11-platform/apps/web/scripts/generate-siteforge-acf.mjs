@@ -92,11 +92,12 @@ const definitions = {
     text('subheading'),
     select('form_type', ['contact', 'tour', 'register'], 'contact'),
     url('redirect_url'),
-    text('provider'),
+    select('provider', ['p11_lumaleasing'], 'p11_lumaleasing'),
     { name: 'consent_text', label: 'consent_text', type: 'textarea' },
     select('variant', ['card', 'split', 'minimal'], 'card'),
   ],
   map: [
+    text('address'),
     { name: 'latitude', label: 'latitude', type: 'number' },
     { name: 'longitude', label: 'longitude', type: 'number' },
     { name: 'zoom_level', label: 'zoom_level', type: 'number', default_value: 15 },
@@ -139,6 +140,14 @@ const definitions = {
   ],
   poi: [
     { name: 'intro_text', label: 'intro_text', type: 'textarea' },
+    repeater('points', [
+      text('name'),
+      text('category'),
+      text('address'),
+      { name: 'distance_miles', label: 'distance_miles', type: 'number' },
+      { name: 'travel_time_minutes', label: 'travel_time_minutes', type: 'number' },
+      url('source_url'),
+    ]),
     {
       name: 'categories',
       label: 'categories',

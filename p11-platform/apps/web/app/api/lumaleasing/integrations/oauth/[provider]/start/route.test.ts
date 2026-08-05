@@ -27,7 +27,7 @@ describe('integration OAuth start route', () => {
     vi.clearAllMocks()
     vi.resetModules()
     vi.stubEnv('MICROSOFT_CLIENT_ID', 'microsoft-client-id')
-    vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://app.example.com')
+    vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://app.example.com')
     createSignedIntegrationOAuthStateMock.mockReturnValue('signed-state')
     createClientMock.mockResolvedValue({
       auth: { getUser: authGetUserMock },

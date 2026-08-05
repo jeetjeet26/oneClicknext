@@ -18,7 +18,7 @@ if ( empty( $slides ) ) {
 }
 ?>
 
-<section <?php echo oneclick_get_block_wrapper_attributes( array( 'class' => 'block-top-slides swiper-container' ) ); ?> data-autoplay="<?php echo $autoplay ? 'true' : 'false'; ?>" data-overlay="<?php echo esc_attr( $overlay_style ); ?>">
+<section <?php echo oneclick_get_block_wrapper_attributes( $block, array( 'class' => 'block-top-slides swiper-container' ) ); ?> data-autoplay="<?php echo $autoplay ? 'true' : 'false'; ?>" data-overlay="<?php echo esc_attr( $overlay_style ); ?>">
 	<div class="swiper-wrapper">
 		<?php
 		foreach ( $slides as $slide ) {

@@ -10,7 +10,6 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 $siteforge_configuration = get_option( 'oneclick_siteforge_configuration', array() );
 $siteforge_header = is_array( $siteforge_configuration['header'] ?? null ) ? $siteforge_configuration['header'] : array();
-$siteforge_navigation = is_array( $siteforge_configuration['navigation'] ?? null ) ? $siteforge_configuration['navigation'] : array();
 $siteforge_media = is_array( $siteforge_configuration['media'] ?? null ) ? $siteforge_configuration['media'] : array();
 $siteforge_motion = is_array( $siteforge_configuration['motion'] ?? null ) ? $siteforge_configuration['motion'] : array();
 ?>
@@ -23,7 +22,7 @@ $siteforge_motion = is_array( $siteforge_configuration['motion'] ?? null ) ? $si
 	<?php wp_head(); ?>
 </head>
 
-<body <?php body_class(); ?> data-motion-level="<?php echo esc_attr( $siteforge_motion['level'] ?? 'none' ); ?>" data-motion-reveal="<?php echo esc_attr( $siteforge_motion['reveal'] ?? 'none' ); ?>">
+<body <?php body_class(); ?> data-motion-level="<?php echo esc_attr( $siteforge_motion['level'] ?? 'none' ); ?>" data-motion-reveal="<?php echo esc_attr( $siteforge_motion['reveal'] ?? 'none' ); ?>" data-motion-reduced="<?php echo esc_attr( $siteforge_motion['reducedMotion'] ?? 'respect' ); ?>">
 	<?php wp_body_open(); ?>
 
 	<div id="page" class="site">
@@ -85,25 +84,16 @@ $siteforge_motion = is_array( $siteforge_configuration['motion'] ?? null ) ? $si
 					</button>
 
 					<?php
-					if ( ! empty( $siteforge_navigation['items'] ) ) {
-						echo '<div class="primary-menu-container"><ul id="primary-menu">';
-						foreach ( $siteforge_navigation['items'] as $item ) {
-							$target = ! empty( $item['external'] ) ? ' target="_blank" rel="noopener noreferrer"' : '';
-							echo '<li><a href="' . esc_url( $item['href'] ) . '"' . $target . '>' . esc_html( $item['label'] ) . '</a></li>';
-						}
-						echo '</ul></div>';
-					} else {
-						wp_nav_menu(
+					wp_nav_menu(
 						array(
 							'theme_location' => 'primary',
 							'menu_id'        => 'primary-menu',
 							'container'      => 'div',
 							'container_class' => 'primary-menu-container',
 							'fallback_cb'    => 'wp_page_menu',
-							'depth'          => 2,
+							'depth'          => 0,
 						)
-						);
-					}
+					);
 					?>
 				</nav>
 

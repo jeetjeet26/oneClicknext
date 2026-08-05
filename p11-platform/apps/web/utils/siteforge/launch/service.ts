@@ -8,10 +8,14 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database, Json } from '@/types/supabase'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { recordSharedApprovalDecision } from '@/utils/services/shared-approvals'
+import { CloudwaysProviderClient } from '@/utils/siteforge/providers/cloudways-provider'
+import { getWordPressCredentialReference } from '@/utils/siteforge/wordpress/credential-vault'
+import { WordPressAPIClient } from '@/utils/siteforge/wordpress-client'
+import { validateWordPressThemeArtifact } from '@/utils/siteforge/wordpress/theme-artifact'
 import {
-  CloudwaysProviderClient,
-  CloudwaysUnsupportedOperationError,
-} from '@/utils/siteforge/providers/cloudways-provider'
+  siteForgeAnalyticsConfigSchema,
+  siteForgeLegalConfigSchema,
+} from '@/utils/siteforge/quality/deterministic-gates'
 import {
   getLaunchRelease,
   SiteForgeLaunchError,
@@ -26,6 +30,12 @@ interface PromotionTokenPayload {
   contentHash: string
   expiresAt: string
   nonce: string
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {}
 }
 
 function promotionSecret(): string {
@@ -232,9 +242,25 @@ async function loadCloudwaysTargets(releaseId: string, client: ServiceClient) {
     .eq('id', releaseId)
     .single()
   if (!release.data) throw new SiteForgeLaunchError('Launch release not found', 404)
+  const { data: website, error: websiteError } = await client
+    .from('property_websites')
+    .select('wordpress_credential_ref')
+    .eq('id', release.data.website_id)
+    .single()
+  if (websiteError || !website?.wordpress_credential_ref) {
+    throw new SiteForgeLaunchError(
+      'Production WordPress credential identity is required',
+      409
+    )
+  }
+  const parentCredentials = await getWordPressCredentialReference(
+    website.wordpress_credential_ref
+  )
   const { data: targets, error } = await client
     .from('siteforge_wordpress_targets')
-    .select('target_type, provider, provider_application_id, provider_parent_application_id, provider_server_id')
+    .select(
+      'id, target_type, provider, provider_application_id, provider_parent_application_id, provider_server_id, credential_ref, site_url'
+    )
     .eq('website_id', release.data.website_id)
     .eq('is_active', true)
     .in('target_type', ['staging', 'production'])
@@ -242,20 +268,42 @@ async function loadCloudwaysTargets(releaseId: string, client: ServiceClient) {
   const staging = targets?.find(target => target.target_type === 'staging')
   const production = targets?.find(target => target.target_type === 'production')
   const productionApplicationId =
-    production?.provider_application_id || staging?.provider_parent_application_id
-  const serverId = production?.provider_server_id || staging?.provider_server_id
+    production?.provider_application_id ||
+    parentCredentials.providerMetadata?.applicationId ||
+    null
+  const productionServerId =
+    production?.provider_server_id ||
+    parentCredentials.providerMetadata?.serverId ||
+    null
   if (
     staging?.provider !== 'cloudways' ||
+    parentCredentials.provider !== 'cloudways' ||
+    !parentCredentials.providerMetadata ||
+    (production && production.provider !== 'cloudways') ||
     !staging.provider_application_id ||
+    !staging.provider_parent_application_id ||
+    !staging.provider_server_id ||
     !productionApplicationId ||
-    !serverId
+    !productionServerId ||
+    productionApplicationId !== staging.provider_parent_application_id ||
+    productionServerId !== staging.provider_server_id ||
+    parentCredentials.providerMetadata.applicationId !==
+      staging.provider_parent_application_id ||
+    parentCredentials.providerMetadata.serverId !== staging.provider_server_id
   ) {
-    throw new SiteForgeLaunchError('Complete Cloudways staging and production identities are required', 409)
+    throw new SiteForgeLaunchError(
+      'Exact Cloudways parent/child application and server ownership is required',
+      409
+    )
   }
   return {
-    serverId,
+    serverId: productionServerId,
     stagingApplicationId: staging.provider_application_id,
     productionApplicationId,
+    productionTargetId: production?.id || null,
+    productionCredentialRef:
+      production?.credential_ref || website.wordpress_credential_ref,
+    productionUrl: production?.site_url || parentCredentials.url,
   }
 }
 
@@ -272,7 +320,8 @@ function cloudwaysClient(): CloudwaysProviderClient {
 async function consumePromotionToken(
   release: Awaited<ReturnType<typeof getLaunchRelease>>,
   token: string,
-  client: ServiceClient
+  client: ServiceClient,
+  allowClaimedReconciliation = false
 ) {
   verifyManualPromotionToken(token, {
     releaseId: release.id,
@@ -281,11 +330,16 @@ async function consumePromotionToken(
   })
   if (
     !release.promotion_token_hash ||
-    release.promotion_token_consumed_at ||
     tokenHash(token) !== release.promotion_token_hash ||
     !release.promotion_token_expires_at ||
     new Date(release.promotion_token_expires_at).getTime() <= Date.now()
   ) {
+    throw new SiteForgeLaunchError('Promotion token is expired or already consumed', 409)
+  }
+  if (release.promotion_token_consumed_at) {
+    if (allowClaimedReconciliation && release.promotion_operation_id) {
+      return release
+    }
     throw new SiteForgeLaunchError('Promotion token is expired or already consumed', 409)
   }
   const now = new Date().toISOString()
@@ -307,6 +361,7 @@ export async function promoteLaunchRelease(
     propertyId: string
     promotionToken: string
     actorId: string
+    backupConfirmation?: { operationId: string; backupId: string }
     manualConfirmation?: { operationId: string }
     requestId?: string
   },
@@ -319,8 +374,9 @@ export async function promoteLaunchRelease(
     contentHash: release.artifact_content_hash,
   })
   if (
-    !release.approval_expires_at ||
-    new Date(release.approval_expires_at).getTime() <= Date.now()
+    release.state !== 'promoted' &&
+    (!release.approval_expires_at ||
+      new Date(release.approval_expires_at).getTime() <= Date.now())
   ) {
     throw new SiteForgeLaunchError('Launch approval has expired', 409)
   }
@@ -328,89 +384,200 @@ export async function promoteLaunchRelease(
   const cloudways = cloudwaysClient()
 
   if (release.state === 'launch_approved') {
-    const backup = await cloudways.createApplicationBackup(targets.productionApplicationId)
-    const backupIdentity = backup.backupId || backup.operationId
-    if (!backupIdentity) {
-      throw new SiteForgeLaunchError('Cloudways did not return a durable backup identity', 502)
+    if (!input.backupConfirmation) {
+      return {
+        release,
+        manualRequired: true as const,
+        requiredConfirmation: 'backup' as const,
+        dashboardAction:
+          'Create a production application backup in Cloudways, then resubmit the exact completed backup operation ID and backup ID. Automatic backup creation is disabled because the current schema cannot safely deduplicate a crash after the provider mutation.',
+      }
     }
-    const { data: checkpointed, error } = await client
-      .from('siteforge_launch_releases')
-      .update({
-        backup_provider: 'cloudways',
-        backup_id: backupIdentity,
-        backup_operation_id: backup.operationId,
-      })
-      .eq('id', release.id)
-      .eq('state_version', release.state_version)
-      .select('*')
-      .single()
-    if (error || !checkpointed) throw new SiteForgeLaunchError('Failed to checkpoint Cloudways backup', 500)
-    if (backup.operationId) await cloudways.waitForOperation(backup.operationId)
-    const now = new Date().toISOString()
-    const { data: backedUp, error: backupUpdateError } = await client
-      .from('siteforge_launch_releases')
-      .update({ backed_up_at: now })
-      .eq('id', checkpointed.id)
-      .eq('state_version', checkpointed.state_version)
-      .select('*')
-      .single()
-    if (backupUpdateError || !backedUp) throw new SiteForgeLaunchError('Failed to record completed backup', 500)
-    release = await transitionLaunchRelease(
-      backedUp,
-      'backed_up',
-      'provider',
-      input.actorId,
-      'Production backup completed before promotion',
-      { backupId: backupIdentity, operationId: backup.operationId },
-      input.requestId || null,
-      client
-    )
+    await cloudways.verifyOperation(input.backupConfirmation.operationId, {
+      kind: 'backup',
+      serverId: targets.serverId,
+      applicationId: targets.productionApplicationId,
+      backupId: input.backupConfirmation.backupId,
+    })
+    if (
+      release.backup_operation_id &&
+      (release.backup_operation_id !== input.backupConfirmation.operationId ||
+        release.backup_id !== input.backupConfirmation.backupId)
+    ) {
+      throw new SiteForgeLaunchError(
+        'A different backup operation is already claimed for this release',
+        409
+      )
+    }
+    if (!release.backup_operation_id) {
+      const { data: checkpointed, error } = await client
+        .from('siteforge_launch_releases')
+        .update({
+          backup_provider: 'cloudways-manual',
+          backup_id: input.backupConfirmation.backupId,
+          backup_operation_id: input.backupConfirmation.operationId,
+          backed_up_at: new Date().toISOString(),
+        })
+        .eq('id', release.id)
+        .eq('state', 'launch_approved')
+        .eq('state_version', release.state_version)
+        .is('backup_operation_id', null)
+        .select('*')
+        .maybeSingle()
+      if (error) {
+        throw new SiteForgeLaunchError(
+          `Failed to claim the verified Cloudways backup: ${error.message}`,
+          500
+        )
+      }
+      if (checkpointed) release = checkpointed
+      else release = await getLaunchRelease(input.releaseId, input.propertyId, client)
+    }
+    if (
+      release.state === 'launch_approved' &&
+      release.backup_operation_id === input.backupConfirmation.operationId &&
+      release.backup_id === input.backupConfirmation.backupId
+    ) {
+      release = await transitionLaunchRelease(
+        release,
+        'backed_up',
+        'operator',
+        input.actorId,
+        'Verified exact pre-promotion production backup',
+        {
+          backupId: input.backupConfirmation.backupId,
+          operationId: input.backupConfirmation.operationId,
+          serverId: targets.serverId,
+          applicationId: targets.productionApplicationId,
+        },
+        input.requestId || null,
+        client
+      )
+    }
+  }
+  if (release.state === 'promoted') {
+    if (
+      !input.manualConfirmation ||
+      release.promotion_operation_id !== input.manualConfirmation.operationId
+    ) {
+      throw new SiteForgeLaunchError(
+        'Release is already promoted by a different or unconfirmed operation',
+        409
+      )
+    }
+    await cloudways.verifyOperation(input.manualConfirmation.operationId, {
+      kind: 'promotion',
+      serverId: targets.serverId,
+      applicationId: targets.productionApplicationId,
+      stagingApplicationId: targets.stagingApplicationId,
+    })
+    return { release, manualRequired: false as const }
   }
   if (release.state !== 'backed_up') {
     throw new SiteForgeLaunchError(`Release cannot be promoted from ${release.state}`, 409)
   }
-
-  let operationId: string
-  if (input.manualConfirmation) {
-    operationId = input.manualConfirmation.operationId
-  } else {
-    try {
-      const promotion = await cloudways.promoteStagingApplication(targets)
-      operationId = promotion.operationId || `cloudways-sync-${Date.now()}`
-      if (promotion.operationId) await cloudways.waitForOperation(promotion.operationId)
-    } catch (error) {
-      if (error instanceof CloudwaysUnsupportedOperationError) {
-        return {
-          release,
-          manualRequired: true as const,
-          dashboardAction: 'Push the approved staging application to live in Cloudways, then resubmit this token with manualConfirmation.operationId.',
-        }
-      }
-      throw error
+  if (!input.manualConfirmation) {
+    return {
+      release,
+      manualRequired: true as const,
+      requiredConfirmation: 'promotion' as const,
+      dashboardAction:
+        'Push the exact staging child application to its recorded production parent in Cloudways, then resubmit the completed operation ID. Automatic promotion is disabled because the provider mutation cannot be made crash-idempotent with the current schema.',
     }
   }
 
-  release = await consumePromotionToken(release, input.promotionToken, client)
+  const operationId = input.manualConfirmation.operationId
+  if (
+    release.promotion_operation_id &&
+    release.promotion_operation_id !== operationId
+  ) {
+    throw new SiteForgeLaunchError(
+      'A different promotion operation is already claimed for this release',
+      409
+    )
+  }
+  if (!release.promotion_operation_id) {
+    const { data: claimed, error: claimError } = await client
+      .from('siteforge_launch_releases')
+      .update({
+        promotion_provider: 'cloudways-manual-pending-verification',
+        promotion_operation_id: operationId,
+      })
+      .eq('id', release.id)
+      .eq('state', 'backed_up')
+      .eq('state_version', release.state_version)
+      .is('promotion_operation_id', null)
+      .select('*')
+      .maybeSingle()
+    if (claimError) {
+      throw new SiteForgeLaunchError(
+        `Failed to claim the promotion operation: ${claimError.message}`,
+        500
+      )
+    }
+    release =
+      claimed || (await getLaunchRelease(input.releaseId, input.propertyId, client))
+  }
+  if (release.promotion_operation_id !== operationId) {
+    throw new SiteForgeLaunchError(
+      'Promotion operation claim lost to another request',
+      409
+    )
+  }
+
+  await cloudways.verifyOperation(operationId, {
+    kind: 'promotion',
+    serverId: targets.serverId,
+    applicationId: targets.productionApplicationId,
+    stagingApplicationId: targets.stagingApplicationId,
+  })
+
+  release = await consumePromotionToken(
+    release,
+    input.promotionToken,
+    client,
+    true
+  )
   const promotedAt = new Date().toISOString()
   const { data: promoted, error: promotedError } = await client
     .from('siteforge_launch_releases')
     .update({
-      promotion_provider: input.manualConfirmation ? 'cloudways-manual' : 'cloudways',
+      promotion_provider: 'cloudways-manual',
       promotion_operation_id: operationId,
       promoted_at: promotedAt,
     })
     .eq('id', release.id)
+    .eq('state', 'backed_up')
     .eq('state_version', release.state_version)
+    .eq('promotion_operation_id', operationId)
     .select('*')
-    .single()
-  if (promotedError || !promoted) throw new SiteForgeLaunchError('Failed to record production promotion', 500)
+    .maybeSingle()
+  if (promotedError) {
+    throw new SiteForgeLaunchError('Failed to record production promotion', 500)
+  }
+  if (!promoted) {
+    const reconciled = await getLaunchRelease(input.releaseId, input.propertyId, client)
+    if (
+      reconciled.state === 'promoted' &&
+      reconciled.promotion_operation_id === operationId
+    ) {
+      return { release: reconciled, manualRequired: false as const }
+    }
+    throw new SiteForgeLaunchError('Promotion claim changed before completion', 409)
+  }
   release = await transitionLaunchRelease(
     promoted,
     'promoted',
-    input.manualConfirmation ? 'operator' : 'provider',
+    'operator',
     input.actorId,
-    input.manualConfirmation ? 'Operator confirmed Cloudways promotion' : 'Cloudways promotion completed',
-    { operationId, manual: Boolean(input.manualConfirmation) },
+    'Operator confirmed exact Cloudways promotion ownership',
+    {
+      operationId,
+      serverId: targets.serverId,
+      productionApplicationId: targets.productionApplicationId,
+      stagingApplicationId: targets.stagingApplicationId,
+      manual: true,
+    },
     input.requestId || null,
     client
   )
@@ -429,54 +596,167 @@ export async function restoreLaunchRelease(
   client: ServiceClient = createServiceClient()
 ) {
   let release = await getLaunchRelease(input.releaseId, input.propertyId, client)
-  if (!['promoted', 'production_certified', 'live', 'failed'].includes(release.state)) {
+  if (
+    !['promoted', 'production_certified', 'live', 'failed', 'rolled_back'].includes(
+      release.state
+    )
+  ) {
     throw new SiteForgeLaunchError(`Release cannot be restored from ${release.state}`, 409)
   }
   if (!release.backup_id || !release.rollback_artifact_id || !release.rollback_content_hash) {
     throw new SiteForgeLaunchError('Release does not have a complete rollback identity', 409)
   }
   if (!input.rationale.trim()) throw new SiteForgeLaunchError('Restore rationale is required', 400)
+  if (!input.manualConfirmation) {
+    return requestLaunchRestore(
+      {
+        releaseId: input.releaseId,
+        propertyId: input.propertyId,
+        rationale: input.rationale,
+        actorId: input.actorId,
+        requestId: input.requestId,
+        source: 'manager_request',
+      },
+      client
+    )
+  }
+
   const targets = await loadCloudwaysTargets(release.id, client)
-  let operationId: string
-  if (input.manualConfirmation) {
-    operationId = input.manualConfirmation.operationId
-  } else {
-    try {
-      const cloudways = cloudwaysClient()
-      const restore = await cloudways.restoreApplicationBackup({
-        applicationId: targets.productionApplicationId,
-        backupId: release.backup_id,
+  let { data: drill, error: drillError } = await client
+    .from('siteforge_restore_drills')
+    .select('*')
+    .eq('release_id', release.id)
+    .in('status', ['queued', 'restoring', 'verifying'])
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (drillError) {
+    throw new SiteForgeLaunchError(
+      `Failed to load the awaiting-operator restore request: ${drillError.message}`,
+      500
+    )
+  }
+  if (!drill) {
+    await requestLaunchRestore(
+      {
+        releaseId: input.releaseId,
+        propertyId: input.propertyId,
+        rationale: input.rationale,
+        actorId: input.actorId,
+        requestId: input.requestId,
+        source: 'manager_request',
+      },
+      client
+    )
+    const loaded = await client
+      .from('siteforge_restore_drills')
+      .select('*')
+      .eq('release_id', release.id)
+      .in('status', ['queued', 'restoring', 'verifying'])
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    drill = loaded.data
+    drillError = loaded.error
+  }
+  if (drillError || !drill) {
+    throw new SiteForgeLaunchError(
+      'An awaiting-operator restore request is required before execution confirmation',
+      409
+    )
+  }
+
+  const operationId = input.manualConfirmation.operationId
+  if (drill.provider_operation_id && drill.provider_operation_id !== operationId) {
+    throw new SiteForgeLaunchError(
+      'A different restore operation is already claimed for this request',
+      409
+    )
+  }
+  if (!drill.provider_operation_id) {
+    const { data: claimed, error: claimError } = await client
+      .from('siteforge_restore_drills')
+      .update({
+        status: 'verifying',
+        provider_operation_id: operationId,
+        started_at: drill.started_at || new Date().toISOString(),
       })
-      operationId = restore.operationId || `cloudways-restore-sync-${Date.now()}`
-      if (restore.operationId) await cloudways.waitForOperation(restore.operationId)
-    } catch (error) {
-      if (error instanceof CloudwaysUnsupportedOperationError) {
-        return {
-          release,
-          manualRequired: true as const,
-          dashboardAction: 'Restore the recorded backup in Cloudways, then resubmit with manualConfirmation.operationId.',
-        }
-      }
-      throw error
+      .eq('id', drill.id)
+      .in('status', ['queued', 'restoring', 'verifying'])
+      .is('provider_operation_id', null)
+      .select('*')
+      .maybeSingle()
+    if (claimError) {
+      throw new SiteForgeLaunchError(
+        `Failed to claim restore verification: ${claimError.message}`,
+        500
+      )
+    }
+    if (!claimed) {
+      const reloaded = await client
+        .from('siteforge_restore_drills')
+        .select('*')
+        .eq('id', drill.id)
+        .single()
+      drill = reloaded.data
+    } else {
+      drill = claimed
     }
   }
-  release = await transitionLaunchRelease(
-    release,
-    'rolled_back',
-    input.manualConfirmation ? 'operator' : 'provider',
-    input.actorId,
-    input.rationale,
-    {
-      backupId: release.backup_id,
-      operationId,
-      rollbackArtifactId: release.rollback_artifact_id,
-      rollbackContentHash: release.rollback_content_hash,
-      manual: Boolean(input.manualConfirmation),
-    },
-    input.requestId || null,
-    client
+  if (!drill || drill.provider_operation_id !== operationId) {
+    throw new SiteForgeLaunchError('Restore operation claim changed concurrently', 409)
+  }
+
+  await cloudwaysClient().verifyOperation(operationId, {
+    kind: 'restore',
+    serverId: targets.serverId,
+    applicationId: targets.productionApplicationId,
+    backupId: release.backup_id,
+  })
+  if (!targets.productionCredentialRef || !targets.productionUrl) {
+    throw new SiteForgeLaunchError(
+      'Production credentials and URL are required to verify the restored manifest',
+      409
+    )
+  }
+  const credentials = await getWordPressCredentialReference(
+    targets.productionCredentialRef
   )
-  const { error: websiteError } = await client
+  const remoteManifest = await new WordPressAPIClient(targets.productionUrl, {
+    username: credentials.username,
+    password: credentials.password,
+  }).getContentManifest()
+  if (remoteManifest.content_hash !== release.rollback_content_hash) {
+    throw new SiteForgeLaunchError(
+      'Restored remote manifest does not match the certified rollback identity',
+      409
+    )
+  }
+
+  const { data: website, error: websiteLookupError } = await client
+    .from('property_websites')
+    .select('production_artifact_id, production_content_hash')
+    .eq('id', release.website_id)
+    .single()
+  if (websiteLookupError || !website) {
+    throw new SiteForgeLaunchError('Restore website projection is unavailable', 500)
+  }
+  const alreadyProjected =
+    website.production_artifact_id === release.rollback_artifact_id &&
+    website.production_content_hash === release.rollback_content_hash
+  if (
+    !alreadyProjected &&
+    (website.production_artifact_id !== release.artifact_id ||
+      website.production_content_hash !== release.artifact_content_hash)
+  ) {
+    throw new SiteForgeLaunchError(
+      'Production projection changed after restore was requested',
+      409
+    )
+  }
+  const { data: projected, error: websiteError } = alreadyProjected
+    ? { data: { id: release.website_id }, error: null }
+    : await client
     .from('property_websites')
     .update({
       production_artifact_id: release.rollback_artifact_id,
@@ -489,6 +769,340 @@ export async function restoreLaunchRelease(
     .eq('id', release.website_id)
     .eq('production_artifact_id', release.artifact_id)
     .eq('production_content_hash', release.artifact_content_hash)
-  if (websiteError) throw new SiteForgeLaunchError('Restore succeeded but website projection update failed', 500)
+    .select('id')
+    .maybeSingle()
+  if (websiteError || !projected) {
+    throw new SiteForgeLaunchError(
+      'Verified restore could not update the website projection',
+      500
+    )
+  }
+  if (release.state !== 'rolled_back') {
+    release = await transitionLaunchRelease(
+      release,
+      'rolled_back',
+      'operator',
+      input.actorId,
+      input.rationale,
+      {
+        backupId: release.backup_id,
+        operationId,
+        rollbackArtifactId: release.rollback_artifact_id,
+        rollbackContentHash: release.rollback_content_hash,
+        remoteManifestHash: remoteManifest.content_hash,
+        serverId: targets.serverId,
+        applicationId: targets.productionApplicationId,
+        manual: true,
+      },
+      input.requestId || null,
+      client
+    )
+  }
   return { release, manualRequired: false as const }
+}
+
+export async function requestLaunchRestore(
+  input: {
+    releaseId: string
+    propertyId: string
+    rationale: string
+    actorId: string
+    requestId?: string
+    source:
+      | 'manager_request'
+      | 'production_failure'
+      | 'production_cancel'
+      | 'production_health'
+      | 'restore_drill'
+      | 'stale_job'
+  },
+  client: ServiceClient = createServiceClient()
+) {
+  const release = await getLaunchRelease(input.releaseId, input.propertyId, client)
+  if (!['promoted', 'production_certified', 'live', 'failed'].includes(release.state)) {
+    throw new SiteForgeLaunchError(
+      `Release cannot request restore protection from ${release.state}`,
+      409
+    )
+  }
+  if (!release.backup_id || !release.rollback_artifact_id || !release.rollback_content_hash) {
+    throw new SiteForgeLaunchError(
+      'Restore request requires the observed rollback artifact and backup identity',
+      409
+    )
+  }
+
+  let protectionApplied = false
+  let protectionError: string | null = null
+  try {
+    await protectLaunchProduction(release, client)
+    protectionApplied = true
+  } catch (error) {
+    protectionError = error instanceof Error ? error.message : String(error)
+  }
+
+  const now = new Date().toISOString()
+  const incidentValues = {
+    org_id: release.org_id,
+    property_id: release.property_id,
+    website_id: release.website_id,
+    artifact_id: release.artifact_id,
+    dedupe_key: `restore-request:${release.id}`,
+    severity: 'critical',
+    status: 'open',
+    category: 'restore_required',
+    title: 'SiteForge production restore requires an operator',
+    summary: input.rationale.trim(),
+    evidence: {
+      releaseId: release.id,
+      source: input.source,
+      requestId: input.requestId || null,
+      protectionApplied,
+      protectionError,
+      backupId: release.backup_id,
+      rollbackArtifactId: release.rollback_artifact_id,
+      rollbackContentHash: release.rollback_content_hash,
+      executionRequiresOperator: true,
+    } as Json,
+    updated_at: now,
+  }
+  const { data: existingIncident, error: incidentLookupError } = await client
+    .from('siteforge_incidents')
+    .select('id')
+    .eq('website_id', release.website_id)
+    .eq('dedupe_key', incidentValues.dedupe_key)
+    .neq('status', 'resolved')
+    .maybeSingle()
+  if (incidentLookupError) {
+    throw new SiteForgeLaunchError(
+      `Production was protected but the restore incident could not be loaded: ${incidentLookupError.message}`,
+      500
+    )
+  }
+  const incidentResult = existingIncident
+    ? await client
+        .from('siteforge_incidents')
+        .update(incidentValues)
+        .eq('id', existingIncident.id)
+    : await client.from('siteforge_incidents').insert(incidentValues)
+  if (incidentResult.error && incidentResult.error.code !== '23505') {
+    throw new SiteForgeLaunchError(
+      `Production was protected but the restore incident could not be persisted: ${incidentResult.error.message}`,
+      500
+    )
+  }
+
+  const dedupeKey = `siteforge-restore-request:${release.id}`
+  let { data: job, error: jobLookupError } = await client
+    .from('shared_jobs')
+    .select('id, lifecycle_status')
+    .eq('org_id', release.org_id)
+    .eq('domain', 'siteforge.restore-request')
+    .eq('dedupe_key', dedupeKey)
+    .maybeSingle()
+  if (jobLookupError) {
+    throw new SiteForgeLaunchError(
+      `Failed to load the durable restore request: ${jobLookupError.message}`,
+      500
+    )
+  }
+  if (!job) {
+    const created = await client
+      .from('shared_jobs')
+      .insert({
+        org_id: release.org_id,
+        property_id: release.property_id,
+        domain: 'siteforge.restore-request',
+        subject_type: 'siteforge_launch_release',
+        subject_id: release.id,
+        lifecycle_status: 'queued',
+        status_reason: 'awaiting_operator_restore',
+        dedupe_key: dedupeKey,
+        payload: {
+          releaseId: release.id,
+          websiteId: release.website_id,
+          actorId: input.actorId,
+          source: input.source,
+        },
+        max_attempts: 10,
+      })
+      .select('id, lifecycle_status')
+      .maybeSingle()
+    if (created.error && created.error.code !== '23505') {
+      throw new SiteForgeLaunchError(
+        `Failed to create the durable restore request: ${created.error.message}`,
+        500
+      )
+    }
+    job = created.data
+    if (!job) {
+      const concurrent = await client
+        .from('shared_jobs')
+        .select('id, lifecycle_status')
+        .eq('org_id', release.org_id)
+        .eq('domain', 'siteforge.restore-request')
+        .eq('dedupe_key', dedupeKey)
+        .single()
+      job = concurrent.data
+      jobLookupError = concurrent.error
+    }
+  }
+  if (jobLookupError || !job) {
+    throw new SiteForgeLaunchError('Failed to reconcile the durable restore request', 500)
+  }
+
+  const { data: existingDrill, error: drillLookupError } = await client
+    .from('siteforge_restore_drills')
+    .select('id')
+    .eq('release_id', release.id)
+    .in('status', ['queued', 'restoring', 'verifying'])
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (drillLookupError) {
+    throw new SiteForgeLaunchError(
+      `Failed to load the awaiting-operator restore request: ${drillLookupError.message}`,
+      500
+    )
+  }
+  if (!existingDrill) {
+    const { data: claimed, error: claimError } = await client
+      .from('shared_jobs')
+      .update({
+        lifecycle_status: 'running',
+        status_reason: 'creating_restore_request',
+        heartbeat_at: now,
+        started_at: now,
+        updated_at: now,
+      })
+      .eq('id', job.id)
+      .in('lifecycle_status', ['queued', 'retrying'])
+      .select('id')
+      .maybeSingle()
+    if (claimError) {
+      throw new SiteForgeLaunchError(
+        `Failed to claim restore request creation: ${claimError.message}`,
+        500
+      )
+    }
+    if (claimed) {
+      const { error: drillCreateError } = await client
+        .from('siteforge_restore_drills')
+        .insert({
+          org_id: release.org_id,
+          property_id: release.property_id,
+          website_id: release.website_id,
+          release_id: release.id,
+          backup_id: release.backup_id,
+          expected_artifact_id: release.rollback_artifact_id,
+          expected_content_hash: release.rollback_content_hash,
+          status: 'verifying',
+          verification_report: {
+            requestType: input.source,
+            executionRequiresOperator: true,
+            restoreCompleted: false,
+            protectionApplied,
+            protectionError,
+            requestedAt: now,
+          } as Json,
+        })
+      if (drillCreateError) {
+        await client
+          .from('shared_jobs')
+          .update({
+            lifecycle_status: 'retrying',
+            status_reason: 'restore_request_persistence_failed',
+            retry_at: now,
+            available_at: now,
+            error_message: drillCreateError.message,
+            updated_at: now,
+          })
+          .eq('id', job.id)
+          .eq('lifecycle_status', 'running')
+        throw new SiteForgeLaunchError(
+          `Failed to persist the awaiting-operator restore request: ${drillCreateError.message}`,
+          500
+        )
+      }
+      await client
+        .from('shared_jobs')
+        .update({
+          lifecycle_status: 'succeeded',
+          status_reason: 'awaiting_operator_restore',
+          current_step: 'Restore request is awaiting an operator',
+          progress: 100,
+          finished_at: now,
+          heartbeat_at: now,
+          updated_at: now,
+        })
+        .eq('id', job.id)
+        .eq('lifecycle_status', 'running')
+    }
+  }
+
+  return {
+    release,
+    manualRequired: true as const,
+    requiredConfirmation: 'restore' as const,
+    dashboardAction:
+      'Production is protected/noindex. A launch manager must restore the recorded backup in Cloudways and submit the exact completed operation ID.',
+    protectionApplied,
+    protectionError,
+  }
+}
+
+async function protectLaunchProduction(
+  release: Awaited<ReturnType<typeof getLaunchRelease>>,
+  client: ServiceClient
+): Promise<void> {
+  const targets = await loadCloudwaysTargets(release.id, client)
+  if (!targets.productionCredentialRef || !targets.productionUrl) {
+    throw new Error('Production credentials and URL are unavailable for noindex protection')
+  }
+  const { data: artifact, error } = await client
+    .from('siteforge_blueprint_versions')
+    .select('blueprint, runtime_contract_version')
+    .eq('id', release.artifact_id)
+    .eq('website_id', release.website_id)
+    .single()
+  if (error || !artifact) {
+    throw new Error(`Production artifact is unavailable for protection: ${error?.message}`)
+  }
+  if (artifact.runtime_contract_version === 3) {
+    throw new Error(
+      'Runtime v3 production protection requires the supervised exact restore; legacy settings protection is forbidden'
+    )
+  }
+  const blueprint = asRecord(artifact.blueprint)
+  const themeArtifact = validateWordPressThemeArtifact(
+    blueprint.wordpressThemeArtifact
+  )
+  const credentials = await getWordPressCredentialReference(
+    targets.productionCredentialRef
+  )
+  await new WordPressAPIClient(targets.productionUrl, {
+    username: credentials.username,
+    password: credentials.password,
+  }).applySiteForgeSettings({
+    themeArtifact,
+    legal: siteForgeLegalConfigSchema.parse(blueprint.legal),
+    analytics: siteForgeAnalyticsConfigSchema.parse(blueprint.analytics),
+    targetMode: 'staging',
+  })
+  if (targets.productionTargetId) {
+    const { error: targetError } = await client
+      .from('siteforge_wordpress_targets')
+      .update({
+        protection_mode: 'noindex',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', targets.productionTargetId)
+      .eq('provider_application_id', targets.productionApplicationId)
+      .eq('provider_server_id', targets.serverId)
+    if (targetError) {
+      throw new Error(
+        `Noindex was applied but its target projection failed: ${targetError.message}`
+      )
+    }
+  }
 }

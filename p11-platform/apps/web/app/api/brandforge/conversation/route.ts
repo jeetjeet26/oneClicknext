@@ -5,7 +5,6 @@ import OpenAI from 'openai'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || '')
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || '' })
 
 type ConversationRole = 'user' | 'assistant'
 type ConversationMessage = {
@@ -187,6 +186,7 @@ Current Market Context:
 
     // Helper function to call OpenAI (fallback)
     async function callOpenAI(messages: { role: 'system' | 'user' | 'assistant', content: string }[]) {
+      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
       const completion = await openai.chat.completions.create({
         model: 'gpt-4o',
         messages,

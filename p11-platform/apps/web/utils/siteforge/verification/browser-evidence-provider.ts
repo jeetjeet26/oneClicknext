@@ -1,10 +1,15 @@
 import { SITEFORGE_CERTIFICATION_POLICY_VERSION } from './browser-evidence'
+import type { CertificationArtifactBinding } from './certification-binding'
 
 export async function collectBrowserCertificationEvidence(input: {
   targetUrl: string
   expectedUrls: string[]
   credentials?: { username: string; password: string }
-  phase: 'protected' | 'public'
+  environment: 'protected_preview' | 'staging' | 'production'
+  access: 'protected' | 'public'
+  requireIndexable: boolean
+  artifact: CertificationArtifactBinding
+  bindingHash: string
 }): Promise<unknown | undefined> {
   const endpoint = process.env.SITEFORGE_BROWSER_CERTIFIER_URL
   if (!endpoint) return undefined
@@ -31,7 +36,11 @@ export async function collectBrowserCertificationEvidence(input: {
     },
     body: JSON.stringify({
       policyVersion: SITEFORGE_CERTIFICATION_POLICY_VERSION,
-      phase: input.phase,
+      environment: input.environment,
+      access: input.access,
+      requireIndexable: input.requireIndexable,
+      artifact: input.artifact,
+      bindingHash: input.bindingHash,
       targetUrl: input.targetUrl,
       expectedUrls: input.expectedUrls,
       credentials: input.credentials,

@@ -83,6 +83,7 @@ export function ReviewStep() {
           type: community.type || null,
           address: community.address.street ? community.address : null,
           websiteUrl: community.websiteUrl || null,
+          additionalUrls: community.additionalUrls.filter(url => url.trim()),
           unitCount: community.unitCount ? parseInt(community.unitCount) : null,
           yearBuilt: community.yearBuilt ? parseInt(community.yearBuilt) : null,
           amenities: community.amenities,

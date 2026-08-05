@@ -13,6 +13,7 @@ interface TrackEventParams {
   propertyId: string
   eventType: EventType
   metadata?: Record<string, unknown>
+  idempotencyKey?: string
 }
 
 /**
@@ -24,6 +25,7 @@ export async function trackEngagementEvent({
   propertyId,
   eventType,
   metadata,
+  idempotencyKey,
 }: TrackEventParams): Promise<void> {
   const supabase = createServiceClient()
   const payload: Database['public']['Tables']['lead_engagement_events']['Insert'] = {
@@ -32,15 +34,23 @@ export async function trackEngagementEvent({
     event_type: eventType,
     metadata: ((metadata || {}) as Json),
     score_weight: EVENT_WEIGHTS[eventType],
+    idempotency_key: idempotencyKey || null,
   }
 
-  const { error } = await supabase
-    .from('lead_engagement_events')
-    .insert(payload)
+  const query = idempotencyKey
+    ? supabase
+        .from('lead_engagement_events')
+        .upsert(payload, {
+          onConflict: 'property_id,idempotency_key',
+          ignoreDuplicates: true,
+        })
+    : supabase.from('lead_engagement_events').insert(payload)
+  const { error } = await query
 
   if (error) {
-    console.error(`[EngagementTracker] Failed to insert ${eventType} for lead ${leadId}:`, error)
-    return
+    throw new Error(
+      `[EngagementTracker] Failed to insert ${eventType} for lead ${leadId}: ${error.message}`
+    )
   }
 
   // Rescore the lead after new event
@@ -48,6 +58,8 @@ export async function trackEngagementEvent({
     .rpc('score_lead', { p_lead_id: leadId })
 
   if (scoreError) {
-    console.error(`[EngagementTracker] Failed to rescore lead ${leadId}:`, scoreError)
+    throw new Error(
+      `[EngagementTracker] Failed to rescore lead ${leadId}: ${scoreError.message}`
+    )
   }
 }

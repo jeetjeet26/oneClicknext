@@ -9,8 +9,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-$data_source = oneclick_get_block_field( 'data_source', $block, 'yardi' );
-$display_style = oneclick_get_block_field( 'display_style', $block, 'interactive' );
+$data_source = oneclick_get_block_field( 'data_source', $block, 'siteforge' );
+$display_style = oneclick_get_block_field( 'display_style', $block, 'cards' );
 $filter_options = oneclick_get_block_field( 'filter_options', $block, array() );
 $floor_plans = oneclick_get_block_field( 'floor_plans', $block, array() );
 $show_pricing = (bool) oneclick_get_block_field( 'show_pricing', $block, true );
@@ -18,7 +18,7 @@ $show_availability = (bool) oneclick_get_block_field( 'show_availability', $bloc
 $floor_plans = is_array( $floor_plans ) ? $floor_plans : array();
 ?>
 
-<section <?php echo oneclick_get_block_wrapper_attributes( array( 'class' => 'block-plans-availability' ) ); ?> data-source="<?php echo esc_attr( $data_source ); ?>" data-style="<?php echo esc_attr( $display_style ); ?>">
+<section <?php echo oneclick_get_block_wrapper_attributes( $block, array( 'class' => 'block-plans-availability' ) ); ?> data-source="<?php echo esc_attr( $data_source ); ?>" data-style="<?php echo esc_attr( $display_style ); ?>">
 	<div class="site-container">
 		<div class="plans-browser">
 			<?php
@@ -70,17 +70,21 @@ $floor_plans = is_array( $floor_plans ) ? $floor_plans : array();
 						<?php foreach ( $floor_plans as $floor_plan ) { ?>
 							<?php
 							$name = sanitize_text_field( $floor_plan['name'] ?? '' );
-							$bedrooms = absint( $floor_plan['bedrooms'] ?? 0 );
+							if ( ! $name || ! array_key_exists( 'bedrooms', $floor_plan ) ) {
+								continue;
+							}
+							$bedrooms = absint( $floor_plan['bedrooms'] );
 							$bathrooms = isset( $floor_plan['bathrooms'] ) ? (float) $floor_plan['bathrooms'] : null;
 							$sqft_min = isset( $floor_plan['sqft_min'] ) ? absint( $floor_plan['sqft_min'] ) : null;
 							$sqft_max = isset( $floor_plan['sqft_max'] ) ? absint( $floor_plan['sqft_max'] ) : null;
+							$sqft_filter_value = null !== $sqft_max ? $sqft_max : $sqft_min;
 							$rent_min = isset( $floor_plan['rent_min'] ) ? (float) $floor_plan['rent_min'] : null;
 							$rent_max = isset( $floor_plan['rent_max'] ) ? (float) $floor_plan['rent_max'] : null;
 							$available_count = isset( $floor_plan['available_count'] ) ? absint( $floor_plan['available_count'] ) : null;
 							$image_url = esc_url( $floor_plan['image_url'] ?? '' );
 							$image_alt = sanitize_text_field( $floor_plan['image_alt'] ?? ( $name . ' floor plan' ) );
 							?>
-							<article class="plan-card" data-floor-plan-row data-bedrooms="<?php echo esc_attr( $bedrooms ); ?>" data-sqft="<?php echo esc_attr( $sqft_max ?? $sqft_min ?? 0 ); ?>">
+							<article class="plan-card" data-floor-plan-row data-bedrooms="<?php echo esc_attr( $bedrooms ); ?>"<?php if ( null !== $sqft_filter_value ) { ?> data-sqft="<?php echo esc_attr( $sqft_filter_value ); ?>"<?php } ?>>
 								<?php if ( $image_url ) { ?>
 									<img class="plan-image" src="<?php echo $image_url; ?>" alt="<?php echo esc_attr( $image_alt ); ?>" loading="lazy" decoding="async">
 								<?php } ?>

@@ -1,26 +1,59 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { Database, Json } from '@/types/supabase'
+import type { Database, Json, Tables } from '@/types/supabase'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { isTrustedCertificationRequired } from '@/utils/siteforge/editor/feature'
+import {
+  isSiteForgeRuntimeBackedContractVersion,
+  parseSiteForgeRuntimeContractVersion,
+} from '@/utils/siteforge/runtime-dispatcher'
 
 export interface CertifiedRenderedEditorEvidence {
   source: 'server_certification'
   certificationId: string
+  artifactId: string
   reportHash: string
   policyVersion: string
   environment: 'preview' | 'staging' | 'production'
+  status: 'passed' | 'failed'
+  report: Json
+}
+
+export interface HistoricalRenderedEditorEvidence {
+  source: 'ancestor_certification'
+  certificationId: string
+  artifactId: string
+  reportHash: string
+  policyVersion: string
+  environment: 'preview' | 'staging' | 'production'
+  status: 'passed' | 'failed'
   report: Json
 }
 
 export interface UncertifiedRenderedEditorEvidence {
-  source: 'certification_not_required'
+  source: 'certification_not_required' | 'certification_unavailable'
   artifactId: string
   contentHash: string
   report: Json
 }
 
 export type RenderedEditorEvidence =
-  CertifiedRenderedEditorEvidence | UncertifiedRenderedEditorEvidence
+  | CertifiedRenderedEditorEvidence
+  | HistoricalRenderedEditorEvidence
+  | UncertifiedRenderedEditorEvidence
+
+export class SiteForgeEditorContextError extends Error {
+  constructor(
+    public readonly code:
+      | 'website_not_found'
+      | 'artifact_version_conflict'
+      | 'artifact_not_found'
+      | 'artifact_hash_conflict',
+    message: string
+  ) {
+    super(message)
+    this.name = 'SiteForgeEditorContextError'
+  }
+}
 
 export interface SiteForgeEditorSnapshot {
   website: {
@@ -45,6 +78,7 @@ export interface SiteForgeEditorSnapshot {
   propertyEvidence: Json
   approvedAssets: Json
   revisionHistory: Json
+  conversationHistory: Json
   wordpressCapabilities: Json
   renderedEvidence: RenderedEditorEvidence
 }
@@ -53,9 +87,78 @@ function asJson(value: unknown): Json {
   return value as Json
 }
 
+type CertificationEvidenceRow = Pick<
+  Tables<'siteforge_certification_evidence'>,
+  | 'id'
+  | 'artifact_id'
+  | 'policy_version'
+  | 'environment'
+  | 'status'
+  | 'report_hash'
+  | 'report'
+>
+
+export function selectRenderedEditorEvidence(input: {
+  certifications: CertificationEvidenceRow[]
+  revisionIds: string[]
+  currentArtifactId: string
+  currentContentHash: string
+  certificationRequired: boolean
+  lookupFailed?: boolean
+}): RenderedEditorEvidence {
+  const revisionIds = new Set(input.revisionIds)
+  const certifications = input.certifications.filter(certification =>
+    revisionIds.has(certification.artifact_id)
+  )
+  const currentCertification = certifications.find(
+    certification => certification.artifact_id === input.currentArtifactId
+  )
+  const selectedCertification = currentCertification || certifications[0] || null
+  if (
+    selectedCertification &&
+    !['preview', 'staging', 'production'].includes(
+      selectedCertification.environment
+    )
+  ) {
+    throw new Error('Rendered certification environment is invalid')
+  }
+  if (selectedCertification) {
+    return {
+      source: currentCertification
+        ? 'server_certification'
+        : 'ancestor_certification',
+      certificationId: selectedCertification.id,
+      artifactId: selectedCertification.artifact_id,
+      reportHash: selectedCertification.report_hash,
+      policyVersion: selectedCertification.policy_version,
+      environment:
+        selectedCertification.environment as CertifiedRenderedEditorEvidence['environment'],
+      status:
+        selectedCertification.status as CertifiedRenderedEditorEvidence['status'],
+      report: selectedCertification.report,
+    }
+  }
+  return {
+    source: input.certificationRequired
+      ? 'certification_unavailable'
+      : 'certification_not_required',
+    artifactId: input.currentArtifactId,
+    contentHash: input.currentContentHash,
+    report: {
+      certificationRequired: input.certificationRequired,
+      reason: input.lookupFailed
+        ? 'Rendered evidence lookup was unavailable; exact certification remains mandatory before deployment approval'
+        : input.certificationRequired
+          ? 'This draft has no rendered evidence yet; editing may continue, but approval and deployment remain blocked until exact certification passes'
+          : 'Trusted browser certification is disabled for semantic editing',
+    },
+  }
+}
+
 export async function buildSiteForgeEditorSnapshot(
   input: {
     websiteId: string
+    sessionId: string
     expectedArtifactId: string
     expectedContentHash: string
   },
@@ -67,12 +170,16 @@ export async function buildSiteForgeEditorSnapshot(
     .eq('id', input.websiteId)
     .single()
   if (websiteError || !website) {
-    throw new Error(
+    throw new SiteForgeEditorContextError(
+      'website_not_found',
       `Editor website not found: ${websiteError?.message || input.websiteId}`
     )
   }
   if (website.current_artifact_version_id !== input.expectedArtifactId) {
-    throw new Error('SiteForge artifact version conflict')
+    throw new SiteForgeEditorContextError(
+      'artifact_version_conflict',
+      'SiteForge artifact version conflict; reload the editor and retry against the current revision'
+    )
   }
 
   const [
@@ -80,6 +187,7 @@ export async function buildSiteForgeEditorSnapshot(
     propertyResult,
     assetsResult,
     revisionsResult,
+    messagesResult,
     certificationResult,
     runtimeTargetResult,
   ] = await Promise.all([
@@ -114,14 +222,21 @@ export async function buildSiteForgeEditorSnapshot(
       .order('version', { ascending: false })
       .limit(20),
     client
-      .from('siteforge_certification_evidence')
-      .select('id, policy_version, environment, report_hash, report')
-      .eq('website_id', website.id)
-      .eq('artifact_id', input.expectedArtifactId)
-      .eq('status', 'passed')
+      .from('siteforge_edit_messages')
+      .select(
+        'id, role, status, content, failure_code, resulting_artifact_id, created_at'
+      )
+      .eq('session_id', input.sessionId)
       .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle(),
+      .limit(12),
+    client
+      .from('siteforge_certification_evidence')
+      .select(
+        'id, artifact_id, policy_version, environment, status, report_hash, report'
+      )
+      .eq('website_id', website.id)
+      .order('created_at', { ascending: false })
+      .limit(20),
     client
       .from('siteforge_wordpress_targets')
       .select(
@@ -134,12 +249,16 @@ export async function buildSiteForgeEditorSnapshot(
   ])
 
   if (artifactResult.error || !artifactResult.data) {
-    throw new Error(
+    throw new SiteForgeEditorContextError(
+      'artifact_not_found',
       `Editor artifact not found: ${artifactResult.error?.message || input.expectedArtifactId}`
     )
   }
   if (artifactResult.data.content_hash !== input.expectedContentHash) {
-    throw new Error('SiteForge artifact hash conflict')
+    throw new SiteForgeEditorContextError(
+      'artifact_hash_conflict',
+      'SiteForge artifact hash conflict; reload the editor and retry against the current revision'
+    )
   }
   if (propertyResult.error || !propertyResult.data) {
     throw new Error(
@@ -154,54 +273,40 @@ export async function buildSiteForgeEditorSnapshot(
       `Editor revision history unavailable: ${revisionsResult.error.message}`
     )
   }
+  if (messagesResult.error) {
+    throw new Error(
+      `Editor conversation history unavailable: ${messagesResult.error.message}`
+    )
+  }
   if (runtimeTargetResult.error) {
     throw new Error(
       `Editor WordPress runtime capability unavailable: ${runtimeTargetResult.error.message}`
     )
   }
   const certificationRequired = isTrustedCertificationRequired()
-  if (
-    certificationRequired &&
-    (certificationResult.error || !certificationResult.data)
-  ) {
-    throw new Error(
-      'Trusted rendered certification is required before semantic editing'
-    )
-  }
-  if (
-    certificationResult.data &&
-    !['preview', 'staging', 'production'].includes(
-      certificationResult.data.environment
-    )
-  ) {
-    throw new Error('Rendered certification environment is invalid')
-  }
-  const renderedEvidence: RenderedEditorEvidence = certificationResult.data
-    ? {
-        source: 'server_certification',
-        certificationId: certificationResult.data.id,
-        reportHash: certificationResult.data.report_hash,
-        policyVersion: certificationResult.data.policy_version,
-        environment: certificationResult.data
-          .environment as CertifiedRenderedEditorEvidence['environment'],
-        report: certificationResult.data.report,
-      }
-    : {
-        source: 'certification_not_required',
-        artifactId: input.expectedArtifactId,
-        contentHash: input.expectedContentHash,
-        report: {
-          certificationRequired: false,
-          reason:
-            'Trusted browser certification is disabled for semantic editing',
-        },
-      }
+  const renderedEvidence = selectRenderedEditorEvidence({
+    certifications: certificationResult.data || [],
+    revisionIds: (revisionsResult.data || []).map(revision => revision.id),
+    currentArtifactId: input.expectedArtifactId,
+    currentContentHash: input.expectedContentHash,
+    certificationRequired,
+    lookupFailed: Boolean(certificationResult.error),
+  })
 
   const blueprint = artifactResult.data.blueprint
   const blueprintRecord =
     blueprint && typeof blueprint === 'object' && !Array.isArray(blueprint)
       ? (blueprint as Record<string, Json | undefined>)
       : {}
+  const targetRuntimeContractVersion = runtimeTargetResult.data
+    ? parseSiteForgeRuntimeContractVersion(
+        runtimeTargetResult.data.runtime_contract_version
+      )
+    : null
+  const runtimeBacked =
+    targetRuntimeContractVersion !== null &&
+    isSiteForgeRuntimeBackedContractVersion(targetRuntimeContractVersion) &&
+    Boolean(runtimeTargetResult.data?.runtime_version)
 
   return {
     website: {
@@ -231,14 +336,17 @@ export async function buildSiteForgeEditorSnapshot(
     }),
     approvedAssets: asJson(assetsResult.data || []),
     revisionHistory: asJson(revisionsResult.data || []),
+    conversationHistory: asJson([...(messagesResult.data || [])].reverse()),
     wordpressCapabilities: asJson({
       artifactSchemaVersion: 2,
       semanticOperations: true,
-      runtimeV2:
-        runtimeTargetResult.data?.runtime_contract_version === 2 &&
-        Boolean(runtimeTargetResult.data.runtime_version),
+      runtimeBacked,
+      runtimeV2: targetRuntimeContractVersion === 2 && runtimeBacked,
+      runtimeV3: targetRuntimeContractVersion === 3 && runtimeBacked,
       runtime: runtimeTargetResult.data || null,
-      themeOverlay: runtimeTargetResult.data?.runtime_contract_version !== 2,
+      themeOverlay:
+        targetRuntimeContractVersion === null ||
+        targetRuntimeContractVersion === 1,
       contentManifestRequired: true,
       targetTypes: ['canonical_preview', 'staging'],
     }),

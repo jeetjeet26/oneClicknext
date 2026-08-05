@@ -6,11 +6,13 @@ const {
   validatePropertyAccessMock,
   decideMock,
   profileSingleMock,
+  assertLeaseMock,
 } = vi.hoisted(() => ({
   getUserMock: vi.fn(),
   validatePropertyAccessMock: vi.fn(),
   decideMock: vi.fn(),
   profileSingleMock: vi.fn(),
+  assertLeaseMock: vi.fn(),
 }))
 
 vi.mock('@/utils/supabase/server', () => ({
@@ -25,6 +27,24 @@ vi.mock('@/utils/supabase/server', () => ({
 vi.mock('@/utils/services/auth-guard', () => ({
   validatePropertyAccess: validatePropertyAccessMock,
 }))
+vi.mock('@/utils/supabase/admin', () => ({
+  createServiceClient: vi.fn(() => {
+    const builder: Record<string, unknown> = {}
+    builder.select = vi.fn(() => builder)
+    builder.eq = vi.fn(() => builder)
+    builder.maybeSingle = vi.fn().mockResolvedValue({
+      data: { property_id: propertyId, website_id: artifactId },
+      error: null,
+    })
+    return { from: vi.fn(() => builder) }
+  }),
+}))
+vi.mock('@/utils/siteforge/testing/aurora-lifecycle-control', async () => {
+  const actual = await vi.importActual<
+    typeof import('@/utils/siteforge/testing/aurora-lifecycle-control')
+  >('@/utils/siteforge/testing/aurora-lifecycle-control')
+  return { ...actual, assertActiveAuroraLifecycleLease: assertLeaseMock }
+})
 vi.mock('@/utils/siteforge/artifacts/approval', async (importOriginal) => {
   const actual =
     await importOriginal<

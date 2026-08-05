@@ -13,6 +13,35 @@ import {
 } from '@/utils/siteforge/block-schemas'
 import type { ApprovedFloorPlanSnapshot } from '@/utils/siteforge/providers/floor-plans'
 import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
+import type { Tables } from '@/types/supabase'
+import {
+  legalEvidenceId,
+  type SiteForgeLegalConfig,
+} from '@/utils/siteforge/quality/deterministic-gates'
+
+type ApprovedPointOfInterest = Pick<
+  Tables<'property_points_of_interest'>,
+  | 'name'
+  | 'category'
+  | 'address'
+  | 'distance_miles'
+  | 'travel_time_minutes'
+  | 'source_url'
+>
+
+export type SourcedMapLocation = {
+  address?: string
+  latitude?: number
+  longitude?: number
+}
+
+export type SiteForgeFinalizationIntegrityContext = {
+  mapLocation?: SourcedMapLocation
+  formProviders?: {
+    lead: 'p11_lumaleasing' | 'csv_export' | 'unconfigured'
+    tour: 'p11_lumaleasing' | 'external_url' | 'unconfigured'
+  }
+}
 
 const EMPTY_FLOOR_PLAN_SNAPSHOT: ApprovedFloorPlanSnapshot = {
   capturedAt: '1970-01-01T00:00:00.000Z',
@@ -31,6 +60,71 @@ function records(value: unknown): Array<Record<string, unknown>> {
           Boolean(item) && typeof item === 'object' && !Array.isArray(item)
       )
     : []
+}
+
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+}
+
+function sourcedCoordinate(...values: unknown[]): number | undefined {
+  return values.find(
+    (value): value is number => typeof value === 'number' && Number.isFinite(value)
+  )
+}
+
+export function extractSourcedMapLocation(
+  propertySnapshot: unknown
+): SourcedMapLocation {
+  const snapshot = record(propertySnapshot)
+  const property = record(snapshot.property || snapshot)
+  const addressSource = property.address
+  const addressRecord = record(addressSource)
+  const location = record(property.location)
+  const street = stringValue(
+    addressRecord.street || addressRecord.address1 || addressRecord.line1
+  )
+  const address =
+    stringValue(addressSource) ||
+    stringValue(property.property_address) ||
+    [
+      street,
+      stringValue(addressRecord.city),
+      stringValue(addressRecord.state),
+      stringValue(addressRecord.zip || addressRecord.postalCode),
+      stringValue(addressRecord.country),
+    ]
+      .filter(Boolean)
+      .join(', ')
+  const latitude = sourcedCoordinate(
+    property.latitude,
+    property.property_latitude,
+    location.latitude,
+    location.lat,
+    addressRecord.latitude,
+    addressRecord.lat
+  )
+  const longitude = sourcedCoordinate(
+    property.longitude,
+    property.property_longitude,
+    location.longitude,
+    location.lng,
+    addressRecord.longitude,
+    addressRecord.lng
+  )
+  const validCoordinates =
+    latitude !== undefined &&
+    longitude !== undefined &&
+    latitude >= -90 &&
+    latitude <= 90 &&
+    longitude >= -180 &&
+    longitude <= 180
+
+  return {
+    ...(address ? { address } : {}),
+    ...(validCoordinates ? { latitude, longitude } : {}),
+  }
 }
 
 function escapeHtml(value: string): string {
@@ -83,8 +177,11 @@ function photoForSection(
 
 function normalizeContent(
   section: PageSection,
+  page: Pick<GeneratedPage, 'slug' | 'title' | 'purpose'>,
   manifest: PhotoManifest,
-  floorPlanSnapshot: ApprovedFloorPlanSnapshot
+  floorPlanSnapshot: ApprovedFloorPlanSnapshot,
+  pointsOfInterest: ApprovedPointOfInterest[],
+  integrityContext: SiteForgeFinalizationIntegrityContext
 ): Record<string, unknown> {
   const raw = section.content
   const headline = stringValue(raw.headline, section.label || section.type)
@@ -189,24 +286,59 @@ function normalizeContent(
           : '3',
       }
     }
-    case 'acf/form':
+    case 'acf/form': {
+      const requestedFormType = String(raw.form_type)
+      const inferredFormType = /\b(schedule|book)?[\s-]*(a[\s-]*)?tour\b/i.test(
+        [
+          page.slug,
+          page.title,
+          page.purpose,
+          section.label,
+          section.type,
+          raw.heading,
+        ].join(' ')
+      )
+        ? 'tour'
+        : 'contact'
+      const formType = ['contact', 'tour', 'register'].includes(requestedFormType)
+        ? requestedFormType
+        : inferredFormType
+      const provider =
+        formType === 'tour'
+          ? integrityContext.formProviders?.tour
+          : integrityContext.formProviders?.lead
       return {
         heading: stringValue(raw.heading, headline),
         subheading: stringValue(raw.subheading, body).slice(0, 300) || undefined,
-        form_type: ['contact', 'tour', 'register'].includes(String(raw.form_type))
-          ? raw.form_type
-          : 'contact',
+        form_type: formType,
         redirect_url: stringValue(raw.redirect_url) || undefined,
-        provider: 'p11_lumaleasing',
+        provider: provider || 'p11_lumaleasing',
         consent_text:
           'By submitting, you agree that the property may contact you about leasing. Message and data rates may apply.',
       }
-    case 'acf/map':
+    }
+    case 'acf/map': {
+      const location = integrityContext.mapLocation
+      const hasCoordinates =
+        location?.latitude !== undefined && location.longitude !== undefined
+      if (!location?.address && !hasCoordinates) {
+        throw new Error(
+          `Section ${section.id || section.type} requires a sourced address or coordinate pair`
+        )
+      }
       return {
+        ...(location.address ? { address: location.address } : {}),
+        ...(hasCoordinates
+          ? {
+              latitude: location.latitude,
+              longitude: location.longitude,
+            }
+          : {}),
         zoom_level:
           typeof raw.zoom_level === 'number' ? Math.round(raw.zoom_level) : 15,
         show_directions: raw.show_directions !== false,
       }
+    }
     case 'acf/html-section':
       return {
         html_content: `<p>${escapeHtml(body)}</p>`,
@@ -256,6 +388,11 @@ function normalizeContent(
             : undefined,
           availability_url: row.availabilityUrl,
           apply_url: row.applyUrl,
+          source: row.source,
+          source_identity: row.sourceIdentity,
+          effective_at: row.effectiveAt,
+          expires_at: row.expiresAt,
+          source_updated_at: row.sourceUpdatedAt,
         })),
         inventory_snapshot: {
           captured_at: floorPlanSnapshot.capturedAt,
@@ -277,6 +414,23 @@ function normalizeContent(
     case 'acf/poi':
       return {
         intro_text: body,
+        points: pointsOfInterest.map((point) => ({
+          name: point.name,
+          category: point.category,
+          address:
+            typeof point.address === 'string'
+              ? point.address
+              : point.address &&
+                  typeof point.address === 'object' &&
+                  !Array.isArray(point.address)
+                ? Object.values(point.address)
+                    .filter((value): value is string => typeof value === 'string')
+                    .join(', ')
+                : undefined,
+          distance_miles: point.distance_miles ?? undefined,
+          travel_time_minutes: point.travel_time_minutes ?? undefined,
+          source_url: point.source_url ?? undefined,
+        })),
         categories: ['restaurants', 'shopping', 'entertainment', 'transit'],
         radius_miles:
           typeof raw.radius_miles === 'number'
@@ -289,73 +443,60 @@ function normalizeContent(
 export function finalizeSiteForgePages(
   pages: GeneratedPage[],
   manifest: PhotoManifest,
-  floorPlanSnapshot: ApprovedFloorPlanSnapshot = EMPTY_FLOOR_PLAN_SNAPSHOT
+  legal: SiteForgeLegalConfig,
+  floorPlanSnapshot: ApprovedFloorPlanSnapshot = EMPTY_FLOOR_PLAN_SNAPSHOT,
+  pointsOfInterest: ApprovedPointOfInterest[] = [],
+  integrityContext: SiteForgeFinalizationIntegrityContext = {}
 ): GeneratedPage[] {
-  const legalPages: GeneratedPage[] = [
+  const legalSpecs = [
     {
-      slug: 'privacy',
+      path: legal.privacyPath,
       title: 'Privacy',
-      purpose:
-        'Explain how leasing inquiries and website interactions are handled.',
-      sections: [
-        {
-          id: 'privacy-policy',
-          type: 'legal',
-          acfBlock: 'acf/text-section' as const,
-          order: 0,
-          reasoning: 'Provide a stable privacy-policy destination',
-          evidenceIds: ['siteforge-legal-policy-v1'],
-          content: {
-            headline: 'Privacy',
-            content:
-              'Information submitted through this website is used to respond to leasing inquiries, schedule requested tours, operate the website, and meet applicable legal obligations. Contact the property team to ask about access, correction, or deletion of submitted information.',
-          },
-        },
-      ],
+      purpose: 'Publish the approved privacy policy.',
+      id: 'privacy-policy',
+      body: legal.policyBodies.privacyPolicy,
     },
     {
-      slug: 'terms',
+      path: legal.termsPath,
       title: 'Terms',
-      purpose: 'State the terms governing use of property website information.',
-      sections: [
-        {
-          id: 'terms-of-use',
-          type: 'legal',
-          acfBlock: 'acf/text-section' as const,
-          order: 0,
-          reasoning: 'Provide a stable terms destination',
-          evidenceIds: ['siteforge-legal-policy-v1'],
-          content: {
-            headline: 'Terms of Use',
-            content:
-              'Website content is provided for general leasing information and may change. Pricing, availability, dimensions, and features must be confirmed with the property team before relying on them.',
-          },
-        },
-      ],
+      purpose: 'Publish the approved terms of use.',
+      id: 'terms-of-use',
+      body: legal.policyBodies.terms,
     },
     {
-      slug: 'accessibility',
+      path: legal.accessibilityPath,
       title: 'Accessibility',
-      purpose: 'Describe the commitment and contact path for accessible service.',
-      sections: [
-        {
-          id: 'accessibility-statement',
-          type: 'legal',
-          acfBlock: 'acf/text-section' as const,
-          order: 0,
-          reasoning: 'Provide a stable accessibility destination',
-          evidenceIds: ['siteforge-accessibility-policy-v1'],
-          content: {
-            headline: 'Accessibility',
-            content:
-              'We aim to provide an accessible website experience. If you encounter a barrier or need leasing information in another format, contact the property team for assistance.',
-          },
-        },
-      ],
+      purpose: 'Publish the approved accessibility statement.',
+      id: 'accessibility-statement',
+      body: legal.policyBodies.accessibility,
     },
-  ].filter((legalPage) => !pages.some((page) => page.slug === legalPage.slug))
+  ].map(spec => ({
+    ...spec,
+    slug: spec.path.replace(/^\/+|\/+$/g, ''),
+  }))
+  const legalSlugs = new Set(legalSpecs.map(spec => spec.slug))
+  const contentPages = pages.filter(page => !legalSlugs.has(page.slug))
+  const legalPages: GeneratedPage[] = legalSpecs.map(spec => ({
+    slug: spec.slug,
+    title: spec.title,
+    purpose: spec.purpose,
+    sections: [
+      {
+        id: spec.id,
+        type: 'legal',
+        acfBlock: 'acf/text-section' as const,
+        order: 0,
+        reasoning: 'Publish the exact approved legal policy body',
+        evidenceIds: [legalEvidenceId(legal)],
+        content: {
+          headline: spec.title,
+          content: spec.body,
+        },
+      },
+    ],
+  }))
 
-  return [...pages, ...legalPages].map((page) => {
+  return [...contentPages, ...legalPages].map((page) => {
     const seoDescription = `${page.purpose.trim()} Explore floor plans, amenities, neighborhood details, and ways to contact the leasing team.`
       .slice(0, 160)
       .trim()
@@ -382,7 +523,14 @@ export function finalizeSiteForgePages(
         id: section.id || `${page.slug}-${index + 1}`,
         order: index,
         evidenceIds: section.evidenceIds || [],
-        content: normalizeContent(section, manifest, floorPlanSnapshot),
+        content: normalizeContent(
+          section,
+          page,
+          manifest,
+          floorPlanSnapshot,
+          pointsOfInterest,
+          integrityContext
+        ),
       })),
     }
     return strictGeneratedPageSchema.parse(

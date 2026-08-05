@@ -40,6 +40,8 @@ p11-platform/supabase/.branches/
 !tsconfig.json
 !vercel.json
 !eslint.config.mjs
+!wordpress-plugin/oneclick-siteforge-runtime/fixtures/v2/*.json
+!wordpress-plugin/oneclick-siteforge-runtime/fixtures/v3/*.json
 google-credentials.json
 *-credentials.json
 oneclick-*.json

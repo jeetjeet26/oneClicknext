@@ -13,7 +13,7 @@ vi.mock('@/utils/services/google-calendar', () => ({
 describe('integration OAuth callback route', () => {
   beforeEach(() => {
     vi.resetModules()
-    vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://app.example.com')
+    vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://app.example.com')
   })
 
   afterEach(() => {

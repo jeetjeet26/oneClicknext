@@ -94,7 +94,12 @@ describe('documents upload route auth', () => {
       data: [{ embedding: [0.1, 0.2, 0.3] }],
     })
 
-    const documentsInsertMock = vi.fn().mockResolvedValue({ error: null })
+    const documentsInsertMock = vi.fn().mockReturnValue({
+      select: vi.fn().mockResolvedValue({
+        data: [{ id: 'document-1' }],
+        error: null,
+      }),
+    })
     const sourceMaybeSingleMock = vi.fn().mockResolvedValue({
       data: null,
       error: null,
@@ -177,7 +182,12 @@ describe('documents upload route auth', () => {
       data: [{ embedding: [0.1, 0.2, 0.3] }],
     })
 
-    const documentsInsertMock = vi.fn().mockResolvedValue({ error: null })
+    const documentsInsertMock = vi.fn().mockReturnValue({
+      select: vi.fn().mockResolvedValue({
+        data: [{ id: 'document-1' }],
+        error: null,
+      }),
+    })
     const documentsDeleteRunEqMock = vi.fn().mockResolvedValue({ error: null })
     const documentsDeletePropertyEqMock = vi.fn().mockReturnValue({ eq: documentsDeleteRunEqMock })
     const documentsDeleteMock = vi.fn().mockReturnValue({ eq: documentsDeletePropertyEqMock })

@@ -273,8 +273,10 @@ function getBuiltinBlockSchemas(): Record<string, ACFBlockSchema> {
       fields: {
         heading: { type: 'text', description: 'Note: heading, not headline' },
         subheading: { type: 'text', description: 'Note: subheading, not subheadline' },
-        form_type: { type: 'select', choices: ['contact', 'tour'] },
+        form_type: { type: 'select', choices: ['contact', 'tour', 'register'] },
         redirect_url: { type: 'url' },
+        provider: { type: 'select', choices: ['p11_lumaleasing'] },
+        consent_text: { type: 'textarea' },
       },
     },
     'acf/gallery': {
@@ -297,8 +299,11 @@ function getBuiltinBlockSchemas(): Record<string, ACFBlockSchema> {
     'acf/map': {
       label: 'Google Maps Embed',
       description:
-        'Google Maps embed for property location (address comes from theme options)',
+        'Google Maps location with a keyless sourced-address fallback',
       fields: {
+        address: { type: 'text' },
+        latitude: { type: 'number', min: -90, max: 90 },
+        longitude: { type: 'number', min: -180, max: 180 },
         zoom_level: { type: 'number', min: 1, max: 21, default: 15 },
         show_directions: { type: 'true_false' },
       },

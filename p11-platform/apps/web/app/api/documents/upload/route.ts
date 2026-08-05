@@ -211,7 +211,10 @@ export async function POST(req: NextRequest) {
     }))
 
     // Insert into database
-    const { error: insertError } = await supabase.from('documents').insert(payload as never)
+    const { data: insertedDocuments, error: insertError } = await supabase
+      .from('documents')
+      .insert(payload as never)
+      .select('id')
     
     if (insertError) {
       console.error('Document insert error:', insertError)
@@ -260,6 +263,7 @@ export async function POST(req: NextRequest) {
       chunks: chunks.length,
       characters: textContent.length,
       knowledgeSourceId,
+      documentIds: (insertedDocuments || []).map(document => document.id),
       originalFileUrl,
       originalFileStored: !!originalFileUrl,
     })

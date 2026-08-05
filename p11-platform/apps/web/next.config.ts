@@ -28,10 +28,20 @@ for (const p of envPaths) {
 
 const nextConfig: NextConfig = {
   /* config options here */
+  allowedDevOrigins: ["127.0.0.1"],
   reactCompiler: true,
-  serverExternalPackages: ["ssh2"],
+  serverExternalPackages: [
+    "ssh2",
+    "@browserbasehq/sdk",
+    "playwright-core",
+    "axe-core",
+  ],
   outputFileTracingIncludes: {
     "/.well-known/workflow/v1/step": ["./runtime-assets/*"],
+    "/api/siteforge/browser-certifier": [
+      "./node_modules/playwright-core/**/*",
+      "./node_modules/axe-core/**/*",
+    ],
   },
   /**
    * Ensure Edge middleware has access to required public env vars in dev/prod.

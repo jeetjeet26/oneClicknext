@@ -1,15 +1,42 @@
 import { describe, expect, it } from 'vitest'
 import type { GeneratedPage } from '@/types/siteforge'
 import type { PhotoManifest } from '@/utils/siteforge/agents/photo-agent'
-import { finalizeSiteForgePages } from './finalize-pages'
+import {
+  extractSourcedMapLocation,
+  finalizeSiteForgePages,
+} from './finalize-pages'
+import { createSiteForgeLegalConfigFromSnapshot } from '@/utils/siteforge/quality/deterministic-gates'
+
+const approvedLegal = createSiteForgeLegalConfigFromSnapshot({
+  legal: {
+    id: '11111111-1111-4111-8111-111111111111',
+    version: 2,
+    status: 'approved',
+    approved_at: '2026-07-31T20:00:00.000Z',
+    effective_at: '2026-08-01T00:00:00.000Z',
+    privacy_policy: { text: 'Approved privacy body, exactly as reviewed.' },
+    terms: { text: 'Approved terms body, exactly as reviewed.' },
+    accessibility: {
+      text: 'Approved accessibility body, exactly as reviewed.',
+    },
+    fair_housing: {
+      text: 'Approved Equal Housing Opportunity statement.',
+    },
+    pricing_disclaimer: { text: 'Approved pricing disclaimer.' },
+    analytics_consent: { text: 'Approved analytics consent.' },
+    communications_consent: {
+      text: 'Approved communications consent.',
+    },
+  },
+})
 
 describe('finalizeSiteForgePages', () => {
   it('turns generated copy into exact publishable block contracts', () => {
     const pages: GeneratedPage[] = [
       {
-        title: 'Home',
-        slug: 'home',
-        purpose: 'Convert qualified prospects',
+        title: 'Schedule a Tour',
+        slug: 'schedule-a-tour',
+        purpose: 'Help qualified prospects schedule a property tour',
         sections: [
           {
             id: 'hero',
@@ -29,7 +56,7 @@ describe('finalizeSiteForgePages', () => {
             acfBlock: 'acf/form',
             order: 1,
             reasoning: 'Provide a direct conversion path',
-            content: { heading: 'Schedule a tour', form_type: 'tour' },
+            content: { heading: 'Schedule a tour' },
           },
         ],
       },
@@ -58,7 +85,7 @@ describe('finalizeSiteForgePages', () => {
       stats: { uploaded: 1, generated: 0, fromBrandForge: 0, total: 1 },
     }
 
-    const finalized = finalizeSiteForgePages(pages, manifest)
+    const finalized = finalizeSiteForgePages(pages, manifest, approvedLegal)
 
     expect(finalized[0]?.sections[0]?.content).toEqual(
       expect.objectContaining({
@@ -72,9 +99,119 @@ describe('finalizeSiteForgePages', () => {
     expect(finalized[0]?.sections[1]?.content).toEqual(
       expect.objectContaining({
         provider: 'p11_lumaleasing',
+        form_type: 'tour',
         consent_text: expect.stringContaining('agree'),
       })
     )
+  })
+
+  it('publishes map content only from the pinned property location source', () => {
+    const mapLocation = extractSourcedMapLocation({
+      property: {
+        address: {
+          street: '120 Juniper Street',
+          city: 'Portland',
+          state: 'OR',
+          zip: '97205',
+        },
+        latitude: 45.5231,
+        longitude: -122.6765,
+      },
+    })
+    const manifest: PhotoManifest = {
+      photos: [],
+      byCategory: {
+        hero: [],
+        amenities: [],
+        lifestyle: [],
+        gallery: [],
+        logos: [],
+      },
+      assignments: {},
+      stats: { uploaded: 0, generated: 0, fromBrandForge: 0, total: 0 },
+    }
+    const finalized = finalizeSiteForgePages(
+      [
+        {
+          slug: 'neighborhood',
+          title: 'Neighborhood',
+          purpose: 'Help visitors find the community.',
+          sections: [
+            {
+              id: 'neighborhood-map',
+              type: 'map',
+              acfBlock: 'acf/map',
+              order: 0,
+              reasoning: 'Provide sourced location details.',
+              content: {
+                address: 'AI-generated address must not win',
+                zoom_level: 14,
+              },
+            },
+          ],
+        },
+      ],
+      manifest,
+      approvedLegal,
+      undefined,
+      [],
+      { mapLocation }
+    )
+
+    expect(finalized[0].sections[0].content).toEqual({
+      address: '120 Juniper Street, Portland, OR, 97205',
+      latitude: 45.5231,
+      longitude: -122.6765,
+      zoom_level: 14,
+      show_directions: true,
+    })
+  })
+
+  it('fails finalization when the confirmed form provider is unsupported', () => {
+    const manifest: PhotoManifest = {
+      photos: [],
+      byCategory: {
+        hero: [],
+        amenities: [],
+        lifestyle: [],
+        gallery: [],
+        logos: [],
+      },
+      assignments: {},
+      stats: { uploaded: 0, generated: 0, fromBrandForge: 0, total: 0 },
+    }
+
+    expect(() =>
+      finalizeSiteForgePages(
+        [
+          {
+            slug: 'contact',
+            title: 'Contact',
+            purpose: 'Contact the leasing team.',
+            sections: [
+              {
+                id: 'contact-form',
+                type: 'form',
+                acfBlock: 'acf/form',
+                order: 0,
+                reasoning: 'Capture a lead.',
+                content: { heading: 'Contact us', form_type: 'contact' },
+              },
+            ],
+          },
+        ],
+        manifest,
+        approvedLegal,
+        undefined,
+        [],
+        {
+          formProviders: {
+            lead: 'csv_export',
+            tour: 'unconfigured',
+          },
+        }
+      )
+    ).toThrow()
   })
 
   it('renders the approved inventory snapshot as real floor-plan rows', () => {
@@ -107,7 +244,7 @@ describe('finalizeSiteForgePages', () => {
       assignments: {},
       stats: { uploaded: 0, generated: 0, fromBrandForge: 0, total: 0 },
     }
-    const finalized = finalizeSiteForgePages(pages, manifest, {
+    const finalized = finalizeSiteForgePages(pages, manifest, approvedLegal, {
       capturedAt: '2026-07-31T12:00:00.000Z',
       contentHash: 'b'.repeat(64),
       rows: [
@@ -122,6 +259,11 @@ describe('finalizeSiteForgePages', () => {
           imageUrl: 'https://cdn.example.com/aspen.png',
           imageAlt: 'Aspen one-bedroom floor plan',
           applyUrl: 'https://property.example.com/apply/aspen',
+          source: 'manual',
+          sourceIdentity: 'approved-import-42',
+          effectiveAt: '2026-07-31T11:00:00.000Z',
+          expiresAt: '2026-08-01T11:00:00.000Z',
+          sourceUpdatedAt: '2026-07-31T10:00:00.000Z',
         },
       ],
     })
@@ -136,12 +278,109 @@ describe('finalizeSiteForgePages', () => {
             sqft_min: 720,
             rent_min: 1_895,
             available_count: 2,
+            source: 'manual',
+            source_identity: 'approved-import-42',
+            effective_at: '2026-07-31T11:00:00.000Z',
+            expires_at: '2026-08-01T11:00:00.000Z',
+            source_updated_at: '2026-07-31T10:00:00.000Z',
           }),
         ],
         inventory_snapshot: {
           captured_at: '2026-07-31T12:00:00.000Z',
           content_hash: 'b'.repeat(64),
         },
+      })
+    )
+  })
+
+  it('builds legal pages only from exact approved policy bodies', () => {
+    const manifest: PhotoManifest = {
+      photos: [],
+      byCategory: {
+        hero: [],
+        amenities: [],
+        lifestyle: [],
+        gallery: [],
+        logos: [],
+      },
+      assignments: {},
+      stats: { uploaded: 0, generated: 0, fromBrandForge: 0, total: 0 },
+    }
+
+    const finalized = finalizeSiteForgePages(
+      [
+        {
+          slug: 'privacy',
+          title: 'Generic Privacy',
+          purpose: 'Generated placeholder that must be replaced.',
+          sections: [],
+        },
+      ],
+      manifest,
+      approvedLegal
+    )
+
+    expect(finalized.map(page => page.slug)).toEqual([
+      'privacy',
+      'terms',
+      'accessibility',
+    ])
+    expect(finalized[0].sections[0].content.content).toBe(
+      approvedLegal.policyBodies.privacyPolicy
+    )
+  })
+
+  it('renders approved onboarding points of interest without requiring a map', () => {
+    const pages: GeneratedPage[] = [
+      {
+        title: 'Neighborhood',
+        slug: 'neighborhood',
+        purpose: 'Show what is nearby.',
+        sections: [
+          {
+            id: 'nearby',
+            type: 'poi',
+            acfBlock: 'acf/poi',
+            order: 0,
+            reasoning: 'Publish approved neighborhood facts.',
+            content: { body: 'Live near everyday essentials.' },
+          },
+        ],
+      },
+    ]
+    const manifest: PhotoManifest = {
+      photos: [],
+      byCategory: {
+        hero: [],
+        amenities: [],
+        lifestyle: [],
+        gallery: [],
+        logos: [],
+      },
+      assignments: {},
+      stats: { uploaded: 0, generated: 0, fromBrandForge: 0, total: 0 },
+    }
+
+    const finalized = finalizeSiteForgePages(pages, manifest, approvedLegal, undefined, [
+      {
+        name: 'Riverfront Park',
+        category: 'parks',
+        address: { street: '100 River Road', city: 'Austin' },
+        distance_miles: 0.7,
+        travel_time_minutes: 4,
+        source_url: 'https://example.com/riverfront-park',
+      },
+    ])
+
+    expect(finalized[0]?.sections[0]?.content).toEqual(
+      expect.objectContaining({
+        points: [
+          expect.objectContaining({
+            name: 'Riverfront Park',
+            address: '100 River Road, Austin',
+            distance_miles: 0.7,
+          }),
+        ],
       })
     )
   })
