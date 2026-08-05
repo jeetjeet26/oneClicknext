@@ -30,25 +30,24 @@ export type BrowserCertificationArtifactDescriptor = {
   sha256: string;
 };
 
-export type ApprovedBrowserBaseline =
-  BrowserCertificationArtifactDescriptor & {
-    baselineId: string;
-    url: string;
-    viewport: keyof typeof VIEWPORTS;
-    artifact: {
-      artifactId: string;
-      contentHash: string;
-    };
-    environment: "protected_preview" | "staging" | "production";
-    access: "protected" | "public";
-    requireIndexable: boolean;
-    policyVersion: typeof SITEFORGE_CERTIFICATION_POLICY_VERSION;
-    bindingHash: string;
-    evidenceDigest: string;
-    approvalId: string;
-    approvedAt: string;
-    approvedBy: string;
+export type ApprovedBrowserBaseline = BrowserCertificationArtifactDescriptor & {
+  baselineId: string;
+  url: string;
+  viewport: keyof typeof VIEWPORTS;
+  artifact: {
+    artifactId: string;
+    contentHash: string;
   };
+  environment: "protected_preview" | "staging" | "production";
+  access: "protected" | "public";
+  requireIndexable: boolean;
+  policyVersion: typeof SITEFORGE_CERTIFICATION_POLICY_VERSION;
+  bindingHash: string;
+  evidenceDigest: string;
+  approvalId: string;
+  approvedAt: string;
+  approvedBy: string;
+};
 
 export type LighthouseReportArtifact =
   BrowserCertificationArtifactDescriptor & {
@@ -316,7 +315,8 @@ async function fillDeterministicForm(page: Page, formIndex: number) {
     const control = controls.nth(index);
     const tag = await control.evaluate((element) => element.tagName);
     const type = ((await control.getAttribute("type")) || "text").toLowerCase();
-    if (["hidden", "submit", "button", "reset", "file"].includes(type)) continue;
+    if (["hidden", "submit", "button", "reset", "file"].includes(type))
+      continue;
     if (type === "checkbox" || type === "radio") {
       if ((await control.isVisible()) && !(await control.isChecked())) {
         await control.check();
@@ -325,9 +325,7 @@ async function fillDeterministicForm(page: Page, formIndex: number) {
       const option = await control
         .locator("option:not([disabled])")
         .evaluateAll((items) =>
-          items
-            .map((item) => (item as HTMLOptionElement).value)
-            .find(Boolean),
+          items.map((item) => (item as HTMLOptionElement).value).find(Boolean),
         );
       if (option) await control.selectOption(option);
     } else if (await control.isVisible()) {
@@ -391,7 +389,10 @@ async function testForms(page: Page) {
     }
 
     if (!metadata.initiallyValid) {
-      await submit.first().click().catch(() => undefined);
+      await submit
+        .first()
+        .click()
+        .catch(() => undefined);
     }
     const validationObserved =
       metadata.requiredCount === 0 || !metadata.initiallyValid;
@@ -403,15 +404,20 @@ async function testForms(page: Page) {
       captured = route.request();
       await route.abort("blockedbyclient");
     });
-    await submit.first().click().catch(() => undefined);
+    await submit
+      .first()
+      .click()
+      .catch(() => undefined);
     await page.waitForTimeout(500);
     await page.unroute(destination);
 
     const errorVisible = await form
-      .locator('.form-error:visible, [role="alert"]:visible, [aria-invalid="true"]')
+      .locator(
+        '.form-error:visible, [role="alert"]:visible, [aria-invalid="true"]',
+      )
       .count();
     const successVisible = await form
-      .locator('.form-success:visible, [data-success]:visible')
+      .locator(".form-success:visible, [data-success]:visible")
       .count();
     const capturedRequest = captured as PlaywrightRequest | null;
     const request = capturedRequest
@@ -576,10 +582,9 @@ async function hideNonBaselineUi(page: Page) {
     if (document.getElementById(id)) return;
     const style = document.createElement("style");
     style.id = id;
-    style.textContent = [
-      "#lumaleasing-widget",
-      ".siteforge-back-to-top",
-    ].join(",") + "{visibility:hidden!important}";
+    style.textContent =
+      ["#lumaleasing-widget", ".siteforge-back-to-top"].join(",") +
+      "{visibility:hidden!important}";
     document.head.appendChild(style);
   });
 }
@@ -606,7 +611,8 @@ async function testConsent(page: Page) {
       .filter((name) => /\.js(?:[?#]|$)/i.test(name)),
   );
   const banner = page.locator(".siteforge-consent-banner").first();
-  const bannerVisible = (await banner.count()) > 0 && (await banner.isVisible());
+  const bannerVisible =
+    (await banner.count()) > 0 && (await banner.isVisible());
   const decline = page.locator('[data-consent="denied"]').first();
   const grant = page.locator('[data-consent="granted"]').first();
   const controlsPresent =
@@ -653,8 +659,7 @@ async function testConsent(page: Page) {
   return {
     defaultState: "denied" as const,
     bannerVisible,
-    preferenceControlsUsable:
-      controlsPresent && declineTested && grantTested,
+    preferenceControlsUsable: controlsPresent && declineTested && grantTested,
     declineTested,
     grantTested,
     scripts: [...new Set([...before, ...after])].map((src) => ({
@@ -756,7 +761,10 @@ export function parseLighthouseReportArtifact(
     throw new Error("Lighthouse report artifact is not valid JSON");
   }
   const category = (name: string) =>
-    requiredNumber(report.categories?.[name]?.score, `categories.${name}.score`);
+    requiredNumber(
+      report.categories?.[name]?.score,
+      `categories.${name}.score`,
+    );
   const audit = (name: string) =>
     requiredNumber(report.audits?.[name]?.numericValue, `audits.${name}`);
   const finalUrl =
@@ -877,117 +885,126 @@ export async function collectBrowserbaseCertificationEvidence(
 
   try {
     for (const expectedUrl of input.expectedUrls) {
-      for (const [viewport, size] of Object.entries(VIEWPORTS) as Array<
-        [keyof typeof VIEWPORTS, (typeof VIEWPORTS)[keyof typeof VIEWPORTS]]
-      >) {
-        const visualPage = await context.newPage();
-        try {
-          await configureCertificationPage(visualPage, input.credentials);
-          await visualPage.setViewportSize(size);
-          await visualPage.goto(expectedUrl, {
-            waitUntil: "domcontentloaded",
-            timeout: 30_000,
-          });
-          await visualPage.waitForTimeout(750);
-          await waitForVisualStability(visualPage);
-          await dismissTransientWidgetUi(visualPage);
-          await hideNonBaselineUi(visualPage);
-          await visualPage.waitForTimeout(150);
+      await Promise.all(
+        (
+          Object.entries(VIEWPORTS) as Array<
+            [keyof typeof VIEWPORTS, (typeof VIEWPORTS)[keyof typeof VIEWPORTS]]
+          >
+        ).map(async ([viewport, size]) => {
+          const visualPage = await context.newPage();
+          try {
+            await configureCertificationPage(visualPage, input.credentials);
+            await visualPage.setViewportSize(size);
+            await visualPage.goto(expectedUrl, {
+              waitUntil: "domcontentloaded",
+              timeout: 30_000,
+            });
+            await visualPage.waitForTimeout(750);
+            await waitForVisualStability(visualPage);
+            await dismissTransientWidgetUi(visualPage);
+            await hideNonBaselineUi(visualPage);
+            await visualPage.waitForTimeout(150);
 
-          const image = await visualPage.screenshot({
-            fullPage: true,
-            type: "png",
-          });
-          const digest = sha256(image);
-          const storagePath = [
-            "browser-certification",
-            input.artifact.artifactId,
-            input.environment,
-            session.id,
-            storageSegment(expectedUrl),
-            `${viewport}-${digest}.png`,
-          ].join("/");
-          const identityDigest = hashSiteForgeContent({
-            artifact: input.artifact,
-            bindingHash: input.bindingHash,
-            targetUrl: normalizeUrl(input.targetUrl),
-            pageUrl: normalizeUrl(expectedUrl),
-            viewport,
-            width: size.width,
-            height: size.height,
-            environment: input.environment,
-            access: input.access,
-            requireIndexable: input.requireIndexable,
-            policyVersion: SITEFORGE_CERTIFICATION_POLICY_VERSION,
-            screenshotSha256: digest,
-            storagePath,
-          });
-          await input.artifactWriter({
-            storagePath,
-            bytes: image,
-            contentType: "image/png",
-            sha256: digest,
-          });
-          screenshots.push({
-            url: expectedUrl,
-            viewport,
-            width: size.width,
-            height: size.height,
-            storagePath,
-            sha256: digest,
-            bytes: image.byteLength,
-            contentType: "image/png",
-            identityDigest,
-          });
-
-          const baseline = baselineByKey.get(
-            `${normalizeUrl(expectedUrl)}|${viewport}`,
-          );
-          if (baseline) {
-            if (
-              baseline.artifact.artifactId !== input.artifact.artifactId ||
-              baseline.artifact.contentHash !== input.artifact.contentHash ||
-              baseline.environment !== input.environment ||
-              baseline.access !== input.access ||
-              baseline.requireIndexable !== input.requireIndexable ||
-              baseline.policyVersion !== SITEFORGE_CERTIFICATION_POLICY_VERSION ||
-              baseline.bindingHash !== input.bindingHash
-            ) {
-              throw new Error("Approved visual baseline identity is not exact");
-            }
-            if (baseline.storagePath === storagePath) {
-              throw new Error("A current screenshot cannot be its own baseline");
-            }
-            pendingBaselineComparisons.push({
+            const image = await visualPage.screenshot({
+              fullPage: true,
+              type: "png",
+            });
+            const digest = sha256(image);
+            const storagePath = [
+              "browser-certification",
+              input.artifact.artifactId,
+              input.environment,
+              session.id,
+              storageSegment(expectedUrl),
+              `${viewport}-${digest}.png`,
+            ].join("/");
+            const identityDigest = hashSiteForgeContent({
+              artifact: input.artifact,
+              bindingHash: input.bindingHash,
+              targetUrl: normalizeUrl(input.targetUrl),
+              pageUrl: normalizeUrl(expectedUrl),
+              viewport,
+              width: size.width,
+              height: size.height,
+              environment: input.environment,
+              access: input.access,
+              requireIndexable: input.requireIndexable,
+              policyVersion: SITEFORGE_CERTIFICATION_POLICY_VERSION,
+              screenshotSha256: digest,
+              storagePath,
+            });
+            await input.artifactWriter({
+              storagePath,
+              bytes: image,
+              contentType: "image/png",
+              sha256: digest,
+            });
+            screenshots.push({
               url: expectedUrl,
               viewport,
-              actualStoragePath: storagePath,
-              actualSha256: digest,
-              actualBytes: image,
-              baseline,
+              width: size.width,
+              height: size.height,
+              storagePath,
+              sha256: digest,
+              bytes: image.byteLength,
+              contentType: "image/png",
+              identityDigest,
             });
-          }
 
-          const dimensions = await visualPage.evaluate(() => ({
-            overflow: Math.max(
-              0,
-              document.documentElement.scrollWidth -
-                document.documentElement.clientWidth,
-            ),
-            cumulativeLayoutShift:
-              (window as typeof window & { __siteforgeCLS?: number })
-                .__siteforgeCLS || 0,
-          }));
-          layout.push({
-            url: expectedUrl,
-            viewport,
-            horizontalOverflowPixels: dimensions.overflow,
-            cumulativeLayoutShift: dimensions.cumulativeLayoutShift,
-          });
-        } finally {
-          await visualPage.close();
-        }
-      }
+            const baseline = baselineByKey.get(
+              `${normalizeUrl(expectedUrl)}|${viewport}`,
+            );
+            if (baseline) {
+              if (
+                baseline.artifact.artifactId !== input.artifact.artifactId ||
+                baseline.artifact.contentHash !== input.artifact.contentHash ||
+                baseline.environment !== input.environment ||
+                baseline.access !== input.access ||
+                baseline.requireIndexable !== input.requireIndexable ||
+                baseline.policyVersion !==
+                  SITEFORGE_CERTIFICATION_POLICY_VERSION ||
+                baseline.bindingHash !== input.bindingHash
+              ) {
+                throw new Error(
+                  "Approved visual baseline identity is not exact",
+                );
+              }
+              if (baseline.storagePath === storagePath) {
+                throw new Error(
+                  "A current screenshot cannot be its own baseline",
+                );
+              }
+              pendingBaselineComparisons.push({
+                url: expectedUrl,
+                viewport,
+                actualStoragePath: storagePath,
+                actualSha256: digest,
+                actualBytes: image,
+                baseline,
+              });
+            }
+
+            const dimensions = await visualPage.evaluate(() => ({
+              overflow: Math.max(
+                0,
+                document.documentElement.scrollWidth -
+                  document.documentElement.clientWidth,
+              ),
+              cumulativeLayoutShift:
+                (window as typeof window & { __siteforgeCLS?: number })
+                  .__siteforgeCLS || 0,
+            }));
+            layout.push({
+              url: expectedUrl,
+              viewport,
+              horizontalOverflowPixels: dimensions.overflow,
+              cumulativeLayoutShift: dimensions.cumulativeLayoutShift,
+            });
+          } finally {
+            await visualPage.close();
+          }
+        }),
+      );
     }
 
     for (const expectedUrl of input.expectedUrls) {
@@ -1175,9 +1192,7 @@ export async function collectBrowserbaseCertificationEvidence(
     const listedUrls = [
       ...new Set(
         [sitemapBody, ...sitemapDocuments].flatMap((body) =>
-          [...body.matchAll(/<loc>([^<]+)<\/loc>/gi)].map(
-            (match) => match[1],
-          ),
+          [...body.matchAll(/<loc>([^<]+)<\/loc>/gi)].map((match) => match[1]),
         ),
       ),
     ];
@@ -1217,9 +1232,9 @@ export async function collectBrowserbaseCertificationEvidence(
         robots: {
           url: robotsUrl,
           status: robotsResponse.status(),
-          sitemapUrls: [
-            ...robotsBody.matchAll(/^sitemap:\s*(\S+)/gim),
-          ].map((match) => match[1]),
+          sitemapUrls: [...robotsBody.matchAll(/^sitemap:\s*(\S+)/gim)].map(
+            (match) => match[1],
+          ),
           blockedCriticalUrls: [],
         },
       },
