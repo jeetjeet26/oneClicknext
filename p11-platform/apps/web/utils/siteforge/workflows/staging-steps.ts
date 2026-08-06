@@ -9,7 +9,10 @@ import {
   getWordPressCredentialReference,
   storeWordPressCredentialReference,
 } from '@/utils/siteforge/wordpress/credential-vault'
-import { SshWordPressInstaller } from '@/utils/siteforge/wordpress/wordpress-installer'
+import {
+  SshWordPressInstaller,
+  type WordPressSshCredentials,
+} from '@/utils/siteforge/wordpress/wordpress-installer'
 import {
   deployToExistingWordPress,
   WordPressAPIClient,
@@ -25,6 +28,7 @@ import {
   runtimePropertyProfile,
 } from '@/utils/siteforge/property-context'
 import { deployArtifactBoundRuntimeV3 } from '@/utils/siteforge/workflows/runtime-deployment-v3'
+import { normalizeSiteForgePreviewCredential } from '@/utils/siteforge/workflows/preview-steps'
 
 export interface SiteForgeStagingWorkflowInput {
   sharedJobId: string
@@ -44,6 +48,14 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {}
+}
+
+function hostOf(value: string): string {
+  try {
+    return new URL(value).hostname.toLowerCase()
+  } catch {
+    return value.trim().toLowerCase()
+  }
 }
 
 export function readCloudwaysProvisioningCheckpoint(metadata: unknown): {
@@ -302,6 +314,34 @@ export async function runSiteForgeStagingDeployment(
   if (!process.env.CLOUDWAYS_API_KEY || !process.env.CLOUDWAYS_EMAIL) {
     throw new FatalError('Cloudways API credentials are required for staging')
   }
+  const cloudways = new CloudwaysProviderClient({
+    apiKey: process.env.CLOUDWAYS_API_KEY,
+    email: process.env.CLOUDWAYS_EMAIL,
+  })
+
+  // WordPress REST basic auth only accepts application passwords, never the
+  // login password. When this staging site descends from the shared preview
+  // application, its cloned database contains the same application password
+  // the preview render path already authenticates with, so prefer that
+  // identity over whatever was recorded in the parent vault secret.
+  const previewRestUsername = normalizeSiteForgePreviewCredential(
+    process.env.SITEFORGE_PREVIEW_WP_USERNAME
+  )
+  const previewRestPassword = normalizeSiteForgePreviewCredential(
+    process.env.SITEFORGE_PREVIEW_WP_APP_PASSWORD
+  )
+  const previewRestUrl = normalizeSiteForgePreviewCredential(
+    process.env.SITEFORGE_PREVIEW_WP_URL
+  )
+  const sharesPreviewLineage =
+    Boolean(previewRestUsername && previewRestPassword && previewRestUrl) &&
+    hostOf(previewRestUrl!) === hostOf(parentCredentials.url)
+  const restUsername = sharesPreviewLineage
+    ? previewRestUsername!
+    : parentCredentials.username
+  const restPassword = sharesPreviewLineage
+    ? previewRestPassword!
+    : parentCredentials.password
 
   const { data: target, error: targetError } = await client
     .from('siteforge_wordpress_targets')
@@ -328,6 +368,9 @@ export async function runSiteForgeStagingDeployment(
   const checkpointOperationId = provisioningCheckpoint.operationId
   stagingApplicationId =
     stagingApplicationId || provisioningCheckpoint.applicationId
+  let stagingApplication: Awaited<
+    ReturnType<CloudwaysProviderClient['getApplication']>
+  > | null = null
 
   if (!stagingCredentials || !stagingApplicationId || !stagingUrl) {
     await assertStagingNotCancelled(input, client)
@@ -337,29 +380,38 @@ export async function runSiteForgeStagingDeployment(
       20,
       'Creating linked Cloudways staging application'
     )
-    const cloudways = new CloudwaysProviderClient({
-      apiKey: process.env.CLOUDWAYS_API_KEY,
-      email: process.env.CLOUDWAYS_EMAIL,
-    })
     const operationId = checkpointOperationId
     if (!stagingApplicationId && !operationId) {
       throw new FatalError(
         'SITEFORGE_PROVIDER_IDEMPOTENCY_UNAVAILABLE: create the exact Cloudways staging child outside the workflow and persist its application/operation checkpoint before retrying'
       )
     }
-    if (!stagingApplicationId || !operationId) {
-      throw new FatalError(
-        'A complete Cloudways staging application and operation checkpoint is required'
-      )
-    }
     if (operationId) {
-      await cloudways.waitForOperation(operationId)
+      const operation = await cloudways.waitForOperation(operationId)
+      if (!stagingApplicationId) {
+        // The clone response only carries operation_id; Cloudways reveals the
+        // staging application id on the completed operation record.
+        stagingApplicationId =
+          operation.app_id !== undefined
+            ? String(operation.app_id)
+            : operation.application_id !== undefined
+              ? String(operation.application_id)
+              : operation.staging_app_id !== undefined
+                ? String(operation.staging_app_id)
+                : null
+      }
+    }
+    if (!stagingApplicationId) {
+      throw new FatalError(
+        'Cloudways did not reveal the staging application identity after the clone completed'
+      )
     }
     await assertStagingNotCancelled(input, client)
     const application = await cloudways.getApplication({
       serverId: parentCredentials.providerMetadata.serverId,
       applicationId: stagingApplicationId,
     })
+    stagingApplication = application
     stagingApplicationId = String(application.id)
     stagingUrl = /^https?:\/\//.test(application.app_fqdn)
       ? application.app_fqdn
@@ -374,8 +426,8 @@ export async function runSiteForgeStagingDeployment(
       credentials: {
         provider: 'cloudways',
         url: stagingUrl,
-        username: parentCredentials.username,
-        password: parentCredentials.password,
+        username: restUsername,
+        password: restPassword,
         ssh: {
           host:
             application.public_ip ||
@@ -433,6 +485,45 @@ export async function runSiteForgeStagingDeployment(
     throw new FatalError('Cloudways staging credentials are incomplete')
   }
 
+  // Cloudways app users routinely have SSH password auth disabled, so prefer
+  // the master-user/private-key identity (same as the preview render path)
+  // over the app-user password stored at provisioning time.
+  let deploymentSsh: WordPressSshCredentials = stagingCredentials.ssh
+  const sshPrivateKey =
+    process.env.SITEFORGE_CLOUDWAYS_SSH_PRIVATE_KEY?.replace(/\\n/g, '\n')
+  if (sshPrivateKey && stagingApplicationId) {
+    if (!stagingApplication) {
+      stagingApplication = await cloudways.getApplication({
+        serverId: parentCredentials.providerMetadata.serverId,
+        applicationId: stagingApplicationId,
+      })
+    }
+    if (stagingApplication.master_user && stagingApplication.sys_user) {
+      deploymentSsh = {
+        host: stagingApplication.public_ip || stagingCredentials.ssh.host,
+        port: 22,
+        username: stagingApplication.master_user,
+        privateKey: sshPrivateKey,
+        applicationRoot: `/home/master/applications/${stagingApplication.sys_user}/public_html`,
+        sftpApplicationRoot: `/applications/${stagingApplication.sys_user}/public_html`,
+      }
+    }
+  }
+
+  if (stagingApplicationId) {
+    // Cloudways protects cloned staging apps with htaccess basic auth by
+    // default, which blocks the WordPress REST readiness checks. Remove it;
+    // staging privacy stays enforced through the noindex protection mode.
+    const stagingAuth = await cloudways.setStagingAuthStatus({
+      serverId: parentCredentials.providerMetadata.serverId,
+      applicationId: stagingApplicationId,
+      action: 'disable',
+    })
+    if (stagingAuth.operationId) {
+      await cloudways.waitForOperation(stagingAuth.operationId)
+    }
+  }
+
   await updateStage(
     input,
     'deploying_staging',
@@ -464,9 +555,9 @@ export async function runSiteForgeStagingDeployment(
       environment: 'staging',
       siteUrl: stagingUrl,
       adminUrl: stagingAdminUrl,
-      username: stagingCredentials.username,
-      applicationPassword: stagingCredentials.password,
-      ssh: stagingCredentials.ssh,
+      username: restUsername,
+      applicationPassword: restPassword,
+      ssh: deploymentSsh,
       acfProLicenseKey,
       publicRuntime,
       protection: { mode: 'noindex' },
@@ -482,8 +573,8 @@ export async function runSiteForgeStagingDeployment(
       url: stagingUrl,
       adminUrl: stagingAdminUrl,
       credentials: {
-        username: stagingCredentials.username,
-        password: stagingCredentials.password,
+        username: restUsername,
+        password: restPassword,
       },
     }
   } else {
@@ -492,12 +583,12 @@ export async function runSiteForgeStagingDeployment(
     }
     const installer = new SshWordPressInstaller()
     await installer.ensureInstalled({
-      ssh: stagingCredentials.ssh,
+      ssh: deploymentSsh,
       acfProLicenseKey,
     })
     if (release.overlayPackage && release.overlayContentHash) {
       await installer.installThemeOverlay({
-        ssh: stagingCredentials.ssh,
+        ssh: deploymentSsh,
         archive: release.overlayPackage,
         contentHash: release.overlayContentHash,
       })
@@ -506,8 +597,8 @@ export async function runSiteForgeStagingDeployment(
     instance = await deployToExistingWordPress({
       wpUrl: stagingUrl,
       credentials: {
-        username: stagingCredentials.username,
-        password: stagingCredentials.password,
+        username: restUsername,
+        password: restPassword,
       },
       pages,
       propertyContext,
@@ -575,6 +666,22 @@ async function completeStagingDeployment(
 ) {
   const client = createServiceClient()
   const now = new Date().toISOString()
+  // Stamp the artifact as remotely verified so it becomes an eligible
+  // rollback candidate for future launch releases.
+  const { error: verificationStampError } = await client
+    .from('siteforge_blueprint_versions')
+    .update({
+      remote_verification_report: output.certification,
+      remote_verified_url: output.url,
+      remote_verified_at: now,
+    })
+    .eq('id', input.artifactId)
+    .eq('website_id', input.websiteId)
+  if (verificationStampError) {
+    throw new Error(
+      `Failed to stamp remote verification on the staged artifact: ${verificationStampError.message}`
+    )
+  }
   const [deployment, target, website, job] = await Promise.all([
     client
       .from('siteforge_artifact_deployments')

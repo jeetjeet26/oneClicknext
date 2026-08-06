@@ -17,6 +17,10 @@ import {
   siteForgeAttributionSchema,
 } from '@/utils/siteforge/operations/attribution'
 import { enqueueSiteForgeOutbox } from '@/utils/siteforge/operations/outbox'
+import {
+  LeadUpsertError,
+  upsertLeadByContact,
+} from '@/utils/services/lead-upsert'
 
 export const conversionAttributionSchema = siteForgeAttributionSchema
 
@@ -69,6 +73,7 @@ export interface ConversionProviderAdapter {
   submitLead(input: NormalizedLeadSubmission): Promise<{
     leadId: string
     duplicate: boolean
+    isExisting: boolean
   }>
   scheduleTour(input: NormalizedTourSubmission): Promise<{
     tourId: string
@@ -97,33 +102,69 @@ abstract class DatabaseConversionAdapter
     if (existingError) {
       throw new Error(`Failed to check lead submission identity: ${existingError.message}`)
     }
-    if (existing) return { leadId: existing.id, duplicate: true }
+    if (existing) {
+      return { leadId: existing.id, duplicate: true, isExisting: true }
+    }
 
-    const { data, error } = await this.client
-      .from('leads')
-      .insert({
-        org_id: input.orgId,
-        property_id: input.propertyId,
-        provider: this.provider,
-        provider_submission_id: input.submissionId,
-        source: input.attribution.source,
-        first_name: input.firstName,
-        last_name: input.lastName || null,
-        email: input.email || null,
-        phone: input.phone || null,
-        move_in_date: input.moveInDate || null,
-        bedrooms: input.bedrooms || null,
-        notes: input.notes || null,
-        status: 'new',
-        consent: input.consent,
-        consent_text: input.consentText,
-        consented_at: input.consentedAt,
-        attribution: input.attribution as unknown as Json,
+    try {
+      const result = await upsertLeadByContact({
+        client: this.client,
+        propertyId: input.propertyId,
+        email: input.email,
+        phone: input.phone,
+        create: {
+          org_id: input.orgId,
+          provider: this.provider,
+          provider_submission_id: input.submissionId,
+          source: input.attribution.source,
+          first_name: input.firstName,
+          last_name: input.lastName || null,
+          email: input.email || null,
+          phone: input.phone || null,
+          move_in_date: input.moveInDate || null,
+          bedrooms: input.bedrooms || null,
+          notes: input.notes || null,
+          status: 'new',
+          consent: input.consent,
+          consent_text: input.consentText,
+          consented_at: input.consentedAt,
+          attribution: input.attribution as unknown as Json,
+        },
+        update: {
+          first_name: input.firstName,
+          ...(input.lastName ? { last_name: input.lastName } : {}),
+          ...(input.email ? { email: input.email } : {}),
+          ...(input.phone ? { phone: input.phone } : {}),
+          ...(input.moveInDate ? { move_in_date: input.moveInDate } : {}),
+          ...(input.bedrooms ? { bedrooms: input.bedrooms } : {}),
+          ...(input.notes ? { notes: input.notes } : {}),
+          consent: input.consent,
+          consent_text: input.consentText,
+          consented_at: input.consentedAt,
+        },
+        repeatActivity: {
+          description: `Returned via SiteForge Website: ${
+            [
+              input.moveInDate ? `Move-in: ${input.moveInDate}` : null,
+              input.bedrooms ? `Bedrooms: ${input.bedrooms}` : null,
+              input.notes ? `Notes: ${input.notes}` : null,
+            ].filter(Boolean).join(', ') || 'New inquiry'
+          }`,
+          metadata: {
+            source: 'siteforge',
+            provider: this.provider,
+            submissionId: input.submissionId,
+          },
+        },
       })
-      .select('id')
-      .single()
-    if (error || !data) {
-      if (error?.code === '23505') {
+
+      return {
+        leadId: result.leadId,
+        duplicate: false,
+        isExisting: result.isExisting,
+      }
+    } catch (error) {
+      if (error instanceof LeadUpsertError && error.code === '23505') {
         const { data: duplicate } = await this.client
           .from('leads')
           .select('id')
@@ -131,11 +172,13 @@ abstract class DatabaseConversionAdapter
           .eq('provider', this.provider)
           .eq('provider_submission_id', input.submissionId)
           .single()
-        if (duplicate) return { leadId: duplicate.id, duplicate: true }
+        if (duplicate) {
+          return { leadId: duplicate.id, duplicate: true, isExisting: true }
+        }
       }
-      throw new Error(`Failed to submit lead through ${this.provider}: ${error?.message}`)
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      throw new Error(`Failed to submit lead through ${this.provider}: ${message}`)
     }
-    return { leadId: data.id, duplicate: false }
   }
 
   async scheduleTour(raw: NormalizedTourSubmission) {
@@ -463,6 +506,7 @@ export async function ingestPublicSiteForgeConversion(
 ): Promise<{
   leadId: string
   duplicate: boolean
+  isExisting: boolean
   tour?: BookLumaLeasingTourResult
 }> {
   const input = siteForgePublicConversionSchema.parse(raw)
@@ -534,13 +578,15 @@ export async function ingestPublicSiteForgeConversion(
     }).catch((error) =>
       console.error('[SiteForge conversion] CRM sync failed (non-blocking):', error)
     )
-    workflow(leadResult.leadId, context.propertyId, 'lead_created').catch(
-      (error) =>
-        console.error(
-          '[SiteForge conversion] lead workflow failed (non-blocking):',
-          error
-        )
-    )
+    if (!leadResult.isExisting) {
+      workflow(leadResult.leadId, context.propertyId, 'lead_created').catch(
+        (error) =>
+          console.error(
+            '[SiteForge conversion] lead workflow failed (non-blocking):',
+            error
+          )
+      )
+    }
     const trackEvent = dependencies.trackEvent || trackEngagementEvent
     trackEvent({
       leadId: leadResult.leadId,
@@ -556,7 +602,7 @@ export async function ingestPublicSiteForgeConversion(
     }).catch((error) =>
       console.error('[SiteForge conversion] LeadPulse event failed (non-blocking):', error)
     )
-  } else if (!hasInjectedSideEffects) {
+  } else if (!hasInjectedSideEffects && !leadResult.duplicate) {
     const enqueue = dependencies.enqueueOutbox || enqueueSiteForgeOutbox
     const sharedIdentity = {
       orgId: context.orgId,
@@ -572,7 +618,7 @@ export async function ingestPublicSiteForgeConversion(
         capturedAt: attribution.consent.capturedAt,
       } as Json,
     }
-    await Promise.all([
+    const outboxWrites = [
       enqueue(client, {
         ...sharedIdentity,
         eventType: 'crm.lead_sync',
@@ -596,16 +642,6 @@ export async function ingestPublicSiteForgeConversion(
       }),
       enqueue(client, {
         ...sharedIdentity,
-        eventType: 'workflow.start',
-        idempotencyKey: `${submissionId}:workflow`,
-        payload: {
-          propertyId: context.propertyId,
-          leadId: leadResult.leadId,
-          trigger: 'lead_created',
-        },
-      }),
-      enqueue(client, {
-        ...sharedIdentity,
         eventType: 'leadpulse.engagement',
         idempotencyKey: `${submissionId}:leadpulse`,
         payload: {
@@ -621,7 +657,22 @@ export async function ingestPublicSiteForgeConversion(
           },
         } as Json,
       }),
-    ])
+    ]
+    if (!leadResult.isExisting) {
+      outboxWrites.push(
+        enqueue(client, {
+          ...sharedIdentity,
+          eventType: 'workflow.start',
+          idempotencyKey: `${submissionId}:workflow`,
+          payload: {
+            propertyId: context.propertyId,
+            leadId: leadResult.leadId,
+            trigger: 'lead_created',
+          },
+        })
+      )
+    }
+    await Promise.all(outboxWrites)
   }
 
   await persistAttributionTouches(

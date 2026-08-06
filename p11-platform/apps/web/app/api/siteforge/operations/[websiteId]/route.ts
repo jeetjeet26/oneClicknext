@@ -28,12 +28,20 @@ export async function GET(
       { status: auth.status, headers: ctx.responseHeaders }
     )
   }
-  const [website, releases, events, certifications, restores, rollbackHistory] =
-    await Promise.all([
+  const [
+    website,
+    releases,
+    events,
+    certifications,
+    restores,
+    rollbackHistory,
+    productionTarget,
+    productionProvisioningJob,
+  ] = await Promise.all([
       auth.service
         .from('property_websites')
         .select(
-          'id, property_id, editor_lifecycle_status, staging_artifact_id, staging_content_hash, staging_certified_at, production_artifact_id, production_content_hash, production_url, production_certified_at, production_certification_report'
+          'id, property_id, editor_lifecycle_status, staging_artifact_id, staging_content_hash, staging_certified_at, production_artifact_id, production_content_hash, production_url, production_certified_at, production_certification_report, wordpress_credential_ref, production_target_id, target_domain, domain_status'
         )
         .eq('id', websiteId)
         .single(),
@@ -68,6 +76,27 @@ export async function GET(
         .eq('change_type', 'rollback')
         .order('created_at', { ascending: false })
         .limit(20),
+      auth.service
+        .from('siteforge_wordpress_targets')
+        .select(
+          'id, status, site_url, admin_url, dashboard_url, provider_application_id, provider_server_id, credential_ref'
+        )
+        .eq('website_id', websiteId)
+        .eq('target_type', 'production')
+        .eq('is_active', true)
+        .maybeSingle(),
+      auth.service
+        .from('shared_jobs')
+        .select(
+          'id, lifecycle_status, stage, progress, current_step, error_message, workflow_run_id, updated_at'
+        )
+        .eq('org_id', auth.website.org_id)
+        .eq('property_id', auth.website.property_id)
+        .eq('domain', 'siteforge.production_provisioning')
+        .eq('subject_type', 'siteforge_wordpress_target')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle(),
     ])
   const error =
     website.error ||
@@ -75,7 +104,9 @@ export async function GET(
     events.error ||
     certifications.error ||
     restores.error ||
-    rollbackHistory.error
+    rollbackHistory.error ||
+    productionTarget.error ||
+    productionProvisioningJob.error
   if (error) {
     return NextResponse.json(
       { error: error.message },
@@ -90,6 +121,8 @@ export async function GET(
       certifications: certifications.data || [],
       restores: restores.data || [],
       rollbackHistory: rollbackHistory.data || [],
+      productionTarget: productionTarget.data || null,
+      productionProvisioningJob: productionProvisioningJob.data || null,
       automaticProductionLaunch: false,
       browserCertifierConfigured: Boolean(
         process.env.SITEFORGE_BROWSER_CERTIFIER_URL &&

@@ -157,7 +157,9 @@ export const siteForgePlanSchema = z.object({
   schemaVersion: z.literal(1),
   propertyId: z.guid(),
   onboardingSnapshot: z.object({
-    id: z.string().uuid(),
+    // z.guid() (not strict RFC-version uuid) to match propertyId above:
+    // seeded rows use fixed ids whose version nibble is not a real v4.
+    id: z.guid(),
     contentHash: z.string().length(64),
     enabledCapabilities: z.array(z.enum([
       'crm',
@@ -167,7 +169,7 @@ export const siteForgePlanSchema = z.object({
     ])).default([]),
   }).optional(),
   brandSnapshot: z.object({
-    assetId: z.string().uuid(),
+    assetId: z.guid(),
     contractVersion: z.literal('1.0'),
     contractHash: z.string().length(64),
     origin: brandOriginSchema,

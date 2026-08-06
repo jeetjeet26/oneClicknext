@@ -17,7 +17,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { ACFBlockRenderer, type DesignSystem } from './ACFBlockRenderer'
+import type { DesignSystem } from './ACFBlockRenderer'
 import type { GeneratedPage, SiteConfiguration, WebsiteStatusResponse } from '@/types/siteforge'
 import {
   classifyWebsiteStatus,
@@ -1106,27 +1106,6 @@ export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewPr
     currentArtifact?.quality_report
   )
   
-  // Get design system from website data (can be at top level or in siteArchitecture)
-  const siteConfiguration = website.siteBlueprint?.siteConfiguration
-  const siteChrome = siteConfiguration
-    ? buildSiteChromeModel(
-        siteConfiguration,
-        website.siteBlueprint?.propertySnapshot || website.property,
-        website.siteBlueprint?.legal
-      )
-    : null
-  const designSystem: DesignSystem | undefined =
-    siteConfiguration
-      ? {
-          colorSystem: siteConfiguration.design.colors,
-          colors: siteConfiguration.design.colors,
-          typography: siteConfiguration.design.typography,
-          spacing: siteConfiguration.design.spacing,
-        }
-      : website.designSystem ||
-        website.siteArchitecture?.designSystem ||
-        undefined
-
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -1422,11 +1401,11 @@ export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewPr
         <CardHeader>
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
-              <CardTitle>P11 Approximate Preview</CardTitle>
+              <CardTitle>Site Structure</CardTitle>
               <CardDescription className="mt-1 max-w-3xl">
-                This in-app rendering approximates the shared theme chrome and
-                registered ACF blocks. It is not the exact WordPress output and
-                does not render custom overlays.
+                Structural breakdown of each page: section order, block type,
+                and evidence sources. For visuals, use the Exact WordPress
+                Render above — it is the real deployed output.
               </CardDescription>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -1482,22 +1461,6 @@ export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewPr
                 value={page.slug}
                 className="space-y-4"
               >
-                {siteConfiguration && siteChrome && (
-                  <div
-                    className="overflow-hidden rounded-lg border bg-white text-gray-900"
-                    data-motion-level={siteConfiguration.motion.level}
-                    style={{
-                      fontFamily: siteConfiguration.design.typography.bodyFont,
-                      color: siteConfiguration.design.colors.text,
-                      background: siteConfiguration.design.colors.background,
-                    }}
-                  >
-                    <SitePreviewHeader
-                      configuration={siteConfiguration}
-                      chrome={siteChrome}
-                    />
-                  </div>
-                )}
                 <div className="bg-gray-100 dark:bg-gray-800 rounded-lg p-4 space-y-2">
                   <h3 className="font-semibold text-gray-900 dark:text-white">{page.title}</h3>
                   <p className="text-sm text-gray-600 dark:text-gray-400">{page.purpose}</p>
@@ -1606,26 +1569,10 @@ export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewPr
                             </div>
                           </div>
                         )}
-                        
-                        {/* Visual Preview */}
-                        <div className="bg-white dark:bg-gray-900">
-                          <ACFBlockRenderer
-                            blockType={section.acfBlock || section.type}
-                            blockIdentity={section.id || `${page.slug}-${idx + 1}`}
-                            content={section.content}
-                            designSystem={designSystem}
-                          />
-                        </div>
                       </div>
                     ))}
                   </div>
                 )}
-                {siteConfiguration && siteChrome ? (
-                  <SitePreviewFooter
-                    configuration={siteConfiguration}
-                    chrome={siteChrome}
-                  />
-                ) : null}
               </TabsContent>
             ))}
           </Tabs>

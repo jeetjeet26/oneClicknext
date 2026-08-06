@@ -31,6 +31,8 @@ function insertionClient() {
   const builder: Record<string, unknown> = {}
   builder.select = vi.fn(() => builder)
   builder.eq = vi.fn(() => builder)
+  builder.ilike = vi.fn(() => builder)
+  builder.limit = vi.fn().mockResolvedValue({ data: [], error: null })
   builder.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null })
   builder.insert = vi.fn((value) => {
     inserted = value
@@ -44,6 +46,84 @@ function insertionClient() {
     client: { from: vi.fn(() => builder) },
     inserted: () => inserted,
   }
+}
+
+function repeatLeadClient() {
+  let updated: unknown
+  const client = {
+    from: vi.fn((table: string) => {
+      if (table === 'leads') {
+        return {
+          select: vi.fn((columns: string) => {
+            if (columns === 'id') {
+              return {
+                eq: vi.fn(() => ({
+                  eq: vi.fn(() => ({
+                    eq: vi.fn(() => ({
+                      maybeSingle: vi.fn().mockResolvedValue({
+                        data: null,
+                        error: null,
+                      }),
+                    })),
+                  })),
+                })),
+              }
+            }
+            return {
+              eq: vi.fn(() => ({
+                ilike: vi.fn(() => ({
+                  limit: vi.fn().mockResolvedValue({
+                    data: [{ id: 'lead-existing', notes: 'Original inquiry' }],
+                    error: null,
+                  }),
+                })),
+              })),
+            }
+          }),
+          update: vi.fn((payload: unknown) => {
+            updated = payload
+            return {
+              eq: vi.fn(() => ({
+                eq: vi.fn(() => ({
+                  select: vi.fn(() => ({
+                    single: vi.fn().mockResolvedValue({
+                      data: {
+                        id: 'lead-existing',
+                        status: 'contacted',
+                        notes: (payload as { notes?: string }).notes,
+                      },
+                      error: null,
+                    }),
+                  })),
+                })),
+              })),
+            }
+          }),
+        }
+      }
+      if (table === 'lead_activities') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                eq: vi.fn(() => ({
+                  gte: vi.fn(() => ({
+                    maybeSingle: vi.fn().mockResolvedValue({
+                      data: null,
+                      error: null,
+                    }),
+                  })),
+                })),
+              })),
+            })),
+          })),
+          insert: vi.fn().mockResolvedValue({ error: null }),
+        }
+      }
+      throw new Error(`Unexpected table ${table}`)
+    }),
+  }
+  return { client, updated: () => updated }
 }
 
 function publicContextClient() {
@@ -159,6 +239,7 @@ describe('provider-neutral conversion adapters', () => {
     expect(result).toEqual({
       leadId: '33333333-3333-4333-8333-333333333333',
       duplicate: false,
+      isExisting: false,
     })
     expect(fake.inserted()).toEqual(
       expect.objectContaining({
@@ -307,6 +388,64 @@ describe('provider-neutral conversion adapters', () => {
       '22222222-2222-4222-8222-222222222222',
       'lead_created'
     )
+  })
+
+  it('updates and re-syncs a repeat website lead without restarting nurture', async () => {
+    const fake = repeatLeadClient()
+    const syncLead = vi.fn().mockResolvedValue({
+      success: true,
+      action: 'linked',
+    })
+    const startLeadWorkflow = vi.fn().mockResolvedValue({ success: true })
+    const trackEvent = vi.fn().mockResolvedValue(undefined)
+
+    const result = await ingestPublicSiteForgeConversion(
+      {
+        websiteId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        publicKey: 'sf_public_test',
+        artifactId: null,
+        orgId: '11111111-1111-4111-8111-111111111111',
+        propertyId: '22222222-2222-4222-8222-222222222222',
+        propertyName: 'Aspen House',
+        provider: 'p11',
+        toursEnabled: false,
+        allowedOrigins: ['https://property.example.com'],
+      },
+      {
+        name: 'Jordan Lee',
+        email: 'jordan@example.com',
+        form_type: 'contact',
+        submission_id: 'siteforge-form-repeat',
+        consent: true,
+        consent_text: 'I agree to receive leasing communications.',
+        move_in_date: '2026-10-01',
+        bedrooms: '2',
+        message: 'Ready to schedule another tour.',
+      },
+      {
+        client: fake.client as never,
+        syncLead,
+        startLeadWorkflow,
+        trackEvent,
+        recordTelemetry: vi.fn().mockResolvedValue(undefined),
+      }
+    )
+
+    expect(result).toMatchObject({
+      leadId: 'lead-existing',
+      duplicate: false,
+      isExisting: true,
+    })
+    expect(fake.updated()).toEqual(
+      expect.objectContaining({
+        move_in_date: '2026-10-01',
+        bedrooms: '2',
+        notes: 'Original inquiry\n\nReady to schedule another tour.',
+      })
+    )
+    expect(syncLead).toHaveBeenCalledOnce()
+    expect(trackEvent).toHaveBeenCalledOnce()
+    expect(startLeadWorkflow).not.toHaveBeenCalled()
   })
 
   it('routes tour forms through the canonical booking service', async () => {

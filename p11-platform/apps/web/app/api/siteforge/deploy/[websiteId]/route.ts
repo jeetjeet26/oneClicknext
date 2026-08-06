@@ -6,6 +6,8 @@ import { createServiceClient } from '@/utils/supabase/admin'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { createRequestContext } from '@/utils/services/request-context'
 import { getWordPressCredentialReference } from '@/utils/siteforge/wordpress/credential-vault'
+import { CloudwaysProviderClient } from '@/utils/siteforge/providers/cloudways-provider'
+import { readCloudwaysProvisioningCheckpoint } from '@/utils/siteforge/workflows/staging-steps'
 import { siteForgeStagingDeploymentWorkflow } from '@/workflows/siteforge-staging-deployment'
 import type { Json } from '@/types/supabase'
 import {
@@ -235,6 +237,106 @@ export async function POST(
         )
       }
       targetId = createdTarget.id
+    }
+
+    if (!localSimulation && parentMetadata) {
+      // Cloudways cloneApp is not idempotent, so the workflow refuses to
+      // initiate it. Start the clone exactly once here and persist the
+      // operation checkpoint; the workflow waits on it and resolves the
+      // staging application identity from the completed operation.
+      const { data: targetRow, error: targetRowError } = await client
+        .from('siteforge_wordpress_targets')
+        .select('id, metadata, provider_application_id, credential_ref, site_url')
+        .eq('id', targetId)
+        .single()
+      if (targetRowError || !targetRow) {
+        throw new Error(
+          `Failed to load staging target for provisioning: ${
+            targetRowError?.message || 'missing row'
+          }`
+        )
+      }
+      const checkpoint = readCloudwaysProvisioningCheckpoint(targetRow.metadata)
+      const alreadyProvisioned = Boolean(
+        targetRow.provider_application_id &&
+          targetRow.credential_ref &&
+          targetRow.site_url
+      )
+      if (
+        !alreadyProvisioned &&
+        !checkpoint.operationId &&
+        !checkpoint.applicationId
+      ) {
+        const cloudways = new CloudwaysProviderClient({
+          apiKey: process.env.CLOUDWAYS_API_KEY!,
+          email: process.env.CLOUDWAYS_EMAIL!,
+        })
+        let clone: { operationId: string | null; applicationId: string | null }
+        try {
+          clone = await cloudways.createStagingApplication({
+            serverId: parentMetadata.serverId,
+            parentApplicationId: parentMetadata.applicationId,
+            label: `siteforge-staging-${website.id.slice(0, 8)}`,
+          })
+        } catch (error) {
+          ctx.logError(502, error)
+          return NextResponse.json(
+            {
+              error: 'Failed to start the Cloudways staging clone',
+              detail:
+                error instanceof Error ? error.message : 'Unknown provider error',
+            },
+            { status: 502, headers: ctx.responseHeaders }
+          )
+        }
+        if (!clone.operationId && !clone.applicationId) {
+          return NextResponse.json(
+            {
+              error:
+                'Cloudways did not return a staging clone operation identity',
+            },
+            { status: 502, headers: ctx.responseHeaders }
+          )
+        }
+        const currentMetadata =
+          targetRow.metadata &&
+          typeof targetRow.metadata === 'object' &&
+          !Array.isArray(targetRow.metadata)
+            ? (targetRow.metadata as Record<string, unknown>)
+            : {}
+        const { data: checkpointRow, error: checkpointError } = await client
+          .from('siteforge_wordpress_targets')
+          .update({
+            metadata: {
+              ...currentMetadata,
+              provisioningCheckpoint: {
+                operationId: clone.operationId,
+                applicationId: clone.applicationId,
+                parentApplicationId: parentMetadata.applicationId,
+                serverId: parentMetadata.serverId,
+                initiatedAt: new Date().toISOString(),
+              },
+            } as Json,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', targetId)
+          .filter('metadata->provisioningCheckpoint', 'is', null)
+          .select('id')
+          .maybeSingle()
+        if (checkpointError) {
+          throw new Error(
+            `Failed to persist Cloudways staging provisioning checkpoint: ${checkpointError.message}`
+          )
+        }
+        if (!checkpointRow) {
+          // A concurrent request already persisted a checkpoint; proceed with
+          // that one rather than overwriting it.
+          console.warn(
+            '[siteforge.deploy] staging checkpoint already present; orphaning clone',
+            { targetId, orphanOperationId: clone.operationId }
+          )
+        }
+      }
     }
 
     const dedupeKey = [

@@ -103,17 +103,23 @@ export async function POST(
       .eq('dedupe_key', dedupeKey)
       .maybeSingle()
     if (duplicateJob) {
-      const { data: duplicateMessages } = await serviceClient
-        .from('siteforge_edit_messages')
-        .select('id, role, status, resulting_artifact_id')
-        .eq('session_id', session.id)
-        .eq('shared_job_id', duplicateJob.id)
-      const userMessage = duplicateMessages?.find(
-        message => message.role === 'user'
-      )
-      const assistantMessage = duplicateMessages?.find(
-        message => message.role === 'assistant'
-      )
+      // Only the assistant message carries shared_job_id (unique per job);
+      // the user message is resolved through its client request identity.
+      const [{ data: assistantMessage }, { data: userMessage }] =
+        await Promise.all([
+          serviceClient
+            .from('siteforge_edit_messages')
+            .select('id, role, status, resulting_artifact_id')
+            .eq('session_id', session.id)
+            .eq('shared_job_id', duplicateJob.id)
+            .maybeSingle(),
+          serviceClient
+            .from('siteforge_edit_messages')
+            .select('id')
+            .eq('session_id', session.id)
+            .eq('client_request_id', parsed.data.clientRequestId)
+            .maybeSingle(),
+        ])
       return NextResponse.json(
         {
           duplicate: true,
@@ -214,7 +220,8 @@ export async function POST(
           clientRequestId: parsed.data.clientRequestId,
           parentArtifactId: artifact.id,
           parentContentHash: artifact.content_hash,
-          sharedJobId: job.id,
+          // shared_job_id is unique per job and reserved for the assistant
+          // message, which the job status route resolves by that column.
           createdBy: user.id,
         },
         serviceClient

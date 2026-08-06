@@ -34,6 +34,7 @@ import {
   siteForgeAnalyticsConfigSchema,
   siteForgeLegalConfigSchema,
 } from '@/utils/siteforge/quality/deterministic-gates'
+import { verifyKnowledgeBaseEvidenceIds } from '@/utils/siteforge/quality/knowledge-evidence'
 import type { PhotoManifest } from '@/utils/siteforge/agents/photo-agent'
 import {
   rebuildWordPressThemeArtifactFromDesignSystem,
@@ -316,10 +317,13 @@ export async function validateAndPublishSemanticEdit(
   const confirmedPlan = blueprintRecord.confirmedPlan
     ? siteForgePlanSchema.parse(blueprintRecord.confirmedPlan)
     : undefined
+  const verifiedKnowledgeBaseEvidenceIds =
+    await verifyKnowledgeBaseEvidenceIds(client, input.propertyId, pages)
   assertFactualSemanticEditGrounding({
     originalBlueprint: snapshot.artifact.blueprint as unknown as SiteBlueprint,
     updatedBlueprint,
     confirmedPlan,
+    verifiedEvidenceIds: verifiedKnowledgeBaseEvidenceIds,
   })
   const legacyPhotoManifest =
     originalBlueprint.photoManifest &&
@@ -339,6 +343,7 @@ export async function validateAndPublishSemanticEdit(
     themeArtifact,
     legal: siteForgeLegalConfigSchema.parse(blueprintRecord.legal),
     analytics: siteForgeAnalyticsConfigSchema.parse(blueprintRecord.analytics),
+    additionalTrustedEvidenceIds: verifiedKnowledgeBaseEvidenceIds,
   })
   if (!deterministic.passed) {
     const failures = deterministic.checks
@@ -387,7 +392,10 @@ export async function validateAndPublishSemanticEdit(
     .eq('id', input.sharedJobId)
     .eq('domain', 'siteforge.semantic_edit')
     .eq('cancel_requested', false)
-    .or('status_reason.is.null,status_reason.neq.publication_claimed')
+    // NULL-safe "not yet claimed" guard. PostgREST rejects an or=(...) filter
+    // combined with an UPDATE ... RETURNING representation (42703), so this
+    // must stay a simple IS DISTINCT FROM filter.
+    .filter('status_reason', 'isdistinct', 'publication_claimed')
     .in('lifecycle_status', ['running', 'retrying'])
     .select('id')
     .maybeSingle()

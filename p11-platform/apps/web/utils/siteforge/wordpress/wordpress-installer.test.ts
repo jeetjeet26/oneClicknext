@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { canonicalizeSiteForgeContent } from '@/utils/siteforge/content-hash'
 import type { VerifiedRuntimeV3PackageIdentity } from '@/utils/siteforge/artifacts/release'
 import {
+  createWordPressApplicationPassword,
   prepareWordPressInstallerArchives,
   SshWordPressInstaller,
 } from './wordpress-installer'
@@ -76,6 +77,51 @@ describe('WordPress exact package installation', () => {
         packageSha256: 'a'.repeat(64),
       })
     ).rejects.toThrow('base theme package digest mismatch')
+  })
+})
+
+describe('WordPress application-password provisioning', () => {
+  it('creates a REST application password for the first administrator', async () => {
+    const ssh = {
+      host: '192.0.2.10',
+      username: 'master-user',
+      privateKey: 'private-key',
+      applicationRoot: '/home/master/applications/site/public_html',
+    }
+    const runCommand = async (
+      receivedSsh: Parameters<
+        typeof createWordPressApplicationPassword
+      >[0]['ssh'],
+      command: string
+    ): Promise<string> => {
+      expect(receivedSsh).toEqual(ssh)
+      expect(command).toContain(
+        "cd '/home/master/applications/site/public_html'"
+      )
+      expect(command).toContain(
+        'wp user list --role=administrator --field=user_login'
+      )
+      expect(command).toContain(
+        "wp user application-password create \"$admin_user\" 'siteforge-deploy' --porcelain"
+      )
+      return 'siteforge-admin\nabcd efgh ijkl mnop qrst uvwx\n'
+    }
+
+    await expect(
+      createWordPressApplicationPassword({ ssh }, runCommand)
+    ).resolves.toEqual({
+      username: 'siteforge-admin',
+      applicationPassword: 'abcd efgh ijkl mnop qrst uvwx',
+    })
+  })
+
+  it('fails closed when WP-CLI does not return a valid password', async () => {
+    await expect(
+      createWordPressApplicationPassword(
+        { ssh: { host: 'unused', username: 'unused' } },
+        async () => 'siteforge-admin\nshort\n'
+      )
+    ).rejects.toThrow('invalid application password')
   })
 })
 

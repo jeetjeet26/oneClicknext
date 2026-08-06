@@ -105,6 +105,112 @@ describe("Cloudways API v2 provider", () => {
     );
   });
 
+  it("creates a dedicated WordPress application through the add-app endpoint", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(
+      response({
+        data: {
+          operation_id: "operation-789",
+          app_id: "production-456",
+        },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      new CloudwaysProviderClient({
+        email: "ops@example.com",
+        apiKey: "cw_access-token",
+      }).createApplication({
+        serverId: "server-123",
+        label: "siteforge-aurora",
+        appVersion: "6.8.1",
+      }),
+    ).resolves.toEqual({
+      operationId: "operation-789",
+      applicationId: "production-456",
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.cloudways.com/api/v2/app?server_id=server-123&application=wordpress&app_version=6.8.1&app_label=siteforge-aurora",
+      expect.objectContaining({
+        method: "POST",
+        body: undefined,
+      }),
+    );
+  });
+
+  it("discovers the latest supported WordPress version before creating an app", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        response({
+          data: {
+            apps: [
+              {
+                label: "WordPress",
+                versions: [
+                  { application: "wordpress", app_version: "6.8.1" },
+                  { application: "wordpress", app_version: "6.9.0" },
+                ],
+              },
+            ],
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        response({ data: { operation_id: "operation-790" } }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await new CloudwaysProviderClient({
+      email: "ops@example.com",
+      apiKey: "cw_access-token",
+    }).createApplication({
+      serverId: "server-123",
+      label: "siteforge-current-wordpress",
+    });
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "https://api.cloudways.com/api/v2/apps",
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("app_version=6.9.0"),
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("disables staging htaccess auth with a form-encoded body", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(
+      response({
+        status: true,
+        operation_id: "flex-92994091",
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      new CloudwaysProviderClient({
+        email: "ops@example.com",
+        apiKey: "cw_access-token",
+      }).setStagingAuthStatus({
+        serverId: "1655141",
+        applicationId: "6599441",
+        action: "disable",
+      }),
+    ).resolves.toEqual({ operationId: "flex-92994091" });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("https://api.cloudways.com/api/v2/staging/auth/status");
+    expect(init).toMatchObject({ method: "POST" });
+    expect(String(init?.body)).toBe(
+      "server_id=1655141&app_id=6599441&action=disable",
+    );
+    expect(
+      (init?.headers as Record<string, string>)["Content-Type"],
+    ).toBe("application/x-www-form-urlencoded");
+  });
+
   it("verifies live add_staging_app operations nested under the operation envelope", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(
       response({

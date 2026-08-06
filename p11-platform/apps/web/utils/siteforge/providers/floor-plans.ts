@@ -359,6 +359,14 @@ function defined<T>(value: T | null): T | undefined {
   return value == null ? undefined : value
 }
 
+// Postgres returns timestamps with a +00:00 offset; block contracts require
+// strict ISO-8601 UTC ("Z") datetimes.
+function isoTimestamp(value: string | null): string | undefined {
+  if (value == null) return undefined
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString()
+}
+
 export function createApprovedFloorPlanSnapshot(
   units: readonly ApprovedPropertyUnit[],
   capturedAt = new Date().toISOString()
@@ -381,9 +389,9 @@ export function createApprovedFloorPlanSnapshot(
       applyUrl: defined(unit.apply_url),
       source: unit.source,
       sourceIdentity: unit.source_identity,
-      effectiveAt: defined(unit.effective_at),
-      expiresAt: defined(unit.expires_at),
-      sourceUpdatedAt: defined(unit.source_updated_at),
+      effectiveAt: isoTimestamp(unit.effective_at),
+      expiresAt: isoTimestamp(unit.expires_at),
+      sourceUpdatedAt: isoTimestamp(unit.source_updated_at),
     }))
     .sort((left, right) => left.id.localeCompare(right.id))
   const contentHash = hashSiteForgeContent(rows)

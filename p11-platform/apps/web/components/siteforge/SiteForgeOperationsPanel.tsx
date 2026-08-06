@@ -25,6 +25,10 @@ type Operations = {
     production_url: string | null
     production_certified_at: string | null
     editor_lifecycle_status: string
+    wordpress_credential_ref: string | null
+    production_target_id: string | null
+    target_domain: string | null
+    domain_status: string
   }
   releases: Array<{
     id: string
@@ -49,6 +53,26 @@ type Operations = {
     changes_summary: string | null
     created_at: string
   }>
+  productionTarget: {
+    id: string
+    status: string
+    site_url: string | null
+    admin_url: string | null
+    dashboard_url: string | null
+    provider_application_id: string | null
+    provider_server_id: string | null
+    credential_ref: string | null
+  } | null
+  productionProvisioningJob: {
+    id: string
+    lifecycle_status: string
+    stage: string
+    progress: number
+    current_step: string
+    error_message: string | null
+    workflow_run_id: string | null
+    updated_at: string
+  } | null
   automaticProductionLaunch: false
   browserCertifierConfigured: boolean
 }
@@ -78,6 +102,7 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
   const [legalRightsConfirmed, setLegalRightsConfirmed] = useState(false)
   const [promotionToken, setPromotionToken] = useState('')
   const [manualOperationId, setManualOperationId] = useState('')
+  const [targetDomain, setTargetDomain] = useState('')
 
   const refresh = useCallback(async () => {
     const [operationsResponse, incidentsResponse] = await Promise.all([
@@ -95,6 +120,7 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
     if (!incidentsResponse.ok)
       throw new Error(incidentsData.error || 'Incidents unavailable')
     setOperations(operationsData)
+    setTargetDomain((current) => current || operationsData.website.target_domain || '')
     setIncidents(incidentsData)
   }, [websiteId])
 
@@ -105,6 +131,15 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
       )
     )
   }, [refresh])
+
+  useEffect(() => {
+    const status = operations?.productionProvisioningJob?.lifecycle_status
+    if (!status || !['queued', 'running', 'retrying'].includes(status)) return
+    const timer = window.setInterval(() => {
+      void refresh().catch(() => undefined)
+    }, 3_000)
+    return () => window.clearInterval(timer)
+  }, [operations?.productionProvisioningJob?.lifecycle_status, refresh])
 
   async function postAction(
     key: string,
@@ -270,6 +305,33 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
     }
   }
 
+  async function provisionProductionWordPress() {
+    const confirmed = window.confirm(
+      'Create and link a dedicated Cloudways WordPress application for this property? This provisions a billable provider resource and cannot be safely duplicated.'
+    )
+    if (!confirmed) return
+    const result = await postAction(
+      'provision-production',
+      `/api/siteforge/provision-production/${websiteId}`,
+      {}
+    )
+    if (result) {
+      setMessage(
+        'Production WordPress provisioning started. Progress will update automatically.'
+      )
+    }
+  }
+
+  async function saveTargetDomain() {
+    if (!targetDomain.trim()) {
+      setMessage('Enter the production domain first.')
+      return
+    }
+    await postAction('save-domain', `/api/siteforge/domains/${websiteId}`, {
+      targetDomain: targetDomain.trim(),
+    })
+  }
+
   const activeIncidents =
     incidents?.incidents.filter((incident) => incident.status !== 'resolved') ||
     []
@@ -324,6 +386,129 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
             </p>
           </div>
         </div>
+
+        <section
+          className="space-y-3 rounded border p-4"
+          aria-labelledby="production-wordpress-heading"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p id="production-wordpress-heading" className="font-medium">
+                Production WordPress
+              </p>
+              <p className="text-sm text-muted-foreground">
+                Dedicated Cloudways parent application for this property.
+              </p>
+            </div>
+            <Badge
+              variant={
+                operations?.productionTarget?.status === 'ready'
+                  ? 'success'
+                  : 'outline'
+              }
+            >
+              {operations?.productionTarget?.status ||
+                (operations?.website.wordpress_credential_ref
+                  ? 'Linked'
+                  : 'Not provisioned')}
+            </Badge>
+          </div>
+          {operations?.productionProvisioningJob &&
+          ['queued', 'running', 'retrying', 'failed'].includes(
+            operations.productionProvisioningJob.lifecycle_status
+          ) ? (
+            <div className="rounded bg-muted/50 p-3 text-sm">
+              <p className="font-medium">
+                {operations.productionProvisioningJob.current_step}
+              </p>
+              <p className="text-muted-foreground">
+                {operations.productionProvisioningJob.progress}% ·{' '}
+                {operations.productionProvisioningJob.lifecycle_status}
+              </p>
+              {operations.productionProvisioningJob.error_message ? (
+                <p role="alert" className="mt-1 text-destructive">
+                  {operations.productionProvisioningJob.error_message}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+          <div className="flex flex-wrap gap-2">
+            {!operations?.website.wordpress_credential_ref ? (
+              <Button
+                size="sm"
+                disabled={
+                  Boolean(busy) ||
+                  ['queued', 'running', 'retrying'].includes(
+                    operations?.productionProvisioningJob?.lifecycle_status || ''
+                  )
+                }
+                onClick={() => void provisionProductionWordPress()}
+              >
+                {busy === 'provision-production'
+                  ? 'Starting…'
+                  : 'Provision production WordPress'}
+              </Button>
+            ) : null}
+            {operations?.productionTarget?.site_url ? (
+              <Button size="sm" variant="outline" asChild>
+                <a
+                  href={operations.productionTarget.site_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Open production WordPress
+                </a>
+              </Button>
+            ) : null}
+            {operations?.productionTarget?.admin_url ? (
+              <Button size="sm" variant="outline" asChild>
+                <a
+                  href={operations.productionTarget.admin_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Production wp-admin
+                </a>
+              </Button>
+            ) : null}
+            {operations?.productionTarget?.dashboard_url ? (
+              <Button size="sm" variant="outline" asChild>
+                <a
+                  href={operations.productionTarget.dashboard_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Cloudways application
+                </a>
+              </Button>
+            ) : null}
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <label className="min-w-0 flex-1 text-sm">
+              Production domain
+              <input
+                value={targetDomain}
+                onChange={(event) => setTargetDomain(event.target.value)}
+                placeholder="www.example.com"
+                className="mt-1 w-full rounded border bg-background px-3 py-2"
+              />
+            </label>
+            <Button
+              size="sm"
+              variant="outline"
+              className="self-end"
+              disabled={!targetDomain.trim() || Boolean(busy)}
+              onClick={() => void saveTargetDomain()}
+            >
+              Save domain
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            After saving, point the domain’s A record to the Cloudways server.
+            Domain attachment and SSL run only after the staged release is
+            certified for production.
+          </p>
+        </section>
 
         <Textarea
           value={rationale}

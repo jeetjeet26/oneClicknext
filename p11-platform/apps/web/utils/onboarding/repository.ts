@@ -178,10 +178,13 @@ export async function buildOnboardingSnapshot(
       approvedUnits.map(unit => unit.id),
       units.length ? 'needs_review' : 'missing',
     ),
+    // Neighborhood data is optional: many properties have no curated points
+    // of interest, and the generated site simply omits that section. The
+    // domain is still reported so operators can see it is missing.
     neighborhood: report(
       approvedPois.length > 0,
-      true,
-      ['At least one sourced and approved point of interest is required'],
+      false,
+      ['No sourced and approved points of interest; the neighborhood section will be omitted'],
       approvedPois.map(poi => poi.id),
       pointsOfInterest.length ? 'needs_review' : 'missing',
     ),

@@ -219,6 +219,51 @@ function exec(client: Client, command: string): Promise<string> {
   })
 }
 
+export async function createWordPressApplicationPassword(
+  input: {
+    ssh: WordPressSshCredentials
+    label?: string
+  },
+  runCommand?: (
+    ssh: WordPressSshCredentials,
+    command: string
+  ) => Promise<string>
+): Promise<{ username: string; applicationPassword: string }> {
+  const applicationRoot = input.ssh.applicationRoot || 'public_html'
+  const label = input.label || 'siteforge-deploy'
+  const command = [
+    `cd ${shellQuote(applicationRoot)}`,
+    'admin_user="$(wp user list --role=administrator --field=user_login | head -n 1)"',
+    'test -n "$admin_user"',
+    'printf \'%s\\n\' "$admin_user"',
+    `wp user application-password create "$admin_user" ${shellQuote(label)} --porcelain`,
+  ].join(' && ')
+  let output: string
+  if (runCommand) {
+    output = await runCommand(input.ssh, command)
+  } else {
+    const client = await connect(input.ssh)
+    try {
+      output = await exec(client, command)
+    } finally {
+      client.end()
+    }
+  }
+  const [username, applicationPassword] = output
+    .split(/\r?\n/)
+    .map(value => value.trim())
+    .filter(Boolean)
+  if (!username || !applicationPassword) {
+    throw new Error(
+      'WordPress did not return an administrator and application password'
+    )
+  }
+  if (applicationPassword.replace(/\s/g, '').length < 24) {
+    throw new Error('WordPress returned an invalid application password')
+  }
+  return { username, applicationPassword }
+}
+
 export class SshWordPressInstaller {
   async installBaseTheme(input: {
     ssh: WordPressSshCredentials

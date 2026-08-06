@@ -3,7 +3,11 @@ import type { SiteBlueprint } from '@/types/siteforge'
 import type { SiteForgePlan } from '@/utils/siteforge/contracts'
 import { assertFactualSemanticEditGrounding } from './factual-guard'
 
-function blueprint(content: Record<string, unknown>, acfBlock = 'acf/text-section') {
+function blueprint(
+  content: Record<string, unknown>,
+  acfBlock = 'acf/text-section',
+  evidenceIds: string[] = ['evidence-1']
+) {
   return {
     pages: [
       {
@@ -18,7 +22,7 @@ function blueprint(content: Record<string, unknown>, acfBlock = 'acf/text-sectio
             content,
             reasoning: 'Test',
             order: 0,
-            evidenceIds: ['evidence-1'],
+            evidenceIds,
           },
         ],
       },
@@ -26,7 +30,9 @@ function blueprint(content: Record<string, unknown>, acfBlock = 'acf/text-sectio
   } as unknown as SiteBlueprint
 }
 
+const propertyId = '66666666-6666-4666-8666-666666666666'
 const confirmedPlan = {
+  propertyId,
   knownFacts: [
     {
       claim: 'Acacia includes rooftop decks and solar.',
@@ -58,6 +64,69 @@ describe('assertFactualSemanticEditGrounding', () => {
         confirmedPlan,
       })
     ).toThrow('does not retain an exact claim from its pinned evidence')
+  })
+
+  it('allows edits to copy grounded on the pinned brand contract namespace', () => {
+    const brandEvidence = [`brand-context:${propertyId}:0`]
+    expect(() =>
+      assertFactualSemanticEditGrounding({
+        originalBlueprint: blueprint(
+          { content: 'Older copy.' },
+          'acf/text-section',
+          brandEvidence
+        ),
+        updatedBlueprint: blueprint(
+          { content: 'Refreshed on-brand copy.' },
+          'acf/text-section',
+          brandEvidence
+        ),
+        confirmedPlan,
+      })
+    ).not.toThrow()
+  })
+
+  it('rejects brand-context evidence pinned to another property', () => {
+    const foreignEvidence = [
+      'brand-context:99999999-9999-4999-8999-999999999999:0',
+    ]
+    expect(() =>
+      assertFactualSemanticEditGrounding({
+        originalBlueprint: blueprint(
+          { content: 'Older copy.' },
+          'acf/text-section',
+          foreignEvidence
+        ),
+        updatedBlueprint: blueprint(
+          { content: 'Refreshed copy.' },
+          'acf/text-section',
+          foreignEvidence
+        ),
+        confirmedPlan,
+      })
+    ).toThrow('does not retain an exact claim from its pinned evidence')
+  })
+
+  it('allows edits to copy grounded on caller-verified knowledge-base ids', () => {
+    const knowledgeBaseEvidence = ['55555555-5555-4555-8555-555555555555']
+    const run = (verifiedEvidenceIds?: readonly string[]) => () =>
+      assertFactualSemanticEditGrounding({
+        originalBlueprint: blueprint(
+          { content: 'Older copy.' },
+          'acf/text-section',
+          knowledgeBaseEvidence
+        ),
+        updatedBlueprint: blueprint(
+          { content: 'Refreshed grounded copy.' },
+          'acf/text-section',
+          knowledgeBaseEvidence
+        ),
+        confirmedPlan,
+        verifiedEvidenceIds,
+      })
+    expect(run(knowledgeBaseEvidence)).not.toThrow()
+    expect(run()).toThrow(
+      'does not retain an exact claim from its pinned evidence'
+    )
   })
 
   it('requires source workflows for inventory and POI changes', () => {

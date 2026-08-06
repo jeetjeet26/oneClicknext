@@ -242,9 +242,10 @@ export function buildSiteForgePlan(input: BuildSiteForgePlanInput): SiteForgePla
     conversionStrategy: {
       primaryAction,
       secondaryAction: primaryAction === 'contact' ? 'tours' : 'contact',
-      leadDestination: enabledCapabilities.includes('crm')
-        ? 'p11_lumaleasing'
-        : 'csv_export',
+      // Lead capture always posts to the platform conversion endpoint (the
+      // WordPress form block supports no other provider). The CRM capability
+      // only controls downstream syncing of captured leads.
+      leadDestination: 'p11_lumaleasing',
       tourDestination: enabledCapabilities.includes('tours')
         ? 'p11_lumaleasing'
         : 'unconfigured',

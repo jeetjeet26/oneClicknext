@@ -63,7 +63,12 @@ describe('semantic editor turn route', () => {
 
     expect(source).toContain(".eq('dedupe_key', dedupeKey)")
     expect(source).toContain(".eq('shared_job_id', duplicateJob.id)")
-    expect(source.match(/sharedJobId: job\.id/g)).toHaveLength(3)
+    // shared_job_id is unique per job: only the assistant message and the
+    // workflow input may carry it, never the user message insert.
+    expect(source.match(/sharedJobId: job\.id/g)).toHaveLength(2)
+    expect(source).toContain(
+      ".eq('client_request_id', parsed.data.clientRequestId)"
+    )
     expect(source).toContain("status_reason: 'workflow_start_failed'")
     expect(source).toContain('Failed to link semantic edit workflow')
   })

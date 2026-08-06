@@ -21,8 +21,20 @@ vi.mock('@/utils/supabase/server', () => ({ createClient }))
 vi.mock('@/utils/supabase/admin', () => ({ createServiceClient }))
 vi.mock('@/utils/services/auth-guard', () => ({ validatePropertyAccess }))
 vi.mock('workflow/api', () => ({ start }))
+const { getWordPressCredentialReference, createStagingApplication } = vi.hoisted(
+  () => ({
+    getWordPressCredentialReference: vi.fn(),
+    createStagingApplication: vi.fn(),
+  })
+)
 vi.mock('@/utils/siteforge/wordpress/credential-vault', () => ({
-  getWordPressCredentialReference: vi.fn(),
+  getWordPressCredentialReference,
+  storeWordPressCredentialReference: vi.fn(),
+}))
+vi.mock('@/utils/siteforge/providers/cloudways-provider', () => ({
+  CloudwaysProviderClient: vi.fn(function CloudwaysProviderClient() {
+    return { createStagingApplication }
+  }),
 }))
 vi.mock('@/workflows/siteforge-staging-deployment', () => ({
   siteForgeStagingDeploymentWorkflow: vi.fn(),
@@ -48,7 +60,7 @@ function request(path: string): NextRequest {
 
 function builder(result: unknown) {
   const value: Record<string, unknown> = {}
-  for (const method of ['select', 'eq', 'in', 'contains', 'neq', 'limit', 'insert', 'update']) {
+  for (const method of ['select', 'eq', 'in', 'contains', 'neq', 'limit', 'insert', 'update', 'filter']) {
     value[method] = vi.fn(() => value)
   }
   value.single = vi.fn().mockResolvedValue(result)
@@ -177,5 +189,136 @@ describe('Cloudways staging deployment route', () => {
       }),
     ])
     expect(from).not.toHaveBeenCalledWith('siteforge_jobs')
+  })
+
+  it('initiates the Cloudways staging clone once and persists the checkpoint', async () => {
+    authGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } })
+    validatePropertyAccess.mockResolvedValue({ authorized: true })
+    start.mockResolvedValue({ runId: 'staging-run-2', cancel: vi.fn() })
+    vi.stubEnv('CLOUDWAYS_API_KEY', 'cloudways-key')
+    vi.stubEnv('CLOUDWAYS_EMAIL', 'ops@example.com')
+    getWordPressCredentialReference.mockResolvedValue({
+      provider: 'cloudways',
+      url: 'https://parent.example.com',
+      username: 'admin',
+      password: 'secret',
+      ssh: null,
+      providerMetadata: {
+        provider: 'cloudways',
+        serverId: '111',
+        applicationId: '222',
+        publicIp: '1.2.3.4',
+      },
+    })
+    createStagingApplication.mockResolvedValue({
+      operationId: 'op-1',
+      applicationId: null,
+    })
+
+    const targetProvisionRead = builder({
+      data: {
+        id: ids.target,
+        metadata: { promotionPolicy: 'siteforge_launch_release_v1' },
+        provider_application_id: null,
+        credential_ref: null,
+        site_url: null,
+      },
+      error: null,
+    })
+    const checkpointUpdate = builder({ data: { id: ids.target }, error: null })
+    const queues: Record<string, ReturnType<typeof builder>[]> = {
+      property_websites: [
+        builder({
+          data: {
+            id: ids.website,
+            org_id: ids.org,
+            property_id: ids.property,
+            current_artifact_version_id: ids.artifact,
+            canonical_preview_artifact_id: ids.artifact,
+            canonical_preview_content_hash: 'a'.repeat(64),
+            wordpress_credential_ref: 'supabase-vault:parent-ref',
+            staging_artifact_id: null,
+            staging_content_hash: null,
+            staging_url: null,
+          },
+          error: null,
+        }),
+        builder({ data: { id: ids.website }, error: null }),
+      ],
+      siteforge_blueprint_versions: [
+        builder({
+          data: {
+            id: ids.artifact,
+            content_hash: 'a'.repeat(64),
+            asset_manifest_hash: 'b'.repeat(64),
+            base_theme_package_sha256: 'c'.repeat(64),
+            overlay_package_sha256: null,
+            deployment_decision: 'approved',
+            deployment_approved_at: '2026-07-30T20:00:00.000Z',
+            confirmed_approval_id: ids.approval,
+          },
+          error: null,
+        }),
+      ],
+      siteforge_wordpress_targets: [
+        builder({ data: null, error: null }),
+        builder({ data: { id: ids.target }, error: null }),
+        targetProvisionRead,
+        checkpointUpdate,
+      ],
+      shared_jobs: [
+        builder({ data: null, error: null }),
+        builder({ data: { id: ids.job }, error: null }),
+        builder({ data: { id: ids.job }, error: null }),
+      ],
+      siteforge_artifact_deployments: [
+        builder({ data: null, error: null }),
+        builder({ data: { id: ids.deployment }, error: null }),
+        builder({ data: { id: ids.deployment }, error: null }),
+      ],
+    }
+    from.mockImplementation((table: string) => {
+      const next = queues[table]?.shift()
+      if (!next) throw new Error(`Unexpected ${table} query`)
+      return next
+    })
+
+    const { POST } = await import('./route')
+    const response = await POST(request(`/api/siteforge/deploy/${ids.website}`), {
+      params: Promise.resolve({ websiteId: ids.website }),
+    })
+    expect(response.status).toBe(202)
+    expect(createStagingApplication).toHaveBeenCalledTimes(1)
+    expect(createStagingApplication).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serverId: '111',
+        parentApplicationId: '222',
+      })
+    )
+    expect(checkpointUpdate.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          promotionPolicy: 'siteforge_launch_release_v1',
+          provisioningCheckpoint: expect.objectContaining({
+            operationId: 'op-1',
+            applicationId: null,
+            parentApplicationId: '222',
+            serverId: '111',
+          }),
+        }),
+      })
+    )
+    expect(checkpointUpdate.filter).toHaveBeenCalledWith(
+      'metadata->provisioningCheckpoint',
+      'is',
+      null
+    )
+    expect(start).toHaveBeenCalledWith(expect.any(Function), [
+      expect.objectContaining({
+        artifactId: ids.artifact,
+        targetId: ids.target,
+        localSimulation: false,
+      }),
+    ])
   })
 })

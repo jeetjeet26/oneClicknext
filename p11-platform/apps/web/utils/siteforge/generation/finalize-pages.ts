@@ -300,9 +300,20 @@ function normalizeContent(
       )
         ? 'tour'
         : 'contact'
-      const formType = ['contact', 'tour', 'register'].includes(requestedFormType)
+      let formType = ['contact', 'tour', 'register'].includes(requestedFormType)
         ? requestedFormType
         : inferredFormType
+      // Tour scheduling needs the platform tours capability; when the plan
+      // explicitly routes tours to an unsupported destination the form still
+      // captures the visitor as a contact lead instead of failing the publish.
+      const configuredTourProvider = integrityContext.formProviders?.tour
+      if (
+        formType === 'tour' &&
+        configuredTourProvider !== undefined &&
+        configuredTourProvider !== 'p11_lumaleasing'
+      ) {
+        formType = 'contact'
+      }
       const provider =
         formType === 'tour'
           ? integrityContext.formProviders?.tour

@@ -253,7 +253,9 @@ const themeArtifact = {
     { role: 'body', family: 'Example Serif', weights: [400], source: 'fallback', fallback: 'Georgia, serif', preload: false },
   ],
 } as unknown as WordPressThemeArtifact
+const planPropertyId = '66666666-6666-4666-8666-666666666666'
 const confirmedPlan = {
+  propertyId: planPropertyId,
   brandSnapshot: {
     assetId: '33333333-3333-4333-8333-333333333333',
     contractVersion: '1.0',
@@ -427,6 +429,41 @@ describe('deterministic SiteForge quality gates', () => {
     ).toEqual(expect.objectContaining({ passed: false, severity: 'blocker' }))
   })
 
+  it('accepts finalizer-appended legal pages absent from the confirmed plan', () => {
+    // Plans enumerate only content pages; the privacy/terms/accessibility
+    // trio is appended deterministically from the approved legal config and
+    // is verified exactly by the legal_and_consent gate instead.
+    const planWithoutLegalPages = structuredClone(confirmedPlan)
+    planWithoutLegalPages.pages = planWithoutLegalPages.pages.filter(
+      page => page.slug === 'home'
+    )
+    const report = evaluate(pages, { confirmedPlan: planWithoutLegalPages })
+    expect(report.passed).toBe(true)
+    expect(
+      report.checks.find(check => check.id === 'confirmed_plan_fidelity')
+    ).toEqual(expect.objectContaining({ passed: true }))
+    expect(
+      report.checks.find(check => check.id === 'factual_evidence')
+    ).toEqual(expect.objectContaining({ passed: true }))
+  })
+
+  it('trusts caller-verified knowledge-base evidence ids and nothing else', () => {
+    const knowledgeBaseId = '55555555-5555-4555-8555-555555555555'
+    const modified = structuredClone(pages)
+    modified[0].sections[0].evidenceIds = [knowledgeBaseId]
+
+    expect(
+      evaluate(modified).checks.find(check => check.id === 'factual_evidence')
+    ).toEqual(expect.objectContaining({ passed: false, severity: 'blocker' }))
+
+    const verified = evaluate(modified, {
+      additionalTrustedEvidenceIds: [knowledgeBaseId],
+    })
+    expect(
+      verified.checks.find(check => check.id === 'factual_evidence')
+    ).toEqual(expect.objectContaining({ passed: true }))
+  })
+
   it('accepts an explicit evidence-safe placeholder', () => {
     const modified = structuredClone(pages)
     modified[0].sections[0].content = createEvidenceSafePlaceholder(
@@ -456,6 +493,77 @@ describe('deterministic SiteForge quality gates', () => {
     const report = evaluate(pages, { confirmedPlan: changedPlan })
     expect(report.checks.find(check => check.id === 'pinned_brand_hash'))
       .toEqual(expect.objectContaining({ passed: false, severity: 'blocker' }))
+  })
+
+  it('accepts a token matching any approved hex when a role has several colors', () => {
+    const multiColorContract = normalizeBrandForgeContract({
+      identity: { name: 'Example Apartments' },
+      logos: {
+        variants: [{
+          role: 'primary',
+          assetId: logoAssetId,
+          url: 'https://cdn.example.com/exterior.jpg',
+          alt: 'Example Apartments logo',
+          restrictions: [],
+        }],
+      },
+      colors: {
+        roles: [
+          { role: 'primary', name: 'Gold', hex: '#C9A962', usage: 'Accents' },
+          { role: 'primary', name: 'Sage', hex: '#7D8B74', usage: 'Primary' },
+          { role: 'secondary', name: 'Cream', hex: '#F5F1E8', usage: 'Backgrounds' },
+        ],
+      },
+      typography: {
+        roles: [
+          { role: 'headline', family: 'Example Sans', weights: [700], usage: 'Headlines', fallback: 'Arial, sans-serif' },
+          { role: 'body', family: 'Example Serif', weights: [400], usage: 'Body', fallback: 'Georgia, serif' },
+        ],
+      },
+    }, { origin: 'imported', approvalStatus: 'approved' })
+    const multiColorPlan = structuredClone(confirmedPlan)
+    multiColorPlan.brandSnapshot!.contract = multiColorContract
+    multiColorPlan.brandSnapshot!.contractHash =
+      hashBrandForgeContract(multiColorContract)
+    const multiColorTheme = structuredClone(themeArtifact)
+    multiColorTheme.designTokens.colors.primary = '#C9A962'
+    multiColorTheme.designTokens.colors.secondary = '#F5F1E8'
+
+    const report = evaluate(pages, {
+      confirmedPlan: multiColorPlan,
+      themeArtifact: multiColorTheme,
+    })
+    expect(
+      report.checks.find(check => check.id === 'exact_brand_tokens')
+    ).toEqual(expect.objectContaining({ passed: true }))
+
+    multiColorTheme.designTokens.colors.primary = '#000000'
+    const substituted = evaluate(pages, {
+      confirmedPlan: multiColorPlan,
+      themeArtifact: multiColorTheme,
+    })
+    expect(
+      substituted.checks.find(check => check.id === 'exact_brand_tokens')
+    ).toEqual(
+      expect.objectContaining({ passed: false, locations: ['colors.primary'] })
+    )
+  })
+
+  it('trusts pinned brand-context evidence only for the plan property', () => {
+    const modified = structuredClone(pages)
+    modified[0].sections[0].evidenceIds = [
+      `brand-context:${planPropertyId}:0`,
+    ]
+    expect(
+      evaluate(modified).checks.find(check => check.id === 'factual_evidence')
+    ).toEqual(expect.objectContaining({ passed: true }))
+
+    modified[0].sections[0].evidenceIds = [
+      'brand-context:99999999-9999-4999-8999-999999999999:0',
+    ]
+    expect(
+      evaluate(modified).checks.find(check => check.id === 'factual_evidence')
+    ).toEqual(expect.objectContaining({ passed: false, severity: 'blocker' }))
   })
 
   it('blocks substituted brand tokens', () => {

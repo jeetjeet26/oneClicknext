@@ -95,7 +95,10 @@ export async function POST(
       })
       .eq('id', job.id)
       .in('lifecycle_status', ['queued', 'running', 'retrying'])
-      .or('status_reason.is.null,status_reason.neq.publication_claimed')
+      // NULL-safe "not yet claimed" guard. PostgREST rejects an or=(...)
+      // filter combined with an UPDATE ... RETURNING representation (42703),
+      // so this must stay a simple IS DISTINCT FROM filter.
+      .filter('status_reason', 'isdistinct', 'publication_claimed')
       .select('id')
       .maybeSingle()
 

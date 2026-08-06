@@ -288,26 +288,51 @@ export function evaluateDeterministicSiteForgeQuality(input: {
   themeArtifact: WordPressThemeArtifact
   legal: SiteForgeLegalConfig
   analytics: SiteForgeAnalyticsConfig
+  /**
+   * Evidence ids verified by the caller against a trusted store (for example
+   * knowledge-base document rows confirmed to exist for this property).
+   * Membership here never bypasses the plan gate for ids the caller did not
+   * explicitly verify.
+   */
+  additionalTrustedEvidenceIds?: readonly string[]
   evaluatedAt?: string
 }): DeterministicQualityReport {
   const checks: z.infer<typeof qualityCheckSchema>[] = []
+  const legal = siteForgeLegalConfigSchema.safeParse(input.legal)
+  // The privacy/terms/accessibility pages are deterministic platform
+  // furniture appended during finalization from the approved legal config;
+  // they are verified exactly by the legal_and_consent gate below, so the
+  // plan-topology comparison excludes them.
+  const legalPageSlugs = new Set(
+    legal.success
+      ? [
+          legal.data.privacyPath,
+          legal.data.termsPath,
+          legal.data.accessibilityPath,
+        ].map(path => normalizeInternalPath(path).replace(/^\/+/, ''))
+      : []
+  )
   if (input.confirmedPlan) {
-    const expectedPageSignatures = input.confirmedPlan.pages.map(page => ({
-      slug: page.slug,
-      title: page.title,
-      sections: page.sections.map(section => ({
-        id: section.id,
-        block: section.block,
-      })),
-    }))
-    const actualPageSignatures = input.pages.map(page => ({
-      slug: page.slug,
-      title: page.title,
-      sections: page.sections.map(section => ({
-        id: section.id,
-        block: section.acfBlock,
-      })),
-    }))
+    const expectedPageSignatures = input.confirmedPlan.pages
+      .filter(page => !legalPageSlugs.has(page.slug))
+      .map(page => ({
+        slug: page.slug,
+        title: page.title,
+        sections: page.sections.map(section => ({
+          id: section.id,
+          block: section.block,
+        })),
+      }))
+    const actualPageSignatures = input.pages
+      .filter(page => !legalPageSlugs.has(page.slug))
+      .map(page => ({
+        slug: page.slug,
+        title: page.title,
+        sections: page.sections.map(section => ({
+          id: section.id,
+          block: section.acfBlock,
+        })),
+      }))
     const fidelityPassed =
       JSON.stringify(actualPageSignatures) === JSON.stringify(expectedPageSignatures)
     const topologyIsBlocking =
@@ -360,12 +385,22 @@ export function evaluateDeterministicSiteForgeQuality(input: {
       })
 
       const tokenColors = input.themeArtifact.designTokens.colors
-      const colorFailures = contract.colors.roles.flatMap(color => {
-        if (!['primary', 'secondary', 'accent'].includes(color.role)) return []
-        return tokenColors[color.role]?.toLowerCase() === color.hex.toLowerCase()
-          ? []
-          : [`colors.${color.role}`]
-      })
+      // Approved contracts may list several hexes per role (for example a
+      // gold and a sage both approved as primary). The rendered token must be
+      // one of the approved hexes for its role; requiring equality with every
+      // entry would make multi-color brands unsatisfiable.
+      const colorFailures = (['primary', 'secondary', 'accent'] as const).flatMap(
+        roleName => {
+          const approvedHexes = contract.colors.roles
+            .filter(color => color.role === roleName)
+            .map(color => color.hex.toLowerCase())
+          if (approvedHexes.length === 0) return []
+          const token = tokenColors[roleName]?.toLowerCase()
+          return token && approvedHexes.includes(token)
+            ? []
+            : [`colors.${roleName}`]
+        }
+      )
       const normalizeFont = (font: string) =>
         font.split(',')[0].replace(/["']/g, '').trim().toLowerCase()
       const fontFailures = [
@@ -476,7 +511,6 @@ export function evaluateDeterministicSiteForgeQuality(input: {
     locations: fairHousingLocations,
   })
 
-  const legal = siteForgeLegalConfigSchema.safeParse(input.legal)
   const legalPageFailures = legal.success
     ? [
         {
@@ -663,7 +697,17 @@ export function evaluateDeterministicSiteForgeQuality(input: {
         ...input.confirmedPlan.pages.flatMap(page =>
           page.sections.flatMap(section => section.evidenceIds || [])
         ),
+        // The approved legal config is itself trusted evidence for the exact
+        // policy bodies it publishes.
+        ...(legal.success ? [legalEvidenceId(legal.data)] : []),
+        ...(input.additionalTrustedEvidenceIds || []),
       ])
+    : null
+  // Copy grounded on the pinned BrandForge contract's own positioning claims
+  // cites synthetic ids in this namespace; the contract identity is verified
+  // separately by the pinned_brand_hash blocker.
+  const brandContextEvidencePrefix = input.confirmedPlan?.propertyId
+    ? `brand-context:${input.confirmedPlan.propertyId}:`
     : null
   const ungroundedSections = input.pages.flatMap((page) =>
     page.sections.flatMap((section) => {
@@ -680,7 +724,9 @@ export function evaluateDeterministicSiteForgeQuality(input: {
           evidenceId =>
             evidenceId === SITEFORGE_PLACEHOLDER_EVIDENCE_ID ||
             trustedEvidenceIds === null ||
-            trustedEvidenceIds.has(evidenceId)
+            trustedEvidenceIds.has(evidenceId) ||
+            (brandContextEvidencePrefix !== null &&
+              evidenceId.startsWith(brandContextEvidencePrefix))
         )
       return hasValidEvidence
         ? []

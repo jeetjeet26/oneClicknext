@@ -297,12 +297,28 @@ export async function renderCanonicalWordPressPreview(
       }
     }
     if (application?.public_ip) {
-      runtimeSsh = {
-        host: application.public_ip,
-        username: application.app_user,
-        password: application.app_password,
-        applicationRoot: "public_html",
-      };
+      // Cloudways app users routinely have SSH password auth disabled, so
+      // prefer the same master-user/private-key identity the staging and
+      // production deploy paths use. Built from the application lookup we
+      // already made; no extra Cloudways API calls (their rate limit is easy
+      // to trip during renders).
+      const sshPrivateKey =
+        process.env.SITEFORGE_CLOUDWAYS_SSH_PRIVATE_KEY?.replace(/\\n/g, "\n");
+      runtimeSsh =
+        sshPrivateKey && application.master_user && application.sys_user
+          ? {
+              host: application.public_ip,
+              username: application.master_user,
+              privateKey: sshPrivateKey,
+              applicationRoot: `/home/master/applications/${application.sys_user}/public_html`,
+              sftpApplicationRoot: `/applications/${application.sys_user}/public_html`,
+            }
+          : {
+              host: application.public_ip,
+              username: application.app_user,
+              password: application.app_password,
+              applicationRoot: "public_html",
+            };
       if (!runtimeV3) {
         await new SshWordPressInstaller().ensureInstalled({
           ssh: runtimeSsh,

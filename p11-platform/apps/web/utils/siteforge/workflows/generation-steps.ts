@@ -30,6 +30,7 @@ import {
   evaluateDeterministicSiteForgeQuality,
   type SiteForgeLegalConfig,
 } from '@/utils/siteforge/quality/deterministic-gates'
+import { verifyKnowledgeBaseEvidenceIds } from '@/utils/siteforge/quality/knowledge-evidence'
 import type { GeneratedPage, GenerationPreferences } from '@/types/siteforge'
 import type { Json, TablesUpdate } from '@/types/supabase'
 import {
@@ -529,13 +530,40 @@ export async function persistSiteForgeGenerationArtifact(
       preload: role.role === 'headline' || role.role === 'body',
     }
   })
+  // The design agent copies brand colors from its palette context, but the
+  // publish contract is the pinned BrandForge contract roles. Keep the
+  // agent's choice when it already used an approved hex for the role;
+  // otherwise pin the first approved hex so the immutable artifact can never
+  // ship substituted brand colors regardless of agent output.
+  const contractColorRoles =
+    confirmedPlan.brandSnapshot?.contract.colors.roles ?? []
+  const enforcedDesignSystem: DesignSystem = {
+    ...designSystem,
+    colorSystem: { ...designSystem.colorSystem },
+  }
+  for (const roleName of ['primary', 'secondary', 'accent'] as const) {
+    const approved = contractColorRoles.filter(
+      color => color.role === roleName
+    )
+    if (approved.length === 0) continue
+    const current = enforcedDesignSystem.colorSystem[roleName]?.toLowerCase()
+    if (!approved.some(color => color.hex.toLowerCase() === current)) {
+      enforcedDesignSystem.colorSystem[roleName] = approved[0].hex
+    }
+  }
   const wordpressThemeArtifact = buildWordPressThemeArtifact(
-    designSystem,
+    enforcedDesignSystem,
     wordpressCapabilities,
     undefined,
     wordpressFontAssets,
   )
   const analytics = createDefaultSiteForgeAnalyticsConfig()
+  const verifiedKnowledgeBaseEvidenceIds =
+    await verifyKnowledgeBaseEvidenceIds(
+      supabase,
+      input.propertyId,
+      finalizedPages
+    )
   const deterministicQualityReport = evaluateDeterministicSiteForgeQuality({
     pages: finalizedPages,
     confirmedPlan,
@@ -543,6 +571,7 @@ export async function persistSiteForgeGenerationArtifact(
     themeArtifact: wordpressThemeArtifact,
     legal,
     analytics,
+    additionalTrustedEvidenceIds: verifiedKnowledgeBaseEvidenceIds,
     evaluatedAt: now,
   })
   if (!deterministicQualityReport.passed) {
@@ -553,6 +582,21 @@ export async function persistSiteForgeGenerationArtifact(
           ? `${check.id} (${check.locations.join(', ')})`
           : check.id
       )
+    // Failed runs persist nothing, so emit the complete diagnostic surface to
+    // runtime logs: the full report plus the evidence each section cited.
+    console.error('[siteforge_workflow] deterministic gate failure detail', {
+      sharedJobId: input.sharedJobId,
+      report: deterministicQualityReport,
+      sectionEvidence: finalizedPages.map(page => ({
+        slug: page.slug,
+        sections: page.sections.map(section => ({
+          id: section.id,
+          block: section.acfBlock,
+          evidenceIds: section.evidenceIds,
+        })),
+      })),
+      verifiedKnowledgeBaseEvidenceIds,
+    })
     throw new FatalError(
       `Deterministic quality gates failed: ${blockers.join(', ')}`
     )
@@ -567,7 +611,7 @@ export async function persistSiteForgeGenerationArtifact(
     onboardingSnapshot: confirmedPlan.onboardingSnapshot,
     brandContext,
     architecture,
-    designSystem,
+    designSystem: enforcedDesignSystem,
     siteConfiguration: wordpressThemeArtifact.siteConfiguration,
     wordpressThemeArtifact,
     legal,

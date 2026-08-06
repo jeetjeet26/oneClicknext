@@ -9,7 +9,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'ONECLICK_SITEFORGE_VERSION', '2.2.9' );
+define( 'ONECLICK_SITEFORGE_VERSION', '2.2.11' );
 define( 'ONECLICK_SITEFORGE_DIR', get_template_directory() );
 define( 'ONECLICK_SITEFORGE_URI', get_template_directory_uri() );
 
@@ -746,7 +746,9 @@ function oneclick_siteforge_security_headers() {
 	if ( headers_sent() ) {
 		return;
 	}
-	header( 'X-Frame-Options: SAMEORIGIN' );
+	// frame-ancestors replaces X-Frame-Options so the oneClick console can
+	// embed exact WordPress previews while other origins stay blocked.
+	header( "Content-Security-Policy: frame-ancestors 'self' https://hellop11.com https://www.hellop11.com" );
 	header( 'X-Content-Type-Options: nosniff' );
 	header( 'Referrer-Policy: strict-origin-when-cross-origin' );
 	if ( is_ssl() ) {

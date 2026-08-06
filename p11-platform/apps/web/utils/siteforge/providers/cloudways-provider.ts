@@ -65,8 +65,11 @@ const cloudwaysApplicationSchema = z
     app_fqdn: z.string().min(1),
     app_user: z.string().min(1),
     app_password: z.string().min(1),
+    sys_user: z.string().optional(),
     server_id: z.union([z.string(), z.number()]).optional(),
     public_ip: z.string().optional(),
+    master_user: z.string().optional(),
+    master_password: z.string().optional(),
     is_staging: z.union([z.string(), z.number(), z.boolean()]).optional(),
     source_app_id: z.union([z.string(), z.number()]).nullable().optional(),
   })
@@ -120,6 +123,92 @@ export class CloudwaysProviderClient {
   private accessToken?: string;
 
   constructor(private readonly credentials: CloudwaysProviderCredentials) {}
+
+  async createApplication(input: {
+    serverId: string;
+    label: string;
+    appVersion?: string;
+  }): Promise<{ operationId: string | null; applicationId: string | null }> {
+    // Cloudways API v2 add-app contract. Creating an app is not idempotent;
+    // callers must persist the returned operation checkpoint before retrying.
+    const appVersion =
+      input.appVersion || (await this.getLatestWordPressVersion());
+    const response = z
+      .object({
+        operation_id: z.union([z.string(), z.number()]).optional(),
+        id: z.union([z.string(), z.number()]).optional(),
+        app_id: z.union([z.string(), z.number()]).optional(),
+        application_id: z.union([z.string(), z.number()]).optional(),
+      })
+      .passthrough()
+      .parse(
+        await this.request("/app", {
+          method: "POST",
+          query: {
+            server_id: input.serverId,
+            application: "wordpress",
+            app_version: appVersion,
+            app_label: input.label,
+          },
+        }),
+      );
+    return {
+      operationId:
+        response.operation_id !== undefined
+          ? String(response.operation_id)
+          : response.id !== undefined
+            ? String(response.id)
+            : null,
+      applicationId:
+        response.application_id !== undefined
+          ? String(response.application_id)
+          : response.app_id !== undefined
+            ? String(response.app_id)
+            : null,
+    };
+  }
+
+  async getLatestWordPressVersion(): Promise<string> {
+    const payload = z
+      .object({
+        apps: z
+          .array(
+            z
+              .object({
+                versions: z
+                  .array(
+                    z
+                      .object({
+                        application: z.string(),
+                        app_version: z.string(),
+                      })
+                      .passthrough(),
+                  )
+                  .default([]),
+              })
+              .passthrough(),
+          )
+          .default([]),
+      })
+      .passthrough()
+      .parse(await this.request("/apps", { method: "GET" }));
+    const versions = payload.apps
+      .flatMap((app) => app.versions)
+      .filter((version) => version.application === "wordpress")
+      .map((version) => version.app_version)
+      .sort((left, right) =>
+        right.localeCompare(left, undefined, {
+          numeric: true,
+          sensitivity: "base",
+        }),
+      );
+    if (!versions[0]) {
+      throw new Error(
+        "Cloudways did not advertise a supported WordPress application version",
+      );
+    }
+    return versions[0];
+  }
 
   private async fetchWithBackoff(
     request: () => Promise<Response>,
@@ -326,6 +415,59 @@ export class CloudwaysProviderClient {
     };
   }
 
+  async setStagingAuthStatus(input: {
+    serverId: string;
+    applicationId: string;
+    action: "enable" | "disable";
+  }): Promise<{ operationId: string | null }> {
+    const accessToken = await this.authenticate();
+    // Cloudflare in front of the Cloudways API rejects this POST with query
+    // params; it only accepts a form-encoded body.
+    const response = await this.fetchWithBackoff(() =>
+      fetch(`${this.baseUrl}/staging/auth/status`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          server_id: input.serverId,
+          app_id: input.applicationId,
+          action: input.action,
+        }),
+        signal: AbortSignal.timeout(60_000),
+      }),
+    );
+    const text = await response.text();
+    let payload: unknown = {};
+    try {
+      payload = text ? JSON.parse(text) : {};
+    } catch {
+      payload = { message: text };
+    }
+    if (!response.ok) {
+      const message =
+        payload && typeof payload === "object" && "message" in payload
+          ? String((payload as Record<string, unknown>).message)
+          : "Unknown Cloudways error";
+      throw new Error(
+        `Cloudways staging auth ${input.action} failed (${response.status}): ${message}`,
+      );
+    }
+    const parsed = z
+      .object({
+        operation_id: z.union([z.string(), z.number()]).optional(),
+      })
+      .passthrough()
+      .parse(payload);
+    return {
+      operationId:
+        parsed.operation_id !== undefined
+          ? String(parsed.operation_id)
+          : null,
+    };
+  }
+
   async waitForOperation(
     operationId: string,
     timeoutMs = 30 * 60_000,
@@ -404,6 +546,8 @@ export class CloudwaysProviderClient {
               .object({
                 id: z.union([z.string(), z.number()]),
                 public_ip: z.string().optional(),
+                master_user: z.string().optional(),
+                master_password: z.string().optional(),
                 apps: z.array(cloudwaysApplicationSchema).default([]),
               })
               .passthrough(),
@@ -444,6 +588,8 @@ export class CloudwaysProviderClient {
       ...application,
       server_id: applicationServer.id,
       public_ip: applicationServer.public_ip,
+      master_user: applicationServer.master_user,
+      master_password: applicationServer.master_password,
     });
   }
 

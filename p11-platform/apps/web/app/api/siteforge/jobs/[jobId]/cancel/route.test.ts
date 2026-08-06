@@ -109,7 +109,7 @@ describe('SiteForge job cancellation', () => {
     const updateBuilder: Record<string, unknown> = {}
     updateBuilder.eq = vi.fn(() => updateBuilder)
     updateBuilder.in = vi.fn(() => updateBuilder)
-    updateBuilder.or = vi.fn(() => updateBuilder)
+    updateBuilder.filter = vi.fn(() => updateBuilder)
     updateBuilder.select = vi.fn(() => updateBuilder)
     updateBuilder.maybeSingle = vi.fn().mockResolvedValue({
       data: { id: jobId },
