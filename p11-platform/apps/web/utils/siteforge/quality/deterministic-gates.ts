@@ -87,6 +87,32 @@ export const deterministicQualityReportSchema = z.object({
 })
 
 export type SiteForgeLegalConfig = z.infer<typeof siteForgeLegalConfigSchema>
+
+// Immutable artifacts created before legal provenance hardening carry only
+// the original approved fields. They must remain renderable exactly as
+// approved, so render/deploy paths accept this shape while quality gates for
+// newly generated artifacts still require the full provenance schema above.
+export const siteForgeLegacyLegalConfigSchema = z
+  .object({
+    equalHousingOpportunity: z.literal(true),
+    fairHousingDisclaimer: z.string().trim().min(20).max(100_000),
+    privacyPath: z.string().startsWith('/'),
+    termsPath: z.string().startsWith('/'),
+    accessibilityPath: z.string().startsWith('/'),
+  })
+  .strict()
+
+export type RenderableSiteForgeLegalConfig =
+  | SiteForgeLegalConfig
+  | z.infer<typeof siteForgeLegacyLegalConfigSchema>
+
+export function parseRenderableSiteForgeLegalConfig(
+  value: unknown
+): RenderableSiteForgeLegalConfig {
+  const hardened = siteForgeLegalConfigSchema.safeParse(value)
+  if (hardened.success) return hardened.data
+  return siteForgeLegacyLegalConfigSchema.parse(value)
+}
 export type SiteForgeAnalyticsConfig = z.infer<
   typeof siteForgeAnalyticsConfigSchema
 >

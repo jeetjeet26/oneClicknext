@@ -17,8 +17,8 @@ import {
 } from "@/utils/siteforge/wordpress-client";
 import { validateWordPressThemeArtifact } from "@/utils/siteforge/wordpress/theme-artifact";
 import {
+  parseRenderableSiteForgeLegalConfig,
   siteForgeAnalyticsConfigSchema,
-  siteForgeLegalConfigSchema,
 } from "@/utils/siteforge/quality/deterministic-gates";
 import { loadSiteForgePublicRuntimeConfig } from "@/utils/siteforge/public-runtime";
 import { brandForgeContractV1Schema } from "@/utils/brandforge/contracts";
@@ -210,7 +210,7 @@ export async function renderCanonicalWordPressPreview(
   const legal =
     runtimeV2 || runtimeV3
       ? null
-      : siteForgeLegalConfigSchema.parse(blueprint.legal);
+      : parseRenderableSiteForgeLegalConfig(blueprint.legal);
   const analytics =
     runtimeV2 || runtimeV3
       ? null

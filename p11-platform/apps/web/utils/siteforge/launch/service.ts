@@ -14,7 +14,7 @@ import { WordPressAPIClient } from '@/utils/siteforge/wordpress-client'
 import { validateWordPressThemeArtifact } from '@/utils/siteforge/wordpress/theme-artifact'
 import {
   siteForgeAnalyticsConfigSchema,
-  siteForgeLegalConfigSchema,
+  parseRenderableSiteForgeLegalConfig,
 } from '@/utils/siteforge/quality/deterministic-gates'
 import {
   getLaunchRelease,
@@ -1428,7 +1428,7 @@ async function protectLaunchProduction(
     password: credentials.password,
   }).applySiteForgeSettings({
     themeArtifact,
-    legal: siteForgeLegalConfigSchema.parse(blueprint.legal),
+    legal: parseRenderableSiteForgeLegalConfig(blueprint.legal),
     analytics: siteForgeAnalyticsConfigSchema.parse(blueprint.analytics),
     targetMode: 'staging',
   })

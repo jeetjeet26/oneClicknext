@@ -11,7 +11,7 @@ import { mapWebsiteAssetRow } from '@/utils/siteforge/assets/repository'
 import { validateWordPressThemeArtifact } from '@/utils/siteforge/wordpress/theme-artifact'
 import {
   siteForgeAnalyticsConfigSchema,
-  siteForgeLegalConfigSchema,
+  parseRenderableSiteForgeLegalConfig,
 } from '@/utils/siteforge/quality/deterministic-gates'
 import {
   getWordPressCredentialReference,
@@ -299,7 +299,7 @@ export async function runSiteForgeDeployment(
   const themeArtifact = validateWordPressThemeArtifact(
     (website as unknown as DeploymentWebsite).blueprint?.wordpressThemeArtifact
   )
-  const legal = siteForgeLegalConfigSchema.parse(
+  const legal = parseRenderableSiteForgeLegalConfig(
     (website as unknown as DeploymentWebsite).blueprint?.legal
   )
   const analytics = siteForgeAnalyticsConfigSchema.parse(

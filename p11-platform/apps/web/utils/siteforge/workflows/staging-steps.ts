@@ -17,7 +17,7 @@ import {
 import { validateWordPressThemeArtifact } from '@/utils/siteforge/wordpress/theme-artifact'
 import {
   siteForgeAnalyticsConfigSchema,
-  siteForgeLegalConfigSchema,
+  parseRenderableSiteForgeLegalConfig,
 } from '@/utils/siteforge/quality/deterministic-gates'
 import { loadSiteForgePublicRuntimeConfig } from '@/utils/siteforge/public-runtime'
 import {
@@ -236,7 +236,7 @@ export async function runSiteForgeStagingDeployment(
     : validateWordPressThemeArtifact(blueprint.wordpressThemeArtifact)
   const legal = runtimeV3
     ? null
-    : siteForgeLegalConfigSchema.parse(blueprint.legal)
+    : parseRenderableSiteForgeLegalConfig(blueprint.legal)
   const analytics = runtimeV3
     ? null
     : siteForgeAnalyticsConfigSchema.parse(blueprint.analytics)

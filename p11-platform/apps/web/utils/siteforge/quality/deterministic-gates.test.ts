@@ -7,6 +7,8 @@ import {
   createSiteForgeLegalConfigFromSnapshot,
   evaluateDeterministicSiteForgeQuality,
   legalEvidenceId,
+  parseRenderableSiteForgeLegalConfig,
+  siteForgeLegalConfigSchema,
 } from './deterministic-gates'
 import {
   createEvidenceSafePlaceholder,
@@ -57,6 +59,31 @@ describe('approved legal projection', () => {
     })
     expect(legal.sourceHash).toMatch(/^[a-f0-9]{64}$/)
     expect(legal.approvedAt).toBe('2026-07-31T20:00:00.000Z')
+  })
+
+  it('renders pre-hardening artifacts while gates still require provenance', () => {
+    const legacyLegal = {
+      equalHousingOpportunity: true,
+      fairHousingDisclaimer:
+        'We are pledged to the letter and spirit of U.S. policy for the achievement of equal housing opportunity.',
+      privacyPath: '/privacy',
+      termsPath: '/terms',
+      accessibilityPath: '/accessibility',
+    }
+    // Render paths accept the exact legacy shape from immutable artifacts.
+    expect(parseRenderableSiteForgeLegalConfig(legacyLegal)).toEqual(legacyLegal)
+    // The hardened schema used by quality gates still rejects it.
+    expect(siteForgeLegalConfigSchema.safeParse(legacyLegal).success).toBe(false)
+    // Unknown or malformed shapes still fail closed at render time.
+    expect(() =>
+      parseRenderableSiteForgeLegalConfig({
+        ...legacyLegal,
+        equalHousingOpportunity: false,
+      })
+    ).toThrow()
+    expect(() =>
+      parseRenderableSiteForgeLegalConfig({ ...legacyLegal, extra: true })
+    ).toThrow()
   })
 
   it('fails closed without approved legal evidence', () => {

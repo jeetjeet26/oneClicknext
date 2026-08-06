@@ -17,7 +17,7 @@ import { loadApprovedFloorPlanSnapshot } from '@/utils/siteforge/providers/floor
 import { validateWordPressThemeArtifact } from '@/utils/siteforge/wordpress/theme-artifact'
 import {
   siteForgeAnalyticsConfigSchema,
-  siteForgeLegalConfigSchema,
+  parseRenderableSiteForgeLegalConfig,
 } from '@/utils/siteforge/quality/deterministic-gates'
 import {
   getLaunchRelease,
@@ -256,7 +256,7 @@ export async function certifySiteForgeProduction(
     : validateWordPressThemeArtifact(blueprint.wordpressThemeArtifact)
   const legal = runtimeV3
     ? null
-    : siteForgeLegalConfigSchema.parse(blueprint.legal)
+    : parseRenderableSiteForgeLegalConfig(blueprint.legal)
   const analytics = runtimeV3
     ? null
     : siteForgeAnalyticsConfigSchema.parse(blueprint.analytics)
