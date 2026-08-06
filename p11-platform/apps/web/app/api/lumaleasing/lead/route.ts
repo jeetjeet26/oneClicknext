@@ -7,24 +7,7 @@ import { auditLog, getRequestIp } from '@/utils/services/audit-logger';
 import { createRequestContext } from '@/utils/services/request-context';
 import { syncLeadToCRM } from '@/utils/services/crm-sync';
 import { startWorkflow } from '@/utils/services/workflow-processor';
-
-const LEAD_CAPTURE_ACTIVITY_DEDUPE_WINDOW_MS = 5 * 60 * 1000
-
-function buildLeadUpdatePayload(params: {
-  firstName: string
-  lastName: string
-  email: string
-  phone: string
-}): Record<string, string> {
-  const payload: Record<string, string> = {}
-
-  if (params.firstName) payload.first_name = params.firstName
-  if (params.lastName) payload.last_name = params.lastName
-  if (params.email) payload.email = params.email
-  if (params.phone) payload.phone = params.phone
-
-  return payload
-}
+import { upsertLeadByContact } from '@/utils/services/lead-upsert';
 
 // Handle CORS preflight — origin-restricted in production
 export async function OPTIONS(req: NextRequest) {
@@ -147,76 +130,53 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Check if lead already exists (email first, then phone) so widget retries
-    // reuse the same lead instead of creating duplicates.
-    let leadId: string | null = null;
-    const leadUpdatePayload = buildLeadUpdatePayload({
-      firstName,
-      lastName,
+    const intentDetails = [];
+    if (moveInDate) intentDetails.push(`Move-in: ${moveInDate}`);
+    if (bedroomPreference) intentDetails.push(`Bedrooms: ${bedroomPreference}`);
+    if (notes) intentDetails.push(`Notes: ${notes}`);
+    const repeatDescription = intentDetails.length > 0
+      ? `Returned via LumaLeasing Widget: ${intentDetails.join(', ')}`
+      : 'Returned via LumaLeasing Widget';
+
+    const leadResult = await upsertLeadByContact({
+      client: supabase,
+      propertyId,
       email,
       phone,
-    })
+      create: {
+        first_name: firstName || '',
+        last_name: lastName || '',
+        email: email || '',
+        phone: phone || '',
+        source: 'LumaLeasing Widget',
+        status: 'new',
+        move_in_date: moveInDate || null,
+        bedrooms: bedroomPreference || null,
+        notes: notes || null,
+      },
+      update: {
+        ...(firstName ? { first_name: firstName } : {}),
+        ...(lastName ? { last_name: lastName } : {}),
+        ...(email ? { email } : {}),
+        ...(phone ? { phone } : {}),
+        ...(moveInDate ? { move_in_date: moveInDate } : {}),
+        ...(bedroomPreference ? { bedrooms: bedroomPreference } : {}),
+        ...(notes ? { notes } : {}),
+      },
+      repeatActivity: {
+        description: repeatDescription,
+        metadata: {
+          source: 'lumaleasing_widget',
+          moveInDate,
+          bedroomPreference,
+          notes,
+        },
+      },
+    });
+    const leadId = leadResult.leadId;
+    const isNewLead = !leadResult.isExisting;
 
-    if (email) {
-      const { data: existingLead } = await supabase
-        .from('leads')
-        .select('id')
-        .eq('property_id', propertyId)
-        .eq('email', email)
-        .limit(1);
-
-      if (existingLead?.[0]?.id) {
-        leadId = existingLead[0].id;
-      }
-    }
-
-    if (!leadId && phone) {
-      const { data: existingLead } = await supabase
-        .from('leads')
-        .select('id')
-        .eq('property_id', propertyId)
-        .eq('phone', phone)
-        .limit(1);
-
-      if (existingLead?.[0]?.id) {
-        leadId = existingLead[0].id;
-      }
-    }
-
-    if (leadId && Object.keys(leadUpdatePayload).length > 0) {
-      await supabase
-        .from('leads')
-        .update(leadUpdatePayload)
-        .eq('id', leadId);
-    }
-
-    // Create new lead if not found, then run the same downstream side
-    // effects the chat route triggers so widget-only lead capture and
-    // chat-discovered leads land in CRM/workflows the same way.
-    let isNewLead = false;
-    if (!leadId) {
-      const { data: newLead, error } = await supabase
-        .from('leads')
-        .insert({
-          property_id: propertyId,
-          first_name: firstName || '',
-          last_name: lastName || '',
-          email: email || '',
-          phone: phone || '',
-          source: 'LumaLeasing Widget',
-          status: 'new',
-        })
-        .select('id')
-        .single();
-
-      if (error) {
-        ctx.logError(500, error, { operation: 'capture_luma_lead' });
-        return serverError(error, responseHeaders);
-      }
-
-      leadId = newLead?.id;
-      isNewLead = Boolean(leadId);
-
+    if (isNewLead) {
       auditLog({
         eventType: 'lead_created',
         propertyId,
@@ -225,11 +185,11 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    if (isNewLead && leadId) {
+    if (leadId) {
       // CRM sync — mirrors `/api/lumaleasing/chat` so leads captured via the
       // widget lead form arrive in the connected CRM the same way as leads
-      // discovered during a chat exchange. Failure must not block the API
-      // response; we already have the lead in our system of record.
+      // discovered during a chat exchange. Repeat captures are re-synced so
+      // the connected CRM receives the latest contact and intent details.
       try {
         const crmNoteParts = [];
         if (moveInDate) crmNoteParts.push(`Desired move-in: ${moveInDate}`);
@@ -242,7 +202,7 @@ export async function POST(req: NextRequest) {
           email: email || undefined,
           phone: phone || undefined,
           source: 'LumaLeasing Widget',
-          status: 'new',
+          status: leadResult.lead.status || undefined,
           move_in_date: moveInDate || undefined,
           bedrooms: bedroomPreference || undefined,
           notes: crmNoteParts.length > 0 ? crmNoteParts.join('. ') : undefined,
@@ -260,45 +220,14 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      // Kick off the lead_created workflow so widget-only leads receive the
-      // same nurture cadence as chat-captured leads.
-      startWorkflow(leadId, propertyId, 'lead_created').catch((workflowError) =>
-        console.error(
-          '[LumaLeasing Lead] Workflow start failed (non-blocking):',
-          workflowError
+      if (isNewLead) {
+        // Repeat captures update the current lead without restarting nurture.
+        startWorkflow(leadId, propertyId, 'lead_created').catch((workflowError) =>
+          console.error(
+            '[LumaLeasing Lead] Workflow start failed (non-blocking):',
+            workflowError
+          )
         )
-      );
-    }
-
-    // Add notes as activity if provided, but suppress duplicate retry writes
-    if (leadId && (notes || moveInDate || bedroomPreference)) {
-      const details = [];
-      if (moveInDate) details.push(`Move-in: ${moveInDate}`);
-      if (bedroomPreference) details.push(`Bedrooms: ${bedroomPreference}`);
-      if (notes) details.push(`Notes: ${notes}`);
-      const description = `Widget Lead Capture: ${details.join(', ')}`
-      const duplicateCutoff = new Date(
-        Date.now() - LEAD_CAPTURE_ACTIVITY_DEDUPE_WINDOW_MS
-      ).toISOString()
-
-      const { data: existingActivity } = await supabase
-        .from('lead_activities')
-        .select('id')
-        .eq('lead_id', leadId)
-        .eq('type', 'note')
-        .eq('description', description)
-        .gte('created_at', duplicateCutoff)
-        .maybeSingle()
-
-      if (!existingActivity) {
-        await supabase
-          .from('lead_activities')
-          .insert({
-            lead_id: leadId,
-            type: 'note',
-            description,
-            metadata: { moveInDate, bedroomPreference, notes },
-          });
       }
     }
 

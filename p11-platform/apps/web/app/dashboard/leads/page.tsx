@@ -55,6 +55,7 @@ type Lead = {
   status: 'new' | 'contacted' | 'tour_booked' | 'toured' | 'leased' | 'lost'
   source: string
   created_at: string
+  updated_at?: string | null
   score?: number | null
   score_bucket?: string | null
   move_in_date?: string | null
@@ -260,6 +261,7 @@ function LeadRow({
 }) {
   const [showStatusMenu, setShowStatusMenu] = useState(false)
   const config = STATUS_CONFIG[lead.status]
+  const lastTouchAt = lead.updated_at || lead.created_at
 
   const getCRMSyncBadge = () => {
     if (!lead.crm_sync_status) return null
@@ -375,7 +377,7 @@ function LeadRow({
       <td className="px-4 py-4">
         <div className="flex items-center gap-1.5 text-sm text-slate-500">
           <Clock size={14} />
-          {formatDistanceToNow(new Date(lead.created_at), { addSuffix: true })}
+          {formatDistanceToNow(new Date(lastTouchAt), { addSuffix: true })}
         </div>
       </td>
       <td className="px-4 py-4">
@@ -2007,6 +2009,8 @@ export default function LeadsPage() {
         propertyId: currentProperty.id,
         page: page.toString(),
         limit: '25',
+        sortBy: 'updated_at',
+        sortOrder: 'desc',
         ...(statusFilter !== 'all' && { status: statusFilter }),
         ...(sourceFilter !== 'all' && { source: sourceFilter }),
         ...(search && { search }),
@@ -2366,7 +2370,7 @@ export default function LeadsPage() {
                     Phone
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                    Created
+                    Last Touch
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider w-12">
                   </th>

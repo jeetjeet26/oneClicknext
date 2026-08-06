@@ -15,6 +15,9 @@ const rateLimitHeadersMock = vi.fn()
 const tourLimiterCheckMock = vi.fn()
 const auditLogMock = vi.fn()
 const getRequestIpMock = vi.fn()
+const upsertLeadByContactMock = vi.fn()
+const syncLeadToCRMMock = vi.fn()
+const recordLeadNoteAndSyncToCRMMock = vi.fn()
 
 vi.mock('@/utils/supabase/admin', () => ({
   createServiceClient: createServiceClientMock,
@@ -54,6 +57,15 @@ vi.mock('@/utils/services/rate-limiter', () => ({
 vi.mock('@/utils/services/audit-logger', () => ({
   auditLog: auditLogMock,
   getRequestIp: getRequestIpMock,
+}))
+
+vi.mock('@/utils/services/lead-upsert', () => ({
+  upsertLeadByContact: upsertLeadByContactMock,
+}))
+
+vi.mock('@/utils/services/crm-sync', () => ({
+  syncLeadToCRM: syncLeadToCRMMock,
+  recordLeadNoteAndSyncToCRM: recordLeadNoteAndSyncToCRMMock,
 }))
 
 describe('LumaLeasing tours route', () => {
@@ -114,6 +126,17 @@ describe('LumaLeasing tours route', () => {
     trackEngagementEventMock.mockReturnValue(Promise.resolve())
     auditLogMock.mockImplementation(() => {})
     getRequestIpMock.mockReturnValue('127.0.0.1')
+    upsertLeadByContactMock.mockResolvedValue({
+      lead: { id: 'lead-1', status: 'tour_booked' },
+      leadId: 'lead-1',
+      isExisting: false,
+      matchedBy: null,
+    })
+    syncLeadToCRMMock.mockResolvedValue({ success: true, action: 'skipped' })
+    recordLeadNoteAndSyncToCRMMock.mockResolvedValue({
+      success: true,
+      action: 'skipped',
+    })
   })
 
   afterEach(() => {
@@ -561,6 +584,12 @@ describe('LumaLeasing tours route', () => {
         },
       },
     })
+    upsertLeadByContactMock.mockResolvedValueOnce({
+      lead: { id: 'lead-1', status: 'tour_booked' },
+      leadId: 'lead-1',
+      isExisting: true,
+      matchedBy: 'phone',
+    })
 
     createServiceClientMock.mockReturnValue({
       from: vi.fn((table: string) => {
@@ -677,6 +706,22 @@ describe('LumaLeasing tours route', () => {
     expect(calendarEventsInsertMock).not.toHaveBeenCalled()
     expect(createCalendarEventMock).not.toHaveBeenCalled()
     expect(sendEmailMock).not.toHaveBeenCalled()
+    expect(upsertLeadByContactMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email: 'jane@example.com',
+        phone: '555-111-2222',
+        update: expect.objectContaining({ status: 'tour_booked' }),
+      })
+    )
+    expect(syncLeadToCRMMock).toHaveBeenCalledWith(
+      'property-1',
+      'lead-1',
+      expect.objectContaining({
+        status: 'tour_booked',
+        notes: expect.stringContaining('Tour requested'),
+      })
+    )
+    expect(startWorkflowMock).not.toHaveBeenCalled()
   })
 
   it('returns 400 for an invalid booking payload', async () => {

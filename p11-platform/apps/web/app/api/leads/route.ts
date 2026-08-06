@@ -12,6 +12,7 @@ import {
   unauthorized,
 } from '@/utils/services/api-helpers'
 import { createRequestContext } from '@/utils/services/request-context'
+import { upsertLeadByContact } from '@/utils/services/lead-upsert'
 
 export async function GET(request: NextRequest) {
   const ctx = createRequestContext(request, '/api/leads')
@@ -69,9 +70,12 @@ export async function GET(request: NextRequest) {
     }
 
     // Apply sorting
-    const validSortColumns = ['created_at', 'first_name', 'last_name', 'status', 'source']
+    const validSortColumns = ['created_at', 'updated_at', 'first_name', 'last_name', 'status', 'source']
     const sortColumn = validSortColumns.includes(sortBy) ? sortBy : 'created_at'
-    query = query.order(sortColumn, { ascending: sortOrder === 'asc' })
+    query = query.order(sortColumn, {
+      ascending: sortOrder === 'asc',
+      nullsFirst: false,
+    })
 
     // Apply pagination
     query = query.range(offset, offset + limit - 1)
@@ -181,11 +185,17 @@ export async function POST(request: NextRequest) {
       return forbidden(ctx.responseHeaders)
     }
 
-    // Create lead
-    const { data: lead, error } = await supabase
-      .from('leads')
-      .insert({
-        property_id: propertyId,
+    const repeatIntent = [
+      moveInDate ? `Move-in: ${moveInDate}` : null,
+      bedrooms ? `Bedrooms: ${bedrooms}` : null,
+      notes ? `Notes: ${notes}` : null,
+    ].filter(Boolean).join(', ')
+    const leadResult = await upsertLeadByContact({
+      client: supabase,
+      propertyId,
+      email,
+      phone,
+      create: {
         first_name: firstName,
         last_name: lastName,
         email: email || null,
@@ -195,14 +205,29 @@ export async function POST(request: NextRequest) {
         bedrooms: bedrooms || null,
         notes: notes || null,
         status: 'new',
-      })
-      .select()
-      .single()
-
-    if (error) {
-      ctx.logError(500, error, { operation: 'create_lead', propertyId })
-      return serverError(error, ctx.responseHeaders)
-    }
+      },
+      update: {
+        first_name: firstName,
+        last_name: lastName,
+        ...(email ? { email } : {}),
+        ...(phone ? { phone } : {}),
+        ...(moveInDate ? { move_in_date: moveInDate } : {}),
+        ...(bedrooms ? { bedrooms } : {}),
+        ...(notes ? { notes } : {}),
+      },
+      repeatActivity: {
+        description: repeatIntent
+          ? `Returned via ${source || 'manual'}: ${repeatIntent}`
+          : `Returned via ${source || 'manual'}`,
+        metadata: {
+          source: source || 'manual',
+          moveInDate,
+          bedrooms,
+          notes,
+        },
+      },
+    })
+    const lead = leadResult.lead
 
     // CRM sync and workflow start are non-blocking; isolate them so one failure
     // does not suppress the other automation side effect.
@@ -213,7 +238,7 @@ export async function POST(request: NextRequest) {
         email: email || undefined,
         phone: phone || undefined,
         source: source || 'manual',
-        status: 'new',
+        status: lead.status || undefined,
         move_in_date: moveInDate || undefined,
         bedrooms: bedrooms || undefined,
         notes: notes || undefined,
@@ -222,18 +247,20 @@ export async function POST(request: NextRequest) {
       console.error('[Leads API] Failed to sync lead to CRM:', crmSyncError)
     }
 
-    try {
-      const workflowResult = await startWorkflow(lead.id, propertyId, 'lead_created')
-      if (workflowResult.success) {
-        console.log(`[Leads API] Started workflow ${workflowResult.workflowId} for lead ${lead.id}`)
+    if (!leadResult.isExisting) {
+      try {
+        const workflowResult = await startWorkflow(lead.id, propertyId, 'lead_created')
+        if (workflowResult.success) {
+          console.log(`[Leads API] Started workflow ${workflowResult.workflowId} for lead ${lead.id}`)
+        }
+      } catch (workflowError) {
+        console.error('[Leads API] Failed to start workflow:', workflowError)
       }
-    } catch (workflowError) {
-      console.error('[Leads API] Failed to start workflow:', workflowError)
     }
 
     // Log audit event
     await logAuditEvent({
-      action: 'create',
+      action: leadResult.isExisting ? 'update' : 'create',
       entityType: 'lead',
       entityId: lead.id,
       entityName: `${firstName} ${lastName}`,
@@ -241,9 +268,17 @@ export async function POST(request: NextRequest) {
       request
     })
 
-    ctx.logSuccess(201, { propertyId, leadId: lead.id })
+    const responseStatus = leadResult.isExisting ? 200 : 201
+    ctx.logSuccess(responseStatus, {
+      propertyId,
+      leadId: lead.id,
+      updatedExisting: leadResult.isExisting,
+    })
 
-    return NextResponse.json({ lead }, { status: 201, headers: ctx.responseHeaders })
+    return NextResponse.json(
+      { lead, updatedExisting: leadResult.isExisting },
+      { status: responseStatus, headers: ctx.responseHeaders }
+    )
   } catch (error) {
     ctx.logError(500, error, { operation: 'create_lead' })
     return serverError(error, ctx.responseHeaders)

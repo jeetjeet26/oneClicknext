@@ -9,6 +9,7 @@ const validatePropertyAccessMock = vi.fn()
 const syncLeadToCRMMock = vi.fn()
 const startWorkflowMock = vi.fn()
 const logAuditEventMock = vi.fn()
+const upsertLeadByContactMock = vi.fn()
 
 vi.mock('@/utils/supabase/server', () => ({
   createClient: createClientMock,
@@ -28,6 +29,10 @@ vi.mock('@/utils/services/workflow-processor', () => ({
 
 vi.mock('@/utils/audit', () => ({
   logAuditEvent: logAuditEventMock,
+}))
+
+vi.mock('@/utils/services/lead-upsert', () => ({
+  upsertLeadByContact: upsertLeadByContactMock,
 }))
 
 describe('POST /api/leads', () => {
@@ -58,6 +63,12 @@ describe('POST /api/leads', () => {
     syncLeadToCRMMock.mockResolvedValue(undefined)
     startWorkflowMock.mockResolvedValue({ success: true, workflowId: 'wf-1' })
     logAuditEventMock.mockResolvedValue(undefined)
+    upsertLeadByContactMock.mockResolvedValue({
+      lead: { id: 'lead-1', status: 'new' },
+      leadId: 'lead-1',
+      isExisting: false,
+      matchedBy: null,
+    })
   })
 
   afterEach(() => {
@@ -148,7 +159,8 @@ describe('POST /api/leads', () => {
     expect(response.status).toBe(201)
     expect(response.headers.get('x-request-id')).toBeTruthy()
     expect(json).toEqual({
-      lead: { id: 'lead-1' },
+      lead: { id: 'lead-1', status: 'new' },
+      updatedExisting: false,
     })
 
     expect(syncLeadToCRMMock).toHaveBeenCalledWith(
@@ -207,5 +219,61 @@ describe('POST /api/leads', () => {
       'property-1',
       'lead_created'
     )
+  })
+
+  it('updates and re-syncs a repeat lead without restarting its workflow', async () => {
+    authGetUserMock.mockResolvedValue({
+      data: { user: { id: 'user-1' } },
+      error: null,
+    })
+    validatePropertyAccessMock.mockResolvedValue({
+      authorized: true,
+      orgId: 'org-1',
+    })
+    upsertLeadByContactMock.mockResolvedValueOnce({
+      lead: {
+        id: 'lead-existing',
+        first_name: 'Jane',
+        last_name: 'Doe',
+        status: 'contacted',
+      },
+      leadId: 'lead-existing',
+      isExisting: true,
+      matchedBy: 'email',
+    })
+
+    const { POST } = await import('./route')
+    const request = new Request('http://localhost/api/leads', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        propertyId: 'property-1',
+        firstName: 'Jane',
+        lastName: 'Doe',
+        email: 'jane@example.com',
+        moveInDate: '2026-10-01',
+        bedrooms: '2',
+        notes: 'Ready for another tour',
+      }),
+    }) as NextRequest
+
+    const response = await POST(request)
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      lead: { id: 'lead-existing', status: 'contacted' },
+      updatedExisting: true,
+    })
+    expect(syncLeadToCRMMock).toHaveBeenCalledWith(
+      'property-1',
+      'lead-existing',
+      expect.objectContaining({
+        move_in_date: '2026-10-01',
+        bedrooms: '2',
+        notes: 'Ready for another tour',
+        status: 'contacted',
+      })
+    )
+    expect(startWorkflowMock).not.toHaveBeenCalled()
   })
 })

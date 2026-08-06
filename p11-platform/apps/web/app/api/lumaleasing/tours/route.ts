@@ -18,7 +18,8 @@ import {
 } from '@/utils/services/google-calendar';
 import { startWorkflow } from '@/utils/services/workflow-processor';
 import { trackEngagementEvent } from '@/utils/services/engagement-tracker';
-import { recordLeadNoteAndSyncToCRM } from '@/utils/services/crm-sync';
+import { recordLeadNoteAndSyncToCRM, syncLeadToCRM } from '@/utils/services/crm-sync';
+import { upsertLeadByContact } from '@/utils/services/lead-upsert';
 import { tourLimiter, getRateLimitKey, rateLimitHeaders } from '@/utils/services/rate-limiter';
 import {
   badRequest,
@@ -429,51 +430,62 @@ export async function POST(req: NextRequest) {
       validatedConversationId = conversation.id
     }
 
-    // Get or create lead
-    let leadId: string | null = null;
+    const repeatIntent = [
+      `Tour requested for ${bookingDate} at ${bookingTime}`,
+      effectiveSpecialRequests
+        ? `Special requests: ${effectiveSpecialRequests}`
+        : null,
+    ].filter(Boolean).join('. ');
+    const leadResult = await upsertLeadByContact({
+      client: supabase,
+      propertyId,
+      email: leadInfo.email,
+      phone: leadInfo.phone,
+      create: {
+        first_name: leadInfo.first_name || '',
+        last_name: leadInfo.last_name || '',
+        email: leadInfo.email,
+        phone: leadInfo.phone || '',
+        source: 'LumaLeasing Tour Booking',
+        status: 'tour_booked',
+        notes: effectiveSpecialRequests || null,
+      },
+      update: {
+        ...(leadInfo.first_name ? { first_name: leadInfo.first_name } : {}),
+        ...(leadInfo.last_name ? { last_name: leadInfo.last_name } : {}),
+        email: leadInfo.email,
+        ...(leadInfo.phone ? { phone: leadInfo.phone } : {}),
+        status: 'tour_booked',
+        ...(effectiveSpecialRequests ? { notes: effectiveSpecialRequests } : {}),
+      },
+      repeatActivity: {
+        description: `Returned via LumaLeasing Tour Booking: ${repeatIntent}`,
+        metadata: {
+          source: 'lumaleasing_tour_widget',
+          tourDate: bookingDate,
+          tourTime: bookingTime,
+          specialRequests: effectiveSpecialRequests,
+        },
+      },
+    });
+    const leadId = leadResult.leadId;
 
-    const { data: existingLead } = await supabase
-      .from('leads')
-      .select('id')
-      .eq('property_id', propertyId)
-      .eq('email', leadInfo.email)
-      .single();
+    syncLeadToCRM(propertyId, leadId, {
+      first_name: leadInfo.first_name || undefined,
+      last_name: leadInfo.last_name || undefined,
+      email: leadInfo.email,
+      phone: leadInfo.phone || undefined,
+      source: 'LumaLeasing Tour Booking',
+      status: 'tour_booked',
+      notes: repeatIntent,
+    }).catch(e =>
+      console.error('[LumaLeasing Tours] CRM lead re-sync failed (non-blocking):', e)
+    );
 
-    if (existingLead) {
-      leadId = existingLead.id;
-      // Update lead info if provided
-      await supabase
-        .from('leads')
-        .update({
-          first_name: leadInfo.first_name || undefined,
-          last_name: leadInfo.last_name || undefined,
-          phone: leadInfo.phone || undefined,
-          status: 'tour_booked',
-        })
-        .eq('id', leadId);
-    } else {
-      const { data: newLead } = await supabase
-        .from('leads')
-        .insert({
-          property_id: propertyId,
-          first_name: leadInfo.first_name || '',
-          last_name: leadInfo.last_name || '',
-          email: leadInfo.email,
-          phone: leadInfo.phone || '',
-          source: 'LumaLeasing Tour Booking',
-          status: 'tour_booked',
-        })
-        .select('id')
-        .single();
-
-      leadId = newLead?.id || null;
-
-      // Start follow-up workflow for new leads (non-blocking)
-      if (leadId) {
-        startWorkflow(leadId, propertyId, 'lead_created').catch(e =>
-          console.error('[LumaLeasing Tours] Workflow start failed (non-blocking):', e)
-        )
-      }
+    if (!leadResult.isExisting) {
+      startWorkflow(leadId, propertyId, 'lead_created').catch(e =>
+        console.error('[LumaLeasing Tours] Workflow start failed (non-blocking):', e)
+      )
     }
 
     if (!leadId) {

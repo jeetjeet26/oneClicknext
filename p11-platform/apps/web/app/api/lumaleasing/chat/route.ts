@@ -13,6 +13,7 @@ import { getPropertyTypeConfig } from '@/utils/property-types';
 import { buildPropertyOnlyResponse, containsContactInfo, detectTourIntent, detectTourOffer, isPropertyChatInScope, stripMarkdownFormatting } from '@/utils/chat-scope';
 import { formatPropertyAddress } from '@/utils/services/property-address';
 import { loadPropertyChatbotContext } from '@/utils/services/chatbot-context-editor';
+import { upsertLeadByContact } from '@/utils/services/lead-upsert';
 import OpenAI from 'openai';
 
 // Type for extracted conversation data
@@ -39,80 +40,6 @@ type RecentMessageRow = {
 
 type DuplicateReplyResult = {
   assistantReply: string
-}
-
-function buildLeadUpdatePayload(params: {
-  firstName?: string | null
-  lastName?: string | null
-  email?: string | null
-  phone?: string | null
-  notes?: string | null
-}): Record<string, string> {
-  const updates: Record<string, string> = {}
-
-  if (params.firstName) updates.first_name = params.firstName
-  if (params.lastName) updates.last_name = params.lastName
-  if (params.email) updates.email = params.email
-  if (params.phone) updates.phone = params.phone
-  if (params.notes) updates.notes = params.notes
-
-  return updates
-}
-
-async function findExistingLeadIdByContact(
-  supabase: ReturnType<typeof createServiceClient>,
-  propertyId: string,
-  params: {
-    email?: string | null
-    phone?: string | null
-  }
-): Promise<string | null> {
-  if (params.email) {
-    const { data: existingByEmail } = await supabase
-      .from('leads')
-      .select('id')
-      .eq('property_id', propertyId)
-      .eq('email', params.email)
-      .limit(1)
-
-    if (existingByEmail?.[0]?.id) {
-      return existingByEmail[0].id
-    }
-  }
-
-  if (params.phone) {
-    const { data: existingByPhone } = await supabase
-      .from('leads')
-      .select('id')
-      .eq('property_id', propertyId)
-      .eq('phone', params.phone)
-      .limit(1)
-
-    if (existingByPhone?.[0]?.id) {
-      return existingByPhone[0].id
-    }
-  }
-
-  return null
-}
-
-function appendConversationSummaryIfMissing(
-  currentNotes: string | null | undefined,
-  conversationSummary: string | null
-): string | null {
-  if (!conversationSummary) {
-    return currentNotes || null
-  }
-
-  if (currentNotes?.includes(conversationSummary)) {
-    return currentNotes
-  }
-
-  const timestamp = new Date().toLocaleString('en-US', {
-    month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
-  })
-  const newNote = `[${timestamp}] ${conversationSummary}`
-  return currentNotes ? `${currentNotes}\n\n${newNote}` : newNote
 }
 
 async function incrementSessionMessageCount(
@@ -330,156 +257,107 @@ Write a professional CRM note (no bullet points, just flowing text):`;
     const leadData = data.lead;
 
     if (leadData && (leadData.email || leadData.phone)) {
-      if (!leadId) {
-        leadId = await findExistingLeadIdByContact(supabase, propertyId, {
-          email: leadData.email,
-          phone: leadData.phone,
-        })
+      const timestamp = new Date().toLocaleString('en-US', {
+        month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
+      });
+      const leadNotes = conversationSummary
+        ? `[${timestamp}] ${conversationSummary}`
+        : 'Initial contact via LumaLeasing widget';
+      const leadResult = await upsertLeadByContact({
+        client: supabase,
+        propertyId,
+        existingLeadId: leadId,
+        email: leadData.email,
+        phone: leadData.phone,
+        create: {
+          first_name: leadData.first_name || '',
+          last_name: leadData.last_name || '',
+          email: leadData.email || '',
+          phone: leadData.phone || '',
+          source: 'LumaLeasing Widget',
+          status: 'new',
+          notes: leadNotes,
+        },
+        update: {
+          ...(leadData.first_name ? { first_name: leadData.first_name } : {}),
+          ...(leadData.last_name ? { last_name: leadData.last_name } : {}),
+          ...(leadData.email ? { email: leadData.email } : {}),
+          ...(leadData.phone ? { phone: leadData.phone } : {}),
+          ...(conversationSummary ? { notes: conversationSummary } : {}),
+        },
+        repeatActivity: {
+          description: `Returned via LumaLeasing Chat: ${
+            conversationSummary || 'Updated contact information'
+          }`,
+          metadata: {
+            source: 'lumaleasing_chat_extraction',
+            conversationSummary,
+          },
+        },
+      });
+      leadId = leadResult.leadId;
+
+      if (leadResult.isExisting) {
+        console.log('[LumaLeasing] lead_updated', { leadId });
+      } else {
+        console.log('[LumaLeasing] lead_created', { leadId, propertyId });
+
+        try {
+          const { data: scoreId } = await supabase.rpc('score_lead', {
+            p_lead_id: leadId,
+          });
+          if (scoreId) {
+            const { data: scoreData } = await supabase
+              .from('lead_scores')
+              .select('total_score, score_bucket')
+              .eq('id', scoreId)
+              .single();
+
+            if (scoreData) {
+              await supabase
+                .from('leads')
+                .update({
+                  score: scoreData.total_score,
+                  score_bucket: scoreData.score_bucket
+                })
+                .eq('id', leadId);
+            }
+          }
+        } catch (scoreError) {
+          console.error('[LumaLeasing] Failed to score lead:', scoreError);
+        }
       }
 
-      if (leadId) {
-        const updates = buildLeadUpdatePayload({
-          firstName: leadData.first_name,
-          lastName: leadData.last_name,
-          phone: leadData.phone,
-          email: leadData.email,
-        })
+      try {
+        const crmResult = await syncLeadToCRM(propertyId, leadId, {
+          first_name: leadData.first_name || undefined,
+          last_name: leadData.last_name || undefined,
+          email: leadData.email || undefined,
+          phone: leadData.phone || undefined,
+          source: 'LumaLeasing Widget',
+          status: leadResult.lead.status || undefined,
+          notes: conversationSummary || leadNotes,
+        });
+        console.log('[LumaLeasing] CRM sync result:', crmResult.action);
+      } catch (crmError) {
+        console.error('[LumaLeasing] CRM sync failed (non-blocking):', crmError);
+      }
 
-        if (conversationSummary) {
-          const { data: currentLead } = await supabase
-            .from('leads')
-            .select('notes')
-            .eq('id', leadId)
-            .single();
-
-          const nextNotes = appendConversationSummaryIfMissing(currentLead?.notes, conversationSummary)
-          if (nextNotes && nextNotes !== currentLead?.notes) {
-            updates.notes = nextNotes
-          }
-        }
-
-        if (Object.keys(updates).length > 0) {
-          await supabase.from('leads').update(updates).eq('id', leadId);
-          console.log('[LumaLeasing] lead_updated', {
-            leadId,
-            updatedFields: Object.keys(updates),
-          });
-
-          // Mirror the update into the connected CRM: attach the new
-          // conversation summary as a note when the lead is already in the
-          // CRM, or trigger the initial sync for a lead that just gained
-          // contact info. Non-blocking for the chat flow.
-          const hasNewSummary = Boolean(updates.notes && conversationSummary)
-          const gainedContactInfo = Boolean(updates.email || updates.phone)
-          if (hasNewSummary || gainedContactInfo) {
-            try {
-              const crmResult = await recordLeadNoteAndSyncToCRM(
-                propertyId,
-                leadId,
-                hasNewSummary ? conversationSummary : null,
-                { persistNote: false }
-              );
-              console.log('[LumaLeasing] CRM lead update result:', crmResult.action);
-            } catch (crmError) {
-              console.error('[LumaLeasing] CRM lead update failed (non-blocking):', crmError);
-            }
-          }
-        }
-      } else {
-        // Create new lead
-        console.log('[LumaLeasing] creating_new_lead', {
+      if (leadResult.isExisting && conversationSummary) {
+        recordLeadNoteAndSyncToCRM(
           propertyId,
-          hasEmail: Boolean(leadData.email),
-          hasPhone: Boolean(leadData.phone),
-          hasFirstName: Boolean(leadData.first_name),
-          hasLastName: Boolean(leadData.last_name),
-        });
-        
-        // Prepare lead notes with conversation summary
-        const timestamp = new Date().toLocaleString('en-US', { 
-          month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' 
-        });
-        const leadNotes = conversationSummary 
-          ? `[${timestamp}] ${conversationSummary}`
-          : 'Initial contact via LumaLeasing widget';
-        
-        const { data: newLead, error } = await supabase
-          .from('leads')
-          .insert({
-            property_id: propertyId,
-            first_name: leadData.first_name || '',
-            last_name: leadData.last_name || '',
-            email: leadData.email || '',
-            phone: leadData.phone || '',
-            source: 'LumaLeasing Widget',
-            status: 'new',
-            notes: leadNotes,
-          })
-          .select('id')
-          .single();
+          leadId,
+          conversationSummary,
+          { persistNote: false }
+        ).catch((crmError) =>
+          console.error('[LumaLeasing] CRM note sync failed (non-blocking):', crmError)
+        );
+      }
 
-        if (error) {
-          console.error('[LumaLeasing] Failed to create lead:', error);
-        } else if (newLead) {
-          leadId = newLead.id;
-          console.log('[LumaLeasing] lead_created', { leadId, propertyId });
-
-          // Score the new lead
-          try {
-            const { data: scoreId } = await supabase.rpc('score_lead', { p_lead_id: leadId });
-            if (scoreId) {
-              // Get the score and update the lead
-              const { data: scoreData } = await supabase
-                .from('lead_scores')
-                .select('total_score, score_bucket')
-                .eq('id', scoreId)
-                .single();
-              
-              if (scoreData) {
-                await supabase
-                  .from('leads')
-                  .update({ 
-                    score: scoreData.total_score, 
-                    score_bucket: scoreData.score_bucket 
-                  })
-                  .eq('id', leadId);
-                console.log('[LumaLeasing] lead_scored', {
-                  leadId,
-                  scoreBucket: scoreData.score_bucket,
-                });
-              }
-            }
-          } catch (scoreError) {
-            console.error('[LumaLeasing] Failed to score lead:', scoreError);
-          }
-
-          // Sync lead to CRM (if configured)
-          if (leadId) {
-            try {
-              const crmResult = await syncLeadToCRM(propertyId, leadId, {
-                first_name: leadData.first_name || undefined,
-                last_name: leadData.last_name || undefined,
-                email: leadData.email || undefined,
-                phone: leadData.phone || undefined,
-                source: 'LumaLeasing Widget',
-                status: 'new',
-                notes: leadNotes,
-              });
-              console.log('[LumaLeasing] CRM sync result:', crmResult.action);
-            } catch (crmError) {
-              console.error('[LumaLeasing] CRM sync failed (non-blocking):', crmError);
-              // CRM sync failures should not block the chat flow
-            }
-          }
-
-          // Start follow-up workflow for new leads (non-blocking)
-          if (leadId) {
-            startWorkflow(leadId, propertyId, 'lead_created').catch(e =>
-              console.error('[LumaLeasing Chat] Workflow start failed (non-blocking):', e)
-            )
-          }
-
-        }
+      if (!leadResult.isExisting) {
+        startWorkflow(leadId, propertyId, 'lead_created').catch(e =>
+          console.error('[LumaLeasing Chat] Workflow start failed (non-blocking):', e)
+        )
       }
     }
 
@@ -704,67 +582,52 @@ export async function POST(req: NextRequest) {
     let leadId: string | null = widgetSession?.lead_id ?? null;
     let leadConvertedThisRequest = false;
 
-    if (leadInfo && !leadId) {
-      leadId = await findExistingLeadIdByContact(supabase, propertyId, {
+    if (leadInfo) {
+      const directLeadResult = await upsertLeadByContact({
+        client: supabase,
+        propertyId,
+        existingLeadId: leadId,
         email: leadInfo.email,
         phone: leadInfo.phone,
-      })
+        create: {
+          first_name: leadInfo.first_name || '',
+          last_name: leadInfo.last_name || '',
+          email: leadInfo.email || '',
+          phone: leadInfo.phone || '',
+          source: 'LumaLeasing Widget',
+          status: 'new',
+        },
+        update: {
+          ...(leadInfo.first_name ? { first_name: leadInfo.first_name } : {}),
+          ...(leadInfo.last_name ? { last_name: leadInfo.last_name } : {}),
+          ...(leadInfo.email ? { email: leadInfo.email } : {}),
+          ...(leadInfo.phone ? { phone: leadInfo.phone } : {}),
+        },
+        repeatActivity: {
+          description: 'Returned via LumaLeasing Chat: Updated contact information',
+          metadata: { source: 'lumaleasing_chat' },
+        },
+      });
+      leadId = directLeadResult.leadId;
 
-      if (leadId) {
-        const updates = buildLeadUpdatePayload({
-          firstName: leadInfo.first_name,
-          lastName: leadInfo.last_name,
-          email: leadInfo.email,
-          phone: leadInfo.phone,
-        })
-
-        if (Object.keys(updates).length > 0) {
-          await supabase
-            .from('leads')
-            .update(updates)
-            .eq('id', leadId)
-        }
+      try {
+        const crmResult = await syncLeadToCRM(propertyId, leadId, {
+          first_name: leadInfo.first_name || undefined,
+          last_name: leadInfo.last_name || undefined,
+          email: leadInfo.email || undefined,
+          phone: leadInfo.phone || undefined,
+          source: 'LumaLeasing Widget',
+          status: directLeadResult.lead.status || undefined,
+        });
+        console.log('[LumaLeasing] CRM sync for direct lead:', crmResult.action);
+      } catch (crmError) {
+        console.error('[LumaLeasing] CRM sync failed (non-blocking):', crmError);
       }
 
-      // Create new lead if not found
-      if (!leadId) {
-        const { data: newLead } = await supabase
-          .from('leads')
-          .insert({
-            property_id: propertyId,
-            first_name: leadInfo.first_name || '',
-            last_name: leadInfo.last_name || '',
-            email: leadInfo.email || '',
-            phone: leadInfo.phone || '',
-            source: 'LumaLeasing Widget',
-            status: 'new',
-          })
-          .select('id')
-          .single();
-
-        leadId = newLead?.id || null;
-
-        // Sync new lead to CRM (if configured)
-        if (leadId) {
-          try {
-            const crmResult = await syncLeadToCRM(propertyId, leadId, {
-              first_name: leadInfo.first_name || undefined,
-              last_name: leadInfo.last_name || undefined,
-              email: leadInfo.email || undefined,
-              phone: leadInfo.phone || undefined,
-              source: 'LumaLeasing Widget',
-              status: 'new',
-            });
-            console.log('[LumaLeasing] CRM sync for direct lead:', crmResult.action);
-          } catch (crmError) {
-            console.error('[LumaLeasing] CRM sync failed (non-blocking):', crmError);
-          }
-
-          // Start follow-up workflow for new leads (non-blocking)
-          startWorkflow(leadId, propertyId, 'lead_created').catch(e =>
-            console.error('[LumaLeasing Chat] Workflow start failed (non-blocking):', e)
-          )
-        }
+      if (!directLeadResult.isExisting) {
+        startWorkflow(leadId, propertyId, 'lead_created').catch(e =>
+          console.error('[LumaLeasing Chat] Workflow start failed (non-blocking):', e)
+        )
       }
 
       // Update session with lead

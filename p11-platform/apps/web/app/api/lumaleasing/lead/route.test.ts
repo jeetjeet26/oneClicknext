@@ -8,6 +8,9 @@ const leadLimiterCheckMock = vi.fn()
 const validateBodyMock = vi.fn()
 const auditLogMock = vi.fn()
 const getRequestIpMock = vi.fn()
+const upsertLeadByContactMock = vi.fn()
+const syncLeadToCRMMock = vi.fn()
+const startWorkflowMock = vi.fn()
 
 vi.mock('@/utils/supabase/admin', () => ({
   createServiceClient: createServiceClientMock,
@@ -29,6 +32,18 @@ vi.mock('@/utils/services/validation', () => ({
 vi.mock('@/utils/services/audit-logger', () => ({
   auditLog: auditLogMock,
   getRequestIp: getRequestIpMock,
+}))
+
+vi.mock('@/utils/services/lead-upsert', () => ({
+  upsertLeadByContact: upsertLeadByContactMock,
+}))
+
+vi.mock('@/utils/services/crm-sync', () => ({
+  syncLeadToCRM: syncLeadToCRMMock,
+}))
+
+vi.mock('@/utils/services/workflow-processor', () => ({
+  startWorkflow: startWorkflowMock,
 }))
 
 describe('Luma lead capture route', () => {
@@ -54,6 +69,14 @@ describe('Luma lead capture route', () => {
         },
       },
     })
+    upsertLeadByContactMock.mockResolvedValue({
+      lead: { id: 'lead-1', status: 'new' },
+      leadId: 'lead-1',
+      isExisting: false,
+      matchedBy: null,
+    })
+    syncLeadToCRMMock.mockResolvedValue({ success: true, action: 'skipped' })
+    startWorkflowMock.mockResolvedValue({ success: true })
   })
 
   afterEach(() => {
@@ -169,8 +192,13 @@ describe('Luma lead capture route', () => {
       leadId: 'lead-1',
       message: "Thanks, Jane! We've saved your information and will be in touch soon.",
     })
-    expect(leadInsertSingleMock).toHaveBeenCalled()
+    expect(upsertLeadByContactMock).toHaveBeenCalled()
     expect(auditLogMock).toHaveBeenCalled()
+    expect(startWorkflowMock).toHaveBeenCalledWith(
+      'lead-1',
+      'property-1',
+      'lead_created'
+    )
   })
 
   it('reuses an existing phone-only lead on retry instead of creating a duplicate', async () => {
@@ -187,6 +215,12 @@ describe('Luma lead capture route', () => {
 
     const leadsUpdateEqMock = vi.fn().mockResolvedValue({ error: null })
     const leadsInsertMock = vi.fn()
+    upsertLeadByContactMock.mockResolvedValueOnce({
+      lead: { id: 'lead-existing', status: 'new' },
+      leadId: 'lead-existing',
+      isExisting: true,
+      matchedBy: 'phone',
+    })
     createServiceClientMock.mockReturnValue({
       from: vi.fn((table: string) => {
         if (table === 'lumaleasing_config') {
@@ -249,7 +283,20 @@ describe('Luma lead capture route', () => {
       message: "Thanks, Jane! We've saved your information and will be in touch soon.",
     })
     expect(leadsInsertMock).not.toHaveBeenCalled()
-    expect(leadsUpdateEqMock).toHaveBeenCalledWith('id', 'lead-existing')
+    expect(upsertLeadByContactMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        phone: '5551112222',
+        repeatActivity: expect.objectContaining({
+          description: 'Returned via LumaLeasing Widget',
+        }),
+      })
+    )
+    expect(syncLeadToCRMMock).toHaveBeenCalledWith(
+      'property-1',
+      'lead-existing',
+      expect.objectContaining({ phone: '5551112222' })
+    )
+    expect(startWorkflowMock).not.toHaveBeenCalled()
   })
 
   it('skips duplicate widget note activity on rapid retry', async () => {
@@ -269,6 +316,12 @@ describe('Luma lead capture route', () => {
     })
 
     const leadActivitiesInsertMock = vi.fn().mockResolvedValue({ error: null })
+    upsertLeadByContactMock.mockResolvedValueOnce({
+      lead: { id: 'lead-1', status: 'new' },
+      leadId: 'lead-1',
+      isExisting: true,
+      matchedBy: 'email',
+    })
     createServiceClientMock.mockReturnValue({
       from: vi.fn((table: string) => {
         if (table === 'lumaleasing_config') {
@@ -351,6 +404,15 @@ describe('Luma lead capture route', () => {
 
     expect(response.status).toBe(200)
     expect(leadActivitiesInsertMock).not.toHaveBeenCalled()
+    expect(upsertLeadByContactMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({
+          move_in_date: '2026-04-01',
+          bedrooms: '2',
+          notes: 'Need top-floor unit',
+        }),
+      })
+    )
   })
 
   it('returns 400 when the session id does not belong to the property', async () => {

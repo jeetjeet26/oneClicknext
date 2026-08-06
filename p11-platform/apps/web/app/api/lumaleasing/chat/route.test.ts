@@ -19,6 +19,7 @@ const startWorkflowMock = vi.fn()
 const trackEngagementEventMock = vi.fn()
 const sendEmailMock = vi.fn()
 const loadPropertyChatbotContextMock = vi.fn()
+const upsertLeadByContactMock = vi.fn()
 const openAiCtorMock = vi.fn(function MockOpenAI() {
   return {
     chat: { completions: { create: openAiChatCreateMock } },
@@ -51,6 +52,10 @@ vi.mock('@/utils/services/audit-logger', () => ({
 vi.mock('@/utils/services/crm-sync', () => ({
   syncLeadToCRM: syncLeadToCRMMock,
   recordLeadNoteAndSyncToCRM: recordLeadNoteAndSyncToCRMMock,
+}))
+
+vi.mock('@/utils/services/lead-upsert', () => ({
+  upsertLeadByContact: upsertLeadByContactMock,
 }))
 
 vi.mock('@/utils/services/google-calendar', () => ({
@@ -93,6 +98,7 @@ describe('LumaLeasing chat route', () => {
     trackEngagementEventMock.mockReset()
     sendEmailMock.mockReset()
     loadPropertyChatbotContextMock.mockReset()
+    upsertLeadByContactMock.mockReset()
     loadPropertyChatbotContextMock.mockResolvedValue({
       contextMarkdown: 'CLIENT PROPERTY CONTEXT\nAcacia includes rooftop decks, solar, and verified floorplan facts.',
       contextJson: {},
@@ -114,6 +120,12 @@ describe('LumaLeasing chat route', () => {
     startWorkflowMock.mockResolvedValue(undefined)
     trackEngagementEventMock.mockResolvedValue(undefined)
     sendEmailMock.mockResolvedValue({ success: true })
+    upsertLeadByContactMock.mockResolvedValue({
+      lead: { id: 'lead-new', status: 'new' },
+      leadId: 'lead-new',
+      isExisting: false,
+      matchedBy: null,
+    })
   })
 
   afterEach(() => {
@@ -498,6 +510,12 @@ describe('LumaLeasing chat route', () => {
         },
       },
     })
+    upsertLeadByContactMock.mockResolvedValueOnce({
+      lead: { id: 'lead-existing', status: 'new' },
+      leadId: 'lead-existing',
+      isExisting: true,
+      matchedBy: 'phone',
+    })
     openAiEmbeddingsCreateMock.mockResolvedValue({
       data: [{ embedding: [0.1, 0.2, 0.3] }],
     })
@@ -623,8 +641,19 @@ describe('LumaLeasing chat route', () => {
     expect(systemPrompt).not.toContain('$3,060')
     expect(systemPrompt).not.toContain('$4,208')
     expect(leadsInsertMock).not.toHaveBeenCalled()
-    expect(leadsUpdateEqMock).toHaveBeenCalledWith('id', 'lead-existing')
-    expect(syncLeadToCRMMock).not.toHaveBeenCalled()
+    expect(upsertLeadByContactMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        phone: '5551112222',
+        repeatActivity: expect.objectContaining({
+          description: expect.stringContaining('Returned via LumaLeasing Chat'),
+        }),
+      })
+    )
+    expect(syncLeadToCRMMock).toHaveBeenCalledWith(
+      'property-1',
+      'lead-existing',
+      expect.objectContaining({ phone: '5551112222' })
+    )
     expect(startWorkflowMock).not.toHaveBeenCalled()
   })
 
@@ -1157,10 +1186,15 @@ describe('LumaLeasing chat route', () => {
       shouldPromptLeadCapture: false,
       wantsTour: false,
     })
-    expect(leadsInsertMock).toHaveBeenCalledWith(expect.objectContaining({
-      email: 'jesse55555@gmail.com',
-      source: 'LumaLeasing Widget',
-    }))
+    expect(upsertLeadByContactMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email: 'jesse55555@gmail.com',
+        create: expect.objectContaining({
+          email: 'jesse55555@gmail.com',
+          source: 'LumaLeasing Widget',
+        }),
+      })
+    )
     expect(loadPropertyChatbotContextMock).toHaveBeenCalledWith(expect.anything(), 'property-1')
     expect(openAiChatCreateMock).toHaveBeenCalled()
   })
@@ -1173,6 +1207,16 @@ describe('LumaLeasing chat route', () => {
         sessionId: 'session-1',
         leadInfo: null,
       },
+    })
+    upsertLeadByContactMock.mockResolvedValueOnce({
+      lead: {
+        id: 'lead-existing',
+        status: 'new',
+        notes: '[Mar 12, 9:00 AM] Prospect asked for pricing details.',
+      },
+      leadId: 'lead-existing',
+      isExisting: true,
+      matchedBy: 'phone',
     })
     openAiEmbeddingsCreateMock.mockResolvedValue({
       data: [{ embedding: [0.1, 0.2, 0.3] }],
@@ -1379,8 +1423,27 @@ describe('LumaLeasing chat route', () => {
       conversationId: 'conv-1',
     })
     expect(leadsInsertMock).not.toHaveBeenCalled()
-    expect(leadNotesUpdateEqMock).toHaveBeenCalledWith('id', 'lead-existing')
-    expect(syncLeadToCRMMock).not.toHaveBeenCalled()
+    expect(upsertLeadByContactMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        phone: '5551112222',
+        update: expect.objectContaining({
+          notes: 'Prospect asked for pricing details.',
+        }),
+      })
+    )
+    expect(syncLeadToCRMMock).toHaveBeenCalledWith(
+      'property-1',
+      'lead-existing',
+      expect.objectContaining({
+        notes: 'Prospect asked for pricing details.',
+      })
+    )
+    expect(recordLeadNoteAndSyncToCRMMock).toHaveBeenCalledWith(
+      'property-1',
+      'lead-existing',
+      'Prospect asked for pricing details.',
+      { persistNote: false }
+    )
     expect(startWorkflowMock).not.toHaveBeenCalled()
     expect(openAiChatCreateMock.mock.calls[0][0].messages).toEqual(
       expect.arrayContaining([
