@@ -3,7 +3,10 @@ import Anthropic from '@anthropic-ai/sdk'
 import { z } from 'zod'
 import { createClient } from '@/utils/supabase/server'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
-import { generationPreferencesSchema } from '@/utils/siteforge/contracts'
+import {
+  generationPreferencesSchema,
+  siteForgeSiteTypeSchema,
+} from '@/utils/siteforge/contracts'
 import {
   createPlanRevision,
   SiteForgePlanError,
@@ -27,6 +30,7 @@ const planningRequestSchema = z.object({
   conversationHistory: z.array(conversationEntrySchema).max(30).default([]),
   userMessage: z.string().trim().min(1).max(5_000).nullable().optional(),
   preferences: generationPreferencesSchema.optional(),
+  siteType: siteForgeSiteTypeSchema.optional(),
   // Accepted during the client migration, but intentionally ignored. The
   // trusted brand context is always assembled again on the server.
   brandContext: z.unknown().optional(),
@@ -113,6 +117,7 @@ export async function POST(request: NextRequest) {
       conversationHistory,
       userMessage,
       preferences,
+      siteType,
     } = parsedRequest.data
 
     const access = await validatePropertyAccess(user.id, propertyId)
@@ -125,6 +130,7 @@ export async function POST(request: NextRequest) {
       propertyId,
       userId: user.id,
       preferences,
+      siteType,
       operatorDirection: userMessage,
       planId,
       expectedRevision,

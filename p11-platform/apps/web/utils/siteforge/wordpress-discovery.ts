@@ -321,6 +321,24 @@ function getBuiltinBlockSchemas(): Record<string, ACFBlockSchema> {
         radius_miles: { type: 'number', default: 1 },
       },
     },
+    'acf/testimonials': {
+      label: 'Resident Testimonials',
+      description:
+        'Source-managed resident reviews embedded from approved ReviewFlow records',
+      fields: {
+        heading: { type: 'text' },
+        reviews: {
+          type: 'repeater',
+          description:
+            'Rows with immutable review id, reviewer name, text, rating, platform, and review date',
+        },
+        source: {
+          type: 'select',
+          required: true,
+          choices: ['reviewflow'],
+        },
+      },
+    },
     'acf/menu': {
       label: 'Sub-Navigation',
       description: 'Horizontal navigation menu for in-page sections',

@@ -1,5 +1,7 @@
-export function isSiteForgeSemanticEditorEnabled(): boolean {
-  return process.env.SITEFORGE_SEMANTIC_EDITOR_ENABLED === 'true'
+export function isSiteForgeSemanticEditorEnabled(
+  value = process.env.SITEFORGE_SEMANTIC_EDITOR_ENABLED
+): boolean {
+  return value?.trim().toLowerCase() !== 'false'
 }
 
 export function isSiteForgeRuntimeExtensionsEnabled(

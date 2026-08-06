@@ -251,6 +251,20 @@ export const registeredBlockPreviewFixtures = {
     categories: ['entertainment'],
     radius_miles: 1,
   },
+  'acf/testimonials': {
+    heading: 'Resident experiences',
+    reviews: [
+      {
+        id: '77777777-7777-4777-8777-777777777777',
+        reviewer_name: 'Jordan R.',
+        review_text: 'The team made our move straightforward.',
+        rating: 5,
+        platform: 'google',
+        review_date: '2026-07-15T12:00:00.000Z',
+      },
+    ],
+    source: 'reviewflow',
+  },
 } satisfies Record<ACFBlockType, Record<string, unknown>>
 
 export const maliciousHtmlPreviewFixtures = {

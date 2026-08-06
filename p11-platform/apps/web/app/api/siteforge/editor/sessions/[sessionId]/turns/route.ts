@@ -19,6 +19,14 @@ const turnSchema = z.object({
   expectedArtifactId: z.string().uuid(),
   expectedContentHash: z.string().regex(/^[a-f0-9]{64}$/),
   clientRequestId: z.string().trim().min(8).max(160),
+  elementContext: z
+    .object({
+      pageSlug: z.string().trim().min(1).max(160),
+      sectionId: z.string().trim().min(1).max(200),
+      blockType: z.string().trim().min(1).max(160).optional(),
+    })
+    .strict()
+    .optional(),
 }).strict()
 
 export async function POST(
@@ -182,6 +190,7 @@ export async function POST(
           sessionId: session.id,
           expectedArtifactId: artifact.id,
           expectedContentHash: artifact.content_hash,
+          elementContext: parsed.data.elementContext || null,
           ...(lifecycleIdentity
             ? {
                 lifecycleOwnerId: lifecycleIdentity.ownerId,
@@ -254,6 +263,7 @@ export async function POST(
           orgId: session.org_id,
           userId: user.id,
           userIntent: parsed.data.userIntent,
+          elementContext: parsed.data.elementContext,
           expectedArtifactId: artifact.id,
           expectedContentHash: artifact.content_hash,
         },

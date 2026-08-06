@@ -13,6 +13,7 @@ const validPlan = {
   propertyId: '11111111-1111-4111-8111-111111111111',
   name: 'Reference-quality launch',
   summary: 'A grounded multifamily marketing site.',
+  siteType: 'standard' as const,
   preferences: {
     style: 'luxury' as const,
     ctaPriority: 'tours' as const,

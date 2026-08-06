@@ -153,8 +153,17 @@ export const siteForgeFloorPlanStrategySchema = z.object({
   freshnessHours: z.number().int().positive().max(8_760).default(168),
 })
 
+export const siteForgeSiteTypeSchema = z.enum([
+  'standard',
+  'lease-up',
+  'student',
+  'senior',
+  'portfolio-landing',
+])
+
 export const siteForgePlanSchema = z.object({
   schemaVersion: z.literal(1),
+  siteType: siteForgeSiteTypeSchema.default('standard'),
   propertyId: z.guid(),
   onboardingSnapshot: z.object({
     // z.guid() (not strict RFC-version uuid) to match propertyId above:

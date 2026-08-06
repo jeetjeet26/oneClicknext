@@ -5,15 +5,23 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Textarea } from '@/components/ui/textarea'
-import { WebsitePreview } from './WebsitePreview'
+import {
+  ACFBlockRenderer,
+  type DesignSystem,
+} from './ACFBlockRenderer'
 import { SiteForgeOperationsPanel } from './SiteForgeOperationsPanel'
-import type { WebsiteStatusResponse } from '@/types/siteforge'
+import type { GeneratedPage, WebsiteStatusResponse } from '@/types/siteforge'
 import {
   classifyWebsiteStatus,
   isExactArtifactPreview,
   responseErrorMessage,
   siteForgeStatusEndpoint,
 } from './orchestration'
+
+function formatEditorModelLabel(model?: string): string {
+  if (!model) return 'SiteForge AI'
+  return model.split('/').at(-1)?.replaceAll('-', ' ') || model
+}
 
 type EditorMessage = {
   id: string
@@ -37,6 +45,11 @@ type EditorSessionPayload = {
     version: number
     content_hash: string
   }
+  previewBlueprint?: {
+    pages?: GeneratedPage[]
+    designSystem?: DesignSystem
+  }
+  editorModel?: string
   previews?: {
     lifecycleStatus: string
     wordpress: string | null
@@ -120,6 +133,12 @@ type PropertyAsset = {
 
 type PreviewSource = 'p11' | 'wordpress'
 type Viewport = 'mobile' | 'tablet' | 'desktop'
+type SelectedElement = {
+  pageSlug: string
+  sectionId: string
+  blockType?: string
+  label: string
+}
 
 const VIEWPORT_WIDTH: Record<Viewport, number | '100%'> = {
   mobile: 390,
@@ -131,9 +150,13 @@ export function SiteForgeEditorWorkspace({ websiteId }: { websiteId: string }) {
   const [payload, setPayload] = useState<EditorSessionPayload | null>(null)
   const [intent, setIntent] = useState('')
   const [elementContext, setElementContext] = useState('')
+  const [selectedElement, setSelectedElement] = useState<SelectedElement | null>(
+    null
+  )
   const [activeJobId, setActiveJobId] = useState<string | null>(null)
   const [previewSource, setPreviewSource] = useState<PreviewSource>('p11')
   const [viewport, setViewport] = useState<Viewport>('desktop')
+  const [selectedPreviewPage, setSelectedPreviewPage] = useState('')
   const [assets, setAssets] = useState<PropertyAsset[]>([])
   const [assetPickerOpen, setAssetPickerOpen] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -206,6 +229,16 @@ export function SiteForgeEditorWorkspace({ websiteId }: { websiteId: string }) {
       block: 'nearest',
     })
   }, [payload?.messages])
+
+  useEffect(() => {
+    const pages = payload?.previewBlueprint?.pages || []
+    if (
+      pages.length > 0 &&
+      !pages.some(page => page.slug === selectedPreviewPage)
+    ) {
+      setSelectedPreviewPage(pages[0].slug)
+    }
+  }, [payload?.previewBlueprint?.pages, selectedPreviewPage])
 
   const renderWordPressPreview = useCallback(
     async (current: EditorSessionPayload, runBrowserQa = false) => {
@@ -337,9 +370,11 @@ export function SiteForgeEditorWorkspace({ websiteId }: { websiteId: string }) {
             data.message?.resulting_artifact_id
           ) {
             setPayload(refreshed)
-            if (previewSource === 'wordpress') {
-              void renderWordPressPreview(refreshed)
-            }
+            // Every published edit creates a new immutable artifact, which makes
+            // the previous WordPress render stale. Refresh it regardless of the
+            // currently selected preview tab so the exact render is ready when
+            // the operator returns to WordPress preview.
+            void renderWordPressPreview(refreshed)
           }
           return
         }
@@ -359,7 +394,7 @@ export function SiteForgeEditorWorkspace({ websiteId }: { websiteId: string }) {
       cancelled = true
       if (timeout) clearTimeout(timeout)
     }
-  }, [activeJobId, openSession, previewSource, renderWordPressPreview])
+  }, [activeJobId, openSession, renderWordPressPreview])
 
   async function submitTurn() {
     const userIntent = intent.trim()
@@ -382,6 +417,13 @@ export function SiteForgeEditorWorkspace({ websiteId }: { websiteId: string }) {
             expectedArtifactId: artifact.id,
             expectedContentHash: artifact.content_hash,
             clientRequestId: crypto.randomUUID(),
+            elementContext: selectedElement
+              ? {
+                  pageSlug: selectedElement.pageSlug,
+                  sectionId: selectedElement.sectionId,
+                  blockType: selectedElement.blockType,
+                }
+              : undefined,
           }),
         }
       )
@@ -391,6 +433,7 @@ export function SiteForgeEditorWorkspace({ websiteId }: { websiteId: string }) {
         await openSession()
         setIntent('')
         setElementContext('')
+        setSelectedElement(null)
         if (['succeeded', 'failed', 'cancelled'].includes(data.status)) {
           setSubmitting(false)
         } else {
@@ -400,6 +443,7 @@ export function SiteForgeEditorWorkspace({ websiteId }: { websiteId: string }) {
       }
       setIntent('')
       setElementContext('')
+      setSelectedElement(null)
       setPayload((current) =>
         current
           ? {
@@ -617,6 +661,10 @@ export function SiteForgeEditorWorkspace({ websiteId }: { websiteId: string }) {
   })
   const stagingMatches =
     payload.previews?.stagingArtifactId === payload.currentArtifact?.id
+  const previewPages = payload.previewBlueprint?.pages || []
+  const currentPreviewPage =
+    previewPages.find(page => page.slug === selectedPreviewPage) ||
+    previewPages[0]
 
   return (
     <div className="space-y-4">
@@ -625,7 +673,9 @@ export function SiteForgeEditorWorkspace({ websiteId }: { websiteId: string }) {
         <CardHeader className="border-b">
           <div className="flex items-center justify-between gap-3">
             <CardTitle className="text-base">SiteForge editor</CardTitle>
-            <Badge variant="outline">Fable 5</Badge>
+            <Badge variant="outline" className="capitalize">
+              {formatEditorModelLabel(payload?.editorModel)}
+            </Badge>
           </div>
           <div className="flex flex-wrap gap-2 text-xs">
             <Badge variant="secondary">
@@ -1018,6 +1068,20 @@ export function SiteForgeEditorWorkspace({ websiteId }: { websiteId: string }) {
           </div>
 
           <div className="space-y-2 border-t p-4">
+            {selectedElement ? (
+              <div className="flex items-start justify-between gap-2 rounded border border-indigo-300 bg-indigo-50 p-2 text-xs text-indigo-950 dark:border-indigo-800 dark:bg-indigo-950/30 dark:text-indigo-100">
+                <span>
+                  Editing {selectedElement.label} on /{selectedElement.pageSlug}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedElement(null)}
+                  aria-label="Clear selected preview element"
+                >
+                  ×
+                </button>
+              </div>
+            ) : null}
             {elementContext ? (
               <div className="flex items-start justify-between gap-2 rounded border bg-muted/40 p-2 text-xs">
                 <span>{elementContext}</span>
@@ -1211,11 +1275,98 @@ export function SiteForgeEditorWorkspace({ websiteId }: { websiteId: string }) {
                 </div>
               )
             ) : (
-              <WebsitePreview
-                key={`${previewRevision}-${viewport}`}
-                websiteId={websiteId}
-                readOnly
-              />
+              <div key={`${previewRevision}-${viewport}`} className="bg-white">
+                <div className="sticky top-0 z-20 border-b bg-white/95 p-3 backdrop-blur">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap gap-2">
+                      {previewPages.map(page => (
+                        <Button
+                          key={page.slug}
+                          size="sm"
+                          variant={
+                            currentPreviewPage?.slug === page.slug
+                              ? 'default'
+                              : 'outline'
+                          }
+                          onClick={() => setSelectedPreviewPage(page.slug)}
+                        >
+                          {page.title}
+                        </Button>
+                      ))}
+                    </div>
+                    <span className="text-xs text-muted-foreground">
+                      Instant approximation — WordPress remains release truth
+                    </span>
+                  </div>
+                </div>
+                {currentPreviewPage ? (
+                  <div
+                    data-preview-page={currentPreviewPage.slug}
+                    style={{
+                      background:
+                        payload.previewBlueprint?.designSystem?.colors
+                          ?.background ||
+                        payload.previewBlueprint?.designSystem?.colorSystem
+                          ?.background ||
+                        '#fff',
+                    }}
+                  >
+                    {currentPreviewPage.sections.map((section, index) => {
+                      const sectionId =
+                        section.id ||
+                        `${currentPreviewPage.slug}-section-${index + 1}`
+                      const selected =
+                        selectedElement?.pageSlug === currentPreviewPage.slug &&
+                        selectedElement.sectionId === sectionId
+                      return (
+                        <div
+                          key={sectionId}
+                          data-preview-section-id={sectionId}
+                          data-preview-block-type={section.acfBlock}
+                          className={`group relative ${
+                            selected
+                              ? 'ring-4 ring-inset ring-indigo-500'
+                              : 'hover:ring-2 hover:ring-inset hover:ring-indigo-300'
+                          }`}
+                        >
+                          <button
+                            type="button"
+                            className="absolute right-3 top-3 z-10 rounded-md border border-indigo-300 bg-white/95 px-3 py-1.5 text-xs font-medium text-indigo-800 opacity-0 shadow-sm transition-opacity group-hover:opacity-100 focus:opacity-100 dark:bg-gray-950 dark:text-indigo-200"
+                            aria-pressed={selected}
+                            onClick={() =>
+                              setSelectedElement({
+                                pageSlug: currentPreviewPage.slug,
+                                sectionId,
+                                blockType: section.acfBlock,
+                                label:
+                                  section.label ||
+                                  section.type ||
+                                  section.acfBlock,
+                              })
+                            }
+                          >
+                            {selected ? 'Selected' : 'Edit this section'}
+                          </button>
+                          <ACFBlockRenderer
+                            blockType={section.acfBlock}
+                            blockIdentity={`${currentPreviewPage.slug}:${sectionId}`}
+                            content={section.content}
+                            className={(section.cssClasses || []).join(' ')}
+                            variant={section.variant}
+                            designSystem={
+                              payload.previewBlueprint?.designSystem
+                            }
+                          />
+                        </div>
+                      )
+                    })}
+                  </div>
+                ) : (
+                  <div className="p-8 text-center text-sm text-muted-foreground">
+                    This artifact has no previewable pages.
+                  </div>
+                )}
+              </div>
             )}
           </div>
         </CardContent>

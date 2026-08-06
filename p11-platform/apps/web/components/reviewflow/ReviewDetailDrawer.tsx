@@ -27,6 +27,16 @@ interface ResponseRow {
   created_at: string
 }
 
+interface TestimonialApprovalRow {
+  id: string
+  status: 'active' | 'revoked'
+  rights_basis: string
+  rights_evidence: Record<string, unknown> | null
+  approved_at: string
+  revoked_at: string | null
+  revocation_reason: string | null
+}
+
 interface Review {
   id: string
   platform: string
@@ -42,6 +52,7 @@ interface Review {
   topics: string[]
   created_at: string
   review_responses?: ResponseRow[]
+  review_testimonial_approvals?: TestimonialApprovalRow[]
   reputation_cases?: Array<{
     id: string
     status: string
@@ -105,6 +116,14 @@ export function ReviewDetailDrawer({ review: initialReview, onClose, onUpdate }:
   const [providerPostUrl, setProviderPostUrl] = useState('')
   const [providerNotes, setProviderNotes] = useState('')
   const [showHistory, setShowHistory] = useState(false)
+  const [testimonialRightsBasis, setTestimonialRightsBasis] =
+    useState('direct_consent')
+  const [testimonialEvidenceNote, setTestimonialEvidenceNote] = useState('')
+  const [testimonialAttributionApproved, setTestimonialAttributionApproved] =
+    useState(false)
+  const [testimonialRevocationReason, setTestimonialRevocationReason] =
+    useState('')
+  const [testimonialLoading, setTestimonialLoading] = useState(false)
 
   const refreshReview = useCallback(async () => {
     const propertyId = (initialReview as unknown as { property_id?: string }).property_id
@@ -149,6 +168,10 @@ export function ReviewDetailDrawer({ review: initialReview, onClose, onUpdate }:
     responses.find((r) => !r.superseded_at && r.status !== 'rejected') || responses[0] || null
   const historyResponses = responses.filter((r) => r.id !== activeResponse?.id)
   const reputationCase = review.reputation_cases?.[0] || null
+  const activeTestimonialApproval =
+    review.review_testimonial_approvals?.find(
+      approval => approval.status === 'active'
+    ) || null
 
   const requiresRationale = !decisionReason.trim()
 
@@ -249,6 +272,79 @@ export function ReviewDetailDrawer({ review: initialReview, onClose, onUpdate }:
     }
   }
 
+  const handleApproveTestimonial = async () => {
+    setTestimonialLoading(true)
+    setActionError(null)
+    try {
+      const response = await fetch(
+        `/api/reviewflow/testimonials/${review.id}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            attributionApproved: testimonialAttributionApproved,
+            rightsBasis: testimonialRightsBasis,
+            evidenceNote: testimonialEvidenceNote.trim(),
+          }),
+        }
+      )
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(
+          (data as { error?: string }).error ||
+            'Failed to approve testimonial publication'
+        )
+      }
+      setTestimonialEvidenceNote('')
+      setTestimonialAttributionApproved(false)
+      onUpdate?.()
+      await refreshReview()
+    } catch (error) {
+      setActionError(
+        error instanceof Error
+          ? error.message
+          : 'Failed to approve testimonial publication'
+      )
+    } finally {
+      setTestimonialLoading(false)
+    }
+  }
+
+  const handleRevokeTestimonial = async () => {
+    setTestimonialLoading(true)
+    setActionError(null)
+    try {
+      const response = await fetch(
+        `/api/reviewflow/testimonials/${review.id}`,
+        {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            reason: testimonialRevocationReason.trim(),
+          }),
+        }
+      )
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(
+          (data as { error?: string }).error ||
+            'Failed to revoke testimonial publication'
+        )
+      }
+      setTestimonialRevocationReason('')
+      onUpdate?.()
+      await refreshReview()
+    } catch (error) {
+      setActionError(
+        error instanceof Error
+          ? error.message
+          : 'Failed to revoke testimonial publication'
+      )
+    } finally {
+      setTestimonialLoading(false)
+    }
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
       <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
@@ -338,6 +434,121 @@ export function ReviewDetailDrawer({ review: initialReview, onClose, onUpdate }:
               <p className="text-slate-700 dark:text-slate-300 whitespace-pre-wrap">
                 {review.review_text}
               </p>
+            </div>
+          </div>
+
+          <div>
+            <h3 className="text-sm font-medium text-slate-500 dark:text-slate-400 mb-2">
+              SiteForge Testimonial Publication
+            </h3>
+            <div className="bg-slate-50 dark:bg-slate-800 rounded-xl p-4 space-y-3">
+              {activeTestimonialApproval ? (
+                <>
+                  <div className="flex items-center gap-2 text-sm text-emerald-700 dark:text-emerald-300">
+                    <Check className="h-4 w-4" />
+                    Approved for attributed website publication
+                  </div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Rights basis:{' '}
+                    {activeTestimonialApproval.rights_basis.replaceAll('_', ' ')}
+                    {' • '}
+                    approved{' '}
+                    {format(
+                      new Date(activeTestimonialApproval.approved_at),
+                      'MMM d, yyyy'
+                    )}
+                  </p>
+                  <textarea
+                    value={testimonialRevocationReason}
+                    onChange={event =>
+                      setTestimonialRevocationReason(event.target.value)
+                    }
+                    placeholder="Reason for revoking publication approval"
+                    className="w-full rounded-lg border border-slate-300 bg-white p-3 text-sm dark:border-slate-600 dark:bg-slate-900"
+                    rows={2}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleRevokeTestimonial}
+                    disabled={
+                      testimonialLoading ||
+                      testimonialRevocationReason.trim().length < 3
+                    }
+                    className="inline-flex items-center gap-2 rounded-lg border border-red-300 px-3 py-2 text-sm font-medium text-red-700 disabled:opacity-50 dark:border-red-700 dark:text-red-300"
+                  >
+                    {testimonialLoading ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Ban className="h-4 w-4" />
+                    )}
+                    Revoke publication approval
+                  </button>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm text-slate-600 dark:text-slate-300">
+                    Response approval does not grant testimonial publication
+                    rights. Record the separate rights basis before SiteForge
+                    can use this review.
+                  </p>
+                  <label className="block text-sm text-slate-600 dark:text-slate-300">
+                    Rights basis
+                    <select
+                      value={testimonialRightsBasis}
+                      onChange={event =>
+                        setTestimonialRightsBasis(event.target.value)
+                      }
+                      className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900"
+                    >
+                      <option value="direct_consent">Direct consent</option>
+                      <option value="platform_terms">Platform terms</option>
+                      <option value="property_license">Property license</option>
+                      <option value="other">Other documented basis</option>
+                    </select>
+                  </label>
+                  <label className="block text-sm text-slate-600 dark:text-slate-300">
+                    Evidence note
+                    <textarea
+                      value={testimonialEvidenceNote}
+                      onChange={event =>
+                        setTestimonialEvidenceNote(event.target.value)
+                      }
+                      placeholder="Where the consent or license evidence is retained"
+                      className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-3 dark:border-slate-600 dark:bg-slate-900"
+                      rows={2}
+                    />
+                  </label>
+                  <label className="flex items-start gap-2 text-sm text-slate-600 dark:text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={testimonialAttributionApproved}
+                      onChange={event =>
+                        setTestimonialAttributionApproved(event.target.checked)
+                      }
+                      className="mt-1"
+                    />
+                    The reviewer name and platform attribution are approved for
+                    public website display.
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleApproveTestimonial}
+                    disabled={
+                      testimonialLoading ||
+                      !testimonialAttributionApproved ||
+                      testimonialEvidenceNote.trim().length < 3
+                    }
+                    className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+                  >
+                    {testimonialLoading ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Check className="h-4 w-4" />
+                    )}
+                    Approve for SiteForge
+                  </button>
+                </>
+              )}
             </div>
           </div>
 

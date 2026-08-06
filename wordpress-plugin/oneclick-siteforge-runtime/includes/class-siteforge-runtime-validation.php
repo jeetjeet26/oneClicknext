@@ -67,19 +67,20 @@ class SiteForge_Runtime_Validation {
 	const KEY_PATTERN  = '/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/';
 	const BLOCK_VARIANTS = array(
 		'acf/menu'               => array( 'standard', 'sticky-cta' ),
-		'acf/top-slides'         => array( 'cinematic', 'editorial', 'split' ),
+		'acf/top-slides'         => array( 'cinematic', 'editorial', 'split', 'panoramic', 'immersive', 'minimal' ),
 		'acf/text-section'       => array( 'editorial', 'contained', 'lead' ),
-		'acf/feature-section'    => array( 'alternating', 'bleed', 'framed' ),
+		'acf/feature-section'    => array( 'alternating', 'bleed', 'framed', 'spotlight', 'collage', 'compact' ),
 		'acf/image'              => array( 'full-bleed', 'contained' ),
 		'acf/links'              => array( 'inline', 'banner', 'sticky' ),
-		'acf/content-grid'       => array( 'amenity-grid', 'tabs', 'editorial' ),
+		'acf/content-grid'       => array( 'amenity-grid', 'tabs', 'editorial', 'bento', 'icon-list', 'carousel' ),
 		'acf/form'               => array( 'card', 'split', 'minimal' ),
 		'acf/map'                => array( 'standard', 'immersive' ),
 		'acf/html-section'       => array( 'contained', 'full-width' ),
-		'acf/gallery'            => array( 'categorized', 'masonry', 'lightbox' ),
+		'acf/gallery'            => array( 'categorized', 'masonry', 'lightbox', 'filmstrip', 'mosaic', 'full-bleed' ),
 		'acf/accordion-section'  => array( 'bordered', 'minimal' ),
 		'acf/plans-availability' => array( 'cards', 'details', 'preleasing' ),
 		'acf/poi'                => array( 'narrative', 'map-list', 'editorial' ),
+		'acf/testimonials'       => array( 'cards', 'spotlight', 'carousel' ),
 	);
 
 	/**

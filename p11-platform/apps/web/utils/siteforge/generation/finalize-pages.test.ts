@@ -105,6 +105,83 @@ describe('finalizeSiteForgePages', () => {
     )
   })
 
+  it('replaces testimonial copy with approved ReviewFlow records and evidence ids', () => {
+    const manifest: PhotoManifest = {
+      photos: [],
+      byCategory: {
+        hero: [],
+        amenities: [],
+        lifestyle: [],
+        gallery: [],
+        logos: [],
+      },
+      assignments: {},
+      stats: { uploaded: 0, generated: 0, fromBrandForge: 0, total: 0 },
+    }
+    const reviewId = '77777777-7777-4777-8777-777777777777'
+    const finalized = finalizeSiteForgePages(
+      [
+        {
+          slug: 'home',
+          title: 'Home',
+          purpose: 'Introduce the property.',
+          sections: [
+            {
+              id: 'resident-stories',
+              type: 'testimonials',
+              acfBlock: 'acf/testimonials',
+              order: 0,
+              reasoning: 'Show approved resident feedback.',
+              content: {
+                heading: 'Invented heading',
+                reviews: [
+                  {
+                    review_text: 'Generated review text must be discarded.',
+                  },
+                ],
+              },
+              evidenceIds: ['generated-evidence'],
+            },
+          ],
+        },
+      ],
+      manifest,
+      approvedLegal,
+      undefined,
+      [],
+      {},
+      [
+        {
+          id: reviewId,
+          reviewerName: 'Jordan R.',
+          reviewText: 'The team made our move straightforward.',
+          rating: 5,
+          platform: 'google',
+          reviewDate: '2026-07-15T12:00:00.000Z',
+        },
+      ]
+    )
+
+    expect(finalized[0].sections[0]).toMatchObject({
+      acfBlock: 'acf/testimonials',
+      evidenceIds: [reviewId],
+      content: {
+        source: 'reviewflow',
+        reviews: [
+          {
+            id: reviewId,
+            reviewer_name: 'Jordan R.',
+            review_text: 'The team made our move straightforward.',
+            rating: 5,
+          },
+        ],
+      },
+    })
+    expect(JSON.stringify(finalized)).not.toContain(
+      'Generated review text must be discarded.'
+    )
+  })
+
   it('publishes map content only from the pinned property location source', () => {
     const mapLocation = extractSourcedMapLocation({
       property: {

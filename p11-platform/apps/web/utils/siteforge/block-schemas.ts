@@ -45,7 +45,6 @@ export const siteForgeBlockContentSchemas = {
             })
             .strict()
         )
-        .min(1)
         .max(12),
     })
     .strict(),
@@ -269,6 +268,27 @@ export const siteForgeBlockContentSchemas = {
         .min(1)
         .max(4),
       radius_miles: z.number().int().min(1).max(10).default(1),
+    })
+    .strict(),
+  'acf/testimonials': z
+    .object({
+      heading: z.string().trim().min(1).max(160),
+      reviews: z
+        .array(
+          z
+            .object({
+              id: z.string().uuid(),
+              reviewer_name: z.string().trim().min(1).max(200),
+              review_text: z.string().trim().min(1).max(4_000),
+              rating: z.number().int().min(1).max(5),
+              platform: z.string().trim().min(1).max(100),
+              review_date: z.string().datetime(),
+            })
+            .strict()
+        )
+        .min(1)
+        .max(12),
+      source: z.literal('reviewflow'),
     })
     .strict(),
 } as const

@@ -1,0 +1,100 @@
+{
+  "key": "group_siteforge_testimonials",
+  "title": "SiteForge testimonials",
+  "fields": [
+    {
+      "key": "field_siteforge_testimonials_heading_0",
+      "name": "heading",
+      "label": "heading",
+      "type": "text"
+    },
+    {
+      "key": "field_siteforge_testimonials_reviews_1",
+      "name": "reviews",
+      "label": "reviews",
+      "type": "repeater",
+      "layout": "block",
+      "button_label": "Add reviews",
+      "sub_fields": [
+        {
+          "key": "field_siteforge_testimonials_reviews_id_0",
+          "name": "id",
+          "label": "id",
+          "type": "text"
+        },
+        {
+          "key": "field_siteforge_testimonials_reviews_reviewer_name_1",
+          "name": "reviewer_name",
+          "label": "reviewer_name",
+          "type": "text"
+        },
+        {
+          "key": "field_siteforge_testimonials_reviews_review_text_2",
+          "name": "review_text",
+          "label": "review_text",
+          "type": "textarea"
+        },
+        {
+          "key": "field_siteforge_testimonials_reviews_rating_3",
+          "name": "rating",
+          "label": "rating",
+          "type": "number",
+          "min": 1,
+          "max": 5
+        },
+        {
+          "key": "field_siteforge_testimonials_reviews_platform_4",
+          "name": "platform",
+          "label": "platform",
+          "type": "text"
+        },
+        {
+          "key": "field_siteforge_testimonials_reviews_review_date_5",
+          "name": "review_date",
+          "label": "review_date",
+          "type": "text"
+        }
+      ]
+    },
+    {
+      "key": "field_siteforge_testimonials_source_2",
+      "name": "source",
+      "label": "source",
+      "type": "select",
+      "choices": {
+        "reviewflow": "reviewflow"
+      },
+      "default_value": "reviewflow"
+    },
+    {
+      "key": "field_siteforge_testimonials_variant_3",
+      "name": "variant",
+      "label": "variant",
+      "type": "select",
+      "choices": {
+        "cards": "cards",
+        "spotlight": "spotlight",
+        "carousel": "carousel"
+      },
+      "default_value": "cards"
+    }
+  ],
+  "location": [
+    [
+      {
+        "param": "block",
+        "operator": "==",
+        "value": "acf/testimonials"
+      }
+    ]
+  ],
+  "menu_order": 0,
+  "position": "normal",
+  "style": "default",
+  "label_placement": "top",
+  "instruction_placement": "label",
+  "active": true,
+  "description": "Versioned SiteForge block contract.",
+  "show_in_rest": 1,
+  "modified": 1785441600
+}

@@ -455,6 +455,40 @@ export async function persistSiteForgeGenerationArtifact(
       `Failed to load approved neighborhood points of interest: ${pointsOfInterestError.message}`
     )
   }
+  const { data: approvedReviewRows, error: approvedReviewsError } =
+    await supabase
+      .from('review_testimonial_approvals')
+      .select(
+        'id, reviewer_name_snapshot, review_text_snapshot, rating_snapshot, platform_snapshot, review_date_snapshot'
+      )
+      .eq('property_id', input.propertyId)
+      .eq('status', 'active')
+      .gte('rating_snapshot', 4)
+      .not('review_date_snapshot', 'is', null)
+      .order('approved_at', { ascending: false })
+      .limit(12)
+  if (approvedReviewsError) {
+    throw new FatalError(
+      `Failed to load approved ReviewFlow reviews: ${approvedReviewsError.message}`
+    )
+  }
+  const approvedReviews = (approvedReviewRows || []).flatMap(review =>
+    review.reviewer_name_snapshot &&
+    review.review_text_snapshot &&
+    review.rating_snapshot &&
+    review.review_date_snapshot
+      ? [
+          {
+            id: review.id,
+            reviewerName: review.reviewer_name_snapshot,
+            reviewText: review.review_text_snapshot,
+            rating: review.rating_snapshot,
+            platform: review.platform_snapshot,
+            reviewDate: review.review_date_snapshot,
+          },
+        ]
+      : []
+  )
   const finalizedPages = finalizeSiteForgePages(
     pages,
     durablePhotoManifest,
@@ -467,7 +501,8 @@ export async function persistSiteForgeGenerationArtifact(
         lead: confirmedPlan.conversionStrategy.leadDestination,
         tour: confirmedPlan.conversionStrategy.tourDestination,
       },
-    }
+    },
+    approvedReviews
   )
   if (!qualityReport.passed) {
     console.warn('[siteforge_workflow] advisory AI quality score below target', {
@@ -571,7 +606,10 @@ export async function persistSiteForgeGenerationArtifact(
     themeArtifact: wordpressThemeArtifact,
     legal,
     analytics,
-    additionalTrustedEvidenceIds: verifiedKnowledgeBaseEvidenceIds,
+    additionalTrustedEvidenceIds: [
+      ...verifiedKnowledgeBaseEvidenceIds,
+      ...approvedReviews.map(review => review.id),
+    ],
     evaluatedAt: now,
   })
   if (!deterministicQualityReport.passed) {

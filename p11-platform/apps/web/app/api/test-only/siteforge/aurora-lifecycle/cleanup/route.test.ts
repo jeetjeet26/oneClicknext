@@ -86,4 +86,26 @@ describe('Aurora lifecycle cleanup route', () => {
     )
     expect(forbidden.status).toBe(403)
   })
+
+  it('deletes deployments linked to owned artifacts before artifact removal', async () => {
+    const removeDeployments = vi.fn().mockResolvedValue({ error: null })
+    const { deleteOwnedArtifactDeployments } = await import('./route')
+
+    await deleteOwnedArtifactDeployments(
+      removeDeployments,
+      identity.websiteId,
+      [
+        '66666666-6666-4666-8666-666666666666',
+        '77777777-7777-4777-8777-777777777777',
+      ]
+    )
+
+    expect(removeDeployments).toHaveBeenCalledWith(
+      [
+        '66666666-6666-4666-8666-666666666666',
+        '77777777-7777-4777-8777-777777777777',
+      ],
+      identity.websiteId
+    )
+  })
 })

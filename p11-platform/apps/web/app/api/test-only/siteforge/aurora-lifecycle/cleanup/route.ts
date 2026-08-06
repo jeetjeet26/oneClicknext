@@ -64,6 +64,19 @@ function controlledError(error: unknown, headers: Record<string, string>) {
   )
 }
 
+export async function deleteOwnedArtifactDeployments(
+  removeDeployments: (
+    artifactIds: string[],
+    websiteId: string
+  ) => PromiseLike<{ error: { message: string } | null }>,
+  websiteId: string,
+  artifactIds: string[]
+) {
+  if (!artifactIds.length) return
+  const { error } = await removeDeployments(artifactIds, websiteId)
+  if (error) throw new Error(error.message)
+}
+
 export async function DELETE(request: NextRequest) {
   const ctx = createRequestContext(
     request,
@@ -383,6 +396,16 @@ export async function DELETE(request: NextRequest) {
         .eq('website_id', identity.websiteId)
       if (error) throw new Error(error.message)
     }
+    await deleteOwnedArtifactDeployments(
+      (artifactIds, ownedWebsiteId) =>
+        client
+          .from('siteforge_artifact_deployments')
+          .delete()
+          .in('artifact_id', artifactIds)
+          .eq('website_id', ownedWebsiteId),
+      identity.websiteId,
+      removableArtifactIds
+    )
     if (registeredDeploymentIds.length) {
       const { error } = await client
         .from('siteforge_artifact_deployments')

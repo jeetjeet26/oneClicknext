@@ -687,6 +687,7 @@ export function evaluateDeterministicSiteForgeQuality(input: {
     'acf/feature-section',
     'acf/plans-availability',
     'acf/poi',
+    'acf/testimonials',
   ])
   const trustedEvidenceIds = input.confirmedPlan
     ? new Set([

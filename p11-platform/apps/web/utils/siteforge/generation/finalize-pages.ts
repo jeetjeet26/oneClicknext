@@ -29,6 +29,15 @@ type ApprovedPointOfInterest = Pick<
   | 'source_url'
 >
 
+export type ApprovedReviewFlowReview = {
+  id: string
+  reviewerName: string
+  reviewText: string
+  rating: number
+  platform: string
+  reviewDate: string
+}
+
 export type SourcedMapLocation = {
   address?: string
   latitude?: number
@@ -181,7 +190,8 @@ function normalizeContent(
   manifest: PhotoManifest,
   floorPlanSnapshot: ApprovedFloorPlanSnapshot,
   pointsOfInterest: ApprovedPointOfInterest[],
-  integrityContext: SiteForgeFinalizationIntegrityContext
+  integrityContext: SiteForgeFinalizationIntegrityContext,
+  approvedReviews: ApprovedReviewFlowReview[]
 ): Record<string, unknown> {
   const raw = section.content
   const headline = stringValue(raw.headline, section.label || section.type)
@@ -448,6 +458,19 @@ function normalizeContent(
             ? Math.round(raw.radius_miles)
             : 1,
       }
+    case 'acf/testimonials':
+      return {
+        heading: headline || 'Resident experiences',
+        reviews: approvedReviews.slice(0, 12).map(review => ({
+          id: review.id,
+          reviewer_name: review.reviewerName,
+          review_text: review.reviewText,
+          rating: review.rating,
+          platform: review.platform,
+          review_date: review.reviewDate,
+        })),
+        source: 'reviewflow',
+      }
   }
 }
 
@@ -457,7 +480,8 @@ export function finalizeSiteForgePages(
   legal: SiteForgeLegalConfig,
   floorPlanSnapshot: ApprovedFloorPlanSnapshot = EMPTY_FLOOR_PLAN_SNAPSHOT,
   pointsOfInterest: ApprovedPointOfInterest[] = [],
-  integrityContext: SiteForgeFinalizationIntegrityContext = {}
+  integrityContext: SiteForgeFinalizationIntegrityContext = {},
+  approvedReviews: ApprovedReviewFlowReview[] = []
 ): GeneratedPage[] {
   const legalSpecs = [
     {
@@ -529,20 +553,30 @@ export function finalizeSiteForgePages(
             ? ['WebPage', 'ApartmentComplex', 'BreadcrumbList']
             : ['WebPage', 'BreadcrumbList'],
       },
-      sections: page.sections.map((section, index) => ({
-        ...section,
-        id: section.id || `${page.slug}-${index + 1}`,
-        order: index,
-        evidenceIds: section.evidenceIds || [],
-        content: normalizeContent(
-          section,
-          page,
-          manifest,
-          floorPlanSnapshot,
-          pointsOfInterest,
-          integrityContext
-        ),
-      })),
+      sections: page.sections
+        .filter(
+          section =>
+            section.acfBlock !== 'acf/testimonials' ||
+            approvedReviews.length > 0
+        )
+        .map((section, index) => ({
+          ...section,
+          id: section.id || `${page.slug}-${index + 1}`,
+          order: index,
+          evidenceIds:
+            section.acfBlock === 'acf/testimonials'
+              ? approvedReviews.map(review => review.id)
+              : section.evidenceIds || [],
+          content: normalizeContent(
+            section,
+            page,
+            manifest,
+            floorPlanSnapshot,
+            pointsOfInterest,
+            integrityContext,
+            approvedReviews
+          ),
+        })),
     }
     return strictGeneratedPageSchema.parse(
       normalized

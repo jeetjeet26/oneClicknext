@@ -7,7 +7,7 @@ import {
   WebsitePreview,
 } from '@/components/siteforge'
 import { createClient } from '@/utils/supabase/server'
-import { redirect } from 'next/navigation'
+import { notFound, redirect } from 'next/navigation'
 import Link from 'next/link'
 
 export default async function SiteForgePreviewPage({
@@ -23,8 +23,17 @@ export default async function SiteForgePreviewPage({
   }
 
   const { websiteId } = await params
-  const semanticEditorEnabled =
-    process.env.SITEFORGE_SEMANTIC_EDITOR_ENABLED === 'true'
+  const { data: website, error: websiteError } = await supabase
+    .from('property_websites')
+    .select('current_artifact_version_id')
+    .eq('id', websiteId)
+    .maybeSingle()
+
+  if (websiteError || !website) {
+    notFound()
+  }
+
+  const isLegacyArtifact = !website.current_artifact_version_id
 
   return (
     <div className="container max-w-7xl py-8">
@@ -38,10 +47,19 @@ export default async function SiteForgePreviewPage({
         </Link>
       </div>
 
-      {semanticEditorEnabled ? (
-        <SiteForgeEditorWorkspace websiteId={websiteId} />
+      {isLegacyArtifact ? (
+        <div className="space-y-4">
+          <div
+            className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950"
+            role="status"
+          >
+            This legacy website is read-only. Regenerate it to create a current
+            artifact before editing.
+          </div>
+          <WebsitePreview websiteId={websiteId} readOnly />
+        </div>
       ) : (
-        <WebsitePreview websiteId={websiteId} />
+        <SiteForgeEditorWorkspace websiteId={websiteId} />
       )}
     </div>
   )

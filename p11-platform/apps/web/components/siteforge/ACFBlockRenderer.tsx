@@ -38,6 +38,7 @@ interface BlockRendererProps {
   blockIdentity: string
   content: unknown
   className?: string
+  variant?: string
   designSystem?: DesignSystem
 }
 
@@ -170,6 +171,8 @@ const semanticTypeToBlock: Record<string, string> = {
   'intro': 'acf/text-section',
   'about': 'acf/text-section',
   'text': 'acf/text-section',
+  'reviews': 'acf/testimonials',
+  'testimonials': 'acf/testimonials',
 }
 
 export function getCriticalPreviewState(
@@ -241,6 +244,7 @@ export function ACFBlockRenderer({
   blockIdentity,
   content,
   className = '',
+  variant,
   designSystem,
 }: BlockRendererProps) {
   const blockContent = asRecord(content)
@@ -283,9 +287,23 @@ export function ACFBlockRenderer({
 
   // Apply design system styles as CSS custom properties
   const brandStyles = getDesignSystemStyles(designSystem)
+  const normalizedVariant = variant?.trim().toLowerCase().replace(/[^a-z0-9-]/g, '')
+  const blockClass = `block-${resolvedBlockType.replace(/^acf\//, '')}`
+  const wrapperClassName = [
+    className,
+    blockClass,
+    normalizedVariant ? `variant-${normalizedVariant}` : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
 
   return (
-    <div className={className} style={brandStyles} data-acf-block={resolvedBlockType}>
+    <div
+      className={wrapperClassName}
+      style={brandStyles}
+      data-acf-block={resolvedBlockType}
+      data-siteforge-variant={normalizedVariant || undefined}
+    >
       <Renderer
         blockIdentity={blockIdentity}
         content={blockContent}
@@ -1051,6 +1069,66 @@ function PointsOfInterest({ content, designSystem }: BlockComponentProps) {
   )
 }
 
+function Testimonials({ content }: BlockComponentProps) {
+  const heading = getString(content, 'heading', 'Resident experiences')
+  const reviews = getRecordArray(content, 'reviews')
+  if (reviews.length === 0) {
+    return (
+      <DegradedBlock
+        title="No approved ReviewFlow testimonials are available"
+        detail="The artifact preserves this section, but P11 will not synthesize resident reviews."
+      />
+    )
+  }
+  return (
+    <section
+      className="px-6 py-16"
+      style={{ background: 'var(--brand-background)' }}
+    >
+      <div className="mx-auto max-w-6xl">
+        <h2
+          className="mb-10 text-3xl font-bold md:text-5xl"
+          style={{
+            color: 'var(--brand-text)',
+            fontFamily: 'var(--font-heading)',
+          }}
+        >
+          {heading}
+        </h2>
+        <div className="grid gap-6 md:grid-cols-3">
+          {reviews.map(review => {
+            const rating = Math.max(
+              1,
+              Math.min(5, getNumber(review, 'rating', 5))
+            )
+            return (
+              <figure
+                key={getString(review, 'id')}
+                className="m-0 border p-6 shadow-sm"
+              >
+                <div
+                  className="mb-4 tracking-widest"
+                  aria-label={`${rating} out of 5 stars`}
+                  style={{ color: 'var(--brand-accent)' }}
+                >
+                  {'★'.repeat(rating)}
+                </div>
+                <blockquote className="m-0 text-lg leading-relaxed">
+                  “{getString(review, 'review_text')}”
+                </blockquote>
+                <figcaption className="mt-6 flex justify-between gap-3 text-xs uppercase tracking-wide">
+                  <strong>{getString(review, 'reviewer_name')}</strong>
+                  <span>{getString(review, 'platform')}</span>
+                </figcaption>
+              </figure>
+            )
+          })}
+        </div>
+      </div>
+    </section>
+  )
+}
+
 const REGISTERED_BLOCK_RENDERERS = {
   'acf/menu': MenuSection,
   'acf/top-slides': HeroSlides,
@@ -1066,6 +1144,7 @@ const REGISTERED_BLOCK_RENDERERS = {
   'acf/accordion-section': AccordionSection,
   'acf/plans-availability': PlansAvailability,
   'acf/poi': PointsOfInterest,
+  'acf/testimonials': Testimonials,
 } satisfies Record<ACFBlockType, React.FC<BlockComponentProps>>
 
 export const EXPLICIT_ACF_PREVIEW_BLOCK_TYPES = Object.freeze(

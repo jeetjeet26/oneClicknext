@@ -82,10 +82,21 @@ describe('health utilities', () => {
         )
       }
 
+      const missingOverlaySecret = await runSiteForgeReadinessCheck({
+        runtimeAssetsDir,
+        env: {
+          SITEFORGE_ACF_PRO_LICENSE_KEY: 'configured',
+        },
+      })
+      expect(missingOverlaySecret.status).toBe('unhealthy')
+      expect(missingOverlaySecret.details?.semanticEditorEnabled).toBe(true)
+      expect(missingOverlaySecret.details?.hasOverlaySigningSecret).toBe(false)
+
       const check = await runSiteForgeReadinessCheck({
         runtimeAssetsDir,
         env: {
           SITEFORGE_ACF_PRO_LICENSE_KEY: 'configured',
+          SITEFORGE_OVERLAY_SIGNING_SECRET: 'configured',
           ANTHROPIC_API_KEY: 'configured',
           SITEFORGE_PREVIEW_WP_URL: 'https://wordpress.example.com',
           SITEFORGE_PREVIEW_WP_USERNAME: 'siteforge',
@@ -131,6 +142,7 @@ describe('health utilities', () => {
         runtimeAssetsDir,
         env: {
           SITEFORGE_ACF_PRO_LICENSE_KEY: 'configured',
+          SITEFORGE_SEMANTIC_EDITOR_ENABLED: 'false',
           CLOUDWAYS_API_KEY: 'partial',
         },
       })
@@ -139,6 +151,7 @@ describe('health utilities', () => {
         runtimeAssetsDir,
         env: {
           SITEFORGE_ACF_PRO_LICENSE_KEY: 'configured',
+          SITEFORGE_SEMANTIC_EDITOR_ENABLED: 'false',
           CLOUDWAYS_API_KEY: 'placeholder',
           CLOUDWAYS_EMAIL: 'placeholder',
         },

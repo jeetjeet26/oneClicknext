@@ -2,6 +2,7 @@ import type { BrandContext } from '@/utils/siteforge/agents/brand-agent'
 import {
   generationPreferencesSchema,
   siteForgePlanSchema,
+  siteForgeSiteTypeSchema,
   type SiteForgePlan,
 } from '@/utils/siteforge/contracts'
 import type { BrandForgeContractV1 } from '@/utils/brandforge/contracts'
@@ -20,8 +21,140 @@ type BuildSiteForgePlanInput = {
     sourceReferences: Array<{ domain?: string; sourceId?: string }>
   }
   preferences?: unknown
+  siteType?: unknown
   operatorDirection?: string | null
   capturedAt?: string
+}
+
+type SiteForgeSiteType = ReturnType<typeof siteForgeSiteTypeSchema.parse>
+
+function applySiteTypeTemplate(
+  standardPages: SiteForgePlan['pages'],
+  siteType: SiteForgeSiteType,
+  sourceId: string
+): SiteForgePlan['pages'] {
+  if (siteType === 'standard') return standardPages
+
+  if (siteType === 'lease-up') {
+    return standardPages.map(page => ({
+      ...page,
+      sections: page.sections.map(section =>
+        section.block === 'acf/top-slides'
+          ? { ...section, variant: 'immersive' }
+          : section.block === 'acf/plans-availability'
+            ? {
+                ...section,
+                variant: 'preleasing',
+                purpose:
+                  'Present verified pre-leasing inventory and registration paths.',
+              }
+            : section
+      ),
+    }))
+  }
+
+  if (siteType === 'student') {
+    const contactIndex = standardPages.findIndex(page => page.slug === 'contact')
+    const studentLife = {
+      slug: 'student-life',
+      title: 'Student Life',
+      navLabel: 'Student Life',
+      purpose:
+        'Present verified study, social, transportation, and resident-support features without demographic targeting.',
+      sections: [
+        {
+          id: 'student-life-highlights',
+          label: 'Student living highlights',
+          purpose:
+            'Organize verified property features relevant to day-to-day student living.',
+          block: 'acf/content-grid' as const,
+          variant: 'bento',
+          required: true,
+          factsRequired: ['verified property amenities and services'],
+          evidenceIds: [sourceId],
+        },
+        {
+          id: 'student-life-faq',
+          label: 'Resident questions',
+          purpose:
+            'Answer verified questions about leasing, services, and community policies.',
+          block: 'acf/accordion-section' as const,
+          variant: 'bordered',
+          required: false,
+          factsRequired: ['verified leasing and property policies'],
+          evidenceIds: [sourceId],
+        },
+      ],
+    }
+    return [
+      ...standardPages.slice(0, Math.max(contactIndex, 0)),
+      studentLife,
+      ...standardPages.slice(Math.max(contactIndex, 0)),
+    ]
+  }
+
+  if (siteType === 'senior') {
+    const contactIndex = standardPages.findIndex(page => page.slug === 'contact')
+    const services = {
+      slug: 'services',
+      title: 'Services',
+      navLabel: 'Services',
+      purpose:
+        'Explain verified residence services, accessibility features, and support offerings.',
+      sections: [
+        {
+          id: 'services-overview',
+          label: 'Services overview',
+          purpose:
+            'Present verified services and accessibility features with clear, factual language.',
+          block: 'acf/feature-section' as const,
+          variant: 'spotlight',
+          required: true,
+          factsRequired: ['verified services and accessibility features'],
+          evidenceIds: [sourceId],
+        },
+        {
+          id: 'services-faq',
+          label: 'Services questions',
+          purpose: 'Answer verified questions about services and residence policies.',
+          block: 'acf/accordion-section' as const,
+          variant: 'minimal',
+          required: false,
+          factsRequired: ['verified services and residence policies'],
+          evidenceIds: [sourceId],
+        },
+      ],
+    }
+    return [
+      ...standardPages.slice(0, Math.max(contactIndex, 0)),
+      services,
+      ...standardPages.slice(Math.max(contactIndex, 0)),
+    ]
+  }
+
+  const home = standardPages.find(page => page.slug === 'home')
+  const amenities = standardPages.find(page => page.slug === 'amenities')
+  const neighborhood = standardPages.find(page => page.slug === 'neighborhood')
+  const contact = standardPages.find(page => page.slug === 'contact')
+  return [
+    {
+      slug: 'home',
+      title: 'Property Overview',
+      navLabel: 'Overview',
+      purpose:
+        'Provide a focused property landing experience with brand, highlights, location, and conversion in one page.',
+      sections: [
+        ...(home?.sections || []).map(section =>
+          section.block === 'acf/top-slides'
+            ? { ...section, variant: 'panoramic' }
+            : section
+        ),
+        ...(amenities?.sections || []),
+        ...(neighborhood?.sections || []).slice(0, 1),
+        ...(contact?.sections || []),
+      ],
+    },
+  ]
 }
 
 function primaryActionLabel(
@@ -48,12 +181,14 @@ export function buildSiteForgePlan(input: BuildSiteForgePlanInput): SiteForgePla
     ...(primaryAction === 'tours' ? ['tours' as const] : []),
   ]))
   const operatorDirection = input.operatorDirection?.trim()
+  const siteType = siteForgeSiteTypeSchema.parse(input.siteType || 'standard')
   const sourceId = input.brandAssetId
   const differentiators = input.brandContext.positioning.differentiators.slice(0, 4)
   const priorities = input.brandContext.targetAudience.priorities.slice(0, 4)
 
   return siteForgePlanSchema.parse({
     schemaVersion: 1,
+    siteType,
     propertyId: input.propertyId,
     onboardingSnapshot: {
       id: input.onboardingSnapshot.id,
@@ -68,8 +203,8 @@ export function buildSiteForgePlan(input: BuildSiteForgePlanInput): SiteForgePla
       contract: input.brandContract,
     },
     enabledCapabilities,
-    name: `${input.propertyName} website plan`,
-    summary: `A grounded, conversion-focused multifamily website for ${input.propertyName}, centered on ${preferences.emphasis || 'the strongest verified property story'}.`,
+    name: `${input.propertyName} ${siteType} website plan`,
+    summary: `A grounded, conversion-focused ${siteType} multifamily website for ${input.propertyName}, centered on ${preferences.emphasis || 'the strongest verified property story'}.`,
     preferences,
     brandDirection: {
       positioning:
@@ -98,7 +233,7 @@ export function buildSiteForgePlan(input: BuildSiteForgePlanInput): SiteForgePla
           },
         ]
       : [],
-    pages: [
+    pages: applySiteTypeTemplate([
       {
         slug: 'home',
         title: 'Home',
@@ -133,6 +268,17 @@ export function buildSiteForgePlan(input: BuildSiteForgePlanInput): SiteForgePla
             variant: 'amenity-grid',
             required: true,
             factsRequired: differentiators,
+            evidenceIds: [sourceId],
+          },
+          {
+            id: 'home-testimonials',
+            label: 'Resident experiences',
+            purpose:
+              'Show only approved, source-managed ReviewFlow reviews when they are available.',
+            block: 'acf/testimonials',
+            variant: 'cards',
+            required: false,
+            factsRequired: ['approved ReviewFlow reviews'],
             evidenceIds: [sourceId],
           },
           {
@@ -238,7 +384,7 @@ export function buildSiteForgePlan(input: BuildSiteForgePlanInput): SiteForgePla
           },
         ],
       },
-    ],
+    ], siteType, sourceId),
     conversionStrategy: {
       primaryAction,
       secondaryAction: primaryAction === 'contact' ? 'tours' : 'contact',

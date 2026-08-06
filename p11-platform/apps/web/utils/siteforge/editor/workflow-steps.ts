@@ -54,6 +54,11 @@ export interface SiteForgeSemanticEditWorkflowInput {
   orgId: string
   userId: string
   userIntent: string
+  elementContext?: {
+    pageSlug: string
+    sectionId: string
+    blockType?: string
+  }
   expectedArtifactId: string
   expectedContentHash: string
 }
@@ -146,7 +151,19 @@ export async function proposeSemanticEdit(
   'use step'
   return runSiteForgeEditorAgent({
     snapshot,
-    userIntent: input.userIntent,
+    userIntent: input.elementContext
+      ? [
+          input.userIntent,
+          '',
+          'The operator selected this exact immutable-artifact element:',
+          `- pageSlug: ${input.elementContext.pageSlug}`,
+          `- sectionId: ${input.elementContext.sectionId}`,
+          ...(input.elementContext.blockType
+            ? [`- blockType: ${input.elementContext.blockType}`]
+            : []),
+          'Treat this identity as targeting context; inspect it before applying operations.',
+        ].join('\n')
+      : input.userIntent,
   })
 }
 

@@ -1,4 +1,4 @@
-// schema_migration_version: 20260804235605
+// schema_migration_version: 20260806233325
 export type Json =
   | string
   | number
@@ -7234,6 +7234,118 @@ export type Database = {
             columns: ["shared_action_attempt_id"]
             isOneToOne: false
             referencedRelation: "shared_action_attempts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      review_testimonial_approvals: {
+        Row: {
+          approved_at: string
+          approved_by: string
+          attribution_approved: boolean
+          content_fingerprint: string
+          created_at: string
+          id: string
+          platform_snapshot: string
+          property_id: string
+          rating_snapshot: number
+          review_date_snapshot: string | null
+          review_id: string
+          review_text_snapshot: string
+          reviewer_name_snapshot: string
+          revocation_reason: string | null
+          revoked_at: string | null
+          revoked_by: string | null
+          rights_basis: string
+          rights_evidence: Json
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          approved_at?: string
+          approved_by: string
+          attribution_approved?: boolean
+          content_fingerprint: string
+          created_at?: string
+          id?: string
+          platform_snapshot: string
+          property_id: string
+          rating_snapshot: number
+          review_date_snapshot?: string | null
+          review_id: string
+          review_text_snapshot: string
+          reviewer_name_snapshot: string
+          revocation_reason?: string | null
+          revoked_at?: string | null
+          revoked_by?: string | null
+          rights_basis: string
+          rights_evidence?: Json
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          approved_at?: string
+          approved_by?: string
+          attribution_approved?: boolean
+          content_fingerprint?: string
+          created_at?: string
+          id?: string
+          platform_snapshot?: string
+          property_id?: string
+          rating_snapshot?: number
+          review_date_snapshot?: string | null
+          review_id?: string
+          review_text_snapshot?: string
+          reviewer_name_snapshot?: string
+          revocation_reason?: string | null
+          revoked_at?: string | null
+          revoked_by?: string | null
+          rights_basis?: string
+          rights_evidence?: Json
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "review_testimonial_approvals_approved_by_fkey"
+            columns: ["approved_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "review_testimonial_approvals_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "review_testimonial_approvals_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "review_testimonial_approvals_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "review_testimonial_approvals_review_id_fkey"
+            columns: ["review_id"]
+            isOneToOne: false
+            referencedRelation: "reviews"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "review_testimonial_approvals_revoked_by_fkey"
+            columns: ["revoked_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
         ]

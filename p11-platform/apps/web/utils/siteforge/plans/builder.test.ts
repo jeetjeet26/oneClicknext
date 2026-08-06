@@ -50,28 +50,37 @@ const brandContract = normalizeBrandForgeContract({
   identity: { name: 'Aurora Denver' },
 }, { origin: 'generated', approvalStatus: 'approved' })
 
+function buildInput(siteType?: string) {
+  return {
+    propertyId: '11111111-1111-4111-8111-111111111111',
+    propertyName: 'Aurora Denver',
+    brandContext,
+    brandAssetId: '22222222-2222-4222-8222-222222222222',
+    brandContract,
+    brandContractHash: hashBrandForgeContract(brandContract),
+    onboardingSnapshot: {
+      id: '33333333-3333-4333-8333-333333333333',
+      contentHash: 'a'.repeat(64),
+      enabledCapabilities: ['tours', 'analytics'] as Array<
+        'crm' | 'tours' | 'chatbot' | 'analytics'
+      >,
+      sourceReferences: [],
+    },
+    siteType,
+    capturedAt: '2026-07-30T17:00:00.000Z',
+  }
+}
+
 describe('buildSiteForgePlan', () => {
   it('builds a validated, deterministic multifamily plan', () => {
     const plan = buildSiteForgePlan({
-      propertyId: '11111111-1111-4111-8111-111111111111',
-      propertyName: 'Aurora Denver',
-      brandContext,
-      brandAssetId: '22222222-2222-4222-8222-222222222222',
-      brandContract,
-      brandContractHash: hashBrandForgeContract(brandContract),
-      onboardingSnapshot: {
-        id: '33333333-3333-4333-8333-333333333333',
-        contentHash: 'a'.repeat(64),
-        enabledCapabilities: ['tours', 'analytics'],
-        sourceReferences: [],
-      },
+      ...buildInput(),
       preferences: {
         style: 'luxury',
         emphasis: 'location',
         ctaPriority: 'tours',
       },
       operatorDirection: 'Give the neighborhood story more visual weight.',
-      capturedAt: '2026-07-30T17:00:00.000Z',
     })
 
     expect(plan.pages.map((page) => page.slug)).toEqual([
@@ -92,5 +101,41 @@ describe('buildSiteForgePlan', () => {
         retrievalStatus: 'available',
       }),
     ])
+  })
+
+  it.each([
+    ['standard', ['home', 'floor-plans', 'amenities', 'neighborhood', 'contact']],
+    [
+      'lease-up',
+      ['home', 'floor-plans', 'amenities', 'neighborhood', 'contact'],
+    ],
+    [
+      'student',
+      [
+        'home',
+        'floor-plans',
+        'amenities',
+        'neighborhood',
+        'student-life',
+        'contact',
+      ],
+    ],
+    [
+      'senior',
+      [
+        'home',
+        'floor-plans',
+        'amenities',
+        'neighborhood',
+        'services',
+        'contact',
+      ],
+    ],
+    ['portfolio-landing', ['home']],
+  ])('builds the %s topology from the registry', (siteType, slugs) => {
+    const plan = buildSiteForgePlan(buildInput(siteType))
+    expect(plan.siteType).toBe(siteType)
+    expect(plan.pages.map(page => page.slug)).toEqual(slugs)
+    expect(plan.pages.every(page => page.sections.length > 0)).toBe(true)
   })
 })

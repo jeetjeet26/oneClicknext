@@ -164,8 +164,22 @@ export type WordPressThemeArtifact = z.infer<typeof wordpressThemeArtifactSchema
 export type WordPressFontAsset = WordPressThemeArtifact['fontAssets'][number]
 
 const COMPONENT_VARIANTS = {
-  hero: ['cinematic', 'editorial', 'split'],
-  amenityShowcase: ['amenity-grid', 'tabs', 'editorial'],
+  hero: [
+    'cinematic',
+    'editorial',
+    'split',
+    'panoramic',
+    'immersive',
+    'minimal',
+  ],
+  amenityShowcase: [
+    'amenity-grid',
+    'tabs',
+    'editorial',
+    'bento',
+    'icon-list',
+    'carousel',
+  ],
   ctaSections: ['inline', 'banner', 'sticky'],
 } as const
 

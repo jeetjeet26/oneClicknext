@@ -31,7 +31,7 @@ export const SITEFORGE_COMPATIBILITY_LOCK_V1 = {
     'wordpress-plugin/oneclick-siteforge-runtime/fixtures/v2/state.json':
       'cc5555799fd0a6829c4674926af6590b164cf96ff977f068efa09e7e8cc014f4',
     'wordpress-theme/oneclick-siteforge/inc/rest-api.php':
-      '5bea6e68d8d50781e0c027669bb22eebbbb2031ce8c941eccb2ec9e0b1f5a902',
+      '0fc30200d32e163d8932042c711f9724daeb797174524f1bcdb5a22a45d9d744',
   },
   groups: {
     acaciaRegressionV1: {
@@ -74,7 +74,7 @@ export const SITEFORGE_COMPATIBILITY_LOCK_V1 = {
     },
     legacyThemeV1ApiContract: {
       digest:
-        '3b3ebdea901a6f43be3315303d422096982116a103fc3697547fccac99b76f4c',
+        '272b997539c804f0bde5472092bdf7c89f0fc9860f311201e6ebe5f0af4814c3',
       files: ['wordpress-theme/oneclick-siteforge/inc/rest-api.php'],
     },
   },

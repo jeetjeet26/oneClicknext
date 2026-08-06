@@ -73,7 +73,7 @@ describe('WordPress theme artifact', () => {
     expect(first.themeOverlay.contentHash).toMatch(/^[a-f0-9]{64}$/)
     expect(first.themeOverlay.files).toHaveLength(2)
     expect(first.siteConfiguration.motion).toEqual(first.motion)
-    expect(Object.keys(first.acfSchemas)).toHaveLength(14)
+    expect(Object.keys(first.acfSchemas)).toHaveLength(15)
     expect(validateWordPressThemeArtifact(first)).toEqual(first)
   })
 

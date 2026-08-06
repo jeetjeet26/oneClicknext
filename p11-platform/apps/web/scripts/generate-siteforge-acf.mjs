@@ -44,7 +44,11 @@ const definitions = {
     ]),
     { name: 'autoplay', label: 'autoplay', type: 'true_false', default_value: 1 },
     select('overlay_style', ['gradient', 'light', 'dark'], 'gradient'),
-    select('variant', ['cinematic', 'editorial', 'split'], 'cinematic'),
+    select(
+      'variant',
+      ['cinematic', 'editorial', 'split', 'panoramic', 'immersive', 'minimal'],
+      'cinematic'
+    ),
   ],
   'text-section': [
     text('headline'),
@@ -61,7 +65,11 @@ const definitions = {
     select('layout', ['image-left', 'image-right'], 'image-left'),
     text('cta_text'),
     url('cta_link'),
-    select('variant', ['alternating', 'bleed', 'framed'], 'alternating'),
+    select(
+      'variant',
+      ['alternating', 'bleed', 'framed', 'spotlight', 'collage', 'compact'],
+      'alternating'
+    ),
   ],
   image: [
     image('image'),
@@ -85,7 +93,11 @@ const definitions = {
       { name: 'description', label: 'description', type: 'textarea' },
     ]),
     select('columns', ['2', '3', '4'], '3'),
-    select('variant', ['amenity-grid', 'tabs', 'editorial'], 'amenity-grid'),
+    select(
+      'variant',
+      ['amenity-grid', 'tabs', 'editorial', 'bento', 'icon-list', 'carousel'],
+      'amenity-grid'
+    ),
   ],
   form: [
     text('heading'),
@@ -111,7 +123,11 @@ const definitions = {
   gallery: [
     { name: 'images', label: 'images', type: 'gallery', return_format: 'id' },
     select('layout', ['grid', 'masonry'], 'grid'),
-    select('variant', ['categorized', 'masonry', 'lightbox'], 'lightbox'),
+    select(
+      'variant',
+      ['categorized', 'masonry', 'lightbox', 'filmstrip', 'mosaic', 'full-bleed'],
+      'lightbox'
+    ),
   ],
   'accordion-section': [
     repeater('items', [
@@ -160,6 +176,19 @@ const definitions = {
     },
     { name: 'radius_miles', label: 'radius_miles', type: 'number', default_value: 1 },
     select('variant', ['narrative', 'map-list', 'editorial'], 'narrative'),
+  ],
+  testimonials: [
+    text('heading'),
+    repeater('reviews', [
+      text('id'),
+      text('reviewer_name'),
+      { name: 'review_text', label: 'review_text', type: 'textarea' },
+      { name: 'rating', label: 'rating', type: 'number', min: 1, max: 5 },
+      text('platform'),
+      text('review_date'),
+    ]),
+    select('source', ['reviewflow'], 'reviewflow'),
+    select('variant', ['cards', 'spotlight', 'carousel'], 'cards'),
   ],
   menu: [
     repeater('menu_items', [text('label'), url('link')]),

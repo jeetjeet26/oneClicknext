@@ -9,6 +9,7 @@ const FACT_BEARING_BLOCKS = new Set<ACFBlockType>([
   'acf/feature-section',
   'acf/plans-availability',
   'acf/poi',
+  'acf/testimonials',
 ])
 
 const SAFE_PROPERTY_OVERVIEW =
@@ -111,6 +112,12 @@ export function createEvidenceSafePlaceholder(
         categories: ['restaurants', 'shopping', 'entertainment', 'transit'],
         radius_miles: 1,
       }
+    case 'acf/testimonials':
+      return {
+        heading: 'Resident experiences',
+        reviews: [],
+        source: 'reviewflow',
+      }
     default:
       return {
         headline: heading,
@@ -151,6 +158,13 @@ export function isEvidenceSafePlaceholder(
     return (
       content.content === SAFE_NEIGHBORHOOD_COPY ||
       content.intro_text === SAFE_NEIGHBORHOOD_COPY
+    )
+  }
+  if (block === 'acf/testimonials') {
+    return (
+      content.source === 'reviewflow' &&
+      Array.isArray(content.reviews) &&
+      content.reviews.length === 0
     )
   }
   return [

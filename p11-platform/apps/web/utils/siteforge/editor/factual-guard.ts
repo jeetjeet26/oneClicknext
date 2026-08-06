@@ -6,6 +6,7 @@ import { SITEFORGE_PLACEHOLDER_EVIDENCE_ID } from '@/utils/siteforge/generation/
 const SOURCE_MANAGED_BLOCKS = new Set([
   'acf/plans-availability',
   'acf/poi',
+  'acf/testimonials',
 ])
 
 function normalizedText(value: unknown): string {

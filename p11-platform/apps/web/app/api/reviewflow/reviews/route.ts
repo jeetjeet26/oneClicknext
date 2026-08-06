@@ -69,6 +69,15 @@ export async function GET(request: NextRequest) {
           owner_profile_id,
           sla_due_at,
           remediation_state
+        ),
+        review_testimonial_approvals (
+          id,
+          status,
+          rights_basis,
+          rights_evidence,
+          approved_at,
+          revoked_at,
+          revocation_reason
         )
       `, { count: 'exact' })
       .eq('property_id', propertyId)

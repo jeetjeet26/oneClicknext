@@ -46,6 +46,7 @@ type CreatePlanRevisionInput = {
   /** @deprecated Planning always uses the approved pinned BrandForge contract. */
   brandContext?: BrandContext
   preferences?: unknown
+  siteType?: unknown
   operatorDirection?: string | null
   conversationHistory: ConversationEntry[]
   planId?: string | null
@@ -274,6 +275,7 @@ export async function createPlanRevision(
       sourceReferences,
     },
     preferences: input.preferences,
+    siteType: input.siteType,
     operatorDirection: input.operatorDirection,
   })
   const missingCapabilities = plan.enabledCapabilities.filter(
@@ -379,6 +381,7 @@ export async function createPlanRevision(
     onboardingSnapshotHash: onboardingSnapshot.content_hash,
     onboardingSnapshotPayload: onboardingSnapshot.snapshot_payload,
     preferences: input.preferences || {},
+    siteType: plan.siteType,
   }
   const { data: contextSnapshot, error: contextError } = await supabase
     .from('shared_context_snapshots')

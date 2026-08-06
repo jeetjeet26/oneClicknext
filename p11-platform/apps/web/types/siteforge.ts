@@ -178,6 +178,7 @@ export const ACF_BLOCK_TYPES = [
   'acf/accordion-section',
   'acf/plans-availability',
   'acf/poi',
+  'acf/testimonials',
 ] as const
 
 export const acfBlockTypeSchema = z.enum(ACF_BLOCK_TYPES)
@@ -185,19 +186,56 @@ export type ACFBlockType = z.infer<typeof acfBlockTypeSchema>
 
 export const SITEFORGE_BLOCK_CAPABILITIES = {
   'acf/menu': { variants: ['standard', 'sticky-cta'] },
-  'acf/top-slides': { variants: ['cinematic', 'editorial', 'split'] },
+  'acf/top-slides': {
+    variants: [
+      'cinematic',
+      'editorial',
+      'split',
+      'panoramic',
+      'immersive',
+      'minimal',
+    ],
+  },
   'acf/text-section': { variants: ['editorial', 'contained', 'lead'] },
-  'acf/feature-section': { variants: ['alternating', 'bleed', 'framed'] },
+  'acf/feature-section': {
+    variants: [
+      'alternating',
+      'bleed',
+      'framed',
+      'spotlight',
+      'collage',
+      'compact',
+    ],
+  },
   'acf/image': { variants: ['full-bleed', 'contained'] },
   'acf/links': { variants: ['inline', 'banner', 'sticky'] },
-  'acf/content-grid': { variants: ['amenity-grid', 'tabs', 'editorial'] },
+  'acf/content-grid': {
+    variants: [
+      'amenity-grid',
+      'tabs',
+      'editorial',
+      'bento',
+      'icon-list',
+      'carousel',
+    ],
+  },
   'acf/form': { variants: ['card', 'split', 'minimal'] },
   'acf/map': { variants: ['standard', 'immersive'] },
   'acf/html-section': { variants: ['contained', 'full-width'] },
-  'acf/gallery': { variants: ['categorized', 'masonry', 'lightbox'] },
+  'acf/gallery': {
+    variants: [
+      'categorized',
+      'masonry',
+      'lightbox',
+      'filmstrip',
+      'mosaic',
+      'full-bleed',
+    ],
+  },
   'acf/accordion-section': { variants: ['bordered', 'minimal'] },
   'acf/plans-availability': { variants: ['cards', 'details', 'preleasing'] },
   'acf/poi': { variants: ['narrative', 'map-list', 'editorial'] },
+  'acf/testimonials': { variants: ['cards', 'spotlight', 'carousel'] },
 } as const satisfies Record<
   ACFBlockType,
   { readonly variants: readonly string[] }

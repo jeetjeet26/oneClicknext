@@ -7,7 +7,10 @@ import {
   getSupabaseServiceRoleKey,
   getSupabaseUrl,
 } from '@/utils/supabase/config'
-import { isCloudwaysThemeInstallationConfigured } from '@/utils/siteforge/editor/feature'
+import {
+  isCloudwaysThemeInstallationConfigured,
+  isSiteForgeSemanticEditorEnabled,
+} from '@/utils/siteforge/editor/feature'
 
 export type HealthStatus = 'healthy' | 'degraded' | 'unhealthy'
 
@@ -146,8 +149,9 @@ export async function runSiteForgeReadinessCheck({
   const artifacts = Object.fromEntries(artifactChecks)
   const artifactsReady = artifactChecks.every(([, ready]) => ready)
   const hasAcfLicense = hasValue(env.SITEFORGE_ACF_PRO_LICENSE_KEY)
-  const semanticEditorEnabled =
-    env.SITEFORGE_SEMANTIC_EDITOR_ENABLED === 'true'
+  const semanticEditorEnabled = isSiteForgeSemanticEditorEnabled(
+    env.SITEFORGE_SEMANTIC_EDITOR_ENABLED
+  )
   const hasOverlaySigningSecret = hasValue(
     env.SITEFORGE_OVERLAY_SIGNING_SECRET
   )

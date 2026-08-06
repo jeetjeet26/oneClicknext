@@ -25,6 +25,7 @@ import {
   AuroraLifecycleControlError,
   registerAuroraOwnedResource,
 } from '@/utils/siteforge/testing/aurora-lifecycle-control'
+import { SITEFORGE_CLAUDE_MODEL } from '@/utils/siteforge/models'
 
 const createSessionSchema = z.object({
   websiteId: z.string().uuid(),
@@ -245,7 +246,7 @@ export async function POST(request: NextRequest) {
 
     const { data: artifact, error: artifactError } = await serviceClient
       .from('siteforge_blueprint_versions')
-      .select('id, version, content_hash, created_at')
+      .select('id, version, content_hash, created_at, blueprint')
       .eq('id', website.current_artifact_version_id)
       .eq('website_id', website.id)
       .single()
@@ -334,7 +335,14 @@ export async function POST(request: NextRequest) {
       {
         session,
         messages,
-        currentArtifact: artifact,
+        currentArtifact: {
+          id: artifact.id,
+          version: artifact.version,
+          content_hash: artifact.content_hash,
+          created_at: artifact.created_at,
+        },
+        previewBlueprint: artifact.blueprint,
+        editorModel: SITEFORGE_CLAUDE_MODEL,
         previews: {
           lifecycleStatus: website.editor_lifecycle_status,
           p11: `/api/siteforge/preview/${website.id}`,

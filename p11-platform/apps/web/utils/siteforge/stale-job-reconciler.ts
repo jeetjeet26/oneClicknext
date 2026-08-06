@@ -16,10 +16,13 @@ export function decideStaleJobOutcome(input: {
   attemptCount: number
   maxAttempts: number
   publicationClaimed?: boolean
-}): 'retrying' | 'failed' | 'cancelled' {
+}): 'failed' | 'cancelled' {
   if (input.cancelRequested) return 'cancelled'
-  if (input.publicationClaimed) return 'failed'
-  return input.attemptCount < input.maxAttempts ? 'retrying' : 'failed'
+  // No background executor consumes a `retrying` SiteForge job. Leaving a
+  // stale job in that state strands both the shared job and its product
+  // projection indefinitely. Terminalize it as failed; the authenticated
+  // retry route can then safely claim and restart it within max_attempts.
+  return 'failed'
 }
 
 export async function reconcileStaleSiteForgeJobs(
@@ -71,14 +74,12 @@ export async function reconcileStaleSiteForgeJobs(
           : null
     const artifactId =
       typeof payload.artifactId === 'string' ? payload.artifactId : null
-    const terminalStatus: 'retrying' | 'failed' | 'cancelled' =
-      decideStaleJobOutcome({
+    const terminalStatus: 'failed' | 'cancelled' = decideStaleJobOutcome({
         cancelRequested: job.cancel_requested,
         attemptCount: job.attempt_count,
         maxAttempts: job.max_attempts,
         publicationClaimed: job.status_reason === 'publication_claimed',
       })
-    const retrying = terminalStatus === 'retrying'
     const { data: terminalized, error: terminalError } = await client
       .from('shared_jobs')
       .update({
@@ -86,13 +87,9 @@ export async function reconcileStaleSiteForgeJobs(
         status_reason:
           job.status_reason === 'publication_claimed'
             ? 'publication_outcome_ambiguous'
-            : retrying
-              ? 'stale_lease_retry_scheduled'
-              : 'stale_lease_recovered',
-        stage: retrying ? 'retrying' : terminalStatus,
-        current_step: retrying
-          ? 'Stale SiteForge workflow scheduled for retry'
-          : 'Stale SiteForge workflow recovered',
+            : 'stale_lease_recovered',
+        stage: terminalStatus,
+        current_step: 'Stale SiteForge workflow recovered',
         error_message:
           job.status_reason === 'publication_claimed'
             ? 'Publication outcome is ambiguous; reload the editor and verify the current immutable revision before retrying'
@@ -108,10 +105,8 @@ export async function reconcileStaleSiteForgeJobs(
         lease_owner: null,
         lease_expires_at: null,
         heartbeat_at: null,
-        attempt_count: retrying ? job.attempt_count + 1 : job.attempt_count,
-        retry_at: retrying ? nowIso : null,
-        available_at: retrying ? nowIso : undefined,
-        finished_at: retrying ? null : nowIso,
+        retry_at: null,
+        finished_at: nowIso,
         updated_at: nowIso,
       })
       .eq('id', job.id)
@@ -127,25 +122,21 @@ export async function reconcileStaleSiteForgeJobs(
     if (!terminalized) continue
 
     if (job.domain === 'siteforge.semantic_edit') {
-      const messageStatus = retrying ? 'running' : terminalStatus
       const { error: messageError } = await client
         .from('siteforge_edit_messages')
         .update({
-          status: messageStatus,
-          content: retrying
-            ? 'The edit execution stalled and is scheduled for a safe retry.'
-            : job.status_reason === 'publication_claimed'
+          status: terminalStatus,
+          content:
+            job.status_reason === 'publication_claimed'
               ? 'The publication outcome is ambiguous. Reload the editor to verify the current immutable revision before retrying.'
               : `The edit ${terminalStatus === 'cancelled' ? 'was cancelled' : 'failed after its execution lease expired'}.`,
-          failure_code: retrying
-            ? null
-            : job.status_reason === 'publication_claimed'
+          failure_code:
+            job.status_reason === 'publication_claimed'
               ? 'publication_outcome_ambiguous'
               : 'siteforge_stale_execution',
-          failure_message: retrying
-            ? null
-            : 'Semantic edit execution lease expired before completion',
-          completed_at: retrying ? null : nowIso,
+          failure_message:
+            'Semantic edit execution lease expired before completion',
+          completed_at: nowIso,
         })
         .eq('shared_job_id', job.id)
         .in('status', ['queued', 'running'])
@@ -155,6 +146,23 @@ export async function reconcileStaleSiteForgeJobs(
           error: messageError.message,
         })
       }
+    }
+
+    if (job.domain === 'siteforge.deployment' && websiteId) {
+      await terminalizeStaleStagingProjection(
+        {
+          websiteId,
+          deploymentId:
+            typeof payload.deploymentId === 'string'
+              ? payload.deploymentId
+              : null,
+          targetId:
+            typeof payload.targetId === 'string' ? payload.targetId : null,
+          terminalStatus,
+          nowIso,
+        },
+        client
+      )
     }
 
     const restored = false
@@ -189,7 +197,9 @@ export async function reconcileStaleSiteForgeJobs(
             restored,
             restoreRequested:
               job.domain === 'siteforge.production-certification',
-            retryScheduled: retrying,
+            retryAvailable:
+              terminalStatus === 'failed' &&
+              job.attempt_count < job.max_attempts,
             attemptCount: job.attempt_count,
             maxAttempts: job.max_attempts,
           } as Json,
@@ -247,5 +257,65 @@ export async function reconcileStaleSiteForgeJobs(
     examined: jobs?.length || 0,
     recovered: results.length,
     results,
+  }
+}
+
+async function terminalizeStaleStagingProjection(
+  input: {
+    websiteId: string
+    deploymentId: string | null
+    targetId: string | null
+    terminalStatus: 'failed' | 'cancelled'
+    nowIso: string
+  },
+  client: ServiceClient
+): Promise<void> {
+  const message =
+    input.terminalStatus === 'cancelled'
+      ? 'Cloudways staging deployment was cancelled after its execution lease expired'
+      : 'Cloudways staging deployment failed after its execution lease expired'
+  const operations: Array<PromiseLike<{ error: { message: string } | null }>> = [
+    client
+      .from('property_websites')
+      .update({
+        editor_lifecycle_status: 'approved_for_staging',
+        generation_status:
+          input.terminalStatus === 'cancelled' ? 'cancelled' : 'deploy_failed',
+        current_step: message,
+        error_message: message,
+        updated_at: input.nowIso,
+      })
+      .eq('id', input.websiteId),
+  ]
+  if (input.deploymentId) {
+    operations.push(
+      client
+        .from('siteforge_artifact_deployments')
+        .update({
+          status: 'failed',
+          certification_report: {
+            error: message,
+            code: 'siteforge_stale_execution',
+            recoveredAt: input.nowIso,
+          } as Json,
+        })
+        .eq('id', input.deploymentId)
+    )
+  }
+  if (input.targetId) {
+    operations.push(
+      client
+        .from('siteforge_wordpress_targets')
+        .update({ status: 'failed', updated_at: input.nowIso })
+        .eq('id', input.targetId)
+        .in('status', ['pending', 'provisioning', 'deploying'])
+    )
+  }
+  const results = await Promise.all(operations)
+  const failure = results.find(result => result.error)
+  if (failure?.error) {
+    throw new Error(
+      `Failed to terminalize stale staging projection: ${failure.error.message}`
+    )
   }
 }

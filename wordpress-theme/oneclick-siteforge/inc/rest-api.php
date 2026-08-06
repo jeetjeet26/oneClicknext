@@ -31,6 +31,7 @@ function oneclick_siteforge_rest_block_names() {
 		'image',
 		'map',
 		'poi',
+		'testimonials',
 		'menu',
 		'accordion-section',
 		'html-section',

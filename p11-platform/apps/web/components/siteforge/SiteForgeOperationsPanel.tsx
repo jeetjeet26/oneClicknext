@@ -4,6 +4,14 @@ import { useCallback, useEffect, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
 
 type Incident = {
@@ -93,6 +101,12 @@ type IncidentPayload = {
   }>
 }
 
+type PendingConfirmation =
+  | 'prepare-first-launch'
+  | 'approve-first-launch'
+  | 'provision-production'
+  | null
+
 export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
   const [operations, setOperations] = useState<Operations | null>(null)
   const [incidents, setIncidents] = useState<IncidentPayload | null>(null)
@@ -103,6 +117,8 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
   const [promotionToken, setPromotionToken] = useState('')
   const [manualOperationId, setManualOperationId] = useState('')
   const [targetDomain, setTargetDomain] = useState('')
+  const [pendingConfirmation, setPendingConfirmation] =
+    useState<PendingConfirmation>(null)
 
   const refresh = useCallback(async () => {
     const [operationsResponse, incidentsResponse] = await Promise.all([
@@ -196,6 +212,31 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
     }
   }
 
+  async function submitLaunchPreparation(
+    rollback:
+      | { artifactId: string; contentHash: string }
+      | null
+  ) {
+    if (
+      !operations?.website.staging_artifact_id ||
+      !operations.website.staging_content_hash
+    ) {
+      return
+    }
+    await postAction('prepare-launch', '/api/siteforge/launch/prepare', {
+      propertyId: operations.website.property_id,
+      websiteId,
+      artifactId: operations.website.staging_artifact_id,
+      contentHash: operations.website.staging_content_hash,
+      ...(rollback
+        ? {
+            rollbackArtifactId: rollback.artifactId,
+            rollbackContentHash: rollback.contentHash,
+          }
+        : {}),
+    })
+  }
+
   async function prepareLaunch() {
     if (
       !operations?.website.staging_artifact_id ||
@@ -221,36 +262,23 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
       return
     }
     if (!hasRollbackCandidate && isFirstLaunch) {
-      const confirmed = window.confirm(
-        'First launch: this website has never been certified on production, so no rollback artifact exists. Recovery relies on the pre-promotion Cloudways backup. Prepare the release anyway?'
-      )
-      if (!confirmed) return
+      setPendingConfirmation('prepare-first-launch')
+      return
     }
-    await postAction('prepare-launch', '/api/siteforge/launch/prepare', {
-      propertyId: operations.website.property_id,
-      websiteId,
-      artifactId: operations.website.staging_artifact_id,
-      contentHash: operations.website.staging_content_hash,
-      ...(hasRollbackCandidate
+    await submitLaunchPreparation(
+      hasRollbackCandidate
         ? {
-            rollbackArtifactId: preview.rollbackToArtifactId,
-            rollbackContentHash: preview.rollbackToContentHash,
+            artifactId: preview.rollbackToArtifactId,
+            contentHash: preview.rollbackToContentHash,
           }
-        : {}),
-    })
+        : null
+    )
   }
 
-  async function approveLaunch() {
+  async function submitLaunchApproval(firstLaunchAcknowledged: boolean) {
     const release = operations?.releases[0]
     if (!release || !legalRightsConfirmed || rationale.trim().length < 10)
       return
-    let firstLaunchAcknowledged = false
-    if (!release.rollback_artifact_id) {
-      firstLaunchAcknowledged = window.confirm(
-        'First launch acknowledgment: no certified production rollback artifact exists for this release. If the launch goes wrong, recovery relies on the pre-promotion Cloudways backup. Approve anyway?'
-      )
-      if (!firstLaunchAcknowledged) return
-    }
     const result = await postAction(
       'approve-launch',
       '/api/siteforge/launch/approve',
@@ -279,6 +307,17 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
     }
   }
 
+  async function approveLaunch() {
+    const release = operations?.releases[0]
+    if (!release || !legalRightsConfirmed || rationale.trim().length < 10)
+      return
+    if (!release.rollback_artifact_id) {
+      setPendingConfirmation('approve-first-launch')
+      return
+    }
+    await submitLaunchApproval(false)
+  }
+
   async function promoteLaunch() {
     const release = operations?.releases[0]
     if (!release || !promotionToken) return
@@ -305,11 +344,7 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
     }
   }
 
-  async function provisionProductionWordPress() {
-    const confirmed = window.confirm(
-      'Create and link a dedicated Cloudways WordPress application for this property? This provisions a billable provider resource and cannot be safely duplicated.'
-    )
-    if (!confirmed) return
+  async function submitProductionProvisioning() {
     const result = await postAction(
       'provision-production',
       `/api/siteforge/provision-production/${websiteId}`,
@@ -319,6 +354,23 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
       setMessage(
         'Production WordPress provisioning started. Progress will update automatically.'
       )
+    }
+  }
+
+  function provisionProductionWordPress() {
+    setPendingConfirmation('provision-production')
+  }
+
+  async function confirmPendingAction() {
+    const action = pendingConfirmation
+    if (!action || busy) return
+    setPendingConfirmation(null)
+    if (action === 'prepare-first-launch') {
+      await submitLaunchPreparation(null)
+    } else if (action === 'approve-first-launch') {
+      await submitLaunchApproval(true)
+    } else {
+      await submitProductionProvisioning()
     }
   }
 
@@ -348,9 +400,31 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
     !['live', 'failed', 'rolled_back'].includes(latestRelease.state)
       ? latestRelease
       : null
+  const confirmationCopy =
+    pendingConfirmation === 'prepare-first-launch'
+      ? {
+          title: 'Prepare first production launch?',
+          description:
+            'No certified production rollback artifact exists yet. Recovery will rely on the pre-promotion Cloudways backup.',
+          confirmLabel: 'Prepare release',
+        }
+      : pendingConfirmation === 'approve-first-launch'
+        ? {
+            title: 'Approve first production launch?',
+            description:
+              'This release has no certified production rollback artifact. If launch fails, recovery will rely on the pre-promotion Cloudways backup.',
+            confirmLabel: 'Approve release',
+          }
+        : {
+            title: 'Provision production WordPress?',
+            description:
+              'This creates a billable Cloudways application and cannot be safely duplicated.',
+            confirmLabel: 'Provision application',
+          }
 
   return (
-    <Card>
+    <>
+      <Card>
       <CardHeader>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <CardTitle className="text-base">Production operations</CardTitle>
@@ -735,7 +809,38 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
           </p>
         ) : null}
       </CardContent>
-    </Card>
+      </Card>
+      <Dialog
+        open={pendingConfirmation !== null}
+        onOpenChange={open => {
+          if (!open && !busy) setPendingConfirmation(null)
+        }}
+      >
+        <DialogContent role="alertdialog" aria-labelledby="siteforge-confirm-title">
+          <DialogHeader>
+            <DialogTitle id="siteforge-confirm-title">
+              {confirmationCopy.title}
+            </DialogTitle>
+            <DialogDescription>{confirmationCopy.description}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              disabled={Boolean(busy)}
+              onClick={() => setPendingConfirmation(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={Boolean(busy)}
+              onClick={() => void confirmPendingAction()}
+            >
+              {busy ? 'Working…' : confirmationCopy.confirmLabel}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   )
 }
 

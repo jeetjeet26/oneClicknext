@@ -104,6 +104,13 @@ type PreviewLink = {
   external: boolean
 }
 
+type PendingAction =
+  | 'delete'
+  | 'regenerate'
+  | 'deploy'
+  | 'approve_artifact'
+  | 'deny_artifact'
+
 export type PreviewNavigationNode = SiteConfiguration['navigation']['items'][number] & {
   children: PreviewNavigationNode[]
 }
@@ -660,11 +667,6 @@ export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewPr
   const [deploymentDiagnostics, setDeploymentDiagnostics] = useState<
     WebsiteStatusResponse['deploymentDiagnostics']
   >()
-  const [selectedSectionId, setSelectedSectionId] = useState<string | null>(null)
-  const [editInstruction, setEditInstruction] = useState<string>('')
-  const [editing, setEditing] = useState(false)
-  const [editError, setEditError] = useState<string | null>(null)
-  const [editSummary, setEditSummary] = useState<string | null>(null)
   const [previewingCanonical, setPreviewingCanonical] = useState(false)
   const [approvingArtifact, setApprovingArtifact] = useState(false)
   const [artifactActionError, setArtifactActionError] = useState<string | null>(
@@ -673,6 +675,10 @@ export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewPr
   const [previewViewport, setPreviewViewport] = useState<
     'mobile' | 'tablet' | 'desktop'
   >('desktop')
+  const [pendingAction, setPendingAction] = useState<PendingAction | null>(null)
+  const [actionReason, setActionReason] = useState('')
+  const [actionNotice, setActionNotice] = useState<string | null>(null)
+  const [rollbackReason, setRollbackReason] = useState('')
 
   const loadWebsite = useCallback(async () => {
     setLoadError(null)
@@ -707,9 +713,8 @@ export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewPr
   }, [loadWebsite])
 
   const handleDelete = async () => {
-    if (!confirm('Delete this website? This cannot be undone.')) return
-    
     setDeleting(true)
+    setActionNotice(null)
     try {
       const response = await fetch(`/api/siteforge/delete/${websiteId}`, {
         method: 'DELETE'
@@ -718,11 +723,11 @@ export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewPr
       if (response.ok) {
         window.location.href = '/dashboard/siteforge'
       } else {
-        alert('Failed to delete website')
+        setActionNotice('Failed to delete website')
       }
     } catch (error) {
       console.error('Delete error:', error)
-      alert('Failed to delete website')
+      setActionNotice('Failed to delete website')
     }
     setDeleting(false)
   }
@@ -734,78 +739,15 @@ export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewPr
         : null
 
     if (!propertyId) {
-      alert('Cannot regenerate: missing property context for this website.')
-      return
-    }
-
-    if (
-      !confirm(
-        'Regeneration requires a new reviewed plan. Return to the planning flow for this property?'
+      setActionNotice(
+        'Cannot regenerate: missing property context for this website.'
       )
-    ) {
       return
     }
 
     setRegenerating(true)
     setDeployError(null)
     window.location.href = regenerationPlanUrl(propertyId, websiteId)
-  }
-
-  const handleEdit = () => {
-    // Soft focus the edit flow: user selects a section then asks for changes.
-    alert('Tip: Click a section below, then describe what you want changed.')
-  }
-
-  const handleApplyEdit = async () => {
-    if (!selectedSectionId) {
-      setEditError('Select a section to edit first.')
-      return
-    }
-    const instruction = editInstruction.trim()
-    if (!instruction) {
-      setEditError('Type what you want changed.')
-      return
-    }
-    const expectedArtifact = website?.artifact?.history.find(
-      (artifact) => artifact.id === website.artifact?.currentId
-    )
-    if (!expectedArtifact) {
-      setEditError('No immutable artifact is available. Reload and try again.')
-      return
-    }
-
-    setEditing(true)
-    setEditError(null)
-    setEditSummary(null)
-
-    try {
-      const response = await fetch(`/api/siteforge/edit/${websiteId}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sectionId: selectedSectionId,
-          userIntent: instruction,
-          expectedArtifactId: expectedArtifact.id,
-          expectedContentHash: expectedArtifact.content_hash,
-        })
-      })
-
-      const data = await response.json()
-      if (!response.ok) {
-        setEditError(data.error || 'Failed to apply edit')
-        setEditing(false)
-        return
-      }
-
-      setEditSummary(data.summary || 'Updated successfully')
-      setEditInstruction('')
-      await loadWebsite()
-    } catch (e) {
-      console.error('Edit error:', e)
-      setEditError('Failed to apply edit')
-    } finally {
-      setEditing(false)
-    }
   }
 
   const handleCanonicalPreview = async () => {
@@ -871,7 +813,8 @@ export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewPr
   }
 
   const handleArtifactApproval = async (
-    decisionStatus: 'approved' | 'denied'
+    decisionStatus: 'approved' | 'denied',
+    decisionReason: string
   ) => {
     const currentArtifact = website?.artifact?.history.find(
       (artifact) => artifact.id === website.artifact?.currentId
@@ -881,12 +824,6 @@ export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewPr
         ? website.property.id
         : null
     if (!currentArtifact || !propertyId) return
-    const decisionReason = window.prompt(
-      decisionStatus === 'approved'
-        ? 'Record why this exact WordPress preview is approved for deployment:'
-        : 'Record why deployment is denied:'
-    )
-    if (!decisionReason?.trim()) return
 
     setApprovingArtifact(true)
     setArtifactActionError(null)
@@ -919,12 +856,6 @@ export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewPr
   }
 
   const handleDeploy = async () => {
-    if (
-      !confirm(
-        'Deploy this exact artifact to linked Cloudways staging? Production promotion remains exclusively in Cloudways.'
-      )
-    ) return
-    
     setDeploying(true)
     setDeployError(null)
     setDeploymentDiagnostics(undefined)
@@ -996,6 +927,7 @@ export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewPr
     setRollbackDialogOpen(true)
     setRollbackPreviewLoading(true)
     setRollbackPreview(null)
+    setRollbackReason('')
     setDeployError(null)
     try {
       const response = await fetch(`/api/siteforge/rollback/${websiteId}`)
@@ -1024,10 +956,8 @@ export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewPr
     ) {
       return
     }
-    const decisionReason = window.prompt(
-      'Record why this verified rollback is required:'
-    )
-    if (!decisionReason || decisionReason.trim().length < 10) return
+    const decisionReason = rollbackReason.trim()
+    if (decisionReason.length < 10) return
     setRollingBack(true)
     setDeployError(null)
     try {
@@ -1050,12 +980,38 @@ export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewPr
 
       setRollbackDialogOpen(false)
       await loadWebsite()
-      alert(data.message || 'Rollback complete.')
+      setActionNotice(data.message || 'Rollback complete.')
     } catch (error) {
       console.error('Rollback error:', error)
       setDeployError('Failed to rollback website')
     } finally {
       setRollingBack(false)
+    }
+  }
+
+  const openActionDialog = (action: PendingAction) => {
+    setActionReason('')
+    setPendingAction(action)
+  }
+
+  const handleConfirmAction = async () => {
+    const action = pendingAction
+    if (!action) return
+    if (
+      (action === 'approve_artifact' || action === 'deny_artifact') &&
+      actionReason.trim().length < 3
+    ) {
+      return
+    }
+    setPendingAction(null)
+    if (action === 'delete') await handleDelete()
+    if (action === 'regenerate') handleRegenerate()
+    if (action === 'deploy') await handleDeploy()
+    if (action === 'approve_artifact') {
+      await handleArtifactApproval('approved', actionReason.trim())
+    }
+    if (action === 'deny_artifact') {
+      await handleArtifactApproval('denied', actionReason.trim())
     }
   }
 
@@ -1235,7 +1191,7 @@ export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewPr
                   </Button>
                 ) : null}
                 <Button
-                  onClick={() => handleArtifactApproval('approved')}
+                  onClick={() => openActionDialog('approve_artifact')}
                   disabled={
                     !canonicalPreviewMatches ||
                     approvingArtifact ||
@@ -1250,7 +1206,7 @@ export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewPr
                 </Button>
                 <Button
                   variant="destructive"
-                  onClick={() => handleArtifactApproval('denied')}
+                  onClick={() => openActionDialog('deny_artifact')}
                   disabled={!canonicalPreviewMatches || approvingArtifact}
                 >
                   Deny
@@ -1471,13 +1427,7 @@ export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewPr
                     {page.sections.map((section, idx) => (
                       <div
                         key={section.id || idx}
-                        className={`border rounded-lg overflow-hidden transition ${
-                          readOnly ? 'cursor-default' : ''
-                        } ${
-                          selectedSectionId === section.id
-                            ? 'border-indigo-500 ring-2 ring-indigo-200 dark:ring-indigo-900/30'
-                            : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
-                        }`}
+                        className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden"
                       >
                         {/* Section Header */}
                         <div className="bg-gray-50 dark:bg-gray-800 px-4 py-2 flex items-center justify-between border-b border-gray-200 dark:border-gray-700">
@@ -1501,74 +1451,7 @@ export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewPr
                                 : 's'}
                             </span>
                           </div>
-                          {!readOnly ? (
-                            <button
-                              type="button"
-                              className="rounded px-2 py-1 text-xs text-gray-600 hover:bg-gray-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500 dark:text-gray-300 dark:hover:bg-gray-700"
-                              aria-pressed={selectedSectionId === section.id}
-                              onClick={() => {
-                                if (section.id) setSelectedSectionId(section.id)
-                                setEditError(null)
-                                setEditSummary(null)
-                              }}
-                            >
-                              {selectedSectionId === section.id
-                                ? 'Selected for editing'
-                                : 'Select for editing'}
-                            </button>
-                          ) : null}
                         </div>
-
-                        {/* Inline Edit UI */}
-                        {!readOnly && selectedSectionId === section.id && (
-                          <div className="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 p-4 space-y-3">
-                            <div className="text-sm font-medium text-gray-900 dark:text-white">
-                              Ask AI to change this section
-                            </div>
-                            <textarea
-                              aria-label={`Edit instruction for ${section.label || section.type}`}
-                              value={editInstruction}
-                              onChange={(e) => setEditInstruction(e.target.value)}
-                              placeholder="Example: Make this feel more luxury, shorten the headline, and emphasize the pool + fitness center."
-                              className="w-full min-h-[90px] rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-950 px-3 py-2 text-sm text-gray-900 dark:text-gray-100"
-                              disabled={editing}
-                            />
-                            <div className="flex items-center gap-3">
-                              <Button
-                                size="sm"
-                                onClick={(e) => {
-                                  e.preventDefault()
-                                  e.stopPropagation()
-                                  handleApplyEdit()
-                                }}
-                                disabled={editing}
-                              >
-                                {editing ? 'Applying…' : 'Apply AI Edit'}
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={(e) => {
-                                  e.preventDefault()
-                                  e.stopPropagation()
-                                  setSelectedSectionId(null)
-                                  setEditInstruction('')
-                                  setEditError(null)
-                                  setEditSummary(null)
-                                }}
-                                disabled={editing}
-                              >
-                                Cancel
-                              </Button>
-                              {editSummary && (
-                                <span className="text-xs text-green-700 dark:text-green-300">{editSummary}</span>
-                              )}
-                              {editError && (
-                                <span className="text-xs text-red-700 dark:text-red-300">{editError}</span>
-                              )}
-                            </div>
-                          </div>
-                        )}
                       </div>
                     ))}
                   </div>
@@ -1705,20 +1588,15 @@ export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewPr
       {!readOnly ? <div className="flex justify-between">
         <Button 
           variant="destructive" 
-          onClick={handleDelete}
+          onClick={() => openActionDialog('delete')}
           disabled={deleting || deploying || regenerating || rollingBack}
         >
           {deleting ? 'Deleting...' : 'Delete Website'}
         </Button>
         <div className="flex space-x-3">
-          <Button variant="outline" onClick={handleRegenerate} disabled={deploying || regenerating || rollingBack}>
+          <Button variant="outline" onClick={() => openActionDialog('regenerate')} disabled={deploying || regenerating || rollingBack}>
             {regenerating ? 'Regenerating...' : 'Regenerate Site'}
           </Button>
-          {!readOnly ? (
-            <Button variant="outline" onClick={handleEdit} disabled={deploying || regenerating || rollingBack}>
-              Edit Content
-            </Button>
-          ) : null}
           <Button
             variant="outline"
             onClick={handleOpenRollbackDialog}
@@ -1744,7 +1622,7 @@ export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewPr
                   : 'Deploying...'}
             </Button>
           ) : (
-            <Button onClick={handleDeploy} disabled={!deploymentApproved}>
+            <Button onClick={() => openActionDialog('deploy')} disabled={!deploymentApproved}>
               {deploymentApproved
                 ? 'Deploy to Cloudways Staging'
                 : 'Approve Exact Preview for Staging'}
@@ -1779,6 +1657,17 @@ export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewPr
                     {rollbackPreview.rollbackToArtifactId}
                   </p>
                 )}
+                <label className="block space-y-2">
+                  <span className="font-medium">
+                    Reason for verified rollback
+                  </span>
+                  <textarea
+                    value={rollbackReason}
+                    onChange={(event) => setRollbackReason(event.target.value)}
+                    className="min-h-24 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-100"
+                    placeholder="Explain why this rollback is required."
+                  />
+                </label>
               </>
             ) : (
               <p>{rollbackPreview?.message || 'No previous version is available for rollback.'}</p>
@@ -1796,13 +1685,94 @@ export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewPr
             <Button
               variant="destructive"
               onClick={handleConfirmRollback}
-              disabled={rollbackPreviewLoading || rollingBack || !rollbackPreview?.canRollback}
+              disabled={
+                rollbackPreviewLoading ||
+                rollingBack ||
+                !rollbackPreview?.canRollback ||
+                rollbackReason.trim().length < 10
+              }
             >
               {rollingBack ? 'Rolling Back...' : 'Confirm Rollback'}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog
+        open={pendingAction !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingAction(null)
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {pendingAction === 'delete'
+                ? 'Delete website'
+                : pendingAction === 'regenerate'
+                  ? 'Start a new reviewed plan'
+                  : pendingAction === 'deploy'
+                    ? 'Deploy exact artifact to staging'
+                    : pendingAction === 'approve_artifact'
+                      ? 'Approve exact artifact'
+                      : 'Deny exact artifact'}
+            </DialogTitle>
+            <DialogDescription>
+              {pendingAction === 'delete'
+                ? 'This permanently deletes the website record and cannot be undone.'
+                : pendingAction === 'regenerate'
+                  ? 'Regeneration returns to planning so a new plan can be reviewed before generation.'
+                  : pendingAction === 'deploy'
+                    ? 'This deploys the approved artifact to linked Cloudways staging. Production promotion remains separately governed.'
+                    : pendingAction === 'approve_artifact'
+                      ? 'Record why the exact WordPress preview is approved for staging.'
+                      : 'Record why this exact artifact must not be deployed.'}
+            </DialogDescription>
+          </DialogHeader>
+          {pendingAction === 'approve_artifact' ||
+          pendingAction === 'deny_artifact' ? (
+            <label className="space-y-2">
+              <span className="text-sm font-medium">Decision reason</span>
+              <textarea
+                value={actionReason}
+                onChange={(event) => setActionReason(event.target.value)}
+                className="min-h-24 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-100"
+                placeholder="Record the evidence and rationale for this decision."
+              />
+            </label>
+          ) : null}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPendingAction(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant={
+                pendingAction === 'delete' ||
+                pendingAction === 'deny_artifact'
+                  ? 'destructive'
+                  : 'default'
+              }
+              onClick={handleConfirmAction}
+              disabled={
+                (pendingAction === 'approve_artifact' ||
+                  pendingAction === 'deny_artifact') &&
+                actionReason.trim().length < 3
+              }
+            >
+              Confirm
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {actionNotice ? (
+        <div
+          role="status"
+          className="rounded-md border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+        >
+          {actionNotice}
+        </div>
+      ) : null}
     </div>
   )
 }

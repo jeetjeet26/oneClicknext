@@ -236,12 +236,16 @@ export function ConversationalGenerationWizard({
       
     } catch (error) {
       console.error('Pre-analysis error:', error)
-      alert(`Failed to analyze brand: ${error instanceof Error ? error.message : 'Unknown error'}`)
-      onClose()
+      setGenerationError(
+        `Failed to analyze brand: ${
+          error instanceof Error ? error.message : 'Unknown error'
+        }`
+      )
+      setPhase('failed')
     } finally {
       setLoading(false)
     }
-  }, [onClose, propertyId])
+  }, [propertyId])
 
   // Phase 1: Run pre-analysis when dialog opens
   useEffect(() => {
@@ -1213,20 +1217,37 @@ export function ConversationalGenerationWizard({
                 {generationError || 'Website generation failed. Please try again.'}
               </p>
             </div>
-            <div className="flex justify-between gap-3">
-              <Button variant="outline" onClick={() => setPhase('conversation')}>
-                ← Review plan
-              </Button>
-              {canRetryGeneration && generationJobId ? (
-                <Button onClick={retryGeneration} disabled={loading}>
-                  {loading ? 'Retrying…' : 'Retry failed job'}
+            {analysis ? (
+              <div className="flex justify-between gap-3">
+                <Button variant="outline" onClick={() => setPhase('conversation')}>
+                  ← Review plan
                 </Button>
-              ) : (
-                <Button onClick={() => setPhase('conversation')} disabled={loading}>
-                  Refine plan
+                {canRetryGeneration && generationJobId ? (
+                  <Button onClick={retryGeneration} disabled={loading}>
+                    {loading ? 'Retrying…' : 'Retry failed job'}
+                  </Button>
+                ) : (
+                  <Button onClick={() => setPhase('conversation')} disabled={loading}>
+                    Refine plan
+                  </Button>
+                )}
+              </div>
+            ) : (
+              <div className="flex justify-end gap-3">
+                <Button variant="outline" onClick={onClose}>
+                  Cancel
                 </Button>
-              )}
-            </div>
+                <Button
+                  disabled={loading}
+                  onClick={() => {
+                    setGenerationError('')
+                    setPhase('analyzing')
+                  }}
+                >
+                  Retry analysis
+                </Button>
+              </div>
+            )}
           </div>
           )}
         </div>

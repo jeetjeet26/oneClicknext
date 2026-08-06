@@ -2151,8 +2151,8 @@ test.describe('local smoke flows', () => {
   }) => {
     test.setTimeout(180_000)
     test.skip(
-      process.env.SITEFORGE_SEMANTIC_EDITOR_ENABLED !== 'true',
-      'Set SITEFORGE_SEMANTIC_EDITOR_ENABLED=true to run the semantic editor smoke.'
+      process.env.SITEFORGE_SEMANTIC_EDITOR_ENABLED === 'false',
+      'Semantic editor smoke is disabled by the explicit opt-out kill switch.'
     )
     await login(page)
     const propertyId = await resolvePropertyIdForSmoke(page)
