@@ -32,8 +32,8 @@ type Operations = {
     state: string
     artifact_id: string
     artifact_content_hash: string
-    rollback_artifact_id: string
-    rollback_content_hash: string
+    rollback_artifact_id: string | null
+    rollback_content_hash: string | null
     created_at: string
   }>
   certifications: Array<{
@@ -170,11 +170,14 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
     }
     const previewResponse = await fetch(`/api/siteforge/rollback/${websiteId}`)
     const preview = await previewResponse.json()
-    if (
-      !previewResponse.ok ||
-      !preview.rollbackToArtifactId ||
-      !preview.rollbackToContentHash
-    ) {
+    const hasRollbackCandidate =
+      previewResponse.ok &&
+      Boolean(preview.rollbackToArtifactId) &&
+      Boolean(preview.rollbackToContentHash)
+    const isFirstLaunch =
+      !operations.website.production_artifact_id &&
+      !operations.website.production_certified_at
+    if (!hasRollbackCandidate && !isFirstLaunch) {
       setMessage(
         preview.error ||
           preview.message ||
@@ -182,13 +185,23 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
       )
       return
     }
+    if (!hasRollbackCandidate && isFirstLaunch) {
+      const confirmed = window.confirm(
+        'First launch: this website has never been certified on production, so no rollback artifact exists. Recovery relies on the pre-promotion Cloudways backup. Prepare the release anyway?'
+      )
+      if (!confirmed) return
+    }
     await postAction('prepare-launch', '/api/siteforge/launch/prepare', {
       propertyId: operations.website.property_id,
       websiteId,
       artifactId: operations.website.staging_artifact_id,
       contentHash: operations.website.staging_content_hash,
-      rollbackArtifactId: preview.rollbackToArtifactId,
-      rollbackContentHash: preview.rollbackToContentHash,
+      ...(hasRollbackCandidate
+        ? {
+            rollbackArtifactId: preview.rollbackToArtifactId,
+            rollbackContentHash: preview.rollbackToContentHash,
+          }
+        : {}),
     })
   }
 
@@ -196,6 +209,13 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
     const release = operations?.releases[0]
     if (!release || !legalRightsConfirmed || rationale.trim().length < 10)
       return
+    let firstLaunchAcknowledged = false
+    if (!release.rollback_artifact_id) {
+      firstLaunchAcknowledged = window.confirm(
+        'First launch acknowledgment: no certified production rollback artifact exists for this release. If the launch goes wrong, recovery relies on the pre-promotion Cloudways backup. Approve anyway?'
+      )
+      if (!firstLaunchAcknowledged) return
+    }
     const result = await postAction(
       'approve-launch',
       '/api/siteforge/launch/approve',
@@ -206,6 +226,7 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
         contentHash: release.artifact_content_hash,
         rollbackArtifactId: release.rollback_artifact_id,
         rollbackContentHash: release.rollback_content_hash,
+        ...(firstLaunchAcknowledged ? { firstLaunchAcknowledged: true } : {}),
         rationale: rationale.trim(),
         legalRightsSnapshot: {
           confirmed: true,
@@ -267,7 +288,7 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
       : null
 
   return (
-    <Card className="xl:col-span-2">
+    <Card>
       <CardHeader>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <CardTitle className="text-base">Production operations</CardTitle>

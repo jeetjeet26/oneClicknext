@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   assertObservedRollbackIdentity,
   isLaunchChatbotContextReady,
+  resolveLaunchRollbackMode,
 } from './repository'
 
 describe('SiteForge launch chatbot readiness', () => {
@@ -79,5 +80,60 @@ describe('SiteForge rollback identity', () => {
         },
       })
     ).toThrow('observed certified production manifest')
+  })
+})
+
+describe('SiteForge launch rollback mode', () => {
+  const artifactId = '11111111-1111-4111-8111-111111111111'
+  const contentHash = 'a'.repeat(64)
+  const neverLaunched = {
+    productionArtifactId: null,
+    productionContentHash: null,
+    productionCertifiedAt: null,
+  }
+  const live = {
+    productionArtifactId: artifactId,
+    productionContentHash: contentHash,
+    productionCertifiedAt: '2026-08-04T18:00:00.000Z',
+  }
+
+  it('allows a bootstrap first launch with no rollback identity', () => {
+    expect(
+      resolveLaunchRollbackMode({
+        rollbackArtifactId: null,
+        rollbackContentHash: null,
+        ...neverLaunched,
+      })
+    ).toEqual({ bootstrapLaunch: true })
+  })
+
+  it('requires a full rollback identity for a live website', () => {
+    expect(() =>
+      resolveLaunchRollbackMode({
+        rollbackArtifactId: null,
+        rollbackContentHash: null,
+        ...live,
+      })
+    ).toThrow('required to update a live website')
+  })
+
+  it('rejects a partial rollback identity', () => {
+    expect(() =>
+      resolveLaunchRollbackMode({
+        rollbackArtifactId: artifactId,
+        rollbackContentHash: null,
+        ...neverLaunched,
+      })
+    ).toThrow('Exact rollback artifact identity is required')
+  })
+
+  it('returns the strict mode when a full rollback identity is supplied', () => {
+    expect(
+      resolveLaunchRollbackMode({
+        rollbackArtifactId: artifactId,
+        rollbackContentHash: contentHash,
+        ...live,
+      })
+    ).toEqual({ bootstrapLaunch: false })
   })
 })

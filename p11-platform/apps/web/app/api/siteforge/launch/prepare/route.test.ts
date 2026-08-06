@@ -18,18 +18,24 @@ const websiteId = '22222222-2222-4222-8222-222222222222'
 const artifactId = '33333333-3333-4333-8333-333333333333'
 const rollbackArtifactId = '44444444-4444-4444-8444-444444444444'
 
-function request(): NextRequest {
+function request(
+  overrides: Record<string, unknown> = {},
+  omit: string[] = []
+): NextRequest {
+  const body: Record<string, unknown> = {
+    propertyId,
+    websiteId,
+    artifactId,
+    contentHash: 'a'.repeat(64),
+    rollbackArtifactId,
+    rollbackContentHash: 'b'.repeat(64),
+    ...overrides,
+  }
+  for (const key of omit) delete body[key]
   return new Request('http://localhost/api/siteforge/launch/prepare', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      propertyId,
-      websiteId,
-      artifactId,
-      contentHash: 'a'.repeat(64),
-      rollbackArtifactId,
-      rollbackContentHash: 'b'.repeat(64),
-    }),
+    body: JSON.stringify(body),
   }) as NextRequest
 }
 
@@ -70,5 +76,28 @@ describe('SiteForge launch preparation route', () => {
         rollbackContentHash: 'b'.repeat(64),
       })
     )
+  })
+
+  it('accepts a first-launch preparation with no rollback identity', async () => {
+    const { POST } = await import('./route')
+    const response = await POST(
+      request({}, ['rollbackArtifactId', 'rollbackContentHash'])
+    )
+    expect(response.status).toBe(201)
+    expect(prepareRelease).toHaveBeenCalledWith(
+      expect.objectContaining({
+        websiteId,
+        artifactId,
+        rollbackArtifactId: null,
+        rollbackContentHash: null,
+      })
+    )
+  })
+
+  it('rejects a partial rollback identity', async () => {
+    const { POST } = await import('./route')
+    const response = await POST(request({}, ['rollbackContentHash']))
+    expect(response.status).toBe(400)
+    expect(prepareRelease).not.toHaveBeenCalled()
   })
 })

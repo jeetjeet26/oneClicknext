@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  assertFirstLaunchAcknowledgment,
   assertPromotedManifestIdentity,
   signManualPromotionToken,
   verifyManualPromotionToken,
@@ -60,5 +61,40 @@ describe('SiteForge promoted manifest verification', () => {
     expect(() =>
       assertPromotedManifestIdentity(identity.contentHash, 'b'.repeat(64))
     ).toThrow('Promoted WordPress manifest does not match')
+  })
+})
+
+describe('SiteForge first-launch acknowledgment', () => {
+  it('requires explicit acknowledgment when no rollback artifact exists', () => {
+    expect(() =>
+      assertFirstLaunchAcknowledgment({
+        releaseRollbackArtifactId: null,
+        firstLaunchAcknowledged: undefined,
+      })
+    ).toThrow('First launch requires explicit acknowledgment')
+    expect(() =>
+      assertFirstLaunchAcknowledgment({
+        releaseRollbackArtifactId: null,
+        firstLaunchAcknowledged: false,
+      })
+    ).toThrow('First launch requires explicit acknowledgment')
+  })
+
+  it('accepts an acknowledged first launch', () => {
+    expect(() =>
+      assertFirstLaunchAcknowledgment({
+        releaseRollbackArtifactId: null,
+        firstLaunchAcknowledged: true,
+      })
+    ).not.toThrow()
+  })
+
+  it('does not require acknowledgment when a rollback artifact exists', () => {
+    expect(() =>
+      assertFirstLaunchAcknowledgment({
+        releaseRollbackArtifactId: identity.artifactId,
+        firstLaunchAcknowledged: undefined,
+      })
+    ).not.toThrow()
   })
 })

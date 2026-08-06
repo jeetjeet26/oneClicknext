@@ -113,14 +113,33 @@ export function verifyManualPromotionToken(
   return payload
 }
 
+// A first-launch release carries no rollback artifact; require the manager
+// to explicitly acknowledge that rollback relies on the pre-promotion
+// Cloudways backup instead of a certified production artifact.
+export function assertFirstLaunchAcknowledgment(input: {
+  releaseRollbackArtifactId: string | null
+  firstLaunchAcknowledged: boolean | undefined
+}): void {
+  if (
+    !input.releaseRollbackArtifactId &&
+    input.firstLaunchAcknowledged !== true
+  ) {
+    throw new SiteForgeLaunchError(
+      'First launch requires explicit acknowledgment that no certified rollback artifact exists and recovery relies on the pre-promotion Cloudways backup',
+      400
+    )
+  }
+}
+
 export async function approveLaunchRelease(
   input: {
     releaseId: string
     propertyId: string
     artifactId: string
     contentHash: string
-    rollbackArtifactId: string
-    rollbackContentHash: string
+    rollbackArtifactId: string | null
+    rollbackContentHash: string | null
+    firstLaunchAcknowledged?: boolean
     rationale: string
     legalRightsSnapshot: Json
     expiresAt: string
@@ -137,14 +156,20 @@ export async function approveLaunchRelease(
   if (
     release.artifact_id !== input.artifactId ||
     release.artifact_content_hash !== input.contentHash ||
-    release.rollback_artifact_id !== input.rollbackArtifactId ||
-    release.rollback_content_hash !== input.rollbackContentHash
+    (release.rollback_artifact_id ?? null) !==
+      (input.rollbackArtifactId ?? null) ||
+    (release.rollback_content_hash ?? null) !==
+      (input.rollbackContentHash ?? null)
   ) {
     throw new SiteForgeLaunchError(
       'Approval does not match the exact launch and rollback identity',
       409
     )
   }
+  assertFirstLaunchAcknowledgment({
+    releaseRollbackArtifactId: release.rollback_artifact_id,
+    firstLaunchAcknowledged: input.firstLaunchAcknowledged,
+  })
   const legal =
     input.legalRightsSnapshot &&
     typeof input.legalRightsSnapshot === 'object' &&
@@ -190,6 +215,9 @@ export async function approveLaunchRelease(
           contentHash: release.artifact_content_hash,
           rollbackArtifactId: release.rollback_artifact_id,
           rollbackContentHash: release.rollback_content_hash,
+          ...(release.rollback_artifact_id
+            ? {}
+            : { firstLaunchAcknowledged: true }),
           legalRightsSnapshot: legal,
           expiresAt: expiresAt.toISOString(),
         },

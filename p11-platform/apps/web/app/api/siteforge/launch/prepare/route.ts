@@ -17,9 +17,12 @@ const requestSchema = z.object({
   websiteId: z.string().uuid(),
   artifactId: z.string().uuid(),
   contentHash: z.string().regex(/^[a-f0-9]{64}$/),
-  rollbackArtifactId: z.string().uuid(),
-  rollbackContentHash: z.string().regex(/^[a-f0-9]{64}$/),
-}).strict()
+  rollbackArtifactId: z.string().uuid().nullish(),
+  rollbackContentHash: z.string().regex(/^[a-f0-9]{64}$/).nullish(),
+}).strict().refine(
+  value => Boolean(value.rollbackArtifactId) === Boolean(value.rollbackContentHash),
+  'Rollback artifact identity must be complete or fully omitted'
+)
 
 export async function POST(request: NextRequest) {
   const ctx = createRequestContext(request, '/api/siteforge/launch/prepare')
@@ -36,6 +39,8 @@ export async function POST(request: NextRequest) {
     if (!auth.user) return auth.response
     const release = await prepareLaunchRelease({
       ...parsed.data,
+      rollbackArtifactId: parsed.data.rollbackArtifactId ?? null,
+      rollbackContentHash: parsed.data.rollbackContentHash ?? null,
       requestedBy: auth.user.id,
       requestId: ctx.requestId,
     })

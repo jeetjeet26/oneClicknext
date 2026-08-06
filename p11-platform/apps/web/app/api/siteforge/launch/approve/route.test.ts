@@ -17,22 +17,27 @@ const artifactId = '33333333-3333-4333-8333-333333333333'
 const rollbackArtifactId = '44444444-4444-4444-8444-444444444444'
 const userId = '55555555-5555-4555-8555-555555555555'
 
-function request(overrides: Record<string, unknown> = {}): NextRequest {
+function request(
+  overrides: Record<string, unknown> = {},
+  omit: string[] = []
+): NextRequest {
+  const body: Record<string, unknown> = {
+    propertyId,
+    releaseId,
+    artifactId,
+    contentHash: 'a'.repeat(64),
+    rollbackArtifactId,
+    rollbackContentHash: 'b'.repeat(64),
+    rationale: 'Release evidence reviewed by the launch manager.',
+    legalRightsSnapshot: { confirmed: true, source: 'asset-register' },
+    expiresAt: '2026-08-04T12:00:00.000Z',
+    ...overrides,
+  }
+  for (const key of omit) delete body[key]
   return new Request('http://localhost/api/siteforge/launch/approve', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      propertyId,
-      releaseId,
-      artifactId,
-      contentHash: 'a'.repeat(64),
-      rollbackArtifactId,
-      rollbackContentHash: 'b'.repeat(64),
-      rationale: 'Release evidence reviewed by the launch manager.',
-      legalRightsSnapshot: { confirmed: true, source: 'asset-register' },
-      expiresAt: '2026-08-04T12:00:00.000Z',
-      ...overrides,
-    }),
+    body: JSON.stringify(body),
   }) as NextRequest
 }
 
@@ -90,5 +95,33 @@ describe('SiteForge launch approval route', () => {
         approvedBy: userId,
       })
     )
+  })
+
+  it('accepts a first-launch approval with acknowledgment and no rollback identity', async () => {
+    const { POST } = await import('./route')
+    const response = await POST(
+      request({ firstLaunchAcknowledged: true }, [
+        'rollbackArtifactId',
+        'rollbackContentHash',
+      ])
+    )
+
+    expect(response.status).toBe(200)
+    expect(approveRelease).toHaveBeenCalledWith(
+      expect.objectContaining({
+        releaseId,
+        rollbackArtifactId: null,
+        rollbackContentHash: null,
+        firstLaunchAcknowledged: true,
+      })
+    )
+  })
+
+  it('rejects a partial rollback identity', async () => {
+    const { POST } = await import('./route')
+    const response = await POST(request({}, ['rollbackContentHash']))
+
+    expect(response.status).toBe(400)
+    expect(approveRelease).not.toHaveBeenCalled()
   })
 })

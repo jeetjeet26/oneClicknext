@@ -73,6 +73,38 @@ export function assertObservedRollbackIdentity(input: {
   }
 }
 
+export function resolveLaunchRollbackMode(input: {
+  rollbackArtifactId: string | null
+  rollbackContentHash: string | null
+  productionArtifactId: string | null
+  productionContentHash: string | null
+  productionCertifiedAt: string | null
+}): { bootstrapLaunch: boolean } {
+  const bootstrapLaunch =
+    !input.rollbackArtifactId && !input.rollbackContentHash
+  if (
+    !bootstrapLaunch &&
+    (!input.rollbackArtifactId || !input.rollbackContentHash)
+  ) {
+    throw new SiteForgeLaunchError(
+      'Exact rollback artifact identity is required',
+      409
+    )
+  }
+  if (
+    bootstrapLaunch &&
+    (input.productionArtifactId ||
+      input.productionContentHash ||
+      input.productionCertifiedAt)
+  ) {
+    throw new SiteForgeLaunchError(
+      'A certified production rollback identity is required to update a live website',
+      409
+    )
+  }
+  return { bootstrapLaunch }
+}
+
 async function transition(
   release: LaunchRelease,
   toState: string,
@@ -166,8 +198,8 @@ export async function prepareLaunchRelease(
     propertyId: string
     artifactId: string
     contentHash: string
-    rollbackArtifactId: string
-    rollbackContentHash: string
+    rollbackArtifactId: string | null
+    rollbackContentHash: string | null
     requestedBy: string
     requestId?: string
   },
@@ -195,9 +227,21 @@ export async function prepareLaunchRelease(
     )
   }
 
+  // First-launch bootstrap: a website that has never been certified on
+  // production has no rollback artifact to point at. Allow preparing the
+  // release without one; the pre-promotion Cloudways backup remains the
+  // rollback path for a first launch. Updating a live website still requires
+  // the exact certified production rollback identity.
+  const { bootstrapLaunch } = resolveLaunchRollbackMode({
+    rollbackArtifactId: input.rollbackArtifactId,
+    rollbackContentHash: input.rollbackContentHash,
+    productionArtifactId: website.production_artifact_id,
+    productionContentHash: website.production_content_hash,
+    productionCertifiedAt: website.production_certified_at,
+  })
+
   const [
     { data: artifact },
-    { data: rollbackArtifact },
     { data: audit },
     { data: lumaConfig, error: lumaConfigError },
     { data: chatbotContext, error: chatbotContextError },
@@ -208,12 +252,6 @@ export async function prepareLaunchRelease(
         'id, content_hash, asset_manifest_hash, base_theme_package_sha256, deployment_decision, confirmed_approval_id'
       )
       .eq('id', input.artifactId)
-      .eq('website_id', input.websiteId)
-      .single(),
-    client
-      .from('siteforge_blueprint_versions')
-      .select('id, content_hash')
-      .eq('id', input.rollbackArtifactId)
       .eq('website_id', input.websiteId)
       .single(),
     client
@@ -264,46 +302,58 @@ export async function prepareLaunchRelease(
       409
     )
   }
-  if (
-    !rollbackArtifact ||
-    rollbackArtifact.content_hash !== input.rollbackContentHash
-  ) {
-    throw new SiteForgeLaunchError(
-      'Exact rollback artifact identity is required',
-      409
-    )
-  }
+  let rollbackArtifact: { id: string; content_hash: string } | null = null
+  if (!bootstrapLaunch) {
+    const { data: rollbackArtifactRow } = await client
+      .from('siteforge_blueprint_versions')
+      .select('id, content_hash')
+      .eq('id', input.rollbackArtifactId!)
+      .eq('website_id', input.websiteId)
+      .single()
+    if (
+      !rollbackArtifactRow ||
+      rollbackArtifactRow.content_hash !== input.rollbackContentHash
+    ) {
+      throw new SiteForgeLaunchError(
+        'Exact rollback artifact identity is required',
+        409
+      )
+    }
+    rollbackArtifact = rollbackArtifactRow
 
-  const { data: certifiedRollbackDeployment, error: rollbackDeploymentError } =
-    await client
+    const {
+      data: certifiedRollbackDeployment,
+      error: rollbackDeploymentError,
+    } = await client
       .from('siteforge_artifact_deployments')
       .select(
         'artifact_id, artifact_content_hash, remote_manifest_hash, certified_at'
       )
       .eq('website_id', input.websiteId)
       .eq('target_id', website.production_target_id || '')
-      .eq('artifact_id', input.rollbackArtifactId)
-      .eq('artifact_content_hash', input.rollbackContentHash)
+      .eq('artifact_id', input.rollbackArtifactId!)
+      .eq('artifact_content_hash', input.rollbackContentHash!)
       .eq('status', 'live')
       .not('certified_at', 'is', null)
       .order('certified_at', { ascending: false })
       .limit(1)
       .maybeSingle()
-  if (rollbackDeploymentError) {
-    throw new SiteForgeLaunchError(
-      `Failed to verify pre-promotion production manifest: ${rollbackDeploymentError.message}`,
-      500
-    )
+    if (rollbackDeploymentError) {
+      throw new SiteForgeLaunchError(
+        `Failed to verify pre-promotion production manifest: ${rollbackDeploymentError.message}`,
+        500
+      )
+    }
+    assertObservedRollbackIdentity({
+      requestedArtifactId: input.rollbackArtifactId!,
+      requestedContentHash: input.rollbackContentHash!,
+      productionArtifactId: website.production_artifact_id,
+      productionContentHash: website.production_content_hash,
+      productionCertifiedAt: website.production_certified_at,
+      productionTargetId: website.production_target_id,
+      certifiedDeployment: certifiedRollbackDeployment,
+    })
   }
-  assertObservedRollbackIdentity({
-    requestedArtifactId: input.rollbackArtifactId,
-    requestedContentHash: input.rollbackContentHash,
-    productionArtifactId: website.production_artifact_id,
-    productionContentHash: website.production_content_hash,
-    productionCertifiedAt: website.production_certified_at,
-    productionTargetId: website.production_target_id,
-    certifiedDeployment: certifiedRollbackDeployment,
-  })
 
   const { data: deployment, error: deploymentError } = await client
     .from('siteforge_artifact_deployments')
@@ -365,8 +415,8 @@ export async function prepareLaunchRelease(
         artifact_id: artifact.id,
         artifact_content_hash: artifact.content_hash,
         staging_deployment_id: deployment.id,
-        rollback_artifact_id: rollbackArtifact.id,
-        rollback_content_hash: rollbackArtifact.content_hash,
+        rollback_artifact_id: rollbackArtifact?.id ?? null,
+        rollback_content_hash: rollbackArtifact?.content_hash ?? null,
         created_by: input.requestedBy,
       })
       .select('*')
@@ -441,8 +491,9 @@ export async function prepareLaunchRelease(
           rollbackContentHash: release.rollback_content_hash,
         },
         execution_payload: { releaseId: release.id },
-        policy_reason:
-          'A manager must separately approve the exact production artifact and rollback identity.',
+        policy_reason: release.rollback_artifact_id
+          ? 'A manager must separately approve the exact production artifact and rollback identity.'
+          : 'First launch: no certified production rollback artifact exists. A manager must approve the exact production artifact and explicitly acknowledge that rollback relies on the pre-promotion Cloudways backup.',
         confidence_score: 1,
         requested_by: input.requestedBy,
       })

@@ -12,15 +12,19 @@ const requestSchema = z.object({
   releaseId: z.string().uuid(),
   artifactId: z.string().uuid(),
   contentHash: z.string().regex(/^[a-f0-9]{64}$/),
-  rollbackArtifactId: z.string().uuid(),
-  rollbackContentHash: z.string().regex(/^[a-f0-9]{64}$/),
+  rollbackArtifactId: z.string().uuid().nullish(),
+  rollbackContentHash: z.string().regex(/^[a-f0-9]{64}$/).nullish(),
+  firstLaunchAcknowledged: z.boolean().optional(),
   rationale: z.string().trim().min(1).max(2_000),
   legalRightsSnapshot: z.record(z.string(), z.unknown()).refine(
     value => value.confirmed === true,
     'Legal and asset rights must be explicitly confirmed'
   ),
   expiresAt: z.string().datetime(),
-}).strict()
+}).strict().refine(
+  value => Boolean(value.rollbackArtifactId) === Boolean(value.rollbackContentHash),
+  'Rollback artifact identity must be complete or fully omitted'
+)
 
 export async function POST(request: NextRequest) {
   const ctx = createRequestContext(request, '/api/siteforge/launch/approve')
@@ -37,6 +41,8 @@ export async function POST(request: NextRequest) {
     if (!auth.user) return auth.response
     const result = await approveLaunchRelease({
       ...parsed.data,
+      rollbackArtifactId: parsed.data.rollbackArtifactId ?? null,
+      rollbackContentHash: parsed.data.rollbackContentHash ?? null,
       legalRightsSnapshot: parsed.data.legalRightsSnapshot as Json,
       approvedBy: auth.user.id,
       requestId: ctx.requestId,
