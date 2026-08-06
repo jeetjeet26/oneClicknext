@@ -53,6 +53,7 @@ type EditorSessionPayload = {
       error_message: string | null
     } | null
     staging: string | null
+    stagingAdmin: string | null
     stagingArtifactId: string | null
     stagingCertifiedAt: string | null
     cloudwaysDashboard: string | null
@@ -618,7 +619,8 @@ export function SiteForgeEditorWorkspace({ websiteId }: { websiteId: string }) {
     payload.previews?.stagingArtifactId === payload.currentArtifact?.id
 
   return (
-    <div className="grid min-h-[calc(100vh-8rem)] items-start gap-4 xl:grid-cols-[minmax(320px,380px)_1fr]">
+    <div className="space-y-4">
+      <div className="grid min-h-[calc(100vh-8rem)] items-start gap-4 xl:grid-cols-[minmax(320px,380px)_1fr]">
       <Card className="flex h-[calc(100dvh-14rem)] min-h-[420px] max-h-[760px] flex-col self-start overflow-hidden xl:sticky xl:top-4 xl:h-[calc(100dvh-6rem)] xl:min-h-[480px]">
         <CardHeader className="border-b">
           <div className="flex items-center justify-between gap-3">
@@ -663,7 +665,18 @@ export function SiteForgeEditorWorkspace({ websiteId }: { websiteId: string }) {
             >
               {deployingStaging ? 'Deploying staging…' : 'Deploy to staging'}
             </Button>
-            {payload.previews?.staging && stagingMatches ? (
+            {payload.previews?.wordpress ? (
+              <Button size="sm" variant="outline" asChild>
+                <a
+                  href={payload.previews.wordpress}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Open WordPress preview
+                </a>
+              </Button>
+            ) : null}
+            {payload.previews?.staging ? (
               <Button size="sm" variant="outline" asChild>
                 <a
                   href={payload.previews.staging}
@@ -671,6 +684,17 @@ export function SiteForgeEditorWorkspace({ websiteId }: { websiteId: string }) {
                   rel="noopener noreferrer"
                 >
                   Open staging
+                </a>
+              </Button>
+            ) : null}
+            {payload.previews?.stagingAdmin ? (
+              <Button size="sm" variant="outline" asChild>
+                <a
+                  href={payload.previews.stagingAdmin}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Staging wp-admin
                 </a>
               </Button>
             ) : null}
@@ -1196,6 +1220,7 @@ export function SiteForgeEditorWorkspace({ websiteId }: { websiteId: string }) {
           </div>
         </CardContent>
       </Card>
+      </div>
       <SiteForgeOperationsPanel websiteId={websiteId} />
     </div>
   )

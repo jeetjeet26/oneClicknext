@@ -276,7 +276,7 @@ export async function POST(request: NextRequest) {
     const { data: stagingTarget } = website.staging_target_id
       ? await serviceClient
           .from('siteforge_wordpress_targets')
-          .select('dashboard_url')
+          .select('dashboard_url, admin_url')
           .eq('id', website.staging_target_id)
           .maybeSingle()
       : { data: null }
@@ -344,6 +344,7 @@ export async function POST(request: NextRequest) {
           certificationStatus: certification?.status || null,
           renderJob: previewJob || null,
           staging: website.staging_url,
+          stagingAdmin: stagingTarget?.admin_url || null,
           stagingArtifactId: website.staging_artifact_id,
           stagingCertifiedAt: website.staging_certified_at,
           cloudwaysDashboard: stagingTarget?.dashboard_url || null,
