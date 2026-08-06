@@ -21,23 +21,42 @@ Never deploy the repository root as the web app. The root `vercel.json` exists, 
 
 ## Before Deploying
 
-1. Check `git status --short`.
-2. If the working tree has unrelated changes, create a clean temporary worktree and apply only the files intended for deploy.
-3. Do not ship unrelated dirty files just because they are present locally.
-4. For Supabase-backed route or schema work, verify live schema with Supabase MCP first.
+1. Commit the work first whenever possible. The strongly preferred deploy source is the main repo at a clean, committed state. Isolated worktree deploys are a last resort, not the default.
+2. Check `git status --short`.
+3. If the working tree has unrelated changes that must not ship, first ask whether they can simply be committed (separately) instead. Only if not, create a clean temporary worktree and apply only the files intended for deploy.
+4. Do not ship unrelated dirty files just because they are present locally.
+5. For Supabase-backed route or schema work, verify live schema with Supabase MCP first.
 
-Recommended clean worktree pattern:
+### Stale deploy-source protection (mandatory)
+
+A production regression occurred on 2026-08-06 because a deploy was run from a leftover `/Users/jasjitgill/oneclickdeploy` folder containing two-day-old code. Vercel deploys are full snapshots of the deploy directory: deploying an old copy silently reverts everything not explicitly patched into it. To prevent this:
+
+- NEVER reuse an existing deploy directory. If a candidate temp path already exists, delete it and create a fresh one.
+- Always create isolation worktrees fresh, immediately before the deploy, with a unique timestamped path:
 
 ```bash
-git worktree add /Users/jasjitgill/oneclickdeploy HEAD
+STAMP=$(date +%Y%m%d%H%M%S)
+git worktree add "/Users/jasjitgill/oneclickdeploy-$STAMP" HEAD
 # apply only intended diffs/files
 ```
 
-Remove it after deployment:
+- Before running `vercel deploy` from any directory other than the main repo, verify the source is current:
 
 ```bash
-git worktree remove --force /Users/jasjitgill/oneclickdeploy
+git -C <deploy-dir> log -1 --format="%h %ci %s"   # must match current main repo HEAD
+git log -1 --format="%h %ci %s"
 ```
+
+If the commits differ, stop and rebuild the worktree from current HEAD.
+
+- Remove the worktree immediately after the deployment is verified — never leave it for a later session:
+
+```bash
+git worktree remove --force "/Users/jasjitgill/oneclickdeploy-$STAMP"
+git worktree prune
+```
+
+- After any isolated deploy, commit the deployed changes to `main` and push to `origin` (https://github.com/jeetjeet26/oneClicknext) in the same session, so the repo never lags behind production.
 
 ## Web App Deploy
 
@@ -70,7 +89,8 @@ Expected success signals:
 Common failure to avoid:
 
 - Running `vercel deploy --prod` from the repo root can fail with “No Next.js version detected” or deploy the wrong shape.
-- Running from a temp folder with uppercase or invalid project-name characters can confuse auto-linking. Use a simple lowercase temp path such as `/Users/jasjitgill/oneclickdeploy`.
+- Running from a temp folder with uppercase or invalid project-name characters can confuse auto-linking. Use a simple lowercase temp path such as `/Users/jasjitgill/oneclickdeploy-<timestamp>`, created fresh per the stale deploy-source protection above.
+- Reusing a previously created deploy folder ships stale code and reverts newer work on production. Always delete leftover deploy folders and rebuild from current HEAD.
 
 ## Render Data Engine Deploy
 
