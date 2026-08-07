@@ -908,6 +908,220 @@ export async function promoteLaunchRelease(
   return { release, manualRequired: false as const }
 }
 
+const LAUNCH_PROVIDER_MUTATION_DOMAIN = 'siteforge.launch.provider-mutation'
+
+export type LaunchProviderMutationResult =
+  | {
+      mutation: 'backup'
+      operationId: string
+      backupId: string
+      idempotent: boolean
+    }
+  | { mutation: 'promotion'; operationId: string; idempotent: boolean }
+
+/**
+ * Executes the non-idempotent Cloudways mutation that the promote flow asks
+ * the operator to confirm (production backup, or staging push-to-live), using
+ * the same claim -> provider call -> checkpoint discipline as production
+ * provisioning. The launch state machine still independently verifies the
+ * returned operation before any release transition, so this only automates
+ * the operator's dashboard action - it does not weaken the promotion gates.
+ */
+export async function executeLaunchProviderMutation(
+  input: {
+    releaseId: string
+    propertyId: string
+    mutation: 'backup' | 'promotion'
+    actorId: string
+    requestId?: string
+  },
+  client: ServiceClient = createServiceClient()
+): Promise<LaunchProviderMutationResult> {
+  const release = await getLaunchRelease(
+    input.releaseId,
+    input.propertyId,
+    client
+  )
+  if (input.mutation === 'backup') {
+    if (release.backup_operation_id && release.backup_id) {
+      return {
+        mutation: 'backup',
+        operationId: release.backup_operation_id,
+        backupId: release.backup_id,
+        idempotent: true,
+      }
+    }
+    if (release.state !== 'launch_approved') {
+      throw new SiteForgeLaunchError(
+        `A production backup cannot be created from ${release.state}`,
+        409
+      )
+    }
+  } else {
+    if (release.promotion_operation_id) {
+      return {
+        mutation: 'promotion',
+        operationId: release.promotion_operation_id,
+        idempotent: true,
+      }
+    }
+    if (release.state !== 'backed_up') {
+      throw new SiteForgeLaunchError(
+        `A staging push-to-live cannot start from ${release.state}`,
+        409
+      )
+    }
+  }
+  const targets = await loadCloudwaysTargets(release.id, client)
+  const cloudways = cloudwaysClient()
+
+  const dedupeKey = `siteforge-launch:${input.mutation}:${release.id}`
+  const now = new Date().toISOString()
+  const inserted = await client
+    .from('shared_jobs')
+    .insert({
+      org_id: release.org_id,
+      property_id: release.property_id,
+      domain: LAUNCH_PROVIDER_MUTATION_DOMAIN,
+      subject_type: 'siteforge_launch_release',
+      subject_id: release.id,
+      lifecycle_status: 'running',
+      status_reason: `launch_${input.mutation}_provider_mutation_claimed`,
+      dedupe_key: dedupeKey,
+      payload: {
+        releaseId: release.id,
+        websiteId: release.website_id,
+        mutation: input.mutation,
+        requestedBy: input.actorId,
+      },
+      heartbeat_at: now,
+      started_at: now,
+      max_attempts: 1,
+    })
+    .select('id')
+    .maybeSingle()
+  if (!inserted.data) {
+    if (inserted.error?.code !== '23505') {
+      throw new SiteForgeLaunchError(
+        `Failed to claim the launch ${input.mutation} provider mutation`,
+        500
+      )
+    }
+    const { data: existing, error } = await client
+      .from('shared_jobs')
+      .select('id, lifecycle_status, output')
+      .eq('domain', LAUNCH_PROVIDER_MUTATION_DOMAIN)
+      .eq('dedupe_key', dedupeKey)
+      .single()
+    if (error || !existing) {
+      throw new SiteForgeLaunchError(
+        `Failed to reconcile the launch ${input.mutation} provider mutation`,
+        500
+      )
+    }
+    const checkpoint = asRecord(existing.output)
+    if (
+      input.mutation === 'backup' &&
+      typeof checkpoint.operationId === 'string' &&
+      typeof checkpoint.backupId === 'string'
+    ) {
+      return {
+        mutation: 'backup',
+        operationId: checkpoint.operationId,
+        backupId: checkpoint.backupId,
+        idempotent: true,
+      }
+    }
+    if (
+      input.mutation === 'promotion' &&
+      typeof checkpoint.operationId === 'string'
+    ) {
+      return {
+        mutation: 'promotion',
+        operationId: checkpoint.operationId,
+        idempotent: true,
+      }
+    }
+    throw new SiteForgeLaunchError(
+      `The launch ${input.mutation} mutation was claimed without a persisted provider identity; manual reconciliation is required`,
+      409
+    )
+  }
+
+  let output: Json
+  let result: LaunchProviderMutationResult
+  if (input.mutation === 'backup') {
+    const started = await cloudways.createApplicationBackup({
+      serverId: targets.serverId,
+      applicationId: targets.productionApplicationId,
+    })
+    if (!started.operationId) {
+      throw new SiteForgeLaunchError(
+        'Cloudways did not return the exact backup operation identity',
+        502
+      )
+    }
+    // Cloudways identifies backups by restore-point timestamps, revealed only
+    // after the backup operation completes.
+    await cloudways.waitForOperation(started.operationId)
+    const restorePoint = await cloudways.getLatestRestorePoint({
+      serverId: targets.serverId,
+      applicationId: targets.productionApplicationId,
+    })
+    if (!restorePoint) {
+      throw new SiteForgeLaunchError(
+        'Cloudways did not reveal the restore point for the completed backup',
+        502
+      )
+    }
+    output = { operationId: started.operationId, backupId: restorePoint }
+    result = {
+      mutation: 'backup',
+      operationId: started.operationId,
+      backupId: restorePoint,
+      idempotent: false,
+    }
+  } else {
+    const started = await cloudways.promoteStagingApplication({
+      serverId: targets.serverId,
+      stagingApplicationId: targets.stagingApplicationId,
+      productionApplicationId: targets.productionApplicationId,
+    })
+    if (!started.operationId) {
+      throw new SiteForgeLaunchError(
+        'Cloudways did not return the exact promotion operation identity',
+        502
+      )
+    }
+    await cloudways.waitForOperation(started.operationId)
+    output = { operationId: started.operationId }
+    result = {
+      mutation: 'promotion',
+      operationId: started.operationId,
+      idempotent: false,
+    }
+  }
+
+  const completedAt = new Date().toISOString()
+  const { error: checkpointError } = await client
+    .from('shared_jobs')
+    .update({
+      lifecycle_status: 'succeeded',
+      status_reason: `launch_${input.mutation}_provider_identity_persisted`,
+      output,
+      finished_at: completedAt,
+      updated_at: completedAt,
+    })
+    .eq('id', inserted.data.id)
+  if (checkpointError) {
+    throw new SiteForgeLaunchError(
+      `Failed to checkpoint the launch ${input.mutation} provider identity`,
+      500
+    )
+  }
+  return result
+}
+
 export async function restoreLaunchRelease(
   input: {
     releaseId: string

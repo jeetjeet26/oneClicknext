@@ -314,54 +314,102 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
     await submitLaunchApproval(false)
   }
 
+  async function postPromotion(body: Record<string, unknown>) {
+    const response = await fetch('/api/siteforge/launch/promote', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    const data = await response.json()
+    // The promote service intentionally answers 409 with operator
+    // instructions when a Cloudways confirmation is still required.
+    if (!response.ok && data?.manualRequired !== true) {
+      throw new Error(data.error || 'Action failed')
+    }
+    return data as Record<string, unknown>
+  }
+
+  async function runProviderMutation(
+    releaseId: string,
+    mutation: 'backup' | 'promotion'
+  ) {
+    const response = await fetch('/api/siteforge/launch/provider-mutations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        propertyId: operations!.website.property_id,
+        releaseId,
+        mutation,
+      }),
+    })
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.error || 'Action failed')
+    return data as { operationId: string; backupId?: string }
+  }
+
   async function promoteLaunch() {
     const release = operations?.releases[0]
     if (!release || !promotionToken || busy) return
-    const body: Record<string, unknown> = {
+    const base = {
       propertyId: operations!.website.property_id,
       releaseId: release.id,
       promotionToken,
     }
-    if (
-      release.state === 'launch_approved' &&
-      manualOperationId.trim() &&
-      manualBackupId.trim()
-    ) {
-      body.backupConfirmation = {
-        operationId: manualOperationId.trim(),
-        backupId: manualBackupId.trim(),
-      }
-    } else if (manualOperationId.trim()) {
-      body.manualConfirmation = { operationId: manualOperationId.trim() }
-    }
     setBusy('promote-launch')
     setMessage(null)
     try {
-      const response = await fetch('/api/siteforge/launch/promote', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      })
-      const data = await response.json()
-      // The promote service intentionally answers 409 with operator
-      // instructions when a Cloudways dashboard confirmation is required.
-      if (data?.manualRequired === true) {
-        setMessage(
-          String(
-            data.dashboardAction ||
-              'Cloudways requires a manual promotion confirmation.'
-          )
-        )
-        await refresh()
-        return
+      // Explicit operator-entered confirmations take precedence over the
+      // automated Cloudways mutations (dashboard fallback path).
+      if (
+        release.state === 'launch_approved' &&
+        manualOperationId.trim() &&
+        manualBackupId.trim()
+      ) {
+        await postPromotion({
+          ...base,
+          backupConfirmation: {
+            operationId: manualOperationId.trim(),
+            backupId: manualBackupId.trim(),
+          },
+        })
+      } else if (manualOperationId.trim()) {
+        await postPromotion({
+          ...base,
+          manualConfirmation: { operationId: manualOperationId.trim() },
+        })
+      } else {
+        let state = release.state
+        if (state === 'launch_approved') {
+          setMessage('Creating the pre-promotion Cloudways backup…')
+          const backup = await runProviderMutation(release.id, 'backup')
+          if (!backup.backupId) {
+            throw new Error('Cloudways backup identity is incomplete')
+          }
+          await postPromotion({
+            ...base,
+            backupConfirmation: {
+              operationId: backup.operationId,
+              backupId: backup.backupId,
+            },
+          })
+          state = 'backed_up'
+        }
+        if (state === 'backed_up') {
+          setMessage('Pushing the staged application to production…')
+          const promotion = await runProviderMutation(release.id, 'promotion')
+          await postPromotion({
+            ...base,
+            manualConfirmation: { operationId: promotion.operationId },
+          })
+        }
       }
-      if (!response.ok) throw new Error(data.error || 'Action failed')
       setManualOperationId('')
       setManualBackupId('')
       setMessage('Action recorded successfully.')
       await refresh()
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Action failed')
+      await refresh()
     } finally {
       setBusy(null)
     }
