@@ -30,6 +30,7 @@ type Operations = {
     staging_content_hash: string | null
     staging_certified_at: string | null
     production_artifact_id: string | null
+    production_content_hash: string | null
     production_url: string | null
     production_certified_at: string | null
     editor_lifecycle_status: string
@@ -244,35 +245,29 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
     ) {
       return
     }
-    const previewResponse = await fetch(`/api/siteforge/rollback/${websiteId}`)
-    const preview = await previewResponse.json()
-    const hasRollbackCandidate =
-      previewResponse.ok &&
-      Boolean(preview.rollbackToArtifactId) &&
-      Boolean(preview.rollbackToContentHash)
+    // Production launch rollback must be the certified production artifact
+    // itself; the editor's blueprint rollback preview points at staging
+    // revisions and is rejected by the launch service.
     const isFirstLaunch =
       !operations.website.production_artifact_id &&
       !operations.website.production_certified_at
-    if (!hasRollbackCandidate && !isFirstLaunch) {
-      setMessage(
-        preview.error ||
-          preview.message ||
-          'A remotely certified rollback artifact is required before launch preparation.'
-      )
-      return
-    }
-    if (!hasRollbackCandidate && isFirstLaunch) {
+    if (isFirstLaunch) {
       setPendingConfirmation('prepare-first-launch')
       return
     }
-    await submitLaunchPreparation(
-      hasRollbackCandidate
-        ? {
-            artifactId: preview.rollbackToArtifactId,
-            contentHash: preview.rollbackToContentHash,
-          }
-        : null
-    )
+    if (
+      !operations.website.production_artifact_id ||
+      !operations.website.production_content_hash
+    ) {
+      setMessage(
+        'A certified production rollback artifact is required before launch preparation.'
+      )
+      return
+    }
+    await submitLaunchPreparation({
+      artifactId: operations.website.production_artifact_id,
+      contentHash: operations.website.production_content_hash,
+    })
   }
 
   async function submitLaunchApproval(firstLaunchAcknowledged: boolean) {
