@@ -197,8 +197,13 @@ export function buildWordPressThemeArtifact(
   capabilities: WordPressCapabilities,
   siteConfiguration?: SiteConfiguration,
   fontAssets: WordPressFontAsset[] = [],
+  // Fresh generations must cover the full current catalog; semantic-edit
+  // rebuilds pass the artifact's own catalog so blocks added to the platform
+  // after an artifact was generated never invalidate that artifact (add-only
+  // compatibility guarantee).
+  requiredBlocks: readonly string[] = ACF_BLOCK_TYPES,
 ): WordPressThemeArtifact {
-  const missingBlocks = ACF_BLOCK_TYPES.filter(
+  const missingBlocks = requiredBlocks.filter(
     (block) =>
       !capabilities.availableBlocks.includes(block) ||
       !capabilities.blockSchemas[block]
@@ -261,7 +266,7 @@ export function buildWordPressThemeArtifact(
       version: capabilities.theme.version,
     },
     acfSchemas: Object.fromEntries(
-      [...ACF_BLOCK_TYPES]
+      [...requiredBlocks]
         .sort()
         .map((block) => [block, capabilities.blockSchemas[block]])
     ),
@@ -419,6 +424,7 @@ export function rebuildWordPressThemeArtifactFromDesignSystem(
     capabilities,
     siteConfiguration,
     existing.fontAssets,
+    Object.keys(existing.acfSchemas),
   )
 }
 

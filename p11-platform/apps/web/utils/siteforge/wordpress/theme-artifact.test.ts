@@ -147,6 +147,33 @@ describe('WordPress theme artifact', () => {
     expect(validateWordPressThemeArtifact(rebuilt)).toEqual(rebuilt)
   })
 
+  it('rebuilds artifacts generated before a new catalog block existed', () => {
+    const current = buildWordPressThemeArtifact(
+      designSystem,
+      getBuiltinThemeCapabilities()
+    )
+    const { contentHash: _contentHash, ...core } = current
+    const staleAcfSchemas = Object.fromEntries(
+      Object.entries(core.acfSchemas).filter(
+        ([block]) => block !== 'acf/testimonials'
+      )
+    )
+    const staleCore = { ...core, acfSchemas: staleAcfSchemas }
+    const stale = {
+      ...staleCore,
+      contentHash: hashSiteForgeContent(staleCore),
+    }
+
+    const rebuilt = rebuildWordPressThemeArtifactFromDesignSystem(
+      stale,
+      designSystem
+    )
+
+    expect(Object.keys(rebuilt.acfSchemas)).toHaveLength(14)
+    expect(rebuilt.acfSchemas).not.toHaveProperty(['acf/testimonials'])
+    expect(validateWordPressThemeArtifact(rebuilt)).toEqual(rebuilt)
+  })
+
   it('rejects unsupported model-invented component variants', () => {
     expect(() =>
       buildWordPressThemeArtifact(
