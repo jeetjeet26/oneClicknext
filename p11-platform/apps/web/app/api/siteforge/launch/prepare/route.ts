@@ -13,7 +13,7 @@ import {
 } from '@/utils/siteforge/testing/aurora-lifecycle-control'
 
 const requestSchema = z.object({
-  propertyId: z.string().uuid(),
+  propertyId: z.guid(),
   websiteId: z.string().uuid(),
   artifactId: z.string().uuid(),
   contentHash: z.string().regex(/^[a-f0-9]{64}$/),

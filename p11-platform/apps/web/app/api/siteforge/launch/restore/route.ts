@@ -7,7 +7,7 @@ import { markRestoreDrillsReadyForVerification } from '@/utils/siteforge/restore
 import { requireLaunchManager } from '../auth'
 
 const requestSchema = z.object({
-  propertyId: z.string().uuid(),
+  propertyId: z.guid(),
   releaseId: z.string().uuid(),
   rationale: z.string().trim().min(1).max(2_000),
   manualConfirmation: z.object({

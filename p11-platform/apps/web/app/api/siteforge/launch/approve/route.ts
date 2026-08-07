@@ -8,7 +8,7 @@ import { SharedApprovalError } from '@/utils/services/shared-approvals'
 import { requireLaunchManager } from '../auth'
 
 const requestSchema = z.object({
-  propertyId: z.string().uuid(),
+  propertyId: z.guid(),
   releaseId: z.string().uuid(),
   artifactId: z.string().uuid(),
   contentHash: z.string().regex(/^[a-f0-9]{64}$/),

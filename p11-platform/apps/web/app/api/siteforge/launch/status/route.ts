@@ -8,7 +8,7 @@ import {
 import { requireLaunchManager } from '../auth'
 
 const querySchema = z.object({
-  propertyId: z.string().uuid(),
+  propertyId: z.guid(),
   releaseId: z.string().uuid().optional(),
   websiteId: z.string().uuid().optional(),
 }).refine(value => Boolean(value.releaseId || value.websiteId))

@@ -6,7 +6,7 @@ import { promoteLaunchRelease } from '@/utils/siteforge/launch/service'
 import { requireLaunchManager } from '../auth'
 
 const requestSchema = z.object({
-  propertyId: z.string().uuid(),
+  propertyId: z.guid(),
   releaseId: z.string().uuid(),
   promotionToken: z.string().min(40).max(4_096),
   backupConfirmation: z.object({
