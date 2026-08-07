@@ -117,6 +117,7 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
   const [legalRightsConfirmed, setLegalRightsConfirmed] = useState(false)
   const [promotionToken, setPromotionToken] = useState('')
   const [manualOperationId, setManualOperationId] = useState('')
+  const [manualBackupId, setManualBackupId] = useState('')
   const [targetDomain, setTargetDomain] = useState('')
   const [pendingConfirmation, setPendingConfirmation] =
     useState<PendingConfirmation>(null)
@@ -315,27 +316,54 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
 
   async function promoteLaunch() {
     const release = operations?.releases[0]
-    if (!release || !promotionToken) return
+    if (!release || !promotionToken || busy) return
     const body: Record<string, unknown> = {
       propertyId: operations!.website.property_id,
       releaseId: release.id,
       promotionToken,
     }
-    if (manualOperationId.trim()) {
+    if (
+      release.state === 'launch_approved' &&
+      manualOperationId.trim() &&
+      manualBackupId.trim()
+    ) {
+      body.backupConfirmation = {
+        operationId: manualOperationId.trim(),
+        backupId: manualBackupId.trim(),
+      }
+    } else if (manualOperationId.trim()) {
       body.manualConfirmation = { operationId: manualOperationId.trim() }
     }
-    const result = await postAction(
-      'promote-launch',
-      '/api/siteforge/launch/promote',
-      body
-    )
-    if (result?.manualRequired === true) {
-      setMessage(
-        String(
-          result.dashboardAction ||
-            'Cloudways requires a manual promotion confirmation.'
+    setBusy('promote-launch')
+    setMessage(null)
+    try {
+      const response = await fetch('/api/siteforge/launch/promote', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const data = await response.json()
+      // The promote service intentionally answers 409 with operator
+      // instructions when a Cloudways dashboard confirmation is required.
+      if (data?.manualRequired === true) {
+        setMessage(
+          String(
+            data.dashboardAction ||
+              'Cloudways requires a manual promotion confirmation.'
+          )
         )
-      )
+        await refresh()
+        return
+      }
+      if (!response.ok) throw new Error(data.error || 'Action failed')
+      setManualOperationId('')
+      setManualBackupId('')
+      setMessage('Action recorded successfully.')
+      await refresh()
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Action failed')
+    } finally {
+      setBusy(null)
     }
   }
 
@@ -618,6 +646,17 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
                 className="mt-1 w-full rounded border bg-background px-3 py-2 text-sm"
               />
             </label>
+            {latestRelease?.state === 'launch_approved' ? (
+              <label className="text-sm">
+                Cloudways backup restore point (backup confirmation)
+                <input
+                  value={manualBackupId}
+                  onChange={(event) => setManualBackupId(event.target.value)}
+                  className="mt-1 w-full rounded border bg-background px-3 py-2 text-sm"
+                  placeholder="e.g. 7/8/2026 7:45 AM restore point timestamp"
+                />
+              </label>
+            ) : null}
           </div>
         ) : null}
         <div className="flex flex-wrap gap-2">
