@@ -309,15 +309,18 @@ export class CloudwaysProviderClient {
     productionApplicationId: string;
   }): Promise<{ operationId: string | null }> {
     try {
-      // Live contract: POST /staging/sync/app pushes the staging source
-      // application onto the destination (production) application.
+      // Live contract: POST /sync/app ("Push or Pull" in Staging Management).
+      // The acting application is the staging clone and source_app_id is the
+      // application it was cloned from (Cloudways models staging apps with a
+      // source_app_id pointing at the production parent), so action=push
+      // copies the staging application onto production.
       const result = cloudwaysOperationSchema.passthrough().parse(
-        await this.request("/staging/sync/app", {
+        await this.request("/sync/app", {
           method: "POST",
           query: {
             server_id: input.serverId,
-            app_id: input.productionApplicationId,
-            source_app_id: input.stagingApplicationId,
+            app_id: input.stagingApplicationId,
+            source_app_id: input.productionApplicationId,
             source_server_id: input.serverId,
             action: "push",
             appFiles: "true",

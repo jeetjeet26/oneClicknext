@@ -1000,7 +1000,8 @@ export async function executeLaunchProviderMutation(
     })
     .select('id')
     .maybeSingle()
-  if (!inserted.data) {
+  let jobId = inserted.data?.id ?? null
+  if (!jobId) {
     if (inserted.error?.code !== '23505') {
       throw new SiteForgeLaunchError(
         `Failed to claim the launch ${input.mutation} provider mutation`,
@@ -1042,15 +1043,90 @@ export async function executeLaunchProviderMutation(
         idempotent: true,
       }
     }
-    throw new SiteForgeLaunchError(
-      `The launch ${input.mutation} mutation was claimed without a persisted provider identity; manual reconciliation is required`,
-      409
-    )
+    if (existing.lifecycle_status !== 'failed') {
+      throw new SiteForgeLaunchError(
+        `The launch ${input.mutation} mutation was claimed without a persisted provider identity; manual reconciliation is required`,
+        409
+      )
+    }
+    // A prior attempt failed before the provider produced any identity, so the
+    // mutation never happened. Re-claim the terminal job exactly once.
+    const reclaimed = await client
+      .from('shared_jobs')
+      .update({
+        lifecycle_status: 'running',
+        status_reason: `launch_${input.mutation}_provider_mutation_reclaimed`,
+        heartbeat_at: now,
+        started_at: now,
+        finished_at: null,
+        updated_at: now,
+      })
+      .eq('id', existing.id)
+      .eq('lifecycle_status', 'failed')
+      .select('id')
+      .maybeSingle()
+    if (!reclaimed.data) {
+      throw new SiteForgeLaunchError(
+        `The launch ${input.mutation} provider mutation is already being retried`,
+        409
+      )
+    }
+    jobId = reclaimed.data.id
   }
 
   let output: Json
   let result: LaunchProviderMutationResult
-  if (input.mutation === 'backup') {
+  try {
+    ;({ output, result } = await runLaunchProviderMutation(
+      input.mutation,
+      targets,
+      cloudways
+    ))
+  } catch (cause) {
+    const failedAt = new Date().toISOString()
+    await client
+      .from('shared_jobs')
+      .update({
+        lifecycle_status: 'failed',
+        status_reason: `launch_${input.mutation}_provider_mutation_failed`,
+        error_message:
+          cause instanceof Error ? cause.message : 'Unknown provider failure',
+        finished_at: failedAt,
+        updated_at: failedAt,
+      })
+      .eq('id', jobId)
+      .eq('lifecycle_status', 'running')
+    throw cause
+  }
+
+  const completedAt = new Date().toISOString()
+  const { error: checkpointError } = await client
+    .from('shared_jobs')
+    .update({
+      lifecycle_status: 'succeeded',
+      status_reason: `launch_${input.mutation}_provider_identity_persisted`,
+      output,
+      finished_at: completedAt,
+      updated_at: completedAt,
+    })
+    .eq('id', jobId)
+  if (checkpointError) {
+    throw new SiteForgeLaunchError(
+      `Failed to checkpoint the launch ${input.mutation} provider identity`,
+      500
+    )
+  }
+  return result
+}
+
+async function runLaunchProviderMutation(
+  mutation: 'backup' | 'promotion',
+  targets: Awaited<ReturnType<typeof loadCloudwaysTargets>>,
+  cloudways: ReturnType<typeof cloudwaysClient>
+): Promise<{ output: Json; result: LaunchProviderMutationResult }> {
+  let output: Json
+  let result: LaunchProviderMutationResult
+  if (mutation === 'backup') {
     const started = await cloudways.createApplicationBackup({
       serverId: targets.serverId,
       applicationId: targets.productionApplicationId,
@@ -1101,25 +1177,7 @@ export async function executeLaunchProviderMutation(
       idempotent: false,
     }
   }
-
-  const completedAt = new Date().toISOString()
-  const { error: checkpointError } = await client
-    .from('shared_jobs')
-    .update({
-      lifecycle_status: 'succeeded',
-      status_reason: `launch_${input.mutation}_provider_identity_persisted`,
-      output,
-      finished_at: completedAt,
-      updated_at: completedAt,
-    })
-    .eq('id', inserted.data.id)
-  if (checkpointError) {
-    throw new SiteForgeLaunchError(
-      `Failed to checkpoint the launch ${input.mutation} provider identity`,
-      500
-    )
-  }
-  return result
+  return { output, result }
 }
 
 export async function restoreLaunchRelease(

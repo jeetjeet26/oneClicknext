@@ -513,7 +513,7 @@ describe("Cloudways API v2 provider", () => {
     ).resolves.toEqual({ operationId: "sync-op" });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "https://api.cloudways.com/api/v2/staging/sync/app?server_id=server-1&app_id=production-1&source_app_id=staging-1&source_server_id=server-1&action=push&appFiles=true&dbFiles=true&backup=true",
+      "https://api.cloudways.com/api/v2/sync/app?server_id=server-1&app_id=staging-1&source_app_id=production-1&source_server_id=server-1&action=push&appFiles=true&dbFiles=true&backup=true",
       expect.objectContaining({ method: "POST" }),
     );
   });
