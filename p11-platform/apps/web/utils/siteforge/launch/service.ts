@@ -10,6 +10,7 @@ import { createServiceClient } from '@/utils/supabase/admin'
 import { recordSharedApprovalDecision } from '@/utils/services/shared-approvals'
 import { CloudwaysProviderClient } from '@/utils/siteforge/providers/cloudways-provider'
 import { getWordPressCredentialReference } from '@/utils/siteforge/wordpress/credential-vault'
+import { normalizeSiteForgePreviewCredential } from '@/utils/siteforge/workflows/preview-steps'
 import { WordPressAPIClient } from '@/utils/siteforge/wordpress-client'
 import { validateWordPressThemeArtifact } from '@/utils/siteforge/wordpress/theme-artifact'
 import {
@@ -372,22 +373,59 @@ async function loadCloudwaysTargets(releaseId: string, client: ServiceClient) {
   }
 }
 
+function launchHostOf(value: string): string {
+  try {
+    return new URL(value).hostname.toLowerCase()
+  } catch {
+    return value.trim().toLowerCase()
+  }
+}
+
 async function loadPromotedContentManifest(
   productionUrl: string,
   credentialRefs: Array<string | null>
 ) {
-  const refs = credentialRefs.filter((ref): ref is string => Boolean(ref))
+  const candidates: Array<{ username: string; password: string }> = []
+  // WordPress REST basic auth only accepts application passwords, never the
+  // login password stored at provisioning time. When production shares
+  // lineage with the SiteForge preview application, the preview application
+  // password is the identity the preview and staging paths already
+  // authenticate with, so it is the known-good REST reader here too.
+  const previewUsername = normalizeSiteForgePreviewCredential(
+    process.env.SITEFORGE_PREVIEW_WP_USERNAME
+  )
+  const previewPassword = normalizeSiteForgePreviewCredential(
+    process.env.SITEFORGE_PREVIEW_WP_APP_PASSWORD
+  )
+  const previewUrl = normalizeSiteForgePreviewCredential(
+    process.env.SITEFORGE_PREVIEW_WP_URL
+  )
+  if (
+    previewUsername &&
+    previewPassword &&
+    previewUrl &&
+    launchHostOf(previewUrl) === launchHostOf(productionUrl)
+  ) {
+    candidates.push({ username: previewUsername, password: previewPassword })
+  }
+  for (const ref of credentialRefs) {
+    if (!ref) continue
+    const credentials = await getWordPressCredentialReference(ref)
+    candidates.push({
+      username: credentials.username,
+      password: credentials.password,
+    })
+  }
   let lastError: unknown = new SiteForgeLaunchError(
     'No WordPress credential is available to verify the promoted manifest',
     409
   )
-  for (const ref of refs) {
-    const credentials = await getWordPressCredentialReference(ref)
+  for (const candidate of candidates) {
     try {
-      return await new WordPressAPIClient(productionUrl, {
-        username: credentials.username,
-        password: credentials.password,
-      }).getContentManifest()
+      return await new WordPressAPIClient(
+        productionUrl,
+        candidate
+      ).getContentManifest()
     } catch (error) {
       const authFailure =
         error instanceof Error && /\((?:401|403)\)/.test(error.message)
