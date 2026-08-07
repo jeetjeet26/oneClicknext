@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   assertFirstLaunchAcknowledgment,
   assertPromotedManifestIdentity,
+  buildRestoreDrillSuccessUpdate,
   signManualPromotionToken,
   verifyManualPromotionToken,
 } from './service'
@@ -96,5 +97,40 @@ describe('SiteForge first-launch acknowledgment', () => {
         firstLaunchAcknowledged: undefined,
       })
     ).not.toThrow()
+  })
+})
+
+describe('SiteForge restore drill closure', () => {
+  it('marks the drill succeeded with the verified manifest and operation identity', () => {
+    const update = buildRestoreDrillSuccessUpdate({
+      existingReport: { requestType: 'operator_supervised_restore_request' },
+      remoteManifestHash: identity.contentHash,
+      operationId: 'flex-1234',
+      actorId: identity.releaseId,
+    })
+
+    expect(update.status).toBe('succeeded')
+    expect(new Date(update.completed_at).getTime()).not.toBeNaN()
+    expect(update.verification_report).toMatchObject({
+      requestType: 'operator_supervised_restore_request',
+      remoteManifestHash: identity.contentHash,
+      verifiedOperationId: 'flex-1234',
+      verifiedBy: identity.releaseId,
+    })
+  })
+
+  it('tolerates a missing or malformed existing report', () => {
+    const update = buildRestoreDrillSuccessUpdate({
+      existingReport: null,
+      remoteManifestHash: identity.contentHash,
+      operationId: 'flex-1234',
+      actorId: identity.releaseId,
+    })
+
+    expect(update.verification_report).toEqual({
+      remoteManifestHash: identity.contentHash,
+      verifiedOperationId: 'flex-1234',
+      verifiedBy: identity.releaseId,
+    })
   })
 })

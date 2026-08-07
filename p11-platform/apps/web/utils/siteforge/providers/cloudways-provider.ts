@@ -261,10 +261,10 @@ export class CloudwaysProviderClient {
     };
   }
 
-  async getLatestRestorePoint(input: {
+  async listRestorePoints(input: {
     serverId: string;
     applicationId: string;
-  }): Promise<string | null> {
+  }): Promise<string[]> {
     // GET /app/manage/backup starts an app_restore_points flex operation whose
     // completed record embeds the available backup_dates in its parameters.
     const started = cloudwaysOperationSchema.passthrough().parse(
@@ -288,18 +288,25 @@ export class CloudwaysProviderClient {
       );
     }
     const operation = await this.waitForOperation(operationId);
-    if (typeof operation.parameters !== "string") return null;
+    if (typeof operation.parameters !== "string") return [];
     let backupDates: unknown;
     try {
       backupDates = (JSON.parse(operation.parameters) as Record<string, unknown>)
         .backup_dates;
     } catch {
-      return null;
+      return [];
     }
-    if (!Array.isArray(backupDates) || backupDates.length === 0) return null;
-    const dates = backupDates
+    if (!Array.isArray(backupDates)) return [];
+    return backupDates
       .filter((value): value is string => typeof value === "string")
       .sort();
+  }
+
+  async getLatestRestorePoint(input: {
+    serverId: string;
+    applicationId: string;
+  }): Promise<string | null> {
+    const dates = await this.listRestorePoints(input);
     return dates.length > 0 ? dates[dates.length - 1] : null;
   }
 

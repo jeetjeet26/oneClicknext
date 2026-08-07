@@ -20,7 +20,15 @@ const requestSchema = z
   .object({
     propertyId: z.guid(),
     websiteId: z.string().uuid(),
-    action: z.enum(['take_backup', 'push_staging']),
+    action: z.enum([
+      'take_backup',
+      'push_staging',
+      'inspect_restore_points',
+      'inspect_operation',
+      'restore_backup',
+    ]),
+    operationId: z.string().min(1).optional(),
+    restorePoint: z.string().min(1).optional(),
   })
   .strict()
 
@@ -121,6 +129,50 @@ export async function POST(request: NextRequest) {
       )
     }
     const provider = new CloudwaysProviderClient({ apiKey, email })
+    if (parsed.data.action === 'inspect_restore_points') {
+      const restorePoints = await provider.listRestorePoints({
+        serverId: staging.provider_server_id,
+        applicationId: staging.provider_parent_application_id,
+      })
+      ctx.logSuccess(200, { action: parsed.data.action })
+      return NextResponse.json(
+        { restorePoints },
+        { headers: ctx.responseHeaders }
+      )
+    }
+    if (parsed.data.action === 'inspect_operation') {
+      if (!parsed.data.operationId) {
+        return NextResponse.json(
+          { error: 'An operation identity is required for inspection' },
+          { status: 400, headers: ctx.responseHeaders }
+        )
+      }
+      const operation = await provider.getOperation(parsed.data.operationId)
+      ctx.logSuccess(200, { action: parsed.data.action })
+      return NextResponse.json({ operation }, { headers: ctx.responseHeaders })
+    }
+    if (parsed.data.action === 'restore_backup') {
+      if (!parsed.data.restorePoint) {
+        return NextResponse.json(
+          { error: 'An exact restore point is required' },
+          { status: 400, headers: ctx.responseHeaders }
+        )
+      }
+      const started = await provider.restoreApplicationBackup({
+        serverId: staging.provider_server_id,
+        applicationId: staging.provider_parent_application_id,
+        backupId: parsed.data.restorePoint,
+      })
+      if (!started.operationId) {
+        throw new Error('Cloudways did not return a restore operation identity')
+      }
+      const operation = await provider.waitForOperation(started.operationId)
+      ctx.logSuccess(200, { action: parsed.data.action })
+      return NextResponse.json(
+        { operationId: started.operationId, operation },
+        { headers: ctx.responseHeaders }
+      )
+    }
     if (parsed.data.action === 'take_backup') {
       const started = await provider.createApplicationBackup({
         serverId: staging.provider_server_id,

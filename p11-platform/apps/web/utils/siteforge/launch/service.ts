@@ -1473,8 +1473,12 @@ export async function restoreLaunchRelease(
     [targets.productionCredentialRef, targets.stagingCredentialRef]
   )
   if (remoteManifest.content_hash !== release.rollback_content_hash) {
+    // Cloudways restores can take 10-15 minutes to land after the operation
+    // reports completion, so a mismatch here usually means the restore is
+    // still propagating. The drill stays claimable and this confirmation can
+    // be retried with the same operation identity once the content lands.
     throw new SiteForgeLaunchError(
-      'Restored remote manifest does not match the certified rollback identity',
+      'Restored remote manifest does not match the certified rollback identity yet. Cloudways restores can take several minutes to take effect after the operation completes; retry this confirmation shortly.',
       409
     )
   }
@@ -1547,7 +1551,47 @@ export async function restoreLaunchRelease(
       client
     )
   }
+  const { error: drillCloseError } = await client
+    .from('siteforge_restore_drills')
+    .update(
+      buildRestoreDrillSuccessUpdate({
+        existingReport: drill.verification_report,
+        remoteManifestHash: remoteManifest.content_hash,
+        operationId,
+        actorId: input.actorId,
+      })
+    )
+    .eq('id', drill.id)
+    .eq('status', 'verifying')
+  if (drillCloseError) {
+    throw new SiteForgeLaunchError(
+      `Verified restore could not close the drill record: ${drillCloseError.message}`,
+      500
+    )
+  }
   return { release, manualRequired: false as const }
+}
+
+export function buildRestoreDrillSuccessUpdate(input: {
+  existingReport: unknown
+  remoteManifestHash: string
+  operationId: string
+  actorId: string
+}) {
+  const existing =
+    input.existingReport && typeof input.existingReport === 'object'
+      ? (input.existingReport as Record<string, unknown>)
+      : {}
+  return {
+    status: 'succeeded' as const,
+    completed_at: new Date().toISOString(),
+    verification_report: {
+      ...existing,
+      remoteManifestHash: input.remoteManifestHash,
+      verifiedOperationId: input.operationId,
+      verifiedBy: input.actorId,
+    },
+  }
 }
 
 export async function requestLaunchRestore(
