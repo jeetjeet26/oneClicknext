@@ -986,6 +986,7 @@ export type LaunchProviderMutationResult =
       idempotent: boolean
     }
   | { mutation: 'promotion'; operationId: string; idempotent: boolean }
+  | { mutation: 'restore'; operationId: string; idempotent: boolean }
 
 /**
  * Executes the non-idempotent Cloudways mutation that the promote flow asks
@@ -999,7 +1000,7 @@ export async function executeLaunchProviderMutation(
   input: {
     releaseId: string
     propertyId: string
-    mutation: 'backup' | 'promotion'
+    mutation: 'backup' | 'promotion' | 'restore'
     actorId: string
     requestId?: string
   },
@@ -1024,6 +1025,38 @@ export async function executeLaunchProviderMutation(
         `A production backup cannot be created from ${release.state}`,
         409
       )
+    }
+  } else if (input.mutation === 'restore') {
+    // The supervised restore flow independently verifies the operation and
+    // the restored manifest against the certified rollback identity; this
+    // only performs the operator's Cloudways restore action for a release
+    // that already has an awaiting-operator restore request.
+    if (!release.backup_id) {
+      throw new SiteForgeLaunchError(
+        'The release has no verified pre-promotion backup to restore',
+        409
+      )
+    }
+    const { data: awaitingDrill } = await client
+      .from('siteforge_restore_drills')
+      .select('id, provider_operation_id')
+      .eq('release_id', release.id)
+      .in('status', ['queued', 'restoring', 'verifying'])
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (!awaitingDrill) {
+      throw new SiteForgeLaunchError(
+        'An awaiting-operator restore request is required before the provider restore',
+        409
+      )
+    }
+    if (awaitingDrill.provider_operation_id) {
+      return {
+        mutation: 'restore',
+        operationId: awaitingDrill.provider_operation_id,
+        idempotent: true,
+      }
     }
   } else {
     if (release.promotion_operation_id) {
@@ -1102,11 +1135,11 @@ export async function executeLaunchProviderMutation(
       }
     }
     if (
-      input.mutation === 'promotion' &&
+      (input.mutation === 'promotion' || input.mutation === 'restore') &&
       typeof checkpoint.operationId === 'string'
     ) {
       return {
-        mutation: 'promotion',
+        mutation: input.mutation,
         operationId: checkpoint.operationId,
         idempotent: true,
       }
@@ -1148,7 +1181,8 @@ export async function executeLaunchProviderMutation(
     ;({ output, result } = await runLaunchProviderMutation(
       input.mutation,
       targets,
-      cloudways
+      cloudways,
+      release.backup_id
     ))
   } catch (cause) {
     const failedAt = new Date().toISOString()
@@ -1188,13 +1222,39 @@ export async function executeLaunchProviderMutation(
 }
 
 async function runLaunchProviderMutation(
-  mutation: 'backup' | 'promotion',
+  mutation: 'backup' | 'promotion' | 'restore',
   targets: Awaited<ReturnType<typeof loadCloudwaysTargets>>,
-  cloudways: ReturnType<typeof cloudwaysClient>
+  cloudways: ReturnType<typeof cloudwaysClient>,
+  releaseBackupId: string | null
 ): Promise<{ output: Json; result: LaunchProviderMutationResult }> {
   let output: Json
   let result: LaunchProviderMutationResult
-  if (mutation === 'backup') {
+  if (mutation === 'restore') {
+    if (!releaseBackupId) {
+      throw new SiteForgeLaunchError(
+        'The release has no verified pre-promotion backup to restore',
+        409
+      )
+    }
+    const started = await cloudways.restoreApplicationBackup({
+      serverId: targets.serverId,
+      applicationId: targets.productionApplicationId,
+      backupId: releaseBackupId,
+    })
+    if (!started.operationId) {
+      throw new SiteForgeLaunchError(
+        'Cloudways did not return the exact restore operation identity',
+        502
+      )
+    }
+    await cloudways.waitForOperation(started.operationId)
+    output = { operationId: started.operationId }
+    result = {
+      mutation: 'restore',
+      operationId: started.operationId,
+      idempotent: false,
+    }
+  } else if (mutation === 'backup') {
     const started = await cloudways.createApplicationBackup({
       serverId: targets.serverId,
       applicationId: targets.productionApplicationId,
@@ -1408,13 +1468,10 @@ export async function restoreLaunchRelease(
       409
     )
   }
-  const credentials = await getWordPressCredentialReference(
-    targets.productionCredentialRef
+  const remoteManifest = await loadPromotedContentManifest(
+    targets.productionUrl,
+    [targets.productionCredentialRef, targets.stagingCredentialRef]
   )
-  const remoteManifest = await new WordPressAPIClient(targets.productionUrl, {
-    username: credentials.username,
-    password: credentials.password,
-  }).getContentManifest()
   if (remoteManifest.content_hash !== release.rollback_content_hash) {
     throw new SiteForgeLaunchError(
       'Restored remote manifest does not match the certified rollback identity',

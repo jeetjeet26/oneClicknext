@@ -11,7 +11,7 @@ export const maxDuration = 300
 const requestSchema = z.object({
   propertyId: z.guid(),
   releaseId: z.string().uuid(),
-  mutation: z.enum(['backup', 'promotion']),
+  mutation: z.enum(['backup', 'promotion', 'restore']),
 }).strict()
 
 export async function POST(request: NextRequest) {
