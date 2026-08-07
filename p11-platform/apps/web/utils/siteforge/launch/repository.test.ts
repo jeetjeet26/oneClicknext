@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   assertObservedRollbackIdentity,
+  classifyRolloutAuditCandidate,
   isLaunchChatbotContextReady,
   resolveLaunchRollbackMode,
 } from './repository'
@@ -36,6 +37,47 @@ describe('SiteForge launch chatbot readiness', () => {
         },
       })
     ).toBe(true)
+  })
+})
+
+describe('SiteForge rollout audit classification', () => {
+  const contentHash = 'a'.repeat(64)
+  const complete = {
+    contentHash,
+    canonicalHash: contentHash,
+    assetManifestHash: 'b'.repeat(64),
+    baseThemePackageSha256: 'c'.repeat(64),
+  }
+
+  it('classifies an intact artifact with a full release identity as deployable', () => {
+    expect(classifyRolloutAuditCandidate(complete)).toEqual({
+      classification: 'deployable',
+      reasonCodes: [],
+    })
+  })
+
+  it('quarantines an artifact whose stored hash does not match the canonical blueprint hash', () => {
+    expect(
+      classifyRolloutAuditCandidate({
+        ...complete,
+        canonicalHash: 'd'.repeat(64),
+      })
+    ).toEqual({
+      classification: 'quarantined',
+      reasonCodes: ['content_hash_mismatch'],
+    })
+  })
+
+  it('quarantines an artifact with an incomplete release identity', () => {
+    expect(
+      classifyRolloutAuditCandidate({
+        ...complete,
+        assetManifestHash: null,
+      })
+    ).toEqual({
+      classification: 'quarantined',
+      reasonCodes: ['incomplete_release_identity'],
+    })
   })
 })
 

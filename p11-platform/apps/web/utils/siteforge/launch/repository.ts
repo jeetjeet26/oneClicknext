@@ -1,9 +1,12 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database, Json, Tables } from '@/types/supabase'
 import { createServiceClient } from '@/utils/supabase/admin'
+import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
 
 export type LaunchRelease = Tables<'siteforge_launch_releases'>
 type ServiceClient = SupabaseClient<Database>
+
+const SHA256_HASH = /^[a-f0-9]{64}$/
 
 export class SiteForgeLaunchError extends Error {
   constructor(
@@ -70,6 +73,28 @@ export function assertObservedRollbackIdentity(input: {
       'Rollback is unavailable without an observed certified production manifest',
       409
     )
+  }
+}
+
+export function classifyRolloutAuditCandidate(input: {
+  contentHash: string
+  canonicalHash: string
+  assetManifestHash: string | null
+  baseThemePackageSha256: string | null
+}): { classification: 'deployable' | 'quarantined'; reasonCodes: string[] } {
+  const reasonCodes: string[] = []
+  if (input.canonicalHash !== input.contentHash) {
+    reasonCodes.push('content_hash_mismatch')
+  }
+  if (
+    !SHA256_HASH.test(input.assetManifestHash || '') ||
+    !SHA256_HASH.test(input.baseThemePackageSha256 || '')
+  ) {
+    reasonCodes.push('incomplete_release_identity')
+  }
+  return {
+    classification: reasonCodes.length ? 'quarantined' : 'deployable',
+    reasonCodes,
   }
 }
 
@@ -288,6 +313,51 @@ export async function prepareLaunchRelease(
       409
     )
   }
+  // Artifacts created after the one-time rollout-audit backfill migration have
+  // no audit row yet. Audit them here on first launch preparation with the
+  // same fail-closed criteria the backfill used (canonical content-hash
+  // integrity plus a complete release identity), so fresh artifacts stay
+  // launchable without weakening the deployable gate.
+  let rolloutClassification: string | null = audit?.classification ?? null
+  if (!audit && artifact) {
+    const { data: blueprintRow } = await client
+      .from('siteforge_blueprint_versions')
+      .select('blueprint')
+      .eq('id', artifact.id)
+      .eq('website_id', input.websiteId)
+      .single()
+    if (blueprintRow) {
+      const canonicalHash = hashSiteForgeContent(blueprintRow.blueprint)
+      const verdict = classifyRolloutAuditCandidate({
+        contentHash: artifact.content_hash,
+        canonicalHash,
+        assetManifestHash: artifact.asset_manifest_hash,
+        baseThemePackageSha256: artifact.base_theme_package_sha256,
+      })
+      const { error: auditInsertError } = await client
+        .from('siteforge_rollout_audits')
+        .upsert(
+          {
+            org_id: website.org_id,
+            property_id: website.property_id,
+            website_id: input.websiteId,
+            artifact_id: artifact.id,
+            original_content_hash: artifact.content_hash,
+            canonical_content_hash: canonicalHash,
+            classification: verdict.classification,
+            reason_codes: verdict.reasonCodes as unknown as Json,
+          },
+          { onConflict: 'website_id,artifact_id', ignoreDuplicates: true }
+        )
+      if (auditInsertError) {
+        throw new SiteForgeLaunchError(
+          'Failed to record the launch rollout audit',
+          500
+        )
+      }
+      rolloutClassification = verdict.classification
+    }
+  }
   if (
     !artifact ||
     artifact.content_hash !== input.contentHash ||
@@ -295,7 +365,7 @@ export async function prepareLaunchRelease(
     !artifact.confirmed_approval_id ||
     !artifact.asset_manifest_hash ||
     !artifact.base_theme_package_sha256 ||
-    audit?.classification !== 'deployable'
+    rolloutClassification !== 'deployable'
   ) {
     throw new SiteForgeLaunchError(
       'The exact artifact is not approved and deployable',
