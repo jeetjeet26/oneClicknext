@@ -246,7 +246,9 @@ export async function POST(request: NextRequest) {
 
     const { data: artifact, error: artifactError } = await serviceClient
       .from('siteforge_blueprint_versions')
-      .select('id, version, content_hash, created_at, blueprint')
+      .select(
+        'id, version, content_hash, created_at, blueprint, deployment_decision'
+      )
       .eq('id', website.current_artifact_version_id)
       .eq('website_id', website.id)
       .single()
@@ -340,6 +342,7 @@ export async function POST(request: NextRequest) {
           version: artifact.version,
           content_hash: artifact.content_hash,
           created_at: artifact.created_at,
+          deployment_decision: artifact.deployment_decision,
         },
         previewBlueprint: artifact.blueprint,
         editorModel: SITEFORGE_CLAUDE_MODEL,
