@@ -367,8 +367,35 @@ async function loadCloudwaysTargets(releaseId: string, client: ServiceClient) {
     productionTargetId: production?.id || null,
     productionCredentialRef:
       production?.credential_ref || website.wordpress_credential_ref,
+    stagingCredentialRef: staging.credential_ref,
     productionUrl: production?.site_url || parentCredentials.url,
   }
+}
+
+async function loadPromotedContentManifest(
+  productionUrl: string,
+  credentialRefs: Array<string | null>
+) {
+  const refs = credentialRefs.filter((ref): ref is string => Boolean(ref))
+  let lastError: unknown = new SiteForgeLaunchError(
+    'No WordPress credential is available to verify the promoted manifest',
+    409
+  )
+  for (const ref of refs) {
+    const credentials = await getWordPressCredentialReference(ref)
+    try {
+      return await new WordPressAPIClient(productionUrl, {
+        username: credentials.username,
+        password: credentials.password,
+      }).getContentManifest()
+    } catch (error) {
+      const authFailure =
+        error instanceof Error && /\((?:401|403)\)/.test(error.message)
+      if (!authFailure) throw error
+      lastError = error
+    }
+  }
+  throw lastError
 }
 
 function cloudwaysClient(): CloudwaysProviderClient {
@@ -416,13 +443,16 @@ async function finalizePromotedRelease(
       409
     )
   }
-  const credentials = await getWordPressCredentialReference(
-    targets.productionCredentialRef
+  const manifest = await loadPromotedContentManifest(
+    targets.productionUrl,
+    // A Cloudways staging push copies the staging database (including
+    // WordPress users and application passwords) onto production, so the
+    // staging credential is the working reader right after promotion while a
+    // supervised restore flips production back to its original credential.
+    // The launch gate is the exact content-hash identity below, not which
+    // read-only credential fetched the manifest.
+    [targets.productionCredentialRef, targets.stagingCredentialRef]
   )
-  const manifest = await new WordPressAPIClient(targets.productionUrl, {
-    username: credentials.username,
-    password: credentials.password,
-  }).getContentManifest()
   assertPromotedManifestIdentity(
     release.artifact_content_hash,
     manifest.content_hash
