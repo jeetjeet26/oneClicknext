@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import {
   evaluateCapabilityReadiness,
   evaluateRequiredAssetReadiness,
-  MINIMUM_APPROVED_PROPERTY_PHOTOS,
 } from './repository'
 
 function asset(
@@ -24,7 +23,7 @@ function asset(
 }
 
 describe('onboarding asset readiness', () => {
-  it('requires a rights-cleared primary logo and sufficient property photography', () => {
+  it('requires a rights-cleared primary logo but keeps photography optional', () => {
     const result = evaluateRequiredAssetReadiness([
       asset('photo-1', 'hero'),
       asset('photo-2', 'interior'),
@@ -33,11 +32,19 @@ describe('onboarding asset readiness', () => {
     expect(result.ready).toBe(false)
     expect(result.reasons).toEqual([
       'An approved, curated, rights-cleared primary logo is required',
-      `At least ${MINIMUM_APPROVED_PROPERTY_PHOTOS} approved, curated, rights-cleared property photos are required (2 available)`,
     ])
   })
 
-  it('counts only approved, unexpired, rights-cleared property photography', () => {
+  it('allows generation with a logo and no property photography', () => {
+    const result = evaluateRequiredAssetReadiness([
+      asset('logo', 'primary_logo'),
+    ])
+
+    expect(result.ready).toBe(true)
+    expect(result.propertyPhotography).toEqual([])
+  })
+
+  it('counts only approved, unexpired, rights-cleared optional photography', () => {
     const result = evaluateRequiredAssetReadiness(
       [
         asset('logo', 'primary_logo'),

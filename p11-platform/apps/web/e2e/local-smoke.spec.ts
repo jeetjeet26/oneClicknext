@@ -405,40 +405,7 @@ async function createApprovedSiteForgeGeneration(
     'Failed to retire stale local inventory before governed reconfirmation.'
   ).toBeNull()
 
-  const { data: property, error: propertyError } = await service
-    .from('properties')
-    .select('org_id')
-    .eq('id', propertyId)
-    .single()
-  expect(propertyError, 'Failed to load local SiteForge property identity.').toBeNull()
   const approvedAt = new Date().toISOString()
-  const { error: photoError } = await service.from('content_assets').upsert(
-    [
-      ['e1111111-1111-4111-8111-111111111111', 'hero', 'b'],
-      ['e2222222-2222-4222-8222-222222222222', 'interior', 'c'],
-      ['e3333333-3333-4333-8333-333333333333', 'exterior', 'd'],
-    ].map(([id, role, hashCharacter], index) => ({
-      id,
-      org_id: property!.org_id,
-      property_id: propertyId,
-      name: `P11 local approved property photo ${index + 1}`,
-      asset_type: 'image',
-      asset_role: role,
-      file_url: `http://127.0.0.1:3000/siteforge/property-placeholder.png?photo=${index + 1}`,
-      content_hash: hashCharacter.repeat(64),
-      rights_status: 'owned',
-      rights_metadata: { basis: 'local smoke fixture' },
-      approval_status: 'approved',
-      curation_status: 'approved',
-      approved_at: approvedAt,
-      source_identity: `local-smoke:${role}:${index + 1}`,
-    })),
-    { onConflict: 'id' }
-  )
-  expect(
-    photoError,
-    'Failed to seed the approved property photography required by SiteForge readiness.'
-  ).toBeNull()
   const { error: logoCurationError } = await service
     .from('content_assets')
     .update({

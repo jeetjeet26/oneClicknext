@@ -253,17 +253,11 @@ export class PhotoAgent extends BaseAgent {
       hasBrandForgeLogo: !!brandContext?.logoAssets?.primaryUrl
     })
     
-    const hasApprovedUploads = strategy.uploadedPhotoUsage.length > 0
-    if (!hasApprovedUploads) {
-      throw new Error(
-        'Photo execution requires approved, curated property photography.',
-      )
-    }
-
     // Generation is evidence-bound: newly synthesized images cannot enter the
     // current artifact until they are persisted, curated, and approved in a
-    // later readiness snapshot. Reuse the approved upload set for uncovered
-    // slots instead of producing an output the generation gate must reject.
+    // later readiness snapshot. Missing optional photography leaves those
+    // sections unassigned instead of producing an output the generation gate
+    // must reject.
     const generatedPhotos: Photo[] = []
     if (strategy.photosToGenerate.length > 0) {
       await this.logAction('photo_generation_deferred_for_approval', {

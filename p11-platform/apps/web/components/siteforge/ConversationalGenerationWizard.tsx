@@ -774,9 +774,8 @@ export function ConversationalGenerationWizard({
                 Add the real property content SiteForge should use
               </h3>
               <p className="mt-1 text-xs text-gray-600 dark:text-gray-300">
-                Add and approve the property photography required for
-                readiness. Web Director will show any remaining remediation
-                before planning can begin.
+                Property photography and floor-plan images are optional. Add
+                them only when you want SiteForge to use them.
               </p>
             </div>
             <PropertyAssetsStep
@@ -814,7 +813,7 @@ export function ConversationalGenerationWizard({
                 {generationError}
               </p>
             )}
-            <div className="sticky bottom-0 z-20 -mx-4 flex justify-end border-t bg-white/95 px-4 py-3 backdrop-blur-sm dark:bg-gray-800/95 sm:-mx-6 sm:px-6">
+            <div className="-mx-4 flex justify-end border-t bg-white px-4 py-3 dark:bg-gray-800 sm:-mx-6 sm:px-6">
               <Button
                 onClick={() => void continueFromAssets()}
                 disabled={loading}

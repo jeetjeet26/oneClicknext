@@ -12,7 +12,6 @@ type DomainReport = {
   sourceIds: string[]
 }
 
-export const MINIMUM_APPROVED_PROPERTY_PHOTOS = 3
 const PROPERTY_PHOTO_ROLES = new Set([
   'hero',
   'amenity',
@@ -143,11 +142,6 @@ export function evaluateRequiredAssetReadiness<
   const reasons = [
     ...(!primaryLogo
       ? ['An approved, curated, rights-cleared primary logo is required']
-      : []),
-    ...(propertyPhotography.length < MINIMUM_APPROVED_PROPERTY_PHOTOS
-      ? [
-          `At least ${MINIMUM_APPROVED_PROPERTY_PHOTOS} approved, curated, rights-cleared property photos are required (${propertyPhotography.length} available)`,
-        ]
       : []),
   ]
 
