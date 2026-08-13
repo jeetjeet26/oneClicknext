@@ -432,25 +432,21 @@ export async function loadApprovedSiteForgeGenerationContext(
   }
   const freshnessMs = plan.floorPlanStrategy.freshnessHours * 3_600_000
   const inventoryTimestamps = inventory.map(row => latestInventoryTimestamp(row))
-  if (
-    inventoryRequired &&
-    inventory.some((row, index) => {
-      const timestamp = inventoryTimestamps[index]
-      return (
-        !timestamp ||
-        now.getTime() - new Date(timestamp).getTime() > freshnessMs ||
-        Boolean(row.expires_at && new Date(row.expires_at) <= now) ||
-        (plan.floorPlanStrategy.showPricing &&
-          row.rent_min == null &&
-          row.rent_max == null) ||
-        (plan.floorPlanStrategy.showAvailability &&
-          row.available_count == null)
-      )
-    })
-  ) {
-    generationConflict(
-      'Approved floor-plan inventory is stale, expired, or incomplete'
+  if (inventoryRequired) {
+    const expired = inventory.some(
+      row => row.expires_at && new Date(row.expires_at) <= now
     )
+    const stale = inventoryTimestamps.some(
+      timestamp =>
+        !timestamp ||
+        now.getTime() - new Date(timestamp).getTime() > freshnessMs
+    )
+    if (expired) {
+      generationConflict('Approved floor-plan inventory has expired')
+    }
+    if (stale) {
+      generationConflict('Approved floor-plan inventory is stale')
+    }
   }
   const latestSourceUpdatedAt = inventoryTimestamps
     .filter((value): value is string => Boolean(value))

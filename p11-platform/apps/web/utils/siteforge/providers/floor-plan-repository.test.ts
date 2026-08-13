@@ -25,7 +25,7 @@ describe('loadApprovedFloorPlanSnapshot', () => {
           apply_url: null,
           effective_at: '2026-07-31T11:00:00.000Z',
           expires_at: '2026-08-01T11:00:00.000Z',
-          source_updated_at: '2026-07-31T11:00:00.000Z',
+          source_updated_at: null,
           source: 'manual',
           source_identity: 'approved-import:aspen',
         },
@@ -51,7 +51,6 @@ describe('loadApprovedFloorPlanSnapshot', () => {
         sourceIdentity: 'approved-import:aspen',
         effectiveAt: '2026-07-31T11:00:00.000Z',
         expiresAt: '2026-08-01T11:00:00.000Z',
-        sourceUpdatedAt: '2026-07-31T11:00:00.000Z',
       }),
     ])
     expect(Object.isFrozen(snapshot.rows)).toBe(true)

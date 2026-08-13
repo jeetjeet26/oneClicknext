@@ -207,7 +207,9 @@ abstract class BaseFloorPlanAdapter<Input>
         apply_url: parsed.applyUrl,
         effective_at: parsed.effectiveAt || now,
         expires_at: parsed.expiresAt,
-        source_updated_at: parsed.sourceUpdatedAt,
+        source_updated_at:
+          parsed.sourceUpdatedAt ||
+          (this.sourceType === 'manual' ? parsed.effectiveAt || now : undefined),
         confidence: this.sourceType === 'manual' ? 1 : 0.95,
         review_status: 'approved',
       }

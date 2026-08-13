@@ -77,6 +77,19 @@ describe('provider-neutral floor-plan adapters', () => {
     expect(freshness).toEqual({ stale: true, ageHours: 48 })
   })
 
+  it('timestamps manual inventory so a new floor plan is fresh', () => {
+    const capturedAt = '2026-08-13T18:00:00.000Z'
+    const rows = new ManualFloorPlanAdapter().normalize(
+      [{ name: 'A1', bedrooms: 1 }],
+      capturedAt
+    )
+
+    expect(rows[0]).toMatchObject({
+      effective_at: capturedAt,
+      source_updated_at: capturedAt,
+    })
+  })
+
   it('creates a stable immutable snapshot from approved inventory rows', () => {
     const snapshot = createApprovedFloorPlanSnapshot(
       [

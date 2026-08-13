@@ -36,7 +36,7 @@ export async function loadFreshApprovedFloorPlanInventory(
       availableCount: unit.available_count ?? undefined,
       effectiveAt: unit.effective_at ?? undefined,
       expiresAt: unit.expires_at ?? undefined,
-      sourceUpdatedAt: unit.source_updated_at ?? undefined,
+      sourceUpdatedAt: unit.source_updated_at ?? unit.effective_at ?? undefined,
     })),
     {
       propertyId,

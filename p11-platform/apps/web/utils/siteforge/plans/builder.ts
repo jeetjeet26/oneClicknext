@@ -401,7 +401,9 @@ export function buildSiteForgePlan(input: BuildSiteForgePlanInput): SiteForgePla
       source: 'property_units',
       display: 'cards',
       showPricing: true,
-      showAvailability: true,
+      // Availability is optional unless an operator explicitly enables it in a
+      // later revision; manual inventory often describes layouts, not live stock.
+      showAvailability: false,
       freshnessHours: 168,
     },
     seoStrategy: {

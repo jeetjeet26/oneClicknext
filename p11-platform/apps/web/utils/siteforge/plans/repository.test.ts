@@ -445,7 +445,9 @@ function arrange(overrides: {
         sqft_max: 760,
         rent_min: 1895,
         rent_max: 2095,
-        available_count: 2,
+        // A display preference must not make optional live availability a
+        // generation prerequisite for otherwise valid manual inventory.
+        available_count: null,
         move_in_specials: null,
         floor_plan_image_url: null,
         floor_plan_image_alt: null,
