@@ -1,4 +1,4 @@
-// schema_migration_version: 20260813022743
+// schema_migration_version: 20260813025222
 export type Json =
   | string
   | number
@@ -4114,6 +4114,8 @@ export type Database = {
           lead_id: string | null
           metadata: Json | null
           next_action_at: string | null
+          processing_expires_at: string | null
+          processing_started_at: string | null
           status: string
           updated_at: string | null
           workflow_id: string | null
@@ -4126,6 +4128,8 @@ export type Database = {
           lead_id?: string | null
           metadata?: Json | null
           next_action_at?: string | null
+          processing_expires_at?: string | null
+          processing_started_at?: string | null
           status?: string
           updated_at?: string | null
           workflow_id?: string | null
@@ -4138,6 +4142,8 @@ export type Database = {
           lead_id?: string | null
           metadata?: Json | null
           next_action_at?: string | null
+          processing_expires_at?: string | null
+          processing_started_at?: string | null
           status?: string
           updated_at?: string | null
           workflow_id?: string | null
