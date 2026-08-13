@@ -26,6 +26,10 @@ export const floorPlanInputRowSchema = z
     ),
     specials: z.string().trim().max(2000).optional(),
     imageUrl: optionalUrl,
+    imageAssetId: z.preprocess(
+      (value) => (value === '' || value == null ? undefined : value),
+      z.guid().optional()
+    ),
     imageAlt: z.string().trim().max(300).optional(),
     availabilityUrl: optionalUrl,
     applyUrl: optionalUrl,
@@ -73,6 +77,7 @@ export interface NormalizedFloorPlan {
   external_id?: string
   canonical_key: string
   floor_plan_image_url?: string
+  floor_plan_image_asset_id?: string
   floor_plan_image_alt?: string
   availability_url?: string
   apply_url?: string
@@ -95,6 +100,7 @@ export interface PublishedFloorPlanRow {
   availableCount?: number
   specials?: string
   imageUrl?: string
+  imageAssetId?: string
   imageAlt?: string
   availabilityUrl?: string
   applyUrl?: string
@@ -195,6 +201,7 @@ abstract class BaseFloorPlanAdapter<Input>
         external_id: parsed.externalId,
         canonical_key: canonicalKey(parsed),
         floor_plan_image_url: parsed.imageUrl,
+        floor_plan_image_asset_id: parsed.imageAssetId,
         floor_plan_image_alt: parsed.imageAlt,
         availability_url: parsed.availabilityUrl,
         apply_url: parsed.applyUrl,
@@ -255,6 +262,7 @@ const csvHeaders: Record<string, keyof ValidFloorPlanInputRow> = {
   available_count: 'availableCount',
   specials: 'specials',
   image_url: 'imageUrl',
+  image_asset_id: 'imageAssetId',
   image_alt: 'imageAlt',
   availability_url: 'availabilityUrl',
   apply_url: 'applyUrl',
@@ -345,6 +353,7 @@ type ApprovedPropertyUnit = {
   available_count: number | null
   move_in_specials: string | null
   floor_plan_image_url: string | null
+  floor_plan_image_asset_id: string | null
   floor_plan_image_alt: string | null
   availability_url: string | null
   apply_url: string | null
@@ -384,6 +393,7 @@ export function createApprovedFloorPlanSnapshot(
       availableCount: defined(unit.available_count),
       specials: defined(unit.move_in_specials),
       imageUrl: defined(unit.floor_plan_image_url),
+      imageAssetId: defined(unit.floor_plan_image_asset_id),
       imageAlt: defined(unit.floor_plan_image_alt),
       availabilityUrl: defined(unit.availability_url),
       applyUrl: defined(unit.apply_url),

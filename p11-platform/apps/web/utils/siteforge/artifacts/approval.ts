@@ -311,12 +311,9 @@ export async function decideSiteForgeArtifactDeployment(
         artifactId: input.artifactId,
         contentHash: input.contentHash,
         canonicalPreviewUrl: current.website.canonical_preview_url,
-        ...(current.certification
-          ? {
-              previewCertificationId: current.certification.id,
-              previewCertificationReportHash: current.certification.report_hash,
-            }
-          : {}),
+        previewCertificationId: current.certification?.id || null,
+        previewCertificationReportHash:
+          current.certification?.report_hash || null,
       },
       policyDecision: {
         policyName: 'siteforge-artifact-deployment',
@@ -326,13 +323,9 @@ export async function decideSiteForgeArtifactDeployment(
           qualityReport: current.artifact.quality_report,
           canonicalPreviewArtifactId:
             current.website.canonical_preview_artifact_id,
-          ...(current.certification
-            ? {
-                previewCertificationId: current.certification.id,
-                previewCertificationReportHash:
-                  current.certification.report_hash,
-              }
-            : {}),
+          previewCertificationId: current.certification?.id || null,
+          previewCertificationReportHash:
+            current.certification?.report_hash || null,
         },
       },
     },

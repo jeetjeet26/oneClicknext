@@ -5,6 +5,7 @@ const authGetUser = vi.fn()
 const validateAccess = vi.fn()
 const listBriefs = vi.fn()
 const createBrief = vi.fn()
+const saveCurrentBrief = vi.fn()
 const websiteMaybeSingle = vi.fn()
 
 vi.mock('@/utils/supabase/server', () => ({
@@ -38,6 +39,7 @@ vi.mock('@/utils/siteforge/briefs/repository', async () => {
     ...actual,
     listSiteForgeBriefVersions: listBriefs,
     createSiteForgeBriefVersion: createBrief,
+    saveCurrentSiteForgeBrief: saveCurrentBrief,
   }
 })
 
@@ -62,6 +64,13 @@ describe('/api/siteforge/briefs tenant contract', () => {
       websiteId: WEBSITE_ID,
       propertyId: PROPERTY_ID,
       version: 1,
+    })
+    saveCurrentBrief.mockResolvedValue({
+      id: 'brief-2',
+      websiteId: WEBSITE_ID,
+      propertyId: PROPERTY_ID,
+      version: 2,
+      status: 'approved',
     })
   })
 
@@ -112,5 +121,30 @@ describe('/api/siteforge/briefs tenant contract', () => {
         expectedVersion: 0,
       })
     )
+  })
+
+  it('saves and confirms a contradiction-free immutable current brief', async () => {
+    const { POST } = await import('./route')
+    const response = await POST(
+      new Request('http://localhost/api/siteforge/briefs', {
+        method: 'POST',
+        body: JSON.stringify({
+          websiteId: WEBSITE_ID,
+          expectedVersion: 1,
+          saveAsCurrent: true,
+          brief: {},
+          unresolvedContradictions: [],
+        }),
+      }) as NextRequest
+    )
+    expect(response.status).toBe(201)
+    expect(saveCurrentBrief).toHaveBeenCalledWith({
+      websiteId: WEBSITE_ID,
+      expectedVersion: 1,
+      brief: {},
+      unresolvedContradictions: [],
+      userId: 'user-1',
+    })
+    expect(createBrief).not.toHaveBeenCalled()
   })
 })

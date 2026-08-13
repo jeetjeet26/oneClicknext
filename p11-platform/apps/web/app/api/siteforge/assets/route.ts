@@ -18,6 +18,10 @@ import {
   getAssetUsability,
 } from '@/utils/siteforge/assets/curation'
 import { analyzeImageContent } from '@/utils/siteforge/assets/image-analysis'
+import {
+  buildSiteForgePhotoTrustUpdate,
+  isSiteForgePhotoAsset,
+} from '@/utils/siteforge/assets/trust-policy'
 
 const propertyIdSchema = z.guid()
 const categorySchema = z.enum([
@@ -237,6 +241,8 @@ export async function POST(request: NextRequest) {
       filename: file.name,
       operatorRole: parsedCategory.data,
     })
+    const trustedAt = new Date().toISOString()
+    const sourceIdentity = `siteforge-upload:${analysis.metadata.contentHash}:${file.name}`
     const service = createServiceClient()
     const { data: duplicate, error: duplicateError } = await service
       .from('content_assets')
@@ -249,9 +255,39 @@ export async function POST(request: NextRequest) {
       throw new Error(`Failed to check duplicate asset: ${duplicateError.message}`)
     }
     if (duplicate) {
+      if (!isSiteForgePhotoAsset(duplicate)) {
+        return NextResponse.json(
+          {
+            error:
+              'Matching content belongs to a non-photo asset and cannot be reused by SiteForge',
+          },
+          { status: 409, headers: ctx.responseHeaders }
+        )
+      }
+      const { data: trustedDuplicate, error: trustError } = await service
+        .from('content_assets')
+        .update(
+          buildSiteForgePhotoTrustUpdate({
+            userId: authorization.userId,
+            trustedAt,
+            sourceIdentity,
+            contentHash: analysis.metadata.contentHash,
+            intake: 'direct_upload',
+            importSource: 'siteforge',
+            currentCurationStatus: duplicate.curation_status,
+            currentRightsMetadata: duplicate.rights_metadata,
+          })
+        )
+        .eq('id', duplicate.id)
+        .eq('property_id', parsedPropertyId.data)
+        .select('*')
+        .single()
+      if (trustError || !trustedDuplicate) {
+        throw new Error('Failed to trust the existing SiteForge photo')
+      }
       ctx.logSuccess(200, { assetId: duplicate.id, duplicate: true })
       return NextResponse.json(
-        { asset: mapAsset(duplicate), duplicate: true },
+        { asset: mapAsset(trustedDuplicate), duplicate: true },
         { status: 200, headers: ctx.responseHeaders }
       )
     }
@@ -281,6 +317,14 @@ export async function POST(request: NextRequest) {
         ? altTextValue.trim().slice(0, 300)
         : null
     const altText = operatorAltText || analysis.altText
+    const trust = buildSiteForgePhotoTrustUpdate({
+      userId: authorization.userId,
+      trustedAt,
+      sourceIdentity,
+      contentHash: analysis.metadata.contentHash,
+      intake: 'direct_upload',
+      importSource: 'siteforge',
+    })
     const { data: created, error: createError } = await service
       .from('content_assets')
       .insert({
@@ -298,17 +342,14 @@ export async function POST(request: NextRequest) {
         storage_bucket: STORAGE_BUCKETS.PROPERTY_ASSETS,
         storage_path: result.storagePath,
         content_hash: analysis.metadata.contentHash,
-        source_identity: `siteforge-upload:${file.name}`,
+        source_identity: sourceIdentity,
         source_metadata: {
-          uploadedAt: new Date().toISOString(),
+          uploadedAt: trustedAt,
           analysisMode: analysis.mode,
           observedElements: analysis.observedElements,
           qualityNotes: analysis.qualityNotes,
         },
-        rights_status: 'unknown',
-        rights_metadata: {},
-        approval_status: 'pending',
-        curation_status: 'needs_review',
+        ...trust,
         alt_text: altText,
         focal_point: analysis.focalPoint,
         crop_suggestion: analysis.cropSuggestion,

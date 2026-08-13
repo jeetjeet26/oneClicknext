@@ -17,7 +17,7 @@ function floorPlan(overrides: Partial<FloorPlanDraft> = {}): FloorPlanDraft {
     availableCount: '2',
     specials: '',
     imageUrl: 'https://example.com/a1.png',
-    imageAssetId: 'pending-image-asset',
+    imageAssetId: '11111111-1111-4111-8111-111111111111',
     imageAlt: 'A1 floor plan',
     availabilityUrl: '',
     applyUrl: '',
@@ -31,6 +31,7 @@ describe('floor-plan preview policy', () => {
       expect.objectContaining({
         name: 'A1',
         imageUrl: 'https://example.com/a1.png',
+        imageAssetId: '11111111-1111-4111-8111-111111111111',
         imageAlt: 'A1 floor plan',
       }),
     ])

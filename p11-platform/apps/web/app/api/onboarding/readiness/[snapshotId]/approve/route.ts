@@ -8,9 +8,12 @@ import { evaluateReadinessApproval } from '@/utils/onboarding/readiness-policy'
 
 const bodySchema = z.object({
   propertyId: z.guid(),
-  rationale: z.string().min(10).max(2_000),
-  allowManagerOverride: z.boolean().default(false),
-})
+  rationale: z.string().trim().max(2_000).optional(),
+  allowManagerOverride: z.literal(true),
+}).refine(
+  value => Boolean(value.rationale && value.rationale.length >= 10),
+  { path: ['rationale'], message: 'Manager override rationale is required' },
+)
 
 export async function POST(
   request: NextRequest,

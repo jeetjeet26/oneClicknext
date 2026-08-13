@@ -262,7 +262,7 @@ export async function approveLaunchRelease(
     rollbackContentHash: string | null
     firstLaunchAcknowledged?: boolean
     rationale: string
-    legalRightsSnapshot: Json
+    legalSnapshot: Json
     expiresAt: string
     approvedBy: string
     requestId?: string
@@ -292,14 +292,14 @@ export async function approveLaunchRelease(
     firstLaunchAcknowledged: input.firstLaunchAcknowledged,
   })
   const legal =
-    input.legalRightsSnapshot &&
-    typeof input.legalRightsSnapshot === 'object' &&
-    !Array.isArray(input.legalRightsSnapshot)
-      ? input.legalRightsSnapshot
+    input.legalSnapshot &&
+    typeof input.legalSnapshot === 'object' &&
+    !Array.isArray(input.legalSnapshot)
+      ? input.legalSnapshot
       : {}
   if (legal.confirmed !== true) {
     throw new SiteForgeLaunchError(
-      'Explicit legal and asset-rights confirmation is required',
+      'Explicit confirmation of the pinned legal content is required',
       400
     )
   }
@@ -358,7 +358,7 @@ export async function approveLaunchRelease(
           ...(release.rollback_artifact_id
             ? {}
             : { firstLaunchAcknowledged: true }),
-          legalRightsSnapshot: legal,
+          legalSnapshot: legal,
           expiresAt: expiresAt.toISOString(),
         },
         policyDecision: {

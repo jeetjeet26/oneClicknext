@@ -540,7 +540,6 @@ export function ConversationalGenerationWizard({
             expectedRevision: approvedPlan.revision,
             contentHash: approvedPlan.contentHash,
             decisionStatus: 'approved',
-            decisionReason: 'Approved in the SiteForge generation wizard.',
           }),
         }
       )

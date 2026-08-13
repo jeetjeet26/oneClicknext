@@ -22,6 +22,8 @@ import {
 
 type ServiceClient = SupabaseClient<Database>
 type BriefRow = Tables<'siteforge_brief_versions'>
+export const CURRENT_BRIEF_APPROVAL_REASON =
+  'siteforge.brief:saved_as_current:v1'
 
 export class SiteForgeBriefError extends Error {
   constructor(
@@ -333,6 +335,61 @@ export async function createSiteForgeBriefVersion(
     )
   }
   return mapBrief(data)
+}
+
+export async function saveCurrentSiteForgeBrief(
+  input: {
+    websiteId: string
+    userId: string
+    brief: unknown
+    unresolvedContradictions?: unknown
+    expectedVersion?: number | null
+  },
+  client: ServiceClient = createServiceClient()
+) {
+  const contradictions = siteForgeBriefContradictionsSchema.parse(
+    input.unresolvedContradictions || []
+  )
+  if (contradictions.length) {
+    throw new SiteForgeBriefError(
+      'Resolve every brief contradiction before saving it as current',
+      409
+    )
+  }
+  const brief = siteForgeBriefSchema.parse(input.brief)
+  const website = await loadWebsite(input.websiteId, client)
+  const sources = await loadCurrentBriefSources(
+    { orgId: website.org_id, propertyId: website.property_id },
+    client
+  )
+  const contentHash = hashSiteForgeBrief({
+    brief,
+    unresolvedContradictions: contradictions,
+    sources,
+  })
+  const { data, error } = await client.rpc('save_current_siteforge_brief', {
+    p_website_id: input.websiteId,
+    p_expected_version: input.expectedVersion || 0,
+    p_brief: {
+      brief,
+      unresolvedContradictions: contradictions,
+    } as unknown as Json,
+    p_onboarding_snapshot_id: sources.onboardingSnapshotId,
+    p_onboarding_snapshot_hash: sources.onboardingSnapshotHash,
+    p_brand_asset_id: sources.brandAssetId,
+    p_brand_contract_hash: sources.brandContractHash,
+    p_content_hash: contentHash,
+    p_actor_id: input.userId,
+    p_reason: CURRENT_BRIEF_APPROVAL_REASON,
+  })
+  const row = data?.[0]
+  if (error || !row) {
+    throw new SiteForgeBriefError(
+      error?.message || 'Failed to save the current SiteForge brief',
+      error?.message?.includes('changed; reload') ? 409 : 500
+    )
+  }
+  return mapBrief(row)
 }
 
 async function ensureBriefApprovalProposal(

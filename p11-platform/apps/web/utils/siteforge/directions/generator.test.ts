@@ -47,7 +47,8 @@ const sources = {
   briefContentHash: 'a'.repeat(64),
   onboardingSnapshotId: '22222222-2222-4222-8222-222222222222',
   onboardingSnapshotHash: 'b'.repeat(64),
-  brandAssetId: '33333333-3333-4333-8333-333333333333',
+  // PostgreSQL accepts UUID-shaped identifiers without an RFC version nibble.
+  brandAssetId: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
   brandContractHash: 'c'.repeat(64),
 }
 

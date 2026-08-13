@@ -23,6 +23,8 @@ import { generateDeterministicCreativeDirections } from './generator'
 type ServiceClient = SupabaseClient<Database>
 type SetRow = Tables<'siteforge_creative_direction_sets'>
 type DirectionRow = Tables<'siteforge_creative_directions'>
+export const DIRECTION_SELECTION_APPROVAL_REASON =
+  'siteforge.direction:selected_for_execution:v1'
 
 export class SiteForgeDirectionError extends Error {
   constructor(
@@ -437,6 +439,111 @@ export async function selectSiteForgeCreativeDirection(
   }
   return mapSet(
     data,
+    current.directions.map(direction => ({
+      direction_set_id: current.id,
+      org_id: current.orgId,
+      property_id: current.propertyId,
+      website_id: current.websiteId,
+      created_at: current.createdAt,
+      direction: direction.direction as unknown as Json,
+      preview_manifest: direction.previewManifest as unknown as Json,
+      content_hash: direction.contentHash,
+      id: direction.id,
+      name: direction.name,
+      ordinal: direction.ordinal,
+    }))
+  )
+}
+
+export async function confirmSiteForgeCreativeDirectionSelection(
+  input: {
+    directionSetId: string
+    propertyId: string
+    selectedDirectionId: string
+    expectedContentHash: string
+    selectionNotes?: string | null
+    reviewerProfileId: string
+  },
+  client: ServiceClient = createServiceClient()
+) {
+  const current = await getSiteForgeDirectionSet(
+    input.directionSetId,
+    input.propertyId,
+    client
+  )
+  if (
+    !['draft', 'ready_for_review'].includes(current.status) ||
+    current.contentHash !== input.expectedContentHash
+  ) {
+    throw new SiteForgeDirectionError(
+      'Creative direction set changed; reload before selecting',
+      409
+    )
+  }
+  const selected = current.directions.find(
+    direction => direction.id === input.selectedDirectionId
+  )
+  if (!selected) {
+    throw new SiteForgeDirectionError(
+      'Selected direction does not belong to this set',
+      400
+    )
+  }
+  const brief = await getSiteForgeBrief(
+    current.briefVersionId,
+    current.propertyId,
+    client
+  )
+  const sources = await loadCurrentBriefSources(
+    { orgId: brief.orgId, propertyId: brief.propertyId },
+    client
+  )
+  if (
+    brief.status !== 'approved' ||
+    selected.direction.provenance.briefVersionId !== brief.id ||
+    selected.direction.provenance.briefContentHash !== brief.contentHash ||
+    selected.direction.provenance.onboardingSnapshotId !==
+      sources.onboardingSnapshotId ||
+    selected.direction.provenance.onboardingSnapshotHash !==
+      sources.onboardingSnapshotHash ||
+    selected.direction.provenance.brandAssetId !== sources.brandAssetId ||
+    selected.direction.provenance.brandContractHash !== sources.brandContractHash
+  ) {
+    throw new SiteForgeDirectionError(
+      'Creative direction sources are stale; generate a new set',
+      409
+    )
+  }
+  const selectionNotes = input.selectionNotes?.trim() || null
+  const contentHash = hashSiteForgeDirectionSet({
+    briefVersionId: brief.id,
+    briefContentHash: brief.contentHash,
+    directionHashes: current.directions.map(direction => direction.contentHash),
+    selectedDirectionHash: selected.contentHash,
+    selectionNotes,
+  })
+  const { data, error } = await client.rpc(
+    'confirm_siteforge_creative_direction',
+    {
+      p_direction_set_id: current.id,
+      p_property_id: current.propertyId,
+      p_selected_direction_id: selected.id,
+      p_expected_content_hash: current.contentHash,
+      p_confirmed_content_hash: contentHash,
+      p_selection_notes: selectionNotes || '',
+      p_actor_id: input.reviewerProfileId,
+      p_reason: DIRECTION_SELECTION_APPROVAL_REASON,
+    }
+  )
+  const row = data?.[0]
+  if (error || !row) {
+    throw new SiteForgeDirectionError(
+      error?.message || 'Failed to confirm creative direction selection',
+      error?.message?.includes('changed; reload') ? 409 : 500
+    )
+  }
+  return mapSet(
+    row,
     current.directions.map(direction => ({
       direction_set_id: current.id,
       org_id: current.orgId,

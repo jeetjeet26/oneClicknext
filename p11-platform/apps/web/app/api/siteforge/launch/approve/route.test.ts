@@ -29,7 +29,7 @@ function request(
     rollbackArtifactId,
     rollbackContentHash: 'b'.repeat(64),
     rationale: 'Release evidence reviewed by the launch manager.',
-    legalRightsSnapshot: { confirmed: true, source: 'asset-register' },
+    legalSnapshot: { confirmed: true, source: 'approved-legal-config' },
     expiresAt: '2026-08-04T12:00:00.000Z',
     ...overrides,
   }
@@ -53,7 +53,7 @@ describe('SiteForge launch approval route', () => {
 
   it('rejects incomplete approval evidence before authorization', async () => {
     const { POST } = await import('./route')
-    const response = await POST(request({ legalRightsSnapshot: { confirmed: false } }))
+    const response = await POST(request({ legalSnapshot: { confirmed: false } }))
 
     expect(response.status).toBe(400)
     expect(requireManager).not.toHaveBeenCalled()

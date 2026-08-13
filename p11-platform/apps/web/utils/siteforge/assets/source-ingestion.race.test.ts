@@ -73,6 +73,7 @@ describe('concurrent asset ingestion', () => {
     const winnerId = '66666666-6666-4666-8666-666666666666'
     const removed: string[][] = []
     const runUpdates: Record<string, unknown>[] = []
+    const trustUpdates: Record<string, unknown>[] = []
     let contentLookup = 0
 
     const service = {
@@ -128,12 +129,30 @@ describe('concurrent asset ingestion', () => {
               contentLookup += 1
               return contentLookup === 1
                 ? { data: null, error: null }
-                : { data: { id: winnerId }, error: null }
+                : {
+                    data: {
+                      id: winnerId,
+                      asset_type: 'image',
+                      asset_role: 'gallery',
+                      curation_status: 'needs_review',
+                      rights_metadata: {},
+                    },
+                    error: null,
+                  }
             })
             return chain
           }
           return {
             ...queryChain(),
+            update: vi.fn((payload: Record<string, unknown>) => {
+              trustUpdates.push(payload)
+              const chain: Record<string, unknown> = {}
+              chain.eq = vi.fn(() => chain)
+              chain.then = (
+                resolve: (value: { data: null; error: null }) => unknown
+              ) => Promise.resolve({ data: null, error: null }).then(resolve)
+              return chain
+            }),
             insert: vi.fn(() => ({
               select: vi.fn(() => ({
                 single: vi.fn().mockResolvedValue({
@@ -181,6 +200,15 @@ describe('concurrent asset ingestion', () => {
             sourceIdentity: 'google_drive:file-1',
           },
         ],
+      })
+    )
+    expect(trustUpdates).toContainEqual(
+      expect.objectContaining({
+        rights_status: 'owned',
+        approval_status: 'approved',
+        curation_status: 'approved',
+        expires_at: null,
+        approved_by: source.created_by,
       })
     )
   })

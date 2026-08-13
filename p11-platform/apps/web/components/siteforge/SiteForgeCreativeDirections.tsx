@@ -30,8 +30,6 @@ export function SiteForgeCreativeDirections({
     useState<PersistedSiteForgeBrief | null>(null)
   const [sets, setSets] = useState<PersistedSiteForgeDirectionSet[]>([])
   const [selectionNotes, setSelectionNotes] = useState('')
-  const [decisionReason, setDecisionReason] = useState('')
-  const [modifiedRationale, setModifiedRationale] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
@@ -124,63 +122,12 @@ export function SiteForgeCreativeDirections({
       if (!response.ok) {
         throw new Error(body.error || 'Failed to select creative direction')
       }
-      setMessage('Selection saved with an exact selected-direction hash.')
+      setMessage('Selected direction confirmed with its exact set and content hashes.')
       await load()
       onChanged?.()
     } catch (cause) {
       setError(
         cause instanceof Error ? cause.message : 'Failed to save selection'
-      )
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function decide(
-    decisionStatus: 'approved' | 'denied' | 'modified'
-  ) {
-    const current = sets[0]
-    const selected = current?.directions.find(
-      direction => direction.id === current.selectedDirectionId
-    )
-    if (!current || !selected) return
-    setBusy(true)
-    setError(null)
-    try {
-      const response = await fetch(
-        `/api/siteforge/directions/${current.id}/decision`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            propertyId: current.propertyId,
-            contentHash: current.contentHash,
-            selectedDirectionId: selected.id,
-            decisionStatus,
-            decisionReason,
-            ...(decisionStatus === 'modified'
-              ? {
-                  modifiedDirection: {
-                    ...selected.direction,
-                    rationale: modifiedRationale,
-                  },
-                }
-              : {}),
-          }),
-        }
-      )
-      const body = await response.json().catch(() => ({}))
-      if (!response.ok) {
-        throw new Error(body.error || 'Failed to decide creative direction')
-      }
-      setDecisionReason('')
-      setModifiedRationale('')
-      setMessage(`Creative direction decision recorded: ${decisionStatus}.`)
-      await load()
-      onChanged?.()
-    } catch (cause) {
-      setError(
-        cause instanceof Error ? cause.message : 'Failed to record decision'
       )
     } finally {
       setBusy(false)
@@ -252,7 +199,7 @@ export function SiteForgeCreativeDirections({
                       {direction.contentHash.slice(0, 16)}…
                     </p>
                     <Button className="w-full" variant={isSelected ? 'outline' : 'default'} disabled={busy || current.status === 'approved'} onClick={() => void select(direction.id!)}>
-                      {isSelected ? 'Update selection notes' : 'Select this direction'}
+                      {isSelected ? 'Selected for execution' : 'Use this direction'}
                     </Button>
                   </CardContent>
                 </Card>
@@ -262,18 +209,9 @@ export function SiteForgeCreativeDirections({
           {current.status !== 'approved' && current.status !== 'denied' ? (
             <Card>
               <CardContent className="space-y-3 pt-6">
-                <Textarea value={selectionNotes} onChange={event => setSelectionNotes(event.target.value)} placeholder="Selection notes and tradeoff rationale" />
-                {selected && current.status === 'ready_for_review' ? (
-                  <>
-                    <p className="text-xs font-mono text-gray-500">Selected hash: {selectedDirectionHash(current)}</p>
-                    <Textarea value={decisionReason} onChange={event => setDecisionReason(event.target.value)} placeholder="Required approval rationale" />
-                    <Textarea value={modifiedRationale} onChange={event => setModifiedRationale(event.target.value)} placeholder="Optional replacement rationale for Modify" />
-                    <div className="flex flex-wrap gap-2">
-                      <Button disabled={busy || !decisionReason.trim()} onClick={() => void decide('approved')}>Approve selected direction</Button>
-                      <Button variant="outline" disabled={busy || !decisionReason.trim() || !modifiedRationale.trim()} onClick={() => void decide('modified')}>Modify as new set</Button>
-                      <Button variant="destructive" disabled={busy || !decisionReason.trim()} onClick={() => void decide('denied')}>Reject set</Button>
-                    </div>
-                  </>
+                <Textarea value={selectionNotes} onChange={event => setSelectionNotes(event.target.value)} placeholder="Optional tradeoff notes" />
+                {selected ? (
+                  <p className="text-xs font-mono text-gray-500">Selected hash: {selectedDirectionHash(current)}</p>
                 ) : null}
               </CardContent>
             </Card>

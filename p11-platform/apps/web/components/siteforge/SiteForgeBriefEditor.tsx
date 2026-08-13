@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
-import { AlertTriangle, Check, Loader2, Save } from 'lucide-react'
+import { AlertTriangle, Check, Save } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -114,7 +114,6 @@ export function SiteForgeBriefEditor({
   const [contradictions, setContradictions] = useState<
     SiteForgeBriefContradiction[]
   >([])
-  const [decisionReason, setDecisionReason] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
@@ -148,7 +147,7 @@ export function SiteForgeBriefEditor({
     return { brief, unresolvedContradictions: contradictions }
   }
 
-  async function save(status: 'draft' | 'ready_for_review') {
+  async function save(mode: 'draft' | 'current') {
     setBusy(true)
     setError(null)
     setMessage(null)
@@ -159,61 +158,22 @@ export function SiteForgeBriefEditor({
         body: JSON.stringify({
           websiteId,
           expectedVersion: briefs[0]?.version || 0,
-          status,
+          status: mode === 'draft' ? 'draft' : 'ready_for_review',
+          saveAsCurrent: mode === 'current',
           ...currentContent(),
         }),
       })
       const body = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(body.error || 'Failed to save brief')
       setMessage(
-        status === 'draft'
+        mode === 'draft'
           ? 'Saved a new immutable draft.'
-          : 'Saved a new version ready for review.'
+          : 'Saved and confirmed a new immutable current brief.'
       )
       await load()
       onChanged?.()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Failed to save brief')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function decide(
-    decisionStatus: 'approved' | 'denied' | 'modified'
-  ) {
-    const current = briefs[0]
-    if (!current) return
-    setBusy(true)
-    setError(null)
-    try {
-      const response = await fetch(
-        `/api/siteforge/briefs/${current.id}/decision`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            propertyId: current.propertyId,
-            contentHash: current.contentHash,
-            decisionStatus,
-            decisionReason,
-            ...(decisionStatus === 'modified'
-              ? {
-                  modifiedBrief: brief,
-                  unresolvedContradictions: contradictions,
-                }
-              : {}),
-          }),
-        }
-      )
-      const body = await response.json().catch(() => ({}))
-      if (!response.ok) throw new Error(body.error || 'Failed to decide brief')
-      setMessage(`Brief decision recorded: ${decisionStatus}.`)
-      setDecisionReason('')
-      await load()
-      onChanged?.()
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Failed to decide brief')
     } finally {
       setBusy(false)
     }
@@ -629,59 +589,15 @@ export function SiteForgeBriefEditor({
               Save draft
             </Button>
             <Button
-              disabled={busy}
-              onClick={() => void save('ready_for_review')}
+              disabled={busy || briefHasUnresolvedContradictions(contradictions)}
+              onClick={() => void save('current')}
             >
               <Check className="mr-2 h-4 w-4" />
-              Save for review
+              Save as current brief
             </Button>
           </div>
         </CardContent>
       </Card>
-
-      {current?.status === 'ready_for_review' ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>Shared approval decision</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <Textarea
-              value={decisionReason}
-              onChange={event => setDecisionReason(event.target.value)}
-              placeholder="Required rationale"
-            />
-            <div className="flex flex-wrap gap-2">
-              <Button
-                disabled={
-                  busy ||
-                  !decisionReason.trim() ||
-                  briefHasUnresolvedContradictions(
-                    current.unresolvedContradictions
-                  )
-                }
-                onClick={() => void decide('approved')}
-              >
-                Approve exact brief
-              </Button>
-              <Button
-                variant="outline"
-                disabled={busy || !decisionReason.trim()}
-                onClick={() => void decide('modified')}
-              >
-                Save fields as modification
-              </Button>
-              <Button
-                variant="destructive"
-                disabled={busy || !decisionReason.trim()}
-                onClick={() => void decide('denied')}
-              >
-                Deny
-              </Button>
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-            </div>
-          </CardContent>
-        </Card>
-      ) : null}
 
       {briefs.length ? (
         <Card>

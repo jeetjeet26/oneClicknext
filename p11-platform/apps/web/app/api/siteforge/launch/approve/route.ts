@@ -16,9 +16,9 @@ const requestSchema = z.object({
   rollbackContentHash: z.string().regex(/^[a-f0-9]{64}$/).nullish(),
   firstLaunchAcknowledged: z.boolean().optional(),
   rationale: z.string().trim().min(1).max(2_000),
-  legalRightsSnapshot: z.record(z.string(), z.unknown()).refine(
+  legalSnapshot: z.record(z.string(), z.unknown()).refine(
     value => value.confirmed === true,
-    'Legal and asset rights must be explicitly confirmed'
+    'Pinned legal content must be explicitly confirmed'
   ),
   expiresAt: z.string().datetime(),
 }).strict().refine(
@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
       ...parsed.data,
       rollbackArtifactId: parsed.data.rollbackArtifactId ?? null,
       rollbackContentHash: parsed.data.rollbackContentHash ?? null,
-      legalRightsSnapshot: parsed.data.legalRightsSnapshot as Json,
+      legalSnapshot: parsed.data.legalSnapshot as Json,
       approvedBy: auth.user.id,
       requestId: ctx.requestId,
     })

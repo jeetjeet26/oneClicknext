@@ -18,8 +18,11 @@ const requestSchema = z.object({
   propertyId: z.guid(),
   contentHash: z.string().regex(/^[a-f0-9]{64}$/),
   decisionStatus: z.enum(['approved', 'denied']),
-  decisionReason: z.string().trim().min(1).max(2_000),
-})
+  decisionReason: z.string().trim().max(2_000).optional(),
+}).refine(
+  value => value.decisionStatus === 'approved' || Boolean(value.decisionReason),
+  { path: ['decisionReason'], message: 'A rejection reason is required' }
+)
 
 export async function POST(
   request: NextRequest,
@@ -106,7 +109,10 @@ export async function POST(
       reviewerProfileId: user.id,
       contentHash: parsed.data.contentHash,
       decisionStatus: parsed.data.decisionStatus,
-      decisionReason: parsed.data.decisionReason,
+      decisionReason:
+        parsed.data.decisionStatus === 'approved'
+          ? 'siteforge.artifact:preview_selected_for_staging:v1'
+          : parsed.data.decisionReason!,
     })
     ctx.logSuccess(200, {
       artifactId,

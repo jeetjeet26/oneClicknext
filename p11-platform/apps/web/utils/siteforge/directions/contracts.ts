@@ -47,11 +47,11 @@ export const siteForgeCreativeDirectionSchema = z.object({
   tradeoffs: z.array(text).min(1),
   provenance: z.object({
     generator: z.literal('siteforge-deterministic-directions-v1'),
-    briefVersionId: z.string().uuid(),
+    briefVersionId: z.guid(),
     briefContentHash: z.string().regex(/^[a-f0-9]{64}$/),
-    onboardingSnapshotId: z.string().uuid(),
+    onboardingSnapshotId: z.guid(),
     onboardingSnapshotHash: z.string().regex(/^[a-f0-9]{64}$/),
-    brandAssetId: z.string().uuid(),
+    brandAssetId: z.guid(),
     brandContractHash: z.string().regex(/^[a-f0-9]{64}$/),
   }),
 })

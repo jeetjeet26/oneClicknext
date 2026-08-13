@@ -42,7 +42,6 @@ const requestBody = {
   expectedRevision: 2,
   contentHash: 'a'.repeat(64),
   decisionStatus: 'approved',
-  decisionReason: 'Approved after review.',
 }
 
 function profileQuery(role: string) {
@@ -131,6 +130,7 @@ describe('SiteForge plan decision route', () => {
         expectedRevision: 2,
         contentHash: 'a'.repeat(64),
         decisionStatus: 'approved',
+        decisionReason: 'siteforge.plan:confirmed_for_generation:v1',
       })
     )
   })

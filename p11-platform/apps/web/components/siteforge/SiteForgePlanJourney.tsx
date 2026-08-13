@@ -113,12 +113,13 @@ export function SiteForgePlanJourney({
           },
         ),
       )
-      setDirection('')
-      setMessage(
-        plan
-          ? `Plan revision ${body.revision} is ready for review.`
-          : 'The SiteForge plan is ready for review.',
+      const savedPlan = directorPlanFromResponse(
+        body as PersistedPlanRevision & {
+          planState?: PersistedPlanRevision['status']
+        },
       )
+      setDirection('')
+      await confirmAndGenerate(savedPlan)
       onChanged()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not save plan')
@@ -127,56 +128,44 @@ export function SiteForgePlanJourney({
     }
   }
 
-  async function approvePlan() {
-    if (!plan || !plan.readiness.ready) return
+  async function confirmAndGenerate(targetPlan = plan) {
+    if (!targetPlan || !targetPlan.readiness.ready) return
     setBusyAction('approve')
     setError('')
     setMessage('')
     try {
-      const response = await fetch(
-        `/api/siteforge/plans/${plan.planId}/decision`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            propertyId,
-            expectedRevision: plan.revision,
-            contentHash: plan.contentHash,
-            decisionStatus: 'approved',
-            decisionReason: 'Approved in the SiteForge Web Director.',
-          }),
-        },
-      )
-      const body = await response.json().catch(() => ({}))
-      if (!response.ok) throw new Error(body.error || 'Could not approve plan')
-      setPlan(current =>
-        current ? { ...current, status: 'confirmed' } : current
-      )
-      setMessage('Plan approved. Generation can now be started.')
-      onChanged()
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not approve plan')
-    } finally {
-      setBusyAction(null)
-    }
-  }
-
-  async function startGeneration() {
-    if (!plan || plan.status !== 'confirmed') return
-    setBusyAction('generate')
-    setError('')
-    setMessage('')
-    try {
-      const response = await fetch('/api/siteforge/generate', {
+      if (targetPlan.status !== 'confirmed') {
+        const response = await fetch(
+          `/api/siteforge/plans/${targetPlan.planId}/decision`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              propertyId,
+              expectedRevision: targetPlan.revision,
+              contentHash: targetPlan.contentHash,
+              decisionStatus: 'approved',
+            }),
+          },
+        )
+        const body = await response.json().catch(() => ({}))
+        if (!response.ok) throw new Error(body.error || 'Could not approve plan')
+        setPlan(current =>
+          current ? { ...current, status: 'confirmed' } : current
+        )
+      }
+      const generationResponse = await fetch('/api/siteforge/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(
-          buildGenerationRequest(websiteId, plan, crypto.randomUUID()),
+          buildGenerationRequest(websiteId, targetPlan, crypto.randomUUID()),
         ),
       })
-      const body = await response.json().catch(() => ({}))
-      if (!response.ok) {
-        throw new Error(body.error || 'Could not start website generation')
+      const generationBody = await generationResponse.json().catch(() => ({}))
+      if (!generationResponse.ok) {
+        throw new Error(
+          generationBody.error || 'Could not start website generation'
+        )
       }
       setPlan(current =>
         current ? { ...current, status: 'consumed' } : current
@@ -185,7 +174,9 @@ export function SiteForgePlanJourney({
       onChanged()
     } catch (cause) {
       setError(
-        cause instanceof Error ? cause.message : 'Could not start generation',
+        cause instanceof Error
+          ? cause.message
+          : 'Could not confirm the plan and start generation',
       )
     } finally {
       setBusyAction(null)
@@ -204,7 +195,7 @@ export function SiteForgePlanJourney({
 
       <Card>
         <CardHeader>
-          <CardTitle>Create, revise, and approve the website plan</CardTitle>
+          <CardTitle>Create or revise the website plan</CardTitle>
           <CardDescription>
             Web Director is the authoritative planning path. Every revision is
             bound to the approved readiness snapshot.
@@ -216,8 +207,7 @@ export function SiteForgePlanJourney({
               role="alert"
               className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950"
             >
-              Resolve the readiness items above, rebuild the snapshot, and have
-              a manager approve it before creating a plan.
+              Resolve the readiness items above and check readiness again.
             </div>
           ) : null}
 
@@ -281,25 +271,27 @@ export function SiteForgePlanJourney({
                 {busyAction === 'save' ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 ) : null}
-                {plan ? 'Save new revision' : 'Create plan'}
+                {plan ? 'Revise and start generation' : 'Create and start generation'}
               </Button>
             ) : null}
             {plan?.status === 'ready_for_review' ? (
               <Button
                 disabled={Boolean(busyAction) || !plan.readiness.ready}
-                onClick={() => void approvePlan()}
+                onClick={() => void confirmAndGenerate()}
               >
-                {busyAction === 'approve' ? 'Approving…' : 'Approve plan'}
+                {busyAction === 'approve'
+                  ? 'Confirming and starting…'
+                  : 'Confirm and start generation'}
               </Button>
             ) : null}
             {plan?.status === 'confirmed' ? (
               <Button
                 disabled={Boolean(busyAction)}
-                onClick={() => void startGeneration()}
+                onClick={() => void confirmAndGenerate()}
               >
-                {busyAction === 'generate'
+                {busyAction === 'approve'
                   ? 'Starting generation…'
-                  : 'Start generation'}
+                  : 'Retry generation'}
               </Button>
             ) : null}
           </div>

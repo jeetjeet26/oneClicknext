@@ -14,7 +14,7 @@ const decisionRequestSchema = z
     expectedRevision: z.number().int().positive(),
     contentHash: z.string().length(64),
     decisionStatus: z.enum(['approved', 'denied', 'modified']),
-    decisionReason: z.string().trim().min(1).max(2_000),
+    decisionReason: z.string().trim().max(2_000).optional(),
     modifiedPlan: z.unknown().optional(),
   })
   .superRefine((value, context) => {
@@ -23,6 +23,13 @@ const decisionRequestSchema = z
         code: z.ZodIssueCode.custom,
         path: ['modifiedPlan'],
         message: 'modifiedPlan is required for a modified decision',
+      })
+    }
+    if (value.decisionStatus !== 'approved' && !value.decisionReason) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['decisionReason'],
+        message: 'A denial or modification reason is required',
       })
     }
   })
@@ -72,7 +79,10 @@ export async function POST(
       contentHash: parsed.data.contentHash,
       reviewerProfileId: user.id,
       decisionStatus: parsed.data.decisionStatus,
-      decisionReason: parsed.data.decisionReason,
+      decisionReason:
+        parsed.data.decisionStatus === 'approved'
+          ? 'siteforge.plan:confirmed_for_generation:v1'
+          : parsed.data.decisionReason!,
       modifiedPlan: parsed.data.modifiedPlan,
     })
 

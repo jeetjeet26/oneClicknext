@@ -7,6 +7,7 @@ import { createRequestContext } from '@/utils/services/request-context'
 import {
   createSiteForgeBriefVersion,
   listSiteForgeBriefVersions,
+  saveCurrentSiteForgeBrief,
   SiteForgeBriefError,
 } from '@/utils/siteforge/briefs/repository'
 
@@ -14,6 +15,7 @@ const createBriefSchema = z.object({
   websiteId: z.string().uuid(),
   expectedVersion: z.number().int().nonnegative().nullable().optional(),
   status: z.enum(['draft', 'ready_for_review']).optional(),
+  saveAsCurrent: z.boolean().optional(),
   brief: z.unknown(),
   unresolvedContradictions: z.unknown().optional(),
 })
@@ -140,10 +142,18 @@ export async function POST(request: NextRequest) {
         { status: 403, headers: ctx.responseHeaders }
       )
     }
-    const brief = await createSiteForgeBriefVersion({
-      ...parsed.data,
-      userId: user.id,
-    })
+    const brief = parsed.data.saveAsCurrent
+      ? await saveCurrentSiteForgeBrief({
+          websiteId: parsed.data.websiteId,
+          expectedVersion: parsed.data.expectedVersion,
+          brief: parsed.data.brief,
+          unresolvedContradictions: parsed.data.unresolvedContradictions,
+          userId: user.id,
+        })
+      : await createSiteForgeBriefVersion({
+          ...parsed.data,
+          userId: user.id,
+        })
     ctx.logSuccess(201, {
       websiteId: brief.websiteId,
       propertyId: brief.propertyId,

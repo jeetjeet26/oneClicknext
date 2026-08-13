@@ -4,7 +4,7 @@ import { createClient } from '@/utils/supabase/server'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { createRequestContext } from '@/utils/services/request-context'
 import {
-  selectSiteForgeCreativeDirection,
+  confirmSiteForgeCreativeDirectionSelection,
   SiteForgeDirectionError,
 } from '@/utils/siteforge/directions/repository'
 
@@ -57,9 +57,10 @@ export async function POST(
         { status: 403, headers: ctx.responseHeaders }
       )
     }
-    const directionSet = await selectSiteForgeCreativeDirection({
+    const directionSet = await confirmSiteForgeCreativeDirectionSelection({
       directionSetId,
       ...parsed.data,
+      reviewerProfileId: user.id,
     })
     ctx.logSuccess(200, {
       directionSetId,

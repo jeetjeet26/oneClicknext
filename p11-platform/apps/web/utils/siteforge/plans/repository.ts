@@ -414,7 +414,7 @@ export async function loadApprovedSiteForgeGenerationContext(
   const { data: inventoryRows, error: inventoryError } = await supabase
     .from('property_units')
     .select(
-      'canonical_key, unit_type, bedrooms, bathrooms, sqft_min, sqft_max, rent_min, rent_max, available_count, move_in_specials, floor_plan_image_url, floor_plan_image_alt, availability_url, apply_url, source, source_identity, effective_at, expires_at, source_updated_at, imported_at'
+      'canonical_key, unit_type, bedrooms, bathrooms, sqft_min, sqft_max, rent_min, rent_max, available_count, move_in_specials, floor_plan_image_url, floor_plan_image_asset_id, floor_plan_image_alt, availability_url, apply_url, source, source_identity, effective_at, expires_at, source_updated_at, imported_at'
     )
     .eq('property_id', website.property_id)
     .eq('org_id', website.org_id)

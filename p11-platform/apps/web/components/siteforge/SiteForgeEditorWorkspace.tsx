@@ -4,14 +4,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
 import {
   ACFBlockRenderer,
@@ -180,8 +172,6 @@ export function SiteForgeEditorWorkspace({
   const [previewingWordPress, setPreviewingWordPress] = useState(false)
   const [previewStep, setPreviewStep] = useState<string | null>(null)
   const [deployingStaging, setDeployingStaging] = useState(false)
-  const [approvalDialogOpen, setApprovalDialogOpen] = useState(false)
-  const [approvalReason, setApprovalReason] = useState('')
   const [approvingArtifact, setApprovingArtifact] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [editJobFailure, setEditJobFailure] = useState<EditJobFailure | null>(
@@ -560,8 +550,7 @@ export function SiteForgeEditorWorkspace({
   async function approveArtifactForStaging() {
     const artifact = payload?.currentArtifact
     const propertyId = payload?.session.property_id
-    const reason = approvalReason.trim()
-    if (!artifact || !propertyId || !reason || approvingArtifact) return
+    if (!artifact || !propertyId || approvingArtifact) return
     setApprovingArtifact(true)
     setError(null)
     try {
@@ -574,15 +563,12 @@ export function SiteForgeEditorWorkspace({
             propertyId,
             contentHash: artifact.content_hash,
             decisionStatus: 'approved',
-            decisionReason: reason,
           }),
         }
       )
       const data = await response.json().catch(() => ({}))
       if (!response.ok)
         throw new Error(data.error || 'Failed to approve the WordPress preview')
-      setApprovalDialogOpen(false)
-      setApprovalReason('')
       await openSession()
     } catch (cause) {
       setError(
@@ -799,9 +785,9 @@ export function SiteForgeEditorWorkspace({
               <Button
                 size="sm"
                 disabled={approvingArtifact}
-                onClick={() => setApprovalDialogOpen(true)}
+                onClick={() => void approveArtifactForStaging()}
               >
-                Approve WordPress preview
+                Use this preview for staging
               </Button>
             ) : null}
             <Button
@@ -1470,54 +1456,6 @@ export function SiteForgeEditorWorkspace({
         </CardContent>
       </Card>
       </div>
-      <Dialog
-        open={approvalDialogOpen}
-        onOpenChange={open => {
-          if (!open && !approvingArtifact) setApprovalDialogOpen(false)
-        }}
-      >
-        <DialogContent
-          role="alertdialog"
-          aria-labelledby="siteforge-preview-approval-title"
-        >
-          <DialogHeader>
-            <DialogTitle id="siteforge-preview-approval-title">
-              Approve this exact WordPress preview?
-            </DialogTitle>
-            <DialogDescription>
-              Approval pins revision v
-              {payload.currentArtifact?.version || '—'} (
-              {payload.currentArtifact?.content_hash?.slice(0, 12) || 'unknown'}
-              …) for Cloudways staging deployment. Review the WordPress preview
-              before approving.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="px-6 pb-2">
-            <Textarea
-              value={approvalReason}
-              onChange={event => setApprovalReason(event.target.value)}
-              placeholder="Approval rationale (required)"
-              aria-label="Preview approval rationale"
-              rows={3}
-            />
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              disabled={approvingArtifact}
-              onClick={() => setApprovalDialogOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              disabled={approvingArtifact || !approvalReason.trim()}
-              onClick={() => void approveArtifactForStaging()}
-            >
-              {approvingArtifact ? 'Approving…' : 'Approve preview'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }

@@ -1819,7 +1819,7 @@ test.describe.serial('Aurora same-website runtime-v3 lifecycle', () => {
             rollbackContentHash: config.rollbackContentHash,
             rationale:
               'Independent launch manager approved the exact Aurora v3 release and immutable rollback baseline.',
-            legalRightsSnapshot: {
+            legalSnapshot: {
               confirmed: true,
               ownerId: config.ownerId,
               expiresAt: config.expiresAt,

@@ -23,8 +23,6 @@ type PropertyAsset = {
   mimeType?: string
   category: AssetCategory
   altText?: string
-  approvalStatus?: 'pending' | 'approved' | 'rejected'
-  rightsStatus?: 'unknown' | 'owned' | 'licensed' | 'generated' | 'restricted'
   createdAt?: string
 }
 
@@ -109,6 +107,7 @@ export function buildManualFloorPlanPreviewRows(
     availableCount: row.availableCount,
     specials: row.specials,
     imageUrl: row.imageUrl,
+    imageAssetId: row.imageAssetId,
     imageAlt: row.imageAlt,
     availabilityUrl: row.availabilityUrl,
     applyUrl: row.applyUrl,
@@ -146,12 +145,6 @@ export function PropertyAssetsStep({
     () => assets.filter((asset) => asset.category !== 'floorplan'),
     [assets]
   )
-  const approvedPhotoCount = useMemo(
-    () =>
-      photoAssets.filter((asset) => asset.approvalStatus === 'approved').length,
-    [photoAssets]
-  )
-
   const loadAssets = useCallback(async () => {
     const response = await fetch(
       `/api/siteforge/assets?propertyId=${encodeURIComponent(propertyId)}`
@@ -165,10 +158,7 @@ export function PropertyAssetsStep({
       : []
     setAssets(nextAssets)
     onPhotoCountChange?.(
-      nextAssets.filter(
-        (asset) =>
-          asset.category !== 'floorplan' && asset.approvalStatus === 'approved'
-      ).length
+      nextAssets.filter((asset) => asset.category !== 'floorplan').length
     )
   }, [onPhotoCountChange, propertyId])
 
@@ -227,43 +217,6 @@ export function PropertyAssetsStep({
     }
   }
 
-  async function approveAsset(asset: PropertyAsset) {
-    setAssetError('')
-    const response = await fetch('/api/siteforge/assets', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        propertyId,
-        updates: [
-          {
-            assetId: asset.id,
-            approvalStatus: 'approved',
-            curationStatus: 'approved',
-            rightsStatus: 'owned',
-            rightsMetadata: { operatorConfirmed: true },
-            altText: asset.altText || asset.filename,
-          },
-        ],
-      }),
-    })
-    if (!response.ok) {
-      setAssetError(await responseError(response, 'Could not approve image rights'))
-      return
-    }
-    const nextAssets = assets.map((item) =>
-      item.id === asset.id
-        ? { ...item, approvalStatus: 'approved' as const, rightsStatus: 'owned' as const }
-        : item
-    )
-    setAssets(nextAssets)
-    onPhotoCountChange?.(
-      nextAssets.filter(
-        (item) =>
-          item.category !== 'floorplan' && item.approvalStatus === 'approved'
-      ).length
-    )
-  }
-
   async function deleteAsset(asset: PropertyAsset) {
     setAssetError('')
     const response = await fetch('/api/siteforge/assets', {
@@ -278,10 +231,7 @@ export function PropertyAssetsStep({
     const nextAssets = assets.filter((item) => item.id !== asset.id)
     setAssets(nextAssets)
     onPhotoCountChange?.(
-      nextAssets.filter(
-        (item) =>
-          item.category !== 'floorplan' && item.approvalStatus === 'approved'
-      ).length
+      nextAssets.filter((item) => item.category !== 'floorplan').length
     )
   }
 
@@ -441,19 +391,12 @@ export function PropertyAssetsStep({
       </div>
 
       <div className="min-w-0 space-y-3">
-        <div className="flex flex-wrap items-start justify-between gap-2">
-          <div>
-            <h4 className="text-sm font-medium">Property photography</h4>
-            <p className="text-xs text-gray-500">
-              Optional. Add JPG, PNG, or WebP files only when you want SiteForge
-              to use real property photography.
-            </p>
-          </div>
-          {approvedPhotoCount > 0 ? (
-            <span className="text-xs text-emerald-700">
-              {approvedPhotoCount} approved
-            </span>
-          ) : null}
+        <div>
+          <h4 className="text-sm font-medium">Property photography</h4>
+          <p className="text-xs text-gray-500">
+            Optional. Add JPG, PNG, or WebP files only when you want SiteForge
+            to use real property photography.
+          </p>
         </div>
         <div className="grid min-w-0 gap-2 sm:grid-cols-[180px_minmax(0,1fr)]">
           <select
@@ -523,15 +466,6 @@ export function PropertyAssetsStep({
                       Remove
                     </button>
                   </div>
-                  {asset.approvalStatus !== 'approved' && (
-                    <button
-                      type="button"
-                      onClick={() => void approveAsset(asset)}
-                      className="text-left text-[11px] font-medium text-emerald-700 hover:underline"
-                    >
-                      Confirm ownership and approve
-                    </button>
-                  )}
                 </div>
               </div>
             ))}

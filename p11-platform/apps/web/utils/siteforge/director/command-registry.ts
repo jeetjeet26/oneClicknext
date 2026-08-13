@@ -246,7 +246,7 @@ export function buildSiteForgeDirectorCommands(
       },
       requiredInput: [
         'rationale',
-        'legalRightsSnapshot',
+        'legalSnapshot',
         'expiresAt',
         'firstLaunchAcknowledged',
       ],

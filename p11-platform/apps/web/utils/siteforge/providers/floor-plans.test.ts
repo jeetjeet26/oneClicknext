@@ -48,6 +48,26 @@ describe('provider-neutral floor-plan adapters', () => {
     )
   })
 
+  it('carries a trusted floor-plan image asset identity through preview', () => {
+    const preview = createFloorPlanPreview(new ManualFloorPlanAdapter(), [
+      {
+        name: 'A1',
+        bedrooms: 1,
+        imageUrl: 'https://cdn.example.com/a1.jpg',
+        imageAssetId: '11111111-1111-4111-8111-111111111111',
+        imageAlt: 'A1 floor plan',
+      },
+    ])
+
+    expect(preview.errors).toEqual([])
+    expect(preview.rows[0]).toEqual(
+      expect.objectContaining({
+        floor_plan_image_asset_id:
+          '11111111-1111-4111-8111-111111111111',
+      })
+    )
+  })
+
   it('reports explicit stale-data state', () => {
     const freshness = new ManualFloorPlanAdapter().freshness(
       '2026-07-01T00:00:00.000Z',
@@ -72,6 +92,7 @@ describe('provider-neutral floor-plan adapters', () => {
           available_count: 3,
           move_in_specials: null,
           floor_plan_image_url: 'https://cdn.example.com/birch.png',
+          floor_plan_image_asset_id: '11111111-1111-4111-8111-111111111111',
           floor_plan_image_alt: 'Birch two-bedroom floor plan',
           availability_url: 'https://property.example.com/availability',
           apply_url: 'https://property.example.com/apply',
@@ -93,6 +114,7 @@ describe('provider-neutral floor-plan adapters', () => {
           available_count: 1,
           move_in_specials: 'One month free',
           floor_plan_image_url: null,
+          floor_plan_image_asset_id: null,
           floor_plan_image_alt: null,
           availability_url: null,
           apply_url: null,
@@ -111,6 +133,7 @@ describe('provider-neutral floor-plan adapters', () => {
       expect.objectContaining({
         source: 'manual',
         sourceIdentity: 'approved-import:aspen',
+        imageAssetId: undefined,
         effectiveAt: '2026-07-31T11:00:00.000Z',
         sourceUpdatedAt: '2026-07-31T10:00:00.000Z',
       })
@@ -133,6 +156,7 @@ describe('provider-neutral floor-plan adapters', () => {
           available_count: 1,
           move_in_specials: 'One month free',
           floor_plan_image_url: null,
+          floor_plan_image_asset_id: null,
           floor_plan_image_alt: null,
           availability_url: null,
           apply_url: null,
@@ -159,6 +183,7 @@ describe('provider-neutral floor-plan adapters', () => {
           available_count: 1,
           move_in_specials: 'One month free',
           floor_plan_image_url: null,
+          floor_plan_image_asset_id: null,
           floor_plan_image_alt: null,
           availability_url: null,
           apply_url: null,

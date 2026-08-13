@@ -69,7 +69,6 @@ function request(): NextRequest {
         propertyId,
         contentHash: 'a'.repeat(64),
         decisionStatus: 'approved',
-        decisionReason: 'Reviewed the exact canonical preview.',
       }),
     }
   ) as NextRequest
@@ -116,6 +115,7 @@ describe('artifact deployment decision route', () => {
         artifactId,
         propertyId,
         decisionStatus: 'approved',
+        decisionReason: 'siteforge.artifact:preview_selected_for_staging:v1',
       })
     )
   })

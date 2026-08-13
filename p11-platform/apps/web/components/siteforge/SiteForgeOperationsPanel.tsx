@@ -116,7 +116,7 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
   const [rationale, setRationale] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
-  const [legalRightsConfirmed, setLegalRightsConfirmed] = useState(false)
+  const [legalConfirmed, setLegalConfirmed] = useState(false)
   const [promotionToken, setPromotionToken] = useState('')
   const [manualOperationId, setManualOperationId] = useState('')
   const [manualBackupId, setManualBackupId] = useState('')
@@ -290,7 +290,7 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
 
   async function submitLaunchApproval(firstLaunchAcknowledged: boolean) {
     const release = operations?.releases[0]
-    if (!release || !legalRightsConfirmed || rationale.trim().length < 10)
+    if (!release || !legalConfirmed || rationale.trim().length < 10)
       return
     const result = await postAction(
       'approve-launch',
@@ -304,7 +304,7 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
         rollbackContentHash: release.rollback_content_hash,
         ...(firstLaunchAcknowledged ? { firstLaunchAcknowledged: true } : {}),
         rationale: rationale.trim(),
-        legalRightsSnapshot: {
+        legalSnapshot: {
           confirmed: true,
           confirmedAt: new Date().toISOString(),
           source: 'siteforge-operator-console',
@@ -322,7 +322,7 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
 
   async function approveLaunch() {
     const release = operations?.releases[0]
-    if (!release || !legalRightsConfirmed || rationale.trim().length < 10)
+    if (!release || !legalConfirmed || rationale.trim().length < 10)
       return
     if (!release.rollback_artifact_id) {
       setPendingConfirmation('approve-first-launch')
@@ -700,13 +700,12 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
         <label className="flex items-start gap-2 text-sm">
           <input
             type="checkbox"
-            checked={legalRightsConfirmed}
-            onChange={(event) => setLegalRightsConfirmed(event.target.checked)}
+            checked={legalConfirmed}
+            onChange={(event) => setLegalConfirmed(event.target.checked)}
             className="mt-1"
           />
           <span>
-            I confirm the pinned legal text and every production asset’s
-            ownership or license for this exact release.
+            I confirm the pinned legal text for this exact release.
           </span>
         </label>
         {promotionToken ||
@@ -755,7 +754,7 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
             <Button
               size="sm"
               disabled={
-                !legalRightsConfirmed ||
+                !legalConfirmed ||
                 rationale.trim().length < 10 ||
                 Boolean(busy)
               }

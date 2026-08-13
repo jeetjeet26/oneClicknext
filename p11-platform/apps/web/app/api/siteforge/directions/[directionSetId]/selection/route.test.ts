@@ -23,7 +23,10 @@ vi.mock('@/utils/siteforge/directions/repository', async () => {
   const actual = await vi.importActual<
     typeof import('@/utils/siteforge/directions/repository')
   >('@/utils/siteforge/directions/repository')
-  return { ...actual, selectSiteForgeCreativeDirection: selectDirection }
+  return {
+    ...actual,
+    confirmSiteForgeCreativeDirectionSelection: selectDirection,
+  }
 })
 
 const SET_ID = '11111111-1111-4111-8111-111111111111'
@@ -62,6 +65,7 @@ describe('creative direction selection route', () => {
       selectedDirectionId: DIRECTION_ID,
       expectedContentHash: 'a'.repeat(64),
       selectionNotes: 'Best balance',
+      reviewerProfileId: 'user-1',
     })
   })
 })

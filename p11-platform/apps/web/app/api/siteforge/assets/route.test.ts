@@ -53,6 +53,7 @@ function assetRow(overrides: Record<string, unknown> = {}) {
     format: 'image/png',
     width: 1200,
     height: 800,
+    asset_type: 'image',
     asset_role: 'amenity',
     alt_text: 'Rooftop amenity terrace',
     approval_status: 'pending',
@@ -87,6 +88,18 @@ function uploadService(duplicate: Record<string, unknown> | null = null) {
   builder.maybeSingle = maybeSingle
   builder.insert = vi.fn(() => ({
     select: vi.fn(() => ({ single })),
+  }))
+  builder.update = vi.fn((payload: Record<string, unknown>) => ({
+    eq: vi.fn(() => ({
+      eq: vi.fn(() => ({
+        select: vi.fn(() => ({
+          single: vi.fn().mockResolvedValue({
+            data: assetRow(payload),
+            error: null,
+          }),
+        })),
+      })),
+    })),
   }))
   const remove = vi.fn().mockResolvedValue({ error: null })
   return {
@@ -147,7 +160,7 @@ describe('SiteForge asset route', () => {
     expect(uploadFileAssetMock).not.toHaveBeenCalled()
   })
 
-  it('saves analysis and starts uploads in needs-review state', async () => {
+  it('immediately trusts direct SiteForge photo uploads with audit metadata', async () => {
     const service = uploadService()
     createServiceClientMock.mockReturnValue(service.client)
     const { POST } = await import('./route')
@@ -164,9 +177,26 @@ describe('SiteForge asset route', () => {
       expect.objectContaining({
         property_id: propertyId,
         content_hash: 'a'.repeat(64),
-        curation_status: 'needs_review',
-        approval_status: 'pending',
-        rights_status: 'unknown',
+        curation_status: 'approved',
+        approval_status: 'approved',
+        rights_status: 'owned',
+        expires_at: null,
+        approved_by: 'user-1',
+        approved_at: expect.any(String),
+        rights_metadata: expect.objectContaining({
+          siteforgeTrustPolicy: {
+            name: 'siteforge-solo-operator-photo-trust',
+            version: '1',
+          },
+          siteforgeTrustEvents: [
+            expect.objectContaining({
+              approvedBy: 'user-1',
+              intake: 'direct_upload',
+              importSource: 'siteforge',
+              contentHash: 'a'.repeat(64),
+            }),
+          ],
+        }),
         quality_score: 0.8,
       })
     )
@@ -190,6 +220,30 @@ describe('SiteForge asset route', () => {
     })
     expect(uploadFileAssetMock).not.toHaveBeenCalled()
     expect(service.builder.insert).not.toHaveBeenCalled()
+    expect(service.builder.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rights_status: 'owned',
+        approval_status: 'approved',
+        curation_status: 'selected',
+        expires_at: null,
+      })
+    )
+  })
+
+  it('does not promote a duplicate BrandForge logo into a trusted photo', async () => {
+    const duplicate = assetRow({
+      asset_type: 'image',
+      asset_role: 'primary_logo',
+      source_identity: 'brandforge:logo',
+    })
+    const service = uploadService(duplicate)
+    createServiceClientMock.mockReturnValue(service.client)
+    const { POST } = await import('./route')
+    const response = await POST(uploadRequest())
+
+    expect(response.status).toBe(409)
+    expect(service.builder.update).not.toHaveBeenCalled()
+    expect(uploadFileAssetMock).not.toHaveBeenCalled()
   })
 
   it('requires manager authorization for batch curation', async () => {

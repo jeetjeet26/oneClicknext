@@ -4,7 +4,10 @@ import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { createRequestContext } from '@/utils/services/request-context'
-import { buildOnboardingSnapshot } from '@/utils/onboarding/repository'
+import {
+  approveOnboardingSnapshot,
+  buildOnboardingSnapshot,
+} from '@/utils/onboarding/repository'
 import { evaluateReadinessApproval } from '@/utils/onboarding/readiness-policy'
 
 const buildSchema = z.object({
@@ -66,11 +69,20 @@ export async function POST(request: NextRequest) {
   const access = await validatePropertyAccess(user.id, parsed.data.propertyId)
   if (!access.authorized || !access.orgId) return NextResponse.json({ error: 'Forbidden' }, { status: 403, headers: ctx.responseHeaders })
   try {
-    const snapshot = await buildOnboardingSnapshot({
+    const builtSnapshot = await buildOnboardingSnapshot({
       ...parsed.data,
       userId: user.id,
       orgId: access.orgId,
     })
+    const snapshot =
+      builtSnapshot.status === 'ready'
+        ? await approveOnboardingSnapshot({
+            orgId: access.orgId,
+            propertyId: parsed.data.propertyId,
+            snapshotId: builtSnapshot.id,
+            userId: user.id,
+          })
+        : builtSnapshot
     ctx.logSuccess(201, { snapshotId: snapshot.id, status: snapshot.status })
     return NextResponse.json(
       {

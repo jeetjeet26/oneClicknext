@@ -1,4 +1,4 @@
-// schema_migration_version: 20260813041647
+// schema_migration_version: 20260813173558
 export type Json =
   | string
   | number
@@ -6211,6 +6211,7 @@ export type Database = {
           effective_at: string | null
           expires_at: string | null
           external_id: string | null
+          floor_plan_image_asset_id: string | null
           floor_plan_image_alt: string | null
           floor_plan_image_url: string | null
           id: string
@@ -6246,6 +6247,7 @@ export type Database = {
           effective_at?: string | null
           expires_at?: string | null
           external_id?: string | null
+          floor_plan_image_asset_id?: string | null
           floor_plan_image_alt?: string | null
           floor_plan_image_url?: string | null
           id?: string
@@ -6281,6 +6283,7 @@ export type Database = {
           effective_at?: string | null
           expires_at?: string | null
           external_id?: string | null
+          floor_plan_image_asset_id?: string | null
           floor_plan_image_alt?: string | null
           floor_plan_image_url?: string | null
           id?: string
@@ -6303,6 +6306,13 @@ export type Database = {
           unit_type?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "property_units_floor_plan_image_asset_id_fkey"
+            columns: ["floor_plan_image_asset_id"]
+            isOneToOne: false
+            referencedRelation: "content_assets"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "property_units_import_id_fkey"
             columns: ["import_id"]
@@ -14578,6 +14588,7 @@ export type Database = {
           package_id: string
           property_id: string
           revision_number: number
+          shared_action_attempt_id: string | null
         }
         Insert: {
           approval_note?: string | null
@@ -14597,6 +14608,7 @@ export type Database = {
           package_id: string
           property_id: string
           revision_number: number
+          shared_action_attempt_id?: string | null
         }
         Update: {
           approval_note?: string | null
@@ -14616,8 +14628,16 @@ export type Database = {
           package_id?: string
           property_id?: string
           revision_number?: number
+          shared_action_attempt_id?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "social_content_revisions_shared_action_attempt_id_fkey"
+            columns: ["shared_action_attempt_id"]
+            isOneToOne: true
+            referencedRelation: "shared_action_attempts"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "social_content_revisions_approved_by_fkey"
             columns: ["approved_by"]
@@ -14784,6 +14804,7 @@ export type Database = {
           publication_id: string
           request_summary: Json
           response_summary: Json
+          shared_action_attempt_id: string | null
           started_at: string
           status: string
         }
@@ -14801,6 +14822,7 @@ export type Database = {
           publication_id: string
           request_summary?: Json
           response_summary?: Json
+          shared_action_attempt_id?: string | null
           started_at?: string
           status?: string
         }
@@ -14818,10 +14840,18 @@ export type Database = {
           publication_id?: string
           request_summary?: Json
           response_summary?: Json
+          shared_action_attempt_id?: string | null
           started_at?: string
           status?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "social_publication_attempts_shared_action_attempt_id_fkey"
+            columns: ["shared_action_attempt_id"]
+            isOneToOne: false
+            referencedRelation: "shared_action_attempts"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "social_publication_attempts_org_id_fkey"
             columns: ["org_id"]
@@ -14880,6 +14910,7 @@ export type Database = {
           revision_id: string
           scheduled_for: string
           shared_job_id: string | null
+          shared_action_attempt_id: string | null
           status: string
           timezone: string
           updated_at: string
@@ -14905,6 +14936,7 @@ export type Database = {
           revision_id: string
           scheduled_for: string
           shared_job_id?: string | null
+          shared_action_attempt_id?: string | null
           status?: string
           timezone?: string
           updated_at?: string
@@ -14930,12 +14962,20 @@ export type Database = {
           revision_id?: string
           scheduled_for?: string
           shared_job_id?: string | null
+          shared_action_attempt_id?: string | null
           status?: string
           timezone?: string
           updated_at?: string
           variant_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "social_publications_shared_action_attempt_id_fkey"
+            columns: ["shared_action_attempt_id"]
+            isOneToOne: true
+            referencedRelation: "shared_action_attempts"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "social_publications_connection_id_fkey"
             columns: ["connection_id"]
@@ -15971,6 +16011,42 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      confirm_siteforge_creative_direction: {
+        Args: {
+          p_actor_id: string
+          p_confirmed_content_hash: string
+          p_direction_set_id: string
+          p_expected_content_hash: string
+          p_property_id: string
+          p_reason: string
+          p_selected_direction_id: string
+          p_selection_notes: string
+        }
+        Returns: {
+          approval_action_attempt_id: string | null
+          approved_at: string | null
+          approved_by: string | null
+          brief_version_id: string
+          confirmed_approval_id: string | null
+          content_hash: string
+          created_at: string
+          created_by: string | null
+          id: string
+          org_id: string
+          property_id: string
+          selected_direction_id: string | null
+          selection_notes: string | null
+          status: string
+          version: number
+          website_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "siteforge_creative_direction_sets"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       consume_siteforge_public_review_rate_limit: {
         Args: {
           p_client_hash: string
@@ -16245,6 +16321,48 @@ export type Database = {
           to: "siteforge_visual_baselines"
           isOneToOne: true
           isSetofReturn: false
+        }
+      }
+      save_current_siteforge_brief: {
+        Args: {
+          p_actor_id: string
+          p_brand_asset_id: string
+          p_brand_contract_hash: string
+          p_brief: Json
+          p_content_hash: string
+          p_expected_version: number
+          p_onboarding_snapshot_hash: string
+          p_onboarding_snapshot_id: string
+          p_reason: string
+          p_website_id: string
+        }
+        Returns: {
+          approval_action_attempt_id: string | null
+          approved_at: string | null
+          approved_by: string | null
+          brand_asset_id: string | null
+          brand_contract_hash: string | null
+          brief: Json
+          confirmed_approval_id: string | null
+          content_hash: string
+          created_at: string
+          created_by: string | null
+          decision_reason: string | null
+          id: string
+          onboarding_snapshot_hash: string | null
+          onboarding_snapshot_id: string | null
+          org_id: string
+          property_id: string
+          status: string
+          unresolved_contradictions: Json
+          version: number
+          website_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "siteforge_brief_versions"
+          isOneToOne: false
+          isSetofReturn: true
         }
       }
       score_lead: { Args: { p_lead_id: string }; Returns: string }

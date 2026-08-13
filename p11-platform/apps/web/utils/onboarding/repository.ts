@@ -11,6 +11,8 @@ import {
 
 type ServiceClient = ReturnType<typeof createServiceClient>
 type DomainState = 'missing' | 'conflicted' | 'needs_review' | 'ready' | 'stale'
+export const READY_READINESS_APPROVAL_REASON =
+  'siteforge.readiness:auto_approved_complete_snapshot:v1'
 type DomainReport = {
   state: DomainState
   blocking: boolean
@@ -436,7 +438,7 @@ export async function approveOnboardingSnapshot(
     propertyId: string
     snapshotId: string
     userId: string
-    rationale: string
+    rationale?: string
     allowManagerOverride?: boolean
   },
   client: ServiceClient = createServiceClient(),
@@ -460,6 +462,12 @@ export async function approveOnboardingSnapshot(
     throw new Error('Manager override confirmation is required')
   }
   const managerOverride = eligibility.requiresManagerOverride
+  const decisionReason = managerOverride
+    ? input.rationale?.trim() || ''
+    : READY_READINESS_APPROVAL_REASON
+  if (managerOverride && decisionReason.length < 10) {
+    throw new Error('Manager override rationale must contain at least 10 characters')
+  }
   const overrideConflicts = eligibility.overrideableConflicts as unknown as Json
 
   const { data: job, error: jobError } = await client
@@ -507,7 +515,7 @@ export async function approveOnboardingSnapshot(
         managerOverride,
       },
       execution_result: { approved: true, managerOverride },
-      policy_reason: input.rationale,
+      policy_reason: decisionReason,
       decided_at: new Date().toISOString(),
       executed_at: new Date().toISOString(),
     })
@@ -520,13 +528,16 @@ export async function approveOnboardingSnapshot(
     org_id: input.orgId,
     property_id: input.propertyId,
     decision_status: 'approved',
-    decision_reason: input.rationale,
+    decision_reason: decisionReason,
     reviewer_profile_id: input.userId,
     decision_payload: {
       snapshotId: snapshot.id,
       contentHash: snapshot.content_hash,
       managerOverride,
       overrideConflicts,
+      reasonCode: managerOverride
+        ? 'siteforge.readiness:manager_warning_override:v1'
+        : READY_READINESS_APPROVAL_REASON,
     },
   })
   if (approvalError) throw new Error(`Failed to record onboarding approval: ${approvalError.message}`)

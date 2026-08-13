@@ -11,6 +11,10 @@ import {
   resolveAssetSourceCredential,
 } from './source-adapters'
 import type { AssetSourceProvider } from './contracts'
+import {
+  buildSiteForgePhotoTrustUpdate,
+  isSiteForgePhotoAsset,
+} from './trust-policy'
 
 type ServiceClient = ReturnType<typeof createServiceClient>
 const MAX_INGEST_BYTES = 20 * 1024 * 1024
@@ -129,7 +133,9 @@ export async function runAssetSourceIngestion(input: {
       const contentHash = analysis.metadata.contentHash
       const { data: duplicate, error: duplicateError } = await service
         .from('content_assets')
-        .select('id')
+        .select(
+          'id, asset_type, asset_role, curation_status, rights_metadata'
+        )
         .eq('property_id', source.property_id)
         .eq('content_hash', contentHash)
         .is('duplicate_of', null)
@@ -138,6 +144,32 @@ export async function runAssetSourceIngestion(input: {
         throw new Error('Failed to check imported asset identity')
       }
       if (duplicate) {
+        if (!isSiteForgePhotoAsset(duplicate)) {
+          rejectedCount += 1
+          continue
+        }
+        const trustedAt = new Date().toISOString()
+        const { error: trustError } = await service
+          .from('content_assets')
+          .update(
+            buildSiteForgePhotoTrustUpdate({
+              userId: input.userId,
+              trustedAt,
+              sourceIdentity: file.sourceIdentity,
+              contentHash,
+              intake: 'provider_import',
+              importSource: provider,
+              currentCurationStatus: duplicate.curation_status,
+              currentRightsMetadata: duplicate.rights_metadata,
+              sourceId: source.id,
+              providerFileId: file.providerFileId,
+            })
+          )
+          .eq('id', duplicate.id)
+          .eq('property_id', source.property_id)
+        if (trustError) {
+          throw new Error('Failed to trust an existing imported photo')
+        }
         duplicateCount += 1
         duplicates.push({
           assetId: duplicate.id,
@@ -167,6 +199,17 @@ export async function runAssetSourceIngestion(input: {
         STORAGE_BUCKETS.PROPERTY_ASSETS,
         storagePath
       )
+      const trustedAt = new Date().toISOString()
+      const trust = buildSiteForgePhotoTrustUpdate({
+        userId: input.userId,
+        trustedAt,
+        sourceIdentity: file.sourceIdentity,
+        contentHash,
+        intake: 'provider_import',
+        importSource: provider,
+        sourceId: source.id,
+        providerFileId: file.providerFileId,
+      })
       const { data: created, error: createError } = await service
         .from('content_assets')
         .insert({
@@ -195,10 +238,7 @@ export async function runAssetSourceIngestion(input: {
             observedElements: analysis.observedElements,
             qualityNotes: analysis.qualityNotes,
           },
-          rights_status: 'unknown',
-          rights_metadata: {},
-          approval_status: 'pending',
-          curation_status: 'needs_review',
+          ...trust,
           alt_text: analysis.altText,
           focal_point: analysis.focalPoint,
           crop_suggestion: analysis.cropSuggestion,
@@ -216,13 +256,40 @@ export async function runAssetSourceIngestion(input: {
         if (createError?.code === '23505') {
           const { data: winner, error: winnerError } = await service
             .from('content_assets')
-            .select('id')
+            .select(
+              'id, asset_type, asset_role, curation_status, rights_metadata'
+            )
             .eq('property_id', source.property_id)
             .eq('content_hash', contentHash)
             .is('duplicate_of', null)
             .maybeSingle()
           if (winnerError || !winner) {
             throw new Error('Failed to reconcile concurrent imported asset')
+          }
+          if (!isSiteForgePhotoAsset(winner)) {
+            rejectedCount += 1
+            continue
+          }
+          const { error: trustWinnerError } = await service
+            .from('content_assets')
+            .update(
+              buildSiteForgePhotoTrustUpdate({
+                userId: input.userId,
+                trustedAt,
+                sourceIdentity: file.sourceIdentity,
+                contentHash,
+                intake: 'provider_import',
+                importSource: provider,
+                currentCurationStatus: winner.curation_status,
+                currentRightsMetadata: winner.rights_metadata,
+                sourceId: source.id,
+                providerFileId: file.providerFileId,
+              })
+            )
+            .eq('id', winner.id)
+            .eq('property_id', source.property_id)
+          if (trustWinnerError) {
+            throw new Error('Failed to trust the concurrent imported photo')
           }
           duplicateCount += 1
           duplicates.push({

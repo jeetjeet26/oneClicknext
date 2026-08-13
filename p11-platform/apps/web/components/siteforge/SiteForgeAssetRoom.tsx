@@ -23,13 +23,6 @@ type CurationStatus =
   | 'generated'
   | 'in_use'
 
-type RightsStatus =
-  | 'unknown'
-  | 'owned'
-  | 'licensed'
-  | 'generated'
-  | 'restricted'
-
 type RoomAsset = {
   id: string
   url: string
@@ -38,9 +31,6 @@ type RoomAsset = {
   category: AssetRole | null
   altText?: string | null
   curationStatus: CurationStatus
-  approvalStatus: 'pending' | 'approved' | 'rejected'
-  rightsStatus: RightsStatus
-  expiresAt?: string | null
   sourceIdentity?: string | null
   contentHash?: string | null
   duplicateOf?: string | null
@@ -87,10 +77,6 @@ type AssetSource = {
 type AssetUpdate = {
   assetId: string
   curationStatus?: CurationStatus
-  approvalStatus?: 'pending' | 'approved' | 'rejected'
-  rightsStatus?: RightsStatus
-  rightsMetadata?: Record<string, unknown>
-  expiresAt?: string | null
   altText?: string | null
   focalPoint?: { x: number; y: number } | null
   assetRole?: AssetRole
@@ -137,7 +123,6 @@ export function SiteForgeAssetRoom({
   const [selected, setSelected] = useState<Set<string>>(() => new Set())
   const [filter, setFilter] = useState<'all' | CurationStatus>('all')
   const [uploadRole, setUploadRole] = useState<AssetRole>('hero')
-  const [bulkRights, setBulkRights] = useState<RightsStatus>('owned')
   const [rejectionReason, setRejectionReason] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -252,7 +237,7 @@ export function SiteForgeAssetRoom({
         else uploaded += 1
       }
       setNotice(
-        `${uploaded} image${uploaded === 1 ? '' : 's'} added for review${
+        `${uploaded} image${uploaded === 1 ? '' : 's'} added${
           duplicates ? `; ${duplicates} duplicate${duplicates === 1 ? '' : 's'} reused` : ''
         }.`
       )
@@ -381,9 +366,8 @@ export function SiteForgeAssetRoom({
         <div>
           <h3 className="text-sm font-semibold">SiteForge asset room</h3>
           <p className="mt-1 max-w-3xl text-xs text-gray-500">
-            Ingest, inspect, clear rights, rank, and select the photography that
-            SiteForge may use. An image is usable only after rights clearance
-            and approval.
+            Ingest, inspect, rank, and deliberately select the photography that
+            SiteForge should use in production.
           </p>
         </div>
         <span
@@ -575,37 +559,6 @@ export function SiteForgeAssetRoom({
             </option>
           ))}
         </select>
-        <select
-          value={bulkRights}
-          onChange={(event) =>
-            setBulkRights(event.target.value as RightsStatus)
-          }
-          className="h-9 rounded-md border bg-background px-2 text-xs"
-          aria-label="Rights status for approval"
-        >
-          <option value="owned">Owned</option>
-          <option value="licensed">Licensed</option>
-          <option value="generated">Generated</option>
-        </select>
-        <Button
-          type="button"
-          size="sm"
-          disabled={busy || selectedIds.length === 0}
-          onClick={() =>
-            void patchAssets(
-              selectedIds.map((assetId) => ({
-                assetId,
-                rightsStatus: bulkRights,
-                rightsMetadata: { operatorConfirmed: true },
-                approvalStatus: 'approved',
-                curationStatus: 'approved',
-              })),
-              'Selected assets approved with rights clearance.'
-            )
-          }
-        >
-          Approve batch
-        </Button>
         <Button
           type="button"
           size="sm"
@@ -693,7 +646,7 @@ export function SiteForgeAssetRoom({
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {visibleAssets.map((asset) => (
             <AssetCard
-              key={`${asset.id}:${asset.curationStatus}:${asset.rightsStatus}:${asset.altText || ''}:${asset.heroRank || ''}:${asset.analyzedAt || ''}`}
+              key={`${asset.id}:${asset.curationStatus}:${asset.altText || ''}:${asset.heroRank || ''}:${asset.analyzedAt || ''}`}
               asset={asset}
               checked={selected.has(asset.id)}
               disabled={busy}
@@ -741,10 +694,6 @@ function AssetCard({
 }) {
   const [altText, setAltText] = useState(asset.altText || '')
   const [role, setRole] = useState<AssetRole>(asset.category || 'gallery')
-  const [rights, setRights] = useState<RightsStatus>(asset.rightsStatus)
-  const [expiresAt, setExpiresAt] = useState(
-    asset.expiresAt?.slice(0, 10) || ''
-  )
   const [focalX, setFocalX] = useState(
     asset.focalPoint?.x?.toString() || '0.5'
   )
@@ -821,31 +770,6 @@ function AssetCard({
             </select>
           </label>
           <label className="space-y-1">
-            <span className="text-gray-500">Rights</span>
-            <select
-              value={rights}
-              onChange={(event) =>
-                setRights(event.target.value as RightsStatus)
-              }
-              className="h-9 w-full rounded-md border bg-background px-2"
-            >
-              <option value="unknown">Unknown</option>
-              <option value="owned">Owned</option>
-              <option value="licensed">Licensed</option>
-              <option value="generated">Generated</option>
-              <option value="restricted">Restricted</option>
-            </select>
-          </label>
-          <label className="space-y-1">
-            <span className="text-gray-500">Rights expiry</span>
-            <input
-              type="date"
-              value={expiresAt}
-              onChange={(event) => setExpiresAt(event.target.value)}
-              className="h-9 w-full rounded-md border bg-background px-2"
-            />
-          </label>
-          <label className="space-y-1">
             <span className="text-gray-500">Hero rank</span>
             <input
               type="number"
@@ -890,10 +814,6 @@ function AssetCard({
               onSave({
                 altText: altText.trim() || null,
                 assetRole: role,
-                rightsStatus: rights,
-                expiresAt: expiresAt
-                  ? new Date(`${expiresAt}T23:59:59.999Z`).toISOString()
-                  : null,
                 focalPoint: {
                   x: Number(focalX),
                   y: Number(focalY),

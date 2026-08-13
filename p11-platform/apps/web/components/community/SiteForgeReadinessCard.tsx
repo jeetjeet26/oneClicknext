@@ -124,9 +124,8 @@ export function SiteForgeReadinessCard({
     if (!snapshot) return
     const requiresManagerOverride =
       snapshot.approvalEligibility?.requiresManagerOverride === true
-    const rationale = requiresManagerOverride
-      ? overrideRationale.trim()
-      : 'Approved from Community Setup readiness review'
+    if (!requiresManagerOverride) return
+    const rationale = overrideRationale.trim()
     if (requiresManagerOverride && rationale.length < 10) {
       setError('Enter a manager override rationale of at least 10 characters')
       return
@@ -208,8 +207,8 @@ export function SiteForgeReadinessCard({
         </div>
         <p className="text-xs text-slate-500">
           These selections are validated against configured integrations and
-          frozen into the approved readiness snapshot. Changing them and
-          checking readiness creates a new snapshot for approval.
+          frozen into the snapshot. A fully ready check is approved immediately;
+          warnings still require an explicit manager override.
         </p>
       </fieldset>
 
@@ -276,7 +275,7 @@ export function SiteForgeReadinessCard({
               />
             </label>
           )}
-          {snapshot.approvalEligibility?.canApprove && (
+          {snapshot.approvalEligibility?.requiresManagerOverride && (
             <button
               type="button"
               disabled={
@@ -287,9 +286,7 @@ export function SiteForgeReadinessCard({
               onClick={() => void approve()}
               className="w-full rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
             >
-              {snapshot.approvalEligibility.requiresManagerOverride
-                ? 'Approve with manager override'
-                : 'Approve and freeze readiness snapshot'}
+              Approve with manager override
             </button>
           )}
         </>
