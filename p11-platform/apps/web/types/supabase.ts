@@ -1,4 +1,4 @@
-// schema_migration_version: 20260813173558
+// schema_migration_version: 20260813195342
 export type Json =
   | string
   | number
@@ -6211,8 +6211,8 @@ export type Database = {
           effective_at: string | null
           expires_at: string | null
           external_id: string | null
-          floor_plan_image_asset_id: string | null
           floor_plan_image_alt: string | null
+          floor_plan_image_asset_id: string | null
           floor_plan_image_url: string | null
           id: string
           import_id: string | null
@@ -6247,8 +6247,8 @@ export type Database = {
           effective_at?: string | null
           expires_at?: string | null
           external_id?: string | null
-          floor_plan_image_asset_id?: string | null
           floor_plan_image_alt?: string | null
+          floor_plan_image_asset_id?: string | null
           floor_plan_image_url?: string | null
           id?: string
           import_id?: string | null
@@ -6283,8 +6283,8 @@ export type Database = {
           effective_at?: string | null
           expires_at?: string | null
           external_id?: string | null
-          floor_plan_image_asset_id?: string | null
           floor_plan_image_alt?: string | null
+          floor_plan_image_asset_id?: string | null
           floor_plan_image_url?: string | null
           id?: string
           import_id?: string | null
@@ -12276,6 +12276,7 @@ export type Database = {
           property_id: string
           status: string
           updated_at: string
+          website_id: string | null
         }
         Insert: {
           approval_action_attempt_id?: string | null
@@ -12293,6 +12294,7 @@ export type Database = {
           property_id: string
           status?: string
           updated_at?: string
+          website_id?: string | null
         }
         Update: {
           approval_action_attempt_id?: string | null
@@ -12310,6 +12312,7 @@ export type Database = {
           property_id?: string
           status?: string
           updated_at?: string
+          website_id?: string | null
         }
         Relationships: [
           {
@@ -12374,6 +12377,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "vw_property_marketing_setup"
             referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "siteforge_plans_website_tenant_fkey"
+            columns: ["website_id", "org_id", "property_id"]
+            isOneToOne: false
+            referencedRelation: "property_websites"
+            referencedColumns: ["id", "org_id", "property_id"]
           },
         ]
       }
@@ -14219,6 +14229,94 @@ export type Database = {
           },
         ]
       }
+      social_attribution_events: {
+        Row: {
+          action_attempt_id: string | null
+          anonymous_subject_hash: string
+          attribution_window_days: number
+          created_at: string
+          event_fingerprint: string
+          event_type: string
+          id: string
+          metadata: Json
+          occurred_at: string
+          org_id: string
+          property_id: string
+          publication_id: string
+        }
+        Insert: {
+          action_attempt_id?: string | null
+          anonymous_subject_hash: string
+          attribution_window_days?: number
+          created_at?: string
+          event_fingerprint: string
+          event_type: string
+          id?: string
+          metadata?: Json
+          occurred_at: string
+          org_id: string
+          property_id: string
+          publication_id: string
+        }
+        Update: {
+          action_attempt_id?: string | null
+          anonymous_subject_hash?: string
+          attribution_window_days?: number
+          created_at?: string
+          event_fingerprint?: string
+          event_type?: string
+          id?: string
+          metadata?: Json
+          occurred_at?: string
+          org_id?: string
+          property_id?: string
+          publication_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "social_attribution_events_action_attempt_id_fkey"
+            columns: ["action_attempt_id"]
+            isOneToOne: false
+            referencedRelation: "shared_action_attempts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "social_attribution_events_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "social_attribution_events_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "social_attribution_events_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "social_attribution_events_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "social_attribution_events_publication_id_fkey"
+            columns: ["publication_id"]
+            isOneToOne: false
+            referencedRelation: "social_publications"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       social_auth_configs: {
         Row: {
           additional_config: Json | null
@@ -14393,6 +14491,7 @@ export type Database = {
           constraints: Json
           created_at: string
           created_by: string | null
+          format_plan: Json
           id: string
           objective: string
           org_id: string
@@ -14412,6 +14511,7 @@ export type Database = {
           constraints?: Json
           created_at?: string
           created_by?: string | null
+          format_plan?: Json
           id?: string
           objective: string
           org_id: string
@@ -14431,6 +14531,7 @@ export type Database = {
           constraints?: Json
           created_at?: string
           created_by?: string | null
+          format_plan?: Json
           id?: string
           objective?: string
           org_id?: string
@@ -14632,13 +14733,6 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "social_content_revisions_shared_action_attempt_id_fkey"
-            columns: ["shared_action_attempt_id"]
-            isOneToOne: true
-            referencedRelation: "shared_action_attempts"
-            referencedColumns: ["id"]
-          },
-          {
             foreignKeyName: "social_content_revisions_approved_by_fkey"
             columns: ["approved_by"]
             isOneToOne: false
@@ -14694,6 +14788,13 @@ export type Database = {
             referencedRelation: "vw_property_marketing_setup"
             referencedColumns: ["property_id"]
           },
+          {
+            foreignKeyName: "social_content_revisions_shared_action_attempt_id_fkey"
+            columns: ["shared_action_attempt_id"]
+            isOneToOne: false
+            referencedRelation: "shared_action_attempts"
+            referencedColumns: ["id"]
+          },
         ]
       }
       social_content_variants: {
@@ -14709,11 +14810,18 @@ export type Database = {
           link_url: string | null
           media_urls: string[]
           org_id: string
+          overlay_text: string[]
           platform: string
           platform_options: Json
           property_id: string
           revision_id: string
+          safe_area: Json
+          sequence_index: number
+          storyboard: Json
+          subtitle_text: string | null
+          thumbnail_asset_id: string | null
           validation: Json
+          variant_key: string
         }
         Insert: {
           alt_text?: string | null
@@ -14727,11 +14835,18 @@ export type Database = {
           link_url?: string | null
           media_urls?: string[]
           org_id: string
+          overlay_text?: string[]
           platform: string
           platform_options?: Json
           property_id: string
           revision_id: string
+          safe_area?: Json
+          sequence_index?: number
+          storyboard?: Json
+          subtitle_text?: string | null
+          thumbnail_asset_id?: string | null
           validation?: Json
+          variant_key: string
         }
         Update: {
           alt_text?: string | null
@@ -14745,11 +14860,18 @@ export type Database = {
           link_url?: string | null
           media_urls?: string[]
           org_id?: string
+          overlay_text?: string[]
           platform?: string
           platform_options?: Json
           property_id?: string
           revision_id?: string
+          safe_area?: Json
+          sequence_index?: number
+          storyboard?: Json
+          subtitle_text?: string | null
+          thumbnail_asset_id?: string | null
           validation?: Json
+          variant_key?: string
         }
         Relationships: [
           {
@@ -14785,6 +14907,13 @@ export type Database = {
             columns: ["revision_id"]
             isOneToOne: false
             referencedRelation: "social_content_revisions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "social_content_variants_thumbnail_asset_id_fkey"
+            columns: ["thumbnail_asset_id"]
+            isOneToOne: false
+            referencedRelation: "content_assets"
             referencedColumns: ["id"]
           },
         ]
@@ -14846,13 +14975,6 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "social_publication_attempts_shared_action_attempt_id_fkey"
-            columns: ["shared_action_attempt_id"]
-            isOneToOne: false
-            referencedRelation: "shared_action_attempts"
-            referencedColumns: ["id"]
-          },
-          {
             foreignKeyName: "social_publication_attempts_org_id_fkey"
             columns: ["org_id"]
             isOneToOne: false
@@ -14887,6 +15009,112 @@ export type Database = {
             referencedRelation: "social_publications"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "social_publication_attempts_shared_action_attempt_id_fkey"
+            columns: ["shared_action_attempt_id"]
+            isOneToOne: false
+            referencedRelation: "shared_action_attempts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      social_publication_metrics: {
+        Row: {
+          clicks: number
+          comments: number
+          created_at: string
+          id: string
+          impressions: number
+          metric_date: string
+          observed_at: string
+          org_id: string
+          property_id: string
+          provider_payload: Json
+          publication_id: string
+          reach: number
+          reactions: number
+          saves: number
+          shares: number
+          updated_at: string
+          video_completions: number
+          video_views: number
+        }
+        Insert: {
+          clicks?: number
+          comments?: number
+          created_at?: string
+          id?: string
+          impressions?: number
+          metric_date: string
+          observed_at?: string
+          org_id: string
+          property_id: string
+          provider_payload?: Json
+          publication_id: string
+          reach?: number
+          reactions?: number
+          saves?: number
+          shares?: number
+          updated_at?: string
+          video_completions?: number
+          video_views?: number
+        }
+        Update: {
+          clicks?: number
+          comments?: number
+          created_at?: string
+          id?: string
+          impressions?: number
+          metric_date?: string
+          observed_at?: string
+          org_id?: string
+          property_id?: string
+          provider_payload?: Json
+          publication_id?: string
+          reach?: number
+          reactions?: number
+          saves?: number
+          shares?: number
+          updated_at?: string
+          video_completions?: number
+          video_views?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "social_publication_metrics_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "social_publication_metrics_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "social_publication_metrics_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "social_publication_metrics_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "social_publication_metrics_publication_id_fkey"
+            columns: ["publication_id"]
+            isOneToOne: false
+            referencedRelation: "social_publications"
+            referencedColumns: ["id"]
+          },
         ]
       }
       social_publications: {
@@ -14897,6 +15125,8 @@ export type Database = {
           created_at: string
           created_by: string | null
           error_classification: string | null
+          experiment_group: string | null
+          experiment_key: string | null
           id: string
           last_error: string | null
           max_attempts: number
@@ -14909,10 +15139,11 @@ export type Database = {
           remote_post_url: string | null
           revision_id: string
           scheduled_for: string
-          shared_job_id: string | null
           shared_action_attempt_id: string | null
+          shared_job_id: string | null
           status: string
           timezone: string
+          tracking_token: string
           updated_at: string
           variant_id: string
         }
@@ -14923,6 +15154,8 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           error_classification?: string | null
+          experiment_group?: string | null
+          experiment_key?: string | null
           id?: string
           last_error?: string | null
           max_attempts?: number
@@ -14935,10 +15168,11 @@ export type Database = {
           remote_post_url?: string | null
           revision_id: string
           scheduled_for: string
-          shared_job_id?: string | null
           shared_action_attempt_id?: string | null
+          shared_job_id?: string | null
           status?: string
           timezone?: string
+          tracking_token?: string
           updated_at?: string
           variant_id: string
         }
@@ -14949,6 +15183,8 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           error_classification?: string | null
+          experiment_group?: string | null
+          experiment_key?: string | null
           id?: string
           last_error?: string | null
           max_attempts?: number
@@ -14961,21 +15197,15 @@ export type Database = {
           remote_post_url?: string | null
           revision_id?: string
           scheduled_for?: string
-          shared_job_id?: string | null
           shared_action_attempt_id?: string | null
+          shared_job_id?: string | null
           status?: string
           timezone?: string
+          tracking_token?: string
           updated_at?: string
           variant_id?: string
         }
         Relationships: [
-          {
-            foreignKeyName: "social_publications_shared_action_attempt_id_fkey"
-            columns: ["shared_action_attempt_id"]
-            isOneToOne: true
-            referencedRelation: "shared_action_attempts"
-            referencedColumns: ["id"]
-          },
           {
             foreignKeyName: "social_publications_connection_id_fkey"
             columns: ["connection_id"]
@@ -15030,6 +15260,13 @@ export type Database = {
             columns: ["revision_id"]
             isOneToOne: false
             referencedRelation: "social_content_revisions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "social_publications_shared_action_attempt_id_fkey"
+            columns: ["shared_action_attempt_id"]
+            isOneToOne: false
+            referencedRelation: "shared_action_attempts"
             referencedColumns: ["id"]
           },
           {

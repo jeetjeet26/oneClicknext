@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   createGenerationRequestSchema,
+  siteForgeGenerationEvidenceSnapshotSchema,
   siteForgePlanSchema,
 } from './contracts'
 import {
@@ -106,6 +107,14 @@ describe('SiteForge contracts', () => {
         propertyId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
       }).propertyId
     ).toBe('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
+  })
+
+  it('accepts PostgreSQL GUID identities in generation evidence', () => {
+    expect(
+      siteForgeGenerationEvidenceSnapshotSchema.shape.brand.shape.assetId.parse(
+        'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+      )
+    ).toBe('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb')
   })
 
   it('rejects generation without an approved plan identity', () => {

@@ -8,7 +8,7 @@ const {
   messageCreateMock,
   brandAnalyzeMock,
   createPlanRevisionMock,
-  getLatestPropertyPlanRevisionMock,
+  getLatestWebsitePlanRevisionMock,
 } = vi.hoisted(() => ({
   authGetUserMock: vi.fn(),
   createClientMock: vi.fn(),
@@ -16,7 +16,7 @@ const {
   messageCreateMock: vi.fn(),
   brandAnalyzeMock: vi.fn(),
   createPlanRevisionMock: vi.fn(),
-  getLatestPropertyPlanRevisionMock: vi.fn(),
+  getLatestWebsitePlanRevisionMock: vi.fn(),
 }))
 
 vi.mock('@/utils/supabase/server', () => ({
@@ -38,7 +38,7 @@ vi.mock('@/utils/siteforge/plans/repository', () => ({
     statusCode = 500
   },
   createPlanRevision: createPlanRevisionMock,
-  getLatestPropertyPlanRevision: getLatestPropertyPlanRevisionMock,
+  getLatestWebsitePlanRevision: getLatestWebsitePlanRevisionMock,
 }))
 
 vi.mock('@anthropic-ai/sdk', () => {
@@ -57,6 +57,8 @@ function makeNextRequest(url: string, init?: RequestInit): NextRequest {
 
 describe('siteforge plan route auth', () => {
   const propertyId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+  const websiteId = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+  const orgId = 'cccccccc-cccc-cccc-cccc-cccccccccccc'
 
   beforeEach(() => {
     vi.clearAllMocks()
@@ -82,7 +84,7 @@ describe('siteforge plan route auth', () => {
         recommendations: [],
       },
     })
-    getLatestPropertyPlanRevisionMock.mockResolvedValue(null)
+    getLatestWebsitePlanRevisionMock.mockResolvedValue(null)
   })
 
   it('GET loads the tenant-authorized current plan for Web Director', async () => {
@@ -90,8 +92,8 @@ describe('siteforge plan route auth', () => {
       data: { user: { id: 'user-1' } },
       error: null,
     })
-    validatePropertyAccessMock.mockResolvedValue({ authorized: true })
-    getLatestPropertyPlanRevisionMock.mockResolvedValue({
+    validatePropertyAccessMock.mockResolvedValue({ authorized: true, orgId })
+    getLatestWebsitePlanRevisionMock.mockResolvedValue({
       planId: '22222222-2222-4222-8222-222222222222',
       revision: 2,
       status: 'ready_for_review',
@@ -100,7 +102,7 @@ describe('siteforge plan route auth', () => {
     const { GET } = await import('./route')
     const response = await GET(
       makeNextRequest(
-        `http://localhost/api/siteforge/plan?propertyId=${propertyId}`,
+        `http://localhost/api/siteforge/plan?propertyId=${propertyId}&websiteId=${websiteId}`,
       ),
     )
 
@@ -109,7 +111,11 @@ describe('siteforge plan route auth', () => {
       plan: expect.objectContaining({ revision: 2 }),
     })
     expect(validatePropertyAccessMock).toHaveBeenCalledWith('user-1', propertyId)
-    expect(getLatestPropertyPlanRevisionMock).toHaveBeenCalledWith(propertyId)
+    expect(getLatestWebsitePlanRevisionMock).toHaveBeenCalledWith({
+      websiteId,
+      propertyId,
+      orgId,
+    })
   })
 
   it('POST returns 401 when unauthenticated', async () => {
@@ -119,7 +125,7 @@ describe('siteforge plan route auth', () => {
     const response = await POST(
       makeNextRequest('http://localhost/api/siteforge/plan', {
         method: 'POST',
-        body: JSON.stringify({ propertyId }),
+        body: JSON.stringify({ websiteId, propertyId }),
       }),
     )
 
@@ -135,7 +141,7 @@ describe('siteforge plan route auth', () => {
     const response = await POST(
       makeNextRequest('http://localhost/api/siteforge/plan', {
         method: 'POST',
-        body: JSON.stringify({ propertyId }),
+        body: JSON.stringify({ websiteId, propertyId }),
       }),
     )
 
@@ -145,7 +151,7 @@ describe('siteforge plan route auth', () => {
 
   it('POST makes review explicit instead of inferring approval from magic phrases', async () => {
     authGetUserMock.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
-    validatePropertyAccessMock.mockResolvedValue({ authorized: true })
+    validatePropertyAccessMock.mockResolvedValue({ authorized: true, orgId })
     messageCreateMock.mockResolvedValue({
       content: [{ type: 'text', text: 'Current recommendation: lead with the neighborhood.' }],
       usage: { output_tokens: 20 },
@@ -157,6 +163,7 @@ describe('siteforge plan route auth', () => {
       makeNextRequest('http://localhost/api/siteforge/plan', {
         method: 'POST',
         body: JSON.stringify({
+          websiteId,
           propertyId,
           conversationHistory: [],
           userMessage: 'build it',
@@ -172,6 +179,9 @@ describe('siteforge plan route auth', () => {
         contentHash: 'a'.repeat(64),
         suggestedActions: ['Review plan', 'Refine with AI'],
       })
+    )
+    expect(createPlanRevisionMock).toHaveBeenCalledWith(
+      expect.objectContaining({ websiteId, propertyId })
     )
   })
 })

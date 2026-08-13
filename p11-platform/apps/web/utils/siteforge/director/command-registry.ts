@@ -84,6 +84,7 @@ export function buildSiteForgeDirectorCommands(
       },
       requiredInput: ['decisionStatus', 'decisionReason'],
       payload: {
+        websiteId: context.websiteId,
         propertyId: context.propertyId,
         expectedRevision: context.plan.revision,
         contentHash: context.plan.contentHash,

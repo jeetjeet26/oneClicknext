@@ -1,5 +1,6 @@
 import { createServiceClient } from '@/utils/supabase/admin'
-import type { Json, TablesInsert } from '@/types/supabase'
+import type { SupabaseClient } from '@supabase/supabase-js'
+import type { Database, Json, TablesInsert } from '@/types/supabase'
 import type { BrandContext } from '@/utils/siteforge/agents/brand-agent'
 import {
   siteForgePlanSchema,
@@ -41,6 +42,26 @@ import {
 } from '@/utils/siteforge/directions/contracts'
 
 type ServiceClient = ReturnType<typeof createServiceClient>
+type SiteForgePlansTable = Database['public']['Tables']['siteforge_plans']
+type WebsiteBoundDatabase = {
+  public: Omit<Database['public'], 'Tables'> & {
+    Tables: Omit<Database['public']['Tables'], 'siteforge_plans'> & {
+      siteforge_plans: {
+        Row: SiteForgePlansTable['Row'] & { website_id: string }
+        Insert: SiteForgePlansTable['Insert'] & { website_id: string }
+        Update: SiteForgePlansTable['Update'] & { website_id?: string }
+        Relationships: SiteForgePlansTable['Relationships']
+      }
+    }
+  }
+}
+
+// This narrow compatibility bridge is temporary until the new migration is
+// applied and the generated database types can be refreshed.
+function siteForgePlans(supabase: ServiceClient) {
+  return (supabase as unknown as SupabaseClient<WebsiteBoundDatabase>)
+    .from('siteforge_plans')
+}
 
 export class SiteForgePlanError extends Error {
   constructor(
@@ -59,6 +80,7 @@ type ConversationEntry = {
 }
 
 type CreatePlanRevisionInput = {
+  websiteId: string
   propertyId: string
   userId: string
   /** @deprecated Planning always uses the approved pinned BrandForge contract. */
@@ -72,6 +94,8 @@ type CreatePlanRevisionInput = {
 }
 
 export type PersistedPlanRevision = {
+  websiteId: string
+  orgId: string
   planId: string
   planVersionId: string
   revision: number
@@ -116,6 +140,88 @@ function latestInventoryTimestamp(row: {
   return row.source_updated_at || row.effective_at || row.imported_at || null
 }
 
+const ASSET_DEPENDENT_BLOCKS = new Set([
+  'acf/top-slides',
+  'acf/feature-section',
+  'acf/image',
+  'acf/content-grid',
+  'acf/gallery',
+  'acf/poi',
+  'acf/testimonials',
+])
+
+export function siteForgePlanRequirements(
+  plan: {
+    pages: ReadonlyArray<{
+      sections: ReadonlyArray<{ block: string; required?: boolean }>
+    }>
+  }
+): { assets: boolean; inventory: boolean } {
+  const requiredSections = plan.pages.flatMap(page =>
+    page.sections.filter(section => section.required !== false)
+  )
+  return {
+    assets: requiredSections.some(section =>
+      ASSET_DEPENDENT_BLOCKS.has(section.block)
+    ),
+    inventory: requiredSections.some(
+      section => section.block === 'acf/plans-availability'
+    ),
+  }
+}
+
+export function preservePinnedPlanSources(source: {
+  onboarding_snapshot_id: string | null
+  onboarding_snapshot_hash: string | null
+  brand_asset_id: string | null
+  brand_contract_version: string | null
+  brand_contract_hash: string | null
+}) {
+  return {
+    onboarding_snapshot_id: source.onboarding_snapshot_id,
+    onboarding_snapshot_hash: source.onboarding_snapshot_hash,
+    brand_asset_id: source.brand_asset_id,
+    brand_contract_version: source.brand_contract_version,
+    brand_contract_hash: source.brand_contract_hash,
+  }
+}
+
+export function pinModifiedPlanSources(
+  modifiedPlanInput: unknown,
+  currentPlan: SiteForgePlan
+): SiteForgePlan {
+  const modifiedPlan = siteForgePlanSchema.parse(modifiedPlanInput)
+  if (modifiedPlan.propertyId !== currentPlan.propertyId) {
+    throw new SiteForgePlanError('Modified plan property cannot be changed', 400)
+  }
+  if (
+    modifiedPlan.onboardingSnapshot &&
+    hashSiteForgeContent(modifiedPlan.onboardingSnapshot) !==
+      hashSiteForgeContent(currentPlan.onboardingSnapshot)
+  ) {
+    throw new SiteForgePlanError(
+      'Modified plan onboarding identity must match the pinned source',
+      400
+    )
+  }
+  if (
+    modifiedPlan.brandSnapshot &&
+    hashSiteForgeContent(modifiedPlan.brandSnapshot) !==
+      hashSiteForgeContent(currentPlan.brandSnapshot)
+  ) {
+    throw new SiteForgePlanError(
+      'Modified plan brand identity must match the pinned source',
+      400
+    )
+  }
+  return siteForgePlanSchema.parse({
+    ...modifiedPlan,
+    propertyId: currentPlan.propertyId,
+    onboardingSnapshot: currentPlan.onboardingSnapshot,
+    brandSnapshot: currentPlan.brandSnapshot,
+  })
+}
+
 /**
  * Loads the immutable, approval-bound generation truth and hashes every
  * mutable source into one evidence snapshot. This is used both at request time
@@ -135,19 +241,21 @@ export async function loadApprovedSiteForgeGenerationContext(
     generationConflict('Generation website is unavailable')
   }
 
-  const { data: planRow, error: planError } = await supabase
-    .from('siteforge_plans')
-    .select('id, property_id, org_id, status, current_revision, confirmed_version_id')
+  const { data: boundPlanRow, error: boundPlanError } = await siteForgePlans(
+    supabase
+  )
+    .select('id, website_id, property_id, org_id, status, current_revision, confirmed_version_id')
     .eq('id', input.planId)
+    .eq('website_id', website.id)
     .eq('property_id', website.property_id)
     .eq('org_id', website.org_id)
     .single()
   if (
-    planError ||
-    !planRow ||
-    !['confirmed', 'consumed'].includes(planRow.status) ||
-    planRow.current_revision !== input.confirmedRevision ||
-    !planRow.confirmed_version_id
+    boundPlanError ||
+    !boundPlanRow ||
+    !['confirmed', 'consumed'].includes(boundPlanRow.status) ||
+    boundPlanRow.current_revision !== input.confirmedRevision ||
+    !boundPlanRow.confirmed_version_id
   ) {
     generationConflict('A matching confirmed plan is required for generation')
   }
@@ -167,8 +275,8 @@ export async function loadApprovedSiteForgeGenerationContext(
       brand_contract_version,
       brand_contract_hash
     `)
-    .eq('id', planRow.confirmed_version_id)
-    .eq('plan_id', planRow.id)
+    .eq('id', boundPlanRow.confirmed_version_id)
+    .eq('plan_id', boundPlanRow.id)
     .eq('revision', input.confirmedRevision)
     .single()
   if (
@@ -199,6 +307,8 @@ export async function loadApprovedSiteForgeGenerationContext(
   ) {
     generationConflict('Confirmed plan does not match its pinned readiness truth')
   }
+  const { assets: assetsRequired, inventory: inventoryRequired } =
+    siteForgePlanRequirements(plan)
 
   const { data: onboarding, error: onboardingError } = await supabase
     .from('property_onboarding_snapshots')
@@ -369,14 +479,20 @@ export async function loadApprovedSiteForgeGenerationContext(
     .eq('approval_status', 'approved')
     .in('rights_status', ['owned', 'licensed', 'generated'])
     .order('id', { ascending: true })
-  if (assetError) {
+  if (assetError && assetsRequired) {
     generationConflict(`Failed to load approved asset manifest: ${assetError.message}`)
   }
+  if (assetError) {
+    console.warn('[siteforge_generation] optional asset manifest unavailable', {
+      websiteId: website.id,
+      error: assetError.message,
+    })
+  }
   const currentAssetReadiness = evaluateRequiredAssetReadiness(
-    assetRows || [],
+    assetError ? [] : assetRows || [],
     now,
   )
-  if (!currentAssetReadiness.ready) {
+  if (assetsRequired && !currentAssetReadiness.ready) {
     generationConflict(
       `Generation asset manifest no longer satisfies readiness: ${currentAssetReadiness.reasons.join('; ')}`,
     )
@@ -403,14 +519,11 @@ export async function loadApprovedSiteForgeGenerationContext(
       expiresAt: asset.expires_at,
     }]
   })
-  if (assets.length === 0) {
+  if (assetsRequired && assets.length === 0) {
     generationConflict('Generation requires an approved rights-cleared asset manifest')
   }
   const assetManifestHash = hashSiteForgeContent(assets)
 
-  const inventoryRequired = plan.pages.some(page =>
-    page.sections.some(section => section.block === 'acf/plans-availability')
-  )
   const { data: inventoryRows, error: inventoryError } = await supabase
     .from('property_units')
     .select(
@@ -421,10 +534,16 @@ export async function loadApprovedSiteForgeGenerationContext(
     .eq('active', true)
     .eq('review_status', 'approved')
     .order('canonical_key', { ascending: true })
-  if (inventoryError) {
+  if (inventoryError && inventoryRequired) {
     generationConflict(`Failed to load approved inventory evidence: ${inventoryError.message}`)
   }
-  const inventory = (inventoryRows || []).filter(
+  if (inventoryError) {
+    console.warn('[siteforge_generation] optional inventory unavailable', {
+      websiteId: website.id,
+      error: inventoryError.message,
+    })
+  }
+  const inventory = (inventoryError ? [] : inventoryRows || []).filter(
     row => !isSyntheticInventorySource(row),
   )
   if (inventoryRequired && inventory.length === 0) {
@@ -463,7 +582,7 @@ export async function loadApprovedSiteForgeGenerationContext(
     propertyId: website.property_id,
     orgId: website.org_id,
     plan: {
-      id: planRow.id,
+      id: boundPlanRow.id,
       versionId: version.id,
       revision: version.revision,
       contentHash: version.content_hash,
@@ -490,6 +609,7 @@ export async function loadApprovedSiteForgeGenerationContext(
       contractHash: brandHash,
     },
     assetManifest: {
+      required: assetsRequired,
       assets,
       contentHash: assetManifestHash,
     },
@@ -538,6 +658,39 @@ export async function assertSiteForgeGenerationEvidenceCurrent(
     generationConflict('Generation evidence changed after the request was approved')
   }
   return current
+}
+
+export async function consumeConfirmedSiteForgePlan(
+  input: {
+    planId: string
+    planVersionId: string
+    websiteId: string
+    propertyId: string
+    orgId: string
+    consumedAt: string
+  },
+  supabase: ServiceClient = createServiceClient()
+): Promise<void> {
+  const { data, error } = await siteForgePlans(supabase)
+    .update({
+      status: 'consumed',
+      consumed_at: input.consumedAt,
+      updated_at: input.consumedAt,
+    })
+    .eq('id', input.planId)
+    .eq('website_id', input.websiteId)
+    .eq('property_id', input.propertyId)
+    .eq('org_id', input.orgId)
+    .eq('status', 'confirmed')
+    .eq('confirmed_version_id', input.planVersionId)
+    .select('id')
+    .single()
+  if (error || !data) {
+    throw new SiteForgePlanError(
+      'Confirmed plan was already consumed or changed',
+      409
+    )
+  }
 }
 
 function buildReadinessReport(
@@ -595,22 +748,23 @@ function buildReadinessReport(
     })
   }
 
-  if (floorPlans && floorPlans.activeCount === 0) {
+  const requirements = siteForgePlanRequirements(plan)
+  if (requirements.inventory && floorPlans && floorPlans.activeCount === 0) {
     issues.push({
       code: 'floor_plan_inventory_missing',
-      severity: 'warning',
+      severity: 'blocker',
       category: 'inventory',
       message:
-        'No reviewed floor plans are available. SiteForge will publish clearly labeled placeholders that can be replaced later.',
+        'The chosen Floor Plans page requires approved floor-plan inventory.',
       evidenceIds: [],
     })
-  } else if (floorPlans?.latestUpdatedAt) {
+  } else if (requirements.inventory && floorPlans?.latestUpdatedAt) {
     const ageHours =
       (Date.now() - new Date(floorPlans.latestUpdatedAt).getTime()) / 3_600_000
     if (ageHours > plan.floorPlanStrategy.freshnessHours) {
       issues.push({
         code: 'floor_plan_inventory_stale',
-        severity: 'warning',
+        severity: 'blocker',
         category: 'inventory',
         message: `Floor-plan inventory is older than ${plan.floorPlanStrategy.freshnessHours} hours.`,
         evidenceIds: [],
@@ -627,34 +781,37 @@ function buildReadinessReport(
 }
 
 function applyCurrentReadinessPolicy(value: unknown): SiteForgeReadinessReport {
-  const stored = siteForgeReadinessReportSchema.parse(value)
-  const issues = stored.issues.map((issue) =>
-    issue.code === 'floor_plan_inventory_missing'
-      ? {
-          ...issue,
-          severity: 'warning' as const,
-          message:
-            'No reviewed floor plans are available. SiteForge will publish clearly labeled placeholders that can be replaced later.',
-        }
-      : issue
-  )
-
-  return siteForgeReadinessReportSchema.parse({
-    ...stored,
-    ready: !issues.some((issue) => issue.severity === 'blocker'),
-    policyVersion: 'siteforge-plan-readiness-v2',
-    issues,
-  })
+  return siteForgeReadinessReportSchema.parse(value)
 }
 
-async function loadProperty(
+async function loadPlanningIdentity(
+  websiteId: string,
   propertyId: string,
   supabase: ServiceClient
-): Promise<{ id: string; name: string; org_id: string }> {
+): Promise<{
+  websiteId: string
+  id: string
+  name: string
+  org_id: string
+}> {
+  const { data: website, error: websiteError } = await supabase
+    .from('property_websites')
+    .select('id, property_id, org_id')
+    .eq('id', websiteId)
+    .eq('property_id', propertyId)
+    .single()
+  if (websiteError || !website?.org_id) {
+    throw new SiteForgePlanError(
+      'Website not found for this property and organization',
+      404
+    )
+  }
+
   const { data, error } = await supabase
     .from('properties')
     .select('id, name, org_id')
     .eq('id', propertyId)
+    .eq('org_id', website.org_id)
     .single()
 
   if (error || !data?.org_id) {
@@ -662,6 +819,7 @@ async function loadProperty(
   }
 
   return {
+    websiteId: website.id,
     id: data.id,
     name: data.name,
     org_id: data.org_id,
@@ -672,7 +830,11 @@ export async function createPlanRevision(
   input: CreatePlanRevisionInput,
   supabase: ServiceClient = createServiceClient()
 ): Promise<PersistedPlanRevision> {
-  const property = await loadProperty(input.propertyId, supabase)
+  const property = await loadPlanningIdentity(
+    input.websiteId,
+    input.propertyId,
+    supabase
+  )
   const onboardingSnapshot = await getLatestApprovedOnboardingSnapshot(
     property.id,
     supabase,
@@ -756,12 +918,6 @@ export async function createPlanRevision(
       })
     : []
   const assetReadiness = evaluateRequiredAssetReadiness(snapshotAssets)
-  if (!assetReadiness.ready) {
-    throw new SiteForgePlanError(
-      `Approved readiness no longer satisfies SiteForge asset policy: ${assetReadiness.reasons.join('; ')}. Rebuild and approve readiness.`,
-      409,
-    )
-  }
   const enabledCapabilities = Array.isArray(snapshotPayload.enabledCapabilities)
     ? snapshotPayload.enabledCapabilities.filter(
         (capability): capability is 'crm' | 'tours' | 'chatbot' | 'analytics' =>
@@ -788,6 +944,12 @@ export async function createPlanRevision(
     siteType: input.siteType,
     operatorDirection: input.operatorDirection,
   })
+  if (siteForgePlanRequirements(plan).assets && !assetReadiness.ready) {
+    throw new SiteForgePlanError(
+      `The chosen pages require approved SiteForge assets: ${assetReadiness.reasons.join('; ')}. Rebuild and approve readiness.`,
+      409,
+    )
+  }
   const missingCapabilities = plan.enabledCapabilities.filter(
     capability => !enabledCapabilities.includes(capability),
   )
@@ -805,8 +967,15 @@ export async function createPlanRevision(
     .eq('property_id', property.id)
     .eq('active', true)
     .eq('review_status', 'approved')
-  if (floorPlanError) {
+  const requirements = siteForgePlanRequirements(plan)
+  if (floorPlanError && requirements.inventory) {
     throw new SiteForgePlanError('Failed to evaluate floor-plan readiness', 503)
+  }
+  if (floorPlanError) {
+    console.warn('[siteforge_planning] optional floor-plan inventory unavailable', {
+      websiteId: property.websiteId,
+      error: floorPlanError.message,
+    })
   }
   const publishableFloorPlans = (reviewedFloorPlans || []).filter(
     floorPlan => !isSyntheticInventorySource(floorPlan),
@@ -832,11 +1001,12 @@ export async function createPlanRevision(
   let nextRevision = 1
 
   if (planId) {
-    const { data: existing, error } = await supabase
-      .from('siteforge_plans')
-      .select('id, property_id, current_revision, status')
+    const { data: existing, error } = await siteForgePlans(supabase)
+      .select('id, website_id, property_id, org_id, current_revision, status')
       .eq('id', planId)
+      .eq('website_id', property.websiteId)
       .eq('property_id', property.id)
+      .eq('org_id', property.org_id)
       .single()
 
     if (error || !existing) {
@@ -854,7 +1024,8 @@ export async function createPlanRevision(
     }
     nextRevision = existing.current_revision + 1
   } else {
-    const insert: TablesInsert<'siteforge_plans'> = {
+    const insert: TablesInsert<'siteforge_plans'> & { website_id: string } = {
+      website_id: property.websiteId,
       org_id: property.org_id,
       property_id: property.id,
       status: 'draft',
@@ -863,8 +1034,7 @@ export async function createPlanRevision(
       created_at: now,
       updated_at: now,
     }
-    const { data: created, error } = await supabase
-      .from('siteforge_plans')
+    const { data: created, error } = await siteForgePlans(supabase)
       .insert(insert)
       .select('id')
       .single()
@@ -938,8 +1108,7 @@ export async function createPlanRevision(
     throw new SiteForgePlanError('Failed to persist SiteForge plan revision', 500)
   }
 
-  const { data: updated, error: updateError } = await supabase
-    .from('siteforge_plans')
+  const { data: updated, error: updateError } = await siteForgePlans(supabase)
     .update({
       current_revision: nextRevision,
       status: 'ready_for_review',
@@ -952,7 +1121,9 @@ export async function createPlanRevision(
       updated_at: now,
     })
     .eq('id', planId)
+    .eq('website_id', property.websiteId)
     .eq('property_id', property.id)
+    .eq('org_id', property.org_id)
     .select('id')
     .single()
 
@@ -961,6 +1132,8 @@ export async function createPlanRevision(
   }
 
   return {
+    websiteId: property.websiteId,
+    orgId: property.org_id,
     planId,
     planVersionId: version.id,
     revision: nextRevision,
@@ -973,15 +1146,22 @@ export async function createPlanRevision(
 }
 
 export async function getCurrentPlanRevision(
-  planId: string,
-  propertyId: string,
+  input: {
+    planId: string
+    websiteId: string
+    propertyId: string
+    orgId: string
+  },
   supabase: ServiceClient = createServiceClient()
 ): Promise<PersistedPlanRevision> {
-  const { data: planRow, error: planError } = await supabase
-    .from('siteforge_plans')
-    .select('id, property_id, current_revision, status, approval_action_attempt_id')
-    .eq('id', planId)
-    .eq('property_id', propertyId)
+  const { data: planRow, error: planError } = await siteForgePlans(supabase)
+    .select(
+      'id, website_id, property_id, org_id, current_revision, status, approval_action_attempt_id'
+    )
+    .eq('id', input.planId)
+    .eq('website_id', input.websiteId)
+    .eq('property_id', input.propertyId)
+    .eq('org_id', input.orgId)
     .single()
 
   if (planError || !planRow) {
@@ -991,7 +1171,7 @@ export async function getCurrentPlanRevision(
   const { data: version, error: versionError } = await supabase
     .from('siteforge_plan_versions')
     .select('id, plan, readiness_report, content_hash')
-    .eq('plan_id', planId)
+    .eq('plan_id', input.planId)
     .eq('revision', planRow.current_revision)
     .single()
 
@@ -1000,7 +1180,9 @@ export async function getCurrentPlanRevision(
   }
 
   return {
-    planId,
+    websiteId: planRow.website_id,
+    orgId: planRow.org_id,
+    planId: input.planId,
     planVersionId: version.id,
     revision: planRow.current_revision,
     status: siteForgePlanStatusSchema.parse(planRow.status),
@@ -1011,14 +1193,19 @@ export async function getCurrentPlanRevision(
   }
 }
 
-export async function getLatestPropertyPlanRevision(
-  propertyId: string,
+export async function getLatestWebsitePlanRevision(
+  input: {
+    websiteId: string
+    propertyId: string
+    orgId: string
+  },
   supabase: ServiceClient = createServiceClient(),
 ): Promise<PersistedPlanRevision | null> {
-  const { data, error } = await supabase
-    .from('siteforge_plans')
+  const { data, error } = await siteForgePlans(supabase)
     .select('id')
-    .eq('property_id', propertyId)
+    .eq('website_id', input.websiteId)
+    .eq('property_id', input.propertyId)
+    .eq('org_id', input.orgId)
     .order('updated_at', { ascending: false })
     .limit(1)
     .maybeSingle()
@@ -1026,7 +1213,9 @@ export async function getLatestPropertyPlanRevision(
   if (error) {
     throw new SiteForgePlanError('Failed to load the current SiteForge plan', 500)
   }
-  return data ? getCurrentPlanRevision(data.id, propertyId, supabase) : null
+  return data
+    ? getCurrentPlanRevision({ ...input, planId: data.id }, supabase)
+    : null
 }
 
 async function ensureApprovalProposal(
@@ -1045,17 +1234,8 @@ async function ensureApprovalProposal(
     }
   }
 
-  const { data: property, error } = await supabase
-    .from('properties')
-    .select('org_id')
-    .eq('id', current.plan.propertyId)
-    .single()
-  if (error || !property?.org_id) {
-    throw new SiteForgePlanError('Property organization not found', 404)
-  }
-
   const proposal = await proposeSharedAction({
-    orgId: property.org_id,
+    orgId: current.orgId,
     propertyId: current.plan.propertyId,
     domain: 'siteforge',
     subjectType: 'plan_confirmation',
@@ -1085,13 +1265,15 @@ async function ensureApprovalProposal(
     },
   })
 
-  const { error: updateError } = await supabase
-    .from('siteforge_plans')
+  const { error: updateError } = await siteForgePlans(supabase)
     .update({
       approval_action_attempt_id: proposal.sharedActionAttemptId,
       updated_at: new Date().toISOString(),
     })
     .eq('id', current.planId)
+    .eq('website_id', current.websiteId)
+    .eq('property_id', current.plan.propertyId)
+    .eq('org_id', current.orgId)
     .eq('current_revision', current.revision)
 
   if (updateError) {
@@ -1103,7 +1285,9 @@ async function ensureApprovalProposal(
 
 type DecidePlanInput = {
   planId: string
+  websiteId: string
   propertyId: string
+  orgId: string
   expectedRevision: number
   contentHash: string
   reviewerProfileId: string
@@ -1116,7 +1300,15 @@ export async function decideSiteForgePlan(
   input: DecidePlanInput,
   supabase: ServiceClient = createServiceClient()
 ) {
-  const current = await getCurrentPlanRevision(input.planId, input.propertyId, supabase)
+  const current = await getCurrentPlanRevision(
+    {
+      planId: input.planId,
+      websiteId: input.websiteId,
+      propertyId: input.propertyId,
+      orgId: input.orgId,
+    },
+    supabase
+  )
   if (
     current.revision !== input.expectedRevision ||
     current.contentHash !== input.contentHash
@@ -1129,11 +1321,8 @@ export async function decideSiteForgePlan(
 
   const modifiedPlan =
     input.decisionStatus === 'modified'
-      ? siteForgePlanSchema.parse(input.modifiedPlan)
+      ? pinModifiedPlanSources(input.modifiedPlan, current.plan)
       : null
-  if (modifiedPlan && modifiedPlan.propertyId !== input.propertyId) {
-    throw new SiteForgePlanError('Modified plan property cannot be changed', 400)
-  }
   const modifiedContentHash = modifiedPlan
     ? hashSiteForgeContent(modifiedPlan)
     : null
@@ -1180,8 +1369,7 @@ export async function decideSiteForgePlan(
 
   const now = new Date().toISOString()
   if (input.decisionStatus === 'approved') {
-    const { data, error } = await supabase
-      .from('siteforge_plans')
+    const { data, error } = await siteForgePlans(supabase)
       .update({
         status: 'confirmed',
         confirmed_version_id: current.planVersionId,
@@ -1192,6 +1380,9 @@ export async function decideSiteForgePlan(
         updated_at: now,
       })
       .eq('id', current.planId)
+      .eq('website_id', current.websiteId)
+      .eq('property_id', input.propertyId)
+      .eq('org_id', input.orgId)
       .eq('current_revision', current.revision)
       .eq('status', 'ready_for_review')
       .select('id')
@@ -1201,14 +1392,16 @@ export async function decideSiteForgePlan(
       throw new SiteForgePlanError('Plan changed before confirmation completed', 409)
     }
   } else if (input.decisionStatus === 'denied') {
-    const { error } = await supabase
-      .from('siteforge_plans')
+    const { error } = await siteForgePlans(supabase)
       .update({
         status: 'denied',
         decision_reason: input.decisionReason.trim(),
         updated_at: now,
       })
       .eq('id', current.planId)
+      .eq('website_id', current.websiteId)
+      .eq('property_id', input.propertyId)
+      .eq('org_id', input.orgId)
       .eq('current_revision', current.revision)
 
     if (error) {
@@ -1217,7 +1410,9 @@ export async function decideSiteForgePlan(
   } else if (modifiedPlan) {
     const { data: priorVersion, error: priorVersionError } = await supabase
       .from('siteforge_plan_versions')
-      .select('context_snapshot_id, conversation_history')
+      .select(
+        'context_snapshot_id, conversation_history, onboarding_snapshot_id, onboarding_snapshot_hash, brand_asset_id, brand_contract_version, brand_contract_hash'
+      )
       .eq('id', current.planVersionId)
       .single()
     if (priorVersionError || !priorVersion) {
@@ -1238,6 +1433,7 @@ export async function decideSiteForgePlan(
         readiness_report: current.readiness as unknown as Json,
         conversation_history: priorVersion.conversation_history,
         content_hash: nextContentHash,
+        ...preservePinnedPlanSources(priorVersion),
         created_by: input.reviewerProfileId,
         created_at: now,
       })
@@ -1247,8 +1443,7 @@ export async function decideSiteForgePlan(
       throw new SiteForgePlanError('Failed to persist modified plan revision', 500)
     }
 
-    const { data: updated, error: updateError } = await supabase
-      .from('siteforge_plans')
+    const { data: updated, error: updateError } = await siteForgePlans(supabase)
       .update({
         current_revision: nextRevision,
         status: 'ready_for_review',
@@ -1261,6 +1456,9 @@ export async function decideSiteForgePlan(
         updated_at: now,
       })
       .eq('id', current.planId)
+      .eq('website_id', current.websiteId)
+      .eq('property_id', input.propertyId)
+      .eq('org_id', input.orgId)
       .eq('current_revision', current.revision)
       .select('id')
       .single()

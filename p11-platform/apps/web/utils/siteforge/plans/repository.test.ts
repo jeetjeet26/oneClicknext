@@ -10,7 +10,22 @@ import {
   hashSiteForgeDirection,
   hashSiteForgeDirectionSet,
 } from '@/utils/siteforge/directions/contracts'
-import { loadApprovedSiteForgeGenerationContext } from './repository'
+import type { SiteForgePlan } from '@/utils/siteforge/contracts'
+import {
+  decideSiteForgePlan,
+  loadApprovedSiteForgeGenerationContext,
+  pinModifiedPlanSources,
+  preservePinnedPlanSources,
+  siteForgePlanRequirements,
+} from './repository'
+
+const { recordApprovalDecisionMock } = vi.hoisted(() => ({
+  recordApprovalDecisionMock: vi.fn(),
+}))
+
+vi.mock('@/utils/services/shared-approvals', () => ({
+  recordSharedApprovalDecision: recordApprovalDecisionMock,
+}))
 
 const ids = {
   website: '11111111-1111-4111-8111-111111111111',
@@ -281,6 +296,7 @@ function query(result: { data: unknown; error: unknown }) {
     builder[method] = vi.fn(() => builder)
   }
   builder.single = vi.fn().mockResolvedValue(result)
+  builder.maybeSingle = vi.fn().mockResolvedValue(result)
   builder.then = (
     resolve: (value: { data: unknown; error: unknown }) => unknown,
     reject: (reason: unknown) => unknown
@@ -292,8 +308,28 @@ function arrange(overrides: {
   direction?: Record<string, unknown>
   assets?: unknown[]
   inventory?: unknown[]
+  assetError?: { message: string }
+  inventoryError?: { message: string }
+  optionalSources?: boolean
 } = {}) {
-  const plan = planFixture()
+  const plan = planFixture() as SiteForgePlan
+  if (overrides.optionalSources) {
+    plan.pages = [{
+      slug: 'about',
+      title: 'About',
+      navLabel: 'About',
+      purpose: 'Present grounded property information.',
+      sections: [{
+        id: 'about-copy',
+        label: 'About copy',
+        purpose: 'Explain approved property facts.',
+        block: 'acf/text-section' as const,
+        required: true,
+        factsRequired: [],
+        evidenceIds: ['inventory'],
+      }],
+    }]
+  }
   const planHash = hashSiteForgeContent(plan)
   const brief = briefFixture()
   const briefHash = hashSiteForgeBrief({
@@ -331,6 +367,7 @@ function arrange(overrides: {
     siteforge_plans: query({
       data: {
         id: ids.plan,
+        website_id: ids.website,
         property_id: ids.property,
         org_id: ids.org,
         status: 'confirmed',
@@ -433,7 +470,7 @@ function arrange(overrides: {
           expires_at: null,
         },
       ],
-      error: null,
+      error: overrides.assetError ?? null,
     }),
     property_units: query({
       data: overrides.inventory ?? [{
@@ -460,18 +497,19 @@ function arrange(overrides: {
         source_updated_at: '2026-08-10T12:00:00.000Z',
         imported_at: '2026-08-10T12:05:00.000Z',
       }],
-      error: null,
+      error: overrides.inventoryError ?? null,
     }),
   }
   return {
     client: { from: vi.fn((table: string) => tables[table]) } as never,
     contentHash: planHash,
+    tables,
   }
 }
 
 describe('loadApprovedSiteForgeGenerationContext', () => {
   it('builds one hash-bound evidence snapshot from approved generation truth', async () => {
-    const { client, contentHash } = arrange()
+    const { client, contentHash, tables } = arrange()
 
     const context = await loadApprovedSiteForgeGenerationContext(
       {
@@ -497,6 +535,15 @@ describe('loadApprovedSiteForgeGenerationContext', () => {
       inventory: { required: true, rowCount: 1 },
     })
     expect(context.evidenceSnapshot.contentHash).toMatch(/^[a-f0-9]{64}$/)
+    expect(tables.siteforge_plans.eq).toHaveBeenCalledWith(
+      'website_id',
+      ids.website
+    )
+    expect(tables.siteforge_plans.eq).toHaveBeenCalledWith(
+      'property_id',
+      ids.property
+    )
+    expect(tables.siteforge_plans.eq).toHaveBeenCalledWith('org_id', ids.org)
   })
 
   it('rejects a selected creative direction whose payload hash changed', async () => {
@@ -518,9 +565,8 @@ describe('loadApprovedSiteForgeGenerationContext', () => {
     ).rejects.toThrow('creative-direction hash')
   })
 
-  it.each([
-    {
-      name: 'synthetic-only inventory',
+  it('fails closed for synthetic-only required inventory', async () => {
+    const { client, contentHash } = arrange({
       inventory: [{
         canonical_key: 'fake-a1',
         unit_type: 'Fake',
@@ -543,16 +589,7 @@ describe('loadApprovedSiteForgeGenerationContext', () => {
         source_updated_at: '2026-08-10T12:00:00.000Z',
         imported_at: '2026-08-10T12:00:00.000Z',
       }],
-      message: 'requires approved floor-plan inventory',
-    },
-    {
-      name: 'missing rights-cleared assets',
-      assets: [],
-      message: 'asset manifest no longer satisfies readiness',
-    },
-  ])('fails closed for $name', async ({ inventory, assets, message }) => {
-    const { client, contentHash } = arrange({ inventory, assets })
-
+    })
     await expect(
       loadApprovedSiteForgeGenerationContext(
         {
@@ -564,6 +601,300 @@ describe('loadApprovedSiteForgeGenerationContext', () => {
         client,
         new Date('2026-08-10T13:00:00.000Z')
       )
-    ).rejects.toThrow(message)
+    ).rejects.toThrow('requires approved floor-plan inventory')
+  })
+
+  it('allows an empty asset manifest when chosen pages need no media', async () => {
+    const { client, contentHash } = arrange({
+      assets: [],
+      optionalSources: true,
+    })
+    const context = await loadApprovedSiteForgeGenerationContext(
+      {
+        websiteId: ids.website,
+        planId: ids.plan,
+        confirmedRevision: 1,
+        contentHash,
+      },
+      client,
+      new Date('2026-08-10T13:00:00.000Z')
+    )
+
+    expect(context.evidenceSnapshot.assetManifest).toEqual({
+      required: false,
+      assets: [],
+      contentHash: hashSiteForgeContent([]),
+    })
+  })
+
+  it('degrades unavailable optional assets and inventory to empty evidence', async () => {
+    const { client, contentHash } = arrange({
+      optionalSources: true,
+      assetError: { message: 'assets unavailable' },
+      inventoryError: { message: 'inventory unavailable' },
+    })
+    const context = await loadApprovedSiteForgeGenerationContext(
+      {
+        websiteId: ids.website,
+        planId: ids.plan,
+        confirmedRevision: 1,
+        contentHash,
+      },
+      client,
+      new Date('2026-08-10T13:00:00.000Z'),
+    )
+
+    expect(context.evidenceSnapshot.assetManifest).toMatchObject({
+      required: false,
+      assets: [],
+    })
+    expect(context.evidenceSnapshot.inventory).toMatchObject({
+      required: false,
+      rowCount: 0,
+    })
+  })
+
+  it('fails closed when required inventory cannot be loaded', async () => {
+    const { client, contentHash } = arrange({
+      inventoryError: { message: 'inventory unavailable' },
+    })
+    await expect(
+      loadApprovedSiteForgeGenerationContext(
+        {
+          websiteId: ids.website,
+          planId: ids.plan,
+          confirmedRevision: 1,
+          contentHash,
+        },
+        client,
+        new Date('2026-08-10T13:00:00.000Z'),
+      )
+    ).rejects.toThrow('Failed to load approved inventory evidence')
+  })
+})
+
+describe('SiteForge plan integrity helpers', () => {
+  it('derives optional asset and inventory requirements from chosen pages', () => {
+    expect(
+      siteForgePlanRequirements({
+        pages: [{
+          sections: [{ block: 'acf/text-section' }],
+        }],
+      })
+    ).toEqual({ assets: false, inventory: false })
+    expect(
+      siteForgePlanRequirements({
+        pages: [{
+          sections: [
+            { block: 'acf/gallery' },
+            { block: 'acf/plans-availability' },
+          ],
+        }],
+      })
+    ).toEqual({ assets: true, inventory: true })
+    expect(
+      siteForgePlanRequirements({
+        pages: [{
+          sections: [
+            { block: 'acf/gallery', required: false },
+            { block: 'acf/plans-availability', required: false },
+          ],
+        }],
+      })
+    ).toEqual({ assets: false, inventory: false })
+  })
+
+  it('preserves every pinned onboarding and brand source on modification', () => {
+    const sources = {
+      onboarding_snapshot_id: ids.onboarding,
+      onboarding_snapshot_hash: onboardingHash,
+      brand_asset_id: ids.brand,
+      brand_contract_version: '1.0',
+      brand_contract_hash: brandHash,
+    }
+    expect(preservePinnedPlanSources(sources)).toEqual(sources)
+  })
+
+  it('rejects conflicting embedded identities and restores omitted pinned sources', () => {
+    const current = planFixture()
+    expect(() =>
+      pinModifiedPlanSources(
+        {
+          ...current,
+          onboardingSnapshot: {
+            ...current.onboardingSnapshot,
+            id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+          },
+        },
+        current,
+      )
+    ).toThrow('onboarding identity')
+
+    const withoutSources = Object.fromEntries(
+      Object.entries(current).filter(
+        ([key]) => !['onboardingSnapshot', 'brandSnapshot'].includes(key)
+      )
+    )
+    const pinned = pinModifiedPlanSources(
+      { ...withoutSources, summary: 'Reviewer-modified summary.' },
+      current,
+    )
+    expect(pinned.onboardingSnapshot).toEqual(current.onboardingSnapshot)
+    expect(pinned.brandSnapshot).toEqual(current.brandSnapshot)
+  })
+
+  it('inserts a modified revision with canonical embedded and DB source identities', async () => {
+    const current = planFixture()
+    const priorSources = {
+      context_snapshot_id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+      conversation_history: [],
+      onboarding_snapshot_id: ids.onboarding,
+      onboarding_snapshot_hash: onboardingHash,
+      brand_asset_id: ids.brand,
+      brand_contract_version: '1.0',
+      brand_contract_hash: brandHash,
+    }
+    const insertedVersions: Array<Record<string, unknown>> = []
+    const planRead = query({
+      data: {
+        id: ids.plan,
+        website_id: ids.website,
+        property_id: ids.property,
+        org_id: ids.org,
+        current_revision: 1,
+        status: 'ready_for_review',
+        approval_action_attempt_id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+      },
+      error: null,
+    })
+    const currentVersion = query({
+      data: {
+        id: ids.version,
+        plan: current,
+        readiness_report: {
+          ready: true,
+          evaluatedAt: '2026-08-10T12:00:00.000Z',
+          policyVersion: 'test-v1',
+          issues: [],
+        },
+        content_hash: hashSiteForgeContent(current),
+      },
+      error: null,
+    })
+    const approvalAttempt = query({
+      data: {
+        id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+        proposal_decision_status: 'proposed',
+      },
+      error: null,
+    })
+    const priorVersion = query({ data: priorSources, error: null })
+    const versionInsert = query({
+      data: { id: 'ffffffff-ffff-4fff-8fff-ffffffffffff' },
+      error: null,
+    })
+    versionInsert.insert = vi.fn((value: Record<string, unknown>) => {
+      insertedVersions.push(value)
+      return versionInsert
+    })
+    const planUpdate = query({ data: { id: ids.plan }, error: null })
+    planUpdate.update = vi.fn(() => planUpdate)
+    let planCalls = 0
+    let versionCalls = 0
+    const client = {
+      from: vi.fn((table: string) => {
+        if (table === 'siteforge_plans') {
+          planCalls += 1
+          return planCalls === 1 ? planRead : planUpdate
+        }
+        if (table === 'shared_action_attempts') return approvalAttempt
+        if (table === 'siteforge_plan_versions') {
+          versionCalls += 1
+          if (versionCalls === 1) return currentVersion
+          if (versionCalls === 2) return priorVersion
+          return versionInsert
+        }
+        throw new Error(`Unexpected table: ${table}`)
+      }),
+    }
+    recordApprovalDecisionMock.mockResolvedValue({
+      approval: { id: 'abababab-abab-4bab-8bab-abababababab' },
+    })
+    const modified = {
+      ...current,
+      summary: 'Reviewer-modified summary.',
+      onboardingSnapshot: undefined,
+      brandSnapshot: undefined,
+    }
+
+    const result = await decideSiteForgePlan(
+      {
+        planId: ids.plan,
+        websiteId: ids.website,
+        propertyId: ids.property,
+        orgId: ids.org,
+        expectedRevision: 1,
+        contentHash: hashSiteForgeContent(current),
+        reviewerProfileId: 'cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd',
+        decisionStatus: 'modified',
+        decisionReason: 'Clarify the approved summary.',
+        modifiedPlan: modified,
+      },
+      client as never,
+    )
+
+    expect(result.revision).toBe(2)
+    expect(insertedVersions).toHaveLength(1)
+    expect(insertedVersions[0]).toMatchObject({
+      plan_id: ids.plan,
+      revision: 2,
+      onboarding_snapshot_id: ids.onboarding,
+      onboarding_snapshot_hash: onboardingHash,
+      brand_asset_id: ids.brand,
+      brand_contract_version: '1.0',
+      brand_contract_hash: brandHash,
+      plan: expect.objectContaining({
+        onboardingSnapshot: current.onboardingSnapshot,
+        brandSnapshot: current.brandSnapshot,
+      }),
+    })
+  })
+
+  it('rejects a plan outside the requested website and organization boundary', async () => {
+    recordApprovalDecisionMock.mockClear()
+    const scopedPlanQuery = query({
+      data: null,
+      error: { message: 'not found' },
+    })
+    const client = {
+      from: vi.fn((table: string) => {
+        if (table !== 'siteforge_plans') {
+          throw new Error(`Unexpected table: ${table}`)
+        }
+        return scopedPlanQuery
+      }),
+    }
+    const otherWebsite = '12121212-1212-4212-8212-121212121212'
+    const otherOrg = '34343434-3434-4434-8434-343434343434'
+
+    await expect(
+      decideSiteForgePlan(
+        {
+          planId: ids.plan,
+          websiteId: otherWebsite,
+          propertyId: ids.property,
+          orgId: otherOrg,
+          expectedRevision: 1,
+          contentHash: 'a'.repeat(64),
+          reviewerProfileId: 'cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd',
+          decisionStatus: 'approved',
+          decisionReason: 'Approve.',
+        },
+        client as never,
+      )
+    ).rejects.toThrow('SiteForge plan not found')
+    expect(scopedPlanQuery.eq).toHaveBeenCalledWith('website_id', otherWebsite)
+    expect(scopedPlanQuery.eq).toHaveBeenCalledWith('org_id', otherOrg)
+    expect(recordApprovalDecisionMock).not.toHaveBeenCalled()
   })
 })

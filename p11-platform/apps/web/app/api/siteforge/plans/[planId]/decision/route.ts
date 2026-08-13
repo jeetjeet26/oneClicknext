@@ -10,6 +10,7 @@ import { SharedApprovalError } from '@/utils/services/shared-approvals'
 
 const decisionRequestSchema = z
   .object({
+    websiteId: z.guid(),
     propertyId: z.guid(),
     expectedRevision: z.number().int().positive(),
     contentHash: z.string().length(64),
@@ -40,7 +41,7 @@ export async function POST(
 ) {
   try {
     const { planId } = await params
-    if (!z.string().uuid().safeParse(planId).success) {
+    if (!z.guid().safeParse(planId).success) {
       return NextResponse.json({ error: 'Invalid plan identifier' }, { status: 400 })
     }
 
@@ -59,7 +60,7 @@ export async function POST(
     }
 
     const access = await validatePropertyAccess(user.id, parsed.data.propertyId)
-    if (!access.authorized) {
+    if (!access.authorized || !access.orgId) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
@@ -74,7 +75,9 @@ export async function POST(
 
     const result = await decideSiteForgePlan({
       planId,
+      websiteId: parsed.data.websiteId,
       propertyId: parsed.data.propertyId,
+      orgId: access.orgId,
       expectedRevision: parsed.data.expectedRevision,
       contentHash: parsed.data.contentHash,
       reviewerProfileId: user.id,

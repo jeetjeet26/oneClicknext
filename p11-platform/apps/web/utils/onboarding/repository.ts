@@ -2,6 +2,7 @@ import { createServiceClient } from '@/utils/supabase/admin'
 import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
 import { getAssetUsability } from '@/utils/siteforge/assets/curation'
 import { isSyntheticInventorySource } from '@/utils/siteforge/providers/inventory-policy'
+import { normalizePublicWebsiteUrl } from '@/utils/services/public-url'
 import type { Json, Tables } from '@/types/supabase'
 import {
   evaluateReadinessApproval,
@@ -49,6 +50,7 @@ export type OnboardingSnapshotPayload = {
   chatbotContext: Tables<'property_chatbot_contexts'> | null
   requestedCapabilities: string[]
   enabledCapabilities: string[]
+  additionalUrls: string[]
 }
 
 export function evaluateCapabilityReadiness(input: {
@@ -122,6 +124,29 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {}
+}
+
+export function includeAdditionalUrlsInOnboardingPayload<
+  T extends Record<string, unknown>,
+>(payload: T, additionalUrls: string[]): T & { additionalUrls: string[] } {
+  return {
+    ...payload,
+    additionalUrls: normalizeOnboardingAdditionalUrls(additionalUrls),
+  }
+}
+
+export function normalizeOnboardingAdditionalUrls(additionalUrls: string[]): string[] {
+  const normalized = additionalUrls.flatMap(value => {
+    const publicUrl = normalizePublicWebsiteUrl(value)
+    if (!publicUrl) return []
+    const url = new URL(publicUrl)
+    url.searchParams.sort()
+    if (url.pathname !== '/') {
+      url.pathname = url.pathname.replace(/\/+$/, '')
+    }
+    return [url.toString()]
+  })
+  return [...new Set(normalized)].sort()
 }
 
 export function evaluateRequiredAssetReadiness<
@@ -286,7 +311,7 @@ export async function buildOnboardingSnapshot(
     ),
     assets: report(
       assetReadiness.ready,
-      readinessApprovalPolicyForDomain('assets'),
+      'advisory',
       assetReadiness.reasons,
       approvedAssets.map(asset => asset.id),
       assets.length ? 'needs_review' : 'missing',
@@ -299,8 +324,10 @@ export async function buildOnboardingSnapshot(
     ),
     units: report(
       approvedUnits.length > 0,
-      readinessApprovalPolicyForDomain('units'),
-      ['At least one active, approved floor plan or unit source is required'],
+      'advisory',
+      [
+        'No active approved floor-plan inventory is available; plans that include a Floor Plans page will remain blocked',
+      ],
       approvedUnits.map(unit => unit.id),
       units.length ? 'needs_review' : 'missing',
     ),
@@ -346,26 +373,27 @@ export async function buildOnboardingSnapshot(
   const sourceReferences = Object.entries(domains).flatMap(([domain, value]) =>
     value.sourceIds.map(sourceId => ({ domain, sourceId })),
   )
-  const payload: OnboardingSnapshotPayload = {
-    property,
-    contacts,
-    brand: brand ? asRecord(brand) : {},
-    assets: approvedAssets,
-    units: approvedUnits,
-    pointsOfInterest: approvedPois,
-    legal,
-    integrations,
-    analyticsDestinations: analyticsDestinations.map(destination => ({
-      id: destination.id,
-      websiteId: destination.website_id,
-      type: destination.destination_type,
-      identity: destination.destination_identity,
-      consentMode: destination.consent_mode,
-    })),
-    chatbotContext,
-    requestedCapabilities: enabledCapabilities,
-    enabledCapabilities: availableCapabilities,
-  }
+  const payload: OnboardingSnapshotPayload =
+    includeAdditionalUrlsInOnboardingPayload({
+      property,
+      contacts,
+      brand: brand ? asRecord(brand) : {},
+      assets: approvedAssets,
+      units: approvedUnits,
+      pointsOfInterest: approvedPois,
+      legal,
+      integrations,
+      analyticsDestinations: analyticsDestinations.map(destination => ({
+        id: destination.id,
+        websiteId: destination.website_id,
+        type: destination.destination_type,
+        identity: destination.destination_identity,
+        consentMode: destination.consent_mode,
+      })),
+      chatbotContext,
+      requestedCapabilities: enabledCapabilities,
+      enabledCapabilities: availableCapabilities,
+    }, additionalUrls)
   const contentHash = hashSiteForgeContent(payload)
   const status = unresolvedConflicts.length ? 'needs_review' : 'ready'
 
@@ -392,10 +420,7 @@ export async function buildOnboardingSnapshot(
       domain_reports: domains,
       source_references: sourceReferences,
       unresolved_conflicts: unresolvedConflicts,
-      snapshot_payload: {
-        ...payload,
-        additionalUrls,
-      } as unknown as Json,
+      snapshot_payload: payload as unknown as Json,
       content_hash: contentHash,
       brand_asset_id: brand?.id || null,
       brand_contract_version: brand?.contract_version || null,

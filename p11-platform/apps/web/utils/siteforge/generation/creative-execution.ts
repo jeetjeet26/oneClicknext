@@ -15,6 +15,7 @@ import {
   ACF_BLOCK_TYPES,
   SITEFORGE_BLOCK_CAPABILITIES,
   type ACFBlockType,
+  type GenerationPreferences,
 } from '@/types/siteforge'
 
 export type SiteForgeCreativeExecutionContext = {
@@ -178,7 +179,8 @@ function photoRequirement(
  */
 export function composeApprovedSiteForgeArchitecture(
   confirmedPlan: SiteForgePlan,
-  execution: SiteForgeCreativeExecutionContext
+  execution: SiteForgeCreativeExecutionContext,
+  preferences?: GenerationPreferences
 ): ArchitectureProposal {
   const { brief, direction } = execution
   const primaryObjective = brief.objectives.find(
@@ -188,6 +190,7 @@ export function composeApprovedSiteForgeArchitecture(
   const profile = siteForgeCompositionProfile(direction)
 
   return {
+    generationPreferences: preferences,
     navigation: {
       structure:
         profile === 'conversion'

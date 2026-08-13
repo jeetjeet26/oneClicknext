@@ -14,6 +14,8 @@ const {
   serviceFromMock,
   startWorkflowMock,
   deploymentWorkflowMock,
+  generationWorkflowMock,
+  loadApprovedGenerationContextMock,
 } = vi.hoisted(() => ({
   authGetUserMock: vi.fn(),
   createClientMock: vi.fn(),
@@ -22,6 +24,8 @@ const {
   serviceFromMock: vi.fn(),
   startWorkflowMock: vi.fn(),
   deploymentWorkflowMock: vi.fn(),
+  generationWorkflowMock: vi.fn(),
+  loadApprovedGenerationContextMock: vi.fn(),
 }))
 
 vi.mock('@/utils/supabase/server', () => ({
@@ -37,14 +41,26 @@ vi.mock('workflow/api', () => ({
   start: startWorkflowMock,
 }))
 vi.mock('@/workflows/siteforge-generation', () => ({
-  siteForgeGenerationWorkflow: vi.fn(),
+  siteForgeGenerationWorkflow: generationWorkflowMock,
 }))
 vi.mock('@/workflows/siteforge-staging-deployment', () => ({
   siteForgeStagingDeploymentWorkflow: deploymentWorkflowMock,
 }))
+vi.mock('@/utils/siteforge/plans/repository', () => ({
+  SiteForgePlanError: class SiteForgePlanError extends Error {
+    constructor(
+      message: string,
+      readonly statusCode: number
+    ) {
+      super(message)
+    }
+  },
+  loadApprovedSiteForgeGenerationContext: loadApprovedGenerationContextMock,
+}))
 
 const jobId = '11111111-1111-4111-8111-111111111111'
 const propertyId = '22222222-2222-4222-8222-222222222222'
+const orgId = '44444444-4444-4444-8444-444444444444'
 
 function jobQuery(result: unknown) {
   const builder: Record<string, unknown> = {}
@@ -175,6 +191,114 @@ describe('SiteForge job retry', () => {
       expect.objectContaining({
         sharedJobId: jobId,
         localSimulation: true,
+      }),
+    ])
+  })
+
+  it('reconstructs the complete approved generation context before retrying', async () => {
+    mockAuthenticatedUser(authGetUserMock)
+    validatePropertyAccessMock.mockResolvedValue({ authorized: true })
+    startWorkflowMock.mockResolvedValue({
+      runId: 'generation-retry-run',
+      cancel: vi.fn(),
+    })
+    const websiteId = '33333333-3333-4333-8333-333333333333'
+    const planId = '55555555-5555-4555-8555-555555555555'
+    const planVersionId = '66666666-6666-4666-8666-666666666666'
+    const legacyJobId = '77777777-7777-4777-8777-777777777777'
+    const contentHash = 'a'.repeat(64)
+    const failedJob = jobQuery({
+      data: {
+        id: jobId,
+        domain: 'siteforge.generation',
+        org_id: orgId,
+        property_id: propertyId,
+        lifecycle_status: 'failed',
+        cancel_requested: false,
+        attempt_count: 1,
+        max_attempts: 3,
+        payload: { websiteId, planVersionId, legacyJobId },
+      },
+      error: null,
+    })
+    const planVersionQuery = jobQuery({
+      data: {
+        id: planVersionId,
+        plan_id: planId,
+        revision: 2,
+        content_hash: contentHash,
+      },
+      error: null,
+    })
+    const updateBuilder: Record<string, unknown> = {}
+    updateBuilder.update = vi.fn(() => updateBuilder)
+    updateBuilder.eq = vi.fn(() => updateBuilder)
+    updateBuilder.select = vi.fn(() => updateBuilder)
+    updateBuilder.maybeSingle = vi
+      .fn()
+      .mockResolvedValue({ data: { id: jobId }, error: null })
+    const preferences = {
+      style: 'luxury',
+      emphasis: 'lifestyle',
+      ctaPriority: 'tours',
+      referenceSiteUrl: 'https://reference.example.com',
+      contentDensity: 'rich',
+      motion: 'expressive',
+      enabledCapabilities: ['crm', 'tours', 'analytics'],
+    }
+    const brief = { objective: 'Increase qualified tours', audiences: ['renters'] }
+    const creativeDirection = {
+      name: 'Warm editorial',
+      palette: { primary: '#112233' },
+    }
+    const evidenceSnapshot = { contentHash: 'b'.repeat(64) }
+    loadApprovedGenerationContextMock.mockResolvedValue({
+      websiteId,
+      propertyId,
+      orgId,
+      planVersionId,
+      plan: {
+        summary: 'Approved plan summary',
+        recommendations: ['Use grounded leasing copy'],
+        preferences,
+      },
+      brief,
+      creativeDirection,
+      evidenceSnapshot,
+    })
+    let sharedJobCalls = 0
+    serviceFromMock.mockImplementation((table: string) => {
+      if (table === 'siteforge_plan_versions') return planVersionQuery
+      if (table !== 'shared_jobs') {
+        throw new Error(`Unexpected table: ${table}`)
+      }
+      sharedJobCalls += 1
+      return sharedJobCalls === 1 ? failedJob : updateBuilder
+    })
+
+    const { POST } = await import('./route')
+    const response = await POST(
+      makeJsonRequest(`http://localhost/api/siteforge/jobs/${jobId}/retry`),
+      { params: Promise.resolve({ jobId }) }
+    )
+
+    expect(response.status).toBe(200)
+    expect(loadApprovedGenerationContextMock).toHaveBeenCalledWith(
+      { websiteId, planId, confirmedRevision: 2, contentHash },
+      expect.objectContaining({ from: serviceFromMock })
+    )
+    expect(startWorkflowMock).toHaveBeenCalledWith(generationWorkflowMock, [
+      expect.objectContaining({
+        sharedJobId: jobId,
+        legacyJobId,
+        websiteId,
+        propertyId,
+        orgId,
+        planVersionId,
+        preferences,
+        approvedBrief: brief,
+        approvedCreativeDirection: creativeDirection,
+        evidenceSnapshot,
       }),
     ])
   })

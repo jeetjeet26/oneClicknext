@@ -20,6 +20,7 @@ import {
   finalizeSiteForgePages,
 } from '@/utils/siteforge/generation/finalize-pages'
 import { loadFreshApprovedFloorPlanInventory } from '@/utils/siteforge/providers/floor-plan-repository'
+import { createApprovedFloorPlanSnapshot } from '@/utils/siteforge/providers/floor-plans'
 import {
   buildWordPressThemeArtifact,
   type WordPressFontAsset,
@@ -402,6 +403,8 @@ export async function loadConfirmedSiteForgePlan(
     context.propertyId !== input.propertyId ||
     context.orgId !== input.orgId ||
     context.planVersionId !== input.planVersionId ||
+    hashSiteForgeContent(input.preferences) !==
+      hashSiteForgeContent(context.plan.preferences) ||
     hashSiteForgeContent(input.approvedBrief) !== hashSiteForgeContent(context.brief) ||
     hashSiteForgeContent(input.approvedCreativeDirection) !==
       hashSiteForgeContent(context.creativeDirection)
@@ -411,6 +414,47 @@ export async function loadConfirmedSiteForgePlan(
     )
   }
   return context.plan
+}
+
+export function applyApprovedGenerationPreferences(
+  designSystem: DesignSystem,
+  preferences: GenerationPreferences
+): DesignSystem {
+  const density = preferences.contentDensity
+  const densitySpacing = density === 'minimal'
+    ? {
+        scale: 'luxury' as const,
+        sectionPadding: 'clamp(5rem, 10vw, 10rem)',
+      }
+    : density === 'rich'
+      ? {
+          scale: 'tight' as const,
+          sectionPadding: 'clamp(2.5rem, 5vw, 5rem)',
+        }
+      : null
+  const motionLevel = preferences.motion === 'expressive'
+    ? 'prominent' as const
+    : preferences.motion === 'none'
+      ? 'none' as const
+      : 'subtle' as const
+
+  return {
+    ...designSystem,
+    spacing: densitySpacing
+      ? {
+          ...designSystem.spacing,
+          ...densitySpacing,
+          reasoning: `${designSystem.spacing.reasoning} Approved content density: ${density}.`,
+        }
+      : designSystem.spacing,
+    animations: {
+      ...designSystem.animations,
+      level: motionLevel,
+      types: motionLevel === 'none' ? [] : designSystem.animations.types,
+      reasoning:
+        `${designSystem.animations.reasoning} Approved motion preference: ${preferences.motion || 'subtle'}.`,
+    },
+  }
 }
 
 export async function planSiteForgeArchitectureAndDesign(
@@ -426,13 +470,17 @@ export async function planSiteForgeArchitectureAndDesign(
   const execution = creativeExecutionFromInput(input)
   const architecture = composeApprovedSiteForgeArchitecture(
     confirmedPlan,
-    execution
+    execution,
+    input.preferences
   )
   assertRegisteredSiteForgeArchitecture(architecture)
-  const designSystem = await new DesignAgent(input.propertyId).createSystem(
-    brandContext,
-    undefined,
-    execution
+  const designSystem = applyApprovedGenerationPreferences(
+    await new DesignAgent(input.propertyId).createSystem(
+      brandContext,
+      undefined,
+      execution
+    ),
+    input.preferences
   )
   return { architecture, designSystem }
 }
@@ -634,12 +682,31 @@ export async function persistSiteForgeGenerationArtifact(
     input.websiteId,
     photoManifest
   )
-  const floorPlanInventory = await loadFreshApprovedFloorPlanInventory(
-    input.propertyId,
-    supabase,
-    now,
-    confirmedPlan.floorPlanStrategy.freshnessHours
-  )
+  let floorPlanInventory
+  try {
+    floorPlanInventory = await loadFreshApprovedFloorPlanInventory(
+      input.propertyId,
+      supabase,
+      now,
+      confirmedPlan.floorPlanStrategy.freshnessHours
+    )
+  } catch (error) {
+    if (input.evidenceSnapshot.inventory.required) {
+      throw new FatalError(
+        `Failed to load required approved floor-plan inventory: ${
+          error instanceof Error ? error.message : 'unknown inventory error'
+        }`
+      )
+    }
+    console.warn('[siteforge_workflow] optional floor-plan inventory unavailable', {
+      sharedJobId: input.sharedJobId,
+      error: error instanceof Error ? error.message : String(error),
+    })
+    floorPlanInventory = {
+      snapshot: createApprovedFloorPlanSnapshot([], now),
+      stale: false,
+    }
+  }
   const floorPlanSnapshot = floorPlanInventory.snapshot
   if (
     input.evidenceSnapshot.inventory.required &&

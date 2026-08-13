@@ -76,6 +76,7 @@ const input = {
       contractHash: 'f'.repeat(64),
     },
     assetManifest: {
+      required: true,
       assets: [{
         id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
         role: 'hero',
@@ -371,6 +372,55 @@ describe('SiteForge durable generation steps', () => {
         }
       )
     ).toThrow('does not contain a complete approved legal contract')
+  })
+
+  it('applies approved density and motion preferences to generation design', async () => {
+    const { applyApprovedGenerationPreferences } = await import(
+      './generation-steps'
+    )
+    const design = applyApprovedGenerationPreferences(
+      {
+        colorSystem: {
+          primary: '#111111',
+          secondary: '#222222',
+          accent: '#333333',
+          background: '#ffffff',
+          strategy: 'brandforge',
+          reasoning: 'Approved brand.',
+        },
+        typography: {
+          headingFont: 'Inter',
+          headingWeight: 600,
+          bodyFont: 'Inter',
+          scale: 'balanced',
+          strategy: 'brandforge',
+          reasoning: 'Approved type.',
+        },
+        spacing: {
+          scale: 'balanced',
+          containerMaxWidth: '1200px',
+          sectionPadding: '4rem',
+          reasoning: 'Approved direction.',
+        },
+        componentStyles: {
+          hero: { layout: 'split', variant: 'split', treatment: 'split', reasoning: 'Approved.' },
+          amenityShowcase: { layout: 'grid', variant: 'editorial', treatment: 'mixed', reasoning: 'Approved.' },
+          ctaSections: { layout: 'inline', variant: 'inline', treatment: 'button', reasoning: 'Approved.' },
+        },
+        animations: {
+          level: 'subtle',
+          types: ['fadeIn'],
+          reasoning: 'Approved direction.',
+        },
+      },
+      { contentDensity: 'rich', motion: 'none' }
+    )
+
+    expect(design.spacing).toMatchObject({
+      scale: 'tight',
+      sectionPadding: 'clamp(2.5rem, 5vw, 5rem)',
+    })
+    expect(design.animations).toMatchObject({ level: 'none', types: [] })
   })
 })
 

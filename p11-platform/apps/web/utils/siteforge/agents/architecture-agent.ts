@@ -7,6 +7,7 @@ import { BaseAgent, type VectorSearchResult } from './base-agent'
 import { WordPressMcpClient, type WordPressCapabilities } from '@/utils/mcp/wordpress-client'
 import type { BrandContext } from './brand-agent'
 import type { SiteAnalysis } from '@/utils/mcp/wordpress-client'
+import type { GenerationPreferences } from '@/types/siteforge'
 
 export interface ArchitectureProposal {
   navigation: {
@@ -34,6 +35,8 @@ export interface ArchitectureProposal {
     workaround: string
     pluginSuggestion?: string
   }>
+
+  generationPreferences?: GenerationPreferences
 }
 
 export interface SectionSpec {

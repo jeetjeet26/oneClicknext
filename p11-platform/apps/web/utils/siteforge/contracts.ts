@@ -103,7 +103,7 @@ export const siteForgeReadinessIssueSchema = z.object({
   message: z.string().min(1).max(1_000),
   evidenceIds: z.array(z.string()).default([]),
   waivedAt: z.string().datetime().nullable().optional(),
-  waivedBy: z.string().uuid().nullable().optional(),
+  waivedBy: z.guid().nullable().optional(),
   waiverReason: z.string().min(1).max(2_000).nullable().optional(),
 })
 
@@ -245,49 +245,49 @@ export const siteForgePlanSchema = z.object({
 })
 
 export const siteForgePlanVersionSchema = z.object({
-  id: z.string().uuid(),
-  planId: z.string().uuid(),
+  id: z.guid(),
+  planId: z.guid(),
   revision: z.number().int().positive(),
   status: siteForgePlanStatusSchema,
-  contextSnapshotId: z.string().uuid().nullable(),
-  onboardingSnapshotId: z.string().uuid().nullable(),
+  contextSnapshotId: z.guid().nullable(),
+  onboardingSnapshotId: z.guid().nullable(),
   onboardingSnapshotHash: z.string().length(64).nullable(),
-  brandAssetId: z.string().uuid().nullable(),
+  brandAssetId: z.guid().nullable(),
   brandContractVersion: z.string().nullable(),
   brandContractHash: z.string().length(64).nullable(),
   plan: siteForgePlanSchema,
   readiness: siteForgeReadinessReportSchema,
   contentHash: z.string().min(32).max(128),
-  createdBy: z.string().uuid().nullable(),
+  createdBy: z.guid().nullable(),
   createdAt: z.string().datetime(),
 })
 
 export const confirmedSiteForgePlanSchema = siteForgePlanVersionSchema.extend({
   status: z.literal('confirmed'),
-  confirmedBy: z.string().uuid(),
+  confirmedBy: z.guid(),
   confirmedAt: z.string().datetime(),
 })
 
 export const siteForgeArtifactSchema = z.object({
-  id: z.string().uuid(),
-  websiteId: z.string().uuid(),
+  id: z.guid(),
+  websiteId: z.guid(),
   propertyId: z.guid(),
-  orgId: z.string().uuid(),
+  orgId: z.guid(),
   version: z.number().int().positive(),
   schemaVersion: z.number().int().positive(),
   contentHash: z.string().min(32).max(128),
-  parentVersionId: z.string().uuid().nullable(),
+  parentVersionId: z.guid().nullable(),
   changeType: z.enum(['generation', 'edit', 'rollback', 'import']),
-  sourcePlanVersionId: z.string().uuid().nullable(),
-  sharedJobId: z.string().uuid().nullable(),
+  sourcePlanVersionId: z.guid().nullable(),
+  sharedJobId: z.guid().nullable(),
   blueprint: siteBlueprintSchema,
   readiness: siteForgeReadinessReportSchema,
   createdAt: z.string().datetime(),
 })
 
 export const createGenerationRequestSchema = z.object({
-  websiteId: z.string().uuid(),
-  planId: z.string().uuid(),
+  websiteId: z.guid(),
+  planId: z.guid(),
   confirmedRevision: z.number().int().positive(),
   contentHash: z.string().min(32).max(128),
   idempotencyKey: z.string().min(8).max(200),
@@ -296,7 +296,7 @@ export const createGenerationRequestSchema = z.object({
 const generationHashSchema = z.string().regex(/^[a-f0-9]{64}$/)
 
 export const siteForgeGenerationAssetEvidenceSchema = z.object({
-  id: z.string().uuid(),
+  id: z.guid(),
   role: z.string().min(1),
   fileUrl: z.string().url(),
   contentHash: generationHashSchema,
@@ -309,38 +309,39 @@ export const siteForgeGenerationAssetEvidenceSchema = z.object({
 export const siteForgeGenerationEvidenceSnapshotSchema = z.object({
   schemaVersion: z.literal(1),
   capturedAt: z.string().datetime(),
-  websiteId: z.string().uuid(),
+  websiteId: z.guid(),
   propertyId: z.guid(),
   orgId: z.guid(),
   plan: z.object({
-    id: z.string().uuid(),
-    versionId: z.string().uuid(),
+    id: z.guid(),
+    versionId: z.guid(),
     revision: z.number().int().positive(),
     contentHash: generationHashSchema,
   }),
   brief: z.object({
-    id: z.string().uuid(),
+    id: z.guid(),
     version: z.number().int().positive(),
     contentHash: generationHashSchema,
   }),
   creativeDirection: z.object({
-    setId: z.string().uuid(),
+    setId: z.guid(),
     setVersion: z.number().int().positive(),
     setContentHash: generationHashSchema,
-    directionId: z.string().uuid(),
+    directionId: z.guid(),
     directionContentHash: generationHashSchema,
   }),
   onboarding: z.object({
-    id: z.string().uuid(),
+    id: z.guid(),
     contentHash: generationHashSchema,
   }),
   brand: z.object({
-    assetId: z.string().uuid(),
+    assetId: z.guid(),
     contractVersion: z.literal('1.0'),
     contractHash: generationHashSchema,
   }),
   assetManifest: z.object({
-    assets: z.array(siteForgeGenerationAssetEvidenceSchema).min(1),
+    required: z.boolean().default(true),
+    assets: z.array(siteForgeGenerationAssetEvidenceSchema),
     contentHash: generationHashSchema,
   }),
   inventory: z.object({
@@ -353,8 +354,8 @@ export const siteForgeGenerationEvidenceSnapshotSchema = z.object({
 })
 
 export const siteForgeJobStatusResponseSchema = z.object({
-  jobId: z.string().uuid(),
-  websiteId: z.string().uuid().nullable(),
+  jobId: z.guid(),
+  websiteId: z.guid().nullable(),
   lifecycleStatus: siteForgeJobStatusSchema,
   stage: siteForgeGenerationStageSchema,
   progress: z.number().int().min(0).max(100),

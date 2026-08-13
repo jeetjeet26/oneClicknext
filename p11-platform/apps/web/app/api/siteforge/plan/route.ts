@@ -9,7 +9,7 @@ import {
 } from '@/utils/siteforge/contracts'
 import {
   createPlanRevision,
-  getLatestPropertyPlanRevision,
+  getLatestWebsitePlanRevision,
   SiteForgePlanError,
 } from '@/utils/siteforge/plans/repository'
 import { SITEFORGE_CLAUDE_MODEL } from '@/utils/siteforge/models'
@@ -25,8 +25,9 @@ const conversationEntrySchema = z.object({
 })
 
 const planningRequestSchema = z.object({
+  websiteId: z.guid(),
   propertyId: z.guid(),
-  planId: z.string().uuid().nullable().optional(),
+  planId: z.guid().nullable().optional(),
   expectedRevision: z.number().int().positive().nullable().optional(),
   conversationHistory: z.array(conversationEntrySchema).max(30).default([]),
   userMessage: z.string().trim().min(1).max(5_000).nullable().optional(),
@@ -60,10 +61,12 @@ function planSummaryForPrompt(plan: {
 export async function GET(request: NextRequest) {
   try {
     const propertyId = new URL(request.url).searchParams.get('propertyId')
+    const websiteId = new URL(request.url).searchParams.get('websiteId')
     const parsedPropertyId = z.guid().safeParse(propertyId)
-    if (!parsedPropertyId.success) {
+    const parsedWebsiteId = z.guid().safeParse(websiteId)
+    if (!parsedPropertyId.success || !parsedWebsiteId.success) {
       return NextResponse.json(
-        { error: 'Valid property ID required' },
+        { error: 'Valid property and website IDs required' },
         { status: 400 },
       )
     }
@@ -77,11 +80,15 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
     const access = await validatePropertyAccess(user.id, parsedPropertyId.data)
-    if (!access.authorized) {
+    if (!access.authorized || !access.orgId) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
-    const plan = await getLatestPropertyPlanRevision(parsedPropertyId.data)
+    const plan = await getLatestWebsitePlanRevision({
+      websiteId: parsedWebsiteId.data,
+      propertyId: parsedPropertyId.data,
+      orgId: access.orgId,
+    })
     return NextResponse.json({ plan })
   } catch (error) {
     if (error instanceof SiteForgePlanError) {
@@ -148,6 +155,7 @@ export async function POST(request: NextRequest) {
 
     const {
       propertyId,
+      websiteId,
       planId,
       expectedRevision,
       conversationHistory,
@@ -157,13 +165,14 @@ export async function POST(request: NextRequest) {
     } = parsedRequest.data
 
     const access = await validatePropertyAccess(user.id, propertyId)
-    if (!access.authorized) {
+    if (!access.authorized || !access.orgId) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     const now = new Date().toISOString()
     const persisted = await createPlanRevision({
       propertyId,
+      websiteId,
       userId: user.id,
       preferences,
       siteType,

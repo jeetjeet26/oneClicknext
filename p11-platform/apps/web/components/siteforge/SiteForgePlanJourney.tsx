@@ -60,9 +60,10 @@ export function SiteForgePlanJourney({
         `/api/onboarding/readiness?propertyId=${encodeURIComponent(propertyId)}`,
         { cache: 'no-store' },
       ),
-      fetch(`/api/siteforge/plan?propertyId=${encodeURIComponent(propertyId)}`, {
-        cache: 'no-store',
-      }),
+      fetch(
+        `/api/siteforge/plan?propertyId=${encodeURIComponent(propertyId)}&websiteId=${encodeURIComponent(websiteId)}`,
+        { cache: 'no-store' },
+      ),
     ])
     const readinessBody = await readinessResponse.json().catch(() => ({}))
     const planBody = await planResponse.json().catch(() => ({}))
@@ -74,7 +75,7 @@ export function SiteForgePlanJourney({
     }
     setReadiness(readinessBody.snapshots?.[0] || null)
     setPlan(planBody.plan || null)
-  }, [propertyId])
+  }, [propertyId, websiteId])
 
   useEffect(() => {
     void load().catch(cause =>
@@ -92,6 +93,7 @@ export function SiteForgePlanJourney({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          websiteId,
           propertyId,
           planId: plan?.planId,
           expectedRevision: plan?.revision,
@@ -141,6 +143,7 @@ export function SiteForgePlanJourney({
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
+              websiteId,
               propertyId,
               expectedRevision: targetPlan.revision,
               contentHash: targetPlan.contentHash,

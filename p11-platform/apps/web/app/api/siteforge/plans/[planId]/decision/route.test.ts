@@ -37,7 +37,10 @@ vi.mock('@/utils/siteforge/plans/repository', () => ({
 
 const planId = '11111111-1111-4111-8111-111111111111'
 const propertyId = '22222222-2222-4222-8222-222222222222'
+const websiteId = '44444444-4444-4444-8444-444444444444'
+const orgId = '55555555-5555-4555-8555-555555555555'
 const requestBody = {
+  websiteId,
   propertyId,
   expectedRevision: 2,
   contentHash: 'a'.repeat(64),
@@ -80,7 +83,7 @@ describe('SiteForge plan decision route', () => {
 
   it('requires an approval-capable role', async () => {
     mockAuthenticatedUser(authGetUserMock)
-    validatePropertyAccessMock.mockResolvedValue({ authorized: true })
+    validatePropertyAccessMock.mockResolvedValue({ authorized: true, orgId })
     fromMock.mockReturnValue(profileQuery('member'))
 
     const { POST } = await import('./route')
@@ -96,7 +99,7 @@ describe('SiteForge plan decision route', () => {
 
   it('records an explicit revision-bound approval', async () => {
     mockAuthenticatedUser(authGetUserMock)
-    validatePropertyAccessMock.mockResolvedValue({ authorized: true })
+    validatePropertyAccessMock.mockResolvedValue({ authorized: true, orgId })
     fromMock.mockReturnValue(profileQuery('manager'))
     decideSiteForgePlanMock.mockResolvedValue({
       planId,
@@ -126,7 +129,9 @@ describe('SiteForge plan decision route', () => {
     expect(decideSiteForgePlanMock).toHaveBeenCalledWith(
       expect.objectContaining({
         planId,
+        websiteId,
         propertyId,
+        orgId,
         expectedRevision: 2,
         contentHash: 'a'.repeat(64),
         decisionStatus: 'approved',

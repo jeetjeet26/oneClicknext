@@ -885,6 +885,7 @@ async function createApprovedSiteForgeGeneration(
   const planResponse = await callAuthedApi(page, '/api/siteforge/plan', {
     method: 'POST',
     body: {
+      websiteId,
       propertyId,
       conversationHistory: [],
       userMessage: operatorDirection,
@@ -922,6 +923,7 @@ async function createApprovedSiteForgeGeneration(
     {
       method: 'POST',
       body: {
+        websiteId,
         propertyId,
         expectedRevision: plan.revision,
         contentHash: plan.contentHash,
@@ -2584,6 +2586,14 @@ test.describe('local smoke flows', () => {
         }),
       ])
     )
+
+    await page.goto(`/dashboard/siteforge/${generation.websiteId}`)
+    await expect(
+      page.getByRole('heading', { name: 'Build your property website' })
+    ).toBeVisible()
+    await expect(page.getByText('Preview and edit', { exact: true }).first()).toBeVisible()
+    await expect(page.getByText('Plan approval', { exact: true })).toHaveCount(0)
+    await expect(page.getByText('Advanced diagnostics')).toBeVisible()
 
     const artifactResponse = await callAuthedApi(
       page,

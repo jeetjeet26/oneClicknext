@@ -361,7 +361,7 @@ export function ConversationalGenerationWizard({
   }
   
   async function sendMessage() {
-    if (!userInput.trim()) return
+    if (!userInput.trim() || !websiteId) return
     
     // Add user message
     const userMsg: ConversationMessage = {
@@ -379,6 +379,7 @@ export function ConversationalGenerationWizard({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          websiteId,
           propertyId,
           planId: serverPlan?.planId,
           expectedRevision: serverPlan?.revision,
@@ -419,6 +420,9 @@ export function ConversationalGenerationWizard({
   async function persistSelectedPreferences(
     currentPlan: ServerPlanSnapshot
   ): Promise<ServerPlanSnapshot> {
+    if (!websiteId) {
+      throw new Error('SiteForge project identity is unavailable')
+    }
     const approvedPreferences = await preferencesForApprovedReadiness()
     if (preferencesMatch(currentPlan.plan.preferences, approvedPreferences)) {
       return currentPlan
@@ -428,6 +432,7 @@ export function ConversationalGenerationWizard({
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        websiteId,
         propertyId,
         planId: currentPlan.planId,
         expectedRevision: currentPlan.revision,
@@ -536,6 +541,7 @@ export function ConversationalGenerationWizard({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
+            websiteId,
             propertyId,
             expectedRevision: approvedPlan.revision,
             contentHash: approvedPlan.contentHash,
@@ -658,6 +664,7 @@ export function ConversationalGenerationWizard({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
+            websiteId,
             propertyId,
             expectedRevision: serverPlan.revision,
             contentHash: serverPlan.contentHash,
@@ -712,6 +719,7 @@ export function ConversationalGenerationWizard({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
+            websiteId,
             propertyId,
             expectedRevision: serverPlan.revision,
             contentHash: serverPlan.contentHash,

@@ -14,6 +14,7 @@ const validatePropertyAccessMock = vi.fn()
 const serviceFromMock = vi.fn()
 const serviceRpcMock = vi.fn()
 const loadApprovedGenerationContextMock = vi.fn()
+const consumeConfirmedPlanMock = vi.fn()
 const publishSiteForgeArtifactMock = vi.fn()
 
 vi.mock('@/utils/supabase/server', () => ({
@@ -56,6 +57,7 @@ vi.mock('@/utils/siteforge/plans/repository', () => {
   return {
     SiteForgePlanError: MockSiteForgePlanError,
     loadApprovedSiteForgeGenerationContext: loadApprovedGenerationContextMock,
+    consumeConfirmedSiteForgePlan: consumeConfirmedPlanMock,
   }
 })
 
@@ -100,6 +102,7 @@ const evidenceSnapshot = {
     contractHash: 'f'.repeat(64),
   },
   assetManifest: {
+    required: true,
     assets: [{
       id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
       role: 'hero',
@@ -126,7 +129,13 @@ const structuredPlan = {
   propertyId,
   name: 'P11 Demo website plan',
   summary: 'A grounded multifamily website.',
-  preferences: { ctaPriority: 'tours', motion: 'subtle' },
+  preferences: {
+    ctaPriority: 'tours',
+    referenceSiteUrl: 'https://reference.example.com',
+    contentDensity: 'rich',
+    motion: 'expressive',
+    enabledCapabilities: ['tours'],
+  },
   brandDirection: {
     positioning: 'Verified positioning',
     voice: 'Warm',
@@ -228,6 +237,7 @@ describe('siteforge generate route', () => {
       version: 1,
       contentHash: '6'.repeat(64),
     })
+    consumeConfirmedPlanMock.mockResolvedValue(undefined)
   })
 
   it('returns 401 when unauthenticated', async () => {
@@ -420,6 +430,7 @@ describe('siteforge generate route', () => {
     expect(websiteUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
         generation_status: 'ready_for_preview',
+        user_preferences: structuredPlan.preferences,
         generation_input: expect.objectContaining({
           websiteId,
           planId,
@@ -428,6 +439,16 @@ describe('siteforge generate route', () => {
           evidenceSnapshot,
         }),
       })
+    )
+    expect(consumeConfirmedPlanMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        websiteId,
+        propertyId,
+        orgId: evidenceSnapshot.orgId,
+        planId,
+        planVersionId,
+      }),
+      expect.anything()
     )
     expect(jobInsert).toHaveBeenCalledWith(
       expect.objectContaining({

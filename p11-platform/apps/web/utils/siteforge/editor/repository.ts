@@ -65,6 +65,12 @@ export async function getOrCreateEditorSession(
     .select('*')
     .single()
 
+  if (createError?.code === '23505') {
+    // Concurrent React mounts can both observe no active session. The unique
+    // active-session index decides the winner; reuse it instead of surfacing a
+    // false editor failure to the operator.
+    return getOrCreateEditorSession(input, client)
+  }
   if (createError || !created) {
     throw new Error(
       `Failed to create editor session: ${createError?.message || 'missing row'}`

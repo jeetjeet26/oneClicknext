@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest'
 import {
   evaluateCapabilityReadiness,
   evaluateRequiredAssetReadiness,
+  includeAdditionalUrlsInOnboardingPayload,
+  normalizeOnboardingAdditionalUrls,
 } from './repository'
+import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
 
 function asset(
   id: string,
@@ -120,5 +123,46 @@ describe('onboarding capability readiness', () => {
         hasChatbotContext: false,
       }),
     ).toEqual(['analytics is enabled but no active provider is configured'])
+  })
+})
+
+describe('onboarding canonical payload', () => {
+  it('changes the canonical hash when additional source URLs change', () => {
+    const first = includeAdditionalUrlsInOnboardingPayload(
+      { property: { id: 'property-1' } },
+      ['https://first.example.com']
+    )
+    const second = includeAdditionalUrlsInOnboardingPayload(
+      { property: { id: 'property-1' } },
+      ['https://second.example.com']
+    )
+
+    expect(hashSiteForgeContent(first)).not.toBe(hashSiteForgeContent(second))
+  })
+
+  it('normalizes, deduplicates, and sorts additional URLs before hashing', () => {
+    const variants = [
+      ' HTTPS://Example.COM:443/floor-plans/#availability ',
+      'https://example.com/floor-plans',
+      'example.com/amenities?b=2&a=1',
+      'not a valid url',
+    ]
+
+    expect(normalizeOnboardingAdditionalUrls(variants)).toEqual([
+      'https://example.com/amenities?a=1&b=2',
+      'https://example.com/floor-plans',
+    ])
+    const normalized = includeAdditionalUrlsInOnboardingPayload(
+      { property: { id: 'property-1' } },
+      variants,
+    )
+    const reordered = includeAdditionalUrlsInOnboardingPayload(
+      { property: { id: 'property-1' } },
+      [
+        'https://example.com/amenities?a=1&b=2',
+        'https://example.com/floor-plans/',
+      ],
+    )
+    expect(hashSiteForgeContent(normalized)).toBe(hashSiteForgeContent(reordered))
   })
 })

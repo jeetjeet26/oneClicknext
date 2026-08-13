@@ -24,6 +24,12 @@ type PropertyAsset = {
   category: AssetCategory
   altText?: string
   createdAt?: string
+  sourceMetadata?: {
+    analysisMode?: 'visual_ai' | 'metadata_fallback'
+    observedElements?: string[]
+    qualityNotes?: string[]
+  }
+  qualityScore?: number | null
 }
 
 export type FloorPlanDraft = {
@@ -127,7 +133,6 @@ export function PropertyAssetsStep({
   onPhotoCountChange?: (count: number) => void
 }) {
   const [assets, setAssets] = useState<PropertyAsset[]>([])
-  const [category, setCategory] = useState<AssetCategory>('hero')
   const [uploading, setUploading] = useState(false)
   const [assetError, setAssetError] = useState('')
   const [floorPlanMode, setFloorPlanMode] = useState<'manual' | 'csv'>('manual')
@@ -198,7 +203,7 @@ export function PropertyAssetsStep({
     try {
       const selectedFiles = Array.from(files)
       const results = await Promise.allSettled(
-        selectedFiles.map((file) => uploadAsset(file, category))
+        selectedFiles.map((file) => uploadAsset(file, 'gallery'))
       )
       const { succeeded: created, failedNames: failedFiles } =
         partitionUploadResults(selectedFiles, results)
@@ -233,6 +238,36 @@ export function PropertyAssetsStep({
     onPhotoCountChange?.(
       nextAssets.filter((item) => item.category !== 'floorplan').length
     )
+  }
+
+  async function updateAssetCategory(
+    asset: PropertyAsset,
+    assetRole: AssetCategory
+  ) {
+    setAssetError('')
+    const response = await fetch('/api/siteforge/assets', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        propertyId,
+        updates: [{ assetId: asset.id, assetRole }],
+      }),
+    })
+    if (!response.ok) {
+      setAssetError(
+        await responseError(response, 'Could not update the photo category')
+      )
+      return
+    }
+    const body = await response.json()
+    const updated = Array.isArray(body.assets)
+      ? (body.assets[0] as PropertyAsset | undefined)
+      : undefined
+    if (updated) {
+      setAssets((current) =>
+        current.map((item) => (item.id === updated.id ? updated : item))
+      )
+    }
   }
 
   function updateFloorPlan(
@@ -394,40 +429,25 @@ export function PropertyAssetsStep({
         <div>
           <h4 className="text-sm font-medium">Property photography</h4>
           <p className="text-xs text-gray-500">
-            Optional. Add JPG, PNG, or WebP files only when you want SiteForge
-            to use real property photography.
+            Optional. Upload JPG, PNG, or WebP files and SiteForge will identify
+            what each image shows, suggest its placement, and write accessible
+            alt text. You can correct any suggestion below.
           </p>
         </div>
-        <div className="grid min-w-0 gap-2 sm:grid-cols-[180px_minmax(0,1fr)]">
-          <select
-            value={category}
-            onChange={(event) =>
-              setCategory(event.target.value as AssetCategory)
-            }
-            className="h-10 min-w-0 rounded-md border bg-background px-3 text-sm"
-            aria-label="Photo category"
-          >
-            {photoCategories.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-          <label className="flex min-h-10 min-w-0 cursor-pointer items-center justify-center rounded-md border border-dashed px-3 text-center text-sm hover:bg-gray-50 dark:hover:bg-gray-900">
-            {uploading ? 'Uploading…' : 'Choose property photos'}
-            <input
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              multiple
-              className="sr-only"
-              disabled={uploading}
-              onChange={(event) => {
-                void uploadPhotos(event.target.files)
-                event.currentTarget.value = ''
-              }}
-            />
-          </label>
-        </div>
+        <label className="flex min-h-12 min-w-0 cursor-pointer items-center justify-center rounded-md border border-dashed px-3 text-center text-sm hover:bg-gray-50 dark:hover:bg-gray-900">
+          {uploading ? 'Analyzing and uploading…' : 'Choose property photos'}
+          <input
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            multiple
+            className="sr-only"
+            disabled={uploading}
+            onChange={(event) => {
+              void uploadPhotos(event.target.files)
+              event.currentTarget.value = ''
+            }}
+          />
+        </label>
         {assetError && (
           <p className="rounded-md bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-950/40 dark:text-red-300">
             {assetError}
@@ -450,14 +470,44 @@ export function PropertyAssetsStep({
                     className="object-cover"
                   />
                 </div>
-                <div className="min-w-0 space-y-1 p-2">
+                <div className="min-w-0 space-y-2 p-2">
                   <div className="truncate text-xs font-medium">
                     {asset.filename}
                   </div>
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="truncate text-[11px] capitalize text-gray-500">
-                      {asset.category}
-                    </span>
+                  <div className="text-[11px] text-gray-500">
+                    {asset.sourceMetadata?.analysisMode === 'visual_ai'
+                      ? 'AI identified'
+                      : 'File metadata only'}
+                    {asset.qualityScore != null
+                      ? ` · ${Math.round(asset.qualityScore * 100)}% quality`
+                      : ''}
+                  </div>
+                  {asset.sourceMetadata?.observedElements?.length ? (
+                    <p className="line-clamp-2 text-[11px] text-gray-500">
+                      {asset.sourceMetadata.observedElements.slice(0, 3).join(', ')}
+                    </p>
+                  ) : null}
+                  <label className="block text-[11px] text-gray-500">
+                    Use as
+                    <select
+                      value={asset.category}
+                      onChange={(event) =>
+                        void updateAssetCategory(
+                          asset,
+                          event.target.value as AssetCategory
+                        )
+                      }
+                      className="mt-1 h-8 w-full rounded-md border bg-background px-2 text-xs text-foreground"
+                      aria-label={`Category for ${asset.filename}`}
+                    >
+                      {photoCategories.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <div className="flex justify-end">
                     <button
                       type="button"
                       onClick={() => void deleteAsset(asset)}

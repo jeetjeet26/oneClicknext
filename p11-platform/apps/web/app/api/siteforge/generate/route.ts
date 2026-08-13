@@ -15,6 +15,7 @@ import { start } from 'workflow/api'
 import { siteForgeGenerationWorkflow } from '@/workflows/siteforge-generation'
 import { publishSiteForgeArtifact } from '@/utils/siteforge/artifacts/repository'
 import {
+  consumeConfirmedSiteForgePlan,
   loadApprovedSiteForgeGenerationContext,
   SiteForgePlanError,
 } from '@/utils/siteforge/plans/repository'
@@ -102,9 +103,7 @@ export async function POST(request: NextRequest) {
     const planVersion = { id: generationContext.planVersionId }
     const propertyId = generationContext.propertyId
     const preferences: GenerationPreferences = {
-      style: structuredPlan.preferences.style,
-      emphasis: structuredPlan.preferences.emphasis,
-      ctaPriority: structuredPlan.preferences.ctaPriority,
+      ...structuredPlan.preferences,
     }
     const prompt = [
       structuredPlan.summary,
@@ -328,21 +327,23 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to create generation job' }, { status: 500 })
     }
 
-    const { data: consumedPlan, error: consumePlanError } = await serviceSupabase
-      .from('siteforge_plans')
-      .update({
-        status: 'consumed',
-        consumed_at: nowIso,
-        updated_at: nowIso,
-      })
-      .eq('id', planId)
-      .eq('status', 'confirmed')
-      .eq('confirmed_version_id', planVersion.id)
-      .select('id')
-      .single()
-
-    if (consumePlanError || !consumedPlan) {
-      const message = 'Confirmed plan was already consumed or changed'
+    try {
+      await consumeConfirmedSiteForgePlan(
+        {
+          planId,
+          planVersionId: planVersion.id,
+          websiteId,
+          propertyId,
+          orgId: property.org_id,
+          consumedAt: nowIso,
+        },
+        serviceSupabase
+      )
+    } catch (error) {
+      const message =
+        error instanceof SiteForgePlanError
+          ? error.message
+          : 'Confirmed plan was already consumed or changed'
       await Promise.all([
         serviceSupabase
           .from('shared_jobs')

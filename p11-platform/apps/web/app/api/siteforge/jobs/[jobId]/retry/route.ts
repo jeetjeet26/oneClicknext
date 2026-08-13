@@ -4,49 +4,52 @@ import { start } from 'workflow/api'
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
-import { siteForgePlanSchema } from '@/utils/siteforge/contracts'
+import {
+  loadApprovedSiteForgeGenerationContext,
+  SiteForgePlanError,
+} from '@/utils/siteforge/plans/repository'
 import { siteForgeGenerationWorkflow } from '@/workflows/siteforge-generation'
 import { siteForgeStagingDeploymentWorkflow } from '@/workflows/siteforge-staging-deployment'
 import { siteForgeCanonicalPreviewWorkflow } from '@/workflows/siteforge-canonical-preview'
 import { siteForgeProductionCertificationWorkflow } from '@/workflows/siteforge-production-certification'
 
 const sharedPayloadSchema = z.object({
-  planVersionId: z.string().uuid(),
-  websiteId: z.string().uuid(),
-  legacyJobId: z.string().uuid(),
+  planVersionId: z.guid(),
+  websiteId: z.guid(),
+  legacyJobId: z.guid(),
 })
 
 const deploymentPayloadSchema = z.object({
-  websiteId: z.string().uuid(),
+  websiteId: z.guid(),
   propertyId: z.guid(),
-  orgId: z.string().uuid(),
-  targetId: z.string().uuid(),
-  deploymentId: z.string().uuid(),
-  artifactId: z.string().uuid(),
+  orgId: z.guid(),
+  targetId: z.guid(),
+  deploymentId: z.guid(),
+  artifactId: z.guid(),
   contentHash: z.string().regex(/^[a-f0-9]{64}$/),
-  approvalId: z.string().uuid(),
+  approvalId: z.guid(),
   localSimulation: z.boolean().default(false),
   startedAt: z.string().datetime(),
 })
 
 const previewPayloadSchema = z.object({
-  websiteId: z.string().uuid(),
+  websiteId: z.guid(),
   propertyId: z.guid(),
-  orgId: z.string().uuid(),
-  artifactId: z.string().uuid(),
+  orgId: z.guid(),
+  artifactId: z.guid(),
   contentHash: z.string().regex(/^[a-f0-9]{64}$/),
-  targetId: z.string().uuid(),
+  targetId: z.guid(),
 })
 
 const productionPayloadSchema = z.object({
-  releaseId: z.string().uuid(),
-  actorId: z.string().uuid(),
-  websiteId: z.string().uuid(),
+  releaseId: z.guid(),
+  actorId: z.guid(),
+  websiteId: z.guid(),
   propertyId: z.guid(),
-  orgId: z.string().uuid(),
-  targetId: z.string().uuid(),
-  deploymentId: z.string().uuid(),
-  artifactId: z.string().uuid(),
+  orgId: z.guid(),
+  targetId: z.guid(),
+  deploymentId: z.guid(),
+  artifactId: z.guid(),
   contentHash: z.string().regex(/^[a-f0-9]{64}$/),
   productionUrl: z.string().url(),
   startedAt: z.string().datetime(),
@@ -58,7 +61,7 @@ export async function POST(
 ) {
   try {
     const { jobId } = await params
-    if (!z.string().uuid().safeParse(jobId).success) {
+    if (!z.guid().safeParse(jobId).success) {
       return NextResponse.json({ error: 'Invalid job identifier' }, { status: 400 })
     }
 
@@ -122,23 +125,50 @@ export async function POST(
       )
     }
 
-    let generationPlan: ReturnType<typeof siteForgePlanSchema.parse> | null = null
-    if (generationPayload.success) {
+    let generationContext: Awaited<
+      ReturnType<typeof loadApprovedSiteForgeGenerationContext>
+    > | null = null
+    if (job.domain === 'siteforge.generation' && generationPayload.success) {
       const { data: planVersion, error: planError } = await serviceSupabase
         .from('siteforge_plan_versions')
-        .select('plan')
+        .select('id, plan_id, revision, content_hash')
         .eq('id', generationPayload.data.planVersionId)
         .single()
       if (planError || !planVersion) {
         return NextResponse.json({ error: 'Confirmed plan revision not found' }, { status: 404 })
       }
-      generationPlan = siteForgePlanSchema.parse(planVersion.plan)
+      try {
+        generationContext = await loadApprovedSiteForgeGenerationContext(
+          {
+            websiteId: generationPayload.data.websiteId,
+            planId: planVersion.plan_id,
+            confirmedRevision: planVersion.revision,
+            contentHash: planVersion.content_hash,
+          },
+          serviceSupabase
+        )
+      } catch (error) {
+        if (error instanceof SiteForgePlanError) {
+          return NextResponse.json({ error: error.message }, { status: error.statusCode })
+        }
+        throw error
+      }
+      if (
+        generationContext.planVersionId !== generationPayload.data.planVersionId ||
+        generationContext.propertyId !== job.property_id ||
+        generationContext.orgId !== job.org_id
+      ) {
+        return NextResponse.json(
+          { error: 'Generation retry context does not match the failed job' },
+          { status: 409 }
+        )
+      }
     }
     if (
       job.domain !== 'siteforge.preview' &&
       job.domain !== 'siteforge.deployment' &&
       job.domain !== 'siteforge.production-certification' &&
-      !generationPlan
+      !generationContext
     ) {
       return NextResponse.json(
         { error: 'SiteForge job is missing resumable workflow context' },
@@ -216,24 +246,27 @@ export async function POST(
             startedAt: now,
           },
         ])
-      } else if (generationPayload.success && generationPlan) {
+      } else if (generationPayload.success && generationContext) {
         run = await start(siteForgeGenerationWorkflow, [
           {
             sharedJobId: job.id,
             legacyJobId: generationPayload.data.legacyJobId,
             websiteId: generationPayload.data.websiteId,
-            propertyId: job.property_id,
-            orgId: job.org_id,
-            planVersionId: generationPayload.data.planVersionId,
-            preferences: {
-              style: generationPlan.preferences.style,
-              emphasis: generationPlan.preferences.emphasis,
-              ctaPriority: generationPlan.preferences.ctaPriority,
-            },
+            propertyId: generationContext.propertyId,
+            orgId: generationContext.orgId,
+            planVersionId: generationContext.planVersionId,
+            preferences: { ...generationContext.plan.preferences },
             prompt: [
-              generationPlan.summary,
-              ...generationPlan.recommendations,
+              generationContext.plan.summary,
+              ...generationContext.plan.recommendations,
+              `Approved brief:\n${JSON.stringify(generationContext.brief)}`,
+              `Approved creative direction:\n${JSON.stringify(
+                generationContext.creativeDirection
+              )}`,
             ].join('\n\n'),
+            approvedBrief: generationContext.brief,
+            approvedCreativeDirection: generationContext.creativeDirection,
+            evidenceSnapshot: generationContext.evidenceSnapshot,
             startedAt: now,
           },
         ])
