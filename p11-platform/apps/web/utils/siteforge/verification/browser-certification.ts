@@ -63,15 +63,18 @@ function missingEvidenceReport(evaluatedAt: string, issues: unknown): BrowserCer
     policyVersion: SITEFORGE_CERTIFICATION_POLICY_VERSION,
     evidenceVersion: SITEFORGE_BROWSER_EVIDENCE_VERSION,
     evaluatedAt,
+    capturedAt: null,
     passed: false,
     evidenceAccepted: false,
+    screenshots: [],
     checks: [
       check(
         'evidence.browser.required',
         'evidence',
         false,
         'Complete, versioned browser evidence is required for certification.',
-        { issues }
+        { issues },
+        'identity'
       ),
     ],
   })
@@ -288,13 +291,16 @@ function evaluateSeoPresentation(
     const page = pages.get(normalizedUrl(expectedUrl))
     if (!page) return []
     const validJsonLd = page.jsonLd.some(item => item.valid && item.types.length > 0)
+    const openGraphImageIsSecure =
+      page.openGraph.imageUrl !== undefined &&
+      new URL(page.openGraph.imageUrl).protocol === 'https:'
     const passed =
       page.canonicalUrl !== undefined &&
       normalizedUrl(page.canonicalUrl) === normalizedUrl(expectedUrl) &&
       Boolean(
         page.openGraph.title &&
         page.openGraph.description &&
-        page.openGraph.imageUrl &&
+        openGraphImageIsSecure &&
         page.openGraph.url &&
         normalizedUrl(page.openGraph.url) === normalizedUrl(expectedUrl)
       ) &&
@@ -314,7 +320,8 @@ function evaluateSeoPresentation(
 
 function evaluateIndexability(
   evidence: BrowserCertificationEvidence,
-  expectedUrls: string[]
+  expectedUrls: string[],
+  targetUrl: string
 ): BrowserCertificationCheck[] {
   const sitemapUrls = new Set(evidence.seo.sitemap.listedUrls.map(normalizedUrl))
   const missingFromSitemap = expectedUrls
@@ -328,6 +335,9 @@ function evaluateIndexability(
     evidence.seo.robots.sitemapUrls.some(
       url => normalizedUrl(url) === normalizedUrl(evidence.seo.sitemap.url)
     ) &&
+    new URL(evidence.seo.sitemap.url).origin === new URL(targetUrl).origin &&
+    new URL(evidence.seo.robots.url).origin === new URL(targetUrl).origin &&
+    new URL(evidence.seo.robots.url).pathname === '/robots.txt' &&
     evidence.seo.robots.blockedCriticalUrls.length === 0 &&
     missingFromSitemap.length === 0
   return [
@@ -380,8 +390,9 @@ function evaluateRedirects(
   const missing = criticalUrls.map(normalizedUrl).filter(url => !critical.has(url))
   const failures = [...critical.values()].filter(route =>
     route.status < 200 ||
-    route.status >= 400 ||
-    route.hops > 5
+    route.status >= 300 ||
+    route.hops > 5 ||
+    normalizedUrl(route.finalUrl) !== normalizedUrl(route.requestedUrl)
   )
   const loops = redirectLoops(evidence.redirects.entries)
   return [
@@ -534,7 +545,7 @@ export function certifyBrowserEvidence(
     ...evaluateInteractions(parsed.data, expectedUrls),
     ...presentationChecks,
     ...(input.requireIndexable
-      ? evaluateIndexability(parsed.data, expectedUrls)
+      ? evaluateIndexability(parsed.data, expectedUrls, input.targetUrl)
       : []),
     ...evaluateRedirects(parsed.data, criticalUrls),
     ...evaluateConsent(parsed.data),
@@ -543,8 +554,10 @@ export function certifyBrowserEvidence(
     policyVersion: SITEFORGE_CERTIFICATION_POLICY_VERSION,
     evidenceVersion: SITEFORGE_BROWSER_EVIDENCE_VERSION,
     evaluatedAt,
+    capturedAt: parsed.data.capturedAt,
     passed: checks.every(item => item.passed || item.severity !== 'blocker'),
     evidenceAccepted: true,
+    screenshots: parsed.data.screenshots,
     checks,
   })
 }

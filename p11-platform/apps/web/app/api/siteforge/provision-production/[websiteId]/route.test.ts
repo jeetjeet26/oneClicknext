@@ -25,7 +25,10 @@ vi.mock('@/utils/services/auth-guard', () => ({
   validatePropertyManagerAccess,
 }))
 vi.mock('workflow/api', () => ({ start }))
-vi.mock('@/utils/siteforge/providers/cloudways-provider', () => ({
+vi.mock('@/utils/siteforge/providers/cloudways-provider', async importOriginal => ({
+  ...(await importOriginal<
+    typeof import('@/utils/siteforge/providers/cloudways-provider')
+  >()),
   CloudwaysProviderClient: vi.fn(function CloudwaysProviderClient() {
     return { createApplication }
   }),
@@ -186,7 +189,10 @@ describe('production WordPress provisioning route', () => {
     expect(start).not.toHaveBeenCalled()
   })
 
-  it('persists the provider checkpoint once and starts the workflow', async () => {
+  it('accepts access-token-only auth and starts the checkpointed workflow', async () => {
+    vi.stubEnv('CLOUDWAYS_ACCESS_TOKEN', 'modern-cloudways-access-token')
+    vi.stubEnv('CLOUDWAYS_API_KEY', '')
+    vi.stubEnv('CLOUDWAYS_EMAIL', '')
     createApplication.mockResolvedValue({
       operationId: 'operation-123',
       applicationId: null,

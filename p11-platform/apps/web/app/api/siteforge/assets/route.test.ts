@@ -1,32 +1,27 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NextRequest } from 'next/server'
 
-const authGetUserMock = vi.fn()
-const createClientMock = vi.fn()
-const createServiceClientMock = vi.fn()
-const validatePropertyAccessMock = vi.fn()
-const uploadFileAssetMock = vi.fn()
-const insertMock = vi.fn()
-const singleMock = vi.fn()
+const authorizeAssetPropertyMock = vi.hoisted(() => vi.fn())
+const createServiceClientMock = vi.hoisted(() => vi.fn())
+const uploadFileAssetMock = vi.hoisted(() => vi.fn())
+const analyzeImageContentMock = vi.hoisted(() => vi.fn())
 
-vi.mock('@/utils/supabase/server', () => ({
-  createClient: createClientMock,
+vi.mock('@/utils/siteforge/assets/auth', () => ({
+  authorizeAssetProperty: authorizeAssetPropertyMock,
 }))
-
 vi.mock('@/utils/supabase/admin', () => ({
   createServiceClient: createServiceClientMock,
 }))
-
-vi.mock('@/utils/services/auth-guard', () => ({
-  validatePropertyAccess: validatePropertyAccessMock,
-}))
-
 vi.mock('@/utils/storage/asset-service', () => ({
   STORAGE_BUCKETS: { PROPERTY_ASSETS: 'property-assets' },
   uploadFileAsset: uploadFileAssetMock,
 }))
+vi.mock('@/utils/siteforge/assets/image-analysis', () => ({
+  analyzeImageContent: analyzeImageContentMock,
+}))
 
-const propertyId = '11111111-2222-3333-4444-555555555555'
+const propertyId = '11111111-2222-4333-8444-555555555555'
+const assetId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
 
 function pngFile(name = 'rooftop.png') {
   return new File(
@@ -36,145 +31,194 @@ function pngFile(name = 'rooftop.png') {
   )
 }
 
-function uploadRequest(options?: {
-  file?: File
-  category?: string
-  propertyId?: string
-}) {
+function uploadRequest(file = pngFile()) {
   const formData = new FormData()
-  formData.set('propertyId', options?.propertyId || propertyId)
-  formData.set('category', options?.category || 'amenity')
-  formData.set('file', options?.file || pngFile())
+  formData.set('propertyId', propertyId)
+  formData.set('category', 'amenity')
+  formData.set('file', file)
   return new Request('http://localhost/api/siteforge/assets', {
     method: 'POST',
     body: formData,
   }) as unknown as NextRequest
 }
 
-describe('SiteForge property assets route', () => {
+function assetRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: assetId,
+    file_url: 'https://cdn.example.com/rooftop.png',
+    thumbnail_url: null,
+    name: 'rooftop.png',
+    description: null,
+    file_size_bytes: 8,
+    format: 'image/png',
+    width: 1200,
+    height: 800,
+    asset_role: 'amenity',
+    alt_text: 'Rooftop amenity terrace',
+    approval_status: 'pending',
+    curation_status: 'needs_review',
+    rights_status: 'unknown',
+    rights_metadata: {},
+    expires_at: null,
+    source_identity: 'siteforge-upload:rooftop.png',
+    source_metadata: {},
+    content_hash: 'a'.repeat(64),
+    duplicate_of: null,
+    focal_point: null,
+    crop_suggestion: null,
+    quality_score: 0.8,
+    hero_rank: null,
+    usage_manifest: [],
+    analyzed_at: '2026-08-10T00:00:00.000Z',
+    created_at: '2026-08-10T00:00:00.000Z',
+    ...overrides,
+  }
+}
+
+function uploadService(duplicate: Record<string, unknown> | null = null) {
+  const maybeSingle = vi.fn().mockResolvedValue({ data: duplicate, error: null })
+  const single = vi
+    .fn()
+    .mockResolvedValue({ data: assetRow(), error: null })
+  const builder: Record<string, ReturnType<typeof vi.fn>> = {}
+  builder.select = vi.fn(() => builder)
+  builder.eq = vi.fn(() => builder)
+  builder.is = vi.fn(() => builder)
+  builder.maybeSingle = maybeSingle
+  builder.insert = vi.fn(() => ({
+    select: vi.fn(() => ({ single })),
+  }))
+  const remove = vi.fn().mockResolvedValue({ error: null })
+  return {
+    client: {
+      from: vi.fn(() => builder),
+      storage: { from: vi.fn(() => ({ remove })) },
+    },
+    builder,
+  }
+}
+
+describe('SiteForge asset route', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    createClientMock.mockResolvedValue({
-      auth: { getUser: authGetUserMock },
-    })
-    authGetUserMock.mockResolvedValue({
-      data: { user: { id: 'user-1' } },
-      error: null,
-    })
-    validatePropertyAccessMock.mockResolvedValue({
-      authorized: true,
+    authorizeAssetPropertyMock.mockResolvedValue({
+      status: 200,
+      userId: 'user-1',
       orgId: '99999999-9999-4999-8999-999999999999',
     })
     uploadFileAssetMock.mockResolvedValue({
       success: true,
-      publicUrl:
-        'https://example.supabase.co/storage/v1/object/public/property-assets/photo.png',
-      storagePath: `${propertyId}/siteforge/amenity/photo.png`,
+      publicUrl: 'https://cdn.example.com/rooftop.png',
+      storagePath: `${propertyId}/siteforge/amenity/rooftop.png`,
       fileSize: 8,
     })
-    singleMock.mockResolvedValue({
-      data: {
-        id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
-        file_url:
-          'https://example.supabase.co/storage/v1/object/public/property-assets/photo.png',
-        name: 'rooftop.png',
-        file_size_bytes: 8,
-        format: 'image/png',
-        asset_role: 'amenity',
-        alt_text: 'rooftop',
-        approval_status: 'pending',
-        rights_status: 'unknown',
-        created_at: '2026-07-31T00:00:00.000Z',
-      },
-      error: null,
-    })
-    insertMock.mockReturnValue({
-      select: vi.fn(() => ({ single: singleMock })),
-    })
-    createServiceClientMock.mockReturnValue({
-      from: vi.fn(() => ({ insert: insertMock })),
-      storage: {
-        from: vi.fn(() => ({ remove: vi.fn().mockResolvedValue({ error: null }) })),
+    analyzeImageContentMock.mockResolvedValue({
+      mode: 'visual_ai',
+      model: 'anthropic/test',
+      visualClaims: true,
+      suggestedRole: 'amenity',
+      altText: 'Rooftop amenity terrace',
+      focalPoint: { x: 0.5, y: 0.5 },
+      cropSuggestion: null,
+      qualityScore: 0.8,
+      observedElements: ['terrace'],
+      qualityNotes: ['sharp'],
+      metadata: {
+        contentHash: 'a'.repeat(64),
+        byteLength: 8,
+        mediaType: 'image/png',
+        width: 1200,
+        height: 800,
       },
     })
   })
 
-  it('rejects unauthenticated property uploads', async () => {
-    authGetUserMock.mockResolvedValue({
-      data: { user: null },
-      error: null,
+  it('rejects unauthenticated uploads before analysis or storage', async () => {
+    authorizeAssetPropertyMock.mockResolvedValue({
+      status: 401,
+      userId: null,
+      orgId: null,
     })
     const { POST } = await import('./route')
     const response = await POST(uploadRequest())
 
     expect(response.status).toBe(401)
-    await expect(response.json()).resolves.toEqual({ error: 'Unauthorized' })
+    expect(analyzeImageContentMock).not.toHaveBeenCalled()
     expect(uploadFileAssetMock).not.toHaveBeenCalled()
   })
 
-  it('rejects files whose bytes do not match their image type', async () => {
-    const { POST } = await import('./route')
-    const response = await POST(
-      uploadRequest({
-        file: new File(['not a png'], 'fake.png', { type: 'image/png' }),
-      })
-    )
-
-    expect(response.status).toBe(400)
-    await expect(response.json()).resolves.toEqual({
-      error: 'The uploaded file does not contain a valid image',
-    })
-    expect(uploadFileAssetMock).not.toHaveBeenCalled()
-  })
-
-  it('stores a categorized photo pending rights review', async () => {
+  it('saves analysis and starts uploads in needs-review state', async () => {
+    const service = uploadService()
+    createServiceClientMock.mockReturnValue(service.client)
     const { POST } = await import('./route')
     const response = await POST(uploadRequest())
 
     expect(response.status).toBe(201)
-    await expect(response.json()).resolves.toMatchObject({
-      asset: {
-        id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
-        category: 'amenity',
-        altText: 'rooftop',
-        approvalStatus: 'pending',
-        rightsStatus: 'unknown',
-      },
-    })
-    expect(uploadFileAssetMock).toHaveBeenCalledWith(
-      expect.any(File),
+    expect(analyzeImageContentMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        bucket: 'property-assets',
-        propertyId,
-        folder: 'siteforge/amenity',
-        contentType: 'image/png',
-        upsert: false,
+        bytes: expect.any(Uint8Array),
+        mediaType: 'image/png',
       })
     )
-    expect(insertMock).toHaveBeenCalledWith(
+    expect(service.builder.insert).toHaveBeenCalledWith(
       expect.objectContaining({
         property_id: propertyId,
-        asset_type: 'image',
-        asset_role: 'amenity',
+        content_hash: 'a'.repeat(64),
+        curation_status: 'needs_review',
         approval_status: 'pending',
         rights_status: 'unknown',
+        quality_score: 0.8,
       })
     )
   })
 
-  it('keeps uploaded floor-plan layouts out of the property photo pool', async () => {
+  it('returns the existing asset for duplicate content without uploading', async () => {
+    const duplicate = assetRow({
+      approval_status: 'approved',
+      curation_status: 'selected',
+      rights_status: 'owned',
+    })
+    const service = uploadService(duplicate)
+    createServiceClientMock.mockReturnValue(service.client)
     const { POST } = await import('./route')
-    const response = await POST(
-      uploadRequest({ category: 'floorplan', file: pngFile('a1.png') })
-    )
+    const response = await POST(uploadRequest())
 
-    expect(response.status).toBe(201)
-    expect(insertMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        asset_type: 'image',
-        asset_role: 'floorplan',
-        approval_status: 'pending',
-      })
-    )
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      duplicate: true,
+      asset: { id: assetId, usable: true },
+    })
+    expect(uploadFileAssetMock).not.toHaveBeenCalled()
+    expect(service.builder.insert).not.toHaveBeenCalled()
+  })
+
+  it('requires manager authorization for batch curation', async () => {
+    authorizeAssetPropertyMock.mockResolvedValue({
+      status: 403,
+      userId: 'user-1',
+      orgId: null,
+    })
+    const request = new Request('http://localhost/api/siteforge/assets', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        propertyId,
+        updates: [
+          {
+            assetId,
+            approvalStatus: 'approved',
+            curationStatus: 'approved',
+            rightsStatus: 'owned',
+          },
+        ],
+      }),
+    }) as unknown as NextRequest
+    const { PATCH } = await import('./route')
+    const response = await PATCH(request)
+
+    expect(response.status).toBe(403)
+    expect(authorizeAssetPropertyMock).toHaveBeenCalledWith(propertyId, {
+      manager: true,
+    })
   })
 })

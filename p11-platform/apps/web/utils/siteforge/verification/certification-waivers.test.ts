@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildImmutableCertificationWaiver,
+  certificationWaiverClass,
   CertificationWaiverError,
   isWaivableCertificationCheck,
   waiverIsActive,
@@ -43,6 +44,8 @@ describe('certification waiver policy', () => {
     'rights.asset_license',
     'browser:accessibility.critical_axe',
     'browser:consent.script_blocking',
+    'browser:evidence.browser.required',
+    'provenance.asset',
   ])('forbids non-waivable check %s', checkCode => {
     expect(isWaivableCertificationCheck(checkCode)).toBe(false)
     expect(() => buildImmutableCertificationWaiver({
@@ -51,6 +54,18 @@ describe('certification waiver policy', () => {
       request: { ...request, checkCode },
       now: new Date('2026-07-31T00:00:00.000Z'),
     })).toThrow(CertificationWaiverError)
+  })
+
+  it('classifies only bounded quality findings as manager-waivable', () => {
+    expect(
+      certificationWaiverClass('performance.lighthouse_mobile_budget')
+    ).toBe('manager_waivable')
+    expect(certificationWaiverClass('browser:consent.script_blocking')).toBe(
+      'non_waivable'
+    )
+    expect(certificationWaiverClass('rendered_image_provenance')).toBe(
+      'non_waivable'
+    )
   })
 
   it('rejects expired and overlong waivers', () => {

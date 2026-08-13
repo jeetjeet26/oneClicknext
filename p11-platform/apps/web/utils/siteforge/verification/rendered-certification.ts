@@ -51,6 +51,21 @@ export type RenderedCertificationReport = z.infer<
   typeof renderedCertificationReportSchema
 >
 
+/**
+ * Canonical preview is an iterative review surface: deterministic rendered
+ * checks remain blocking, while browser presentation findings are recorded
+ * for correction and become blocking on the public staging render. Public
+ * staging and production never use this exception.
+ */
+export function browserFindingsAreAdvisory(input: {
+  environment: 'protected_preview' | 'staging' | 'production'
+  access: 'protected' | 'public'
+}): boolean {
+  return (
+    input.environment === 'protected_preview' && input.access === 'protected'
+  )
+}
+
 export function buildRenderedCertificationTruth(
   onboardingSnapshot: unknown,
   approvedImageUrls: string[],
@@ -518,14 +533,14 @@ export async function certifyRenderedWordPressArtifact(input: {
     artifact: input.artifactBinding,
     bindingHash,
   })
-  // Browser-collected evidence (screenshots, visual baselines, console state)
-  // is advisory only: it is recorded verbatim for review but never gates the
-  // report. Deterministic HTTP checks above remain the blocking surface.
+  const advisoryBrowserFindings = browserFindingsAreAdvisory(input)
   checks.push(
     ...browser.checks.map(browserCheck => ({
       id: `browser:${browserCheck.code}`,
       passed: browserCheck.passed,
-      severity: 'warning' as const,
+      severity: advisoryBrowserFindings
+        ? ('warning' as const)
+        : browserCheck.severity,
       message: browserCheck.message,
       evidence: {
         category: browserCheck.category,

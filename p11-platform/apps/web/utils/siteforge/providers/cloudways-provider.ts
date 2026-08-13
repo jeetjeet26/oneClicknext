@@ -66,6 +66,7 @@ const cloudwaysApplicationSchema = z
     app_user: z.string().min(1),
     app_password: z.string().min(1),
     sys_user: z.string().optional(),
+    sys_password: z.string().optional(),
     server_id: z.union([z.string(), z.number()]).optional(),
     public_ip: z.string().optional(),
     master_user: z.string().optional(),
@@ -90,9 +91,35 @@ export function assertStagingApplicationParent(
   }
 }
 
-export interface CloudwaysProviderCredentials {
-  email: string;
-  apiKey: string;
+export type CloudwaysProviderCredentials =
+  | {
+      accessToken: string;
+      email?: never;
+      apiKey?: never;
+    }
+  | {
+      accessToken?: never;
+      email: string;
+      apiKey: string;
+    };
+
+export type CloudwaysProviderEnvironment = Record<string, string | undefined>;
+
+export function getCloudwaysProviderCredentials(
+  env: CloudwaysProviderEnvironment = process.env,
+): CloudwaysProviderCredentials | null {
+  const accessToken = env.CLOUDWAYS_ACCESS_TOKEN?.trim();
+  if (accessToken) return { accessToken };
+
+  const email = env.CLOUDWAYS_EMAIL?.trim();
+  const apiKey = env.CLOUDWAYS_API_KEY?.trim();
+  return email && apiKey ? { email, apiKey } : null;
+}
+
+export function hasCloudwaysProviderCredentials(
+  env: CloudwaysProviderEnvironment = process.env,
+): boolean {
+  return getCloudwaysProviderCredentials(env) !== null;
 }
 
 export function parseCloudwaysApplicationHostname(value: string): {
@@ -217,7 +244,7 @@ export class CloudwaysProviderClient {
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       const response = await request();
       if (
-        ![429, 502, 503, 504].includes(response.status) ||
+        ![429, 500, 502, 503, 504].includes(response.status) ||
         attempt === maxAttempts - 1
       ) {
         return response;
@@ -425,6 +452,29 @@ export class CloudwaysProviderClient {
     };
   }
 
+  async deleteApplication(input: {
+    serverId: string;
+    applicationId: string;
+  }): Promise<{ operationId: string | null }> {
+    const response = z
+      .object({
+        operation_id: z.union([z.string(), z.number()]).optional(),
+      })
+      .passthrough()
+      .parse(
+        await this.request(`/app/${encodeURIComponent(input.applicationId)}`, {
+          method: "DELETE",
+          query: { server_id: input.serverId },
+        }),
+      );
+    return {
+      operationId:
+        response.operation_id !== undefined
+          ? String(response.operation_id)
+          : null,
+    };
+  }
+
   async setStagingAuthStatus(input: {
     serverId: string;
     applicationId: string;
@@ -445,7 +495,7 @@ export class CloudwaysProviderClient {
           app_id: input.applicationId,
           action: input.action,
         }),
-        signal: AbortSignal.timeout(60_000),
+        signal: AbortSignal.timeout(120_000),
       }),
     );
     const text = await response.text();
@@ -639,8 +689,17 @@ export class CloudwaysProviderClient {
 
   private async authenticate(): Promise<string> {
     if (this.accessToken) return this.accessToken;
-    if (this.credentials.apiKey.startsWith("cw_")) {
-      this.accessToken = this.credentials.apiKey;
+    if (this.credentials.accessToken) {
+      this.accessToken = this.credentials.accessToken;
+      return this.accessToken;
+    }
+    const apiKey = this.credentials.apiKey;
+    const email = this.credentials.email;
+    if (!apiKey || !email) {
+      throw new Error("Cloudways credentials are unavailable");
+    }
+    if (apiKey.startsWith("cw_")) {
+      this.accessToken = apiKey;
       return this.accessToken;
     }
 
@@ -649,8 +708,8 @@ export class CloudwaysProviderClient {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({
-          email: this.credentials.email,
-          api_key: this.credentials.apiKey,
+          email,
+          api_key: apiKey,
         }),
         signal: AbortSignal.timeout(30_000),
       }),
@@ -694,7 +753,7 @@ export class CloudwaysProviderClient {
           ...(init.body ? { "Content-Type": "application/json" } : {}),
         },
         body: init.body ? JSON.stringify(init.body) : undefined,
-        signal: AbortSignal.timeout(60_000),
+        signal: AbortSignal.timeout(120_000),
       }),
     );
     const text = await response.text();

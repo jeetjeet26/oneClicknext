@@ -174,11 +174,24 @@ class SiteForge_Runtime_V3_State {
 		$checks[]   = $this->check( 'resource_graph', $graph_ok, $graph_ok ? 'Resource graph matches.' : 'Resource graph hash mismatch.' );
 		$target_ok  = isset( $state['targetHash'] ) && hash_equals( $state['targetHash'], SiteForge_Runtime_Validation::hash( $target ) );
 		$checks[]   = $this->check( 'target', $target_ok, $target_ok ? 'Target matches.' : 'Target hash mismatch.' );
+		$identity_ok = isset( $state['identityHash'] ) && SiteForge_Runtime_Validation::is_hash( $state['identityHash'] ) &&
+			hash_equals( $state['identityHash'], SiteForge_Runtime_Validation::hash( $state['identity'] ) );
+		$checks[] = $this->check( 'exact_identity', $identity_ok, $identity_ok ? 'Artifact and package identity matches.' : 'Artifact or package identity mismatch.' );
 
 		$projection    = get_option( self::V2_PROJECTION_OPTION, array() );
 		$projection_ok = is_array( $projection ) && isset( $state['v2ProjectionHash'] ) &&
 			hash_equals( (string) $state['v2ProjectionHash'], SiteForge_Runtime_Validation::hash( $projection ) );
 		$checks[]      = $this->check( 'v2_projection', $projection_ok, $projection_ok ? 'Downgrade projection matches.' : 'Downgrade projection mismatch.' );
+
+		if ( isset( $state['materializationSpec'] ) && is_array( $state['materializationSpec'] ) && class_exists( 'SiteForge_Runtime_V3_Materializer' ) ) {
+			$materializer = new SiteForge_Runtime_V3_Materializer(
+				new SiteForge_Runtime_V3_Assets( new SiteForge_Runtime_Assets() )
+			);
+			$materialized = $materializer->verify( $state['materializationSpec'] );
+			$checks       = array_merge( $checks, $materialized['checks'] );
+		} else {
+			$checks[] = $this->check( 'wordpress_materialization', false, 'Materialization verification specification is missing.' );
+		}
 
 		$verified = true;
 		foreach ( $checks as $check ) {
@@ -262,7 +275,7 @@ class SiteForge_Runtime_V3_State {
 			$sentinel = '__siteforge_v3_rollback_missing_' . $this->uuid();
 			$actual   = get_option( $option, $sentinel );
 			$exists   = $sentinel !== $actual;
-			if ( (bool) $saved['exists'] !== $exists || ( $exists && $actual !== $saved['value'] ) ) {
+			if ( (bool) $saved['exists'] !== $exists || ( $exists && $actual != $saved['value'] ) ) {
 				throw new SiteForge_Runtime_Exception(
 					'siteforge_v3_rollback_readback_failed',
 					'SiteForge v3 rollback readback failed.',
@@ -283,7 +296,7 @@ class SiteForge_Runtime_V3_State {
 
 	private function write_option( $option, $value, $label ) {
 		$result = update_option( $option, $value, false );
-		if ( false === $result && $value !== get_option( $option, null ) ) {
+		if ( false === $result && $value != get_option( $option, null ) ) {
 			throw new SiteForge_Runtime_Exception(
 				'siteforge_v3_state_write_failed',
 				'Could not persist SiteForge v3 ' . $label . '.',

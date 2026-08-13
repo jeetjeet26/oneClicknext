@@ -10,11 +10,14 @@ import type { Json } from '@/types/supabase'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import {
   createGenerationRequestSchema,
-  siteForgePlanSchema,
 } from '@/utils/siteforge/contracts'
 import { start } from 'workflow/api'
 import { siteForgeGenerationWorkflow } from '@/workflows/siteforge-generation'
 import { publishSiteForgeArtifact } from '@/utils/siteforge/artifacts/repository'
+import {
+  loadApprovedSiteForgeGenerationContext,
+  SiteForgePlanError,
+} from '@/utils/siteforge/plans/repository'
 
 export async function terminalizeOrphanGenerationJob(
   serviceSupabase: ReturnType<typeof createServiceClient>,
@@ -64,51 +67,40 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       )
     }
-    const { planId, confirmedRevision, contentHash, idempotencyKey } = parsedBody.data
+    const {
+      websiteId,
+      planId,
+      confirmedRevision,
+      contentHash,
+      idempotencyKey,
+    } = parsedBody.data
     const localSimulationEnabled =
       new URL(request.url).searchParams.get('simulate') === '1' &&
       process.env.NODE_ENV !== 'production'
 
-    const { data: planRecord, error: planError } = await serviceSupabase
-      .from('siteforge_plans')
-      .select('id, property_id, status, current_revision, confirmed_version_id')
-      .eq('id', planId)
-      .single()
-
-    if (
-      planError ||
-      !planRecord ||
-      planRecord.status !== 'confirmed' ||
-      planRecord.current_revision !== confirmedRevision ||
-      !planRecord.confirmed_version_id
-    ) {
-      return NextResponse.json(
-        { error: 'A matching confirmed plan is required for generation' },
-        { status: 409 }
+    let generationContext
+    try {
+      generationContext = await loadApprovedSiteForgeGenerationContext(
+        {
+          websiteId,
+          planId,
+          confirmedRevision,
+          contentHash,
+        },
+        serviceSupabase
       )
+    } catch (error) {
+      if (error instanceof SiteForgePlanError) {
+        return NextResponse.json(
+          { error: error.message },
+          { status: error.statusCode }
+        )
+      }
+      throw error
     }
-
-    const { data: planVersion, error: planVersionError } = await serviceSupabase
-      .from('siteforge_plan_versions')
-      .select('id, plan, content_hash')
-      .eq('id', planRecord.confirmed_version_id)
-      .eq('plan_id', planRecord.id)
-      .eq('revision', confirmedRevision)
-      .single()
-
-    if (
-      planVersionError ||
-      !planVersion ||
-      planVersion.content_hash !== contentHash
-    ) {
-      return NextResponse.json(
-        { error: 'Confirmed plan content no longer matches this request' },
-        { status: 409 }
-      )
-    }
-
-    const structuredPlan = siteForgePlanSchema.parse(planVersion.plan)
-    const propertyId = planRecord.property_id
+    const structuredPlan = generationContext.plan
+    const planVersion = { id: generationContext.planVersionId }
+    const propertyId = generationContext.propertyId
     const preferences: GenerationPreferences = {
       style: structuredPlan.preferences.style,
       emphasis: structuredPlan.preferences.emphasis,
@@ -117,6 +109,10 @@ export async function POST(request: NextRequest) {
     const prompt = [
       structuredPlan.summary,
       ...structuredPlan.recommendations,
+      `Approved brief:\n${JSON.stringify(generationContext.brief)}`,
+      `Approved creative direction:\n${JSON.stringify(
+        generationContext.creativeDirection
+      )}`,
     ].join('\n\n')
 
     // Verify user has access to this property
@@ -126,7 +122,11 @@ export async function POST(request: NextRequest) {
       .eq('id', propertyId)
       .single()
 
-    if (propertyError || !property?.org_id) {
+    if (
+      propertyError ||
+      !property?.org_id ||
+      property.org_id !== generationContext.orgId
+    ) {
       return NextResponse.json({ error: 'Property not found' }, { status: 404 })
     }
 
@@ -135,25 +135,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
-    // Get current version number for this property
-    const { data: existingWebsites } = await serviceSupabase
-      .from('property_websites')
-      .select('version')
-      .eq('property_id', propertyId)
-      .order('version', { ascending: false })
-      .limit(1)
-
-    const nextVersion = existingWebsites && existingWebsites.length > 0 
-      ? (existingWebsites[0].version || 1) + 1 
-      : 1
     const nowIso = new Date().toISOString()
 
     const sharedJobPayload = {
+      websiteId,
       planId,
       planVersionId: planVersion.id,
       confirmedRevision,
       contentHash,
       idempotencyKey,
+      evidenceSnapshot: generationContext.evidenceSnapshot,
     }
     const { data: sharedJob, error: sharedJobError } = await serviceSupabase
       .from('shared_jobs')
@@ -162,7 +153,7 @@ export async function POST(request: NextRequest) {
         property_id: propertyId,
         domain: 'siteforge.generation',
         subject_type: 'property_website',
-        subject_id: null,
+        subject_id: websiteId,
         lifecycle_status: 'queued',
         status_reason: 'workflow_starting',
         stage: 'queued',
@@ -215,11 +206,7 @@ export async function POST(request: NextRequest) {
       ? buildLocalSimulationArchitecture(simulatedPages || [])
       : undefined
 
-    // Create website record
     const websitePayload = {
-      property_id: propertyId,
-      org_id: property.org_id,
-      version: nextVersion,
       generation_status: localSimulationEnabled ? 'ready_for_preview' : 'queued',
       generation_progress: localSimulationEnabled ? 100 : 0,
       current_step: localSimulationEnabled
@@ -228,11 +215,15 @@ export async function POST(request: NextRequest) {
       user_preferences: preferences,
       generation_input: {
         sharedJobId: sharedJob.id,
+        websiteId,
         planId,
         planVersionId: planVersion.id,
         confirmedRevision,
         contentHash,
         idempotencyKey,
+        approvedBrief: generationContext.brief,
+        approvedCreativeDirection: generationContext.creativeDirection,
+        evidenceSnapshot: generationContext.evidenceSnapshot,
         createdAt: nowIso,
         localSimulation: localSimulationEnabled
           ? {
@@ -250,28 +241,31 @@ export async function POST(request: NextRequest) {
 
     const { data: website, error: websiteError } = await serviceSupabase
       .from('property_websites')
-      .insert(websitePayload as never)
-      .select()
+      .update(websitePayload as never)
+      .eq('id', websiteId)
+      .eq('property_id', propertyId)
+      .eq('org_id', property.org_id)
+      .select('id')
       .single()
 
     if (websiteError || !website) {
-      console.error('Error creating website record:', websiteError)
+      console.error('Error preparing website record:', websiteError)
       try {
         await terminalizeOrphanGenerationJob(
           serviceSupabase,
           sharedJob.id,
-          websiteError?.message || 'Failed to create generation website'
+          websiteError?.message || 'Failed to prepare generation website'
         )
       } catch {
         return NextResponse.json(
           {
             error:
-              'Failed to create website and could not terminalize its generation job',
+              'Failed to prepare website and could not terminalize its generation job',
           },
           { status: 500 }
         )
       }
-      return NextResponse.json({ error: 'Failed to create website' }, { status: 500 })
+      return NextResponse.json({ error: 'Failed to prepare website' }, { status: 500 })
     }
 
     // Create job for async processing
@@ -287,6 +281,7 @@ export async function POST(request: NextRequest) {
         confirmedRevision,
         contentHash,
         idempotencyKey,
+        evidenceSnapshot: generationContext.evidenceSnapshot,
         localSimulation: localSimulationEnabled,
       },
       output_data: localSimulationEnabled
@@ -395,6 +390,9 @@ export async function POST(request: NextRequest) {
             planVersionId: planVersion.id,
             preferences,
             prompt,
+            approvedBrief: generationContext.brief,
+            approvedCreativeDirection: generationContext.creativeDirection,
+            evidenceSnapshot: generationContext.evidenceSnapshot,
             startedAt: nowIso,
           },
         ])
@@ -469,6 +467,9 @@ export async function POST(request: NextRequest) {
             pages: simulatedPages || [],
             architecture: simulatedArchitecture || {},
             plan: structuredPlan,
+            generationEvidence: generationContext.evidenceSnapshot,
+            approvedBrief: generationContext.brief,
+            approvedCreativeDirection: generationContext.creativeDirection,
           } as unknown as Json,
           qualityReport: {
             passed: true,

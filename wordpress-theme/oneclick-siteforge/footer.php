@@ -129,7 +129,19 @@ $has_social_links = (bool) array_filter( $social_links );
 					$terms_path = $siteforge_legal['termsPath'] ?? ( $siteforge_legal_paths['termsPath'] ?? '' );
 					$accessibility_path = $siteforge_legal['accessibilityPath'] ?? ( $siteforge_legal_paths['accessibilityPath'] ?? '' );
 					$fair_housing_disclaimer = $siteforge_legal_policies['fairHousing'] ?? ( $siteforge_legal['fairHousingDisclaimer'] ?? '' );
+					$siteforge_v3_legal = get_option( 'oneclick_siteforge_legal_v3', array() );
 					?>
+					<?php if ( is_array( $siteforge_v3_legal ) && ! empty( $siteforge_v3_legal ) ) { ?>
+						<div class="footer-legal-surfaces">
+							<?php foreach ( $siteforge_v3_legal as $policy ) { ?>
+								<?php if ( ! in_array( $policy['policyType'] ?? '', array( 'privacy', 'terms', 'accessibility', 'fair_housing', 'pricing_disclaimer' ), true ) ) { continue; } ?>
+								<details data-siteforge-legal-resource="<?php echo esc_attr( $policy['resourceId'] ?? '' ); ?>">
+									<summary><?php echo esc_html( ucwords( str_replace( '_', ' ', $policy['policyType'] ) ) ); ?></summary>
+									<div><?php echo wp_kses_post( wpautop( $policy['body'] ?? '' ) ); ?></div>
+								</details>
+							<?php } ?>
+						</div>
+					<?php } ?>
 					<?php if ( $privacy_path && $terms_path && $accessibility_path ) { ?>
 						<nav class="footer-legal-navigation" aria-label="<?php esc_attr_e( 'Legal', 'oneclick-siteforge' ); ?>">
 							<a href="<?php echo esc_url( $privacy_path ); ?>"><?php esc_html_e( 'Privacy', 'oneclick-siteforge' ); ?></a>

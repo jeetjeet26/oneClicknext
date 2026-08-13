@@ -1,14 +1,51 @@
 import type {
-  CreateGenerationRequest,
   GenerationPreferences,
   GenerationStatus,
   WebsiteStatusResponse,
 } from '@/types/siteforge'
+import type { CreateGenerationRequest } from '@/utils/siteforge/contracts'
 
 export type ApprovedPlanIdentity = {
   planId: string
   revision: number
   contentHash: string
+}
+
+export type SiteForgeCapability = 'crm' | 'tours' | 'chatbot' | 'analytics'
+
+const SITEFORGE_CAPABILITY_ORDER: SiteForgeCapability[] = [
+  'crm',
+  'tours',
+  'chatbot',
+  'analytics',
+]
+
+export function approvedReadinessCapabilities(value: unknown): SiteForgeCapability[] {
+  if (!Array.isArray(value)) return []
+  const approved = value.find(snapshot => {
+    return Boolean(
+      snapshot &&
+        typeof snapshot === 'object' &&
+        !Array.isArray(snapshot) &&
+        (snapshot as { status?: unknown }).status === 'approved'
+    )
+  })
+  if (!approved || typeof approved !== 'object' || Array.isArray(approved)) {
+    return []
+  }
+  const payload = (approved as { snapshot_payload?: unknown }).snapshot_payload
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return []
+  const capabilities = (payload as { enabledCapabilities?: unknown })
+    .enabledCapabilities
+  if (!Array.isArray(capabilities)) return []
+  const selected = new Set(
+    capabilities.filter(
+      (capability): capability is SiteForgeCapability =>
+        typeof capability === 'string' &&
+        SITEFORGE_CAPABILITY_ORDER.includes(capability as SiteForgeCapability)
+    )
+  )
+  return SITEFORGE_CAPABILITY_ORDER.filter(capability => selected.has(capability))
 }
 
 export function isExactArtifactPreview(input: {
@@ -26,10 +63,12 @@ export function isExactArtifactPreview(input: {
 }
 
 export function buildGenerationRequest(
+  websiteId: string,
   plan: ApprovedPlanIdentity,
   idempotencyKey: string
 ): CreateGenerationRequest {
   return {
+    websiteId,
     planId: plan.planId,
     confirmedRevision: plan.revision,
     contentHash: plan.contentHash,
@@ -120,10 +159,18 @@ export function preferencesMatch(
   persisted: GenerationPreferences | undefined,
   selected: GenerationPreferences
 ): boolean {
+  const persistedCapabilities = [
+    ...(persisted?.enabledCapabilities || []),
+  ].sort()
+  const selectedCapabilities = [
+    ...(selected.enabledCapabilities || []),
+  ].sort()
   return (
     persisted?.style === selected.style &&
     persisted?.emphasis === selected.emphasis &&
-    persisted?.ctaPriority === selected.ctaPriority
+    persisted?.ctaPriority === selected.ctaPriority &&
+    JSON.stringify(persistedCapabilities) ===
+      JSON.stringify(selectedCapabilities)
   )
 }
 

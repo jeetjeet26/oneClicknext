@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  approvedReadinessCapabilities,
   buildGenerationRequest,
   classifyWebsiteStatus,
   isExactArtifactPreview,
@@ -36,6 +37,7 @@ describe('SiteForge frontend orchestration', () => {
   it('builds only the canonical immutable generation request', () => {
     expect(
       buildGenerationRequest(
+        'website-1',
         {
           planId: 'plan-1',
           revision: 4,
@@ -44,6 +46,7 @@ describe('SiteForge frontend orchestration', () => {
         'request-1'
       )
     ).toEqual({
+      websiteId: 'website-1',
       planId: 'plan-1',
       confirmedRevision: 4,
       contentHash: 'a'.repeat(64),
@@ -134,6 +137,39 @@ describe('SiteForge frontend orchestration', () => {
         { style: 'modern', emphasis: 'amenities', ctaPriority: 'tours' }
       )
     ).toBe(false)
+    expect(
+      preferencesMatch(
+        {
+          style: 'modern',
+          emphasis: 'amenities',
+          ctaPriority: 'tours',
+          enabledCapabilities: ['crm'],
+        },
+        {
+          style: 'modern',
+          emphasis: 'amenities',
+          ctaPriority: 'tours',
+          enabledCapabilities: [],
+        }
+      )
+    ).toBe(false)
+  })
+
+  it('uses only capabilities frozen into the approved readiness snapshot', () => {
+    expect(
+      approvedReadinessCapabilities([
+        {
+          status: 'ready',
+          snapshot_payload: { enabledCapabilities: ['crm'] },
+        },
+        {
+          status: 'approved',
+          snapshot_payload: {
+            enabledCapabilities: ['analytics', 'chatbot', 'unknown'],
+          },
+        },
+      ])
+    ).toEqual(['chatbot', 'analytics'])
   })
 
   it('keeps successful uploads when another selected file fails', () => {

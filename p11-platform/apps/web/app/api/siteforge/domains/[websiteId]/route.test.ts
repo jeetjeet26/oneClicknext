@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NextRequest } from 'next/server'
 
 const { getUserMock } = vi.hoisted(() => ({ getUserMock: vi.fn() }))
@@ -13,6 +13,10 @@ vi.mock('@/utils/services/auth-guard', () => ({
 }))
 
 describe('SiteForge production domain route', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
   it('requires authentication before domain changes', async () => {
     getUserMock.mockResolvedValue({ data: { user: null }, error: null })
     const { POST } = await import('./route')
@@ -34,5 +38,29 @@ describe('SiteForge production domain route', () => {
       }
     )
     expect(response.status).toBe(401)
+  })
+
+  it('requires an explicit apex/WWW policy before provider inventory', async () => {
+    getUserMock.mockResolvedValue({
+      data: { user: { id: '22222222-2222-4222-8222-222222222222' } },
+      error: null,
+    })
+    const { POST } = await import('./route')
+    const response = await POST(
+      new Request(
+        'http://localhost/api/siteforge/domains/11111111-1111-4111-8111-111111111111',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ targetDomain: 'example.com' }),
+        }
+      ) as NextRequest,
+      {
+        params: Promise.resolve({
+          websiteId: '11111111-1111-4111-8111-111111111111',
+        }),
+      }
+    )
+    expect(response.status).toBe(400)
   })
 })

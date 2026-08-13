@@ -31,6 +31,9 @@ class PageRecord:
     internal_links: List[Dict[str, Any]] = field(default_factory=list)  # {url, anchor, rel, target}
     external_links: List[Dict[str, Any]] = field(default_factory=list)
     structured_data: Dict[str, Any] = field(default_factory=dict)  # {types, parse_errors, faq, organization}
+    content: Dict[str, Any] = field(default_factory=dict)
+    forms: List[Dict[str, Any]] = field(default_factory=list)
+    provenance: Dict[str, Any] = field(default_factory=dict)
     mixed_content: List[str] = field(default_factory=list)
     blocked_resources: List[str] = field(default_factory=list)
     page_type: str = "unknown"

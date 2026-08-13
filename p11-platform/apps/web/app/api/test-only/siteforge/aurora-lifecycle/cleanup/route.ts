@@ -6,6 +6,12 @@ import { createServiceClient } from '@/utils/supabase/admin'
 import { validatePropertyManagerAccess } from '@/utils/services/auth-guard'
 import { createRequestContext } from '@/utils/services/request-context'
 import {
+  CloudwaysProviderClient,
+  assertStagingApplicationParent,
+  getCloudwaysProviderCredentials,
+} from '@/utils/siteforge/providers/cloudways-provider'
+import { resetWordPressRuntimeV3State } from '@/utils/siteforge/wordpress/wordpress-installer'
+import {
   assertActiveAuroraLifecycleLease,
   AURORA_LIFECYCLE_CONFIRMATION,
   AURORA_LIFECYCLE_DOMAIN,
@@ -14,6 +20,9 @@ import {
   postgresUuidSchema,
   requireAuroraLifecycleIdentity,
 } from '@/utils/siteforge/testing/aurora-lifecycle-control'
+import { SITEFORGE_OVERLAY_BUCKET } from '@/utils/siteforge/editor/overlay-contract'
+
+export const maxDuration = 600
 
 const cleanupSchema = z
   .object({
@@ -46,6 +55,10 @@ function nullableString(value: Json | undefined): string | null {
   return typeof value === 'string' ? value : null
 }
 
+function nullableNumber(value: Json | undefined): number | null {
+  return typeof value === 'number' ? value : null
+}
+
 function controlledError(error: unknown, headers: Record<string, string>) {
   const status =
     error instanceof AuroraLifecycleControlError ? error.statusCode : 500
@@ -75,6 +88,24 @@ export async function deleteOwnedArtifactDeployments(
   if (!artifactIds.length) return
   const { error } = await removeDeployments(artifactIds, websiteId)
   if (error) throw new Error(error.message)
+}
+
+export function selectUnreferencedAuroraOverlays(
+  ownedOverlays: Array<{ id: string; storagePath: string }>,
+  artifactReferences: Array<{ artifactId: string; overlayId: string | null }>,
+  removableArtifactIds: string[]
+) {
+  const removableArtifacts = new Set(removableArtifactIds)
+  const referencedByRetainedArtifact = new Set(
+    artifactReferences.flatMap((reference) =>
+      !removableArtifacts.has(reference.artifactId) && reference.overlayId
+        ? [reference.overlayId]
+        : []
+    )
+  )
+  return ownedOverlays.filter(
+    (overlay) => !referencedByRetainedArtifact.has(overlay.id)
+  )
 }
 
 export async function DELETE(request: NextRequest) {
@@ -207,6 +238,9 @@ export async function DELETE(request: NextRequest) {
     const anchorTargetPrior = record(
       baseline.anchorTargetPrior as Json | null | undefined
     )
+    const anchorRolloutPrior = record(
+      baseline.anchorRolloutPrior as Json | null | undefined
+    )
     const registeredArtifactIds = Array.isArray(baseline.ownedResources)
       ? baseline.ownedResources.flatMap((value) => {
           if (
@@ -289,7 +323,9 @@ export async function DELETE(request: NextRequest) {
         .contains('payload', { lifecycleOwnerId: identity.ownerId }),
       client
         .from('siteforge_wordpress_targets')
-        .select('id, metadata')
+        .select(
+          'id, target_type, provider, provider_application_id, provider_parent_application_id, provider_server_id, metadata'
+        )
         .eq('website_id', identity.websiteId),
     ])
     if (ownedJobsError || targetsError) {
@@ -300,7 +336,7 @@ export async function DELETE(request: NextRequest) {
       ownedJobIds.length
         ? await client
             .from('siteforge_blueprint_versions')
-            .select('id')
+            .select('id, theme_overlay_id')
             .eq('website_id', identity.websiteId)
             .in('shared_job_id', ownedJobIds)
         : { data: [], error: null }
@@ -313,14 +349,132 @@ export async function DELETE(request: NextRequest) {
         ...registeredArtifactIds,
       ]),
     ].filter((artifactId) => artifactId !== rollbackArtifactId)
+    const { data: removableArtifacts, error: removableArtifactsError } =
+      removableArtifactIds.length
+        ? await client
+            .from('siteforge_blueprint_versions')
+            .select('id, theme_overlay_id')
+            .eq('website_id', identity.websiteId)
+            .in('id', removableArtifactIds)
+        : { data: [], error: null }
+    if (removableArtifactsError) {
+      throw new Error('Failed to inspect Aurora overlays for cleanup')
+    }
+    const ownedOverlayIds = [
+      ...new Set(
+        (removableArtifacts || []).flatMap((artifact) =>
+          typeof artifact.theme_overlay_id === 'string'
+            ? [artifact.theme_overlay_id]
+            : []
+        )
+      ),
+    ]
+    const [
+      { data: overlayCandidates, error: overlayCandidatesError },
+      { data: overlayArtifactReferences, error: overlayReferencesError },
+    ] = ownedOverlayIds.length
+      ? await Promise.all([
+          client
+            .from('siteforge_theme_overlays')
+            .select('id, storage_path')
+            .eq('website_id', identity.websiteId)
+            .in('id', ownedOverlayIds),
+          client
+            .from('siteforge_blueprint_versions')
+            .select('id, theme_overlay_id')
+            .eq('website_id', identity.websiteId)
+            .in('theme_overlay_id', ownedOverlayIds),
+        ])
+      : [
+          { data: [], error: null },
+          { data: [], error: null },
+        ]
+    if (overlayCandidatesError || overlayReferencesError) {
+      throw new Error('Failed to inspect owned Aurora overlays for cleanup')
+    }
+    const removableOverlays = selectUnreferencedAuroraOverlays(
+      (overlayCandidates || []).map((overlay) => ({
+        id: overlay.id,
+        storagePath: overlay.storage_path,
+      })),
+      (overlayArtifactReferences || []).map((artifact) => ({
+        artifactId: artifact.id,
+        overlayId: artifact.theme_overlay_id,
+      })),
+      removableArtifactIds
+    )
     const ownedTargets = (targets || []).filter((target) =>
       isAuroraOwnedMetadata(target.metadata, identity.ownerId)
     )
     const removableTargetIds = ownedTargets
       .map((target) => target.id)
       .filter((targetId) => targetId !== identity.targetId)
+    const anchorTarget = (targets || []).find(
+      (target) => target.id === identity.targetId
+    )
+    const backupId = nullableString(baseline.backupId)
+    const restoreAlreadyVerified =
+      nullableString(baseline.restoreBackupId) === backupId &&
+      nullableString(baseline.restoreVerifiedAt) !== null
+    if (backupId) {
+      if (
+        !anchorTarget?.provider_server_id ||
+        !anchorTarget.provider_application_id ||
+        anchorTarget.provider !== 'cloudways'
+      ) {
+        throw new Error(
+          'Aurora cleanup cannot restore the exact Cloudways anchor identity'
+        )
+      }
+      const credentials = getCloudwaysProviderCredentials()
+      if (!credentials) {
+        throw new Error(
+          'Cloudways credentials are required to restore the Aurora safety backup'
+        )
+      }
+      const cloudways = new CloudwaysProviderClient(credentials)
+      const application = await cloudways.getApplication({
+        serverId: anchorTarget.provider_server_id,
+        applicationId: anchorTarget.provider_application_id,
+      })
+      if (!restoreAlreadyVerified) {
+        const restore = await cloudways.restoreApplicationBackup({
+          serverId: anchorTarget.provider_server_id,
+          applicationId: anchorTarget.provider_application_id,
+          backupId,
+        })
+        if (!restore.operationId) {
+          throw new Error(
+            'Cloudways did not return the Aurora cleanup restore operation'
+          )
+        }
+        await cloudways.waitForOperation(restore.operationId)
+      }
+      if (
+        !application.master_user ||
+        !application.master_password ||
+        !application.sys_user
+      ) {
+        throw new Error(
+          'Cloudways master credentials are required to reset Aurora runtime v3 state'
+        )
+      }
+      await resetWordPressRuntimeV3State({
+        siteId: identity.websiteId,
+        ssh: {
+          host:
+            application.public_ip || anchorTarget.provider_server_id,
+          port: 22,
+          username: application.master_user,
+          password: application.master_password,
+          applicationRoot: `/home/master/applications/${application.sys_user}/public_html`,
+          sftpApplicationRoot: `/applications/${application.sys_user}/public_html`,
+        },
+      })
+    }
 
-    const [rollbackReadback, anchorReadback] = await Promise.all([
+    const [rollbackReadback, anchorReadback, anchorRolloutReadback] =
+      await Promise.all([
       client
         .from('siteforge_blueprint_versions')
         .update({
@@ -338,6 +492,21 @@ export async function DELETE(request: NextRequest) {
       client
         .from('siteforge_wordpress_targets')
         .update({
+          status: nullableString(anchorTargetPrior.status) || 'ready',
+          protection_mode:
+            nullableString(anchorTargetPrior.protectionMode) || 'noindex',
+          runtime_contract_version:
+            nullableNumber(anchorTargetPrior.runtimeContractVersion) || 1,
+          runtime_version: nullableString(anchorTargetPrior.runtimeVersion),
+          runtime_package_sha256: nullableString(
+            anchorTargetPrior.runtimePackageSha256
+          ),
+          runtime_manifest_sha256: nullableString(
+            anchorTargetPrior.runtimeManifestSha256
+          ),
+          last_runtime_health_at: nullableString(
+            anchorTargetPrior.lastRuntimeHealthAt
+          ),
           last_verified_artifact_id: nullableString(
             anchorTargetPrior.lastVerifiedArtifactId
           ),
@@ -350,12 +519,31 @@ export async function DELETE(request: NextRequest) {
           last_verified_operation_hash: nullableString(
             anchorTargetPrior.lastVerifiedOperationHash
           ),
+          last_verified_runtime_manifest_sha256: nullableString(
+            anchorTargetPrior.lastVerifiedRuntimeManifestSha256
+          ),
+          metadata: anchorTargetPrior.metadata ?? {},
           updated_at: new Date().toISOString(),
         })
         .eq('id', identity.targetId)
         .eq('website_id', identity.websiteId),
-    ])
-    if (rollbackReadback.error || anchorReadback.error) {
+      client
+        .from('siteforge_runtime_target_rollouts')
+        .update({
+          status: nullableString(anchorRolloutPrior.status) || 'paused',
+          activated_at: nullableString(anchorRolloutPrior.activatedAt),
+          rolled_back_at: nullableString(anchorRolloutPrior.rolledBackAt),
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', identity.rolloutAssignmentId)
+        .eq('target_id', identity.targetId)
+        .eq('website_id', identity.websiteId),
+      ])
+    if (
+      rollbackReadback.error ||
+      anchorReadback.error ||
+      anchorRolloutReadback.error
+    ) {
       throw new Error('Failed to restore Aurora bootstrap readback state')
     }
     const { error: projectionError } = await client
@@ -414,6 +602,58 @@ export async function DELETE(request: NextRequest) {
         .eq('website_id', identity.websiteId)
       if (error) throw new Error(error.message)
     }
+    const ownedCloudwaysStagingTargets = ownedTargets.filter(
+      (target) =>
+        target.target_type === 'staging' && target.provider === 'cloudways'
+    )
+    if (ownedCloudwaysStagingTargets.length) {
+      const credentials = getCloudwaysProviderCredentials()
+      if (!credentials) {
+        throw new Error(
+          'Cloudways credentials are required to remove owned Aurora staging applications'
+        )
+      }
+      const cloudways = new CloudwaysProviderClient(credentials)
+      for (const target of ownedCloudwaysStagingTargets) {
+        if (
+          !target.provider_server_id ||
+          !target.provider_application_id ||
+          !target.provider_parent_application_id ||
+          target.provider_server_id !== anchorTarget?.provider_server_id ||
+          target.provider_parent_application_id !==
+            anchorTarget?.provider_application_id
+        ) {
+          throw new Error(
+            'Owned Aurora staging target provider identity is incomplete or mismatched'
+          )
+        }
+        try {
+          const application = await cloudways.getApplication({
+            serverId: target.provider_server_id,
+            applicationId: target.provider_application_id,
+          })
+          assertStagingApplicationParent(
+            application,
+            target.provider_parent_application_id
+          )
+          const deletion = await cloudways.deleteApplication({
+            serverId: target.provider_server_id,
+            applicationId: target.provider_application_id,
+          })
+          if (deletion.operationId) {
+            await cloudways.waitForOperation(deletion.operationId)
+          }
+        } catch (error) {
+          if (
+            !(error instanceof Error) ||
+            error.message !==
+              'Exact Cloudways application was not found by provider identity or hostname'
+          ) {
+            throw error
+          }
+        }
+      }
+    }
     if (removableTargetIds.length) {
       const { error } = await client
         .from('siteforge_wordpress_targets')
@@ -460,6 +700,21 @@ export async function DELETE(request: NextRequest) {
         .eq('website_id', identity.websiteId)
       if (error) throw new Error(error.message)
     }
+    if (removableOverlays.length) {
+      const { error: overlayDeleteError } = await client
+        .from('siteforge_theme_overlays')
+        .delete()
+        .in(
+          'id',
+          removableOverlays.map((overlay) => overlay.id)
+        )
+        .eq('website_id', identity.websiteId)
+      if (overlayDeleteError) throw new Error(overlayDeleteError.message)
+      const { error: storageDeleteError } = await client.storage
+        .from(SITEFORGE_OVERLAY_BUCKET)
+        .remove(removableOverlays.map((overlay) => overlay.storagePath))
+      if (storageDeleteError) throw new Error(storageDeleteError.message)
+    }
     if (ownedJobIds.length) {
       const { error } = await client
         .from('shared_jobs')
@@ -472,6 +727,7 @@ export async function DELETE(request: NextRequest) {
     const [
       { data: remainingTargets, error: remainingTargetsError },
       { data: remainingJobs, error: remainingJobsError },
+      { data: remainingOverlays, error: remainingOverlaysError },
     ] = await Promise.all([
       client
         .from('siteforge_wordpress_targets')
@@ -483,9 +739,19 @@ export async function DELETE(request: NextRequest) {
         .eq('property_id', identity.propertyId)
         .eq('subject_id', identity.websiteId)
         .contains('payload', { lifecycleOwnerId: identity.ownerId }),
+      removableOverlays.length
+        ? client
+            .from('siteforge_theme_overlays')
+            .select('id')
+            .in(
+              'id',
+              removableOverlays.map((overlay) => overlay.id)
+            )
+            .eq('website_id', identity.websiteId)
+        : Promise.resolve({ data: [], error: null }),
     ])
-    if (remainingTargetsError || remainingJobsError) {
-      throw new Error('Failed to verify owned Aurora target and job cleanup')
+    if (remainingTargetsError || remainingJobsError || remainingOverlaysError) {
+      throw new Error('Failed to verify owned Aurora resource cleanup')
     }
     const remainingIds = [
       ...(remainingTargets || [])
@@ -494,6 +760,7 @@ export async function DELETE(request: NextRequest) {
         )
         .map((target) => target.id),
       ...(remainingJobs || []).map((job) => job.id),
+      ...(remainingOverlays || []).map((overlay) => overlay.id),
     ]
     if (removableArtifactIds.length) {
       const { data, error } = await client

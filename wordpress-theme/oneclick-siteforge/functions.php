@@ -120,6 +120,10 @@ function oneclick_siteforge_enqueue_assets() {
 		);
 		wp_add_inline_style( 'oneclick-siteforge-style', $motion_css );
 	}
+	$siteforge_responsive_css = get_option( 'oneclick_siteforge_responsive_css_v3', '' );
+	if ( is_string( $siteforge_responsive_css ) && '' !== $siteforge_responsive_css ) {
+		wp_add_inline_style( 'oneclick-siteforge-style', $siteforge_responsive_css );
+	}
 
 	// Block Styles
 	wp_enqueue_style(
@@ -682,19 +686,31 @@ function oneclick_siteforge_canonical_seo( $post_id = 0 ) {
 	}
 	$json_ld = array();
 	foreach ( $structured as $entry ) {
-		$decoded = is_string( $entry ) ? json_decode( $entry ) : null;
-		if ( null === $decoded || JSON_ERROR_NONE !== json_last_error() ) {
+		if ( is_string( $entry ) ) {
+			$decoded = json_decode( $entry );
+			if ( null === $decoded || JSON_ERROR_NONE !== json_last_error() ) {
+				return null;
+			}
+		} elseif ( is_array( $entry ) || is_object( $entry ) ) {
+			$decoded = $entry;
+		} else {
 			return null;
 		}
 		$json_ld[] = $decoded;
 	}
 	$noindex = '1' === (string) get_post_meta( $post_id, '_siteforge_seo_noindex', true )
 		|| '0' === (string) get_option( 'blog_public', '0' );
+	$nofollow = '1' === (string) get_post_meta( $post_id, '_siteforge_seo_nofollow', true );
 	return array(
 		'title'       => $title,
 		'description' => $description,
 		'canonical'   => home_url( $canonical_path ),
-		'robots'      => $noindex ? 'noindex, nofollow' : 'index, follow',
+		'robots'      => ( $noindex ? 'noindex' : 'index' ) . ', ' . ( $nofollow ? 'nofollow' : 'follow' ),
+		'openGraph'   => array(
+			'title'       => (string) get_post_meta( $post_id, '_siteforge_seo_og_title', true ),
+			'description' => (string) get_post_meta( $post_id, '_siteforge_seo_og_description', true ),
+			'image'       => (string) get_post_meta( $post_id, '_siteforge_seo_og_image', true ),
+		),
 		'jsonLd'      => $json_ld,
 	);
 }
@@ -734,9 +750,12 @@ function oneclick_siteforge_output_seo_metadata() {
 	echo '<link rel="canonical" href="' . esc_url( $seo['canonical'] ) . '">' . "\n";
 	echo '<meta name="robots" content="' . esc_attr( $seo['robots'] ) . '">' . "\n";
 	echo '<meta property="og:type" content="website">' . "\n";
-	echo '<meta property="og:title" content="' . esc_attr( $seo['title'] ) . '">' . "\n";
+	echo '<meta property="og:title" content="' . esc_attr( $seo['openGraph']['title'] ?: $seo['title'] ) . '">' . "\n";
 	echo '<meta property="og:url" content="' . esc_url( $seo['canonical'] ) . '">' . "\n";
-	echo '<meta property="og:description" content="' . esc_attr( $seo['description'] ) . '">' . "\n";
+	echo '<meta property="og:description" content="' . esc_attr( $seo['openGraph']['description'] ?: $seo['description'] ) . '">' . "\n";
+	if ( $seo['openGraph']['image'] ) {
+		echo '<meta property="og:image" content="' . esc_url( $seo['openGraph']['image'] ) . '">' . "\n";
+	}
 	foreach ( $seo['jsonLd'] as $json_ld ) {
 		echo '<script type="application/ld+json">' . wp_json_encode( $json_ld, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP ) . '</script>' . "\n";
 	}

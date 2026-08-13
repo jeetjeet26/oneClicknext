@@ -22,7 +22,11 @@ import {
   certifyRenderedWordPressArtifact,
   type RenderedCertificationReport,
 } from '@/utils/siteforge/verification/rendered-certification'
-import { CloudwaysProviderClient } from '@/utils/siteforge/providers/cloudways-provider'
+import {
+  CloudwaysProviderClient,
+  getCloudwaysProviderCredentials,
+  hasCloudwaysProviderCredentials,
+} from '@/utils/siteforge/providers/cloudways-provider'
 import { getConfiguredDnsProvider } from '@/utils/siteforge/providers/dns-provider'
 import { loadSiteForgePublicRuntimeConfig } from '@/utils/siteforge/public-runtime'
 import { loadApprovedFloorPlanSnapshot } from '@/utils/siteforge/providers/floor-plan-repository'
@@ -406,7 +410,7 @@ export async function runSiteForgeDeployment(
     )
     instance.ssh = stored.ssh
     instance.providerMetadata = stored.providerMetadata
-  } else if (process.env.CLOUDWAYS_API_KEY && process.env.CLOUDWAYS_EMAIL) {
+  } else if (hasCloudwaysProviderCredentials()) {
     throw new FatalError(
       'SITEFORGE_PROVIDER_IDEMPOTENCY_UNAVAILABLE: automatic Cloudways application provisioning is disabled until a durable provider idempotency key is supported'
     )
@@ -443,9 +447,7 @@ export async function runSiteForgeDeployment(
         websiteId: input.websiteId,
         credentials: {
           provider:
-            process.env.CLOUDWAYS_API_KEY && process.env.CLOUDWAYS_EMAIL
-              ? 'cloudways'
-              : 'wordpress',
+            hasCloudwaysProviderCredentials() ? 'cloudways' : 'wordpress',
           url: instance.url,
           username: instance.credentials.username,
           password: instance.credentials.password,
@@ -513,11 +515,11 @@ export async function runSiteForgeDeployment(
       website.target_domain &&
       process.env.SITEFORGE_ENABLE_PRODUCTION_DOMAIN === '1'
     ) {
+      const cloudwaysCredentials = getCloudwaysProviderCredentials()
       if (
         !instance.providerMetadata ||
         instance.providerMetadata.provider !== 'cloudways' ||
-        !process.env.CLOUDWAYS_API_KEY ||
-        !process.env.CLOUDWAYS_EMAIL
+        !cloudwaysCredentials
       ) {
         throw new FatalError(
           'Cloudways metadata and API credentials are required for domain attachment'
@@ -538,10 +540,7 @@ export async function runSiteForgeDeployment(
         hostname: website.target_domain,
         address: instance.providerMetadata.publicIp,
       })
-      const cloudways = new CloudwaysProviderClient({
-        apiKey: process.env.CLOUDWAYS_API_KEY,
-        email: process.env.CLOUDWAYS_EMAIL,
-      })
+      const cloudways = new CloudwaysProviderClient(cloudwaysCredentials)
       await cloudways.configureApplicationDomain({
         applicationId: instance.providerMetadata.applicationId,
         domain: website.target_domain,
@@ -1020,7 +1019,7 @@ function mergeDeploymentDiagnostics(
 }
 
 function resolveDeploymentProvider(): DeploymentProvider {
-  return process.env.CLOUDWAYS_API_KEY && process.env.CLOUDWAYS_EMAIL
+  return hasCloudwaysProviderCredentials()
     ? 'cloudways'
     : 'existing_wordpress'
 }

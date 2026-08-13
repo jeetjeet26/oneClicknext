@@ -1,13 +1,16 @@
 import { createHash } from 'node:crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { certifyRenderedWordPressArtifact } from './rendered-certification'
+import {
+  browserFindingsAreAdvisory,
+  certifyRenderedWordPressArtifact,
+} from './rendered-certification'
 
 describe('remote WordPress artifact certification', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
   })
 
-  it('passes on deterministic checks while recording browser evidence as advisory warnings', async () => {
+  it('blocks public production when complete browser evidence is missing', async () => {
     const contentHash = 'a'.repeat(64)
     const fetchMock = vi
       .fn<typeof fetch>()
@@ -90,9 +93,7 @@ describe('remote WordPress artifact certification', () => {
       ],
     })
 
-    // Deterministic checks pass, so the report passes even though browser
-    // evidence is missing; the browser failure is preserved as a warning.
-    expect(report.passed).toBe(true)
+    expect(report.passed).toBe(false)
     expect(report.browser.evidenceAccepted).toBe(false)
     expect(report.checks).toEqual(
       expect.arrayContaining([
@@ -115,7 +116,7 @@ describe('remote WordPress artifact certification', () => {
         expect.objectContaining({
           id: 'browser:evidence.browser.required',
           passed: false,
-          severity: 'warning',
+          severity: 'blocker',
         }),
       ])
     )
@@ -123,12 +124,33 @@ describe('remote WordPress artifact certification', () => {
       report.checks.some(
         check => check.id.startsWith('browser:') && check.severity === 'blocker'
       )
-    ).toBe(false)
+    ).toBe(true)
     // Every deterministic (non-browser) failure still fails the report closed.
     expect(
       report.checks.filter(
         check => !check.id.startsWith('browser:') && check.severity === 'blocker'
       ).length
     ).toBeGreaterThan(0)
+  })
+
+  it('limits advisory browser findings to iterative protected preview', () => {
+    expect(
+      browserFindingsAreAdvisory({
+        environment: 'protected_preview',
+        access: 'protected',
+      })
+    ).toBe(true)
+    expect(
+      browserFindingsAreAdvisory({
+        environment: 'staging',
+        access: 'public',
+      })
+    ).toBe(false)
+    expect(
+      browserFindingsAreAdvisory({
+        environment: 'production',
+        access: 'public',
+      })
+    ).toBe(false)
   })
 })

@@ -9,6 +9,7 @@ import {
 } from '@/utils/siteforge/contracts'
 import {
   createPlanRevision,
+  getLatestPropertyPlanRevision,
   SiteForgePlanError,
 } from '@/utils/siteforge/plans/repository'
 import { SITEFORGE_CLAUDE_MODEL } from '@/utils/siteforge/models'
@@ -53,6 +54,41 @@ function planSummaryForPrompt(plan: {
       sections: page.sections.map((section) => section.label),
     })),
     operatorRecommendations: plan.recommendations,
+  }
+}
+
+export async function GET(request: NextRequest) {
+  try {
+    const propertyId = new URL(request.url).searchParams.get('propertyId')
+    const parsedPropertyId = z.guid().safeParse(propertyId)
+    if (!parsedPropertyId.success) {
+      return NextResponse.json(
+        { error: 'Valid property ID required' },
+        { status: 400 },
+      )
+    }
+
+    const supabase = await createClient()
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser()
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+    const access = await validatePropertyAccess(user.id, parsedPropertyId.data)
+    if (!access.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
+    const plan = await getLatestPropertyPlanRevision(parsedPropertyId.data)
+    return NextResponse.json({ plan })
+  } catch (error) {
+    if (error instanceof SiteForgePlanError) {
+      return NextResponse.json({ error: error.message }, { status: error.statusCode })
+    }
+    console.error('SiteForge plan load error:', error)
+    return NextResponse.json({ error: 'Failed to load SiteForge plan' }, { status: 500 })
   }
 }
 

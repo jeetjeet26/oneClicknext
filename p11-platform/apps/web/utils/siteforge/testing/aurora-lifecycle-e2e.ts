@@ -1,4 +1,9 @@
+import { hasCloudwaysProviderCredentials } from '@/utils/siteforge/providers/cloudways-provider'
+
 export type Environment = Record<string, string | undefined>
+
+export const AURORA_LIFECYCLE_CLOUDWAYS_CREDENTIAL_REQUIREMENT =
+  'CLOUDWAYS_ACCESS_TOKEN or (CLOUDWAYS_EMAIL + CLOUDWAYS_API_KEY)'
 
 export const AURORA_LIFECYCLE_REQUIRED_ENV = [
   'AURORA_LIFECYCLE_E2E',
@@ -34,8 +39,6 @@ export const AURORA_LIFECYCLE_REQUIRED_ENV = [
   'SITEFORGE_PREVIEW_WP_URL',
   'SITEFORGE_PREVIEW_WP_USERNAME',
   'SITEFORGE_PREVIEW_WP_APP_PASSWORD',
-  'CLOUDWAYS_API_KEY',
-  'CLOUDWAYS_EMAIL',
 ] as const
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -131,11 +134,14 @@ export function inspectAuroraLifecycleEnv(
   env: Environment,
   now = new Date()
 ): AuroraPreflight {
-  const missing = AURORA_LIFECYCLE_REQUIRED_ENV.filter(
+  const missing: string[] = AURORA_LIFECYCLE_REQUIRED_ENV.filter(
     (key) => !value(env, key)
   )
+  if (!hasCloudwaysProviderCredentials(env)) {
+    missing.push(AURORA_LIFECYCLE_CLOUDWAYS_CREDENTIAL_REQUIREMENT)
+  }
   if (missing.length)
-    return { ready: false, missing: [...missing], invalid: [] }
+    return { ready: false, missing, invalid: [] }
 
   const invalid: string[] = []
   for (const key of UUID_FIELDS) {

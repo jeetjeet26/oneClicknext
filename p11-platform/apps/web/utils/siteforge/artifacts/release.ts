@@ -368,6 +368,7 @@ export interface VerifiedSiteForgeRelease {
     runtimePackageSha256: string | null
     operationSetHash: string | null
   }
+  assetManifest?: z.infer<typeof assetManifestSchema>
   assets: WebsiteAsset[]
   provenanceUrls: string[]
   runtimeAssets: ImmutableRuntimeAsset[]
@@ -526,13 +527,22 @@ export async function loadVerifiedSiteForgeRelease(
           `SiteForge v${runtimeContractVersion} asset ${asset.id} is missing byte size or MIME type`
         )
       }
+      const deliveryUrl = runtimeBacked ? asset.fileUrl : signed.signedUrl
+      if (runtimeBacked) {
+        if (!deliveryUrl.startsWith('https://')) {
+          throw new Error(
+            `SiteForge v${runtimeContractVersion} asset ${asset.id} requires an HTTPS delivery URL`
+          )
+        }
+        await verifyAssetBytes(deliveryUrl, asset.byteSha256)
+      }
       return {
         websiteAsset: {
           id: asset.id,
           websiteId: artifact.website_id,
           assetType: asset.type as AssetType,
           source: asset.source as AssetSource,
-          fileUrl: signed.signedUrl,
+          fileUrl: deliveryUrl,
           fileSize: asset.bytes ?? undefined,
           mimeType: asset.mimeType ?? undefined,
           altText: asset.altText ?? undefined,
@@ -543,7 +553,7 @@ export async function loadVerifiedSiteForgeRelease(
         } satisfies WebsiteAsset,
         runtimeAsset: {
           assetId: asset.id,
-          sourceUrl: signed.signedUrl,
+          sourceUrl: deliveryUrl,
           byteHash: asset.byteSha256,
           bytes: asset.bytes ?? 0,
           mimeType: asset.mimeType || 'application/octet-stream',
@@ -752,6 +762,7 @@ export async function loadVerifiedSiteForgeRelease(
       runtimePackageSha256: artifact.runtime_package_sha256,
       operationSetHash: artifact.operation_set_hash,
     },
+    assetManifest: manifest,
     assets,
     provenanceUrls,
     runtimeAssets,

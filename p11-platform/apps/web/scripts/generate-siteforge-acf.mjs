@@ -1,9 +1,9 @@
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const outputDir = path.resolve(
+export const siteForgeAcfOutputDir = path.resolve(
   appDir,
   '../../../wordpress-theme/oneclick-siteforge/acf-json'
 )
@@ -33,7 +33,7 @@ const repeater = (name, subFields) => ({
   sub_fields: subFields,
 })
 
-const definitions = {
+export const siteForgeAcfDefinitions = {
   'top-slides': [
     repeater('slides', [
       image('image'),
@@ -207,36 +207,103 @@ function withKeys(block, field, index, parent = '') {
   }
 }
 
-await mkdir(outputDir, { recursive: true })
-for (const [block, fields] of Object.entries(definitions)) {
-  const group = {
-    key: `group_siteforge_${block.replaceAll('-', '_')}`,
-    title: `SiteForge ${block.replaceAll('-', ' ')}`,
-    fields: fields.map((field, index) => withKeys(block, field, index)),
-    location: [
-      [
-        {
-          param: 'block',
-          operator: '==',
-          value: `acf/${block}`,
-        },
-      ],
-    ],
-    menu_order: 0,
-    position: 'normal',
-    style: 'default',
-    label_placement: 'top',
-    instruction_placement: 'label',
-    active: true,
-    description: 'Versioned SiteForge block contract.',
-    show_in_rest: 1,
-    modified: 1785441600,
-  }
-  const filename = `group_siteforge_${block.replaceAll('-', '_')}.json`
-  await writeFile(
-    path.join(outputDir, filename),
-    `${JSON.stringify(group, null, 2)}\n`
+export function renderSiteForgeAcfGroups() {
+  return Object.fromEntries(
+    Object.entries(siteForgeAcfDefinitions).map(([block, fields]) => {
+      const group = {
+        key: `group_siteforge_${block.replaceAll('-', '_')}`,
+        title: `SiteForge ${block.replaceAll('-', ' ')}`,
+        fields: fields.map((field, index) => withKeys(block, field, index)),
+        location: [
+          [
+            {
+              param: 'block',
+              operator: '==',
+              value: `acf/${block}`,
+            },
+          ],
+        ],
+        menu_order: 0,
+        position: 'normal',
+        style: 'default',
+        label_placement: 'top',
+        instruction_placement: 'label',
+        active: true,
+        description: 'Versioned SiteForge block contract.',
+        show_in_rest: 1,
+        modified: 1785441600,
+      }
+      const filename = `group_siteforge_${block.replaceAll('-', '_')}.json`
+      return [filename, `${JSON.stringify(group, null, 2)}\n`]
+    })
   )
 }
 
-console.log(`Generated ${Object.keys(definitions).length} SiteForge ACF field groups.`)
+async function existingGeneratedFiles(outputDirectory) {
+  try {
+    return (await readdir(outputDirectory))
+      .filter((filename) => /^group_siteforge_.+\.json$/.test(filename))
+      .sort()
+  } catch (error) {
+    if (error?.code === 'ENOENT') return []
+    throw error
+  }
+}
+
+export async function generateSiteForgeAcf({
+  outputDirectory = siteForgeAcfOutputDir,
+  check = false,
+} = {}) {
+  const rendered = renderSiteForgeAcfGroups()
+  const expectedFiles = Object.keys(rendered).sort()
+  const existingFiles = await existingGeneratedFiles(outputDirectory)
+
+  if (check) {
+    const drift = []
+    for (const filename of expectedFiles) {
+      try {
+        const actual = await readFile(
+          path.join(outputDirectory, filename),
+          'utf8'
+        )
+        if (actual !== rendered[filename]) drift.push(`${filename} differs`)
+      } catch (error) {
+        if (error?.code === 'ENOENT') drift.push(`${filename} is missing`)
+        else throw error
+      }
+    }
+    for (const filename of existingFiles) {
+      if (!rendered[filename]) drift.push(`${filename} is stale`)
+    }
+    if (drift.length) {
+      throw new Error(
+        `SiteForge ACF schema drift detected:\n- ${drift.join('\n- ')}\nRun npm run theme:acf:generate and commit the generated schemas.`
+      )
+    }
+    return { count: expectedFiles.length, files: expectedFiles }
+  }
+
+  await mkdir(outputDirectory, { recursive: true })
+  for (const filename of existingFiles) {
+    if (!rendered[filename]) {
+      await rm(path.join(outputDirectory, filename))
+    }
+  }
+  await Promise.all(
+    expectedFiles.map((filename) =>
+      writeFile(path.join(outputDirectory, filename), rendered[filename])
+    )
+  )
+  return { count: expectedFiles.length, files: expectedFiles }
+}
+
+if (path.resolve(process.argv[1] || '') === fileURLToPath(import.meta.url)) {
+  const command = process.argv[2]
+  if (command && command !== '--check') {
+    throw new Error(`Unknown command ${command}`)
+  }
+  const result = await generateSiteForgeAcf({ check: command === '--check' })
+  console.log(
+    `${command === '--check' ? 'Verified' : 'Generated'} ${result.count} SiteForge ACF field groups.`
+  )
+}

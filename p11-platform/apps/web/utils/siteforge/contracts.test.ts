@@ -117,6 +117,29 @@ describe('SiteForge contracts', () => {
     ).toThrow()
   })
 
+  it('requires the pre-existing website that owns approved generation evidence', () => {
+    expect(
+      createGenerationRequestSchema.parse({
+        websiteId: '22222222-2222-4222-8222-222222222222',
+        planId: validPlan.propertyId,
+        confirmedRevision: 1,
+        contentHash: 'a'.repeat(64),
+        idempotencyKey: 'generation-request-1',
+      })
+    ).toMatchObject({
+      websiteId: '22222222-2222-4222-8222-222222222222',
+      planId: validPlan.propertyId,
+    })
+    expect(() =>
+      createGenerationRequestSchema.parse({
+        planId: validPlan.propertyId,
+        confirmedRevision: 1,
+        contentHash: 'a'.repeat(64),
+        idempotencyKey: 'generation-request-1',
+      })
+    ).toThrow()
+  })
+
   it('hashes semantically identical objects identically', () => {
     const first = { b: 2, a: { y: 2, x: 1 } }
     const second = { a: { x: 1, y: 2 }, b: 2 }

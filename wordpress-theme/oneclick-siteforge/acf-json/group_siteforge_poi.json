@@ -1,0 +1,108 @@
+{
+  "key": "group_siteforge_poi",
+  "title": "SiteForge poi",
+  "fields": [
+    {
+      "key": "field_siteforge_poi_intro_text_0",
+      "name": "intro_text",
+      "label": "intro_text",
+      "type": "textarea"
+    },
+    {
+      "key": "field_siteforge_poi_points_1",
+      "name": "points",
+      "label": "points",
+      "type": "repeater",
+      "layout": "block",
+      "button_label": "Add points",
+      "sub_fields": [
+        {
+          "key": "field_siteforge_poi_points_name_0",
+          "name": "name",
+          "label": "name",
+          "type": "text"
+        },
+        {
+          "key": "field_siteforge_poi_points_category_1",
+          "name": "category",
+          "label": "category",
+          "type": "text"
+        },
+        {
+          "key": "field_siteforge_poi_points_address_2",
+          "name": "address",
+          "label": "address",
+          "type": "text"
+        },
+        {
+          "key": "field_siteforge_poi_points_distance_miles_3",
+          "name": "distance_miles",
+          "label": "distance_miles",
+          "type": "number"
+        },
+        {
+          "key": "field_siteforge_poi_points_travel_time_minutes_4",
+          "name": "travel_time_minutes",
+          "label": "travel_time_minutes",
+          "type": "number"
+        },
+        {
+          "key": "field_siteforge_poi_points_source_url_5",
+          "name": "source_url",
+          "label": "source_url",
+          "type": "url"
+        }
+      ]
+    },
+    {
+      "key": "field_siteforge_poi_categories_2",
+      "name": "categories",
+      "label": "categories",
+      "type": "checkbox",
+      "choices": {
+        "restaurants": "restaurants",
+        "shopping": "shopping",
+        "entertainment": "entertainment",
+        "transit": "transit",
+        "parks": "parks"
+      }
+    },
+    {
+      "key": "field_siteforge_poi_radius_miles_3",
+      "name": "radius_miles",
+      "label": "radius_miles",
+      "type": "number",
+      "default_value": 1
+    },
+    {
+      "key": "field_siteforge_poi_variant_4",
+      "name": "variant",
+      "label": "variant",
+      "type": "select",
+      "choices": {
+        "narrative": "narrative",
+        "map-list": "map-list",
+        "editorial": "editorial"
+      },
+      "default_value": "narrative"
+    }
+  ],
+  "location": [
+    [
+      {
+        "param": "block",
+        "operator": "==",
+        "value": "acf/poi"
+      }
+    ]
+  ],
+  "menu_order": 0,
+  "position": "normal",
+  "style": "default",
+  "label_placement": "top",
+  "instruction_placement": "label",
+  "active": true,
+  "description": "Versioned SiteForge block contract.",
+  "show_in_rest": 1,
+  "modified": 1785441600
+}

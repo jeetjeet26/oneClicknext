@@ -1,0 +1,77 @@
+{
+  "key": "group_siteforge_text_section",
+  "title": "SiteForge text section",
+  "fields": [
+    {
+      "key": "field_siteforge_text_section_headline_0",
+      "name": "headline",
+      "label": "headline",
+      "type": "text"
+    },
+    {
+      "key": "field_siteforge_text_section_subheading_1",
+      "name": "subheading",
+      "label": "subheading",
+      "type": "text"
+    },
+    {
+      "key": "field_siteforge_text_section_content_2",
+      "name": "content",
+      "label": "content",
+      "type": "wysiwyg"
+    },
+    {
+      "key": "field_siteforge_text_section_layout_3",
+      "name": "layout",
+      "label": "layout",
+      "type": "select",
+      "choices": {
+        "center": "center",
+        "left": "left"
+      },
+      "default_value": "center"
+    },
+    {
+      "key": "field_siteforge_text_section_background_4",
+      "name": "background",
+      "label": "background",
+      "type": "select",
+      "choices": {
+        "white": "white",
+        "light": "light",
+        "dark": "dark"
+      },
+      "default_value": "white"
+    },
+    {
+      "key": "field_siteforge_text_section_variant_5",
+      "name": "variant",
+      "label": "variant",
+      "type": "select",
+      "choices": {
+        "editorial": "editorial",
+        "contained": "contained",
+        "lead": "lead"
+      },
+      "default_value": "editorial"
+    }
+  ],
+  "location": [
+    [
+      {
+        "param": "block",
+        "operator": "==",
+        "value": "acf/text-section"
+      }
+    ]
+  ],
+  "menu_order": 0,
+  "position": "normal",
+  "style": "default",
+  "label_placement": "top",
+  "instruction_placement": "label",
+  "active": true,
+  "description": "Versioned SiteForge block contract.",
+  "show_in_rest": 1,
+  "modified": 1785441600
+}

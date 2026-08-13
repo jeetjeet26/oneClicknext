@@ -1,8 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { z } from 'zod'
 
-const { createServiceClientMock, fromMock, messageCreateMock } = vi.hoisted(() => ({
+const {
+  createServiceClientMock,
+  fromMock,
+  generateTextMock,
+  messageCreateMock,
+} = vi.hoisted(() => ({
   createServiceClientMock: vi.fn(),
   fromMock: vi.fn(),
+  generateTextMock: vi.fn(),
   messageCreateMock: vi.fn(),
 }))
 
@@ -18,6 +25,11 @@ vi.mock('@anthropic-ai/sdk', () => ({
   },
 }))
 
+vi.mock('ai', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('ai')>()),
+  generateText: generateTextMock,
+}))
+
 import { BaseAgent } from './base-agent'
 
 class TestBaseAgent extends BaseAgent {
@@ -31,6 +43,21 @@ class TestBaseAgent extends BaseAgent {
       maxTokens: 100,
       jsonMode: true,
     })
+  }
+
+  async callClaudeStructuredForTest() {
+    return this.callClaudeStructured(
+      'Create a website plan',
+      z.object({
+        ok: z.literal(true),
+        sections: z.array(z.string()),
+      }),
+      {
+        systemPrompt: 'Return the typed plan.',
+        maxTokens: 100,
+        name: 'siteforge_plan',
+      }
+    )
   }
 
   parseJSONForTest<T>(response: string) {
@@ -134,6 +161,28 @@ describe('BaseAgent.callClaude', () => {
     )
   })
 
+  it('uses AI SDK typed structured output for new generation callers', async () => {
+    generateTextMock.mockResolvedValue({
+      output: { ok: true, sections: ['hero'] },
+    })
+
+    const agent = new TestBaseAgent('property-1')
+
+    await expect(agent.callClaudeStructuredForTest()).resolves.toEqual({
+      ok: true,
+      sections: ['hero'],
+    })
+    expect(generateTextMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: expect.stringContaining('anthropic/'),
+        instructions: 'Return the typed plan.',
+        prompt: 'Create a website plan',
+        maxOutputTokens: 100,
+        output: expect.objectContaining({ name: 'object' }),
+      })
+    )
+  })
+
   it('repairs literal control characters inside Fable JSON strings', () => {
     const agent = new TestBaseAgent('property-1')
     const response = '{"css":"line one\nline two\tindented","url":"https://example.com/image"}'
@@ -142,5 +191,13 @@ describe('BaseAgent.callClaude', () => {
       css: 'line one\nline two\tindented',
       url: 'https://example.com/image',
     })
+  })
+
+  it('does not extract arbitrary JSON from prose for legacy callers', () => {
+    const agent = new TestBaseAgent('property-1')
+
+    expect(() =>
+      agent.parseJSONForTest('Here is your result: {"ok":true}')
+    ).toThrow('invalid legacy JSON')
   })
 })

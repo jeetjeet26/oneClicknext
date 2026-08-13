@@ -18,6 +18,12 @@ describe('SiteForge editor context', () => {
         acfLicenseKey: 'b'.repeat(24),
       })
     ).toBe(true)
+    expect(
+      isCloudwaysThemeInstallationConfigured({
+        accessToken: 'a'.repeat(32),
+        acfLicenseKey: 'b'.repeat(24),
+      })
+    ).toBe(true)
   })
 })
 

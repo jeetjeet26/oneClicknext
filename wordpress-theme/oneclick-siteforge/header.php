@@ -30,9 +30,9 @@ $siteforge_motion = is_array( $siteforge_configuration['motion'] ?? null ) ? $si
 			<?php esc_html_e( 'Skip to content', 'oneclick-siteforge' ); ?>
 		</a>
 
-		<?php if ( ! isset( $siteforge_header['announcement']['enabled'] ) || $siteforge_header['announcement']['enabled'] ) { ?>
+		<?php if ( ! empty( $siteforge_header['announcement']['enabled'] ) && ! empty( $siteforge_header['announcement']['text'] ) ) { ?>
 			<div class="site-announcement">
-				<span><?php echo esc_html( $siteforge_header['announcement']['text'] ?? ( get_bloginfo( 'description' ) ?: __( 'Distinctive living, thoughtfully designed', 'oneclick-siteforge' ) ) ); ?></span>
+				<span><?php echo esc_html( $siteforge_header['announcement']['text'] ); ?></span>
 				<?php if ( ! empty( $siteforge_header['announcement']['link'] ) ) { ?>
 					<a href="<?php echo esc_url( $siteforge_header['announcement']['link'] ); ?>"><?php esc_html_e( 'Learn more', 'oneclick-siteforge' ); ?></a>
 				<?php } ?>
@@ -90,16 +90,16 @@ $siteforge_motion = is_array( $siteforge_configuration['motion'] ?? null ) ? $si
 							'menu_id'        => 'primary-menu',
 							'container'      => 'div',
 							'container_class' => 'primary-menu-container',
-							'fallback_cb'    => 'wp_page_menu',
+							'fallback_cb'    => false,
 							'depth'          => 0,
 						)
 					);
 					?>
 				</nav>
 
-				<?php if ( ! isset( $siteforge_header['cta']['enabled'] ) || $siteforge_header['cta']['enabled'] ) { ?>
-					<a class="header-cta" href="<?php echo esc_url( $siteforge_header['cta']['href'] ?? home_url( '/schedule-a-tour/' ) ); ?>">
-						<?php echo esc_html( $siteforge_header['cta']['label'] ?? __( 'Schedule a tour', 'oneclick-siteforge' ) ); ?>
+				<?php if ( ! empty( $siteforge_header['cta']['enabled'] ) && ! empty( $siteforge_header['cta']['href'] ) && ! empty( $siteforge_header['cta']['label'] ) ) { ?>
+					<a class="header-cta" href="<?php echo esc_url( $siteforge_header['cta']['href'] ); ?>">
+						<?php echo esc_html( $siteforge_header['cta']['label'] ); ?>
 					</a>
 				<?php } ?>
 			</div>

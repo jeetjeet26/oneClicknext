@@ -1,0 +1,61 @@
+{
+  "key": "group_siteforge_image",
+  "title": "SiteForge image",
+  "fields": [
+    {
+      "key": "field_siteforge_image_image_0",
+      "name": "image",
+      "label": "image",
+      "type": "image",
+      "return_format": "id",
+      "preview_size": "medium"
+    },
+    {
+      "key": "field_siteforge_image_size_1",
+      "name": "size",
+      "label": "size",
+      "type": "select",
+      "choices": {
+        "full": "full",
+        "large": "large",
+        "medium": "medium"
+      },
+      "default_value": "large"
+    },
+    {
+      "key": "field_siteforge_image_caption_2",
+      "name": "caption",
+      "label": "caption",
+      "type": "text"
+    },
+    {
+      "key": "field_siteforge_image_variant_3",
+      "name": "variant",
+      "label": "variant",
+      "type": "select",
+      "choices": {
+        "full-bleed": "full-bleed",
+        "contained": "contained"
+      },
+      "default_value": "contained"
+    }
+  ],
+  "location": [
+    [
+      {
+        "param": "block",
+        "operator": "==",
+        "value": "acf/image"
+      }
+    ]
+  ],
+  "menu_order": 0,
+  "position": "normal",
+  "style": "default",
+  "label_placement": "top",
+  "instruction_placement": "label",
+  "active": true,
+  "description": "Versioned SiteForge block contract.",
+  "show_in_rest": 1,
+  "modified": 1785441600
+}

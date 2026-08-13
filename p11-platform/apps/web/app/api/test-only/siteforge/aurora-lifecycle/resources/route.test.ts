@@ -20,6 +20,20 @@ vi.mock('@/utils/siteforge/testing/aurora-lifecycle-control', async () => {
 })
 
 describe('Aurora lifecycle resource mutation contract', () => {
+  it('counts governed extension requests as custom interaction coverage', async () => {
+    const { deriveAuroraSemanticCoverage } = await import('./route')
+
+    expect(
+      deriveAuroraSemanticCoverage(
+        [{ edit_intent: 'Accessibility: preserve keyboard behavior.' }],
+        [{ id: '55555555-5555-4555-8555-555555555555' }]
+      )
+    ).toMatchObject({
+      accessibility: true,
+      customInteraction: true,
+    })
+  })
+
   it('rejects caller-supplied storage and provider identities', async () => {
     const { POST } = await import('./route')
     const response = await POST(

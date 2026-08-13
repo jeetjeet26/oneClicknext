@@ -4,8 +4,10 @@ import type { BrandContext } from '@/utils/siteforge/agents/brand-agent'
 import {
   siteForgePlanSchema,
   siteForgePlanStatusSchema,
+  siteForgeGenerationEvidenceSnapshotSchema,
   siteForgeReadinessReportSchema,
   type SiteForgePlan,
+  type SiteForgeGenerationEvidenceSnapshot,
   type SiteForgeReadinessReport,
 } from '@/utils/siteforge/contracts'
 import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
@@ -15,12 +17,27 @@ import {
   recordSharedApprovalDecision,
   type SharedApprovalDecisionStatus,
 } from '@/utils/services/shared-approvals'
-import { getLatestApprovedOnboardingSnapshot } from '@/utils/onboarding/repository'
+import {
+  evaluateRequiredAssetReadiness,
+  getLatestApprovedOnboardingSnapshot,
+} from '@/utils/onboarding/repository'
 import {
   hashBrandForgeContract,
   normalizeBrandAssetRow,
 } from '@/utils/brandforge/normalize'
 import { brandContextFromContract } from '@/utils/siteforge/brand-contract-adapter'
+import { createApprovedFloorPlanSnapshot } from '@/utils/siteforge/providers/floor-plans'
+import {
+  hashSiteForgeBrief,
+  siteForgeBriefContradictionsSchema,
+  siteForgeBriefSchema,
+} from '@/utils/siteforge/briefs/contracts'
+import {
+  hashSiteForgeDirection,
+  hashSiteForgeDirectionSet,
+  siteForgeCreativeDirectionSchema,
+  siteForgeDirectionPreviewSchema,
+} from '@/utils/siteforge/directions/contracts'
 
 type ServiceClient = ReturnType<typeof createServiceClient>
 
@@ -62,6 +79,462 @@ export type PersistedPlanRevision = {
   plan: SiteForgePlan
   readiness: SiteForgeReadinessReport
   approvalActionAttemptId: string | null
+}
+
+export type ApprovedSiteForgeGenerationContext = {
+  websiteId: string
+  propertyId: string
+  orgId: string
+  planVersionId: string
+  plan: SiteForgePlan
+  brief: Record<string, unknown>
+  creativeDirection: Record<string, unknown>
+  evidenceSnapshot: SiteForgeGenerationEvidenceSnapshot
+}
+
+type LoadApprovedGenerationContextInput = {
+  websiteId: string
+  planId: string
+  confirmedRevision: number
+  contentHash: string
+}
+
+const SYNTHETIC_INVENTORY_PATTERN =
+  /(?:^|[^a-z])(demo|example|fake|mock|placeholder|seed|synthetic|test)(?:[^a-z]|$)/i
+
+function generationConflict(message: string): never {
+  throw new SiteForgePlanError(message, 409)
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function latestInventoryTimestamp(row: {
+  source_updated_at: string | null
+  effective_at: string | null
+  imported_at: string | null
+}): string | null {
+  return row.source_updated_at || row.effective_at || row.imported_at || null
+}
+
+/**
+ * Loads the immutable, approval-bound generation truth and hashes every
+ * mutable source into one evidence snapshot. This is used both at request time
+ * and immediately before workflow generation so stale inputs fail closed.
+ */
+export async function loadApprovedSiteForgeGenerationContext(
+  input: LoadApprovedGenerationContextInput,
+  supabase: ServiceClient = createServiceClient(),
+  now = new Date()
+): Promise<ApprovedSiteForgeGenerationContext> {
+  const { data: website, error: websiteError } = await supabase
+    .from('property_websites')
+    .select('id, property_id, org_id')
+    .eq('id', input.websiteId)
+    .single()
+  if (websiteError || !website?.org_id) {
+    generationConflict('Generation website is unavailable')
+  }
+
+  const { data: planRow, error: planError } = await supabase
+    .from('siteforge_plans')
+    .select('id, property_id, org_id, status, current_revision, confirmed_version_id')
+    .eq('id', input.planId)
+    .eq('property_id', website.property_id)
+    .eq('org_id', website.org_id)
+    .single()
+  if (
+    planError ||
+    !planRow ||
+    !['confirmed', 'consumed'].includes(planRow.status) ||
+    planRow.current_revision !== input.confirmedRevision ||
+    !planRow.confirmed_version_id
+  ) {
+    generationConflict('A matching confirmed plan is required for generation')
+  }
+
+  const { data: version, error: versionError } = await supabase
+    .from('siteforge_plan_versions')
+    .select(`
+      id,
+      plan_id,
+      revision,
+      plan,
+      readiness_report,
+      content_hash,
+      onboarding_snapshot_id,
+      onboarding_snapshot_hash,
+      brand_asset_id,
+      brand_contract_version,
+      brand_contract_hash
+    `)
+    .eq('id', planRow.confirmed_version_id)
+    .eq('plan_id', planRow.id)
+    .eq('revision', input.confirmedRevision)
+    .single()
+  if (
+    versionError ||
+    !version ||
+    version.content_hash !== input.contentHash
+  ) {
+    generationConflict('Confirmed plan content no longer matches this request')
+  }
+  const plan = siteForgePlanSchema.parse(version.plan)
+  const readiness = siteForgeReadinessReportSchema.parse(version.readiness_report)
+  if (
+    plan.propertyId !== website.property_id ||
+    hashSiteForgeContent(plan) !== version.content_hash ||
+    !readiness.ready ||
+    readiness.issues.some(issue => issue.severity === 'blocker')
+  ) {
+    generationConflict('Confirmed plan is stale or has unresolved readiness blockers')
+  }
+  if (
+    !plan.onboardingSnapshot ||
+    !plan.brandSnapshot ||
+    plan.onboardingSnapshot.id !== version.onboarding_snapshot_id ||
+    plan.onboardingSnapshot.contentHash !== version.onboarding_snapshot_hash ||
+    plan.brandSnapshot.assetId !== version.brand_asset_id ||
+    plan.brandSnapshot.contractVersion !== version.brand_contract_version ||
+    plan.brandSnapshot.contractHash !== version.brand_contract_hash
+  ) {
+    generationConflict('Confirmed plan does not match its pinned readiness truth')
+  }
+
+  const { data: onboarding, error: onboardingError } = await supabase
+    .from('property_onboarding_snapshots')
+    .select(
+      'id, org_id, property_id, status, content_hash, brand_asset_id, brand_contract_version, brand_contract_hash'
+    )
+    .eq('id', version.onboarding_snapshot_id || '')
+    .eq('property_id', website.property_id)
+    .eq('org_id', website.org_id)
+    .single()
+  if (
+    onboardingError ||
+    !onboarding ||
+    onboarding.status !== 'approved' ||
+    onboarding.content_hash !== version.onboarding_snapshot_hash ||
+    onboarding.brand_asset_id !== version.brand_asset_id ||
+    onboarding.brand_contract_version !== version.brand_contract_version ||
+    onboarding.brand_contract_hash !== version.brand_contract_hash
+  ) {
+    generationConflict('Pinned onboarding snapshot is unavailable or changed')
+  }
+
+  const { data: brandRow, error: brandError } = await supabase
+    .from('property_brand_assets')
+    .select('*')
+    .eq('id', version.brand_asset_id || '')
+    .eq('property_id', website.property_id)
+    .single()
+  if (
+    brandError ||
+    !brandRow ||
+    brandRow.approval_status !== 'approved' ||
+    brandRow.contract_version !== version.brand_contract_version
+  ) {
+    generationConflict('Pinned BrandForge contract is unavailable or unapproved')
+  }
+  const brandContract = normalizeBrandAssetRow(
+    brandRow as unknown as Record<string, unknown>
+  )
+  const brandHash = hashBrandForgeContract(brandContract)
+  if (
+    brandHash !== brandRow.contract_hash ||
+    brandHash !== version.brand_contract_hash ||
+    brandHash !== plan.brandSnapshot.contractHash
+  ) {
+    generationConflict('Pinned BrandForge contract hash changed')
+  }
+
+  const { data: briefRow, error: briefError } = await supabase
+    .from('siteforge_brief_versions')
+    .select(
+      'id, version, status, brief, unresolved_contradictions, content_hash, onboarding_snapshot_id, onboarding_snapshot_hash, brand_asset_id, brand_contract_hash'
+    )
+    .eq('website_id', website.id)
+    .eq('property_id', website.property_id)
+    .eq('org_id', website.org_id)
+    .eq('status', 'approved')
+    .single()
+  const parsedBrief = siteForgeBriefSchema.safeParse(briefRow?.brief)
+  const parsedContradictions = siteForgeBriefContradictionsSchema.safeParse(
+    briefRow?.unresolved_contradictions
+  )
+  if (
+    briefError ||
+    !briefRow ||
+    !parsedBrief.success ||
+    !parsedContradictions.success ||
+    parsedContradictions.data.length > 0 ||
+    briefRow.onboarding_snapshot_id !== onboarding.id ||
+    briefRow.onboarding_snapshot_hash !== onboarding.content_hash ||
+    briefRow.brand_asset_id !== brandRow.id ||
+    briefRow.brand_contract_hash !== brandHash ||
+    hashSiteForgeBrief({
+      brief: parsedBrief.success ? parsedBrief.data : ({} as never),
+      unresolvedContradictions: parsedContradictions.success
+        ? parsedContradictions.data
+        : [],
+      sources: {
+        onboardingSnapshotId: onboarding.id,
+        onboardingSnapshotHash: onboarding.content_hash,
+        brandAssetId: brandRow.id,
+        brandContractHash: brandHash,
+      },
+    }) !== briefRow.content_hash
+  ) {
+    generationConflict('Approved SiteForge brief is missing, contradictory, or stale')
+  }
+
+  const { data: directionSet, error: directionSetError } = await supabase
+    .from('siteforge_creative_direction_sets')
+    .select(
+      'id, version, status, brief_version_id, selected_direction_id, selection_notes, content_hash'
+    )
+    .eq('website_id', website.id)
+    .eq('property_id', website.property_id)
+    .eq('org_id', website.org_id)
+    .eq('status', 'approved')
+    .single()
+  if (
+    directionSetError ||
+    !directionSet ||
+    directionSet.brief_version_id !== briefRow.id ||
+    !directionSet.selected_direction_id
+  ) {
+    generationConflict('Approved creative direction is missing or stale')
+  }
+  const { data: directionRows, error: directionError } = await supabase
+    .from('siteforge_creative_directions')
+    .select('id, direction_set_id, ordinal, name, direction, preview_manifest, content_hash')
+    .eq('direction_set_id', directionSet.id)
+    .order('ordinal', { ascending: true })
+  const directions = (directionRows || []).map(row => {
+    const parsedDirection = siteForgeCreativeDirectionSchema.safeParse(row.direction)
+    const parsedPreview = siteForgeDirectionPreviewSchema.safeParse(
+      row.preview_manifest
+    )
+    const canonicalHash =
+      parsedDirection.success && parsedPreview.success
+        ? hashSiteForgeDirection({
+            name: row.name,
+            ordinal: row.ordinal,
+            direction: parsedDirection.data,
+            previewManifest: parsedPreview.data,
+          })
+        : null
+    return { row, parsedDirection, canonicalHash }
+  })
+  const selected = directions.find(
+    candidate => candidate.row.id === directionSet.selected_direction_id
+  )
+  const canonicalSetHash = hashSiteForgeDirectionSet({
+    briefVersionId: briefRow.id,
+    briefContentHash: briefRow.content_hash,
+    directionHashes: directions.map(candidate => candidate.row.content_hash),
+    selectedDirectionHash: selected?.row.content_hash || null,
+    selectionNotes: directionSet.selection_notes,
+  })
+  if (
+    directionError ||
+    directions.length < 2 ||
+    directions.some(candidate =>
+      candidate.canonicalHash !== candidate.row.content_hash
+    ) ||
+    !selected ||
+    !selected.parsedDirection.success ||
+    selected.parsedDirection.data.provenance.briefVersionId !== briefRow.id ||
+    selected.parsedDirection.data.provenance.briefContentHash !==
+      briefRow.content_hash ||
+    selected.parsedDirection.data.provenance.onboardingSnapshotId !==
+      onboarding.id ||
+    selected.parsedDirection.data.provenance.onboardingSnapshotHash !==
+      onboarding.content_hash ||
+    selected.parsedDirection.data.provenance.brandAssetId !== brandRow.id ||
+    selected.parsedDirection.data.provenance.brandContractHash !== brandHash ||
+    canonicalSetHash !== directionSet.content_hash
+  ) {
+    generationConflict('Selected creative-direction hash does not match its payload')
+  }
+  const direction = selected.row
+
+  const { data: assetRows, error: assetError } = await supabase
+    .from('content_assets')
+    .select(
+      'id, asset_role, file_url, content_hash, rights_status, rights_metadata, approval_status, expires_at'
+    )
+    .eq('property_id', website.property_id)
+    .eq('org_id', website.org_id)
+    .eq('approval_status', 'approved')
+    .in('rights_status', ['owned', 'licensed', 'generated'])
+    .order('id', { ascending: true })
+  if (assetError) {
+    generationConflict(`Failed to load approved asset manifest: ${assetError.message}`)
+  }
+  const assets = (assetRows || []).flatMap(asset => {
+    const expired = asset.expires_at && new Date(asset.expires_at) <= now
+    if (
+      expired ||
+      !asset.asset_role ||
+      !asset.content_hash ||
+      !/^[a-f0-9]{64}$/.test(asset.content_hash) ||
+      !isRecord(asset.rights_metadata)
+    ) {
+      return []
+    }
+    return [{
+      id: asset.id,
+      role: asset.asset_role,
+      fileUrl: asset.file_url,
+      contentHash: asset.content_hash,
+      rightsStatus: asset.rights_status as 'owned' | 'licensed' | 'generated',
+      rightsEvidenceHash: hashSiteForgeContent(asset.rights_metadata),
+      approvalStatus: 'approved' as const,
+      expiresAt: asset.expires_at,
+    }]
+  })
+  if (assets.length === 0) {
+    generationConflict('Generation requires an approved rights-cleared asset manifest')
+  }
+  const assetManifestHash = hashSiteForgeContent(assets)
+
+  const inventoryRequired = plan.pages.some(page =>
+    page.sections.some(section => section.block === 'acf/plans-availability')
+  )
+  const { data: inventoryRows, error: inventoryError } = await supabase
+    .from('property_units')
+    .select(
+      'canonical_key, unit_type, bedrooms, bathrooms, sqft_min, sqft_max, rent_min, rent_max, available_count, move_in_specials, floor_plan_image_url, floor_plan_image_alt, availability_url, apply_url, source, source_identity, effective_at, expires_at, source_updated_at, imported_at'
+    )
+    .eq('property_id', website.property_id)
+    .eq('org_id', website.org_id)
+    .eq('active', true)
+    .eq('review_status', 'approved')
+    .order('canonical_key', { ascending: true })
+  if (inventoryError) {
+    generationConflict(`Failed to load approved inventory evidence: ${inventoryError.message}`)
+  }
+  const inventory = inventoryRows || []
+  if (inventoryRequired && inventory.length === 0) {
+    generationConflict('Confirmed plan requires approved floor-plan inventory')
+  }
+  const freshnessMs = plan.floorPlanStrategy.freshnessHours * 3_600_000
+  const inventoryTimestamps = inventory.map(row => latestInventoryTimestamp(row))
+  if (
+    inventoryRequired &&
+    inventory.some((row, index) => {
+      const sourceIdentity = `${row.source} ${row.source_identity}`
+      const timestamp = inventoryTimestamps[index]
+      return (
+        SYNTHETIC_INVENTORY_PATTERN.test(sourceIdentity) ||
+        !timestamp ||
+        now.getTime() - new Date(timestamp).getTime() > freshnessMs ||
+        Boolean(row.expires_at && new Date(row.expires_at) <= now) ||
+        (plan.floorPlanStrategy.showPricing &&
+          row.rent_min == null &&
+          row.rent_max == null) ||
+        (plan.floorPlanStrategy.showAvailability &&
+          row.available_count == null)
+      )
+    })
+  ) {
+    generationConflict(
+      'Approved floor-plan inventory is stale, synthetic, expired, or incomplete'
+    )
+  }
+  const latestSourceUpdatedAt = inventoryTimestamps
+    .filter((value): value is string => Boolean(value))
+    .sort()
+    .at(-1) || null
+  const inventoryContentHash = createApprovedFloorPlanSnapshot(
+    inventory,
+    now.toISOString()
+  ).contentHash
+
+  const snapshotCore = {
+    schemaVersion: 1 as const,
+    websiteId: website.id,
+    propertyId: website.property_id,
+    orgId: website.org_id,
+    plan: {
+      id: planRow.id,
+      versionId: version.id,
+      revision: version.revision,
+      contentHash: version.content_hash,
+    },
+    brief: {
+      id: briefRow.id,
+      version: briefRow.version,
+      contentHash: briefRow.content_hash,
+    },
+    creativeDirection: {
+      setId: directionSet.id,
+      setVersion: directionSet.version,
+      setContentHash: directionSet.content_hash,
+      directionId: direction.id,
+      directionContentHash: direction.content_hash,
+    },
+    onboarding: {
+      id: onboarding.id,
+      contentHash: onboarding.content_hash,
+    },
+    brand: {
+      assetId: brandRow.id,
+      contractVersion: brandContract.contractVersion,
+      contractHash: brandHash,
+    },
+    assetManifest: {
+      assets,
+      contentHash: assetManifestHash,
+    },
+    inventory: {
+      required: inventoryRequired,
+      rowCount: inventory.length,
+      contentHash: inventoryContentHash,
+      latestSourceUpdatedAt,
+    },
+  }
+  const evidenceSnapshot = siteForgeGenerationEvidenceSnapshotSchema.parse({
+    ...snapshotCore,
+    capturedAt: now.toISOString(),
+    contentHash: hashSiteForgeContent(snapshotCore),
+  })
+
+  return {
+    websiteId: website.id,
+    propertyId: website.property_id,
+    orgId: website.org_id,
+    planVersionId: version.id,
+    plan,
+    brief: parsedBrief.data,
+    creativeDirection: selected.parsedDirection.data,
+    evidenceSnapshot,
+  }
+}
+
+export async function assertSiteForgeGenerationEvidenceCurrent(
+  expected: SiteForgeGenerationEvidenceSnapshot,
+  supabase: ServiceClient = createServiceClient(),
+  now = new Date()
+): Promise<ApprovedSiteForgeGenerationContext> {
+  const parsed = siteForgeGenerationEvidenceSnapshotSchema.parse(expected)
+  const current = await loadApprovedSiteForgeGenerationContext(
+    {
+      websiteId: parsed.websiteId,
+      planId: parsed.plan.id,
+      confirmedRevision: parsed.plan.revision,
+      contentHash: parsed.plan.contentHash,
+    },
+    supabase,
+    now
+  )
+  if (current.evidenceSnapshot.contentHash !== parsed.contentHash) {
+    generationConflict('Generation evidence changed after the request was approved')
+  }
+  return current
 }
 
 function buildReadinessReport(
@@ -252,6 +725,36 @@ export async function createPlanRevision(
     && !Array.isArray(onboardingSnapshot.snapshot_payload)
       ? onboardingSnapshot.snapshot_payload
       : {}
+  const snapshotAssets = Array.isArray(snapshotPayload.assets)
+    ? snapshotPayload.assets.flatMap(value => {
+        if (!isRecord(value)) return []
+        if (
+          typeof value.id !== 'string'
+          || typeof value.asset_type !== 'string'
+          || typeof value.approval_status !== 'string'
+          || typeof value.rights_status !== 'string'
+        ) {
+          return []
+        }
+        return [{
+          id: value.id,
+          asset_role:
+            typeof value.asset_role === 'string' ? value.asset_role : null,
+          asset_type: value.asset_type,
+          approval_status: value.approval_status,
+          rights_status: value.rights_status,
+          expires_at:
+            typeof value.expires_at === 'string' ? value.expires_at : null,
+        }]
+      })
+    : []
+  const assetReadiness = evaluateRequiredAssetReadiness(snapshotAssets)
+  if (!assetReadiness.ready) {
+    throw new SiteForgePlanError(
+      `Approved readiness no longer satisfies SiteForge asset policy: ${assetReadiness.reasons.join('; ')}. Rebuild and approve readiness.`,
+      409,
+    )
+  }
   const enabledCapabilities = Array.isArray(snapshotPayload.enabledCapabilities)
     ? snapshotPayload.enabledCapabilities.filter(
         (capability): capability is 'crm' | 'tours' | 'chatbot' | 'analytics' =>
@@ -502,6 +1005,24 @@ export async function getCurrentPlanRevision(
     readiness: applyCurrentReadinessPolicy(version.readiness_report),
     approvalActionAttemptId: planRow.approval_action_attempt_id,
   }
+}
+
+export async function getLatestPropertyPlanRevision(
+  propertyId: string,
+  supabase: ServiceClient = createServiceClient(),
+): Promise<PersistedPlanRevision | null> {
+  const { data, error } = await supabase
+    .from('siteforge_plans')
+    .select('id')
+    .eq('property_id', propertyId)
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (error) {
+    throw new SiteForgePlanError('Failed to load the current SiteForge plan', 500)
+  }
+  return data ? getCurrentPlanRevision(data.id, propertyId, supabase) : null
 }
 
 async function ensureApprovalProposal(

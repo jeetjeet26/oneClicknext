@@ -3,6 +3,7 @@ import { PNG } from 'pngjs'
 import { describe, expect, it } from 'vitest'
 import {
   compareBrowserScreenshots,
+  criticalUrlsBlockedByRobots,
   parseLighthouseReportArtifact,
 } from './browserbase-certifier'
 
@@ -40,6 +41,21 @@ function png(width: number, height: number, color = [245, 245, 245, 255]) {
 }
 
 describe('Browserbase certification evidence', () => {
+  it('reports wildcard robots exclusions for certified routes', () => {
+    expect(
+      criticalUrlsBlockedByRobots(
+        'User-agent: *\nDisallow: /floor-plans',
+        ['https://example.com/', 'https://example.com/floor-plans/']
+      )
+    ).toEqual(['https://example.com/floor-plans/'])
+    expect(
+      criticalUrlsBlockedByRobots(
+        'User-agent: AdsBot\nDisallow: /\nUser-agent: *\nDisallow:',
+        ['https://example.com/']
+      )
+    ).toEqual([])
+  })
+
   it('normalizes trailing uniform browser background without hiding content drift', () => {
     expect(compareBrowserScreenshots(png(4, 4), png(4, 6))).toEqual({
       dimensionsMatch: true,

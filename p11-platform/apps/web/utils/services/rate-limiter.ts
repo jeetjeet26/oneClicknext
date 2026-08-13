@@ -122,6 +122,15 @@ export const publicReadLimiter = createRateLimiter({
   maxRequests: 60,
 })
 
+/**
+ * Public review traffic: retained as an IP-level defense in front of the
+ * signed per-session attempt budget.
+ */
+export const reviewPublicLimiter = createRateLimiter({
+  windowMs: 60_000,
+  maxRequests: 60,
+})
+
 /** Webhooks: 30 per minute per IP/source */
 export const webhookLimiter = createRateLimiter({
   windowMs: 60_000,

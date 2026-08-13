@@ -6,7 +6,7 @@ import { createBrandImportPreview } from '@/utils/brandforge/imports'
 import { createRequestContext } from '@/utils/services/request-context'
 
 const previewSchema = z.object({
-  propertyId: z.string().uuid(),
+  propertyId: z.guid(),
   sourceType: z.enum(['package', 'website', 'manual', 'hybrid']),
   idempotencyKey: z.string().min(8).max(200),
   websiteUrl: z.url().optional(),

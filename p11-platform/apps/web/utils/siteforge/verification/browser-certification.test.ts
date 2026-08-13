@@ -269,6 +269,14 @@ describe('browser certification suite', () => {
 
     expect(report.passed).toBe(true)
     expect(report.evidenceAccepted).toBe(true)
+    expect(report.capturedAt).toBe('2026-07-31T20:00:00.000Z')
+    expect(report.screenshots).toHaveLength(3)
+    expect(report.screenshots[0]).toEqual(
+      expect.objectContaining({
+        storagePath: expect.stringContaining('browser-certification/'),
+        identityDigest: 'f'.repeat(64),
+      })
+    )
     expect(report.checks.map(check => check.code)).toEqual(
       expect.arrayContaining([
         'evidence.identity',
@@ -426,5 +434,35 @@ describe('browser certification suite', () => {
       code: 'interaction.forms_widgets_keyboard_focus',
       passed: false,
     }))
+  })
+
+  it.each([
+    ['axe', (evidence: BrowserCertificationEvidence) => {
+      evidence.accessibility.scans[0].findings.push({
+        ruleId: 'aria-required-attr',
+        impact: 'critical',
+        description: 'Required ARIA attributes are missing',
+        nodes: [{ target: ['button'], html: '<button>' }],
+      })
+    }],
+    ['interaction', (evidence: BrowserCertificationEvidence) => {
+      evidence.interactions.pages[0].keyboard.traps.push('focus trap')
+    }],
+    ['SEO', (evidence: BrowserCertificationEvidence) => {
+      evidence.seo.pages[0].openGraph.url = 'https://example.com/wrong/'
+    }],
+    ['Lighthouse', (evidence: BrowserCertificationEvidence) => {
+      evidence.lighthouse.runs[0].performance = 0.79
+    }],
+    ['redirect', (evidence: BrowserCertificationEvidence) => {
+      evidence.redirects.criticalRoutes[0].finalUrl =
+        'https://example.com/wrong/'
+    }],
+  ])('blocks public certification on failed %s evidence', (_name, mutate) => {
+    const evidence = passingEvidence()
+    mutate(evidence)
+    expect(certifyBrowserEvidence(certificationInput(evidence)).passed).toBe(
+      false
+    )
   })
 })

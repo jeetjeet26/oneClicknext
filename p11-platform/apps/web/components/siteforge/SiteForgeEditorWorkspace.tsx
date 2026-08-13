@@ -17,7 +17,6 @@ import {
   ACFBlockRenderer,
   type DesignSystem,
 } from './ACFBlockRenderer'
-import { SiteForgeOperationsPanel } from './SiteForgeOperationsPanel'
 import type { GeneratedPage, WebsiteStatusResponse } from '@/types/siteforge'
 import {
   classifyWebsiteStatus,
@@ -155,7 +154,13 @@ const VIEWPORT_WIDTH: Record<Viewport, number | '100%'> = {
   desktop: '100%',
 }
 
-export function SiteForgeEditorWorkspace({ websiteId }: { websiteId: string }) {
+export function SiteForgeEditorWorkspace({
+  websiteId,
+  propertyId,
+}: {
+  websiteId: string
+  propertyId: string
+}) {
   const [payload, setPayload] = useState<EditorSessionPayload | null>(null)
   const [intent, setIntent] = useState('')
   const [elementContext, setElementContext] = useState('')
@@ -168,6 +173,8 @@ export function SiteForgeEditorWorkspace({ websiteId }: { websiteId: string }) {
   const [selectedPreviewPage, setSelectedPreviewPage] = useState('')
   const [assets, setAssets] = useState<PropertyAsset[]>([])
   const [assetPickerOpen, setAssetPickerOpen] = useState(false)
+  const [assetsLoaded, setAssetsLoaded] = useState(false)
+  const [assetsLoading, setAssetsLoading] = useState(false)
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [previewingWordPress, setPreviewingWordPress] = useState(false)
@@ -203,24 +210,16 @@ export function SiteForgeEditorWorkspace({ websiteId }: { websiteId: string }) {
     const data = await response.json()
     if (!response.ok)
       throw new Error(data.error || 'Failed to open editor session')
+    if (data.session?.property_id !== propertyId) {
+      throw new Error('Editor session does not match the selected property')
+    }
     setPayload(data as EditorSessionPayload)
     return data as EditorSessionPayload
-  }, [websiteId])
+  }, [propertyId, websiteId])
 
   useEffect(() => {
     let cancelled = false
     void openSession()
-      .then((session) => {
-        if (cancelled) return
-        return fetch(
-          `/api/siteforge/assets?propertyId=${session.session.property_id}`
-        )
-      })
-      .then(async (response) => {
-        if (!response || cancelled || !response.ok) return
-        const data = await response.json()
-        setAssets(Array.isArray(data.assets) ? data.assets : [])
-      })
       .catch((cause) => {
         if (!cancelled)
           setError(
@@ -234,6 +233,35 @@ export function SiteForgeEditorWorkspace({ websiteId }: { websiteId: string }) {
       cancelled = true
     }
   }, [openSession])
+
+  const loadAssets = useCallback(async () => {
+    if (assetsLoading || assetsLoaded) return
+    setAssetsLoading(true)
+    try {
+      const response = await fetch(
+        `/api/siteforge/assets?propertyId=${encodeURIComponent(propertyId)}`
+      )
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to load approved assets')
+      }
+      setAssets(Array.isArray(data.assets) ? data.assets : [])
+      setAssetsLoaded(true)
+    } catch (cause) {
+      setError(
+        cause instanceof Error ? cause.message : 'Failed to load approved assets'
+      )
+    } finally {
+      setAssetsLoading(false)
+    }
+  }, [assetsLoaded, assetsLoading, propertyId])
+
+  function toggleAssetPicker() {
+    setAssetPickerOpen(current => {
+      if (!current) void loadAssets()
+      return !current
+    })
+  }
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({
@@ -1201,9 +1229,11 @@ export function SiteForgeEditorWorkspace({ websiteId }: { websiteId: string }) {
                 type="button"
                 size="sm"
                 variant="outline"
-                onClick={() => setAssetPickerOpen((value) => !value)}
+                onClick={toggleAssetPicker}
+                disabled={assetsLoading}
+                aria-expanded={assetPickerOpen}
               >
-                Approved assets
+                {assetsLoading ? 'Loading assets…' : 'Approved assets'}
               </Button>
               <Button
                 type="button"
@@ -1440,7 +1470,6 @@ export function SiteForgeEditorWorkspace({ websiteId }: { websiteId: string }) {
         </CardContent>
       </Card>
       </div>
-      <SiteForgeOperationsPanel websiteId={websiteId} />
       <Dialog
         open={approvalDialogOpen}
         onOpenChange={open => {

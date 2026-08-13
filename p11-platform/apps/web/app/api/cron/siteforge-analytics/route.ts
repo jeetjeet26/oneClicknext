@@ -21,6 +21,7 @@ export async function GET(request: NextRequest) {
     if (error) throw new Error(`Failed to load SiteForge websites: ${error.message}`)
     let artifacts = 0
     let proposals = 0
+    let outcomes = 0
     for (const website of websites || []) {
       const result = await persistArtifactFunnelsAndIncidents(client, {
         orgId: website.org_id,
@@ -41,12 +42,14 @@ export async function GET(request: NextRequest) {
       })
       artifacts += result.artifacts
       proposals += result.proposals
+      outcomes += result.outcomes
     }
     const result = {
       success: true,
       websites: websites?.length || 0,
       artifacts,
       proposals,
+      outcomes,
       windowStart: start.toISOString(),
       windowEnd: end.toISOString(),
     }

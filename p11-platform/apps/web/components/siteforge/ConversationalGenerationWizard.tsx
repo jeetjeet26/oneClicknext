@@ -17,12 +17,14 @@ import { useRouter } from 'next/navigation'
 import { PropertyAssetsStep } from './PropertyAssetsStep'
 import type { GenerationPreferences, WebsiteStatusResponse } from '@/types/siteforge'
 import {
+  approvedReadinessCapabilities,
   buildGenerationRequest,
   classifyWebsiteStatus,
   preferencesMatch,
   responseErrorMessage,
   siteForgeStatusEndpoint,
 } from './orchestration'
+import type { PersistedSiteForgeBrief } from '@/utils/siteforge/briefs/repository'
 
 interface ConversationalGenerationWizardProps {
   propertyId: string
@@ -115,6 +117,9 @@ export function ConversationalGenerationWizard({
   const [generationError, setGenerationError] = useState('')
   const [serverPlan, setServerPlan] = useState<ServerPlanSnapshot | null>(null)
   const [changeRequest, setChangeRequest] = useState('')
+  const [durableBriefs, setDurableBriefs] = useState<
+    PersistedSiteForgeBrief[]
+  >([])
   const [preferences, setPreferences] = useState<GenerationPreferences>({
     ctaPriority: 'contact',
     enabledCapabilities: [],
@@ -215,6 +220,69 @@ export function ConversationalGenerationWizard({
     setChangeRequest('')
     setPreferences({ ctaPriority: 'contact', enabledCapabilities: [] })
   }, [])
+
+  const preferencesForApprovedReadiness =
+    useCallback(async (): Promise<GenerationPreferences> => {
+      const response = await fetch(
+        `/api/onboarding/readiness?propertyId=${encodeURIComponent(propertyId)}`,
+        { cache: 'no-store' }
+      )
+      const body = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(body.error || 'Could not load approved SiteForge readiness')
+      }
+      const snapshots = Array.isArray(body.snapshots) ? body.snapshots : []
+      if (
+        !snapshots.some(
+          (snapshot: unknown) =>
+            Boolean(snapshot) &&
+            typeof snapshot === 'object' &&
+            !Array.isArray(snapshot) &&
+            (snapshot as { status?: unknown }).status === 'approved'
+        )
+      ) {
+        throw new Error(
+          'Approve SiteForge readiness in Web Director before reviewing this plan.'
+        )
+      }
+      const nextPreferences: GenerationPreferences = {
+        ...preferences,
+        enabledCapabilities: approvedReadinessCapabilities(snapshots),
+      }
+      setPreferences(nextPreferences)
+      return nextPreferences
+    }, [preferences, propertyId])
+
+  const prepareProjectShell = useCallback(async () => {
+    const response = await fetch('/api/siteforge/projects', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ propertyId }),
+    })
+    const body = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      throw new Error(
+        responseErrorMessage(
+          response.status,
+          body,
+          'preparing the SiteForge project'
+        )
+      )
+    }
+    const projectWebsiteId =
+      body &&
+      typeof body === 'object' &&
+      body.project &&
+      typeof body.project === 'object' &&
+      typeof body.project.websiteId === 'string'
+        ? body.project.websiteId
+        : null
+    if (!projectWebsiteId) {
+      throw new Error('SiteForge prepared a project without a website identifier')
+    }
+    setWebsiteId(projectWebsiteId)
+    return projectWebsiteId
+  }, [propertyId])
   
   const runPreAnalysis = useCallback(async () => {
     setLoading(true)
@@ -230,7 +298,8 @@ export function ConversationalGenerationWizard({
       if (!data.brandContext) {
         throw new Error('No brand context returned from analysis')
       }
-      
+
+      await prepareProjectShell()
       setAnalysis(data)
       setPhase('assets')
       
@@ -245,7 +314,7 @@ export function ConversationalGenerationWizard({
     } finally {
       setLoading(false)
     }
-  }, [propertyId])
+  }, [prepareProjectShell, propertyId])
 
   // Phase 1: Run pre-analysis when dialog opens
   useEffect(() => {
@@ -256,93 +325,39 @@ export function ConversationalGenerationWizard({
     }
   }, [open, phase, resetWizard, runPreAnalysis])
 
+  useEffect(() => {
+    if (!open || !websiteId) return
+    let cancelled = false
+    void fetch(
+      `/api/siteforge/briefs?websiteId=${encodeURIComponent(websiteId)}`,
+      { cache: 'no-store' }
+    )
+      .then(async response => {
+        const body = await response.json().catch(() => ({}))
+        if (!response.ok) {
+          throw new Error(body.error || 'Failed to list durable briefs')
+        }
+        if (!cancelled) setDurableBriefs(body.briefs || [])
+      })
+      .catch(error => {
+        if (!cancelled) {
+          console.warn('Could not list durable SiteForge briefs:', error)
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open, websiteId])
+
   async function continueFromAssets() {
-    if (!analysis) return
-    if (!serverPlan) {
-      setPhase('conversation')
-      await startConversation(analysis.brandContext)
+    if (!websiteId) {
+      setGenerationError(
+        'The SiteForge project is not ready yet. Close this window and retry.'
+      )
       return
     }
-
-    setLoading(true)
-    try {
-      const res = await fetch('/api/siteforge/plan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          propertyId,
-          planId: serverPlan.planId,
-          expectedRevision: serverPlan.revision,
-          conversationHistory: conversation,
-          userMessage:
-            'Property photos or floor-plan inventory were updated through the asset step. Refresh the plan against the current approved property assets and units while preserving the selected direction.',
-          preferences,
-        }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) {
-        throw new Error(data.error || `Planning failed: ${res.status}`)
-      }
-      setServerPlan(data)
-      if (typeof data.aiResponse === 'string') {
-        setConversation(current => [
-          ...current,
-          {
-            role: 'assistant',
-            content: data.aiResponse,
-            timestamp: new Date().toISOString(),
-          },
-        ])
-      }
-      setPhase('conversation')
-    } catch (error) {
-      setGenerationError(
-        error instanceof Error ? error.message : 'Could not refresh the plan'
-      )
-    } finally {
-      setLoading(false)
-    }
-  }
-  
-  async function startConversation(brandContext: Record<string, unknown>) {
-    setLoading(true)
-    try {
-      const res = await fetch('/api/siteforge/plan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          propertyId,
-          brandContext: { ...brandContext, propertyName },
-          conversationHistory: [],
-          userMessage: null,
-          preferences,
-        })
-      })
-
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}))
-        throw new Error(errData.error || `Planning failed: ${res.status}`)
-      }
-
-      const data = await res.json()
-
-      setServerPlan(data)
-      setConversation([{
-        role: 'assistant',
-        content: data.aiResponse,
-        timestamp: new Date().toISOString()
-      }])
-      
-    } catch (error) {
-      console.error('Start conversation error:', error)
-      setConversation([{
-        role: 'assistant',
-        content: 'I could not load the narrative recommendation. You can still choose a direction below and review the plan, or close this window and try the analysis again.',
-        timestamp: new Date().toISOString(),
-      }])
-    } finally {
-      setLoading(false)
-    }
+    onClose()
+    router.push(`/dashboard/siteforge/${websiteId}?workspace=plan`)
   }
   
   async function sendMessage() {
@@ -359,6 +374,7 @@ export function ConversationalGenerationWizard({
     setLoading(true)
     
     try {
+      const approvedPreferences = await preferencesForApprovedReadiness()
       const res = await fetch('/api/siteforge/plan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -368,7 +384,7 @@ export function ConversationalGenerationWizard({
           expectedRevision: serverPlan?.revision,
           conversationHistory: conversation,
           userMessage: userInput,
-          preferences,
+          preferences: approvedPreferences,
         })
       })
 
@@ -403,7 +419,8 @@ export function ConversationalGenerationWizard({
   async function persistSelectedPreferences(
     currentPlan: ServerPlanSnapshot
   ): Promise<ServerPlanSnapshot> {
-    if (preferencesMatch(currentPlan.plan.preferences, preferences)) {
+    const approvedPreferences = await preferencesForApprovedReadiness()
+    if (preferencesMatch(currentPlan.plan.preferences, approvedPreferences)) {
       return currentPlan
     }
 
@@ -416,7 +433,7 @@ export function ConversationalGenerationWizard({
         expectedRevision: currentPlan.revision,
         conversationHistory: conversation,
         userMessage: null,
-        preferences,
+        preferences: approvedPreferences,
       }),
     })
     const result = await response.json().catch(() => ({}))
@@ -428,6 +445,58 @@ export function ConversationalGenerationWizard({
     const persisted = result as ServerPlanSnapshot
     setServerPlan(persisted)
     return persisted
+  }
+
+  async function saveWizardToDurableBrief() {
+    const currentBrief = durableBriefs[0]
+    if (!currentBrief || !serverPlan) return
+    setLoading(true)
+    setGenerationError('')
+    try {
+      const reference = {
+        label: `SiteForge wizard plan revision ${serverPlan.revision}`,
+        sourceId: serverPlan.planVersionId,
+        notes: serverPlan.plan.summary,
+      }
+      const response = await fetch('/api/siteforge/briefs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          websiteId: currentBrief.websiteId,
+          expectedVersion: currentBrief.version,
+          status: 'draft',
+          brief: {
+            ...currentBrief.brief,
+            references: [
+              ...currentBrief.brief.references.filter(
+                item => item.sourceId !== serverPlan.planVersionId
+              ),
+              reference,
+            ],
+          },
+          unresolvedContradictions: currentBrief.unresolvedContradictions,
+        }),
+      })
+      const body = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(body.error || 'Failed to save wizard work to brief')
+      }
+      setDurableBriefs(current => [body.brief, ...current])
+      setGenerationError('Wizard plan saved as a new durable brief draft.')
+    } catch (error) {
+      setGenerationError(
+        error instanceof Error
+          ? error.message
+          : 'Failed to save wizard work to brief'
+      )
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function resumeDurableBrief(brief: PersistedSiteForgeBrief) {
+    onClose()
+    router.push(`/dashboard/siteforge/${brief.websiteId}?workspace=brief`)
   }
 
   async function reviewPlan() {
@@ -447,8 +516,10 @@ export function ConversationalGenerationWizard({
   }
   
   async function startGeneration() {
-    if (!serverPlan) {
-      setGenerationError('Review a saved plan before starting generation.')
+    if (!serverPlan || !websiteId) {
+      setGenerationError(
+        'Review a saved plan in a prepared SiteForge project before starting generation.'
+      )
       setPhase('failed')
       return
     }
@@ -486,7 +557,7 @@ export function ConversationalGenerationWizard({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(
-          buildGenerationRequest(approvedPlan, crypto.randomUUID())
+          buildGenerationRequest(websiteId, approvedPlan, crypto.randomUUID())
         )
       })
       
@@ -683,7 +754,7 @@ export function ConversationalGenerationWizard({
             {phase === 'failed' && 'Generation Needs Attention'}
           </DialogTitle>
         </DialogHeader>
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-5 sm:px-6 sm:pb-6">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable] px-4 pb-5 sm:px-6 sm:pb-6">
           {/* Phase 1: Analyzing */}
           {phase === 'analyzing' && (
           <div className="flex flex-col items-center justify-center py-12 space-y-4">
@@ -697,15 +768,15 @@ export function ConversationalGenerationWizard({
         
         {/* Phase 2: Property assets */}
         {phase === 'assets' && analysis && (
-          <div className="space-y-4 py-4">
+          <div className="min-w-0 space-y-4 py-4">
             <div className="rounded-lg bg-gradient-to-r from-indigo-50 to-purple-50 p-4 dark:from-indigo-950/30 dark:to-purple-950/30">
               <h3 className="text-sm font-semibold">
                 Add the real property content SiteForge should use
               </h3>
               <p className="mt-1 text-xs text-gray-600 dark:text-gray-300">
-                This step is optional. You can continue with placeholders, but
-                adding photography and floor plans now gives the plan and
-                generated site better source material.
+                Add and approve the property photography required for
+                readiness. Web Director will show any remaining remediation
+                before planning can begin.
               </p>
             </div>
             <PropertyAssetsStep
@@ -743,12 +814,12 @@ export function ConversationalGenerationWizard({
                 {generationError}
               </p>
             )}
-            <div className="flex justify-end">
+            <div className="sticky bottom-0 z-20 -mx-4 flex justify-end border-t bg-white/95 px-4 py-3 backdrop-blur-sm dark:bg-gray-800/95 sm:-mx-6 sm:px-6">
               <Button
                 onClick={() => void continueFromAssets()}
                 disabled={loading}
               >
-                {loading ? 'Refreshing plan…' : 'Continue to website direction →'}
+                {loading ? 'Preparing project…' : 'Continue in Web Director →'}
               </Button>
             </div>
           </div>
@@ -802,6 +873,41 @@ export function ConversationalGenerationWizard({
             </div>
 
             <div className="mb-4 space-y-3 rounded-lg border p-4">
+              <div className="rounded-md bg-gray-50 p-3 dark:bg-gray-900">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-sm font-semibold">Durable brief workspace</h3>
+                    <p className="text-xs text-gray-500">
+                      {durableBriefs.length
+                        ? `${durableBriefs.length} saved version${durableBriefs.length === 1 ? '' : 's'} available.`
+                        : 'No website-anchored brief exists for this property yet.'}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {durableBriefs[0] ? (
+                      <>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => resumeDurableBrief(durableBriefs[0])}
+                        >
+                          List / resume briefs
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          disabled={loading || !serverPlan}
+                          onClick={() => void saveWizardToDurableBrief()}
+                        >
+                          Save wizard plan to brief
+                        </Button>
+                      </>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
               <div>
                 <h3 className="text-sm font-semibold">Set the direction</h3>
                 <p className="text-xs text-gray-500">
@@ -854,7 +960,7 @@ export function ConversationalGenerationWizard({
               />
               <fieldset className="space-y-2">
                 <legend className="text-xs font-medium text-gray-700 dark:text-gray-300">
-                  Optional connected capabilities
+                  Approved connected capabilities
                 </legend>
                 <div className="grid gap-2 sm:grid-cols-2">
                   {([
@@ -867,20 +973,26 @@ export function ConversationalGenerationWizard({
                       <input
                         type="checkbox"
                         checked={preferences.enabledCapabilities?.includes(capability) || false}
-                        onChange={event => setPreferences(current => ({
-                          ...current,
-                          enabledCapabilities: event.target.checked
-                            ? Array.from(new Set([...(current.enabledCapabilities || []), capability]))
-                            : (current.enabledCapabilities || []).filter(value => value !== capability),
-                        }))}
+                        readOnly
+                        disabled
                       />
                       {label}
                     </label>
                   ))}
                 </div>
                 <p className="text-xs text-gray-500">
-                  Enabled capabilities block planning until their property integration is ready.
+                  These values come from the approved readiness snapshot. Manage
+                  capability integrations and approvals in Web Director.
                 </p>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void continueFromAssets()}
+                  disabled={loading}
+                >
+                  Manage readiness in Web Director
+                </Button>
               </fieldset>
             </div>
 
@@ -922,6 +1034,15 @@ export function ConversationalGenerationWizard({
               <div ref={chatEndRef} />
             </div>
             
+            {generationError && (
+              <p
+                role="alert"
+                className="mb-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300"
+              >
+                {generationError}
+              </p>
+            )}
+
             {/* Input Area */}
             <div className="border-t pt-4 space-y-2">
               <Textarea

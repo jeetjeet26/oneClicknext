@@ -7,7 +7,11 @@ import {
   recordSharedApprovalDecision,
   type SharedApprovalDecisionStatus,
 } from '@/utils/services/shared-approvals'
-import { SharedDispatchError, resumeSharedActionAttempt } from '@/utils/services/shared-dispatcher'
+import {
+  SharedDispatchError,
+  assertSharedActionAttemptDispatchRegistered,
+  resumeSharedActionAttempt,
+} from '@/utils/services/shared-dispatcher'
 
 type ApprovalDecisionRequest = {
   propertyId: string
@@ -108,6 +112,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
+    if (['approved', 'modified'].includes(body.decisionStatus)) {
+      await assertSharedActionAttemptDispatchRegistered(
+        body.actionAttemptId,
+        body.propertyId
+      )
+    }
+
     const result = await recordSharedApprovalDecision({
       propertyId: body.propertyId,
       actionAttemptId: body.actionAttemptId,
@@ -141,6 +152,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true, executionResult, ...result })
   } catch (error) {
+    if (error instanceof SharedDispatchError) {
+      return NextResponse.json({ error: error.message }, { status: error.statusCode })
+    }
     if (error instanceof SharedApprovalError) {
       return NextResponse.json({ error: error.message }, { status: error.statusCode })
     }

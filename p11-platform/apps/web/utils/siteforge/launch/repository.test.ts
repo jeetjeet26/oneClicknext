@@ -3,6 +3,7 @@ import {
   assertObservedRollbackIdentity,
   classifyRolloutAuditCandidate,
   isLaunchChatbotContextReady,
+  isRenderedLaunchCertification,
   resolveLaunchRollbackMode,
 } from './repository'
 
@@ -177,5 +178,39 @@ describe('SiteForge launch rollback mode', () => {
         ...live,
       })
     ).toEqual({ bootstrapLaunch: false })
+  })
+})
+
+describe('SiteForge rendered launch certification', () => {
+  const artifactId = '11111111-1111-4111-8111-111111111111'
+  const contentHash = 'a'.repeat(64)
+  const report = {
+    passed: true,
+    artifactId,
+    contentHash,
+    browser: { evidenceAccepted: true, passed: true },
+  }
+
+  it('requires complete accepted browser evidence, not manifest identity alone', () => {
+    expect(
+      isRenderedLaunchCertification({ report, artifactId, contentHash })
+    ).toBe(true)
+    expect(
+      isRenderedLaunchCertification({
+        report: { passed: true, artifactId, contentHash },
+        artifactId,
+        contentHash,
+      })
+    ).toBe(false)
+    expect(
+      isRenderedLaunchCertification({
+        report: {
+          ...report,
+          browser: { evidenceAccepted: true, passed: false },
+        },
+        artifactId,
+        contentHash,
+      })
+    ).toBe(false)
   })
 })

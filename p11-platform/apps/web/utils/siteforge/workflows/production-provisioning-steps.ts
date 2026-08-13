@@ -1,6 +1,9 @@
 import type { Json } from '@/types/supabase'
 import { createServiceClient } from '@/utils/supabase/admin'
-import { CloudwaysProviderClient } from '@/utils/siteforge/providers/cloudways-provider'
+import {
+  CloudwaysProviderClient,
+  getCloudwaysProviderCredentials,
+} from '@/utils/siteforge/providers/cloudways-provider'
 import {
   createWordPressApplicationPassword,
   type WordPressSshCredentials,
@@ -140,7 +143,8 @@ export async function runProductionProvisioning(
       dashboardUrl: target.dashboard_url,
     }
   }
-  if (!process.env.CLOUDWAYS_API_KEY || !process.env.CLOUDWAYS_EMAIL) {
+  const cloudwaysCredentials = getCloudwaysProviderCredentials()
+  if (!cloudwaysCredentials) {
     throw new Error('Cloudways API credentials are required')
   }
   const checkpoint = readCloudwaysProvisioningCheckpoint(target.metadata)
@@ -151,10 +155,7 @@ export async function runProductionProvisioning(
       'SITEFORGE_PROVIDER_IDEMPOTENCY_UNAVAILABLE: a persisted Cloudways application operation checkpoint is required'
     )
   }
-  const cloudways = new CloudwaysProviderClient({
-    apiKey: process.env.CLOUDWAYS_API_KEY,
-    email: process.env.CLOUDWAYS_EMAIL,
-  })
+  const cloudways = new CloudwaysProviderClient(cloudwaysCredentials)
   if (!applicationId && checkpoint.operationId) {
     const operation = await cloudways.waitForOperation(checkpoint.operationId)
     applicationId =

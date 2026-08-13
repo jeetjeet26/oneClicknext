@@ -19,7 +19,7 @@ const assetRoleSchema = z.enum([
 ])
 const rightsStatusSchema = z.enum(['unknown', 'owned', 'licensed', 'generated', 'restricted'])
 const reviewSchema = z.object({
-  propertyId: z.string().uuid(),
+  propertyId: z.guid(),
   assetId: z.string().uuid(),
   approvalStatus: z.enum(['approved', 'rejected']),
   rightsStatus: rightsStatusSchema,
@@ -82,7 +82,7 @@ export async function GET(request: NextRequest) {
   const propertyId = request.nextUrl.searchParams.get('propertyId')
   const user = await authenticatedUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: ctx.responseHeaders })
-  const parsed = z.string().uuid().safeParse(propertyId)
+  const parsed = z.guid().safeParse(propertyId)
   if (!parsed.success) return NextResponse.json({ error: 'Valid property ID required' }, { status: 400, headers: ctx.responseHeaders })
   const access = await validatePropertyAccess(user.id, parsed.data)
   if (!access.authorized) return NextResponse.json({ error: 'Forbidden' }, { status: 403, headers: ctx.responseHeaders })
@@ -108,7 +108,7 @@ export async function POST(request: NextRequest) {
     const user = await authenticatedUser()
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: ctx.responseHeaders })
     const form = await request.formData()
-    const propertyId = z.string().uuid().parse(form.get('propertyId'))
+    const propertyId = z.guid().parse(form.get('propertyId'))
     const role = assetRoleSchema.parse(form.get('role'))
     const rightsStatus = rightsStatusSchema.parse(form.get('rightsStatus') || 'unknown')
     const file = form.get('file')

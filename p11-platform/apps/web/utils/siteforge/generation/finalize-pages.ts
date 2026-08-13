@@ -46,6 +46,12 @@ export type SourcedMapLocation = {
 
 export type SiteForgeFinalizationIntegrityContext = {
   mapLocation?: SourcedMapLocation
+  floorPlanStrategy?: {
+    display: 'cards' | 'interactive' | 'list'
+    showPricing: boolean
+    showAvailability: boolean
+    freshnessHours: number
+  }
   formProviders?: {
     lead: 'p11_lumaleasing' | 'csv_export' | 'unconfigured'
     tour: 'p11_lumaleasing' | 'external_url' | 'unconfigured'
@@ -419,18 +425,27 @@ function normalizeContent(
           captured_at: floorPlanSnapshot.capturedAt,
           content_hash: floorPlanSnapshot.contentHash,
         },
-        display_style: ['cards', 'interactive', 'list'].includes(
-          String(raw.display_style)
-        )
-          ? raw.display_style
-          : 'cards',
+        display_style:
+          integrityContext.floorPlanStrategy?.display ||
+          (
+            ['cards', 'interactive', 'list'].includes(String(raw.display_style))
+              ? raw.display_style
+              : 'cards'
+          ),
         filter_options: ['bedrooms', 'bathrooms', 'square_footage', 'price', 'availability'],
-        show_pricing: raw.show_pricing !== false,
-        show_availability: raw.show_availability !== false,
+        show_pricing:
+          integrityContext.floorPlanStrategy?.showPricing ??
+          raw.show_pricing !== false,
+        show_availability:
+          integrityContext.floorPlanStrategy?.showAvailability ??
+          raw.show_availability !== false,
         freshness_hours:
-          typeof raw.freshness_hours === 'number'
-            ? Math.round(raw.freshness_hours)
-            : 168,
+          integrityContext.floorPlanStrategy?.freshnessHours ??
+          (
+            typeof raw.freshness_hours === 'number'
+              ? Math.round(raw.freshness_hours)
+              : 168
+          ),
       }
     case 'acf/poi':
       return {

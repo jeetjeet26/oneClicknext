@@ -7,27 +7,24 @@ import {
 } from '@/utils/services/auth-guard'
 import { createRequestContext } from '@/utils/services/request-context'
 import {
+  deriveSiteForgeAutonomyEvidence,
   getActiveSiteForgeAutonomyMode,
   promoteSiteForgeAutonomyMode,
   SITEFORGE_AUTONOMY_MODES,
 } from '@/utils/siteforge/autonomy-policy'
 
 const scopeSchema = z.string().trim().min(3).max(100).regex(/^[a-z0-9._:-]+$/i)
-const promotionSchema = z.object({
-  propertyId: z.string().uuid(),
-  actionScope: scopeSchema,
-  requestedMode: z.enum(SITEFORGE_AUTONOMY_MODES),
-  holdoutPercent: z.number().int().min(0).max(100).default(0),
-  limits: z.record(z.string(), z.unknown()).default({}),
-  evidence: z.object({
-    evaluatedRuns: z.number().int().min(0),
-    supervisedSuccesses: z.number().int().min(0).optional(),
-    incidentRate: z.number().min(0).max(1).optional(),
-    rollbackVerified: z.boolean().optional(),
-  }),
-  policyVersion: z.string().trim().min(1).max(100),
-  rationale: z.string().trim().min(10).max(2_000),
-})
+const promotionSchema = z
+  .object({
+    propertyId: z.guid(),
+    actionScope: scopeSchema,
+    requestedMode: z.enum(SITEFORGE_AUTONOMY_MODES),
+    holdoutPercent: z.number().int().min(0).max(100).default(0),
+    limits: z.record(z.string(), z.unknown()).default({}),
+    policyVersion: z.string().trim().min(1).max(100),
+    rationale: z.string().trim().min(10).max(2_000),
+  })
+  .strict()
 
 async function authenticatedUser() {
   const client = await createClient()
@@ -43,7 +40,7 @@ export async function GET(request: NextRequest) {
   const propertyId = params.get('propertyId')
   const actionScope = params.get('actionScope')
   if (
-    !z.string().uuid().safeParse(propertyId).success ||
+    !z.guid().safeParse(propertyId).success ||
     !scopeSchema.safeParse(actionScope).success
   ) {
     return NextResponse.json(
@@ -65,14 +62,20 @@ export async function GET(request: NextRequest) {
       { status: 403, headers: ctx.responseHeaders }
     )
   }
-  const policy = await getActiveSiteForgeAutonomyMode({
+  const scope = {
     orgId: access.orgId,
     propertyId,
     actionScope: actionScope!,
-  })
+  }
+  const [policy, evidence] = await Promise.all([
+    getActiveSiteForgeAutonomyMode(scope),
+    deriveSiteForgeAutonomyEvidence(scope),
+  ])
   return NextResponse.json(
     {
       policy,
+      evidence,
+      evidenceSource: 'durable_jobs_incidents_approvals_restores_outcomes',
       automaticProductionLaunch: false,
       progression: SITEFORGE_AUTONOMY_MODES,
     },

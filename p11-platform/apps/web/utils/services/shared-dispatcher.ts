@@ -4,6 +4,14 @@ import { getAppBaseUrl } from '@/utils/services/runtime-config'
 
 type DispatchMode = 'resume' | 'replay'
 
+export const REGISTERED_SHARED_DISPATCH_KEYS = [
+  'forgestudio.publish:publish_social_content',
+  'marketvision.proposal:forgestudio_messaging_brief',
+] as const
+
+type RegisteredSharedDispatchKey =
+  (typeof REGISTERED_SHARED_DISPATCH_KEYS)[number]
+
 export class SharedDispatchError extends Error {
   statusCode: number
 
@@ -19,6 +27,63 @@ function toRecord(value: unknown): Record<string, unknown> {
     return value as Record<string, unknown>
   }
   return {}
+}
+
+export function isSharedActionDispatchRegistered(
+  domain: string,
+  actionType: string
+): boolean {
+  return (REGISTERED_SHARED_DISPATCH_KEYS as readonly string[]).includes(
+    `${domain}:${actionType}`
+  )
+}
+
+/**
+ * Generic approval must never mutate an action into approved state unless the
+ * shared dispatcher can actually execute it. SiteForge plan, artifact, visual
+ * baseline, and launch decisions intentionally stay on their dedicated leaf
+ * services because those services atomically maintain domain projections.
+ */
+export async function assertSharedActionAttemptDispatchRegistered(
+  actionAttemptId: string,
+  propertyId: string
+): Promise<void> {
+  const supabase = createServiceClient()
+  const { data, error } = await supabase
+    .from('shared_action_attempts')
+    .select(
+      `
+        id,
+        action_type,
+        property_id,
+        shared_jobs!inner (
+          domain
+        )
+      `
+    )
+    .eq('id', actionAttemptId)
+    .eq('property_id', propertyId)
+    .single()
+
+  if (error || !data) {
+    throw new SharedDispatchError('Shared action attempt not found', 404)
+  }
+  const sharedJob = Array.isArray(data.shared_jobs)
+    ? data.shared_jobs[0]
+    : data.shared_jobs
+  const domain =
+    sharedJob && typeof sharedJob.domain === 'string'
+      ? sharedJob.domain
+      : null
+  if (
+    !domain ||
+    !isSharedActionDispatchRegistered(domain, data.action_type)
+  ) {
+    throw new SharedDispatchError(
+      `No shared dispatcher is registered for ${domain || 'unknown'}:${data.action_type}`,
+      501
+    )
+  }
 }
 
 /**
@@ -161,6 +226,12 @@ export async function resumeSharedActionAttempt(
   if (!sharedJobId || !domain) {
     throw new SharedDispatchError('Shared action attempt is missing job context', 409)
   }
+  if (!isSharedActionDispatchRegistered(domain, data.action_type)) {
+    throw new SharedDispatchError(
+      `No shared dispatcher is registered for ${domain}:${data.action_type}`,
+      501
+    )
+  }
 
   if (mode === 'resume' && !['approved', 'modified'].includes(data.proposal_decision_status || '')) {
     throw new SharedDispatchError('Only approved or modified actions can be resumed', 409)
@@ -174,7 +245,7 @@ export async function resumeSharedActionAttempt(
   }
 
   const dispatch = async () => {
-    switch (`${domain}:${data.action_type}`) {
+    switch (`${domain}:${data.action_type}` as RegisteredSharedDispatchKey) {
       case 'forgestudio.publish:publish_social_content':
         return dispatchForgeStudioPublishAction({
           actionAttemptId: data.id,

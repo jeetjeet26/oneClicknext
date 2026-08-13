@@ -5,6 +5,7 @@ import { unauthorized, validateCronAuth } from '@/utils/services/api-helpers'
 import { createRequestContext } from '@/utils/services/request-context'
 import {
   createDefaultSiteForgeHealthProbes,
+  declaredSiteForgePagePaths,
   runSiteForgeHealth,
   SITEFORGE_HEALTH_CHECKS,
   type SiteForgeHealthProbes,
@@ -32,7 +33,7 @@ export async function GET(request: NextRequest) {
     let query = service
       .from('property_websites')
       .select(
-        'id, org_id, property_id, production_artifact_id, production_content_hash, production_url'
+        'id, org_id, property_id, production_artifact_id, production_content_hash, production_url, pages_generated'
       )
       .not('production_url', 'is', null)
       .not('production_certified_at', 'is', null)
@@ -41,6 +42,20 @@ export async function GET(request: NextRequest) {
     if (websiteId) query = query.eq('id', websiteId)
     const { data: websites, error } = await query
     if (error) throw new Error(`Failed to load production websites: ${error.message}`)
+    const websiteIds = (websites || []).map(website => website.id)
+    const { data: connectorRows, error: connectorError } = websiteIds.length
+      ? await service
+          .from('siteforge_connector_configs')
+          .select(
+            'id, website_id, capability, status, last_success_at, freshness_seconds'
+          )
+          .in('website_id', websiteIds)
+      : { data: [], error: null }
+    if (connectorError) {
+      throw new Error(
+        `Failed to load production connector freshness: ${connectorError.message}`
+      )
+    }
 
     const results = []
     for (const website of websites || []) {
@@ -68,6 +83,16 @@ export async function GET(request: NextRequest) {
             artifactId: website.production_artifact_id,
             contentHash: website.production_content_hash,
             url: website.production_url,
+            declaredPages: declaredSiteForgePagePaths(website.pages_generated),
+            connectors: (connectorRows || [])
+              .filter(connector => connector.website_id === website.id)
+              .map(connector => ({
+                id: connector.id,
+                capability: connector.capability,
+                status: connector.status,
+                lastSuccessAt: connector.last_success_at,
+                freshnessSeconds: connector.freshness_seconds,
+              })),
           },
           { trigger: 'scheduled', probes }
         )

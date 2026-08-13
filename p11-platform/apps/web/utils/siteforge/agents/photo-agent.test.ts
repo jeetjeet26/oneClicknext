@@ -25,9 +25,14 @@ describe('createSiteForgePlaceholderPhotos', () => {
     ])
     expect(
       placeholders.every(
-        (photo) =>
-        photo.url.startsWith('https://') &&
-        photo.scene?.startsWith('Placeholder for future') === true
+        (photo) => {
+          const url = new URL(photo.url)
+          return (
+            ['http:', 'https:'].includes(url.protocol) &&
+            url.pathname === '/siteforge/property-placeholder.png' &&
+            photo.scene?.startsWith('Placeholder for future') === true
+          )
+        }
       )
     ).toBe(true)
   })

@@ -9,6 +9,7 @@ import { validatePropertyManagerAccess } from '@/utils/services/auth-guard'
 import { createRequestContext } from '@/utils/services/request-context'
 import {
   CloudwaysProviderClient,
+  getCloudwaysProviderCredentials,
   parseCloudwaysApplicationHostname,
 } from '@/utils/siteforge/providers/cloudways-provider'
 import { readCloudwaysProvisioningCheckpoint } from '@/utils/siteforge/workflows/staging-steps'
@@ -89,7 +90,8 @@ export async function POST(
         { status: 409, headers: ctx.responseHeaders }
       )
     }
-    if (!process.env.CLOUDWAYS_API_KEY || !process.env.CLOUDWAYS_EMAIL) {
+    const cloudwaysCredentials = getCloudwaysProviderCredentials()
+    if (!cloudwaysCredentials) {
       return NextResponse.json(
         { error: 'Cloudways API credentials are required', requiresConfig: true },
         { status: 503, headers: ctx.responseHeaders }
@@ -325,10 +327,7 @@ export async function POST(
           }`
         )
       }
-      const cloudways = new CloudwaysProviderClient({
-        apiKey: process.env.CLOUDWAYS_API_KEY,
-        email: process.env.CLOUDWAYS_EMAIL,
-      })
+      const cloudways = new CloudwaysProviderClient(cloudwaysCredentials)
       let application: {
         operationId: string | null
         applicationId: string | null

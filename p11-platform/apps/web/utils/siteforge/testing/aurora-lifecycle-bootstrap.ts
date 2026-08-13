@@ -2,9 +2,11 @@ import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
 import { WordPressAPIClient } from '@/utils/siteforge/wordpress-client'
 import { getWordPressCredentialReference } from '@/utils/siteforge/wordpress/credential-vault'
 import { storeWordPressCredentialReference } from '@/utils/siteforge/wordpress/credential-vault'
+import { createWordPressApplicationPassword } from '@/utils/siteforge/wordpress/wordpress-installer'
 import {
   CloudwaysProviderClient,
   assertStagingApplicationParent,
+  getCloudwaysProviderCredentials,
   parseCloudwaysApplicationHostname,
 } from '@/utils/siteforge/providers/cloudways-provider'
 import type { Database, Json } from '@/types/supabase'
@@ -145,14 +147,14 @@ export async function bootstrapAuroraArtifacts(input: {
   ] = await Promise.all([
     client
       .from('property_websites')
-      .select('current_artifact_version_id')
+      .select('current_artifact_version_id, siteforge_public_key')
       .eq('id', identity.websiteId)
       .eq('property_id', identity.propertyId)
       .single(),
     client
       .from('siteforge_wordpress_targets')
       .select(
-        'id, site_url, credential_ref, last_verified_artifact_id, last_verified_content_hash, last_verified_asset_manifest_hash, last_verified_operation_hash'
+        'id, site_url, credential_ref, status, protection_mode, runtime_contract_version, runtime_version, runtime_package_sha256, runtime_manifest_sha256, last_runtime_health_at, last_verified_artifact_id, last_verified_content_hash, last_verified_asset_manifest_hash, last_verified_operation_hash, last_verified_runtime_manifest_sha256, metadata'
       )
       .eq('id', identity.targetId)
       .eq('website_id', identity.websiteId)
@@ -176,6 +178,7 @@ export async function bootstrapAuroraArtifacts(input: {
   if (
     websiteError ||
     !website?.current_artifact_version_id ||
+    !website.siteforge_public_key ||
     targetError ||
     !target
   ) {
@@ -423,11 +426,21 @@ export async function bootstrapAuroraArtifacts(input: {
             remoteVerifiedAt: source.remote_verified_at,
           },
           anchorTargetPrior: {
+            status: target.status,
+            protectionMode: target.protection_mode,
+            runtimeContractVersion: target.runtime_contract_version,
+            runtimeVersion: target.runtime_version,
+            runtimePackageSha256: target.runtime_package_sha256,
+            runtimeManifestSha256: target.runtime_manifest_sha256,
+            lastRuntimeHealthAt: target.last_runtime_health_at,
             lastVerifiedArtifactId: target.last_verified_artifact_id,
             lastVerifiedContentHash: target.last_verified_content_hash,
             lastVerifiedAssetManifestHash:
               target.last_verified_asset_manifest_hash,
             lastVerifiedOperationHash: target.last_verified_operation_hash,
+            lastVerifiedRuntimeManifestSha256:
+              target.last_verified_runtime_manifest_sha256,
+            metadata: target.metadata,
           },
           startArtifactId: startArtifact.id,
           startContentHash: startArtifact.content_hash,
@@ -608,9 +621,8 @@ export async function provisionAuroraTargets(input: {
       'bootstrap_baseline_missing'
     )
   }
-  const apiKey = process.env.CLOUDWAYS_API_KEY?.trim()
-  const email = process.env.CLOUDWAYS_EMAIL?.trim()
-  if (!apiKey || !email) {
+  const cloudwaysCredentials = getCloudwaysProviderCredentials()
+  if (!cloudwaysCredentials) {
     throw new AuroraLifecycleControlError(
       'Cloudways API credentials are unavailable',
       503,
@@ -639,7 +651,7 @@ export async function provisionAuroraTargets(input: {
       'provider_identity_missing'
     )
   }
-  const cloudways = new CloudwaysProviderClient({ apiKey, email })
+  const cloudways = new CloudwaysProviderClient(cloudwaysCredentials)
   await cloudways.verifyOperation(input.stagingOperationId, {
     kind: 'staging',
     serverId: providerIdentity.serverId,
@@ -660,12 +672,60 @@ export async function provisionAuroraTargets(input: {
     stagingApplication,
     providerIdentity.applicationId
   )
+  const stagingAuth = await cloudways.setStagingAuthStatus({
+    serverId: providerIdentity.serverId,
+    applicationId: input.stagingApplicationId,
+    action: 'disable',
+  })
+  if (stagingAuth.operationId) {
+    await cloudways.waitForOperation(stagingAuth.operationId)
+  }
+  if (
+    !productionApplication.sys_user ||
+    !productionApplication.master_user ||
+    !productionApplication.master_password ||
+    !stagingApplication.sys_user ||
+    !stagingApplication.master_user ||
+    !stagingApplication.master_password
+  ) {
+    throw new AuroraLifecycleControlError(
+      'Cloudways application SSH credentials are unavailable',
+      503,
+      'provider_credentials_unavailable'
+    )
+  }
   const productionUrl = /^https?:\/\//.test(productionApplication.app_fqdn)
     ? productionApplication.app_fqdn
     : `https://${productionApplication.app_fqdn}`
   const stagingUrl = /^https?:\/\//.test(stagingApplication.app_fqdn)
     ? stagingApplication.app_fqdn
     : `https://${stagingApplication.app_fqdn}`
+  const productionSsh = {
+    host: productionApplication.public_ip || providerIdentity.serverId,
+    port: 22,
+    username: productionApplication.master_user,
+    password: productionApplication.master_password,
+    applicationRoot: `/home/master/applications/${productionApplication.sys_user}/public_html`,
+    sftpApplicationRoot: `/applications/${productionApplication.sys_user}/public_html`,
+  }
+  const stagingSsh = {
+    host: stagingApplication.public_ip || providerIdentity.serverId,
+    port: 22,
+    username: stagingApplication.master_user,
+    password: stagingApplication.master_password,
+    applicationRoot: `/home/master/applications/${stagingApplication.sys_user}/public_html`,
+    sftpApplicationRoot: `/applications/${stagingApplication.sys_user}/public_html`,
+  }
+  const [productionWordPress, stagingWordPress] = await Promise.all([
+    createWordPressApplicationPassword({
+      ssh: productionSsh,
+      label: `siteforge-aurora-${identity.ownerId}`,
+    }),
+    createWordPressApplicationPassword({
+      ssh: stagingSsh,
+      label: `siteforge-aurora-${identity.ownerId}`,
+    }),
+  ])
   const productionCredentialRef = await storeWordPressCredentialReference({
     websiteId: identity.websiteId,
     secretName: `${identity.websiteId}:aurora-production:${identity.ownerId}`,
@@ -673,15 +733,9 @@ export async function provisionAuroraTargets(input: {
     credentials: {
       provider: 'cloudways',
       url: productionUrl,
-      username: productionApplication.app_user,
-      password: productionApplication.app_password,
-      ssh: {
-        host: productionApplication.public_ip || providerIdentity.serverId,
-        port: 22,
-        username: productionApplication.app_user,
-        password: productionApplication.app_password,
-        applicationRoot: 'public_html',
-      },
+      username: productionWordPress.username,
+      password: productionWordPress.applicationPassword,
+      ssh: productionSsh,
       providerMetadata: {
         provider: 'cloudways',
         serverId: providerIdentity.serverId,
@@ -698,15 +752,9 @@ export async function provisionAuroraTargets(input: {
     credentials: {
       provider: 'cloudways',
       url: stagingUrl,
-      username: stagingApplication.app_user,
-      password: stagingApplication.app_password,
-      ssh: {
-        host: stagingApplication.public_ip || providerIdentity.serverId,
-        port: 22,
-        username: stagingApplication.app_user,
-        password: stagingApplication.app_password,
-        applicationRoot: 'public_html',
-      },
+      username: stagingWordPress.username,
+      password: stagingWordPress.applicationPassword,
+      ssh: stagingSsh,
       providerMetadata: {
         provider: 'cloudways',
         serverId: providerIdentity.serverId,

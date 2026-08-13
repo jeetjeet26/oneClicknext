@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NextRequest } from 'next/server'
+import { z } from 'zod'
 
 const { resolveMock, ingestMock, rateCheckMock } = vi.hoisted(() => ({
   resolveMock: vi.fn(),
@@ -92,6 +93,7 @@ describe('SiteForge public conversion ingress', () => {
       expect.objectContaining({
         orgId: '33333333-3333-4333-8333-333333333333',
         propertyId: '22222222-2222-4222-8222-222222222222',
+        artifactId: '55555555-5555-4555-8555-555555555555',
       }),
       payload
     )
@@ -154,5 +156,28 @@ describe('SiteForge public conversion ingress', () => {
     expect(response.status).toBe(429)
     expect(response.headers.get('Retry-After')).toBe('60')
     expect(ingestMock).not.toHaveBeenCalled()
+  })
+
+  it('returns validation failure when conversion consent evidence is absent', async () => {
+    ingestMock.mockRejectedValueOnce(
+      new z.ZodError([
+        {
+          code: 'custom',
+          path: ['consent'],
+          message: 'Consent is required',
+        },
+      ])
+    )
+    const { POST } = await import('./route')
+    const response = await POST(
+      request({
+        email: 'jordan@example.com',
+        submission_id: 'siteforge-form-123',
+        page_url: 'https://property.example.com/contact/',
+      }),
+      routeContext
+    )
+
+    expect(response.status).toBe(400)
   })
 })

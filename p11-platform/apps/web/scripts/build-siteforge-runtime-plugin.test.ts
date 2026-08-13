@@ -1,9 +1,10 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   buildSiteForgeRuntimePlugin,
+  checkSiteForgeRuntimePluginArtifact,
   isSiteForgeRuntimeV3Enabled,
 } from './build-siteforge-runtime-plugin.mjs'
 import { verifyBuiltRuntimeV3Package } from './publish-siteforge-runtime-packages'
@@ -73,8 +74,59 @@ describe('SiteForge runtime plugin package', () => {
           gitSha: options.gitSha,
         },
       })
+
+      await expect(
+        checkSiteForgeRuntimePluginArtifact({
+          ...options,
+          outputDirectory: firstDirectory,
+        })
+      ).resolves.toMatchObject({
+        archiveHash: first.archiveHash,
+        manifestSha256: first.manifestSha256,
+      })
+
+      await writeFile(
+        `${first.archivePath}.manifest.json`,
+        Buffer.from('{"drift":true}')
+      )
+      await expect(
+        checkSiteForgeRuntimePluginArtifact({
+          ...options,
+          outputDirectory: firstDirectory,
+        })
+      ).rejects.toThrow(/manifest drift|digest mismatch/)
     } finally {
       await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('removes v3 manifest sidecars when explicitly building runtime v2', async () => {
+    const outputDirectory = await mkdtemp(
+      path.join(tmpdir(), 'siteforge-runtime-v2-')
+    )
+    const sourceDirectory = path.resolve(
+      process.cwd(),
+      '../../../wordpress-plugin/oneclick-siteforge-runtime'
+    )
+    try {
+      const v3 = await buildSiteForgeRuntimePlugin({
+        sourceDirectory,
+        outputDirectory,
+        v3Enabled: true,
+        gitSha: '0123456789abcdef0123456789abcdef01234567',
+      })
+      await access(`${v3.archivePath}.manifest.json`)
+
+      const v2 = await buildSiteForgeRuntimePlugin({
+        sourceDirectory,
+        outputDirectory,
+        v3Enabled: false,
+      })
+      expect(v2.runtimeContractVersion).toBe(2)
+      await expect(access(`${v2.archivePath}.manifest.json`)).rejects.toThrow()
+      await expect(access(`${v2.archivePath}.manifest.sha256`)).rejects.toThrow()
+    } finally {
+      await rm(outputDirectory, { recursive: true, force: true })
     }
   })
 })

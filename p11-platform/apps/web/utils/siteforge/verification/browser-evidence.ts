@@ -1,8 +1,11 @@
 import { z } from 'zod'
-import { certificationArtifactBindingSchema } from './certification-binding'
+import {
+  certificationArtifactBindingSchema,
+  SITEFORGE_CERTIFICATION_BINDING_POLICY_VERSION,
+} from './certification-binding'
 
 export const SITEFORGE_CERTIFICATION_POLICY_VERSION =
-  'siteforge-browser-certification-v16' as const
+  SITEFORGE_CERTIFICATION_BINDING_POLICY_VERSION
 export const SITEFORGE_BROWSER_EVIDENCE_VERSION =
   'siteforge-browser-evidence-v2' as const
 export const SITEFORGE_LEGACY_BROWSER_EVIDENCE_VERSION =
@@ -69,6 +72,16 @@ export const approvedVisualBaselineSchema = pageViewportSchema.extend({
   approvedBy: z.string().uuid(),
 })
 
+export const browserScreenshotEvidenceSchema = pageViewportSchema.extend({
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+  storagePath: durableStoragePathSchema,
+  sha256: sha256Schema,
+  bytes: z.number().int().positive(),
+  contentType: z.literal('image/png'),
+  identityDigest: sha256Schema,
+})
+
 export const browserCertificationEvidenceSchema = z.object({
   evidenceVersion: z.literal(SITEFORGE_BROWSER_EVIDENCE_VERSION),
   capturedAt: z.string().datetime(),
@@ -82,17 +95,7 @@ export const browserCertificationEvidenceSchema = z.object({
     artifactBinding: certificationArtifactBindingSchema,
     bindingHash: sha256Schema,
   }),
-  screenshots: z.array(
-    pageViewportSchema.extend({
-      width: z.number().int().positive(),
-      height: z.number().int().positive(),
-      storagePath: durableStoragePathSchema,
-      sha256: sha256Schema,
-      bytes: z.number().int().positive(),
-      contentType: z.literal('image/png'),
-      identityDigest: sha256Schema,
-    })
-  ),
+  screenshots: z.array(browserScreenshotEvidenceSchema),
   baselineDiffs: z.array(
     pageViewportSchema.extend({
       baselineStoragePath: durableStoragePathSchema,
@@ -383,6 +386,9 @@ export const browserCertificationEvidenceReaderSchema = z.union([
 export type BrowserCertificationEvidence = z.infer<
   typeof browserCertificationEvidenceSchema
 >
+export type BrowserScreenshotEvidence = z.infer<
+  typeof browserScreenshotEvidenceSchema
+>
 
 export const browserCertificationCheckSchema = z.object({
   code: z.string().min(1),
@@ -408,8 +414,10 @@ export const browserCertificationReportSchema = z.object({
   policyVersion: z.literal(SITEFORGE_CERTIFICATION_POLICY_VERSION),
   evidenceVersion: z.literal(SITEFORGE_BROWSER_EVIDENCE_VERSION),
   evaluatedAt: z.string().datetime(),
+  capturedAt: z.string().datetime().nullable(),
   passed: z.boolean(),
   evidenceAccepted: z.boolean(),
+  screenshots: z.array(browserScreenshotEvidenceSchema),
   checks: z.array(browserCertificationCheckSchema),
 })
 

@@ -4,7 +4,10 @@ import type { Json } from '@/types/supabase'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { normalizeLegacyPages } from '@/utils/siteforge/blueprint'
 import { loadVerifiedSiteForgeRelease } from '@/utils/siteforge/artifacts/release'
-import { CloudwaysProviderClient } from '@/utils/siteforge/providers/cloudways-provider'
+import {
+  CloudwaysProviderClient,
+  getCloudwaysProviderCredentials,
+} from '@/utils/siteforge/providers/cloudways-provider'
 import {
   getWordPressCredentialReference,
   storeWordPressCredentialReference,
@@ -29,6 +32,14 @@ import {
 } from '@/utils/siteforge/property-context'
 import { deployArtifactBoundRuntimeV3 } from '@/utils/siteforge/workflows/runtime-deployment-v3'
 import { normalizeSiteForgePreviewCredential } from '@/utils/siteforge/workflows/preview-steps'
+import { brandForgeContractV1Schema } from '@/utils/brandforge/contracts'
+import { loadApprovedFloorPlanSnapshot } from '@/utils/siteforge/providers/floor-plan-repository'
+import {
+  buildRenderedCertificationTruth,
+  certifyRenderedWordPressArtifact,
+} from '@/utils/siteforge/verification/rendered-certification'
+import { buildReleaseCertificationBinding } from '@/utils/siteforge/verification/certification-binding'
+import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
 
 export interface SiteForgeStagingWorkflowInput {
   sharedJobId: string
@@ -82,6 +93,25 @@ export function assertExactStagingManifest(
   if (remoteContentHash !== expectedContentHash) {
     throw new FatalError(
       'Cloudways staging manifest does not match the approved artifact'
+    )
+  }
+}
+
+export function runtimeV3StagingManifestHash(
+  runtimeEvidence: Json | null
+): string | null {
+  const evidence = asRecord(runtimeEvidence)
+  return typeof evidence.finalContentHash === 'string'
+    ? evidence.finalContentHash
+    : null
+}
+
+export function assertPublicStagingCertification(report: {
+  passed: boolean
+}): void {
+  if (!report.passed) {
+    throw new FatalError(
+      'Public staging launch blocked by rendered browser certification'
     )
   }
 }
@@ -311,13 +341,11 @@ export async function runSiteForgeStagingDeployment(
       'The linked WordPress target is not a Cloudways parent application'
     )
   }
-  if (!process.env.CLOUDWAYS_API_KEY || !process.env.CLOUDWAYS_EMAIL) {
+  const cloudwaysCredentials = getCloudwaysProviderCredentials()
+  if (!cloudwaysCredentials) {
     throw new FatalError('Cloudways API credentials are required for staging')
   }
-  const cloudways = new CloudwaysProviderClient({
-    apiKey: process.env.CLOUDWAYS_API_KEY,
-    email: process.env.CLOUDWAYS_EMAIL,
-  })
+  const cloudways = new CloudwaysProviderClient(cloudwaysCredentials)
 
   // WordPress REST basic auth only accepts application passwords, never the
   // login password. When this staging site descends from the shared preview
@@ -628,26 +656,91 @@ export async function runSiteForgeStagingDeployment(
     'Verifying exact Cloudways staging artifact'
   )
   await assertStagingNotCancelled(input, client)
-  const manifest = await new WordPressAPIClient(
-    instance.url,
-    instance.credentials
-  ).getContentManifest()
-  assertExactStagingManifest(input.contentHash, manifest.content_hash)
+  const remoteContentHash = runtimeV3
+    ? runtimeV3StagingManifestHash(runtimeEvidence)
+    : (
+        await new WordPressAPIClient(
+          instance.url,
+          instance.credentials
+        ).getContentManifest()
+      ).content_hash
+  assertExactStagingManifest(input.contentHash, remoteContentHash)
   const integrityReport = {
     policyVersion: 'siteforge-staging-integrity-v1',
     passed: true,
     artifactId: input.artifactId,
     contentHash: input.contentHash,
-    remoteManifestHash: manifest.content_hash,
+    remoteManifestHash: remoteContentHash,
     verifiedAt: new Date().toISOString(),
     ...(runtimeEvidence ? { runtimeEvidence } : {}),
   }
+  const brandContract = brandForgeContractV1Schema.safeParse(
+    asRecord(blueprint.brandSnapshot).contract
+  )
+  const floorPlanSnapshot = await loadApprovedFloorPlanSnapshot(
+    input.propertyId,
+    client
+  )
+  const certification = await certifyRenderedWordPressArtifact({
+    artifactId: input.artifactId,
+    contentHash: input.contentHash,
+    artifactBinding: buildReleaseCertificationBinding(release),
+    targetUrl: instance.url,
+    credentials: instance.credentials,
+    pages,
+    environment: 'staging',
+    access: 'public',
+    requireIndexable: false,
+    brandContract: brandContract.success ? brandContract.data : undefined,
+    ...buildRenderedCertificationTruth(
+      propertySnapshot,
+      [
+        ...release.provenanceUrls,
+        ...floorPlanSnapshot.rows.flatMap(row =>
+          row.imageUrl ? [row.imageUrl] : []
+        ),
+      ],
+      publicRuntime.conversionEndpoint,
+      release.runtimeAssets.map(asset => asset.byteHash)
+    ),
+  })
+  const certificationReport = {
+    ...certification,
+    stagingIntegrity: integrityReport,
+  } as unknown as Json
+  const { error: evidenceError } = await client
+    .from('siteforge_certification_evidence')
+    .insert({
+      org_id: input.orgId,
+      property_id: input.propertyId,
+      website_id: input.websiteId,
+      artifact_id: input.artifactId,
+      policy_version: certification.policyVersion,
+      environment: 'staging',
+      status: certification.passed ? 'passed' : 'failed',
+      report: certificationReport,
+      evidence_manifest: {
+        targetUrl: instance.url,
+        bindingHash: certification.bindingHash,
+        evidenceHash: certification.evidenceHash,
+        browserEvidenceHash: hashSiteForgeContent(certification.browser),
+      },
+      binding_hash: certification.bindingHash,
+      evidence_hash: certification.evidenceHash,
+      report_hash: hashSiteForgeContent(certificationReport),
+    })
+  if (evidenceError) {
+    throw new Error(
+      `Failed to persist public staging certification: ${evidenceError.message}`
+    )
+  }
+  assertPublicStagingCertification(certification)
 
   return completeStagingDeployment(input, {
     url: instance.url,
     adminUrl: instance.adminUrl,
     dashboardUrl: stagingDashboardUrl,
-    certification: integrityReport as Json,
+    certification: certificationReport,
     pages: pages.length,
     assets: release.assets.length,
   })

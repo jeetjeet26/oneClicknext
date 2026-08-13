@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
+import { SiteForgeLaunchTimeline } from './SiteForgeLaunchTimeline'
 
 type Incident = {
   id: string
@@ -38,6 +39,7 @@ type Operations = {
     production_target_id: string | null
     target_domain: string | null
     domain_status: string
+    ssl_status: string
   }
   releases: Array<{
     id: string
@@ -119,6 +121,9 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
   const [manualOperationId, setManualOperationId] = useState('')
   const [manualBackupId, setManualBackupId] = useState('')
   const [targetDomain, setTargetDomain] = useState('')
+  const [apexWwwPolicy, setApexWwwPolicy] = useState<
+    'apex' | 'www' | 'custom'
+  >('custom')
   const [pendingConfirmation, setPendingConfirmation] =
     useState<PendingConfirmation>(null)
 
@@ -138,7 +143,19 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
     if (!incidentsResponse.ok)
       throw new Error(incidentsData.error || 'Incidents unavailable')
     setOperations(operationsData)
-    setTargetDomain((current) => current || operationsData.website.target_domain || '')
+    setTargetDomain(
+      current => current || operationsData.website.target_domain || ''
+    )
+    if (operationsData.website.target_domain) {
+      const domain = String(operationsData.website.target_domain)
+      setApexWwwPolicy(
+        domain.startsWith('www.')
+          ? 'www'
+          : domain.split('.').length === 2
+            ? 'apex'
+            : 'custom'
+      )
+    }
     setIncidents(incidentsData)
   }, [websiteId])
 
@@ -405,6 +422,7 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
       }
       setManualOperationId('')
       setManualBackupId('')
+      setPromotionToken('')
       setMessage('Action recorded successfully.')
       await refresh()
     } catch (error) {
@@ -452,6 +470,7 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
     }
     await postAction('save-domain', `/api/siteforge/domains/${websiteId}`, {
       targetDomain: targetDomain.trim(),
+      apexWwwPolicy,
     })
   }
 
@@ -516,8 +535,8 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
               {latestProductionQa
                 ? latestProductionQa.status === 'passed'
                   ? 'Passed'
-                  : 'Warnings · non-blocking'
-                : 'Not run · optional'}
+                  : 'Failed · recovery required'
+                : 'Required before live'}
             </p>
           </div>
           <div className="rounded border p-3 text-sm">
@@ -628,7 +647,7 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
               </Button>
             ) : null}
           </div>
-          <div className="flex flex-col gap-2 sm:flex-row">
+          <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_180px_auto]">
             <label className="min-w-0 flex-1 text-sm">
               Production domain
               <input
@@ -637,6 +656,22 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
                 placeholder="www.example.com"
                 className="mt-1 w-full rounded border bg-background px-3 py-2"
               />
+            </label>
+            <label className="text-sm">
+              Apex / WWW policy
+              <select
+                value={apexWwwPolicy}
+                onChange={event =>
+                  setApexWwwPolicy(
+                    event.target.value as 'apex' | 'www' | 'custom'
+                  )
+                }
+                className="mt-1 w-full rounded border bg-background px-3 py-2"
+              >
+                <option value="apex">Apex canonical</option>
+                <option value="www">WWW canonical</option>
+                <option value="custom">Custom host only</option>
+              </select>
             </label>
             <Button
               size="sm"
@@ -649,9 +684,10 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
             </Button>
           </div>
           <p className="text-xs text-muted-foreground">
-            After saving, point the domain’s A record to the Cloudways server.
-            Domain attachment and SSL run only after the staged release is
-            certified for production.
+            Saving performs a read-only provider inventory and persists the
+            rollback manifest. Cutover lowers intended TTL to 300 seconds,
+            tracks propagation, and keeps production protected until browser
+            certification passes.
           </p>
         </section>
 
@@ -738,7 +774,7 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
               Backup & promote approved release
             </Button>
           ) : null}
-          {latestRelease?.state === 'live' ? (
+          {latestRelease?.state === 'promoted' ? (
             <Button
               size="sm"
               disabled={
@@ -756,7 +792,7 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
                 )
               }
             >
-              Run full browser QA
+              Certify public production
             </Button>
           ) : null}
           <Button
@@ -796,10 +832,10 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
             </Button>
           ) : null}
         </div>
-        {latestRelease?.state === 'live' &&
+        {latestRelease?.state === 'promoted' &&
         !operations?.browserCertifierConfigured ? (
           <p role="alert" className="text-sm text-amber-700">
-            Browser QA is unavailable until the optional certifier is
+            Production cannot become live until the public browser certifier is
             configured.
           </p>
         ) : null}
@@ -889,6 +925,12 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
           <p role="status" className="text-sm text-muted-foreground">
             {message}
           </p>
+        ) : null}
+        {operations ? (
+          <SiteForgeLaunchTimeline
+            websiteId={websiteId}
+            propertyId={operations.website.property_id}
+          />
         ) : null}
       </CardContent>
       </Card>

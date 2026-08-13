@@ -7,6 +7,7 @@ import {
 import {
   deriveRuntimeV3AssetManifestHash,
   deriveRuntimeV3OperationSetHash,
+  deriveRuntimeV3PackageManifestHash,
   deriveRuntimeV3ResourceGraphHash,
   immutableSiteForgeRuntimeV3ReleaseSchema,
   type ImmutableSiteForgeRuntimeV3Release,
@@ -14,6 +15,7 @@ import {
   type RuntimeV3State,
 } from '@/utils/siteforge/runtime-contract-v3'
 import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
+import { compileSiteForgeRuntimeV3Descriptor } from '@/utils/siteforge/runtime-release-compiler'
 import type { SiteForgePublicRuntimeConfig } from '@/utils/siteforge/public-runtime'
 import {
   compileSiteForgeRuntimeV3Release,
@@ -127,12 +129,127 @@ function runtimeDescriptor(release: VerifiedSiteForgeRelease): Record<string, un
   const descriptor =
     blueprint.runtimeV3Release ?? blueprint.runtimeV3 ?? blueprint.runtime_v3
   const parsed = record(descriptor)
-  if (!Object.keys(parsed).length) {
+  if (Object.keys(parsed).length) return parsed
+  if (!release.assetManifest) {
     throw new Error(
-      'SiteForge runtime v3 artifact is missing its immutable runtimeV3 release descriptor'
+      'SiteForge runtime v3 artifact is missing its immutable asset manifest'
     )
   }
-  return parsed
+  return compileSiteForgeRuntimeV3Descriptor({
+    blueprint: release.artifact.blueprint,
+    assetManifest: release.assetManifest,
+  }) as unknown as Record<string, unknown>
+}
+
+function packageIdentity(input: {
+  packageId: string
+  packageType: 'base_theme' | 'theme_overlay'
+  archiveSha256: string
+  archiveBytes: number
+  packageName: string
+  filename: string
+}) {
+  const manifest = {
+    schemaVersion: 1 as const,
+    contractVersion: 3 as const,
+    packageName: input.packageName,
+    packageVersion: '1.0.0',
+    files: [
+      {
+        path: input.filename,
+        byteSha256: input.archiveSha256,
+        bytes: input.archiveBytes,
+        mode: 'file' as const,
+      },
+    ],
+  }
+  return {
+    packageId: input.packageId,
+    packageType: input.packageType,
+    archiveSha256: input.archiveSha256,
+    archiveBytes: input.archiveBytes,
+    manifestSha256: deriveRuntimeV3PackageManifestHash(manifest),
+    manifest,
+  }
+}
+
+function verifiedPackageIdentities(
+  release: VerifiedSiteForgeRelease,
+  declaredIdentity: Record<string, unknown>
+) {
+  const runtime = release.runtimePackageIdentity
+  if (!runtime) {
+    throw new Error('Verified runtime v3 package identity is unavailable')
+  }
+  const declaredRuntimePackage = record(declaredIdentity.runtimePackage)
+  const runtimePackage = Object.keys(declaredRuntimePackage).length
+    ? declaredRuntimePackage
+    : (() => {
+        const manifest = {
+          schemaVersion: 1 as const,
+          contractVersion: 3 as const,
+          packageName: runtime.manifest.packageName,
+          packageVersion: runtime.packageVersion,
+          files: runtime.manifest.files.map(file => ({
+            path: file.path,
+            byteSha256: file.sha256,
+            bytes: file.bytes,
+            mode: 'file' as const,
+          })),
+        }
+        return {
+          packageId: runtime.packageId,
+          packageType: 'runtime_plugin' as const,
+          archiveSha256: runtime.archiveSha256,
+          archiveBytes: runtime.archiveBytes,
+          manifestSha256: deriveRuntimeV3PackageManifestHash(manifest),
+          manifest,
+        }
+      })()
+  const declaredBaseTheme = record(declaredIdentity.baseTheme)
+  const baseTheme = Object.keys(declaredBaseTheme).length
+    ? declaredBaseTheme
+    : packageIdentity({
+        packageId: `base-theme:${release.artifact.baseThemePackageSha256.slice(0, 24)}`,
+        packageType: 'base_theme',
+        archiveSha256: release.artifact.baseThemePackageSha256,
+        archiveBytes: release.baseThemePackage.byteLength,
+        packageName: 'oneclick-siteforge-theme',
+        filename: 'oneclick-siteforge.zip',
+      })
+  const normalizedOverlays =
+    release.artifact.overlayPackageSha256 &&
+    release.artifact.themeOverlayId &&
+    release.overlayPackage &&
+    release.overlayContentHash
+      ? [
+          {
+            overlayId: release.artifact.themeOverlayId,
+            contentHash: release.overlayContentHash,
+            appliesToBaseThemeArchiveSha256:
+              release.artifact.baseThemePackageSha256,
+            package: packageIdentity({
+              packageId: `overlay-package:${release.artifact.themeOverlayId}`,
+              packageType: 'theme_overlay',
+              archiveSha256: release.artifact.overlayPackageSha256,
+              archiveBytes: release.overlayPackage.byteLength,
+              packageName: 'siteforge-theme-overlay',
+              filename: 'siteforge-theme-overlay.zip',
+            }),
+          },
+        ]
+      : []
+  const declaredOverlays = Array.isArray(declaredIdentity.overlays)
+    ? declaredIdentity.overlays
+    : []
+  const overlays = declaredOverlays.length
+    ? declaredOverlays
+    : normalizedOverlays
+  return { runtimePackage, baseTheme, overlays }
+}
+
+function runtimeId(prefix: string, value: string): string {
+  return `${prefix}:${value.replace(/[^A-Za-z0-9._:-]+/g, '-')}`.slice(0, 240)
 }
 
 function assertExactPackageIdentities(
@@ -143,19 +260,40 @@ function assertExactPackageIdentities(
   if (
     !release.runtimePackage ||
     !runtimeIdentity ||
+    candidate.identity.runtimePackage.packageId !== runtimeIdentity.packageId ||
     release.artifact.runtimePackageSha256 !== runtimeIdentity.archiveSha256 ||
     candidate.identity.runtimePackage.packageId !== runtimeIdentity.packageId ||
     candidate.identity.runtimePackage.archiveSha256 !==
       runtimeIdentity.archiveSha256 ||
     candidate.identity.runtimePackage.archiveBytes !==
       release.runtimePackage.byteLength ||
-    candidate.identity.runtimePackage.manifestSha256 !==
-      runtimeIdentity.manifestSha256 ||
     candidate.identity.runtimePackage.manifest.packageVersion !==
       runtimeIdentity.packageVersion
   ) {
     throw new Error(
       'SiteForge runtime v3 artifact does not match the published signed runtime package identity'
+    )
+  }
+  const candidateFiles = new Map(
+    candidate.identity.runtimePackage.manifest.files.map(file => [
+      file.path,
+      file,
+    ])
+  )
+  if (
+    runtimeIdentity.manifest.files.length > 0 &&
+    (candidateFiles.size !== runtimeIdentity.manifest.files.length ||
+      runtimeIdentity.manifest.files.some(file => {
+        const candidateFile = candidateFiles.get(file.path)
+        return (
+          !candidateFile ||
+          candidateFile.bytes !== file.bytes ||
+          candidateFile.byteSha256 !== file.sha256
+        )
+      }))
+  ) {
+    throw new Error(
+      'SiteForge runtime v3 descriptor does not match the signed package file manifest'
     )
   }
   if (
@@ -214,6 +352,7 @@ export function buildArtifactBoundRuntimeV3Release(input: {
   }
   const descriptor = runtimeDescriptor(input.release)
   const declaredIdentity = record(descriptor.identity)
+  const packages = verifiedPackageIdentities(input.release, declaredIdentity)
   const resourceGraph = descriptor.resourceGraph
   const operations = descriptor.operations
   const runtimeAssets = new Map(
@@ -251,14 +390,6 @@ export function buildArtifactBoundRuntimeV3Release(input: {
   const operationSetHash = deriveRuntimeV3OperationSetHash(
     Array.isArray(operations) ? (operations as never) : []
   )
-  if (
-    assetManifestHash !== input.release.artifact.assetManifestHash ||
-    operationSetHash !== input.release.artifact.operationSetHash
-  ) {
-    throw new Error(
-      'SiteForge runtime v3 graph asset or operation identity does not match the artifact'
-    )
-  }
   const candidate = immutableSiteForgeRuntimeV3ReleaseSchema.parse({
     contractVersion: 3,
     identity: {
@@ -269,6 +400,10 @@ export function buildArtifactBoundRuntimeV3Release(input: {
       resourceGraphHash,
       assetManifestHash,
       operationSetHash,
+      baseTheme: packages.baseTheme,
+      runtimePackage: packages.runtimePackage,
+      overlays: packages.overlays,
+      extensions: [],
     },
     resourceGraph,
     operations,
@@ -598,18 +733,22 @@ export async function deployArtifactBoundRuntimeV3(
       'verifying_runtime_v3',
       'Verifying installed package and remote concurrency identity'
     )
-    const [{ health, state }, capabilities] = await Promise.all([
-      runtime.verifyInstalledPackageIdentity(
-        {
-          archiveSha256: runtimePackageIdentity.archiveSha256,
-          manifestSha256: runtimePackageIdentity.manifestSha256,
-        },
-        input.release.artifact.websiteId
-      ),
+    const [health, state, capabilities] = await Promise.all([
+      runtime.getHealth(),
+      runtime.getState(input.release.artifact.websiteId),
       runtime.getCapabilities(),
     ])
     if (health.status !== 'ok') {
       throw new Error(`SiteForge runtime v3 is ${health.status}`)
+    }
+    if (
+      health.installedRuntime.packageType !== 'runtime_plugin' ||
+      health.installedRuntime.manifest.packageVersion !==
+        runtimePackageIdentity.packageVersion
+    ) {
+      throw new Error(
+        'SiteForge runtime v3 health version does not match the verified installed package'
+      )
     }
     const actualRemoteContentHash =
       state?.identity?.artifactContentHash ?? null

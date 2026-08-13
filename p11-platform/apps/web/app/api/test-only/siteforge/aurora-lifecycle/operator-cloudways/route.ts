@@ -11,7 +11,10 @@ import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { validatePropertyManagerAccess } from '@/utils/services/auth-guard'
 import { createRequestContext } from '@/utils/services/request-context'
-import { CloudwaysProviderClient } from '@/utils/siteforge/providers/cloudways-provider'
+import {
+  CloudwaysProviderClient,
+  getCloudwaysProviderCredentials,
+} from '@/utils/siteforge/providers/cloudways-provider'
 import { assertNotAcaciaIdentity } from '@/utils/siteforge/testing/aurora-lifecycle-control'
 
 export const maxDuration = 300
@@ -99,9 +102,8 @@ export async function POST(request: NextRequest) {
       .single()
     assertNotAcaciaIdentity({ propertyName: property?.name || '' })
 
-    const apiKey = process.env.CLOUDWAYS_API_KEY?.trim()
-    const email = process.env.CLOUDWAYS_EMAIL?.trim()
-    if (!apiKey || !email) {
+    const cloudwaysCredentials = getCloudwaysProviderCredentials()
+    if (!cloudwaysCredentials) {
       return NextResponse.json(
         { error: 'Cloudways API credentials are required' },
         { status: 503, headers: ctx.responseHeaders }
@@ -128,7 +130,7 @@ export async function POST(request: NextRequest) {
         { status: 409, headers: ctx.responseHeaders }
       )
     }
-    const provider = new CloudwaysProviderClient({ apiKey, email })
+    const provider = new CloudwaysProviderClient(cloudwaysCredentials)
     if (parsed.data.action === 'inspect_restore_points') {
       const restorePoints = await provider.listRestorePoints({
         serverId: staging.provider_server_id,

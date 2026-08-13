@@ -4,7 +4,10 @@ import { z } from 'zod'
 import type { Json } from '@/types/supabase'
 import { validatePropertyManagerAccess } from '@/utils/services/auth-guard'
 import { createRequestContext } from '@/utils/services/request-context'
-import { CloudwaysProviderClient } from '@/utils/siteforge/providers/cloudways-provider'
+import {
+  CloudwaysProviderClient,
+  getCloudwaysProviderCredentials,
+} from '@/utils/siteforge/providers/cloudways-provider'
 import { getWordPressCredentialReference } from '@/utils/siteforge/wordpress/credential-vault'
 import { readCloudwaysProvisioningCheckpoint } from '@/utils/siteforge/workflows/staging-steps'
 import { createServiceClient } from '@/utils/supabase/admin'
@@ -78,11 +81,8 @@ export async function POST(
         { status: 403, headers: ctx.responseHeaders }
       )
     }
-    if (
-      !website.wordpress_credential_ref ||
-      !process.env.CLOUDWAYS_API_KEY ||
-      !process.env.CLOUDWAYS_EMAIL
-    ) {
+    const cloudwaysCredentials = getCloudwaysProviderCredentials()
+    if (!website.wordpress_credential_ref || !cloudwaysCredentials) {
       return NextResponse.json(
         {
           error:
@@ -255,10 +255,7 @@ export async function POST(
       )
     }
 
-    const cloudways = new CloudwaysProviderClient({
-      apiKey: process.env.CLOUDWAYS_API_KEY,
-      email: process.env.CLOUDWAYS_EMAIL,
-    })
+    const cloudways = new CloudwaysProviderClient(cloudwaysCredentials)
     let providerResult: {
       operationId: string | null
       applicationId: string | null

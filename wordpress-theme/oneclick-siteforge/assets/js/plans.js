@@ -34,86 +34,47 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   });
 
-  function renderPlanPlaceholders(container) {
-    const slots = [1, 2, 3].map(function(slot) {
-      return '<div class="plan-card plan-placeholder" aria-label="Floor plan placeholder ' + slot + '">' +
-        '<div class="plan-placeholder-image" aria-hidden="true"></div>' +
-        '<h3>Floor plan coming soon</h3>' +
-        '<p>Details will be added after the floor plan is reviewed.</p>' +
-        '</div>';
-    }).join('');
-
-    container.innerHTML = '<div class="plans-empty-state">' +
-      '<h2>Floor plans coming soon</h2>' +
-      '<p>Check back soon for reviewed layouts, pricing, and availability.</p>' +
-      '<div class="plans-list">' + slots + '</div>' +
+  function renderUnavailable(container) {
+    container.innerHTML = '<div class="plans-unavailable" role="status">' +
+      '<h2>Floor-plan inventory unavailable</h2>' +
+      '<p>Current pricing and availability cannot be verified. Please contact the property directly.</p>' +
       '</div>';
   }
 
   function loadPlans(dataSource, container, displayStyle) {
+    const settings = window.oneClickPlansSettings || {};
     const apiUrl = dataSource === 'yardi'
-      ? window.oneClickPlansSettings.yardi_url
-      : window.oneClickPlansSettings.rentcafe_url;
+      ? settings.yardi_url
+      : settings.rentcafe_url;
 
     if (!apiUrl) {
-      renderPlanPlaceholders(container);
+      renderUnavailable(container);
       return;
     }
 
-    // Simulate plan data loading
-    // In production, this would fetch from the configured API
-    const plans = generateMockPlans();
-
-    renderPlans(plans, container, displayStyle);
-  }
-
-  function generateMockPlans() {
-    return [
-      {
-        id: 1,
-        name: 'Studio',
-        bedrooms: 'Studio',
-        bathrooms: '1',
-        sqft: '550',
-        price: '$1,200',
-        image: null,
-        features: ['In-Unit Washer/Dryer', 'Balcony', 'City Views'],
-        family_friendly: false
-      },
-      {
-        id: 2,
-        name: 'One Bedroom',
-        bedrooms: '1',
-        bathrooms: '1',
-        sqft: '750',
-        price: '$1,500',
-        image: null,
-        features: ['In-Unit Washer/Dryer', 'Walk-in Closet', 'Stainless Steel Appliances'],
-        family_friendly: false
-      },
-      {
-        id: 3,
-        name: 'Two Bedroom',
-        bedrooms: '2',
-        bathrooms: '2',
-        sqft: '1,100',
-        price: '$2,100',
-        image: null,
-        features: ['In-Unit Washer/Dryer', 'Dishwasher', 'Hardwood Floors'],
-        family_friendly: true
-      },
-      {
-        id: 4,
-        name: 'Three Bedroom',
-        bedrooms: '3',
-        bathrooms: '2.5',
-        sqft: '1,500',
-        price: '$2,800',
-        image: null,
-        features: ['In-Unit Washer/Dryer', 'Concierge', 'Garage Parking'],
-        family_friendly: true
-      }
-    ];
+    fetch(apiUrl, { credentials: 'omit', headers: { Accept: 'application/json' } })
+      .then(function(response) {
+        if (!response.ok) throw new Error('inventory request failed');
+        return response.json();
+      })
+      .then(function(payload) {
+        const plans = Array.isArray(payload.rows) ? payload.rows : [];
+        const capturedAt = Date.parse(payload.capturedAt || payload.captured_at || '');
+        const maxAgeMs = 24 * 60 * 60 * 1000;
+        const fresh = Number.isFinite(capturedAt) && Date.now() - capturedAt <= maxAgeMs &&
+          plans.length > 0 && plans.every(function(plan) {
+            const sourceAt = Date.parse(plan.sourceUpdatedAt || plan.source_updated_at || plan.effectiveAt || plan.effective_at || '');
+            const expiresAt = plan.expiresAt || plan.expires_at;
+            return Number.isFinite(sourceAt) && Date.now() - sourceAt <= maxAgeMs &&
+              (!expiresAt || Date.parse(expiresAt) > Date.now()) &&
+              plan.pricingHiddenReason !== 'stale_inventory';
+          });
+        if (!fresh) throw new Error('inventory is unavailable or stale');
+        renderPlans(plans, container, displayStyle);
+      })
+      .catch(function() {
+        renderUnavailable(container);
+      });
   }
 
   function renderPlans(plans, container, displayStyle) {
@@ -131,12 +92,12 @@ document.addEventListener('DOMContentLoaded', function() {
       html += '<tbody>';
       plans.forEach(function(plan) {
         html += '<tr>';
-        html += '<td>' + plan.name + '</td>';
-        html += '<td>' + plan.bedrooms + '</td>';
-        html += '<td>' + plan.bathrooms + '</td>';
-        html += '<td>' + plan.sqft + '</td>';
-        html += '<td>' + plan.price + '</td>';
-        html += '<td>' + plan.features.join(', ') + '</td>';
+        html += '<td>' + escapeHtml(plan.name) + '</td>';
+        html += '<td>' + escapeHtml(plan.bedrooms) + '</td>';
+        html += '<td>' + escapeHtml(plan.bathrooms) + '</td>';
+        html += '<td>' + escapeHtml(plan.sqft || plan.sqftMin || '') + '</td>';
+        html += '<td>' + escapeHtml(plan.price || plan.rentMin || '') + '</td>';
+        html += '<td>' + escapeHtml(Array.isArray(plan.features) ? plan.features.join(', ') : '') + '</td>';
         html += '</tr>';
       });
       html += '</tbody></table>';
@@ -146,28 +107,30 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   function createPlanCard(plan) {
-    let html = '<div class="plan-card" data-bedrooms="' + plan.bedrooms + '" data-sqft="' + plan.sqft.replace(/,/g, '') + '" data-family="' + plan.family_friendly + '">';
+    const sqft = String(plan.sqft || plan.sqftMax || plan.sqftMin || '');
+    const price = plan.price || (plan.rentMin != null ? '$' + Number(plan.rentMin).toLocaleString() : '');
+    let html = '<div class="plan-card" data-bedrooms="' + escapeHtml(plan.bedrooms) + '" data-sqft="' + escapeHtml(sqft.replace(/,/g, '')) + '">';
     html += '<div class="plan-header">';
-    html += '<h3>' + plan.name + '</h3>';
-    html += '<div class="plan-price">' + plan.price + '</div>';
+    html += '<h3>' + escapeHtml(plan.name) + '</h3>';
+    if (price) html += '<div class="plan-price">' + escapeHtml(price) + '</div>';
     html += '</div>';
     html += '<div class="plan-details">';
-    html += '<p><strong>Bedrooms:</strong> ' + plan.bedrooms + '</p>';
-    html += '<p><strong>Bathrooms:</strong> ' + plan.bathrooms + '</p>';
-    html += '<p><strong>Square Footage:</strong> ' + plan.sqft + ' sq ft</p>';
+    html += '<p><strong>Bedrooms:</strong> ' + escapeHtml(plan.bedrooms) + '</p>';
+    if (plan.bathrooms != null) html += '<p><strong>Bathrooms:</strong> ' + escapeHtml(plan.bathrooms) + '</p>';
+    if (sqft) html += '<p><strong>Square Footage:</strong> ' + escapeHtml(sqft) + ' sq ft</p>';
     html += '</div>';
-    html += '<div class="plan-features">';
-    html += '<strong>Features:</strong>';
-    html += '<ul>';
-    plan.features.forEach(function(feature) {
-      html += '<li>' + feature + '</li>';
-    });
-    html += '</ul>';
-    html += '</div>';
-    html += '<button class="btn btn-primary plan-inquire">Inquire Now</button>';
+    if (plan.availabilityUrl || plan.availability_url) {
+      html += '<a class="btn btn-primary" href="' + escapeHtml(plan.availabilityUrl || plan.availability_url) + '">Check availability</a>';
+    }
     html += '</div>';
 
     return html;
+  }
+
+  function escapeHtml(value) {
+    return String(value == null ? '' : value).replace(/[&<>"']/g, function(character) {
+      return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' })[character];
+    });
   }
 
   function setupFilters(filtersContainer, container) {

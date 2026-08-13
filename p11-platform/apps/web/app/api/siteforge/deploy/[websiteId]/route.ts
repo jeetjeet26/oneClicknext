@@ -6,7 +6,10 @@ import { createServiceClient } from '@/utils/supabase/admin'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { createRequestContext } from '@/utils/services/request-context'
 import { getWordPressCredentialReference } from '@/utils/siteforge/wordpress/credential-vault'
-import { CloudwaysProviderClient } from '@/utils/siteforge/providers/cloudways-provider'
+import {
+  CloudwaysProviderClient,
+  getCloudwaysProviderCredentials,
+} from '@/utils/siteforge/providers/cloudways-provider'
 import { readCloudwaysProvisioningCheckpoint } from '@/utils/siteforge/workflows/staging-steps'
 import { siteForgeStagingDeploymentWorkflow } from '@/workflows/siteforge-staging-deployment'
 import type { Json } from '@/types/supabase'
@@ -125,6 +128,7 @@ export async function POST(
     const localSimulation =
       request.nextUrl.searchParams.get('simulate') === '1' &&
       process.env.NODE_ENV !== 'production'
+    const cloudwaysCredentials = getCloudwaysProviderCredentials()
     let parentMetadata:
       | {
           serverId: string
@@ -135,8 +139,7 @@ export async function POST(
     if (!localSimulation) {
       if (
         !website.wordpress_credential_ref ||
-        !process.env.CLOUDWAYS_API_KEY ||
-        !process.env.CLOUDWAYS_EMAIL
+        !cloudwaysCredentials
       ) {
         return NextResponse.json(
           {
@@ -267,10 +270,7 @@ export async function POST(
         !checkpoint.operationId &&
         !checkpoint.applicationId
       ) {
-        const cloudways = new CloudwaysProviderClient({
-          apiKey: process.env.CLOUDWAYS_API_KEY!,
-          email: process.env.CLOUDWAYS_EMAIL!,
-        })
+        const cloudways = new CloudwaysProviderClient(cloudwaysCredentials!)
         let clone: { operationId: string | null; applicationId: string | null }
         try {
           clone = await cloudways.createStagingApplication({

@@ -9,6 +9,7 @@ import type { VerifiedRuntimeV3PackageIdentity } from '@/utils/siteforge/artifac
 import {
   createWordPressApplicationPassword,
   prepareWordPressInstallerArchives,
+  resetWordPressRuntimeV3State,
   SshWordPressInstaller,
 } from './wordpress-installer'
 
@@ -122,6 +123,40 @@ describe('WordPress application-password provisioning', () => {
         async () => 'siteforge-admin\nshort\n'
       )
     ).rejects.toThrow('invalid application password')
+  })
+})
+
+describe('WordPress runtime v3 fixture reset', () => {
+  it('removes only resources owned by the exact SiteForge site identity', async () => {
+    const ssh = {
+      host: '192.0.2.10',
+      username: 'master-user',
+      applicationRoot: '/home/master/applications/site/public_html',
+    }
+    await resetWordPressRuntimeV3State(
+      {
+        ssh,
+        siteId: '11111111-1111-4111-8111-111111111111',
+      },
+      async (receivedSsh, command) => {
+        expect(receivedSsh).toEqual(ssh)
+        expect(command).toContain(
+          "cd '/home/master/applications/site/public_html'"
+        )
+        expect(command).toContain(
+          "$site_id = \"11111111-1111-4111-8111-111111111111\""
+        )
+        expect(command).toContain('_siteforge_v3_site_id')
+        expect(command).toContain(
+          'oneclick_siteforge_runtime_transactions_v3'
+        )
+        expect(command).toMatch(
+          /update_option\([^)]*stylesheet[^)]*oneclick-siteforge/
+        )
+        expect(command).toContain('wp_cache_flush()')
+        return ''
+      }
+    )
   })
 })
 

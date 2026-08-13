@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
 import { ACACIA_REGRESSION_BASELINE_V1 as acacia } from '@/fixtures/acacia-regression.v1'
+import { createServiceClient } from '@/utils/supabase/admin'
 import {
   auroraMutationHeaders,
   formatAuroraPreflightFailure,
@@ -391,6 +392,110 @@ async function createApprovedSiteForgeGeneration(
     ctaPriority: 'contact',
     enabledCapabilities: [],
   }
+  const { config: loadLocalEnv } = await import('dotenv')
+  loadLocalEnv({ path: '../../.env.local', override: false, quiet: true })
+  const service = createServiceClient()
+  const { error: retireInventoryError } = await service
+    .from('property_units')
+    .update({ active: false })
+    .eq('property_id', propertyId)
+    .eq('active', true)
+  expect(
+    retireInventoryError,
+    'Failed to retire stale local inventory before governed reconfirmation.'
+  ).toBeNull()
+
+  const { data: property, error: propertyError } = await service
+    .from('properties')
+    .select('org_id')
+    .eq('id', propertyId)
+    .single()
+  expect(propertyError, 'Failed to load local SiteForge property identity.').toBeNull()
+  const approvedAt = new Date().toISOString()
+  const { error: photoError } = await service.from('content_assets').upsert(
+    [
+      ['e1111111-1111-4111-8111-111111111111', 'hero', 'b'],
+      ['e2222222-2222-4222-8222-222222222222', 'interior', 'c'],
+      ['e3333333-3333-4333-8333-333333333333', 'exterior', 'd'],
+    ].map(([id, role, hashCharacter], index) => ({
+      id,
+      org_id: property!.org_id,
+      property_id: propertyId,
+      name: `P11 local approved property photo ${index + 1}`,
+      asset_type: 'image',
+      asset_role: role,
+      file_url: `http://127.0.0.1:3000/siteforge/property-placeholder.png?photo=${index + 1}`,
+      content_hash: hashCharacter.repeat(64),
+      rights_status: 'owned',
+      rights_metadata: { basis: 'local smoke fixture' },
+      approval_status: 'approved',
+      approved_at: approvedAt,
+      source_identity: `local-smoke:property-photo:${index + 1}`,
+    })),
+    { onConflict: 'id' }
+  )
+  expect(
+    photoError,
+    'Failed to seed the approved property photography required by SiteForge readiness.'
+  ).toBeNull()
+
+  const inventoryConfirmedAt = new Date().toISOString()
+  const inventoryPreview = await callAuthedApi(
+    page,
+    '/api/siteforge/floor-plans/import/preview',
+    {
+      method: 'POST',
+      body: {
+        propertyId,
+        sourceType: 'manual',
+        sourceIdentity: `operator-reconfirmation:${propertyId}`,
+        rows: [
+          {
+            externalId: 'a1',
+            name: 'A1',
+            bedrooms: 1,
+            bathrooms: 1,
+            sqftMin: 700,
+            sqftMax: 740,
+            rentMin: 1800,
+            rentMax: 1950,
+            availableCount: 3,
+            effectiveAt: inventoryConfirmedAt,
+            sourceUpdatedAt: inventoryConfirmedAt,
+          },
+        ],
+      },
+    }
+  )
+  expect(
+    inventoryPreview.ok,
+    `Floor-plan inventory preview failed: ${JSON.stringify(inventoryPreview)}`
+  ).toBeTruthy()
+  const inventoryImport = inventoryPreview.data as {
+    importId?: string
+    canConfirm?: boolean
+    errors?: unknown[]
+  }
+  expect(
+    inventoryImport.canConfirm,
+    `Floor-plan inventory preview was not confirmable: ${JSON.stringify(inventoryImport.errors)}`
+  ).toBe(true)
+  const inventoryConfirmation = await callAuthedApi(
+    page,
+    '/api/siteforge/floor-plans/import/confirm',
+    {
+      method: 'POST',
+      body: {
+        propertyId,
+        importId: inventoryImport.importId,
+      },
+    }
+  )
+  expect(
+    inventoryConfirmation.ok,
+    `Floor-plan inventory confirmation failed: ${JSON.stringify(inventoryConfirmation)}`
+  ).toBeTruthy()
+
   const readinessResponse = await callAuthedApi(
     page,
     '/api/onboarding/readiness',
@@ -432,6 +537,369 @@ async function createApprovedSiteForgeGeneration(
       `SiteForge readiness approval failed: ${JSON.stringify(readinessApproval)}`
     ).toBeTruthy()
   }
+
+  const projectResponse = await callAuthedApi(
+    page,
+    '/api/siteforge/projects',
+    {
+      method: 'POST',
+      body: { propertyId },
+    }
+  )
+  expect(
+    projectResponse.ok,
+    `SiteForge project shell creation failed: ${JSON.stringify(projectResponse)}`
+  ).toBeTruthy()
+  const project = projectResponse.data as {
+    project?: {
+      websiteId?: string
+      propertyId?: string
+      status?: string
+    }
+    reused?: boolean
+  }
+  expect(project.project?.websiteId).toMatch(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+  )
+  expect(project.project?.propertyId).toBe(propertyId)
+  expect(project.project?.status).toBe('planning')
+  const websiteId = project.project?.websiteId as string
+
+  const existingBriefsResponse = await callAuthedApi(
+    page,
+    `/api/siteforge/briefs?websiteId=${websiteId}`
+  )
+  expect(
+    existingBriefsResponse.ok,
+    `SiteForge brief lookup failed: ${JSON.stringify(existingBriefsResponse)}`
+  ).toBeTruthy()
+  const existingBrief = (
+    existingBriefsResponse.data as {
+      briefs?: Array<{
+        id?: string
+        version?: number
+        status?: string
+        contentHash?: string
+        websiteId?: string
+        sources?: { onboardingSnapshotId?: string }
+      }>
+    }
+  ).briefs?.find(
+    candidate =>
+      candidate.sources?.onboardingSnapshotId === readiness.snapshot?.id &&
+      ['ready_for_review', 'approved'].includes(candidate.status || '')
+  )
+  const latestBriefVersion = (
+    existingBriefsResponse.data as {
+      briefs?: Array<{ version?: number }>
+    }
+  ).briefs?.[0]?.version
+  const briefResponse = existingBrief
+    ? { ok: true, status: 200, data: { brief: existingBrief } }
+    : await callAuthedApi(page, '/api/siteforge/briefs', {
+    method: 'POST',
+    body: {
+      websiteId,
+      expectedVersion: latestBriefVersion || 0,
+      status: 'ready_for_review',
+      brief: {
+        title: 'Local SiteForge lifecycle verification brief',
+        summary:
+          'Build a deterministic local preview from approved onboarding and BrandForge evidence. Copy must distinguish verified property facts from recommendations and placeholders.',
+        objectives: [
+          {
+            statement:
+              'Verify the governed SiteForge planning, approval, generation, preview, staging, and rollback lifecycle.',
+            priority: 'primary',
+            successSignal:
+              'The exact approved hashes remain linked through generation and downstream artifact gates.',
+          },
+          {
+            statement:
+              'Produce an accessible property website structure without inventing property claims.',
+            priority: 'secondary',
+            successSignal:
+              'Generated content uses approved evidence or clearly labeled placeholders.',
+          },
+        ],
+        audiences: [
+          {
+            segment: 'Prospective residents evaluating the property',
+            needs: [
+              'Clear property information supported by approved sources',
+              'An obvious way to contact the property team',
+            ],
+            objections: [
+              'Unclear source provenance',
+              'Unsupported pricing, availability, or amenity claims',
+            ],
+          },
+          {
+            segment: 'Property operators reviewing launch readiness',
+            needs: [
+              'Traceable approval evidence',
+              'Exact preview, staging, and rollback artifact identity',
+            ],
+            objections: [
+              'Unreviewed creative changes',
+              'Content hashes that drift between lifecycle stages',
+            ],
+          },
+        ],
+        conversion: {
+          primaryAction: 'Contact the property team',
+          secondaryActions: ['Review property information'],
+          funnelNotes:
+            'Use the configured contact path and do not represent unverified pricing, availability, or tour inventory.',
+        },
+        scope: {
+          includedPages: ['Home'],
+          excludedItems: [
+            'Unverified resident testimonials',
+            'Unsupported pricing or availability claims',
+          ],
+        },
+        stakeholders: [
+          {
+            name: 'Local smoke operator',
+            role: 'Lifecycle verifier',
+            decisionRights: [
+              'Review the exact brief, direction, plan, and generated artifact evidence',
+            ],
+          },
+        ],
+        approvers: [
+          {
+            name: 'Authenticated local manager',
+            role: 'Governed approval reviewer',
+          },
+        ],
+        launchTarget: {
+          targetDate: null,
+          timezone: 'UTC',
+          flexibility: 'flexible',
+        },
+        legalConstraints: [
+          {
+            name: 'Evidence-backed property claims',
+            requirement:
+              'Publish only approved facts or clearly identified placeholders and recommendations.',
+            blocking: true,
+          },
+          {
+            name: 'Accessible interaction',
+            requirement:
+              'Preserve keyboard access, readable structure, and meaningful labels.',
+            blocking: true,
+          },
+        ],
+        integrationConstraints: [
+          {
+            name: 'Local deterministic lifecycle',
+            requirement:
+              'Use local simulation while preserving production approval and hash gates.',
+            blocking: true,
+          },
+        ],
+        references: [
+          {
+            label: 'Approved onboarding readiness snapshot',
+            sourceId: readiness.snapshot?.id,
+            notes:
+              'Pinned server-side source identity used by the brief and generation evidence.',
+          },
+          {
+            label: 'Operator direction for this lifecycle',
+            sourceId: `local-smoke:${websiteId}`,
+            notes: operatorDirection,
+          },
+        ],
+        kpis: [
+          {
+            name: 'Approval identity preservation',
+            target: '100% exact hash continuity',
+            measurement:
+              'Compare brief, direction, plan, preview, staging, and rollback identities.',
+            owner: 'Local smoke operator',
+          },
+        ],
+      },
+      unresolvedContradictions: [],
+    },
+      })
+  expect(
+    briefResponse.ok,
+    `SiteForge ready brief creation failed: ${JSON.stringify(briefResponse)}`
+  ).toBeTruthy()
+  const brief = (
+    briefResponse.data as {
+      brief?: {
+        id?: string
+        status?: string
+        contentHash?: string
+        websiteId?: string
+      }
+    }
+  ).brief
+  expect(['ready_for_review', 'approved']).toContain(brief?.status)
+  expect(brief?.websiteId).toBe(websiteId)
+  expect(brief?.contentHash).toMatch(/^[a-f0-9]{64}$/)
+
+  const briefDecisionResponse =
+    brief?.status === 'approved'
+      ? { ok: true, status: 200, data: brief }
+      : await callAuthedApi(
+          page,
+          `/api/siteforge/briefs/${brief?.id}/decision`,
+          {
+            method: 'POST',
+            body: {
+              propertyId,
+              contentHash: brief?.contentHash,
+              decisionStatus: 'approved',
+              decisionReason:
+                'Local smoke approves this complete brief and its exact pinned source hashes.',
+            },
+          }
+        )
+  expect(
+    briefDecisionResponse.ok,
+    `SiteForge brief approval failed: ${JSON.stringify(briefDecisionResponse)}`
+  ).toBeTruthy()
+  expect(
+    (briefDecisionResponse.data as { status?: string }).status
+  ).toBe('approved')
+
+  const existingDirectionsResponse = await callAuthedApi(
+    page,
+    `/api/siteforge/directions?websiteId=${websiteId}`
+  )
+  expect(
+    existingDirectionsResponse.ok,
+    `SiteForge direction lookup failed: ${JSON.stringify(existingDirectionsResponse)}`
+  ).toBeTruthy()
+  const existingDirectionSet = (
+    existingDirectionsResponse.data as {
+      directionSets?: Array<{
+        id?: string
+        version?: number
+        briefVersionId?: string
+        status?: string
+        contentHash?: string
+        selectedDirectionId?: string | null
+        directions?: Array<{ id?: string; contentHash?: string }>
+      }>
+    }
+  ).directionSets?.find(
+    candidate =>
+      candidate.briefVersionId === brief?.id &&
+      ['draft', 'ready_for_review', 'approved'].includes(candidate.status || '')
+  )
+  const latestDirectionVersion = (
+    existingDirectionsResponse.data as {
+      directionSets?: Array<{ version?: number }>
+    }
+  ).directionSets?.[0]?.version
+  const directionResponse = existingDirectionSet
+    ? {
+        ok: true,
+        status: 200,
+        data: { directionSet: existingDirectionSet },
+      }
+    : await callAuthedApi(page, '/api/siteforge/directions', {
+        method: 'POST',
+        body: {
+          briefVersionId: brief?.id,
+          propertyId,
+          expectedSetVersion: latestDirectionVersion || 0,
+        },
+      })
+  expect(
+    directionResponse.ok,
+    `SiteForge direction generation failed: ${JSON.stringify(directionResponse)}`
+  ).toBeTruthy()
+  const directionSet = (
+    directionResponse.data as {
+      directionSet?: {
+        id?: string
+        status?: string
+        contentHash?: string
+        selectedDirectionId?: string | null
+        directions?: Array<{ id?: string; contentHash?: string }>
+      }
+    }
+  ).directionSet
+  expect(['draft', 'ready_for_review', 'approved']).toContain(
+    directionSet?.status
+  )
+  expect(directionSet?.directions).toHaveLength(3)
+  expect(directionSet?.contentHash).toMatch(/^[a-f0-9]{64}$/)
+  const selectedDirection =
+    directionSet?.directions?.find(
+      candidate => candidate.id === directionSet.selectedDirectionId
+    ) || directionSet?.directions?.[0]
+  expect(selectedDirection?.id).toBeTruthy()
+
+  const selectionResponse =
+    directionSet?.status === 'draft'
+      ? await callAuthedApi(
+          page,
+          `/api/siteforge/directions/${directionSet?.id}/selection`,
+          {
+            method: 'POST',
+            body: {
+              propertyId,
+              selectedDirectionId: selectedDirection?.id,
+              expectedContentHash: directionSet?.contentHash,
+              selectionNotes:
+                'Local smoke selects the first deterministic evidence-backed direction.',
+            },
+          }
+        )
+      : { ok: true, status: 200, data: { directionSet } }
+  expect(
+    selectionResponse.ok,
+    `SiteForge direction selection failed: ${JSON.stringify(selectionResponse)}`
+  ).toBeTruthy()
+  const selectedSet = (
+    selectionResponse.data as {
+      directionSet?: {
+        status?: string
+        contentHash?: string
+        selectedDirectionId?: string
+      }
+    }
+  ).directionSet
+  expect(['ready_for_review', 'approved']).toContain(selectedSet?.status)
+  expect(selectedSet?.selectedDirectionId).toBe(selectedDirection?.id)
+  expect(selectedSet?.contentHash).toMatch(/^[a-f0-9]{64}$/)
+
+  const directionDecisionResponse =
+    selectedSet?.status === 'approved'
+      ? { ok: true, status: 200, data: selectedSet }
+      : await callAuthedApi(
+          page,
+          `/api/siteforge/directions/${directionSet?.id}/decision`,
+          {
+            method: 'POST',
+            body: {
+              propertyId,
+              contentHash: selectedSet?.contentHash,
+              selectedDirectionId: selectedDirection?.id,
+              decisionStatus: 'approved',
+              decisionReason:
+                'Local smoke approves the exact selected creative direction and shared approval evidence.',
+            },
+          }
+        )
+  expect(
+    directionDecisionResponse.ok,
+    `SiteForge direction approval failed: ${JSON.stringify(directionDecisionResponse)}`
+  ).toBeTruthy()
+  expect(
+    (directionDecisionResponse.data as { status?: string }).status
+  ).toBe('approved')
+
   const planResponse = await callAuthedApi(page, '/api/siteforge/plan', {
     method: 'POST',
     body: {
@@ -502,6 +970,7 @@ async function createApprovedSiteForgeGeneration(
     {
       method: 'POST',
       body: {
+        websiteId,
         planId: plan.planId,
         confirmedRevision: plan.revision,
         contentHash: plan.contentHash,
@@ -523,7 +992,7 @@ async function createApprovedSiteForgeGeneration(
   expect(generation.status).toBe('queued')
 
   return {
-    websiteId: generation.websiteId as string,
+    websiteId,
     jobId: generation.jobId as string,
     planId: plan.planId as string,
     planVersionId: plan.planVersionId as string,
@@ -712,7 +1181,10 @@ async function loadAuroraResources(
   const separator = config.resourcesUrl.includes('?') ? '&' : '?'
   const response = await callAuthedApi(
     page,
-    `${config.resourcesUrl}${separator}ownerId=${encodeURIComponent(config.ownerId)}&websiteId=${encodeURIComponent(config.websiteId)}`
+    `${config.resourcesUrl}${separator}ownerId=${encodeURIComponent(config.ownerId)}&websiteId=${encodeURIComponent(config.websiteId)}`,
+    {
+      headers: auroraMutationHeaders(config),
+    }
   )
   expectApiOk(response, 'Aurora owned-resource inspection')
   return response.data as AuroraResources
@@ -1152,11 +1624,11 @@ test.describe.serial('Aurora same-website runtime-v3 lifecycle', () => {
         'Topology: add a clearly named amenities page and preserve all existing required pages.',
         'Navigation and footer: expose the amenities page in both global navigation and footer without removing legal links.',
         'Forms: improve the contact and tour forms while preserving verified destinations, labels, validation, and consent.',
-        'SEO and redirects: add exact canonical metadata, Open Graph fields, JSON-LD, sitemap coverage, and a loop-free redirect for the prior amenities path.',
+        'SEO and redirects: update the amenities page title, description, exact /amenities canonical path, and JSON-LD using semantic page operations. Preserve the verified migration redirect from /community-amenities/ to /amenities/ without changing its separately managed runtime configuration.',
         'Media: use only approved governed property media, preserve rights metadata, alt text, dimensions, and immutable asset identities.',
         'Knowledge: add a concise neighborhood section derived only from approved knowledge sources and cite the source identities in the artifact.',
-        'Responsive: improve tablet and mobile layout without horizontal overflow or changing approved content.',
-        'Accessibility: improve landmarks, heading order, labels, keyboard order, visible focus, contrast, and reduced-motion behavior.',
+        'Responsive: use semantic design.update spacing to set a 1280px container maximum and 5rem section padding for safer tablet and mobile layouts without changing approved content; do not request custom code.',
+        'Accessibility: use semantic page and section updates to improve heading order and form labels, and motion.update to preserve reducedMotion respect; do not request custom code.',
       ]
       const consecutiveArtifacts: string[] = []
       for (const intent of editIntents) {
@@ -2093,7 +2565,7 @@ test.describe('local smoke flows', () => {
     }
   })
 
-  test('siteforge confirmed plan produces an immutable artifact before staging', async ({
+  test('siteforge default local lifecycle preserves exact artifact gates through launch and rollback', async ({
     page,
   }) => {
     test.setTimeout(180_000)
@@ -2118,15 +2590,18 @@ test.describe('local smoke flows', () => {
       `Generation did not reach ready state: ${JSON.stringify(generationStatus)}`
     ).toBe(true)
 
-    const deployResponse = await callAuthedApi(
-      page,
-      `/api/siteforge/deploy/${generation.websiteId}?simulate=1`,
-      { method: 'POST' }
+    const localPreview = generationStatus.siteArchitecture as
+      | { pages?: Array<{ slug?: string; purpose?: string }> }
+      | undefined
+    expect(localPreview?.pages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          slug: 'home',
+          purpose:
+            'Provide a deterministic local preview page for smoke validation.',
+        }),
+      ])
     )
-    expect(deployResponse.status).toBe(409)
-    expect(
-      String((deployResponse.data as Record<string, unknown>)?.error || '')
-    ).toContain('Approve an exact')
 
     const artifactResponse = await callAuthedApi(
       page,
@@ -2139,11 +2614,87 @@ test.describe('local smoke flows', () => {
     const artifactData = artifactResponse.data as Record<string, unknown>
     const currentArtifact = artifactData.currentArtifact as
       { id?: string; version?: number; content_hash?: string } | undefined
-    expect(typeof currentArtifact?.id).toBe('string')
+    expect(currentArtifact?.id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+    )
     expect(typeof currentArtifact?.version).toBe('number')
     expect(currentArtifact?.content_hash).toMatch(/^[a-f0-9]{64}$/)
+
+    // The default lane intentionally has no WordPress provider. Exercise each
+    // exact-identity mutation and prove it fails closed instead of recording
+    // simulated provider evidence or fake success.
+    const approvalResponse = await callAuthedApi(
+      page,
+      `/api/siteforge/artifacts/${currentArtifact?.id}/decision`,
+      {
+        method: 'POST',
+        body: {
+          propertyId,
+          contentHash: currentArtifact?.content_hash,
+          decisionStatus: 'approved',
+          decisionReason:
+            'Local smoke verifies exact artifact approval remains bound to canonical WordPress preview evidence.',
+        },
+      }
+    )
+    expect(approvalResponse.status).toBe(409)
+    expect(
+      String((approvalResponse.data as Record<string, unknown>)?.error || '')
+    ).toMatch(
+      /deterministic quality gates|canonical WordPress preview/
+    )
+
+    const deployResponse = await callAuthedApi(
+      page,
+      `/api/siteforge/deploy/${generation.websiteId}?simulate=1`,
+      { method: 'POST' }
+    )
+    expect(deployResponse.status).toBe(409)
+    expect(
+      String((deployResponse.data as Record<string, unknown>)?.error || '')
+    ).toContain('Approve an exact')
+
+    const launchPreparation = await callAuthedApi(
+      page,
+      '/api/siteforge/launch/prepare',
+      {
+        method: 'POST',
+        body: {
+          propertyId,
+          websiteId: generation.websiteId,
+          artifactId: currentArtifact?.id,
+          contentHash: currentArtifact?.content_hash,
+        },
+      }
+    )
+    expect(launchPreparation.status).toBe(409)
+    expect(
+      String(
+        (launchPreparation.data as Record<string, unknown>)?.error || ''
+      )
+    ).toContain('verified on staging')
+
     expect(artifactData.canRollback).toBe(false)
     expect(artifactData.history).toEqual([])
+
+    const rollbackRevision = await callAuthedApi(
+      page,
+      `/api/siteforge/rollback/${generation.websiteId}`,
+      {
+        method: 'POST',
+        body: {
+          expectedCurrentArtifactId: currentArtifact?.id,
+          targetArtifactId: currentArtifact?.id,
+          targetContentHash: currentArtifact?.content_hash,
+          decisionReason:
+            'Local smoke verifies rollback revisions require an independently verified immutable target.',
+        },
+      }
+    )
+    expect(rollbackRevision.status).toBe(409)
+    expect(
+      String((rollbackRevision.data as Record<string, unknown>)?.error || '')
+    ).toContain('verified remote artifact')
   })
 
   test('siteforge semantic editor opens one-window chat and staging workspace', async ({
@@ -2170,6 +2721,7 @@ test.describe('local smoke flows', () => {
     )
 
     await page.goto(`/dashboard/siteforge/${websiteId}`)
+    await page.getByRole('tab', { name: 'Build & review' }).click()
     await expect(
       page.getByText(
         /Production promotion requires a separate, expiring manager launch approval/
@@ -2181,6 +2733,8 @@ test.describe('local smoke flows', () => {
     await expect(
       page.getByRole('button', { name: 'Deploy to staging' })
     ).toBeVisible()
+    await page.getByRole('tab', { name: 'Delivery' }).click()
+    await page.getByRole('tab', { name: 'Launch & recovery' }).click()
     await expect(page.getByText('Human launch gate enforced')).toBeVisible()
     await expect(
       page.getByRole('button', { name: 'Prepare launch release' })
@@ -2710,6 +3264,7 @@ test.describe('local smoke flows', () => {
         body: {
           responseId,
           action: 'approve',
+          decisionReason: 'Approved by the deterministic local smoke operator.',
         },
       }
     )
@@ -2746,10 +3301,8 @@ test.describe('local smoke flows', () => {
           id?: string
           status?: string
           posted_at?: string | null
-        }>
-        review_tickets?: Array<{
-          title?: string
-          resolution_notes?: string | null
+          posting_mode?: string | null
+          provider_post_url?: string | null
         }>
       }>
     }
@@ -2764,14 +3317,8 @@ test.describe('local smoke flows', () => {
     )
     expect(postedResponseRecord?.status).toBe('posted')
     expect(typeof postedResponseRecord?.posted_at).toBe('string')
-
-    const providerTicket = (postedReview?.review_tickets || []).find((ticket) =>
-      (ticket.title || '').includes('Provider response posted')
-    )
-    expect(providerTicket).toBeTruthy()
-    expect(providerTicket?.resolution_notes || '').toContain(
-      providerEvidenceUrl
-    )
+    expect(postedResponseRecord?.posting_mode).toBe('manual_confirmed')
+    expect(postedResponseRecord?.provider_post_url).toBe(providerEvidenceUrl)
   })
 
   test('forgestudio generate to approve transition stays explicit locally', async ({
@@ -3297,7 +3844,7 @@ test.describe('local smoke flows', () => {
     expect(generation.contentHash).toMatch(/^[a-f0-9]{64}$/)
   })
 
-  test('existing brand import pins readiness and generates a canonical SiteForge preview', async ({
+  test('existing brand import pins readiness and provider-gates its exact SiteForge preview', async ({
     page,
   }) => {
     test.setTimeout(180_000)
@@ -3524,6 +4071,18 @@ test.describe('local smoke flows', () => {
         },
       }
     )
+    const canonicalPreviewConfigured = Boolean(
+      process.env.SITEFORGE_PREVIEW_WP_URL?.trim() &&
+        process.env.SITEFORGE_PREVIEW_WP_USERNAME &&
+        process.env.SITEFORGE_PREVIEW_WP_APP_PASSWORD
+    )
+    if (!canonicalPreviewConfigured) {
+      expect(canonical.status).toBe(503)
+      expect(
+        String((canonical.data as Record<string, unknown>)?.error || '')
+      ).toContain('Canonical WordPress preview is not configured')
+      return
+    }
     expect(
       canonical.ok,
       `Canonical preview failed: ${JSON.stringify(canonical)}`

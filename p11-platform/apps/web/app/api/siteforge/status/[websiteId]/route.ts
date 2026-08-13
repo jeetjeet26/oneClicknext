@@ -7,6 +7,7 @@ import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
 import type { WebsiteStatusResponse } from '@/types/siteforge'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
+import { hasCloudwaysProviderCredentials } from '@/utils/siteforge/providers/cloudways-provider'
 
 export async function GET(
   _request: NextRequest,
@@ -173,7 +174,7 @@ function getBrandReadiness(
 }
 
 function getDeploymentReadiness(): WebsiteStatusResponse['deploymentReadiness'] {
-  const hasCloudways = Boolean(process.env.CLOUDWAYS_API_KEY && process.env.CLOUDWAYS_EMAIL)
+  const hasCloudways = hasCloudwaysProviderCredentials()
   const hasExistingWp = Boolean(
     process.env.SITEFORGE_WP_URL &&
       process.env.SITEFORGE_WP_USERNAME &&

@@ -3,11 +3,14 @@ import { execFileSync } from 'node:child_process'
 import {
   access,
   mkdir,
+  mkdtemp,
   readFile,
   readdir,
+  rm,
   stat,
   writeFile,
 } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { strToU8, zipSync } from 'fflate'
@@ -367,22 +370,49 @@ export async function buildSiteForgeTheme({
   return { archivePath, archiveHash, manifest }
 }
 
+export async function checkSiteForgeThemeArtifact({
+  signingKey = process.env.SITEFORGE_THEME_SIGNING_KEY,
+  gitSha = process.env.VERCEL_GIT_COMMIT_SHA,
+  outputDirectory = outputDir,
+} = {}) {
+  const checked = await verifyRuntimeArtifact('oneclick-siteforge.zip', {
+    runtimeAssetsDir: outputDirectory,
+  })
+  const temporaryDirectory = await mkdtemp(
+    path.join(tmpdir(), 'siteforge-theme-check-')
+  )
+  try {
+    const rebuilt = await buildSiteForgeTheme({
+      signingKey,
+      gitSha,
+      outputDirectory: temporaryDirectory,
+    })
+    if (rebuilt.archiveHash !== checked.archiveHash) {
+      throw new Error(
+        `SiteForge theme artifact drift detected: checked ${checked.archiveHash}, rebuilt ${rebuilt.archiveHash}; run npm run theme:build with the same signing key and Git SHA`
+      )
+    }
+    return rebuilt
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true })
+  }
+}
+
 if (path.resolve(process.argv[1] || '') === fileURLToPath(import.meta.url)) {
   const command = process.argv[2] || '--validate'
   if (command === '--validate') {
-    const result = await validateSiteForgeDeploymentAssets()
-    if (result.sourceValidation) {
-      console.log(
-        `Validated SiteForge theme ${result.sourceValidation.version} (${result.sourceValidation.files.length} files) and runtime artifact digests.`
-      )
-    } else {
-      console.log(
-        `Verified ${result.artifacts.length} SiteForge runtime artifacts and checked digests; source theme is outside the deployment bundle.`
-      )
-    }
+    const result = await validateSiteForgeTheme()
+    console.log(
+      `Validated SiteForge theme ${result.version} (${result.files.length} files).`
+    )
   } else if (command === '--build') {
     const result = await buildSiteForgeTheme()
     console.log(`Built ${result.archivePath} (${result.archiveHash}).`)
+  } else if (command === '--check') {
+    const result = await checkSiteForgeThemeArtifact()
+    console.log(
+      `Verified reproducible SiteForge theme artifact (${result.archiveHash}).`
+    )
   } else if (command === '--verify') {
     const results = await verifySiteForgeRuntimeArtifacts()
     console.log(

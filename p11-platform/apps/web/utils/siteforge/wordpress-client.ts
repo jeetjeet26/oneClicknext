@@ -746,7 +746,7 @@ export class WordPressAPIClient {
   }
 
   async getContentManifest(): Promise<{
-    content_hash: string | null
+    content_hash: string
     page_ids: number[]
     updated_at?: string
   }> {
@@ -764,9 +764,16 @@ export class WordPressAPIClient {
       response && typeof response === 'object' && !Array.isArray(response)
         ? response
         : {}
+    if (
+      typeof record.content_hash !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(record.content_hash)
+    ) {
+      throw new Error(
+        'SiteForge content manifest did not include a valid artifact hash'
+      )
+    }
     return {
-      content_hash:
-        typeof record.content_hash === 'string' ? record.content_hash : null,
+      content_hash: record.content_hash,
       page_ids: Array.isArray(record.page_ids)
         ? record.page_ids.filter(
             (id): id is number => typeof id === 'number' && id > 0

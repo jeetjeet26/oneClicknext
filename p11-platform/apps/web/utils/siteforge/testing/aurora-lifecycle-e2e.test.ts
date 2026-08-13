@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  AURORA_LIFECYCLE_CLOUDWAYS_CREDENTIAL_REQUIREMENT,
   AURORA_LIFECYCLE_REQUIRED_ENV,
   auroraMutationHeaders,
   formatAuroraPreflightFailure,
@@ -51,6 +52,8 @@ function completeEnvironment(): Environment {
     SITEFORGE_AURORA_LIFECYCLE_CONTROL_ENABLED: 'true',
     SITEFORGE_AURORA_LIFECYCLE_CONTROL_SECRET: 's'.repeat(32),
     AURORA_LIFECYCLE_PROMOTION_OPERATION_ID: 'promotion-operation-1',
+    CLOUDWAYS_API_KEY: 'legacy-cloudways-api-key',
+    CLOUDWAYS_EMAIL: 'operator@cloudways.example',
   })
   return env
 }
@@ -60,7 +63,10 @@ describe('Aurora lifecycle E2E preflight', () => {
     const preflight = inspectAuroraLifecycleEnv({}, NOW)
     expect(preflight.ready).toBe(false)
     if (preflight.ready) throw new Error('Expected a failed preflight')
-    expect(preflight.missing).toEqual([...AURORA_LIFECYCLE_REQUIRED_ENV])
+    expect(preflight.missing).toEqual([
+      ...AURORA_LIFECYCLE_REQUIRED_ENV,
+      AURORA_LIFECYCLE_CLOUDWAYS_CREDENTIAL_REQUIREMENT,
+    ])
     expect(formatAuroraPreflightFailure(preflight)).toContain(
       'AURORA_LIFECYCLE_PROPERTY_ID'
     )
@@ -81,6 +87,27 @@ describe('Aurora lifecycle E2E preflight', () => {
       'x-p11-test-rollout-assignment-id':
         preflight.config.rolloutAssignmentId,
     })
+  })
+
+  it('accepts a Cloudways access token without the legacy credential pair', () => {
+    const env = completeEnvironment()
+    delete env.CLOUDWAYS_API_KEY
+    delete env.CLOUDWAYS_EMAIL
+    env.CLOUDWAYS_ACCESS_TOKEN = 'modern-cloudways-access-token'
+
+    expect(inspectAuroraLifecycleEnv(env, NOW).ready).toBe(true)
+  })
+
+  it('rejects partial Cloudways credentials without weakening other requirements', () => {
+    const env = completeEnvironment()
+    delete env.CLOUDWAYS_EMAIL
+
+    const preflight = inspectAuroraLifecycleEnv(env, NOW)
+    expect(preflight.ready).toBe(false)
+    if (preflight.ready) throw new Error('Expected a failed preflight')
+    expect(preflight.missing).toContain(
+      AURORA_LIFECYCLE_CLOUDWAYS_CREDENTIAL_REQUIREMENT
+    )
   })
 
   it('does not require artifacts or provider operation IDs before bootstrap', () => {

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { createHash } from 'node:crypto'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -6,6 +7,7 @@ import path from 'node:path'
 // without a TypeScript loader.
 import {
   buildSiteForgeTheme,
+  checkSiteForgeThemeArtifact,
   validateSiteForgeDeploymentAssets,
   validateSiteForgeTheme,
   verifyRuntimeArtifact,
@@ -100,18 +102,66 @@ describe('SiteForge theme package', () => {
     }
   })
 
-  it('verifies shipped artifacts when source is outside the deployment bundle', async () => {
-    await expect(
-      validateSiteForgeDeploymentAssets({
-        sourceThemeDir: path.join(tmpdir(), 'missing-siteforge-theme'),
+  it('checks a built theme against a deterministic rebuild', async () => {
+    const outputDirectory = await mkdtemp(
+      path.join(tmpdir(), 'siteforge-theme-check-')
+    )
+    try {
+      const options = {
+        signingKey: 'deterministic-check-key',
+        gitSha: '0123456789abcdef',
+        outputDirectory,
+      }
+      const built = await buildSiteForgeTheme(options)
+      await expect(checkSiteForgeThemeArtifact(options)).resolves.toMatchObject({
+        archiveHash: built.archiveHash,
       })
-    ).resolves.toMatchObject({
-      sourceValidation: null,
-      artifacts: [
-        { archiveHash: expect.any(String) },
-        { archiveHash: expect.any(String) },
-        { archiveHash: expect.any(String) },
-      ],
-    })
+
+      await writeFile(built.archivePath, Buffer.from('PKdrift'))
+      await expect(checkSiteForgeThemeArtifact(options)).rejects.toThrow(
+        /valid ZIP archive|digest mismatch/
+      )
+    } finally {
+      await rm(outputDirectory, { recursive: true, force: true })
+    }
+  })
+
+  it('verifies an explicit deployment bundle when source is unavailable', async () => {
+    const runtimeAssetsDir = await mkdtemp(
+      path.join(tmpdir(), 'siteforge-deployment-assets-')
+    )
+    try {
+      for (const filename of [
+        'oneclick-siteforge.zip',
+        'advanced-custom-fields-pro.zip',
+        'oneclick-siteforge-runtime.zip',
+      ]) {
+        const archive = Buffer.alloc(128)
+        archive[0] = 0x50
+        archive[1] = 0x4b
+        const digest = createHash('sha256').update(archive).digest('hex')
+        await writeFile(path.join(runtimeAssetsDir, filename), archive)
+        await writeFile(
+          path.join(runtimeAssetsDir, `${filename}.sha256`),
+          `${digest}  ${filename}\n`
+        )
+      }
+
+      await expect(
+        validateSiteForgeDeploymentAssets({
+          sourceThemeDir: path.join(tmpdir(), 'missing-siteforge-theme'),
+          runtimeAssetsDir,
+        })
+      ).resolves.toMatchObject({
+        sourceValidation: null,
+        artifacts: [
+          { archiveHash: expect.any(String) },
+          { archiveHash: expect.any(String) },
+          { archiveHash: expect.any(String) },
+        ],
+      })
+    } finally {
+      await rm(runtimeAssetsDir, { recursive: true, force: true })
+    }
   })
 })

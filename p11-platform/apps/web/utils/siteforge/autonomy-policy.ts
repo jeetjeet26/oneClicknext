@@ -11,9 +11,17 @@ export type SiteForgeAutonomyMode = (typeof SITEFORGE_AUTONOMY_MODES)[number]
 
 export type AutonomyPromotionEvidence = {
   evaluatedRuns: number
-  supervisedSuccesses?: number
-  incidentRate?: number
-  rollbackVerified?: boolean
+  completedJobs: number
+  supervisedSuccesses: number
+  approvalDecisions: number
+  incidentCount: number
+  incidentRate: number
+  rollbackVerified: boolean
+  restoreEvidenceRuns: number
+  providerEvidenceRuns: number
+  outcomeMeasurements: number
+  negativeOutcomeRate: number
+  derivedAt: string
 }
 
 const modeIndex = (mode: SiteForgeAutonomyMode) =>
@@ -51,17 +59,26 @@ export function validateAutonomyPromotion(input: {
   if (input.requestedMode === 'supervised' && input.evidence.evaluatedRuns < 2) {
     throw new Error('Supervised mode requires at least two recommendation evaluations')
   }
+  if (
+    input.requestedMode === 'supervised' &&
+    input.evidence.approvalDecisions < 1
+  ) {
+    throw new Error('Supervised mode requires durable approval evidence')
+  }
   if (input.requestedMode === 'bounded_auto') {
     if (isProductionLaunchScope(input.actionScope)) {
       throw new Error('Production launch can never use automatic execution')
     }
     if (
-      (input.evidence.supervisedSuccesses || 0) < 5 ||
+      input.evidence.supervisedSuccesses < 5 ||
       input.evidence.rollbackVerified !== true ||
-      (input.evidence.incidentRate ?? 1) > 0.1
+      input.evidence.incidentRate > 0.1 ||
+      input.evidence.providerEvidenceRuns < 2 ||
+      input.evidence.outcomeMeasurements < 3 ||
+      input.evidence.negativeOutcomeRate > 0.1
     ) {
       throw new Error(
-        'Bounded auto requires five supervised successes, verified rollback, and incident rate at or below 10%'
+        'Bounded auto requires five supervised successes, repeated provider evidence, verified rollback, measured outcomes, and incident/negative-outcome rates at or below 10%'
       )
     }
     if (
@@ -71,6 +88,169 @@ export function validateAutonomyPromotion(input: {
     ) {
       throw new Error('Bounded auto requires a holdout and a daily action limit')
     }
+  }
+}
+
+function record(value: Json | null): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {}
+}
+
+export async function deriveSiteForgeAutonomyEvidence(input: {
+  orgId: string
+  propertyId: string | null
+  actionScope: string
+}): Promise<AutonomyPromotionEvidence> {
+  const service = createServiceClient()
+  let actionQuery = service
+    .from('shared_action_attempts')
+    .select(
+      'id, job_id, proposal_decision_status, execution_status, execution_result, rollback_metadata, proposed_at'
+    )
+    .eq('org_id', input.orgId)
+    .eq('action_type', input.actionScope)
+  actionQuery = input.propertyId
+    ? actionQuery.eq('property_id', input.propertyId)
+    : actionQuery.is('property_id', null)
+  const { data: actions, error: actionError } = await actionQuery
+  if (actionError) {
+    throw new Error(`Failed to derive autonomy action evidence: ${actionError.message}`)
+  }
+  const actionRows = actions || []
+  const actionIds = actionRows.map(action => action.id)
+  const jobIds = [...new Set(actionRows.map(action => action.job_id))]
+
+  let jobsQuery = service
+    .from('shared_jobs')
+    .select('id, lifecycle_status, output, error_details')
+    .eq('org_id', input.orgId)
+    .in('id', jobIds.length ? jobIds : ['00000000-0000-0000-0000-000000000000'])
+  jobsQuery = input.propertyId
+    ? jobsQuery.eq('property_id', input.propertyId)
+    : jobsQuery.is('property_id', null)
+
+  let incidentQuery = service
+    .from('siteforge_incidents')
+    .select('id, status, severity, category, created_at')
+    .eq('org_id', input.orgId)
+  incidentQuery = input.propertyId
+    ? incidentQuery.eq('property_id', input.propertyId)
+    : incidentQuery.limit(0)
+
+  let restoreQuery = service
+    .from('siteforge_restore_drills')
+    .select('id, status, verification_report, completed_at')
+    .eq('org_id', input.orgId)
+  restoreQuery = input.propertyId
+    ? restoreQuery.eq('property_id', input.propertyId)
+    : restoreQuery.limit(0)
+
+  const [jobsResult, incidentsResult, restoresResult, approvalsResult, outcomesResult] =
+    await Promise.all([
+      jobsQuery,
+      incidentQuery,
+      restoreQuery,
+      service
+        .from('shared_approvals')
+        .select('id, action_attempt_id, decision_status')
+        .eq('org_id', input.orgId)
+        .in(
+          'action_attempt_id',
+          actionIds.length
+            ? actionIds
+            : ['00000000-0000-0000-0000-000000000000']
+        ),
+      service
+        .from('shared_experiment_outcomes')
+        .select('id, action_attempt_id, outcome_status, kpi_name')
+        .eq('org_id', input.orgId)
+        .in(
+          'action_attempt_id',
+          actionIds.length
+            ? actionIds
+            : ['00000000-0000-0000-0000-000000000000']
+        ),
+    ])
+  const evidenceError = [
+    jobsResult,
+    incidentsResult,
+    restoresResult,
+    approvalsResult,
+    outcomesResult,
+  ].find(result => result.error)?.error
+  if (evidenceError) {
+    throw new Error(`Failed to derive autonomy evidence: ${evidenceError.message}`)
+  }
+
+  const approvals = approvalsResult.data || []
+  const approvedIds = new Set(
+    approvals
+      .filter(approval => ['approved', 'modified'].includes(approval.decision_status))
+      .map(approval => approval.action_attempt_id)
+  )
+  const completedJobs = (jobsResult.data || []).filter(job =>
+    ['succeeded', 'failed', 'cancelled'].includes(job.lifecycle_status)
+  )
+  const supervisedSuccesses = actionRows.filter(
+    action =>
+      approvedIds.has(action.id) &&
+      action.proposal_decision_status !== 'proposed' &&
+      action.execution_status === 'executed' &&
+      completedJobs.some(
+        job => job.id === action.job_id && job.lifecycle_status === 'succeeded'
+      )
+  ).length
+  const providerEvidence = new Set<string>()
+  for (const action of actionRows) {
+    const result = record(action.execution_result)
+    const rollback = record(action.rollback_metadata)
+    const provider =
+      typeof result.provider === 'string'
+        ? result.provider
+        : typeof rollback.provider === 'string'
+          ? rollback.provider
+          : null
+    const operationId =
+      typeof result.providerOperationId === 'string'
+        ? result.providerOperationId
+        : typeof result.providerRequestId === 'string'
+          ? result.providerRequestId
+          : typeof rollback.providerOperationId === 'string'
+            ? rollback.providerOperationId
+            : null
+    if (provider && operationId) providerEvidence.add(`${provider}:${operationId}`)
+  }
+  const restores = restoresResult.data || []
+  const verifiedRestores = restores.filter(restore => {
+    if (restore.status !== 'succeeded' || !restore.completed_at) return false
+    const report = record(restore.verification_report)
+    return report.passed === true || report.verified === true
+  })
+  const outcomes = outcomesResult.data || []
+  const negativeOutcomes = outcomes.filter(
+    outcome => outcome.outcome_status === 'negative'
+  ).length
+  const incidentCount = (incidentsResult.data || []).filter(
+    incident => incident.status !== 'resolved'
+  ).length
+  const denominator = Math.max(1, completedJobs.length)
+
+  return {
+    evaluatedRuns: actionRows.length,
+    completedJobs: completedJobs.length,
+    supervisedSuccesses,
+    approvalDecisions: approvals.length,
+    incidentCount,
+    incidentRate: incidentCount / denominator,
+    rollbackVerified:
+      verifiedRestores.length > 0 ||
+      actionRows.some(action => action.execution_status === 'reversed'),
+    restoreEvidenceRuns: verifiedRestores.length,
+    providerEvidenceRuns: providerEvidence.size,
+    outcomeMeasurements: outcomes.length,
+    negativeOutcomeRate: outcomes.length ? negativeOutcomes / outcomes.length : 1,
+    derivedAt: new Date().toISOString(),
   }
 }
 
@@ -101,20 +281,20 @@ export async function promoteSiteForgeAutonomyMode(input: {
   requestedMode: SiteForgeAutonomyMode
   holdoutPercent: number
   limits: Record<string, unknown>
-  evidence: AutonomyPromotionEvidence
   policyVersion: string
   rationale: string
   actorId: string
 }) {
   const service = createServiceClient()
   const current = await getActiveSiteForgeAutonomyMode(input)
+  const evidence = await deriveSiteForgeAutonomyEvidence(input)
   validateAutonomyPromotion({
     actionScope: input.actionScope,
     currentMode: (current?.mode as SiteForgeAutonomyMode | undefined) || null,
     requestedMode: input.requestedMode,
     holdoutPercent: input.holdoutPercent,
     limits: input.limits,
-    evidence: input.evidence,
+    evidence,
   })
   const now = new Date().toISOString()
   if (current) {
@@ -134,7 +314,7 @@ export async function promoteSiteForgeAutonomyMode(input: {
       mode: input.requestedMode,
       limits: {
         ...input.limits,
-        promotionEvidence: input.evidence,
+        promotionEvidence: evidence,
         automaticExecutionAllowed: canSiteForgeActAutomatically(
           input.actionScope,
           input.requestedMode

@@ -304,7 +304,12 @@ describe('finalizeSiteForgePages', () => {
             acfBlock: 'acf/plans-availability',
             order: 0,
             reasoning: 'Publish approved inventory.',
-            content: {},
+            content: {
+              rent_min: 9_999,
+              rent_max: 12_999,
+              show_pricing: true,
+              show_availability: true,
+            },
           },
         ],
       },
@@ -321,29 +326,43 @@ describe('finalizeSiteForgePages', () => {
       assignments: {},
       stats: { uploaded: 0, generated: 0, fromBrandForge: 0, total: 0 },
     }
-    const finalized = finalizeSiteForgePages(pages, manifest, approvedLegal, {
-      capturedAt: '2026-07-31T12:00:00.000Z',
-      contentHash: 'b'.repeat(64),
-      rows: [
-        {
-          id: 'aspen-a1',
-          name: 'Aspen',
-          bedrooms: 1,
-          bathrooms: 1,
-          sqftMin: 720,
-          rentMin: 1_895,
-          availableCount: 2,
-          imageUrl: 'https://cdn.example.com/aspen.png',
-          imageAlt: 'Aspen one-bedroom floor plan',
-          applyUrl: 'https://property.example.com/apply/aspen',
-          source: 'manual',
-          sourceIdentity: 'approved-import-42',
-          effectiveAt: '2026-07-31T11:00:00.000Z',
-          expiresAt: '2026-08-01T11:00:00.000Z',
-          sourceUpdatedAt: '2026-07-31T10:00:00.000Z',
+    const finalized = finalizeSiteForgePages(
+      pages,
+      manifest,
+      approvedLegal,
+      {
+        capturedAt: '2026-07-31T12:00:00.000Z',
+        contentHash: 'b'.repeat(64),
+        rows: [
+          {
+            id: 'aspen-a1',
+            name: 'Aspen',
+            bedrooms: 1,
+            bathrooms: 1,
+            sqftMin: 720,
+            rentMin: 1_895,
+            availableCount: 2,
+            imageUrl: 'https://cdn.example.com/aspen.png',
+            imageAlt: 'Aspen one-bedroom floor plan',
+            applyUrl: 'https://property.example.com/apply/aspen',
+            source: 'manual',
+            sourceIdentity: 'approved-import-42',
+            effectiveAt: '2026-07-31T11:00:00.000Z',
+            expiresAt: '2026-08-01T11:00:00.000Z',
+            sourceUpdatedAt: '2026-07-31T10:00:00.000Z',
+          },
+        ],
+      },
+      [],
+      {
+        floorPlanStrategy: {
+          display: 'cards',
+          showPricing: false,
+          showAvailability: true,
+          freshnessHours: 24,
         },
-      ],
-    })
+      }
+    )
 
     expect(finalized[0]?.sections[0]?.content).toEqual(
       expect.objectContaining({
@@ -366,8 +385,13 @@ describe('finalizeSiteForgePages', () => {
           captured_at: '2026-07-31T12:00:00.000Z',
           content_hash: 'b'.repeat(64),
         },
+        show_pricing: false,
+        show_availability: true,
+        freshness_hours: 24,
       })
     )
+    expect(JSON.stringify(finalized)).not.toContain('9999')
+    expect(JSON.stringify(finalized)).not.toContain('12999')
   })
 
   it('builds legal pages only from exact approved policy bodies', () => {

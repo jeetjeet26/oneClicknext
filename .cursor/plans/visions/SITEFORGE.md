@@ -1,6 +1,6 @@
 # Vision: SiteForge
 
-Last Updated: March 17, 2026
+Last Updated: August 10, 2026
 Document Type: Vision grounded in current implementation
 
 ## Mission
@@ -18,13 +18,28 @@ Materially implemented today:
 - generation, analyze, status, preview, edit, deploy, rollback, list, and delete routes in `app/api/siteforge/*`
 - WordPress and Cloudways deployment client in `utils/siteforge/wordpress-client.ts`
 - operator preview and diagnostics UI in `components/siteforge/*`
-- local smoke coverage for simulated generate/deploy/rollback flow
+- immutable, content-hashed blueprint revisions with exact plan and artifact
+  approval identities
+- deterministic ACF JSON, signed theme, and runtime-v3 package build/drift
+  tooling for first-party artifacts
+- default local smoke coverage for approved plan, simulated generation,
+  persisted local preview architecture, and fail-closed
+  quality/approval/staging/launch/rollback gates
+- an opt-in, destructive Aurora runtime-v3 lifecycle for canonical WordPress
+  preview, independent approval, Cloudways staging/promotion, immutable rollback,
+  restore verification, and cleanup
 
 Current reality:
 
 - SiteForge is one of the deepest implemented products in the repo
-- deployment and rollback are materially real
-- the product still needs closure around deploy-source trust and real-target validation
+- deployment, launch, and rollback implementations are materially real and
+  preserve immutable artifact identities
+- the default simulated lane cannot truthfully certify canonical WordPress
+  preview, create Cloudways evidence, or produce a verified rollback target
+- provider-backed Aurora success remains unproven until one complete opt-in run
+  passes; the existence of the test is not acceptance evidence
+- runtime v3 and governed extensions remain explicit opt-ins, while the
+  semantic editor is enabled unless explicitly disabled
 
 ## End-State Vision
 
@@ -40,8 +55,9 @@ Longer term, SiteForge should support bounded website optimization loops, but on
 
 ## P1 Closure Priorities
 
-- guarantee that edited blueprint state is the exact deploy source of truth
+- keep edited blueprint state as the exact immutable deploy source of truth
 - complete at least one real WordPress deploy and rollback validation path
+- keep clean-checkout ACF/theme/runtime generation and drift checks reproducible
 - reduce placeholder preview surfaces on critical content blocks
 - strengthen degraded behavior when upstream brand context is weak or provider calls fail
 

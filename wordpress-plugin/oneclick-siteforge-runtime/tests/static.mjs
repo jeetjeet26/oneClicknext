@@ -24,9 +24,13 @@ const v3Validation = await source(
 const v3Transactions = await source(
   'includes/class-siteforge-runtime-v3-transactions.php'
 )
+const v3Materializer = await source(
+  'includes/class-siteforge-runtime-v3-materializer.php'
+)
 const v3Controller = await source(
   'includes/class-siteforge-runtime-v3-rest-controller.php'
 )
+const plans = await themeSource('assets/js/plans.js')
 
 assert(!transactions.includes("get_page_by_path( 'sample-page'"))
 assert(transactions.includes('rollback_preparation'))
@@ -52,6 +56,14 @@ assert(v3Validation.includes('assert_extension_scopes'))
 assert(v3Validation.includes('Operation must bind to the exact desired resource identity.'))
 assert(v3Transactions.includes('rollback_preparation'))
 assert(v3Transactions.includes('state->restore'))
+assert(v3Transactions.includes('materializer->apply'))
+assert(v3Transactions.includes('materializer->restore'))
+assert(v3Materializer.includes('PAGE_SITE_META'))
+assert(v3Materializer.includes('assert_inventory_fresh'))
+assert(v3Materializer.includes('materialization_readback_failed'))
+assert(!plans.includes('generateMockPlans'))
+assert(!plans.includes('Floor plan placeholder'))
+assert(plans.includes('inventory unavailable'))
 
 for (const name of await readdir(path.join(themeDir, 'blocks'))) {
   if (!name.endsWith('.php')) continue

@@ -279,6 +279,10 @@ export async function loadExactAuroraIdentity(
     ((target.target_type === 'canonical_preview' &&
       rollout.status === 'paused' &&
       [1, 2].includes(target.runtime_contract_version)) ||
+      (target.target_type === 'canonical_preview' &&
+        rollout.status === 'enabled' &&
+        [1, 2].includes(target.runtime_contract_version) &&
+        Boolean(rollout.runtime_package_sha256)) ||
       (rollout.status === 'enabled' &&
         target.runtime_contract_version === 3 &&
         target.runtime_package_sha256 === rollout.runtime_package_sha256))
@@ -445,6 +449,10 @@ export async function acquireOrRenewAuroraLifecycleLease(
         heartbeat_at: now,
         finished_at: null,
         error_message: null,
+        output:
+          operation === 'acquire' && lease.lifecycle_status === 'cancelled'
+            ? { phase: 'bootstrap' }
+            : lease.output,
         payload: leasePayload(identity, lease.payload),
         updated_at: now,
       })
@@ -521,11 +529,6 @@ export async function assertActiveAuroraLifecycleLease(
       )
     }
   }
-  await loadExactAuroraIdentity(
-    identity,
-    service,
-    requiredPhase === 'mutation' ? 'mutation' : 'bootstrap'
-  )
   const lease = await loadLease(identity, service)
   if (
     !lease ||
@@ -552,6 +555,7 @@ export async function assertActiveAuroraLifecycleLease(
       ? lease.output
       : {}
   const phase = output.phase === 'mutation' ? 'mutation' : 'bootstrap'
+  await loadExactAuroraIdentity(identity, service, phase)
   if (requiredPhase !== 'any' && phase !== requiredPhase) {
     fail(
       requiredPhase === 'mutation'
@@ -618,9 +622,12 @@ export async function transitionAuroraLifecycleToMutation(
       ]),
     client
       .from('siteforge_runtime_target_rollouts')
-      .select('id, target_id, requested_contract_version, status')
+      .select(
+        'id, target_id, requested_contract_version, runtime_package_sha256, status, activated_at, rolled_back_at'
+      )
       .eq('website_id', identity.websiteId)
       .in('id', [
+        identity.rolloutAssignmentId,
         output.stagingRolloutId as string,
         output.productionRolloutId as string,
       ]),
@@ -650,6 +657,11 @@ export async function transitionAuroraLifecycleToMutation(
       rollout.id === output.productionRolloutId &&
       rollout.target_id === output.productionTargetId
   )
+  const anchorRollout = rollouts?.find(
+    (rollout) =>
+      rollout.id === identity.rolloutAssignmentId &&
+      rollout.target_id === identity.targetId
+  )
   if (
     artifactsError ||
     targetsError ||
@@ -660,6 +672,10 @@ export async function transitionAuroraLifecycleToMutation(
     !production ||
     !isAuroraOwnedMetadata(staging.metadata, identity.ownerId) ||
     !isAuroraOwnedMetadata(production.metadata, identity.ownerId) ||
+    !anchorRollout ||
+    anchorRollout.requested_contract_version !== 3 ||
+    anchorRollout.runtime_package_sha256 !== output.runtimePackageSha256 ||
+    anchorRollout.status !== 'paused' ||
     stagingRollout?.requested_contract_version !== 3 ||
     stagingRollout.status !== 'paused' ||
     productionRollout?.requested_contract_version !== 3 ||
@@ -672,10 +688,46 @@ export async function transitionAuroraLifecycleToMutation(
     )
   }
   const now = new Date().toISOString()
+  const rolloutIds = [
+    identity.rolloutAssignmentId,
+    output.stagingRolloutId as string,
+    output.productionRolloutId as string,
+  ]
+  const { data: activatedRollouts, error: activationError } = await client
+    .from('siteforge_runtime_target_rollouts')
+    .update({
+      status: 'enabled',
+      activated_at: now,
+      rolled_back_at: null,
+      updated_at: now,
+    })
+    .in('id', rolloutIds)
+    .eq('website_id', identity.websiteId)
+    .select('id')
+  if (
+    activationError ||
+    new Set((activatedRollouts || []).map(rollout => rollout.id)).size !==
+      rolloutIds.length
+  ) {
+    fail(
+      'Aurora runtime rollout assignments could not be activated atomically',
+      409,
+      'rollout_activation_failed'
+    )
+  }
   const { data, error } = await client
     .from('shared_jobs')
     .update({
-      output: { ...output, phase: 'mutation', mutationActivatedAt: now },
+      output: {
+        ...output,
+        phase: 'mutation',
+        mutationActivatedAt: now,
+        anchorRolloutPrior: {
+          status: anchorRollout.status,
+          activatedAt: anchorRollout.activated_at,
+          rolledBackAt: anchorRollout.rolled_back_at,
+        },
+      },
       status_reason: 'aurora_mutation_tracking_active',
       updated_at: now,
     })

@@ -8,6 +8,7 @@ const {
   messageCreateMock,
   brandAnalyzeMock,
   createPlanRevisionMock,
+  getLatestPropertyPlanRevisionMock,
 } = vi.hoisted(() => ({
   authGetUserMock: vi.fn(),
   createClientMock: vi.fn(),
@@ -15,6 +16,7 @@ const {
   messageCreateMock: vi.fn(),
   brandAnalyzeMock: vi.fn(),
   createPlanRevisionMock: vi.fn(),
+  getLatestPropertyPlanRevisionMock: vi.fn(),
 }))
 
 vi.mock('@/utils/supabase/server', () => ({
@@ -36,6 +38,7 @@ vi.mock('@/utils/siteforge/plans/repository', () => ({
     statusCode = 500
   },
   createPlanRevision: createPlanRevisionMock,
+  getLatestPropertyPlanRevision: getLatestPropertyPlanRevisionMock,
 }))
 
 vi.mock('@anthropic-ai/sdk', () => {
@@ -79,6 +82,34 @@ describe('siteforge plan route auth', () => {
         recommendations: [],
       },
     })
+    getLatestPropertyPlanRevisionMock.mockResolvedValue(null)
+  })
+
+  it('GET loads the tenant-authorized current plan for Web Director', async () => {
+    authGetUserMock.mockResolvedValue({
+      data: { user: { id: 'user-1' } },
+      error: null,
+    })
+    validatePropertyAccessMock.mockResolvedValue({ authorized: true })
+    getLatestPropertyPlanRevisionMock.mockResolvedValue({
+      planId: '22222222-2222-4222-8222-222222222222',
+      revision: 2,
+      status: 'ready_for_review',
+    })
+
+    const { GET } = await import('./route')
+    const response = await GET(
+      makeNextRequest(
+        `http://localhost/api/siteforge/plan?propertyId=${propertyId}`,
+      ),
+    )
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual({
+      plan: expect.objectContaining({ revision: 2 }),
+    })
+    expect(validatePropertyAccessMock).toHaveBeenCalledWith('user-1', propertyId)
+    expect(getLatestPropertyPlanRevisionMock).toHaveBeenCalledWith(propertyId)
   })
 
   it('POST returns 401 when unauthenticated', async () => {

@@ -4,9 +4,11 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { createServiceClient } from '@/utils/supabase/admin'
 import { makeBlueprintFromPages } from '@/utils/siteforge/blueprint'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import type { GeneratedPage, WebsiteStatusResponse } from '@/types/siteforge'
+import { hasCloudwaysProviderCredentials } from '@/utils/siteforge/providers/cloudways-provider'
 
 export async function GET(
   _request: NextRequest,
@@ -27,11 +29,12 @@ export async function GET(
     }
 
     // Get website with full details
-    const { data: website, error } = await supabase
+    const service = createServiceClient()
+    const { data: website, error } = await service
       .from('property_websites')
       .select(`
         *,
-        properties!inner (
+        properties!property_websites_property_id_fkey (
           id,
           name,
           org_id,
@@ -55,7 +58,7 @@ export async function GET(
     }
 
     const { data: currentArtifact } = website.current_artifact_version_id
-      ? await supabase
+      ? await service
           .from('siteforge_blueprint_versions')
           .select('id, version, blueprint, asset_manifest, created_at')
           .eq('id', website.current_artifact_version_id)
@@ -89,7 +92,7 @@ export async function GET(
       }
     }
 
-    const { data: artifactHistory } = await supabase
+    const { data: artifactHistory } = await service
       .from('siteforge_blueprint_versions')
       .select(
         'id, version, content_hash, parent_version_id, change_type, changes_summary, quality_score, quality_report, created_at, deployment_decision, deployment_approved_at'
@@ -192,7 +195,7 @@ function getBrandReadiness(
 function getDeploymentReadiness(
   hasCredentialReference = false
 ): WebsiteStatusResponse['deploymentReadiness'] {
-  const hasCloudways = Boolean(process.env.CLOUDWAYS_API_KEY && process.env.CLOUDWAYS_EMAIL)
+  const hasCloudways = hasCloudwaysProviderCredentials()
   const hasExistingWp = Boolean(
     process.env.SITEFORGE_WP_URL &&
       process.env.SITEFORGE_WP_USERNAME &&

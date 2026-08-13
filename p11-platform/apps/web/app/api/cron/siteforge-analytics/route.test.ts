@@ -30,7 +30,7 @@ describe('GET /api/cron/siteforge-analytics', () => {
       data: [{ id: 'website-1', org_id: 'org-1', property_id: 'property-1' }],
       error: null,
     })
-    persistMock.mockResolvedValue({ artifacts: 1, proposals: 0 })
+    persistMock.mockResolvedValue({ artifacts: 1, proposals: 0, outcomes: 4 })
   })
 
   afterEach(() => {
@@ -60,6 +60,7 @@ describe('GET /api/cron/siteforge-analytics', () => {
       websites: 1,
       artifacts: 1,
       proposals: 0,
+      outcomes: 4,
     })
     expect(persistMock).toHaveBeenCalledWith(
       expect.objectContaining({ from: fromMock }),

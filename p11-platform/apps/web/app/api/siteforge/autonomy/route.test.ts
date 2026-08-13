@@ -3,6 +3,7 @@ import type { NextRequest } from 'next/server'
 
 const {
   createClient,
+  deriveEvidence,
   getPolicy,
   getUser,
   promotePolicy,
@@ -10,6 +11,7 @@ const {
   validateManagerAccess,
 } = vi.hoisted(() => ({
   createClient: vi.fn(),
+  deriveEvidence: vi.fn(),
   getPolicy: vi.fn(),
   getUser: vi.fn(),
   promotePolicy: vi.fn(),
@@ -30,10 +32,11 @@ vi.mock('@/utils/siteforge/autonomy-policy', () => ({
     'bounded_auto',
   ],
   getActiveSiteForgeAutonomyMode: getPolicy,
+  deriveSiteForgeAutonomyEvidence: deriveEvidence,
   promoteSiteForgeAutonomyMode: promotePolicy,
 }))
 
-const propertyId = '11111111-1111-4111-8111-111111111111'
+const propertyId = '33333333-3333-3333-3333-333333333333'
 const userId = '22222222-2222-4222-8222-222222222222'
 const orgId = '33333333-3333-4333-8333-333333333333'
 const actionScope = 'content.publish'
@@ -54,7 +57,6 @@ function postRequest(): NextRequest {
       requestedMode: 'observe_only',
       holdoutPercent: 0,
       limits: {},
-      evidence: { evaluatedRuns: 0 },
       policyVersion: 'siteforge-autonomy-v1',
       rationale: 'Enable observation for this property scope.',
     }),
@@ -69,6 +71,20 @@ describe('SiteForge autonomy route', () => {
     validateAccess.mockResolvedValue({ authorized: true, orgId })
     validateManagerAccess.mockResolvedValue({ authorized: true, orgId })
     getPolicy.mockResolvedValue({ mode: 'observe_only', action_scope: actionScope })
+    deriveEvidence.mockResolvedValue({
+      evaluatedRuns: 0,
+      completedJobs: 0,
+      supervisedSuccesses: 0,
+      approvalDecisions: 0,
+      incidentCount: 0,
+      incidentRate: 0,
+      rollbackVerified: false,
+      restoreEvidenceRuns: 0,
+      providerEvidenceRuns: 0,
+      outcomeMeasurements: 0,
+      negativeOutcomeRate: 1,
+      derivedAt: '2026-08-10T00:00:00.000Z',
+    })
     promotePolicy.mockResolvedValue({ mode: 'observe_only', action_scope: actionScope })
   })
 
@@ -98,8 +114,31 @@ describe('SiteForge autonomy route', () => {
     await expect(response.json()).resolves.toMatchObject({
       policy: { mode: 'observe_only' },
       automaticProductionLaunch: false,
+      evidenceSource: 'durable_jobs_incidents_approvals_restores_outcomes',
     })
     expect(getPolicy).toHaveBeenCalledWith({ orgId, propertyId, actionScope })
+  })
+
+  it('rejects caller-asserted promotion evidence', async () => {
+    const { POST } = await import('./route')
+    const request = postRequest()
+    const body = await request.json()
+    const response = await POST(
+      new Request('http://localhost/api/siteforge/autonomy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...body,
+          evidence: {
+            evaluatedRuns: 1_000,
+            supervisedSuccesses: 1_000,
+            rollbackVerified: true,
+          },
+        }),
+      }) as NextRequest
+    )
+    expect(response.status).toBe(400)
+    expect(promotePolicy).not.toHaveBeenCalled()
   })
 
   it('requires property-manager access for autonomy promotion', async () => {

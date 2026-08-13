@@ -13,6 +13,7 @@ const storedWordPressCredentialSchema = z.object({
       username: z.string().min(1),
       password: z.string().min(1),
       applicationRoot: z.string().min(1).optional(),
+      sftpApplicationRoot: z.string().min(1).optional(),
     })
     .optional(),
   providerMetadata: z

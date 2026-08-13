@@ -8,7 +8,10 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database, Json } from '@/types/supabase'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { recordSharedApprovalDecision } from '@/utils/services/shared-approvals'
-import { CloudwaysProviderClient } from '@/utils/siteforge/providers/cloudways-provider'
+import {
+  CloudwaysProviderClient,
+  getCloudwaysProviderCredentials,
+} from '@/utils/siteforge/providers/cloudways-provider'
 import { getWordPressCredentialReference } from '@/utils/siteforge/wordpress/credential-vault'
 import { normalizeSiteForgePreviewCredential } from '@/utils/siteforge/workflows/preview-steps'
 import { WordPressAPIClient } from '@/utils/siteforge/wordpress-client'
@@ -17,11 +20,13 @@ import {
   siteForgeAnalyticsConfigSchema,
   parseRenderableSiteForgeLegalConfig,
 } from '@/utils/siteforge/quality/deterministic-gates'
+import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
 import {
   getLaunchRelease,
   SiteForgeLaunchError,
   transitionLaunchRelease,
 } from './repository'
+import { restoreDnsCutover } from './dns-cutover'
 
 type ServiceClient = SupabaseClient<Database>
 
@@ -29,6 +34,7 @@ interface PromotionTokenPayload {
   releaseId: string
   artifactId: string
   contentHash: string
+  bindingHash: string
   expiresAt: string
   nonce: string
 }
@@ -76,6 +82,7 @@ export function verifyManualPromotionToken(
     releaseId: string
     artifactId: string
     contentHash: string
+    bindingHash: string
   },
   secret = promotionSecret()
 ): PromotionTokenPayload {
@@ -103,6 +110,7 @@ export function verifyManualPromotionToken(
     payload.releaseId !== expected.releaseId ||
     payload.artifactId !== expected.artifactId ||
     payload.contentHash !== expected.contentHash ||
+    payload.bindingHash !== expected.bindingHash ||
     !payload.nonce ||
     new Date(payload.expiresAt).getTime() <= Date.now()
   ) {
@@ -112,6 +120,118 @@ export function verifyManualPromotionToken(
     )
   }
   return payload
+}
+
+export type LaunchApprovalBinding = {
+  releaseId: string
+  artifactId: string
+  contentHash: string
+  stagingDeploymentId: string
+  assetManifestHash: string
+  baseThemePackageSha256: string
+  overlayPackageSha256: string | null
+  runtimeContractVersion: number
+  runtimePackageSha256: string | null
+  certificationReportHash: string
+  rollbackArtifactId: string | null
+  rollbackContentHash: string | null
+}
+
+export function launchApprovalBindingHash(
+  binding: LaunchApprovalBinding
+): string {
+  return hashSiteForgeContent(binding)
+}
+
+export function assertDistinctLaunchActors(input: {
+  operatorId: string | null
+  reviewerId: string | null
+  actingOperatorId?: string
+}): void {
+  if (!input.operatorId || !input.reviewerId) {
+    throw new SiteForgeLaunchError(
+      'Exact launch operator and reviewer identities are required',
+      409
+    )
+  }
+  if (input.operatorId === input.reviewerId) {
+    throw new SiteForgeLaunchError(
+      'The launch reviewer must be different from the launch operator',
+      409
+    )
+  }
+  if (
+    input.actingOperatorId &&
+    (input.actingOperatorId !== input.operatorId ||
+      input.actingOperatorId === input.reviewerId)
+  ) {
+    throw new SiteForgeLaunchError(
+      'Only the recorded launch operator may execute the reviewer-approved cutover',
+      403
+    )
+  }
+}
+
+async function loadLaunchApprovalBinding(
+  release: Awaited<ReturnType<typeof getLaunchRelease>>,
+  client: ServiceClient
+): Promise<{ binding: LaunchApprovalBinding; bindingHash: string }> {
+  const [{ data: artifact, error: artifactError }, { data: deployment, error: deploymentError }] =
+    await Promise.all([
+      client
+        .from('siteforge_blueprint_versions')
+        .select(
+          'id, content_hash, asset_manifest_hash, base_theme_package_sha256, overlay_package_sha256, runtime_contract_version, runtime_package_sha256'
+        )
+        .eq('id', release.artifact_id)
+        .eq('website_id', release.website_id)
+        .single(),
+      client
+        .from('siteforge_artifact_deployments')
+        .select(
+          'id, artifact_id, artifact_content_hash, asset_manifest_hash, base_theme_package_sha256, overlay_package_sha256, runtime_contract_version, runtime_package_sha256, remote_manifest_hash, certification_report, certified_at'
+        )
+        .eq('id', release.staging_deployment_id || '')
+        .eq('artifact_id', release.artifact_id)
+        .single(),
+    ])
+  if (
+    artifactError ||
+    deploymentError ||
+    !artifact ||
+    !deployment ||
+    !deployment.certified_at ||
+    artifact.content_hash !== release.artifact_content_hash ||
+    deployment.artifact_content_hash !== release.artifact_content_hash ||
+    deployment.remote_manifest_hash !== release.artifact_content_hash ||
+    !artifact.asset_manifest_hash ||
+    !artifact.base_theme_package_sha256 ||
+    deployment.asset_manifest_hash !== artifact.asset_manifest_hash ||
+    deployment.base_theme_package_sha256 !== artifact.base_theme_package_sha256 ||
+    deployment.overlay_package_sha256 !== artifact.overlay_package_sha256 ||
+    deployment.runtime_contract_version !== artifact.runtime_contract_version ||
+    deployment.runtime_package_sha256 !== artifact.runtime_package_sha256
+  ) {
+    throw new SiteForgeLaunchError(
+      'The launch approval is not bound to the exact certified artifact, asset, and runtime identity',
+      409
+    )
+  }
+  const binding: LaunchApprovalBinding = {
+    releaseId: release.id,
+    artifactId: release.artifact_id,
+    contentHash: release.artifact_content_hash,
+    stagingDeploymentId: deployment.id,
+    assetManifestHash: artifact.asset_manifest_hash,
+    baseThemePackageSha256: artifact.base_theme_package_sha256,
+    overlayPackageSha256: artifact.overlay_package_sha256,
+    runtimeContractVersion: artifact.runtime_contract_version,
+    runtimePackageSha256: artifact.runtime_package_sha256,
+    certificationReportHash: hashSiteForgeContent(deployment.certification_report),
+    rollbackArtifactId: release.rollback_artifact_id,
+    rollbackContentHash: release.rollback_content_hash,
+  }
+  return { binding, bindingHash: launchApprovalBindingHash(binding) }
 }
 
 // A first-launch release carries no rollback artifact; require the manager
@@ -201,6 +321,23 @@ export async function approveLaunchRelease(
   if (!release.launch_action_attempt_id) {
     throw new SiteForgeLaunchError('Launch approval request is missing', 409)
   }
+  const { data: launchAction, error: launchActionError } = await client
+    .from('shared_action_attempts')
+    .select('requested_by')
+    .eq('id', release.launch_action_attempt_id)
+    .eq('property_id', input.propertyId)
+    .single()
+  if (launchActionError || !launchAction) {
+    throw new SiteForgeLaunchError(
+      'The recorded launch operator identity is unavailable',
+      409
+    )
+  }
+  assertDistinctLaunchActors({
+    operatorId: release.created_by || launchAction.requested_by,
+    reviewerId: input.approvedBy,
+  })
+  const approvalBinding = await loadLaunchApprovalBinding(release, client)
 
   if (release.state === 'certified') {
     const decision = await recordSharedApprovalDecision(
@@ -216,6 +353,8 @@ export async function approveLaunchRelease(
           contentHash: release.artifact_content_hash,
           rollbackArtifactId: release.rollback_artifact_id,
           rollbackContentHash: release.rollback_content_hash,
+          launchBinding: approvalBinding.binding,
+          launchBindingHash: approvalBinding.bindingHash,
           ...(release.rollback_artifact_id
             ? {}
             : { firstLaunchAcknowledged: true }),
@@ -236,8 +375,12 @@ export async function approveLaunchRelease(
       .update({
         launch_approval_id: decision.approval.id,
         approval_expires_at: expiresAt.toISOString(),
-        legal_rights_snapshot: legal,
         approval_rationale: input.rationale.trim(),
+        legal_rights_snapshot: {
+          ...legal,
+          launchBinding: approvalBinding.binding,
+          launchBindingHash: approvalBinding.bindingHash,
+        } as unknown as Json,
         approved_by: input.approvedBy,
         approved_at: now,
       })
@@ -259,6 +402,7 @@ export async function approveLaunchRelease(
         contentHash: release.artifact_content_hash,
         rollbackArtifactId: release.rollback_artifact_id,
         rollbackContentHash: release.rollback_content_hash,
+        launchBindingHash: approvalBinding.bindingHash,
         approvalExpiresAt: expiresAt.toISOString(),
       },
       input.requestId || null,
@@ -269,12 +413,28 @@ export async function approveLaunchRelease(
       `Release cannot be approved from ${release.state}`,
       409
     )
+  } else if (
+    release.approved_by !== input.approvedBy ||
+    asRecord(release.legal_rights_snapshot).launchBindingHash !==
+      approvalBinding.bindingHash
+  ) {
+    throw new SiteForgeLaunchError(
+      'The existing launch approval belongs to a different reviewer or binding',
+      409
+    )
+  }
+  if (release.promotion_token_hash) {
+    throw new SiteForgeLaunchError(
+      'The one-use promotion token was already issued and cannot be reissued',
+      409
+    )
   }
 
   const token = signManualPromotionToken({
     releaseId: release.id,
     artifactId: release.artifact_id,
     contentHash: release.artifact_content_hash,
+    bindingHash: approvalBinding.bindingHash,
     expiresAt: expiresAt.toISOString(),
   })
   const { data: tokenized, error: tokenError } = await client
@@ -437,16 +597,14 @@ async function loadPromotedContentManifest(
 }
 
 function cloudwaysClient(): CloudwaysProviderClient {
-  if (!process.env.CLOUDWAYS_API_KEY || !process.env.CLOUDWAYS_EMAIL) {
+  const credentials = getCloudwaysProviderCredentials()
+  if (!credentials) {
     throw new SiteForgeLaunchError(
       'Cloudways API credentials are required',
       503
     )
   }
-  return new CloudwaysProviderClient({
-    apiKey: process.env.CLOUDWAYS_API_KEY,
-    email: process.env.CLOUDWAYS_EMAIL,
-  })
+  return new CloudwaysProviderClient(credentials)
 }
 
 export function assertPromotedManifestIdentity(
@@ -461,11 +619,121 @@ export function assertPromotedManifestIdentity(
   }
 }
 
+export type LaunchRestoreExpectation =
+  | {
+      mode: 'certified_artifact'
+      expectedArtifactId: string
+      expectedContentHash: string
+      forbiddenContentHash: null
+    }
+  | {
+      mode: 'pre_siteforge_backup'
+      expectedArtifactId: null
+      expectedContentHash: null
+      forbiddenContentHash: string
+    }
+
+export type LaunchRestoreManifestObservation =
+  | {
+      verification: 'exact_siteforge_manifest'
+      manifestAvailable: true
+      contentHash: string
+    }
+  | {
+      verification: 'siteforge_manifest_absent'
+      manifestAvailable: false
+      contentHash: null
+    }
+
+export function resolveLaunchRestoreExpectation(input: {
+  rollbackArtifactId: string | null
+  rollbackContentHash: string | null
+  promotedContentHash: string
+}): LaunchRestoreExpectation {
+  if (input.rollbackArtifactId && input.rollbackContentHash) {
+    return {
+      mode: 'certified_artifact',
+      expectedArtifactId: input.rollbackArtifactId,
+      expectedContentHash: input.rollbackContentHash,
+      forbiddenContentHash: null,
+    }
+  }
+  if (input.rollbackArtifactId || input.rollbackContentHash) {
+    throw new SiteForgeLaunchError(
+      'Release has a partial rollback identity',
+      409
+    )
+  }
+  return {
+    mode: 'pre_siteforge_backup',
+    expectedArtifactId: null,
+    expectedContentHash: null,
+    forbiddenContentHash: input.promotedContentHash,
+  }
+}
+
+export function assertRestoredManifestExpectation(
+  expectation: LaunchRestoreExpectation,
+  observation: LaunchRestoreManifestObservation
+): void {
+  if (expectation.mode === 'certified_artifact') {
+    if (
+      observation.verification !== 'exact_siteforge_manifest' ||
+      observation.contentHash !== expectation.expectedContentHash
+    ) {
+      throw new SiteForgeLaunchError(
+        'Restored remote manifest does not match the certified rollback identity yet. Cloudways restores can take several minutes to take effect after the operation completes; retry this confirmation shortly.',
+        409
+      )
+    }
+    return
+  }
+  if (observation.verification !== 'siteforge_manifest_absent') {
+    throw new SiteForgeLaunchError(
+      observation.contentHash === expectation.forbiddenContentHash
+        ? 'The promoted SiteForge manifest is still active after the first-launch restore; retry this confirmation shortly.'
+        : 'First-launch recovery did not verify a pre-SiteForge state because a valid SiteForge manifest is still present.',
+      409
+    )
+  }
+}
+
+async function loadRestoredManifestObservation(
+  productionUrl: string,
+  credentialRefs: Array<string | null>,
+  expectation: LaunchRestoreExpectation
+): Promise<LaunchRestoreManifestObservation> {
+  try {
+    const manifest = await loadPromotedContentManifest(
+      productionUrl,
+      credentialRefs
+    )
+    return {
+      verification: 'exact_siteforge_manifest',
+      manifestAvailable: true,
+      contentHash: manifest.content_hash,
+    }
+  } catch (error) {
+    if (
+      expectation.mode === 'pre_siteforge_backup' &&
+      error instanceof Error &&
+      /Failed to load SiteForge content manifest \(404\)/.test(error.message)
+    ) {
+      return {
+        verification: 'siteforge_manifest_absent',
+        manifestAvailable: false,
+        contentHash: null,
+      }
+    }
+    throw error
+  }
+}
+
 async function finalizePromotedRelease(
   release: Awaited<ReturnType<typeof getLaunchRelease>>,
   targets: Awaited<ReturnType<typeof loadCloudwaysTargets>>,
-  actorId: string,
-  requestId: string | null,
+  _actorId: string,
+  _requestId: string | null,
   client: ServiceClient
 ) {
   if (release.state === 'live') return release
@@ -511,8 +779,8 @@ async function finalizePromotedRelease(
         credential_ref: targets.productionCredentialRef,
         site_url: targets.productionUrl,
         admin_url: `${targets.productionUrl.replace(/\/+$/, '')}/wp-admin`,
-        protection_mode: 'public',
-        status: 'ready',
+        protection_mode: 'noindex',
+        status: 'provisioning',
         is_active: true,
       })
       .select('id')
@@ -571,13 +839,13 @@ async function finalizePromotedRelease(
         runtime_package_sha256: artifact.runtime_package_sha256,
         runtime_manifest_sha256: null,
         approval_id: release.launch_approval_id,
-        status: 'live',
+        status: 'production_certifying',
         certification_report: integrityReport,
         remote_manifest_hash: release.artifact_content_hash,
         final_verified_content_hash: release.artifact_content_hash,
         deployed_url: targets.productionUrl,
         deployed_at: completedAt,
-        certified_at: completedAt,
+        certified_at: null,
         externally_promoted_at: release.promoted_at || completedAt,
       },
       { onConflict: 'target_id,artifact_id' }
@@ -592,20 +860,18 @@ async function finalizePromotedRelease(
   const { data: website, error: websiteError } = await client
     .from('property_websites')
     .update({
-      editor_lifecycle_status: 'production_live',
+      editor_lifecycle_status: 'certifying_production',
       production_target_id: productionTargetId,
       production_artifact_id: release.artifact_id,
       production_content_hash: release.artifact_content_hash,
       production_url: targets.productionUrl,
-      production_certified_at: completedAt,
+      production_certified_at: null,
       production_certification_report: integrityReport,
       externally_promoted_artifact_id: release.artifact_id,
       externally_promoted_at: release.promoted_at || completedAt,
-      deployed_artifact_version_id: release.artifact_id,
-      deployed_content_hash: release.artifact_content_hash,
-      deployed_at: completedAt,
       wp_url: targets.productionUrl,
-      current_step: 'Production artifact live; optional browser QA available',
+      current_step:
+        'Promotion verified; rendered production certification required before live',
       error_message: null,
       updated_at: completedAt,
     })
@@ -622,48 +888,17 @@ async function finalizePromotedRelease(
     )
   }
 
-  const { data: checkpointed, error: checkpointError } = await client
-    .from('siteforge_launch_releases')
-    .update({
-      production_certification_report: integrityReport,
-      production_certified_at: completedAt,
-    })
-    .eq('id', release.id)
-    .eq('state', 'promoted')
-    .eq('state_version', release.state_version)
-    .select('*')
-    .single()
-  if (checkpointError || !checkpointed) {
-    throw new SiteForgeLaunchError(
-      'Failed to checkpoint production manifest verification',
-      500
-    )
-  }
-  const certified = await transitionLaunchRelease(
-    checkpointed,
-    'production_certified',
-    'system',
-    actorId,
-    'Exact promoted WordPress manifest verified',
-    integrityReport,
-    requestId,
-    client
-  )
-  return transitionLaunchRelease(
-    certified,
-    'live',
-    'system',
-    actorId,
-    'Cloudways promotion completed with exact WordPress manifest identity',
-    integrityReport,
-    requestId,
-    client
-  )
+  // Manifest identity is a promotion preflight, not launch certification.
+  // The release intentionally remains promoted and protected/noindex until
+  // certifySiteForgeProduction records a complete rendered browser report and
+  // performs the production_certified -> live transitions.
+  return release
 }
 
 async function consumePromotionToken(
   release: Awaited<ReturnType<typeof getLaunchRelease>>,
   token: string,
+  bindingHash: string,
   client: ServiceClient,
   allowClaimedReconciliation = false
 ) {
@@ -671,6 +906,7 @@ async function consumePromotionToken(
     releaseId: release.id,
     artifactId: release.artifact_id,
     contentHash: release.artifact_content_hash,
+    bindingHash,
   })
   if (
     !release.promotion_token_hash ||
@@ -723,10 +959,24 @@ export async function promoteLaunchRelease(
     input.propertyId,
     client
   )
+  assertDistinctLaunchActors({
+    operatorId: release.created_by,
+    reviewerId: release.approved_by,
+    actingOperatorId: input.actorId,
+  })
+  const approvalBinding = await loadLaunchApprovalBinding(release, client)
+  const legalSnapshot = asRecord(release.legal_rights_snapshot)
+  if (legalSnapshot.launchBindingHash !== approvalBinding.bindingHash) {
+    throw new SiteForgeLaunchError(
+      'The approved launch binding no longer matches the exact release identity',
+      409
+    )
+  }
   verifyManualPromotionToken(input.promotionToken, {
     releaseId: release.id,
     artifactId: release.artifact_id,
     contentHash: release.artifact_content_hash,
+    bindingHash: approvalBinding.bindingHash,
   })
   if (
     release.state !== 'promoted' &&
@@ -813,6 +1063,37 @@ export async function promoteLaunchRelease(
         input.requestId || null,
         client
       )
+      if (release.launch_action_attempt_id) {
+        const { error: auditError } = await client
+          .from('shared_action_attempts')
+          .update({
+            lifecycle_status: 'running',
+            execution_status: 'running',
+            execution_payload: {
+              releaseId: release.id,
+              artifactId: release.artifact_id,
+              contentHash: release.artifact_content_hash,
+              backupOperationId: input.backupConfirmation.operationId,
+              backupId: input.backupConfirmation.backupId,
+            } as Json,
+            rollback_metadata: {
+              backupProvider: 'cloudways-manual',
+              backupOperationId: input.backupConfirmation.operationId,
+              backupId: input.backupConfirmation.backupId,
+              rollbackArtifactId: release.rollback_artifact_id,
+              rollbackContentHash: release.rollback_content_hash,
+            } as Json,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', release.launch_action_attempt_id)
+          .eq('reviewed_by', release.approved_by || '')
+        if (auditError) {
+          throw new SiteForgeLaunchError(
+            'Backup was verified but its shared action audit could not be updated',
+            500
+          )
+        }
+      }
     }
   }
   if (release.state === 'promoted') {
@@ -906,6 +1187,7 @@ export async function promoteLaunchRelease(
   release = await consumePromotionToken(
     release,
     input.promotionToken,
+    approvalBinding.bindingHash,
     client,
     true
   )
@@ -966,6 +1248,33 @@ export async function promoteLaunchRelease(
     input.requestId || null,
     client
   )
+  if (release.launch_action_attempt_id) {
+    const completedAt = new Date().toISOString()
+    const { error: auditError } = await client
+      .from('shared_action_attempts')
+      .update({
+        lifecycle_status: 'succeeded',
+        execution_status: 'succeeded',
+        execution_result: {
+          releaseId: release.id,
+          artifactId: release.artifact_id,
+          contentHash: release.artifact_content_hash,
+          promotionOperationId: operationId,
+          backupOperationId: release.backup_operation_id,
+          backupId: release.backup_id,
+        } as Json,
+        executed_at: completedAt,
+        updated_at: completedAt,
+      })
+      .eq('id', release.launch_action_attempt_id)
+      .eq('reviewed_by', release.approved_by || '')
+    if (auditError) {
+      throw new SiteForgeLaunchError(
+        'Promotion completed but its shared action audit could not be finalized',
+        500
+      )
+    }
+  }
   release = await finalizePromotedRelease(
     release,
     targets,
@@ -1011,6 +1320,11 @@ export async function executeLaunchProviderMutation(
     input.propertyId,
     client
   )
+  assertDistinctLaunchActors({
+    operatorId: release.created_by,
+    reviewerId: release.approved_by,
+    actingOperatorId: input.actorId,
+  })
   if (input.mutation === 'backup') {
     if (release.backup_operation_id && release.backup_id) {
       return {
@@ -1175,6 +1489,60 @@ export async function executeLaunchProviderMutation(
     jobId = reclaimed.data.id
   }
 
+  const actionType = `siteforge.launch:${input.mutation}`
+  let { data: mutationAction } = await client
+    .from('shared_action_attempts')
+    .select('id')
+    .eq('job_id', jobId)
+    .eq('action_type', actionType)
+    .maybeSingle()
+  if (!mutationAction) {
+    const createdAction = await client
+      .from('shared_action_attempts')
+      .insert({
+        job_id: jobId,
+        org_id: release.org_id,
+        property_id: release.property_id,
+        action_type: actionType,
+        lifecycle_status: 'running',
+        proposal_decision_status: 'approved',
+        execution_status: 'running',
+        requested_by: input.actorId,
+        reviewed_by: release.approved_by,
+        request_payload: {
+          releaseId: release.id,
+          websiteId: release.website_id,
+          artifactId: release.artifact_id,
+          contentHash: release.artifact_content_hash,
+          backupId: release.backup_id,
+          rollbackArtifactId: release.rollback_artifact_id,
+          rollbackContentHash: release.rollback_content_hash,
+        } as Json,
+        execution_payload: {
+          mutation: input.mutation,
+          provider: 'cloudways',
+        } as Json,
+        rollback_metadata: {
+          backupId: release.backup_id,
+          rollbackArtifactId: release.rollback_artifact_id,
+          rollbackContentHash: release.rollback_content_hash,
+        } as Json,
+        policy_reason:
+          'The exact launch operator is executing a separately reviewed provider mutation.',
+        confidence_score: 1,
+        decided_at: now,
+      })
+      .select('id')
+      .single()
+    if (createdAction.error || !createdAction.data) {
+      throw new SiteForgeLaunchError(
+        `Failed to audit the launch ${input.mutation} shared action`,
+        500
+      )
+    }
+    mutationAction = createdAction.data
+  }
+
   let output: Json
   let result: LaunchProviderMutationResult
   try {
@@ -1198,6 +1566,16 @@ export async function executeLaunchProviderMutation(
       })
       .eq('id', jobId)
       .eq('lifecycle_status', 'running')
+    await client
+      .from('shared_action_attempts')
+      .update({
+        lifecycle_status: 'failed',
+        execution_status: 'failed',
+        error_message:
+          cause instanceof Error ? cause.message : 'Unknown provider failure',
+        updated_at: failedAt,
+      })
+      .eq('id', mutationAction.id)
     throw cause
   }
 
@@ -1215,6 +1593,22 @@ export async function executeLaunchProviderMutation(
   if (checkpointError) {
     throw new SiteForgeLaunchError(
       `Failed to checkpoint the launch ${input.mutation} provider identity`,
+      500
+    )
+  }
+  const { error: actionCheckpointError } = await client
+    .from('shared_action_attempts')
+    .update({
+      lifecycle_status: 'succeeded',
+      execution_status: 'succeeded',
+      execution_result: output,
+      executed_at: completedAt,
+      updated_at: completedAt,
+    })
+    .eq('id', mutationAction.id)
+  if (actionCheckpointError) {
+    throw new SiteForgeLaunchError(
+      `Provider identity was saved but the launch ${input.mutation} shared action audit failed`,
       500
     )
   }
@@ -1324,6 +1718,11 @@ export async function restoreLaunchRelease(
     input.propertyId,
     client
   )
+  assertDistinctLaunchActors({
+    operatorId: release.created_by,
+    reviewerId: release.approved_by,
+    actingOperatorId: input.actorId,
+  })
   if (
     ![
       'promoted',
@@ -1338,16 +1737,17 @@ export async function restoreLaunchRelease(
       409
     )
   }
-  if (
-    !release.backup_id ||
-    !release.rollback_artifact_id ||
-    !release.rollback_content_hash
-  ) {
+  if (!release.backup_id) {
     throw new SiteForgeLaunchError(
-      'Release does not have a complete rollback identity',
+      'Release does not have a verified pre-promotion backup identity',
       409
     )
   }
+  const restoreExpectation = resolveLaunchRestoreExpectation({
+    rollbackArtifactId: release.rollback_artifact_id,
+    rollbackContentHash: release.rollback_content_hash,
+    promotedContentHash: release.artifact_content_hash,
+  })
   if (!input.rationale.trim())
     throw new SiteForgeLaunchError('Restore rationale is required', 400)
   if (!input.manualConfirmation) {
@@ -1468,24 +1868,16 @@ export async function restoreLaunchRelease(
       409
     )
   }
-  const remoteManifest = await loadPromotedContentManifest(
+  const remoteManifest = await loadRestoredManifestObservation(
     targets.productionUrl,
-    [targets.productionCredentialRef, targets.stagingCredentialRef]
+    [targets.productionCredentialRef, targets.stagingCredentialRef],
+    restoreExpectation
   )
-  if (remoteManifest.content_hash !== release.rollback_content_hash) {
-    // Cloudways restores can take 10-15 minutes to land after the operation
-    // reports completion, so a mismatch here usually means the restore is
-    // still propagating. The drill stays claimable and this confirmation can
-    // be retried with the same operation identity once the content lands.
-    throw new SiteForgeLaunchError(
-      'Restored remote manifest does not match the certified rollback identity yet. Cloudways restores can take several minutes to take effect after the operation completes; retry this confirmation shortly.',
-      409
-    )
-  }
+  assertRestoredManifestExpectation(restoreExpectation, remoteManifest)
 
   const { data: website, error: websiteLookupError } = await client
     .from('property_websites')
-    .select('production_artifact_id, production_content_hash')
+    .select('production_artifact_id, production_content_hash, target_domain')
     .eq('id', release.website_id)
     .single()
   if (websiteLookupError || !website) {
@@ -1494,9 +1886,55 @@ export async function restoreLaunchRelease(
       500
     )
   }
+  let dnsRestore:
+    | Awaited<ReturnType<typeof restoreDnsCutover>>
+    | null = null
+  if (website.target_domain) {
+    const { data: dnsSnapshot, error: dnsSnapshotError } = await client
+      .from('siteforge_dns_snapshots')
+      .select('id')
+      .eq('website_id', release.website_id)
+      .eq('release_id', release.id)
+      .order('captured_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (dnsSnapshotError) {
+      throw new SiteForgeLaunchError(
+        `Failed to determine whether DNS recovery is required: ${dnsSnapshotError.message}`,
+        500
+      )
+    }
+    // DNS mutation is impossible without a persisted release snapshot. A
+    // missing snapshot therefore means this post-promotion failure happened
+    // before cutover and there is no DNS state to restore.
+    if (dnsSnapshot) {
+      dnsRestore = await restoreDnsCutover(
+        {
+          releaseId: release.id,
+          websiteId: release.website_id,
+          actorId: input.actorId,
+        },
+        client
+      )
+      if (dnsRestore.manualRequired) {
+        throw new SiteForgeLaunchError(
+          `Content was restored, but exact DNS recovery requires supervised removal of provider records: ${dnsRestore.manualRemovalRecordIds.join(
+            ', '
+          )}`,
+          409
+        )
+      }
+      if (dnsRestore.propagationPending) {
+        throw new SiteForgeLaunchError(
+          'Content and DNS records were restored, but public DNS propagation is still pending',
+          409
+        )
+      }
+    }
+  }
   const alreadyProjected =
-    website.production_artifact_id === release.rollback_artifact_id &&
-    website.production_content_hash === release.rollback_content_hash
+    website.production_artifact_id === restoreExpectation.expectedArtifactId &&
+    website.production_content_hash === restoreExpectation.expectedContentHash
   if (
     !alreadyProjected &&
     (website.production_artifact_id !== release.artifact_id ||
@@ -1507,16 +1945,68 @@ export async function restoreLaunchRelease(
       409
     )
   }
+  if (release.state !== 'rolled_back') {
+    release = await transitionLaunchRelease(
+      release,
+      'rolled_back',
+      'operator',
+      input.actorId,
+      input.rationale,
+      {
+        backupId: release.backup_id,
+        operationId,
+        restoreMode: restoreExpectation.mode,
+        rollbackArtifactId: restoreExpectation.expectedArtifactId,
+        rollbackContentHash: restoreExpectation.expectedContentHash,
+        remoteManifestHash: remoteManifest.contentHash,
+        manifestAvailable: remoteManifest.manifestAvailable,
+        manifestVerification: remoteManifest.verification,
+        serverId: targets.serverId,
+        applicationId: targets.productionApplicationId,
+        dnsSnapshotId: dnsRestore?.snapshot.id || null,
+        dnsRestoredAt: dnsRestore?.snapshot.restored_at || null,
+        manual: true,
+      },
+      input.requestId || null,
+      client
+    )
+  }
   const { data: projected, error: websiteError } = alreadyProjected
     ? { data: { id: release.website_id }, error: null }
     : await client
         .from('property_websites')
         .update({
-          production_artifact_id: release.rollback_artifact_id,
-          production_content_hash: release.rollback_content_hash,
-          externally_promoted_artifact_id: release.rollback_artifact_id,
-          deployed_content_hash: release.rollback_content_hash,
-          current_step: 'Production restored to recorded rollback artifact',
+          editor_lifecycle_status:
+            restoreExpectation.mode === 'pre_siteforge_backup'
+              ? 'staging_ready'
+              : 'production_live',
+          production_artifact_id: restoreExpectation.expectedArtifactId,
+          production_content_hash: restoreExpectation.expectedContentHash,
+          production_certified_at:
+            restoreExpectation.mode === 'pre_siteforge_backup'
+              ? null
+              : undefined,
+          production_certification_report:
+            restoreExpectation.mode === 'pre_siteforge_backup'
+              ? null
+              : undefined,
+          externally_promoted_artifact_id:
+            restoreExpectation.expectedArtifactId,
+          externally_promoted_at:
+            restoreExpectation.mode === 'pre_siteforge_backup'
+              ? null
+              : undefined,
+          deployed_artifact_version_id:
+            restoreExpectation.expectedArtifactId,
+          deployed_content_hash: restoreExpectation.expectedContentHash,
+          deployed_at:
+            restoreExpectation.mode === 'pre_siteforge_backup'
+              ? null
+              : undefined,
+          current_step:
+            restoreExpectation.mode === 'pre_siteforge_backup'
+              ? 'Pre-SiteForge production backup restored'
+              : 'Production restored to recorded rollback artifact',
           updated_at: new Date().toISOString(),
         })
         .eq('id', release.website_id)
@@ -1530,33 +2020,13 @@ export async function restoreLaunchRelease(
       500
     )
   }
-  if (release.state !== 'rolled_back') {
-    release = await transitionLaunchRelease(
-      release,
-      'rolled_back',
-      'operator',
-      input.actorId,
-      input.rationale,
-      {
-        backupId: release.backup_id,
-        operationId,
-        rollbackArtifactId: release.rollback_artifact_id,
-        rollbackContentHash: release.rollback_content_hash,
-        remoteManifestHash: remoteManifest.content_hash,
-        serverId: targets.serverId,
-        applicationId: targets.productionApplicationId,
-        manual: true,
-      },
-      input.requestId || null,
-      client
-    )
-  }
   const { error: drillCloseError } = await client
     .from('siteforge_restore_drills')
     .update(
       buildRestoreDrillSuccessUpdate({
         existingReport: drill.verification_report,
-        remoteManifestHash: remoteManifest.content_hash,
+        remoteManifestHash: remoteManifest.contentHash,
+        manifestVerification: remoteManifest.verification,
         operationId,
         actorId: input.actorId,
       })
@@ -1569,12 +2039,52 @@ export async function restoreLaunchRelease(
       500
     )
   }
+  const { data: restoreJob } = await client
+    .from('shared_jobs')
+    .select('id')
+    .eq('org_id', release.org_id)
+    .eq('domain', 'siteforge.restore-request')
+    .eq('dedupe_key', `siteforge-restore-request:${release.id}`)
+    .maybeSingle()
+  if (restoreJob) {
+    const completedAt = new Date().toISOString()
+    const { error: restoreAuditError } = await client
+      .from('shared_action_attempts')
+      .update({
+        lifecycle_status: 'succeeded',
+        execution_status: 'succeeded',
+        execution_result: {
+          releaseId: release.id,
+          operationId,
+          remoteManifestHash: remoteManifest.contentHash,
+          manifestAvailable: remoteManifest.manifestAvailable,
+          manifestVerification: remoteManifest.verification,
+          dnsSnapshotId: dnsRestore?.snapshot.id || null,
+          dnsRestoredAt: dnsRestore?.snapshot.restored_at || null,
+        } as Json,
+        executed_at: completedAt,
+        updated_at: completedAt,
+      })
+      .eq('job_id', restoreJob.id)
+      .eq('action_type', 'siteforge.launch:restore')
+      .eq('requested_by', input.actorId)
+      .eq('reviewed_by', release.approved_by || '')
+    if (restoreAuditError) {
+      throw new SiteForgeLaunchError(
+        'Restore succeeded but its shared action audit could not be finalized',
+        500
+      )
+    }
+  }
   return { release, manualRequired: false as const }
 }
 
 export function buildRestoreDrillSuccessUpdate(input: {
   existingReport: unknown
-  remoteManifestHash: string
+  remoteManifestHash: string | null
+  manifestVerification:
+    | 'exact_siteforge_manifest'
+    | 'siteforge_manifest_absent'
   operationId: string
   actorId: string
 }) {
@@ -1588,6 +2098,7 @@ export function buildRestoreDrillSuccessUpdate(input: {
     verification_report: {
       ...existing,
       remoteManifestHash: input.remoteManifestHash,
+      manifestVerification: input.manifestVerification,
       verifiedOperationId: input.operationId,
       verifiedBy: input.actorId,
     },
@@ -1616,6 +2127,11 @@ export async function requestLaunchRestore(
     input.propertyId,
     client
   )
+  assertDistinctLaunchActors({
+    operatorId: release.created_by,
+    reviewerId: release.approved_by,
+    actingOperatorId: input.actorId,
+  })
   if (
     !['promoted', 'production_certified', 'live', 'failed'].includes(
       release.state
@@ -1626,16 +2142,17 @@ export async function requestLaunchRestore(
       409
     )
   }
-  if (
-    !release.backup_id ||
-    !release.rollback_artifact_id ||
-    !release.rollback_content_hash
-  ) {
+  if (!release.backup_id) {
     throw new SiteForgeLaunchError(
-      'Restore request requires the observed rollback artifact and backup identity',
+      'Restore request requires the verified pre-promotion backup identity',
       409
     )
   }
+  const restoreExpectation = resolveLaunchRestoreExpectation({
+    rollbackArtifactId: release.rollback_artifact_id,
+    rollbackContentHash: release.rollback_content_hash,
+    promotedContentHash: release.artifact_content_hash,
+  })
 
   let protectionApplied = false
   let protectionError: string | null = null
@@ -1665,8 +2182,9 @@ export async function requestLaunchRestore(
       protectionApplied,
       protectionError,
       backupId: release.backup_id,
-      rollbackArtifactId: release.rollback_artifact_id,
-      rollbackContentHash: release.rollback_content_hash,
+      restoreMode: restoreExpectation.mode,
+      rollbackArtifactId: restoreExpectation.expectedArtifactId,
+      rollbackContentHash: restoreExpectation.expectedContentHash,
       executionRequiresOperator: true,
     } as Json,
     updated_at: now,
@@ -1758,6 +2276,58 @@ export async function requestLaunchRestore(
       500
     )
   }
+  let { data: restoreAction } = await client
+    .from('shared_action_attempts')
+    .select('id')
+    .eq('job_id', job.id)
+    .eq('action_type', 'siteforge.launch:restore')
+    .maybeSingle()
+  if (!restoreAction) {
+    const createdAction = await client
+      .from('shared_action_attempts')
+      .insert({
+        job_id: job.id,
+        org_id: release.org_id,
+        property_id: release.property_id,
+        action_type: 'siteforge.launch:restore',
+        lifecycle_status: 'queued',
+        proposal_decision_status: 'approved',
+        execution_status: 'pending_approval',
+        requested_by: input.actorId,
+        reviewed_by: release.approved_by,
+        request_payload: {
+          releaseId: release.id,
+          artifactId: release.artifact_id,
+          contentHash: release.artifact_content_hash,
+          backupId: release.backup_id,
+          restoreMode: restoreExpectation.mode,
+          rollbackArtifactId: restoreExpectation.expectedArtifactId,
+          rollbackContentHash: restoreExpectation.expectedContentHash,
+          rationale: input.rationale,
+          source: input.source,
+        } as Json,
+        execution_payload: { releaseId: release.id } as Json,
+        rollback_metadata: {
+          backupId: release.backup_id,
+          restoreMode: restoreExpectation.mode,
+          rollbackArtifactId: restoreExpectation.expectedArtifactId,
+          rollbackContentHash: restoreExpectation.expectedContentHash,
+        } as Json,
+        policy_reason:
+          'Supervised restore is bound to the separately approved rollback and backup identities.',
+        confidence_score: 1,
+        decided_at: now,
+      })
+      .select('id')
+      .single()
+    if (createdAction.error || !createdAction.data) {
+      throw new SiteForgeLaunchError(
+        'Failed to persist the supervised restore shared action',
+        500
+      )
+    }
+    restoreAction = createdAction.data
+  }
 
   const { data: existingDrill, error: drillLookupError } = await client
     .from('siteforge_restore_drills')
@@ -1802,11 +2372,21 @@ export async function requestLaunchRestore(
           website_id: release.website_id,
           release_id: release.id,
           backup_id: release.backup_id,
-          expected_artifact_id: release.rollback_artifact_id,
-          expected_content_hash: release.rollback_content_hash,
+          expected_artifact_id: restoreExpectation.expectedArtifactId,
+          // The current schema keeps this legacy column non-null. In
+          // pre-SiteForge mode it stores the promoted hash as a forbidden
+          // identity; the report below is the honest nullable expectation.
+          expected_content_hash:
+            restoreExpectation.expectedContentHash ||
+            restoreExpectation.forbiddenContentHash ||
+            release.artifact_content_hash,
           status: 'verifying',
           verification_report: {
             requestType: input.source,
+            restoreMode: restoreExpectation.mode,
+            expectedArtifactId: restoreExpectation.expectedArtifactId,
+            expectedContentHash: restoreExpectation.expectedContentHash,
+            forbiddenContentHash: restoreExpectation.forbiddenContentHash,
             executionRequiresOperator: true,
             restoreCompleted: false,
             protectionApplied,

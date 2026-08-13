@@ -22,6 +22,7 @@
 # production
 /build
 /runtime-assets/*.zip
+/runtime-assets/*.manifest.*
 
 # misc
 .DS_Store

@@ -1,9 +1,8 @@
 'use client'
 
-import Image from 'next/image'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { partitionUploadResults } from './orchestration'
+import { SiteForgeAssetRoom } from './SiteForgeAssetRoom'
 
 type AssetCategory =
   | 'hero'
@@ -65,16 +64,6 @@ type FloorPlanPreview = {
   canConfirm: boolean
 }
 
-const photoCategories: Array<{ value: AssetCategory; label: string }> = [
-  { value: 'hero', label: 'Hero / exterior' },
-  { value: 'amenity', label: 'Amenities' },
-  { value: 'interior', label: 'Apartment interiors' },
-  { value: 'lifestyle', label: 'Lifestyle' },
-  { value: 'gallery', label: 'Gallery' },
-  { value: 'neighborhood', label: 'Neighborhood' },
-  { value: 'exterior', label: 'Building exterior' },
-]
-
 function emptyFloorPlan(): FloorPlanDraft {
   return {
     id: crypto.randomUUID(),
@@ -108,7 +97,6 @@ export function PropertyAssetsStep({
   onPhotoCountChange?: (count: number) => void
 }) {
   const [assets, setAssets] = useState<PropertyAsset[]>([])
-  const [category, setCategory] = useState<AssetCategory>('hero')
   const [uploading, setUploading] = useState(false)
   const [assetError, setAssetError] = useState('')
   const [floorPlanMode, setFloorPlanMode] = useState<'manual' | 'csv'>('manual')
@@ -122,15 +110,6 @@ export function PropertyAssetsStep({
   const [previewing, setPreviewing] = useState(false)
   const [confirming, setConfirming] = useState(false)
 
-  const photoAssets = useMemo(
-    () => assets.filter((asset) => asset.category !== 'floorplan'),
-    [assets]
-  )
-  const approvedPhotoCount = useMemo(
-    () => photoAssets.filter((asset) => asset.approvalStatus === 'approved').length,
-    [photoAssets]
-  )
-
   const loadAssets = useCallback(async () => {
     const response = await fetch(
       `/api/siteforge/assets?propertyId=${encodeURIComponent(propertyId)}`
@@ -143,13 +122,7 @@ export function PropertyAssetsStep({
       ? (body.assets as PropertyAsset[])
       : []
     setAssets(nextAssets)
-    onPhotoCountChange?.(
-      nextAssets.filter(
-        (asset) =>
-          asset.category !== 'floorplan' && asset.approvalStatus === 'approved'
-      ).length
-    )
-  }, [onPhotoCountChange, propertyId])
+  }, [propertyId])
 
   useEffect(() => {
     void loadAssets().catch((error) => {
@@ -180,46 +153,23 @@ export function PropertyAssetsStep({
     return body.asset as PropertyAsset
   }
 
-  async function uploadPhotos(files: FileList | null) {
-    if (!files?.length) return
-    setUploading(true)
-    setAssetError('')
-    try {
-      const selectedFiles = Array.from(files)
-      const results = await Promise.allSettled(
-        selectedFiles.map((file) => uploadAsset(file, category))
-      )
-      const { succeeded: created, failedNames: failedFiles } =
-        partitionUploadResults(selectedFiles, results)
-      if (created.length > 0) {
-        setAssets((current) => [...created, ...current])
-        onPhotoCountChange?.(approvedPhotoCount)
-      }
-
-      if (failedFiles.length > 0) {
-        setAssetError(
-          `${created.length} photo${created.length === 1 ? '' : 's'} uploaded. Could not upload: ${failedFiles.join(', ')}.`
-        )
-      }
-    } catch {
-      setAssetError('Image upload failed before any files could be saved')
-    } finally {
-      setUploading(false)
-    }
-  }
-
   async function approveAsset(asset: PropertyAsset) {
     setAssetError('')
-    const response = await fetch('/api/brandforge/content-assets', {
+    const response = await fetch('/api/siteforge/assets', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         propertyId,
-        assetId: asset.id,
-        approvalStatus: 'approved',
-        rightsStatus: 'owned',
-        rightsMetadata: { operatorConfirmed: true },
-        altText: asset.altText || asset.filename,
+        updates: [
+          {
+            assetId: asset.id,
+            approvalStatus: 'approved',
+            curationStatus: 'approved',
+            rightsStatus: 'owned',
+            rightsMetadata: { operatorConfirmed: true },
+            altText: asset.altText || asset.filename,
+          },
+        ],
       }),
     })
     if (!response.ok) {
@@ -232,30 +182,6 @@ export function PropertyAssetsStep({
         : item
     )
     setAssets(nextAssets)
-    onPhotoCountChange?.(
-      nextAssets.filter(
-        (item) =>
-          item.category !== 'floorplan' && item.approvalStatus === 'approved'
-      ).length
-    )
-  }
-
-  async function deleteAsset(asset: PropertyAsset) {
-    setAssetError('')
-    const response = await fetch('/api/siteforge/assets', {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ propertyId, assetId: asset.id }),
-    })
-    if (!response.ok) {
-      setAssetError(await responseError(response, 'Could not remove image'))
-      return
-    }
-    const nextAssets = assets.filter((item) => item.id !== asset.id)
-    setAssets(nextAssets)
-    onPhotoCountChange?.(
-      nextAssets.filter((item) => item.category !== 'floorplan').length
-    )
   }
 
   function updateFloorPlan(
@@ -420,7 +346,7 @@ export function PropertyAssetsStep({
   }
 
   return (
-    <section className="mb-4 space-y-5 rounded-lg border p-4">
+    <section className="mb-4 min-w-0 space-y-5 rounded-lg border p-4">
       <div>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-sm font-semibold">Property assets</h3>
@@ -434,101 +360,12 @@ export function PropertyAssetsStep({
         </p>
       </div>
 
-      <div className="space-y-3">
-        <div>
-          <h4 className="text-sm font-medium">Property photography</h4>
-          <p className="text-xs text-gray-500">
-            Upload JPG, PNG, or WebP files up to 20MB each and tell SiteForge
-            where they belong.
-          </p>
-        </div>
-        <div className="grid gap-2 sm:grid-cols-[180px_1fr]">
-          <select
-            value={category}
-            onChange={(event) =>
-              setCategory(event.target.value as AssetCategory)
-            }
-            className="h-10 rounded-md border bg-background px-3 text-sm"
-            aria-label="Photo category"
-          >
-            {photoCategories.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-          <label className="flex min-h-10 cursor-pointer items-center justify-center rounded-md border border-dashed px-3 text-sm hover:bg-gray-50 dark:hover:bg-gray-900">
-            {uploading ? 'Uploading…' : 'Choose or drop property photos'}
-            <input
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              multiple
-              className="sr-only"
-              disabled={uploading}
-              onChange={(event) => {
-                void uploadPhotos(event.target.files)
-                event.currentTarget.value = ''
-              }}
-            />
-          </label>
-        </div>
-        {assetError && (
-          <p className="rounded-md bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-950/40 dark:text-red-300">
-            {assetError}
-          </p>
-        )}
-        {photoAssets.length > 0 ? (
-          <div className="grid gap-3 sm:grid-cols-3">
-            {photoAssets.map((asset) => (
-              <div key={asset.id} className="overflow-hidden rounded-md border">
-                <div className="relative aspect-[4/3] bg-gray-100 dark:bg-gray-900">
-                  <Image
-                    src={asset.url}
-                    alt={asset.altText || asset.filename}
-                    fill
-                    unoptimized
-                    sizes="(max-width: 640px) 100vw, 33vw"
-                    className="object-cover"
-                  />
-                </div>
-                <div className="space-y-1 p-2">
-                  <div className="truncate text-xs font-medium">
-                    {asset.filename}
-                  </div>
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[11px] capitalize text-gray-500">
-                      {asset.category}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => void deleteAsset(asset)}
-                      className="text-[11px] text-red-600 hover:underline"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                  {asset.approvalStatus !== 'approved' && (
-                    <button
-                      type="button"
-                      onClick={() => void approveAsset(asset)}
-                      className="text-[11px] font-medium text-emerald-700 hover:underline"
-                    >
-                      Confirm ownership and approve
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="rounded-md bg-gray-50 px-3 py-4 text-center text-xs text-gray-500 dark:bg-gray-900">
-            No photos added yet. Missing categories will use polished,
-            replaceable placeholders.
-          </div>
-        )}
-      </div>
+      <SiteForgeAssetRoom
+        propertyId={propertyId}
+        onUsablePhotoCountChange={onPhotoCountChange}
+      />
 
-      <div className="space-y-3 border-t pt-4">
+      <div className="min-w-0 space-y-3 border-t pt-4">
         <div>
           <h4 className="text-sm font-medium">Floor plans</h4>
           <p className="text-xs text-gray-500">
@@ -538,6 +375,11 @@ export function PropertyAssetsStep({
             hidden on the public site.
           </p>
         </div>
+        {assetError && (
+          <p className="rounded-md bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-950/40 dark:text-red-300">
+            {assetError}
+          </p>
+        )}
         <div className="flex gap-2">
           <Button
             type="button"
@@ -566,7 +408,10 @@ export function PropertyAssetsStep({
         {floorPlanMode === 'manual' ? (
           <div className="space-y-3">
             {floorPlans.map((row, index) => (
-              <div key={row.id} className="space-y-3 rounded-md border p-3">
+              <div
+                key={row.id}
+                className="min-w-0 space-y-3 rounded-md border p-3"
+              >
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-xs font-semibold">
                     Floor plan {index + 1}
@@ -585,7 +430,7 @@ export function PropertyAssetsStep({
                     </button>
                   )}
                 </div>
-                <div className="grid gap-2 sm:grid-cols-4">
+                <div className="grid min-w-0 gap-2 sm:grid-cols-4">
                   <AssetInput
                     label="Plan name *"
                     value={row.name}
@@ -685,7 +530,7 @@ export function PropertyAssetsStep({
                     className="sm:col-span-2"
                   />
                 </div>
-                <div className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-end">
+                <div className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
                   <AssetInput
                     label="Floor-plan image alt text"
                     value={row.imageAlt}

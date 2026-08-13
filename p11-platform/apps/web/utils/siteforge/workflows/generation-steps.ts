@@ -19,7 +19,7 @@ import {
   extractSourcedMapLocation,
   finalizeSiteForgePages,
 } from '@/utils/siteforge/generation/finalize-pages'
-import { loadApprovedFloorPlanSnapshot } from '@/utils/siteforge/providers/floor-plan-repository'
+import { loadFreshApprovedFloorPlanInventory } from '@/utils/siteforge/providers/floor-plan-repository'
 import {
   buildWordPressThemeArtifact,
   type WordPressFontAsset,
@@ -34,6 +34,7 @@ import { verifyKnowledgeBaseEvidenceIds } from '@/utils/siteforge/quality/knowle
 import type { GeneratedPage, GenerationPreferences } from '@/types/siteforge'
 import type { Json, TablesUpdate } from '@/types/supabase'
 import {
+  type SiteForgeGenerationEvidenceSnapshot,
   siteForgePlanSchema,
   type SiteForgePlan,
 } from '@/utils/siteforge/contracts'
@@ -42,6 +43,17 @@ import {
 } from '@/utils/brandforge/contracts'
 import { hashBrandForgeContract } from '@/utils/brandforge/normalize'
 import { brandContextFromContract } from '@/utils/siteforge/brand-contract-adapter'
+import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
+import {
+  assertSiteForgeGenerationEvidenceCurrent,
+} from '@/utils/siteforge/plans/repository'
+import { SITEFORGE_PLACEHOLDER_EVIDENCE_ID } from '@/utils/siteforge/generation/evidence-safe-content'
+import {
+  assertRegisteredSiteForgeArchitecture,
+  composeApprovedSiteForgeArchitecture,
+  parseSiteForgeCreativeExecutionContext,
+  type SiteForgeCreativeExecutionContext,
+} from '@/utils/siteforge/generation/creative-execution'
 
 export type SiteForgeGenerationWorkflowInput = {
   sharedJobId: string
@@ -52,11 +64,171 @@ export type SiteForgeGenerationWorkflowInput = {
   planVersionId: string
   preferences: GenerationPreferences
   prompt: string
+  approvedBrief?: Record<string, unknown>
+  approvedCreativeDirection?: Record<string, unknown>
+  evidenceSnapshot?: SiteForgeGenerationEvidenceSnapshot
   startedAt: string
 }
 
 export const SITEFORGE_LEGAL_REMEDIATION =
   'Complete and approve every Legal section in property onboarding, then reconfirm the SiteForge plan before generating a new artifact.'
+
+type EvidenceBoundGenerationInput = SiteForgeGenerationWorkflowInput & {
+  approvedBrief: Record<string, unknown>
+  approvedCreativeDirection: Record<string, unknown>
+  evidenceSnapshot: SiteForgeGenerationEvidenceSnapshot
+}
+
+function requireEvidenceBoundGenerationInput(
+  input: SiteForgeGenerationWorkflowInput
+): asserts input is EvidenceBoundGenerationInput {
+  if (
+    !input.approvedBrief ||
+    !input.approvedCreativeDirection ||
+    !input.evidenceSnapshot
+  ) {
+    throw new FatalError(
+      'Generation requires an approved brief, creative direction, and evidence snapshot; start a new generation request'
+    )
+  }
+}
+
+function creativeExecutionFromInput(
+  input: SiteForgeGenerationWorkflowInput
+): SiteForgeCreativeExecutionContext {
+  requireEvidenceBoundGenerationInput(input)
+  return parseSiteForgeCreativeExecutionContext({
+    approvedBrief: input.approvedBrief,
+    approvedCreativeDirection: input.approvedCreativeDirection,
+  })
+}
+
+type TopologyPage = {
+  slug: string
+  title: string
+  sections: Array<{ id: string; block: string }>
+}
+
+export type SiteForgeTopologyDiff = {
+  matches: boolean
+  expected: TopologyPage[]
+  actual: TopologyPage[]
+  changes: string[]
+}
+
+export function buildSiteForgeTopologyDiff(
+  confirmedPlan: Pick<SiteForgePlan, 'pages'>,
+  pages: GeneratedPage[]
+): SiteForgeTopologyDiff {
+  const expected = confirmedPlan.pages.map(page => ({
+    slug: page.slug,
+    title: page.title,
+    sections: page.sections.map(section => ({
+      id: section.id,
+      block: section.block,
+    })),
+  }))
+  const actual = pages.map(page => ({
+    slug: page.slug,
+    title: page.title,
+    sections: page.sections.map(section => ({
+      id: section.id || '',
+      block: section.acfBlock || '',
+    })),
+  }))
+  const changes: string[] = []
+  const expectedBySlug = new Map(expected.map((page, index) => [page.slug, { page, index }]))
+  const actualBySlug = new Map(actual.map((page, index) => [page.slug, { page, index }]))
+
+  for (const { page, index } of expectedBySlug.values()) {
+    const generated = actualBySlug.get(page.slug)
+    if (!generated) {
+      changes.push(`page removed: ${page.slug}`)
+      continue
+    }
+    if (generated.index !== index) {
+      changes.push(`page moved: ${page.slug} ${index}->${generated.index}`)
+    }
+    if (generated.page.title !== page.title) {
+      changes.push(`page title changed: ${page.slug}`)
+    }
+    const expectedSections = page.sections.map(section => `${section.id}:${section.block}`)
+    const actualSections = generated.page.sections.map(
+      section => `${section.id}:${section.block}`
+    )
+    if (JSON.stringify(actualSections) !== JSON.stringify(expectedSections)) {
+      changes.push(
+        `section topology changed: ${page.slug} expected [${expectedSections.join(', ')}] actual [${actualSections.join(', ')}]`
+      )
+    }
+  }
+  for (const { page } of actualBySlug.values()) {
+    if (!expectedBySlug.has(page.slug)) {
+      changes.push(`page added: ${page.slug}`)
+    }
+  }
+
+  return {
+    matches: changes.length === 0,
+    expected,
+    actual,
+    changes,
+  }
+}
+
+const FORBIDDEN_GENERATED_COPY =
+  /\b(?:click to edit|lorem ipsum|placeholder|todo|xxx|content for the .+ section)\b/i
+
+function stringLeaves(value: unknown): string[] {
+  if (typeof value === 'string') return [value]
+  if (Array.isArray(value)) return value.flatMap(stringLeaves)
+  if (value && typeof value === 'object') {
+    return Object.values(value as Record<string, unknown>).flatMap(stringLeaves)
+  }
+  return []
+}
+
+export function assertPublishableGeneratedPages(pages: GeneratedPage[]): void {
+  const placeholderLocations = pages.flatMap(page =>
+    page.sections.flatMap(section => {
+      const strings = stringLeaves(section.content)
+      const hasPlaceholder =
+        section.evidenceIds?.includes(SITEFORGE_PLACEHOLDER_EVIDENCE_ID) ||
+        strings.some(value => FORBIDDEN_GENERATED_COPY.test(value))
+      return hasPlaceholder ? [`${page.slug}/${section.id || section.type}`] : []
+    })
+  )
+  if (placeholderLocations.length) {
+    throw new FatalError(
+      `Generated pages contain non-publishable placeholder copy: ${placeholderLocations.join(', ')}`
+    )
+  }
+}
+
+export function assertApprovedGenerationPhotoManifest(
+  input: SiteForgeGenerationWorkflowInput,
+  manifest: PhotoManifest
+): void {
+  requireEvidenceBoundGenerationInput(input)
+  const approvedIds = new Set(
+    input.evidenceSnapshot.assetManifest.assets.map(asset => asset.id)
+  )
+  const invalid = manifest.photos.filter(photo => {
+    const sourceId = photo.sourceAssetId || photo.id
+    return (
+      photo.id.startsWith('siteforge-placeholder-') ||
+      photo.url.toLowerCase().includes('placeholder') ||
+      !approvedIds.has(sourceId)
+    )
+  })
+  if (invalid.length) {
+    throw new FatalError(
+      `Photo output is outside the approved rights-cleared asset manifest: ${invalid
+        .map(photo => photo.id)
+        .join(', ')}`
+    )
+  }
+}
 
 export function resolveApprovedLegalContractForGeneration(
   confirmedPlan: Pick<SiteForgePlan, 'onboardingSnapshot'>,
@@ -221,42 +393,24 @@ export async function loadConfirmedSiteForgePlan(
 ): Promise<SiteForgePlan> {
   'use step'
 
-  const supabase = createServiceClient()
-  const { data, error } = await supabase
-    .from('siteforge_plan_versions')
-    .select(`
-      plan,
-      plan_id,
-      revision,
-      onboarding_snapshot_id,
-      onboarding_snapshot_hash,
-      brand_asset_id,
-      brand_contract_version,
-      brand_contract_hash
-    `)
-    .eq('id', input.planVersionId)
-    .single()
-  if (error || !data) {
+  requireEvidenceBoundGenerationInput(input)
+  const context = await assertSiteForgeGenerationEvidenceCurrent(
+    input.evidenceSnapshot
+  )
+  if (
+    context.websiteId !== input.websiteId ||
+    context.propertyId !== input.propertyId ||
+    context.orgId !== input.orgId ||
+    context.planVersionId !== input.planVersionId ||
+    hashSiteForgeContent(input.approvedBrief) !== hashSiteForgeContent(context.brief) ||
+    hashSiteForgeContent(input.approvedCreativeDirection) !==
+      hashSiteForgeContent(context.creativeDirection)
+  ) {
     throw new FatalError(
-      `Confirmed SiteForge plan revision is unavailable: ${error?.message || 'not found'}`
+      'Generation input does not match the approved evidence snapshot'
     )
   }
-  const plan = siteForgePlanSchema.parse(data.plan)
-  if (plan.propertyId !== input.propertyId) {
-    throw new FatalError('Confirmed SiteForge plan belongs to another property')
-  }
-  if (
-    !plan.onboardingSnapshot
-    || !plan.brandSnapshot
-    || plan.onboardingSnapshot.id !== data.onboarding_snapshot_id
-    || plan.onboardingSnapshot.contentHash !== data.onboarding_snapshot_hash
-    || plan.brandSnapshot.assetId !== data.brand_asset_id
-    || plan.brandSnapshot.contractVersion !== data.brand_contract_version
-    || plan.brandSnapshot.contractHash !== data.brand_contract_hash
-  ) {
-    throw new FatalError('Confirmed SiteForge plan is missing or mismatches pinned readiness truth')
-  }
-  return plan
+  return context.plan
 }
 
 export async function planSiteForgeArchitectureAndDesign(
@@ -269,8 +423,17 @@ export async function planSiteForgeArchitectureAndDesign(
   console.info('[siteforge_workflow] architecture and design started', {
     sharedJobId: input.sharedJobId,
   })
-  const architecture = architectureFromConfirmedPlan(confirmedPlan)
-  const designSystem = await new DesignAgent(input.propertyId).createSystem(brandContext)
+  const execution = creativeExecutionFromInput(input)
+  const architecture = composeApprovedSiteForgeArchitecture(
+    confirmedPlan,
+    execution
+  )
+  assertRegisteredSiteForgeArchitecture(architecture)
+  const designSystem = await new DesignAgent(input.propertyId).createSystem(
+    brandContext,
+    undefined,
+    execution
+  )
   return { architecture, designSystem }
 }
 
@@ -335,7 +498,11 @@ export async function planSiteForgePhotos(
   console.info('[siteforge_workflow] photo planning started', {
     sharedJobId: input.sharedJobId,
   })
-  return new PhotoAgent(input.propertyId).planStrategy(brandContext, architecture)
+  return new PhotoAgent(input.propertyId).planStrategy(
+    brandContext,
+    architecture,
+    creativeExecutionFromInput(input)
+  )
 }
 
 export async function generateSiteForgeContent(
@@ -348,7 +515,13 @@ export async function generateSiteForgeContent(
   console.info('[siteforge_workflow] content generation started', {
     sharedJobId: input.sharedJobId,
   })
-  return new ContentAgent(input.propertyId).generateAll(architecture, brandContext)
+  const pages = await new ContentAgent(input.propertyId).generateAll(
+    architecture,
+    brandContext,
+    creativeExecutionFromInput(input)
+  )
+  assertPublishableGeneratedPages(pages)
+  return pages
 }
 
 export async function executeSiteForgePhotos(
@@ -362,12 +535,18 @@ export async function executeSiteForgePhotos(
   console.info('[siteforge_workflow] photo execution started', {
     sharedJobId: input.sharedJobId,
   })
-  return new PhotoAgent(input.propertyId).execute(strategy, pages, brandContext)
+  const manifest = await new PhotoAgent(input.propertyId).execute(
+    strategy,
+    pages,
+    brandContext
+  )
+  assertApprovedGenerationPhotoManifest(input, manifest)
+  return manifest
 }
 
 export async function validateSiteForgeOutput(
   input: SiteForgeGenerationWorkflowInput,
-  _confirmedPlan: SiteForgePlan,
+  confirmedPlan: SiteForgePlan,
   pages: GeneratedPage[],
   designSystem: DesignSystem,
   photoManifest: PhotoManifest,
@@ -378,6 +557,18 @@ export async function validateSiteForgeOutput(
   console.info('[siteforge_workflow] quality validation started', {
     sharedJobId: input.sharedJobId,
   })
+  const topologyDiff = buildSiteForgeTopologyDiff(confirmedPlan, pages)
+  if (!topologyDiff.matches) {
+    console.error('[siteforge_workflow] generation topology drift', {
+      sharedJobId: input.sharedJobId,
+      topologyDiff,
+    })
+    throw new FatalError(
+      `Generated topology differs from the confirmed plan: ${JSON.stringify(topologyDiff)}`
+    )
+  }
+  assertPublishableGeneratedPages(pages)
+  assertApprovedGenerationPhotoManifest(input, photoManifest)
   const wpCapabilities = await new WordPressMcpClient().getCapabilities(
     'template-collection-theme'
   )
@@ -415,6 +606,8 @@ export async function persistSiteForgeGenerationArtifact(
     websiteId: input.websiteId,
     planVersionId: input.planVersionId,
   })
+  requireEvidenceBoundGenerationInput(input)
+  const execution = creativeExecutionFromInput(input)
   const generationTime = Math.max(
     0,
     Date.now() - new Date(input.startedAt).getTime()
@@ -435,11 +628,31 @@ export async function persistSiteForgeGenerationArtifact(
     onboardingError ? null : onboardingSnapshot
   )
   const propertySnapshot = onboardingSnapshot!.snapshot_payload
+  assertPublishableGeneratedPages(pages)
+  assertApprovedGenerationPhotoManifest(input, photoManifest)
   const durablePhotoManifest = await persistSiteForgeAssets(
     input.websiteId,
     photoManifest
   )
-  const floorPlanSnapshot = await loadApprovedFloorPlanSnapshot(input.propertyId)
+  const floorPlanInventory = await loadFreshApprovedFloorPlanInventory(
+    input.propertyId,
+    supabase,
+    now,
+    confirmedPlan.floorPlanStrategy.freshnessHours
+  )
+  const floorPlanSnapshot = floorPlanInventory.snapshot
+  if (
+    input.evidenceSnapshot.inventory.required &&
+    (
+      floorPlanInventory.stale ||
+      floorPlanSnapshot.rows.length === 0 ||
+      floorPlanSnapshot.contentHash !== input.evidenceSnapshot.inventory.contentHash
+    )
+  ) {
+    throw new FatalError(
+      'Approved floor-plan inventory changed, became stale, or is no longer publishable'
+    )
+  }
   const { data: approvedPointsOfInterest, error: pointsOfInterestError } =
     await supabase
       .from('property_points_of_interest')
@@ -501,9 +714,11 @@ export async function persistSiteForgeGenerationArtifact(
         lead: confirmedPlan.conversionStrategy.leadDestination,
         tour: confirmedPlan.conversionStrategy.tourDestination,
       },
+      floorPlanStrategy: confirmedPlan.floorPlanStrategy,
     },
     approvedReviews
   )
+  assertPublishableGeneratedPages(finalizedPages)
   if (!qualityReport.passed) {
     console.warn('[siteforge_workflow] advisory AI quality score below target', {
       sharedJobId: input.sharedJobId,
@@ -586,6 +801,14 @@ export async function persistSiteForgeGenerationArtifact(
       enforcedDesignSystem.colorSystem[roleName] = approved[0].hex
     }
   }
+  enforcedDesignSystem.colorSystem = {
+    ...enforcedDesignSystem.colorSystem,
+    primary: execution.direction.palette.primary,
+    secondary: execution.direction.palette.secondary,
+    accent: execution.direction.palette.accent,
+    background: execution.direction.palette.background,
+    reasoning: `Exact hash-bound approved creative-direction palette. ${execution.direction.rationale}`,
+  }
   const wordpressThemeArtifact = buildWordPressThemeArtifact(
     enforcedDesignSystem,
     wordpressCapabilities,
@@ -645,6 +868,10 @@ export async function persistSiteForgeGenerationArtifact(
     propertySnapshot,
     updatedAt: now,
     confirmedPlan,
+    generationEvidence: input.evidenceSnapshot,
+    topologyDiff: buildSiteForgeTopologyDiff(confirmedPlan, pages),
+    approvedBrief: input.approvedBrief,
+    approvedCreativeDirection: input.approvedCreativeDirection,
     brandSnapshot: confirmedPlan.brandSnapshot,
     onboardingSnapshot: confirmedPlan.onboardingSnapshot,
     brandContext,
@@ -704,6 +931,12 @@ export async function persistSiteForgeGenerationArtifact(
     } as unknown as Json,
     qualityScore: qualityReport.score,
   })
+  const expectedArtifactContentHash = hashSiteForgeContent(blueprint)
+  if (artifact.contentHash !== expectedArtifactContentHash) {
+    throw new FatalError(
+      'Published artifact content hash does not cover the exact generated blueprint'
+    )
+  }
 
   const result = {
     artifactId: artifact.id,

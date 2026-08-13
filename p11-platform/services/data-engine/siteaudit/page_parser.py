@@ -138,12 +138,35 @@ def parse_page(url: str, html: str, origin: str) -> Dict[str, Any]:
 
     meta_description = None
     meta_robots = None
+    metadata: Dict[str, str] = {}
     for meta in soup.find_all("meta"):
         name = (meta.get("name") or "").lower()
+        property_name = (meta.get("property") or "").lower()
+        content_value = (meta.get("content") or "").strip()
         if name == "description" and meta_description is None:
-            meta_description = (meta.get("content") or "").strip() or None
+            meta_description = content_value or None
         elif name == "robots" and meta_robots is None:
-            meta_robots = (meta.get("content") or "").strip() or None
+            meta_robots = content_value or None
+        metadata_key = property_name or name
+        if (
+            metadata_key
+            and content_value
+            and metadata_key
+            in {
+                "description",
+                "robots",
+                "og:title",
+                "og:description",
+                "og:image",
+                "og:url",
+                "og:type",
+                "twitter:card",
+                "twitter:title",
+                "twitter:description",
+                "twitter:image",
+            }
+        ):
+            metadata.setdefault(metadata_key, content_value[:2000])
 
     canonical_url = None
     canonical_tag = soup.find("link", rel=lambda value: value and "canonical" in value)
@@ -208,6 +231,31 @@ def parse_page(url: str, html: str, origin: str) -> Dict[str, Any]:
             }
         )
 
+    # Form definitions are inventory only. Never capture values, cookies, or
+    # credentials from the source site.
+    forms: List[Dict[str, Any]] = []
+    for form_index, form in enumerate(soup.find_all("form")):
+        fields: List[Dict[str, Any]] = []
+        for field in form.find_all(["input", "select", "textarea", "button"]):
+            field_type = (field.get("type") or field.name or "text").lower()
+            fields.append(
+                {
+                    "tag": field.name,
+                    "type": field_type,
+                    "name": (field.get("name") or "")[:200],
+                    "required": field.has_attr("required"),
+                }
+            )
+        forms.append(
+            {
+                "index": form_index,
+                "action": normalize_url(form.get("action") or url, url) or url,
+                "method": (form.get("method") or "get").lower(),
+                "id": (form.get("id") or "")[:200],
+                "fields": fields[:100],
+            }
+        )
+
     # Mixed content: http resources referenced from an https page
     mixed_content: List[str] = []
     if url.startswith("https://"):
@@ -242,6 +290,7 @@ def parse_page(url: str, html: str, origin: str) -> Dict[str, Any]:
         "title": raw_title,
         "meta_description": meta_description,
         "meta_robots": meta_robots,
+        "metadata": metadata,
         "canonical_url": canonical_url,
         "h1s": h1s,
         "h2s": h2s,
@@ -259,6 +308,15 @@ def parse_page(url: str, html: str, origin: str) -> Dict[str, Any]:
                 schema_types & {"Organization", "ApartmentComplex", "Residence", "LocalBusiness", "RealEstateAgent"}
             ),
         },
+        "content": {
+            "visible_text": text[:50000],
+            "headings": [
+                {"level": heading.name, "text": re.sub(r"\s+", " ", heading.get_text()).strip()[:500]}
+                for heading in soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6"])
+                if heading.get_text(strip=True)
+            ][:200],
+        },
+        "forms": forms,
         "mixed_content": mixed_content,
         "page_type": page_type,
         "answer_block_signals": answer_block_signals,

@@ -1,0 +1,87 @@
+{
+  "key": "group_siteforge_content_grid",
+  "title": "SiteForge content grid",
+  "fields": [
+    {
+      "key": "field_siteforge_content_grid_items_0",
+      "name": "items",
+      "label": "items",
+      "type": "repeater",
+      "layout": "block",
+      "button_label": "Add items",
+      "sub_fields": [
+        {
+          "key": "field_siteforge_content_grid_items_image_0",
+          "name": "image",
+          "label": "image",
+          "type": "image",
+          "return_format": "id",
+          "preview_size": "medium"
+        },
+        {
+          "key": "field_siteforge_content_grid_items_icon_1",
+          "name": "icon",
+          "label": "icon",
+          "type": "text"
+        },
+        {
+          "key": "field_siteforge_content_grid_items_headline_2",
+          "name": "headline",
+          "label": "headline",
+          "type": "text"
+        },
+        {
+          "key": "field_siteforge_content_grid_items_description_3",
+          "name": "description",
+          "label": "description",
+          "type": "textarea"
+        }
+      ]
+    },
+    {
+      "key": "field_siteforge_content_grid_columns_1",
+      "name": "columns",
+      "label": "columns",
+      "type": "select",
+      "choices": {
+        "2": "2",
+        "3": "3",
+        "4": "4"
+      },
+      "default_value": "3"
+    },
+    {
+      "key": "field_siteforge_content_grid_variant_2",
+      "name": "variant",
+      "label": "variant",
+      "type": "select",
+      "choices": {
+        "amenity-grid": "amenity-grid",
+        "tabs": "tabs",
+        "editorial": "editorial",
+        "bento": "bento",
+        "icon-list": "icon-list",
+        "carousel": "carousel"
+      },
+      "default_value": "amenity-grid"
+    }
+  ],
+  "location": [
+    [
+      {
+        "param": "block",
+        "operator": "==",
+        "value": "acf/content-grid"
+      }
+    ]
+  ],
+  "menu_order": 0,
+  "position": "normal",
+  "style": "default",
+  "label_placement": "top",
+  "instruction_placement": "label",
+  "active": true,
+  "description": "Versioned SiteForge block contract.",
+  "show_in_rest": 1,
+  "modified": 1785441600
+}

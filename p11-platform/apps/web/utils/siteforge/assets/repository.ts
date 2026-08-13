@@ -8,6 +8,7 @@ import type {
 } from '@/types/siteforge'
 import type { Photo, PhotoManifest } from '@/utils/siteforge/agents/photo-agent'
 import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
+import { assertAssetCanBeUsed } from './curation'
 
 type ServiceClient = ReturnType<typeof createServiceClient>
 const MAX_SITEFORGE_ASSET_BYTES = 25 * 1024 * 1024
@@ -124,7 +125,7 @@ export async function persistSiteForgeAssets(
   const { data: sourceAssets, error: sourceAssetError } = sourceIds.length
     ? await supabase
         .from('content_assets')
-        .select('id, property_id, content_hash, rights_status, approval_status, expires_at')
+        .select('id, property_id, content_hash, rights_status, approval_status, curation_status, expires_at, duplicate_of')
         .in('id', sourceIds)
     : { data: [], error: null }
   if (sourceAssetError) {
@@ -142,11 +143,9 @@ export async function persistSiteForgeAssets(
       if (!sourceAsset) {
         throw new Error(`SiteForge source asset ${sourceAssetId || photo.id} is unavailable`)
       }
-      if (
-        sourceAsset.approval_status !== 'approved'
-        || !['owned', 'licensed', 'generated'].includes(sourceAsset.rights_status)
-        || (sourceAsset.expires_at && new Date(sourceAsset.expires_at) <= new Date())
-      ) {
+      try {
+        assertAssetCanBeUsed(sourceAsset)
+      } catch {
         throw new Error(`SiteForge source asset ${sourceAsset.id} is not approved and rights-cleared`)
       }
     }

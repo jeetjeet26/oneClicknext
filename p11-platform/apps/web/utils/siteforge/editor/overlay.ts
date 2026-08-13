@@ -304,26 +304,42 @@ export async function validateAndStoreThemeOverlay(
   const { functionsPhp, styleCss, manifest } =
     buildOverlayPackageManifest(proposal)
   const contentHash = computeOverlayContentHash(proposal.reason, manifest)
-  const zipEntries: Record<string, Uint8Array> = {}
+  const archiveMtime = new Date('1980-01-02T00:00:00.000Z')
+  const zipEntries: Record<
+    string,
+    [Uint8Array, { mtime: Date }]
+  > = {}
   for (const file of [...proposal.files].sort((a, b) =>
     a.path.localeCompare(b.path)
   )) {
-    zipEntries[file.path] = strToU8(file.content)
+    zipEntries[file.path] = [
+      strToU8(file.content),
+      { mtime: archiveMtime },
+    ]
   }
-  zipEntries['functions.php'] = strToU8(functionsPhp)
-  zipEntries['style.css'] = strToU8(styleCss)
-  zipEntries['siteforge-overlay.json'] = strToU8(
-    JSON.stringify(
-      {
-        descriptorVersion: 1,
-        overlayContentHash: contentHash,
-        manifest,
-        reason: proposal.reason,
-      },
-      null,
-      2
-    )
-  )
+  zipEntries['functions.php'] = [
+    strToU8(functionsPhp),
+    { mtime: archiveMtime },
+  ]
+  zipEntries['style.css'] = [
+    strToU8(styleCss),
+    { mtime: archiveMtime },
+  ]
+  zipEntries['siteforge-overlay.json'] = [
+    strToU8(
+      JSON.stringify(
+        {
+          descriptorVersion: 1,
+          overlayContentHash: contentHash,
+          manifest,
+          reason: proposal.reason,
+        },
+        null,
+        2
+      )
+    ),
+    { mtime: archiveMtime },
+  ]
   const zip = zipSync(zipEntries, { level: 9 })
   let packageSha256 = validateStoredOverlayPackage(zip, {
     contentHash,

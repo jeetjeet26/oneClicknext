@@ -16,16 +16,20 @@ class SiteForge_Runtime_V3_Transactions {
 	/** @var SiteForge_Runtime_V3_Assets */
 	private $assets;
 
-	public function __construct( SiteForge_Runtime_V3_State $state, SiteForge_Runtime_V3_Assets $assets ) {
-		$this->state  = $state;
-		$this->assets = $assets;
+	/** @var SiteForge_Runtime_V3_Materializer */
+	private $materializer;
+
+	public function __construct( SiteForge_Runtime_V3_State $state, SiteForge_Runtime_V3_Assets $assets, SiteForge_Runtime_V3_Materializer $materializer ) {
+		$this->state        = $state;
+		$this->assets       = $assets;
+		$this->materializer = $materializer;
 	}
 
 	public function apply( $request ) {
 		$input = SiteForge_Runtime_V3_Validation::deployment_request( $request );
 		$this->assert_preparation( $input );
 		$prior = $this->lookup_idempotency( $input );
-		if ( null !== $prior ) {
+		if ( null !== $prior && ( 'succeeded' === $prior['status'] || ( 'running' === $prior['status'] && $this->attempt_owns_active_lock( $prior ) ) ) ) {
 			$prior['idempotentReplay'] = true;
 			return $this->public_status( $prior );
 		}
@@ -33,8 +37,10 @@ class SiteForge_Runtime_V3_Transactions {
 		$lock_token     = $this->acquire_lock();
 		$transaction_id = $this->uuid();
 		$started_at     = gmdate( 'c' );
-		$previous_hash  = $this->state->active_content_hash();
+		$previous_hash  = null;
 		$snapshot       = null;
+		$attempt        = 1;
+		$previous_attempt_transaction_id = null;
 		$status         = array(
 			'contractVersion'           => 3,
 			'transactionId'             => $transaction_id,
@@ -57,15 +63,36 @@ class SiteForge_Runtime_V3_Transactions {
 			'idempotentReplay'          => false,
 			'failure'                    => null,
 			'_assetPreparationId'        => $input['assetPreparationId'],
+			'_attempt'                   => $attempt,
+			'_previousAttemptTransactionId' => $previous_attempt_transaction_id,
+			'_lockToken'                 => $lock_token,
 		);
 
 		try {
+			// Close the race between the pre-lock lookup and lock acquisition.
+			$prior = $this->lookup_idempotency( $input );
+			if ( null !== $prior && 'succeeded' === $prior['status'] ) {
+				$prior['idempotentReplay'] = true;
+				return $this->public_status( $prior );
+			}
+			if ( null !== $prior ) {
+				$this->recover_prior_attempt( $prior );
+				$attempt                         = isset( $prior['_attempt'] ) ? absint( $prior['_attempt'] ) + 1 : 2;
+				$previous_attempt_transaction_id = $prior['transactionId'];
+				$status['_attempt']              = $attempt;
+				$status['_previousAttemptTransactionId'] = $previous_attempt_transaction_id;
+			}
+			$previous_hash = $this->state->active_content_hash();
+			$status['previousRemoteContentHash'] = $previous_hash;
 			$this->assert_expected_hash( $input['expectedRemoteContentHash'], $previous_hash );
 			$this->assert_site_identity( $input['siteId'] );
-			$snapshot            = $this->state->snapshot();
+			$snapshot            = array(
+				'state'           => $this->state->snapshot(),
+				'materialization' => $this->materializer->snapshot( $input['siteId'] ),
+			);
 			$status['_snapshot'] = $snapshot;
 			$this->store_transaction( $status );
-			$this->store_idempotency( $input, $transaction_id );
+			$this->store_idempotency( $input, $transaction_id, $attempt );
 
 			$status['phase'] = 'package_verification';
 			$this->store_transaction( $status );
@@ -73,6 +100,7 @@ class SiteForge_Runtime_V3_Transactions {
 
 			$status['phase'] = 'transaction';
 			$this->store_transaction( $status );
+			$materialization = $this->materializer->apply( $input );
 			$this->state->apply_resources( $input['resources'] );
 
 			$status['phase'] = 'verification';
@@ -82,7 +110,7 @@ class SiteForge_Runtime_V3_Transactions {
 				$option_hashes[ $name ] = SiteForge_Runtime_Validation::hash( $input['resources'][ $name ] );
 			}
 			$resource_hashes = $this->resource_hashes( $input['release']['resourceGraph'] );
-			$resource_ids    = $this->resource_ids( $resource_hashes );
+			$resource_ids    = $materialization['resourceIds'];
 			$media_bindings  = $this->media_bindings( $input['assetPreparationId'] );
 			$updated_at      = gmdate( 'c' );
 			$projection      = $this->state->projection_for( $input, $transaction_id, $updated_at );
@@ -91,6 +119,7 @@ class SiteForge_Runtime_V3_Transactions {
 				'runtimeVersion'      => ONECLICK_SITEFORGE_RUNTIME_V3_VERSION,
 				'siteId'              => $input['siteId'],
 				'identity'            => $input['packageIdentities'],
+				'identityHash'        => SiteForge_Runtime_Validation::hash( $input['packageIdentities'] ),
 				'transactionId'       => $transaction_id,
 				'target'              => $input['release']['target'],
 				'resourceHashes'      => $resource_hashes,
@@ -98,6 +127,7 @@ class SiteForge_Runtime_V3_Transactions {
 				'optionHashes'        => $option_hashes,
 				'targetHash'          => SiteForge_Runtime_Validation::hash( $input['release']['target'] ),
 				'v2ProjectionHash'    => SiteForge_Runtime_Validation::hash( $projection ),
+				'materializationSpec' => $materialization['verificationSpec'],
 				'updatedAt'           => $updated_at,
 			);
 
@@ -121,14 +151,17 @@ class SiteForge_Runtime_V3_Transactions {
 			$this->store_transaction( $status );
 			return $this->public_status( $status );
 		} catch ( Throwable $error ) {
+			if ( $error instanceof SiteForge_Runtime_Exception && 'siteforge_v3_retry_recovery_failed' === $error->get_siteforge_code() ) {
+				throw $error;
+			}
 			$status['status']                = 'failed';
 			$status['completedAt']           = gmdate( 'c' );
 			$status['rollback']['attempted'] = true;
 			try {
 				if ( null !== $snapshot ) {
-					$this->state->restore( $snapshot );
+					$this->state->restore( $snapshot['state'] );
+					$this->materializer->restore( $snapshot['materialization'] );
 				}
-				$this->assets->rollback_preparation( $input['assetPreparationId'], $input['artifactId'] );
 				$status['rollback']['succeeded']                    = true;
 				$status['rollback']['restoredArtifactContentHash'] = $previous_hash;
 				$status['rollback']['restoredResourceGraphHash']   = $this->snapshot_graph_hash( $snapshot );
@@ -173,7 +206,8 @@ class SiteForge_Runtime_V3_Transactions {
 			$status['rollback']['attempted'] = true;
 			$this->store_transaction( $status );
 			try {
-				$this->state->restore( $status['_snapshot'] );
+				$this->state->restore( $status['_snapshot']['state'] );
+				$this->materializer->restore( $status['_snapshot']['materialization'] );
 				$this->assets->rollback_preparation( $status['_assetPreparationId'], $status['identity']['artifactId'] );
 				$status['rollback']['succeeded']                    = true;
 				$status['rollback']['restoredArtifactContentHash'] = $restore_hash;
@@ -290,6 +324,9 @@ class SiteForge_Runtime_V3_Transactions {
 	private function public_status( $status ) {
 		unset( $status['_snapshot'] );
 		unset( $status['_assetPreparationId'] );
+		unset( $status['_attempt'] );
+		unset( $status['_previousAttemptTransactionId'] );
+		unset( $status['_lockToken'] );
 		return $status;
 	}
 
@@ -311,14 +348,29 @@ class SiteForge_Runtime_V3_Transactions {
 		return $this->internal_status( $record['transactionId'] );
 	}
 
-	private function store_idempotency( $input, $transaction_id ) {
+	private function store_idempotency( $input, $transaction_id, $attempt ) {
 		$records = get_option( self::IDEMPOTENCY_OPTION, array() );
 		$records = is_array( $records ) ? $records : array();
-		$records[ hash( 'sha256', $input['idempotencyKey'] ) ] = array(
+		$key     = hash( 'sha256', $input['idempotencyKey'] );
+		$record  = isset( $records[ $key ] ) && is_array( $records[ $key ] ) ? $records[ $key ] : array();
+		$attempts = isset( $record['attempts'] ) && is_array( $record['attempts'] ) ? $record['attempts'] : array();
+		$attempts[] = array(
+			'attempt'       => absint( $attempt ),
+			'transactionId' => $transaction_id,
+			'status'        => 'running',
+			'phase'         => 'preflight',
+			'startedAt'     => gmdate( 'c' ),
+			'completedAt'   => null,
+			'rollback'      => $this->empty_rollback(),
+			'failure'       => null,
+		);
+		$records[ $key ] = array(
 			'identity'                  => $input['packageIdentities'],
 			'expectedRemoteContentHash' => $input['expectedRemoteContentHash'],
 			'transactionId'             => $transaction_id,
-			'createdAt'                 => gmdate( 'c' ),
+			'createdAt'                 => isset( $record['createdAt'] ) ? $record['createdAt'] : gmdate( 'c' ),
+			'updatedAt'                 => gmdate( 'c' ),
+			'attempts'                  => $attempts,
 		);
 		update_option( self::IDEMPOTENCY_OPTION, $records, false );
 	}
@@ -328,6 +380,80 @@ class SiteForge_Runtime_V3_Transactions {
 		$records = is_array( $records ) ? $records : array();
 		$records[ $status['transactionId'] ] = $status;
 		update_option( self::TRANSACTIONS_OPTION, $records, false );
+		$this->update_attempt_evidence( $status );
+	}
+
+	private function update_attempt_evidence( $status ) {
+		if ( ! isset( $status['idempotencyKey'], $status['transactionId'] ) ) {
+			return;
+		}
+		$records = get_option( self::IDEMPOTENCY_OPTION, array() );
+		$key     = hash( 'sha256', $status['idempotencyKey'] );
+		if ( ! is_array( $records ) || ! isset( $records[ $key ]['attempts'] ) || ! is_array( $records[ $key ]['attempts'] ) ) {
+			return;
+		}
+		$found = false;
+		foreach ( $records[ $key ]['attempts'] as &$attempt ) {
+			if ( ! isset( $attempt['transactionId'] ) || $status['transactionId'] !== $attempt['transactionId'] ) {
+				continue;
+			}
+			$attempt['status']      = $status['status'];
+			$attempt['phase']       = $status['phase'];
+			$attempt['completedAt'] = $status['completedAt'];
+			$attempt['rollback']    = $status['rollback'];
+			$attempt['failure']     = $status['failure'];
+			$found                  = true;
+			break;
+		}
+		unset( $attempt );
+		if ( ! $found ) {
+			return;
+		}
+		$records[ $key ]['transactionId'] = $status['transactionId'];
+		$records[ $key ]['updatedAt']     = gmdate( 'c' );
+		update_option( self::IDEMPOTENCY_OPTION, $records, false );
+	}
+
+	private function recover_prior_attempt( $status ) {
+		if ( 'failed' === $status['status'] && true === $status['rollback']['succeeded'] ) {
+			return;
+		}
+		$status['status']                = 'failed';
+		$status['phase']                 = 'rollback';
+		$status['completedAt']           = gmdate( 'c' );
+		$status['rollback']['attempted'] = true;
+		try {
+			if ( empty( $status['_snapshot'] ) ) {
+				throw new SiteForge_Runtime_Exception( 'siteforge_v3_retry_snapshot_missing', 'The prior v3 attempt cannot be recovered without its retained snapshot.', 500 );
+			}
+			$this->state->restore( $status['_snapshot']['state'] );
+			$this->materializer->restore( $status['_snapshot']['materialization'] );
+			$status['rollback']['succeeded']                    = true;
+			$status['rollback']['failure']                      = null;
+			$status['rollback']['restoredArtifactContentHash'] = $status['previousRemoteContentHash'];
+			$status['rollback']['restoredResourceGraphHash']   = $this->snapshot_graph_hash( $status['_snapshot'] );
+			if ( null === $status['failure'] ) {
+				$status['failure'] = array(
+					'code'      => 'operation_failed',
+					'message'   => 'The prior v3 attempt ended before a terminal result was recorded.',
+					'retryable' => true,
+					'stage'     => 'transaction',
+					'details'   => array(),
+				);
+			}
+			$this->store_transaction( $status );
+		} catch ( Throwable $error ) {
+			$status['rollback']['succeeded'] = false;
+			$status['rollback']['failure']   = $this->failure( $error, 'rollback' );
+			$this->store_transaction( $status );
+			throw new SiteForge_Runtime_Exception(
+				'siteforge_v3_retry_recovery_failed',
+				'The prior v3 attempt could not be recovered safely.',
+				500,
+				array( 'transactionId' => $status['transactionId'], 'rollback' => $status['rollback'] ),
+				$error
+			);
+		}
 	}
 
 	private function assert_expected_hash( $expected, $actual ) {
@@ -345,12 +471,14 @@ class SiteForge_Runtime_V3_Transactions {
 	}
 
 	private function snapshot_content_hash( $snapshot ) {
-		$active = isset( $snapshot['options'][ SiteForge_Runtime_V3_State::ACTIVE_OPTION ]['value'] ) ? $snapshot['options'][ SiteForge_Runtime_V3_State::ACTIVE_OPTION ]['value'] : null;
+		$state  = isset( $snapshot['state'] ) ? $snapshot['state'] : $snapshot;
+		$active = isset( $state['options'][ SiteForge_Runtime_V3_State::ACTIVE_OPTION ]['value'] ) ? $state['options'][ SiteForge_Runtime_V3_State::ACTIVE_OPTION ]['value'] : null;
 		return is_array( $active ) && isset( $active['identity']['artifactContentHash'] ) ? $active['identity']['artifactContentHash'] : null;
 	}
 
 	private function snapshot_graph_hash( $snapshot ) {
-		$active = isset( $snapshot['options'][ SiteForge_Runtime_V3_State::ACTIVE_OPTION ]['value'] ) ? $snapshot['options'][ SiteForge_Runtime_V3_State::ACTIVE_OPTION ]['value'] : null;
+		$state  = isset( $snapshot['state'] ) ? $snapshot['state'] : $snapshot;
+		$active = isset( $state['options'][ SiteForge_Runtime_V3_State::ACTIVE_OPTION ]['value'] ) ? $state['options'][ SiteForge_Runtime_V3_State::ACTIVE_OPTION ]['value'] : null;
 		return is_array( $active ) && isset( $active['identity']['resourceGraphHash'] ) ? $active['identity']['resourceGraphHash'] : null;
 	}
 
@@ -365,10 +493,14 @@ class SiteForge_Runtime_V3_Transactions {
 	}
 
 	private function failure( $error, $phase ) {
+		$retryable = ! $error instanceof SiteForge_Runtime_Validation_Exception;
+		if ( $error instanceof SiteForge_Runtime_Exception ) {
+			$retryable = in_array( $error->get_http_status(), array( 423, 429, 500, 502, 503, 504 ), true );
+		}
 		return array(
 			'code'      => $error instanceof SiteForge_Runtime_Validation_Exception ? 'invalid_artifact' : 'operation_failed',
 			'message'   => $error->getMessage(),
-			'retryable' => false,
+			'retryable' => $retryable,
 			'stage'     => in_array( $phase, array( 'package_verification', 'verification', 'v2_projection', 'rollback' ), true ) ? $phase : 'transaction',
 			'details'   => $error instanceof SiteForge_Runtime_Exception || $error instanceof SiteForge_Runtime_Validation_Exception ? $error->get_details() : array(),
 		);
@@ -404,6 +536,18 @@ class SiteForge_Runtime_V3_Transactions {
 			}
 		}
 		throw new SiteForge_Runtime_Exception( 'siteforge_v3_deployment_locked', 'Another SiteForge v3 transaction is in progress.', 423 );
+	}
+
+	private function attempt_owns_active_lock( $status ) {
+		if ( empty( $status['_lockToken'] ) ) {
+			return false;
+		}
+		$lock = get_option( self::LOCK_OPTION, array() );
+		return is_array( $lock )
+			&& ! empty( $lock['token'] )
+			&& ! empty( $lock['createdAt'] )
+			&& (int) $lock['createdAt'] >= time() - 300
+			&& hash_equals( (string) $lock['token'], (string) $status['_lockToken'] );
 	}
 
 	private function release_lock( $token ) {

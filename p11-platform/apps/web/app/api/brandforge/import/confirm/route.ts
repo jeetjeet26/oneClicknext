@@ -6,7 +6,7 @@ import { confirmBrandImport } from '@/utils/brandforge/imports'
 import { createRequestContext } from '@/utils/services/request-context'
 
 const confirmSchema = z.object({
-  propertyId: z.string().uuid(),
+  propertyId: z.guid(),
   importId: z.string().uuid(),
   contract: z.record(z.string(), z.unknown()).optional(),
   resolutions: z.record(z.string(), z.unknown()).optional(),

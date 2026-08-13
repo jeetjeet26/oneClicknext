@@ -130,6 +130,30 @@ export function resolveLaunchRollbackMode(input: {
   return { bootstrapLaunch }
 }
 
+export function isRenderedLaunchCertification(input: {
+  report: unknown
+  artifactId: string
+  contentHash: string
+}): boolean {
+  const report =
+    input.report && typeof input.report === 'object' && !Array.isArray(input.report)
+      ? (input.report as Record<string, unknown>)
+      : null
+  const browser =
+    report?.browser &&
+    typeof report.browser === 'object' &&
+    !Array.isArray(report.browser)
+      ? (report.browser as Record<string, unknown>)
+      : null
+  return Boolean(
+    report?.passed === true &&
+      report.artifactId === input.artifactId &&
+      report.contentHash === input.contentHash &&
+      browser?.evidenceAccepted === true &&
+      browser.passed === true
+  )
+}
+
 async function transition(
   release: LaunchRelease,
   toState: string,
@@ -195,17 +219,36 @@ export async function getLaunchStatus(
   if (error || !release)
     throw new SiteForgeLaunchError('Launch release not found', 404)
 
-  const { data: events, error: eventsError } = await client
-    .from('siteforge_launch_events')
-    .select('*')
-    .eq('release_id', release.id)
-    .order('created_at', { ascending: true })
-  if (eventsError)
+  const [
+    { data: events, error: eventsError },
+    { data: dnsSnapshots, error: dnsError },
+    { data: restoreDrills, error: restoreError },
+  ] = await Promise.all([
+    client
+      .from('siteforge_launch_events')
+      .select('*')
+      .eq('release_id', release.id)
+      .order('created_at', { ascending: true }),
+    client
+      .from('siteforge_dns_snapshots')
+      .select('*')
+      .eq('release_id', release.id)
+      .eq('website_id', release.website_id)
+      .order('captured_at', { ascending: true }),
+    client
+      .from('siteforge_restore_drills')
+      .select('*')
+      .eq('release_id', release.id)
+      .order('created_at', { ascending: true }),
+  ])
+  if (eventsError || dnsError || restoreError)
     throw new SiteForgeLaunchError('Failed to load launch history', 500)
 
   return {
     release,
     events: events || [],
+    dnsSnapshots: dnsSnapshots || [],
+    restoreDrills: restoreDrills || [],
     humanLaunchRequired: !['live', 'rolled_back'].includes(release.state),
     promotionTokenAvailable:
       Boolean(release.promotion_token_hash) &&
@@ -274,7 +317,7 @@ export async function prepareLaunchRelease(
     client
       .from('siteforge_blueprint_versions')
       .select(
-        'id, content_hash, asset_manifest_hash, base_theme_package_sha256, deployment_decision, confirmed_approval_id'
+        'id, content_hash, asset_manifest_hash, base_theme_package_sha256, overlay_package_sha256, runtime_contract_version, runtime_package_sha256, deployment_decision, confirmed_approval_id'
       )
       .eq('id', input.artifactId)
       .eq('website_id', input.websiteId)
@@ -441,10 +484,15 @@ export async function prepareLaunchRelease(
   if (
     deploymentError ||
     !deployment ||
-    deployment.remote_manifest_hash !== input.contentHash
+    deployment.remote_manifest_hash !== input.contentHash ||
+    !isRenderedLaunchCertification({
+      report: deployment.certification_report,
+      artifactId: input.artifactId,
+      contentHash: input.contentHash,
+    })
   ) {
     throw new SiteForgeLaunchError(
-      'Matching staging manifest evidence was not found',
+      'Matching rendered staging certification was not found',
       409
     )
   }
@@ -557,10 +605,27 @@ export async function prepareLaunchRelease(
           releaseId: release.id,
           artifactId: release.artifact_id,
           contentHash: release.artifact_content_hash,
+          stagingDeploymentId: deployment.id,
+          assetManifestHash: artifact.asset_manifest_hash,
+          baseThemePackageSha256: artifact.base_theme_package_sha256,
+          overlayPackageSha256: artifact.overlay_package_sha256,
+          runtimeContractVersion: artifact.runtime_contract_version,
+          runtimePackageSha256: artifact.runtime_package_sha256,
+          stagingCertificationReportHash: hashSiteForgeContent(
+            deployment.certification_report
+          ),
           rollbackArtifactId: release.rollback_artifact_id,
           rollbackContentHash: release.rollback_content_hash,
         },
-        execution_payload: { releaseId: release.id },
+        execution_payload: {
+          releaseId: release.id,
+          stagingDeploymentId: deployment.id,
+          artifactId: release.artifact_id,
+          contentHash: release.artifact_content_hash,
+          assetManifestHash: artifact.asset_manifest_hash,
+          runtimeContractVersion: artifact.runtime_contract_version,
+          runtimePackageSha256: artifact.runtime_package_sha256,
+        },
         policy_reason: release.rollback_artifact_id
           ? 'A manager must separately approve the exact production artifact and rollback identity.'
           : 'First launch: no certified production rollback artifact exists. A manager must approve the exact production artifact and explicitly acknowledge that rollback relies on the pre-promotion Cloudways backup.',

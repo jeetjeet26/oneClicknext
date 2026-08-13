@@ -1,6 +1,8 @@
 import {
   certifySiteForgeProduction,
   failSiteForgeProductionCertification,
+  markSiteForgeProductionProjectionReconciliationRequired,
+  ProductionProjectionReconciliationError,
   type SiteForgeProductionCertificationInput,
 } from '@/utils/siteforge/workflows/production-steps'
 
@@ -20,7 +22,14 @@ export async function siteForgeProductionCertificationWorkflow(
       error instanceof Error
         ? error.message
         : 'SiteForge production certification failed'
-    await failSiteForgeProductionCertification(input, message)
+    if (error instanceof ProductionProjectionReconciliationError) {
+      await markSiteForgeProductionProjectionReconciliationRequired(
+        input,
+        message
+      )
+    } else {
+      await failSiteForgeProductionCertification(input, message)
+    }
     throw error
   }
 }

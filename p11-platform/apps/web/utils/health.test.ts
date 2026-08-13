@@ -158,6 +158,18 @@ describe('health utilities', () => {
       })
       expect(placeholderProvider.status).toBe('degraded')
       expect(placeholderProvider.details?.cloudwaysConfigured).toBe(false)
+
+      const accessTokenProvider = await runSiteForgeReadinessCheck({
+        runtimeAssetsDir,
+        env: {
+          SITEFORGE_ACF_PRO_LICENSE_KEY: 'configured',
+          SITEFORGE_SEMANTIC_EDITOR_ENABLED: 'false',
+          CLOUDWAYS_ACCESS_TOKEN: 'modern-cloudways-access-token',
+        },
+      })
+      expect(accessTokenProvider.status).toBe('healthy')
+      expect(accessTokenProvider.details?.cloudwaysConfigured).toBe(true)
+      expect(accessTokenProvider.details?.cloudwaysCredentialsPresent).toBe(true)
     } finally {
       await rm(runtimeAssetsDir, { recursive: true, force: true })
     }

@@ -264,6 +264,106 @@ export async function createWordPressApplicationPassword(
   return { username, applicationPassword }
 }
 
+export async function resetWordPressRuntimeV3State(
+  input: {
+    ssh: WordPressSshCredentials
+    siteId: string
+  },
+  runCommand?: (
+    ssh: WordPressSshCredentials,
+    command: string
+  ) => Promise<string>
+): Promise<void> {
+  const applicationRoot = input.ssh.applicationRoot || 'public_html'
+  const siteId = input.siteId.replace(/[^A-Za-z0-9._:-]/g, '')
+  if (!siteId) {
+    throw new Error('Runtime v3 reset requires an exact site identity')
+  }
+  const php = `
+$site_id = ${JSON.stringify(siteId)};
+$pages = get_posts(array(
+  'post_type' => 'page',
+  'post_status' => 'any',
+  'numberposts' => -1,
+  'meta_key' => '_siteforge_v3_site_id',
+  'meta_value' => $site_id,
+));
+foreach ($pages as $page) {
+  wp_delete_post($page->ID, true);
+}
+$owners = get_option('oneclick_siteforge_runtime_menu_owners_v3', array());
+foreach (is_array($owners) ? $owners : array() as $owner) {
+  if (is_array($owner) && isset($owner['siteId'], $owner['menuId']) && $owner['siteId'] === $site_id) {
+    wp_delete_nav_menu((int) $owner['menuId']);
+  }
+}
+$preparations = get_option('oneclick_siteforge_runtime_asset_preparations_v3', array());
+foreach (is_array($preparations) ? $preparations : array() as $preparation) {
+  foreach (is_array($preparation) && isset($preparation['assets']) && is_array($preparation['assets']) ? $preparation['assets'] : array() as $asset) {
+    if (is_array($asset) && !empty($asset['attachmentId'])) {
+      wp_delete_attachment((int) $asset['attachmentId'], true);
+    }
+  }
+}
+$options = array(
+  'oneclick_siteforge_runtime_state_v3',
+  'oneclick_siteforge_runtime_v2_projection_v3',
+  'oneclick_siteforge_runtime_transactions_v3',
+  'oneclick_siteforge_runtime_idempotency_v3',
+  'oneclick_siteforge_runtime_deployment_lock_v3',
+  'oneclick_siteforge_runtime_asset_preparations_v3',
+  'oneclick_siteforge_runtime_resource_ids_v3',
+  'oneclick_siteforge_runtime_menu_owners_v3',
+  'oneclick_siteforge_forms_v3',
+  'oneclick_siteforge_redirects_v3',
+  'oneclick_siteforge_integrations_v3',
+  'oneclick_siteforge_legal_v3',
+  'oneclick_siteforge_seo_v3',
+  'oneclick_siteforge_responsive_css_v3'
+);
+$resource_names = array(
+  'graphVersion',
+  'homepagePageId',
+  'pages',
+  'sections',
+  'globalComponents',
+  'chrome',
+  'forms',
+  'redirects',
+  'responsiveRules',
+  'accessibilityAnnotations',
+  'seo',
+  'legal',
+  'analytics',
+  'integrations',
+  'assets',
+  'removals',
+  'target'
+);
+foreach ($resource_names as $resource_name) {
+  $options[] = 'oneclick_siteforge_runtime_resource_v3_' . $resource_name;
+}
+foreach ($options as $option) {
+  delete_option($option);
+}
+update_option('stylesheet', 'oneclick-siteforge');
+update_option('template', 'oneclick-siteforge');
+delete_option('current_theme');
+wp_cache_flush();
+`
+  const command = `cd ${shellQuote(applicationRoot)} && wp eval ${shellQuote(php)}`
+  if (runCommand) {
+    await runCommand(input.ssh, command)
+    return
+  }
+  const client = await connect(input.ssh)
+  try {
+    await exec(client, command)
+  } finally {
+    client.end()
+  }
+}
+
 export class SshWordPressInstaller {
   async installBaseTheme(input: {
     ssh: WordPressSshCredentials

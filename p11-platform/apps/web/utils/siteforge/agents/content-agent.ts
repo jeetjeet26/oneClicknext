@@ -12,10 +12,25 @@ import {
   createEvidenceSafePlaceholder,
   SITEFORGE_PLACEHOLDER_EVIDENCE_ID,
 } from '@/utils/siteforge/generation/evidence-safe-content'
+import type { SiteForgeCreativeExecutionContext } from '@/utils/siteforge/generation/creative-execution'
 
 // Canonical shapes come from types/siteforge.ts; re-exported for existing importers
 export type { GeneratedPage }
 export type GeneratedSection = PageSection
+
+export function buildApprovedContentGuidance(
+  execution?: SiteForgeCreativeExecutionContext
+): string {
+  if (!execution) return 'No approved execution context supplied.'
+  return JSON.stringify({
+    objectives: execution.brief.objectives,
+    audiences: execution.brief.audiences,
+    conversion: execution.brief.conversion,
+    voice: execution.direction.voice,
+    headlineStyle: execution.direction.hero.headlineStyle,
+    cta: execution.direction.cta,
+  }, null, 2)
+}
 
 /**
  * Content Agent - Generates all website copy
@@ -28,7 +43,8 @@ export class ContentAgent extends BaseAgent {
    */
   async generateAll(
     architecture: ArchitectureProposal,
-    brandContext: BrandContext
+    brandContext: BrandContext,
+    execution?: SiteForgeCreativeExecutionContext
   ): Promise<GeneratedPage[]> {
     
     await this.logAction('content_generation_start', {
@@ -44,7 +60,8 @@ export class ContentAgent extends BaseAgent {
           architecture.conversionStrategy,
           architecture.pages.map(candidate =>
             candidate.slug === 'home' ? '/' : `/${candidate.slug}`
-          )
+          ),
+          execution
         )
       )
     )
@@ -64,7 +81,8 @@ export class ContentAgent extends BaseAgent {
     page: ArchitectureProposal['pages'][number],
     brandContext: BrandContext,
     conversionStrategy: ArchitectureProposal['conversionStrategy'],
-    availablePaths: string[]
+    availablePaths: string[],
+    execution?: SiteForgeCreativeExecutionContext
   ): Promise<GeneratedPage> {
     
     // Generate all sections in parallel
@@ -75,7 +93,8 @@ export class ContentAgent extends BaseAgent {
           brandContext,
           page.purpose,
           conversionStrategy,
-          availablePaths
+          availablePaths,
+          execution
         )
       )
     )
@@ -97,12 +116,15 @@ export class ContentAgent extends BaseAgent {
     brandContext: BrandContext,
     pagePurpose: string,
     conversionStrategy: ArchitectureProposal['conversionStrategy'],
-    availablePaths: string[]
+    availablePaths: string[],
+    execution?: SiteForgeCreativeExecutionContext
   ): Promise<GeneratedSection> {
     
     // Get relevant facts via vector search
     const vectorFacts = await this.vectorSearch(
-      `Facts and details for ${section.type} section about ${section.purpose}. ${pagePurpose}`
+      `Facts and details for ${section.type} section about ${section.purpose}. ${pagePurpose}. ${
+        execution?.brief.objectives[0]?.statement || ''
+      }`
     )
     const relevantFacts =
       vectorFacts.length > 0
@@ -131,6 +153,9 @@ ${JSON.stringify(brandContext.contentStrategy, null, 2)}
 
 # BRAND PERSONALITY:
 ${JSON.stringify(brandContext.brandPersonality, null, 2)}
+
+# APPROVED CONTENT HIERARCHY AND VOICE:
+${buildApprovedContentGuidance(execution)}
 
 # RELEVANT FACTS (Vector search - use ONLY these facts):
 ${relevantFacts.map(f => `- ${f.content} (confidence: ${f.similarity.toFixed(2)})`).join('\n')}
@@ -185,6 +210,8 @@ Match this level of clarity and polish without copying the example phrasing.
 5. CTAs must match primaryCTA unless section specifies otherwise
 6. CTA links must use one of the existing page paths listed in the output contract
 7. Reasoning must explain how copy achieves purpose
+8. Follow the approved objective/audience hierarchy and voice do/don't rules when supplied
+9. Use the approved CTA label exactly when a CTA is present
 `
     
     const response = await this.callClaude(prompt, {
@@ -195,6 +222,9 @@ Match this level of clarity and polish without copying the example phrasing.
     
     // Use shared robust JSON parser
     let content = this.parseJSON<Record<string, unknown>>(response, 'ContentAgent')
+    if (execution && typeof content.cta_text === 'string') {
+      content.cta_text = execution.direction.cta.label
+    }
     const block = (section.acfBlock || section.block) as ACFBlockType
     const evidenceSafePlaceholder =
       relevantFacts.length === 0

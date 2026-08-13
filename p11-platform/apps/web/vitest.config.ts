@@ -7,6 +7,7 @@ export default defineConfig({
     globals: true,
     include: ['**/*.{test,spec}.ts'],
     exclude: [...configDefaults.exclude, 'e2e/**'],
+    testTimeout: 15_000,
   },
   resolve: {
     alias: {

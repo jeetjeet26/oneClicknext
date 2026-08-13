@@ -17,7 +17,10 @@ const {
 }))
 
 vi.mock('@/utils/supabase/admin', () => ({ createServiceClient }))
-vi.mock('@/utils/siteforge/providers/cloudways-provider', () => ({
+vi.mock('@/utils/siteforge/providers/cloudways-provider', async importOriginal => ({
+  ...(await importOriginal<
+    typeof import('@/utils/siteforge/providers/cloudways-provider')
+  >()),
   CloudwaysProviderClient: vi.fn(function CloudwaysProviderClient() {
     return { waitForOperation, getApplication }
   }),

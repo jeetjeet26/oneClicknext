@@ -1,0 +1,82 @@
+{
+  "key": "group_siteforge_feature_section",
+  "title": "SiteForge feature section",
+  "fields": [
+    {
+      "key": "field_siteforge_feature_section_image_0",
+      "name": "image",
+      "label": "image",
+      "type": "image",
+      "return_format": "id",
+      "preview_size": "medium"
+    },
+    {
+      "key": "field_siteforge_feature_section_headline_1",
+      "name": "headline",
+      "label": "headline",
+      "type": "text"
+    },
+    {
+      "key": "field_siteforge_feature_section_content_2",
+      "name": "content",
+      "label": "content",
+      "type": "wysiwyg"
+    },
+    {
+      "key": "field_siteforge_feature_section_layout_3",
+      "name": "layout",
+      "label": "layout",
+      "type": "select",
+      "choices": {
+        "image-left": "image-left",
+        "image-right": "image-right"
+      },
+      "default_value": "image-left"
+    },
+    {
+      "key": "field_siteforge_feature_section_cta_text_4",
+      "name": "cta_text",
+      "label": "cta_text",
+      "type": "text"
+    },
+    {
+      "key": "field_siteforge_feature_section_cta_link_5",
+      "name": "cta_link",
+      "label": "cta_link",
+      "type": "url"
+    },
+    {
+      "key": "field_siteforge_feature_section_variant_6",
+      "name": "variant",
+      "label": "variant",
+      "type": "select",
+      "choices": {
+        "alternating": "alternating",
+        "bleed": "bleed",
+        "framed": "framed",
+        "spotlight": "spotlight",
+        "collage": "collage",
+        "compact": "compact"
+      },
+      "default_value": "alternating"
+    }
+  ],
+  "location": [
+    [
+      {
+        "param": "block",
+        "operator": "==",
+        "value": "acf/feature-section"
+      }
+    ]
+  ],
+  "menu_order": 0,
+  "position": "normal",
+  "style": "default",
+  "label_placement": "top",
+  "instruction_placement": "label",
+  "active": true,
+  "description": "Versioned SiteForge block contract.",
+  "show_in_rest": 1,
+  "modified": 1785441600
+}

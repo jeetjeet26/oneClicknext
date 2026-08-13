@@ -11,16 +11,19 @@ export function isSiteForgeRuntimeExtensionsEnabled(
 }
 
 export function isCloudwaysThemeInstallationConfigured(input: {
+  accessToken?: string
   apiKey?: string
   email?: string
   acfLicenseKey?: string
 }): boolean {
+  const accessToken = input.accessToken?.trim() || ''
   const apiKey = input.apiKey?.trim() || ''
   const email = input.email?.trim() || ''
   const acfLicenseKey = input.acfLicenseKey?.trim() || ''
   return (
-    apiKey.length >= 20 &&
-    /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) &&
+    (accessToken.length >= 20 ||
+      (apiKey.length >= 20 &&
+        /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))) &&
     acfLicenseKey.length >= 10
   )
 }

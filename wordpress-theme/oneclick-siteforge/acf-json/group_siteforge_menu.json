@@ -1,0 +1,57 @@
+{
+  "key": "group_siteforge_menu",
+  "title": "SiteForge menu",
+  "fields": [
+    {
+      "key": "field_siteforge_menu_menu_items_0",
+      "name": "menu_items",
+      "label": "menu_items",
+      "type": "repeater",
+      "layout": "block",
+      "button_label": "Add menu items",
+      "sub_fields": [
+        {
+          "key": "field_siteforge_menu_menu_items_label_0",
+          "name": "label",
+          "label": "label",
+          "type": "text"
+        },
+        {
+          "key": "field_siteforge_menu_menu_items_link_1",
+          "name": "link",
+          "label": "link",
+          "type": "url"
+        }
+      ]
+    },
+    {
+      "key": "field_siteforge_menu_variant_1",
+      "name": "variant",
+      "label": "variant",
+      "type": "select",
+      "choices": {
+        "standard": "standard",
+        "sticky-cta": "sticky-cta"
+      },
+      "default_value": "standard"
+    }
+  ],
+  "location": [
+    [
+      {
+        "param": "block",
+        "operator": "==",
+        "value": "acf/menu"
+      }
+    ]
+  ],
+  "menu_order": 0,
+  "position": "normal",
+  "style": "default",
+  "label_placement": "top",
+  "instruction_placement": "label",
+  "active": true,
+  "description": "Versioned SiteForge block contract.",
+  "show_in_rest": 1,
+  "modified": 1785441600
+}

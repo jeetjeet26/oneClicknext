@@ -3,11 +3,16 @@ import type { NextRequest } from 'next/server'
 
 const authGetUserMock = vi.fn()
 const createClientMock = vi.fn()
+const createServiceClientMock = vi.fn()
 const validatePropertyAccessMock = vi.fn()
 const fromMock = vi.fn()
 
 vi.mock('@/utils/supabase/server', () => ({
   createClient: createClientMock,
+}))
+
+vi.mock('@/utils/supabase/admin', () => ({
+  createServiceClient: createServiceClientMock,
 }))
 
 vi.mock('@/utils/services/auth-guard', () => ({
@@ -24,8 +29,8 @@ describe('siteforge preview route auth', () => {
     fromMock.mockReset()
     createClientMock.mockResolvedValue({
       auth: { getUser: authGetUserMock },
-      from: fromMock,
     })
+    createServiceClientMock.mockReturnValue({ from: fromMock })
   })
 
   it('GET returns 401 when unauthenticated', async () => {

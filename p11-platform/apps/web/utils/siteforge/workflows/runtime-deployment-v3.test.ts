@@ -147,7 +147,14 @@ describe('artifact-bound runtime v3 deployment', () => {
         },
       }),
       getDeploymentStatus: vi.fn(),
-      getHealth: vi.fn(),
+      getHealth: vi.fn().mockResolvedValue({
+        status: 'ok',
+        runtimeVersion: '3.0.0',
+        installedRuntime: {
+          packageType: 'runtime_plugin',
+          manifest: { packageVersion: '3.0.0' },
+        },
+      }),
     }
 
     await expect(

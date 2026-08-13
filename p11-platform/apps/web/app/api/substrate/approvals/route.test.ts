@@ -7,6 +7,7 @@ const validatePropertyAccessMock = vi.fn()
 const listPendingSharedApprovalCandidatesMock = vi.fn()
 const recordSharedApprovalDecisionMock = vi.fn()
 const resumeSharedActionAttemptMock = vi.fn()
+const assertSharedActionAttemptDispatchRegisteredMock = vi.fn()
 const fromMock = vi.fn()
 
 vi.mock('@/utils/supabase/server', () => ({
@@ -34,6 +35,8 @@ vi.mock('@/utils/services/shared-dispatcher', async () => {
   )
   return {
     ...actual,
+    assertSharedActionAttemptDispatchRegistered:
+      assertSharedActionAttemptDispatchRegisteredMock,
     resumeSharedActionAttempt: resumeSharedActionAttemptMock,
   }
 })
@@ -41,6 +44,7 @@ vi.mock('@/utils/services/shared-dispatcher', async () => {
 describe('GET/POST /api/substrate/approvals', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    assertSharedActionAttemptDispatchRegisteredMock.mockResolvedValue(undefined)
     createClientMock.mockResolvedValue({
       auth: { getUser: authGetUserMock },
       from: fromMock,
@@ -152,11 +156,55 @@ describe('GET/POST /api/substrate/approvals', () => {
     )
 
     expect(response.status).toBe(200)
+    expect(
+      assertSharedActionAttemptDispatchRegisteredMock
+    ).toHaveBeenCalledWith('action-1', 'property-1')
     await expect(response.json()).resolves.toMatchObject({
       success: true,
       approval: { id: 'approval-1' },
       executionResult: { success: true },
     })
+  })
+
+  it('rejects unregistered actions before recording approval', async () => {
+    const { SharedDispatchError } = await import(
+      '@/utils/services/shared-dispatcher'
+    )
+    authGetUserMock.mockResolvedValue({
+      data: { user: { id: 'user-1' } },
+      error: null,
+    })
+    validatePropertyAccessMock.mockResolvedValue({ authorized: true })
+    const singleMock = vi.fn().mockResolvedValue({
+      data: { role: 'manager' },
+      error: null,
+    })
+    const eqMock = vi.fn(() => ({ single: singleMock }))
+    const selectMock = vi.fn(() => ({ eq: eqMock }))
+    fromMock.mockReturnValue({ select: selectMock })
+    assertSharedActionAttemptDispatchRegisteredMock.mockRejectedValue(
+      new SharedDispatchError(
+        'No shared dispatcher is registered for siteforge.launch:siteforge.launch:promote_production',
+        501
+      )
+    )
+
+    const { POST } = await import('./route')
+    const response = await POST(
+      new Request('http://localhost/api/substrate/approvals', {
+        method: 'POST',
+        body: JSON.stringify({
+          propertyId: 'property-1',
+          actionAttemptId: 'siteforge-action-1',
+          decisionStatus: 'approved',
+          decisionReason: 'approve this launch',
+        }),
+      }) as NextRequest
+    )
+
+    expect(response.status).toBe(501)
+    expect(recordSharedApprovalDecisionMock).not.toHaveBeenCalled()
+    expect(resumeSharedActionAttemptMock).not.toHaveBeenCalled()
   })
 })
 

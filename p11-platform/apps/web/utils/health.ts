@@ -11,6 +11,7 @@ import {
   isCloudwaysThemeInstallationConfigured,
   isSiteForgeSemanticEditorEnabled,
 } from '@/utils/siteforge/editor/feature'
+import { hasCloudwaysProviderCredentials } from '@/utils/siteforge/providers/cloudways-provider'
 
 export type HealthStatus = 'healthy' | 'degraded' | 'unhealthy'
 
@@ -157,10 +158,12 @@ export async function runSiteForgeReadinessCheck({
   )
   const anthropicConfigured = hasValue(env.ANTHROPIC_API_KEY)
   const cloudwaysValuesPresent = [
+    env.CLOUDWAYS_ACCESS_TOKEN,
     env.CLOUDWAYS_API_KEY,
     env.CLOUDWAYS_EMAIL,
   ].filter(hasValue).length
   const cloudwaysConfigured = isCloudwaysThemeInstallationConfigured({
+    accessToken: env.CLOUDWAYS_ACCESS_TOKEN,
     apiKey: env.CLOUDWAYS_API_KEY,
     email: env.CLOUDWAYS_EMAIL,
     acfLicenseKey: env.SITEFORGE_ACF_PRO_LICENSE_KEY,
@@ -204,7 +207,7 @@ export async function runSiteForgeReadinessCheck({
       hasOverlaySigningSecret,
       anthropicConfigured,
       cloudwaysConfigured,
-      cloudwaysCredentialsPresent: cloudwaysValuesPresent === 2,
+      cloudwaysCredentialsPresent: hasCloudwaysProviderCredentials(env),
       wordpressConfigured: wordpressConfigured === 3,
       previewWordPressConfigured: previewWordPressConfigured === 3,
     },

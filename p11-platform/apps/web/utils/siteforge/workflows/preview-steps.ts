@@ -8,6 +8,7 @@ import { loadVerifiedSiteForgeRelease } from "@/utils/siteforge/artifacts/releas
 import { loadApprovedFloorPlanSnapshot } from "@/utils/siteforge/providers/floor-plan-repository";
 import {
   CloudwaysProviderClient,
+  getCloudwaysProviderCredentials,
   parseCloudwaysApplicationHostname,
 } from "@/utils/siteforge/providers/cloudways-provider";
 import { captureOverlayRenderCertification } from "@/utils/siteforge/editor/render-certification";
@@ -257,10 +258,9 @@ export async function renderCanonicalWordPressPreview(
   let runtimeSsh: WordPressSshCredentials | null = null;
   const cloudwaysIdentity = parseCloudwaysApplicationHostname(previewUrl);
   if (cloudwaysIdentity) {
-    const email = process.env.CLOUDWAYS_EMAIL?.trim();
-    const apiKey = process.env.CLOUDWAYS_API_KEY?.trim();
+    const cloudwaysCredentials = getCloudwaysProviderCredentials();
     const acfProLicenseKey = process.env.SITEFORGE_ACF_PRO_LICENSE_KEY?.trim();
-    if (!email || !apiKey || !acfProLicenseKey) {
+    if (!cloudwaysCredentials || !acfProLicenseKey) {
       throw new FatalError(
         "Cloudways and ACF credentials are required to refresh the canonical preview runtime",
       );
@@ -276,10 +276,7 @@ export async function renderCanonicalWordPressPreview(
         updated_at: new Date().toISOString(),
       })
       .eq("id", input.sharedJobId);
-    const cloudways = new CloudwaysProviderClient({
-      email,
-      apiKey,
-    });
+    const cloudways = new CloudwaysProviderClient(cloudwaysCredentials);
     let application = null;
     try {
       application = await cloudways.getApplication(cloudwaysIdentity);
@@ -313,6 +310,16 @@ export async function renderCanonicalWordPressPreview(
               applicationRoot: `/home/master/applications/${application.sys_user}/public_html`,
               sftpApplicationRoot: `/applications/${application.sys_user}/public_html`,
             }
+          : application.master_user &&
+              application.master_password &&
+              application.sys_user
+            ? {
+                host: application.public_ip,
+                username: application.master_user,
+                password: application.master_password,
+                applicationRoot: `/home/master/applications/${application.sys_user}/public_html`,
+                sftpApplicationRoot: `/applications/${application.sys_user}/public_html`,
+              }
           : {
               host: application.public_ip,
               username: application.app_user,
@@ -390,6 +397,10 @@ export async function renderCanonicalWordPressPreview(
       ssh: runtimeSsh,
       acfProLicenseKey,
       publicRuntime,
+      expectedRemoteContentHash:
+        target.runtime_contract_version === 3
+          ? target.last_verified_content_hash
+          : null,
       protection: {
         mode: target.protection_mode as "noindex" | "password_noindex",
         passwordReference:

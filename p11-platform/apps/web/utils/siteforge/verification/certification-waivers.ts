@@ -4,9 +4,12 @@ import type { Json } from '@/types/supabase'
 import { SITEFORGE_CERTIFICATION_POLICY_VERSION } from './browser-evidence'
 
 export const NON_WAIVABLE_CHECK_PREFIXES = [
+  'evidence.',
   'identity.',
   'legal.',
   'rights.',
+  'consent.',
+  'provenance.',
   'accessibility.critical',
 ] as const
 
@@ -17,6 +20,7 @@ const NON_WAIVABLE_CHECK_CODES = new Set([
   'rendered_legal_version',
   'rendered_image_provenance',
   'consent.script_blocking',
+  'evidence.browser.required',
 ])
 
 export const certificationWaiverRequestSchema = z
@@ -66,6 +70,14 @@ export function isWaivableCertificationCheck(checkCode: string): boolean {
   )
 }
 
+export function certificationWaiverClass(
+  checkCode: string
+): 'non_waivable' | 'manager_waivable' {
+  return isWaivableCertificationCheck(checkCode)
+    ? 'manager_waivable'
+    : 'non_waivable'
+}
+
 function canonicalFingerprint(input: {
   orgId: string
   approvedBy: string
@@ -93,7 +105,7 @@ export function buildImmutableCertificationWaiver(input: {
 }): Readonly<ImmutableCertificationWaiver> {
   if (!isWaivableCertificationCheck(input.request.checkCode)) {
     throw new CertificationWaiverError(
-      'Identity, legal, rights, and critical accessibility checks cannot be waived',
+      'Evidence, identity, legal, rights, consent, provenance, and serious accessibility checks cannot be waived',
       422
     )
   }

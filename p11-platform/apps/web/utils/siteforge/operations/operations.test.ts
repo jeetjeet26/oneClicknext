@@ -6,8 +6,11 @@ import {
   evaluateAnomalyRules,
 } from './analytics'
 import {
+  createDurableInventorySnapshot,
   enforceInventoryFreshness,
+  enforceInventorySnapshotFreshness,
   InventoryProviderNotConfiguredError,
+  RentCafeInventoryAdapter,
   YardiInventoryAdapter,
 } from './inventory'
 import {
@@ -48,6 +51,9 @@ describe('SiteForge operations contracts', () => {
     await expect(new YardiInventoryAdapter().fetch('property-1')).rejects.toBeInstanceOf(
       InventoryProviderNotConfiguredError
     )
+    await expect(new RentCafeInventoryAdapter().fetch('property-1')).rejects.toBeInstanceOf(
+      InventoryProviderNotConfiguredError
+    )
     const result = enforceInventoryFreshness(
       [{
         id: 'a1',
@@ -70,6 +76,62 @@ describe('SiteForge operations contracts', () => {
       proposalHash: expect.stringMatching(/^[a-f0-9]{64}$/),
     }))
     expect(Object.isFrozen(result.revisionProposal)).toBe(true)
+  })
+
+  it('persists hash-addressed snapshots and hides every stale pricing field', () => {
+    const snapshot = createDurableInventorySnapshot({
+      propertyId: 'property-1',
+      provider: 'yardi',
+      sourceWatermark: '2026-07-31T00:00:00.000Z',
+      capturedAt: '2026-07-31T00:05:00.000Z',
+      freshnessSeconds: 3_600,
+      units: [
+        {
+          id: 'unit-1',
+          rent: 1_900,
+          rentMin: 1_800,
+          rentMax: 2_000,
+          monthlyRent: 1_900,
+          price: 1_900,
+          availableCount: 2,
+          availability: 'now',
+          specials: 'One month free',
+          sourceUpdatedAt: '2026-07-31T00:00:00.000Z',
+        },
+      ],
+    })
+    const result = enforceInventorySnapshotFreshness(
+      snapshot,
+      new Date('2026-07-31T02:00:00.000Z')
+    )
+
+    expect(snapshot.snapshotId).toBe(`inventory:property-1:${snapshot.contentHash}`)
+    expect(snapshot.contentHash).toMatch(/^[a-f0-9]{64}$/)
+    expect(Object.isFrozen(snapshot.units)).toBe(true)
+    expect(result.snapshotStale).toBe(true)
+    expect(result.units[0]).toEqual({
+      id: 'unit-1',
+      sourceUpdatedAt: '2026-07-31T00:00:00.000Z',
+      expiresAt: '2026-07-31T01:00:00.000Z',
+      pricingHiddenReason: 'stale_inventory',
+    })
+  })
+
+  it('treats malformed source timestamps as stale instead of showing prices', () => {
+    const result = enforceInventoryFreshness(
+      [{ id: 'bad-time', rentMin: 1_800, sourceUpdatedAt: 'not-a-date' }],
+      {
+        propertyId: 'property-1',
+        provider: 'rentcafe',
+        maxAgeHours: 24,
+        now: new Date('2026-07-31T00:00:00.000Z'),
+      }
+    )
+    expect(result.units[0]).not.toHaveProperty('rentMin')
+    expect(result.units[0]).toHaveProperty(
+      'pricingHiddenReason',
+      'stale_inventory'
+    )
   })
 
   it('validates destinations and evaluates artifact-aware funnel anomalies', () => {

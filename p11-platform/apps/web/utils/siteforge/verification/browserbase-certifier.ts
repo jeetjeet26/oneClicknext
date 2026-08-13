@@ -115,6 +115,34 @@ function normalizeUrl(value: string): string {
   return url.toString().replace(/\/$/, "");
 }
 
+export function criticalUrlsBlockedByRobots(
+  robotsBody: string,
+  urls: string[],
+): string[] {
+  const disallowed: string[] = [];
+  let appliesToAll = false;
+  for (const rawLine of robotsBody.split(/\r?\n/)) {
+    const line = rawLine.replace(/#.*$/, "").trim();
+    const userAgent = /^user-agent:\s*(.+)$/i.exec(line);
+    if (userAgent) {
+      appliesToAll = userAgent[1].trim() === "*";
+      continue;
+    }
+    const rule = /^disallow:\s*(.*)$/i.exec(line);
+    if (appliesToAll && rule?.[1].trim()) disallowed.push(rule[1].trim());
+  }
+  return urls.filter((value) => {
+    const pathname = new URL(value).pathname;
+    return disallowed.some((rule) =>
+      rule === "/"
+        ? true
+        : rule.endsWith("*")
+        ? pathname.startsWith(rule.slice(0, -1))
+        : pathname === rule || pathname.startsWith(`${rule}/`),
+    );
+  });
+}
+
 function safePayload(request: PlaywrightRequest): Record<string, unknown> {
   const raw = request.postData();
   if (!raw) return {};
@@ -1259,7 +1287,10 @@ export async function collectBrowserbaseCertificationEvidence(
           sitemapUrls: [...robotsBody.matchAll(/^sitemap:\s*(\S+)/gim)].map(
             (match) => match[1],
           ),
-          blockedCriticalUrls: [],
+          blockedCriticalUrls: criticalUrlsBlockedByRobots(
+            robotsBody,
+            input.expectedUrls,
+          ),
         },
       },
       redirects: { entries: redirectEntries, criticalRoutes },

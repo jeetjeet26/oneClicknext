@@ -8,8 +8,10 @@ vi.mock('@/utils/supabase/admin', () => ({ createServiceClient }))
 
 import {
   assertExactStagingManifest,
+  assertPublicStagingCertification,
   assertStagingDeploymentActive,
   readCloudwaysProvisioningCheckpoint,
+  runtimeV3StagingManifestHash,
   type SiteForgeStagingWorkflowInput,
 } from '@/utils/siteforge/workflows/staging-steps'
 
@@ -107,6 +109,25 @@ describe('Cloudways staging workflow guards', () => {
     ).toThrow('Cloudways staging manifest does not match')
     expect(() =>
       assertExactStagingManifest(input.contentHash, input.contentHash)
+    ).not.toThrow()
+  })
+
+  it('uses verified runtime-v3 evidence as the staging manifest readback', () => {
+    expect(
+      runtimeV3StagingManifestHash({
+        contractVersion: 3,
+        finalContentHash: input.contentHash,
+      })
+    ).toBe(input.contentHash)
+    expect(runtimeV3StagingManifestHash({ contractVersion: 3 })).toBeNull()
+  })
+
+  it('blocks staging launch when rendered browser certification fails', () => {
+    expect(() => assertPublicStagingCertification({ passed: false })).toThrow(
+      'Public staging launch blocked'
+    )
+    expect(() =>
+      assertPublicStagingCertification({ passed: true })
     ).not.toThrow()
   })
 })

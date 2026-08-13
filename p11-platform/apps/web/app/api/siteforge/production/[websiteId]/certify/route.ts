@@ -12,6 +12,8 @@ import {
   assertActiveAuroraLifecycleLease,
   AuroraLifecycleControlError,
 } from '@/utils/siteforge/testing/aurora-lifecycle-control'
+import { assertDistinctLaunchActors } from '@/utils/siteforge/launch/service'
+import { SiteForgeLaunchError } from '@/utils/siteforge/launch/repository'
 
 const requestSchema = z
   .object({
@@ -101,7 +103,7 @@ export async function POST(
       website.production_content_hash !== parsed.data.promotedContentHash
     ) {
       return NextResponse.json(
-        { error: 'Production QA request does not match the live artifact' },
+        { error: 'Production certification does not match the promoted artifact' },
         { status: 409, headers: ctx.responseHeaders }
       )
     }
@@ -109,7 +111,7 @@ export async function POST(
     const { data: release, error: releaseError } = await client
       .from('siteforge_launch_releases')
       .select(
-        'id, state, state_version, artifact_id, artifact_content_hash, approval_expires_at, launch_approval_id, promoted_at'
+        'id, state, state_version, artifact_id, artifact_content_hash, staging_deployment_id, approval_expires_at, launch_approval_id, approved_by, created_by, backup_id, backup_operation_id, promoted_at'
       )
       .eq('id', parsed.data.releaseId)
       .eq('website_id', website.id)
@@ -118,20 +120,28 @@ export async function POST(
     if (
       releaseError ||
       !release ||
-      release.state !== 'live' ||
+      release.state !== 'promoted' ||
       release.artifact_id !== parsed.data.promotedArtifactId ||
       release.artifact_content_hash !== parsed.data.promotedContentHash ||
       !release.launch_approval_id ||
+      !release.staging_deployment_id ||
+      !release.backup_id ||
+      !release.backup_operation_id ||
       !release.promoted_at
     ) {
       return NextResponse.json(
         {
           error:
-            'An exact live launch release is required for optional browser QA',
+            'An exact promoted launch release is required for blocking rendered certification',
         },
         { status: 409, headers: ctx.responseHeaders }
       )
     }
+    assertDistinctLaunchActors({
+      operatorId: release.created_by,
+      reviewerId: release.approved_by,
+      actingOperatorId: user.id,
+    })
     if (!website.wordpress_credential_ref) {
       return NextResponse.json(
         { error: 'Production WordPress credentials are unavailable' },
@@ -166,10 +176,9 @@ export async function POST(
       website.wordpress_credential_ref
     )
     const productionUrl =
-      website.production_url ||
       (website.target_domain
         ? `https://${website.target_domain}`
-        : credentials.url)
+        : website.production_url) || credentials.url
     const now = new Date().toISOString()
 
     const { data: existingTarget } = await client
@@ -191,8 +200,8 @@ export async function POST(
       site_url: productionUrl,
       admin_url: `${productionUrl.replace(/\/$/, '')}/wp-admin`,
       credential_ref: website.wordpress_credential_ref,
-      protection_mode: 'public',
-      status: 'ready',
+      protection_mode: 'noindex',
+      status: 'provisioning',
       is_active: true,
       metadata: {
         promotionPolicy: 'siteforge_launch_release_v1',
@@ -233,9 +242,7 @@ export async function POST(
       .maybeSingle()
     if (
       existingJob &&
-      ['queued', 'running', 'retrying', 'succeeded'].includes(
-        existingJob.lifecycle_status
-      )
+      ['queued', 'running', 'retrying'].includes(existingJob.lifecycle_status)
     ) {
       return NextResponse.json(
         {
@@ -329,7 +336,6 @@ export async function POST(
       actorId: user.id,
       productionUrl,
       startedAt: now,
-      evidenceOnly: true,
       ...(lifecycleIdentity
         ? {
             lifecycleOwnerId: lifecycleIdentity.ownerId,
@@ -375,7 +381,10 @@ export async function POST(
     )
   } catch (error) {
     const status =
-      error instanceof AuroraLifecycleControlError ? error.statusCode : 500
+      error instanceof AuroraLifecycleControlError ||
+      error instanceof SiteForgeLaunchError
+        ? error.statusCode
+        : 500
     ctx.logError(status, error)
     return NextResponse.json(
       {

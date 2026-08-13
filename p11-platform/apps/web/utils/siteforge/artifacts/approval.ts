@@ -4,6 +4,20 @@ import { recordSharedApprovalDecision } from '@/utils/services/shared-approvals'
 
 type ServiceClient = ReturnType<typeof createServiceClient>
 
+/**
+ * Canonical preview is the one iterative exception in the release chain.
+ * A reviewer may approve an exact protected WordPress render without complete
+ * browser evidence so corrections can continue. That approval never certifies
+ * a public environment: staging and production independently require complete
+ * blocking rendered/browser certification.
+ */
+export const CANONICAL_PREVIEW_ITERATION_POLICY = Object.freeze({
+  environment: 'protected_preview' as const,
+  browserEvidenceRequiredForIteration: false,
+  publicStagingCertificationRequired: true,
+  productionCertificationRequired: true,
+})
+
 export class SiteForgeArtifactApprovalError extends Error {
   constructor(
     message: string,
@@ -22,7 +36,7 @@ export async function loadDeployableArtifact(
   const { data: artifact, error } = await supabase
     .from('siteforge_blueprint_versions')
     .select(
-      'id, website_id, org_id, property_id, version, content_hash, quality_report, approval_action_attempt_id, deployment_decision'
+      'id, website_id, org_id, property_id, version, content_hash, quality_report, approval_action_attempt_id, confirmed_approval_id, deployment_decision, decision_reason, deployment_approved_by, deployment_approved_at'
     )
     .eq('id', artifactId)
     .eq('property_id', propertyId)
@@ -55,7 +69,7 @@ export async function loadDeployableArtifact(
   const { data: website, error: websiteError } = await supabase
     .from('property_websites')
     .select(
-      'id, current_artifact_version_id, canonical_preview_artifact_id, canonical_preview_content_hash, canonical_preview_url'
+      'id, current_artifact_version_id, canonical_preview_artifact_id, canonical_preview_content_hash, canonical_preview_url, editor_lifecycle_status'
     )
     .eq('id', artifact.website_id)
     .eq('property_id', propertyId)
@@ -110,12 +124,47 @@ async function ensureDeployProposal(
 ) {
   const current = await loadDeployableArtifact(artifactId, propertyId, supabase)
   if (current.artifact.approval_action_attempt_id) {
-    const { data: existing } = await supabase
+    const { data: existing, error: existingError } = await supabase
       .from('shared_action_attempts')
-      .select('id, proposal_decision_status')
+      .select(
+        'id, org_id, property_id, action_type, proposal_decision_status, request_payload, execution_payload'
+      )
       .eq('id', current.artifact.approval_action_attempt_id)
       .maybeSingle()
-    if (existing?.proposal_decision_status === 'proposed') {
+    if (existingError) {
+      throw new SiteForgeArtifactApprovalError(
+        'Failed to reconcile artifact deployment proposal',
+        500
+      )
+    }
+    if (existing) {
+      const requestPayload =
+        existing.request_payload &&
+        typeof existing.request_payload === 'object' &&
+        !Array.isArray(existing.request_payload)
+          ? existing.request_payload
+          : null
+      const executionPayload =
+        existing.execution_payload &&
+        typeof existing.execution_payload === 'object' &&
+        !Array.isArray(existing.execution_payload)
+          ? existing.execution_payload
+          : null
+      if (
+        existing.org_id !== current.artifact.org_id ||
+        existing.property_id !== propertyId ||
+        existing.action_type !== 'siteforge.artifact:deploy_staging' ||
+        requestPayload?.artifactId !== artifactId ||
+        requestPayload.contentHash !== current.artifact.content_hash ||
+        executionPayload?.artifactId !== artifactId ||
+        executionPayload.contentHash !== current.artifact.content_hash ||
+        executionPayload.websiteId !== current.artifact.website_id
+      ) {
+        throw new SiteForgeArtifactApprovalError(
+          'Artifact deployment proposal is bound to different artifact details',
+          409
+        )
+      }
       return { ...current, actionAttemptId: existing.id }
     }
   }
@@ -182,6 +231,51 @@ async function ensureDeployProposal(
   }
 }
 
+function hasPersistedArtifactDecision(
+  artifact: Awaited<ReturnType<typeof loadDeployableArtifact>>['artifact'],
+  input: {
+    reviewerProfileId: string
+    decisionStatus: 'approved' | 'denied'
+    decisionReason: string
+  },
+  approvalId: string
+): boolean {
+  const hasDecision =
+    artifact.deployment_decision !== null &&
+    artifact.deployment_decision !== 'pending'
+  if (!hasDecision) {
+    if (
+      artifact.confirmed_approval_id !== null ||
+      artifact.decision_reason !== null ||
+      artifact.deployment_approved_by !== null ||
+      artifact.deployment_approved_at !== null
+    ) {
+      throw new SiteForgeArtifactApprovalError(
+        'Artifact has a conflicting partial deployment decision',
+        409
+      )
+    }
+    return false
+  }
+
+  const approvalFieldsMatch =
+    artifact.deployment_decision === input.decisionStatus &&
+    artifact.confirmed_approval_id === approvalId &&
+    artifact.decision_reason === input.decisionReason &&
+    (input.decisionStatus === 'approved'
+      ? artifact.deployment_approved_by === input.reviewerProfileId &&
+        Boolean(artifact.deployment_approved_at)
+      : artifact.deployment_approved_by === null &&
+        artifact.deployment_approved_at === null)
+  if (!approvalFieldsMatch) {
+    throw new SiteForgeArtifactApprovalError(
+      'Artifact deployment was already decided with different details',
+      409
+    )
+  }
+  return true
+}
+
 export async function decideSiteForgeArtifactDeployment(
   input: {
     artifactId: string
@@ -205,20 +299,14 @@ export async function decideSiteForgeArtifactDeployment(
       409
     )
   }
-  if (current.artifact.deployment_decision === 'approved') {
-    throw new SiteForgeArtifactApprovalError(
-      'Artifact deployment is already approved',
-      409
-    )
-  }
-
+  const decisionReason = input.decisionReason.trim()
   const decision = await recordSharedApprovalDecision(
     {
       propertyId: input.propertyId,
       actionAttemptId: current.actionAttemptId,
       reviewerProfileId: input.reviewerProfileId,
       decisionStatus: input.decisionStatus,
-      decisionReason: input.decisionReason,
+      decisionReason,
       decisionPayload: {
         artifactId: input.artifactId,
         contentHash: input.contentHash,
@@ -251,40 +339,86 @@ export async function decideSiteForgeArtifactDeployment(
     supabase
   )
   const now = new Date().toISOString()
-  const { error: updateError } = await supabase
-    .from('siteforge_blueprint_versions')
-    .update({
-      confirmed_approval_id: decision.approval.id,
-      deployment_decision: input.decisionStatus,
-      decision_reason: input.decisionReason,
-      deployment_approved_by:
-        input.decisionStatus === 'approved' ? input.reviewerProfileId : null,
-      deployment_approved_at: input.decisionStatus === 'approved' ? now : null,
-    })
-    .eq('id', input.artifactId)
-    .eq('content_hash', input.contentHash)
-  if (updateError) {
-    throw new SiteForgeArtifactApprovalError(
-      'Failed to persist artifact deployment decision',
-      500
+  if (
+    !hasPersistedArtifactDecision(
+      current.artifact,
+      {
+        reviewerProfileId: input.reviewerProfileId,
+        decisionStatus: input.decisionStatus,
+        decisionReason,
+      },
+      decision.approval.id
     )
+  ) {
+    const artifactUpdate = supabase
+      .from('siteforge_blueprint_versions')
+      .update({
+        confirmed_approval_id: decision.approval.id,
+        deployment_decision: input.decisionStatus,
+        decision_reason: decisionReason,
+        deployment_approved_by:
+          input.decisionStatus === 'approved' ? input.reviewerProfileId : null,
+        deployment_approved_at:
+          input.decisionStatus === 'approved' ? now : null,
+      })
+      .eq('id', input.artifactId)
+      .eq('content_hash', input.contentHash)
+      .eq('approval_action_attempt_id', current.actionAttemptId)
+    const pendingArtifactUpdate =
+      current.artifact.deployment_decision === null
+        ? artifactUpdate.is('deployment_decision', null)
+        : artifactUpdate.eq('deployment_decision', 'pending')
+    const { data: updatedArtifact, error: updateError } =
+      await pendingArtifactUpdate
+        .is('confirmed_approval_id', null)
+        .select('id')
+        .maybeSingle()
+    if (updateError) {
+      throw new SiteForgeArtifactApprovalError(
+        'Failed to persist artifact deployment decision',
+        500
+      )
+    }
+    if (!updatedArtifact) {
+      throw new SiteForgeArtifactApprovalError(
+        'Artifact deployment changed while reconciling the decision',
+        409
+      )
+    }
   }
-  const { error: websiteUpdateError } = await supabase
-    .from('property_websites')
-    .update({
-      editor_lifecycle_status:
-        input.decisionStatus === 'approved'
-          ? 'approved_for_staging'
-          : 'preview_ready',
-      updated_at: now,
-    })
-    .eq('id', current.website.id)
-    .eq('current_artifact_version_id', input.artifactId)
-  if (websiteUpdateError) {
-    throw new SiteForgeArtifactApprovalError(
-      'Failed to persist website approval lifecycle',
-      500
-    )
+  const expectedWebsiteStatus =
+    input.decisionStatus === 'approved'
+      ? 'approved_for_staging'
+      : 'preview_ready'
+  if (current.website.editor_lifecycle_status !== expectedWebsiteStatus) {
+    const { data: updatedWebsite, error: websiteUpdateError } = await supabase
+      .from('property_websites')
+      .update({
+        editor_lifecycle_status: expectedWebsiteStatus,
+        updated_at: now,
+      })
+      .eq('id', current.website.id)
+      .eq('current_artifact_version_id', input.artifactId)
+      .eq('canonical_preview_artifact_id', input.artifactId)
+      .eq('canonical_preview_content_hash', input.contentHash)
+      .eq(
+        'editor_lifecycle_status',
+        current.website.editor_lifecycle_status
+      )
+      .select('id')
+      .maybeSingle()
+    if (websiteUpdateError) {
+      throw new SiteForgeArtifactApprovalError(
+        'Failed to persist website approval lifecycle',
+        500
+      )
+    }
+    if (!updatedWebsite) {
+      throw new SiteForgeArtifactApprovalError(
+        'Artifact website changed while reconciling the decision',
+        409
+      )
+    }
   }
   return {
     artifactId: input.artifactId,

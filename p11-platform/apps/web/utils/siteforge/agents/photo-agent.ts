@@ -15,6 +15,7 @@ import {
   generateAndUploadImage, 
   buildLifestylePhotoPrompt 
 } from '../imagen-client'
+import type { SiteForgeCreativeExecutionContext } from '@/utils/siteforge/generation/creative-execution'
 
 export interface PhotoStrategy {
   uploadedPhotoUsage: Array<{
@@ -131,6 +132,37 @@ type PhotoStrategyInput = {
   analyzedPhotos: AnalyzedPhoto[]
   photoInsights: PhotoInsights
   photoNeeds: PhotoNeed[]
+  execution?: SiteForgeCreativeExecutionContext
+}
+
+export function applyApprovedDirectionToPhotoStrategy(
+  strategy: PhotoStrategy,
+  execution: SiteForgeCreativeExecutionContext
+): PhotoStrategy {
+  const { brief, direction } = execution
+  const audience = brief.audiences[0]
+  const approvedVisualPrompt = [
+    direction.imagery.style,
+    `Subjects: ${direction.imagery.subjects.join(', ')}`,
+    direction.imagery.treatment,
+    `Hero media: ${direction.hero.mediaTreatment}`,
+    `Audience context: ${audience.segment}; needs: ${audience.needs.join(', ')}`,
+  ].join('. ')
+
+  return {
+    ...strategy,
+    photosToGenerate: strategy.photosToGenerate.map(spec => ({
+      ...spec,
+      prompt: `${approvedVisualPrompt}. Scene: ${spec.scene}. ${spec.prompt}`.trim(),
+      reasoning: `${spec.reasoning} Approved direction: ${direction.rationale}`,
+    })),
+    photoGuidelines: {
+      lighting: `${direction.imagery.style}; ${direction.hero.mediaTreatment}`,
+      composition: `${direction.hero.composition}; ${direction.imagery.treatment}`,
+      subjects: direction.imagery.subjects.join(', '),
+      mood: direction.voice.traits.join(', '),
+    },
+  }
 }
 
 /**
@@ -144,7 +176,8 @@ export class PhotoAgent extends BaseAgent {
    */
   async planStrategy(
     brandContext: BrandContext,
-    architecture: ArchitectureProposal
+    architecture: ArchitectureProposal,
+    execution?: SiteForgeCreativeExecutionContext
   ): Promise<PhotoStrategy> {
 
     await this.logAction('photo_strategy_start', { propertyId: this.propertyId })
@@ -166,8 +199,12 @@ export class PhotoAgent extends BaseAgent {
       brandContext,
       analyzedPhotos,
       photoInsights,
-      photoNeeds
+      photoNeeds,
+      execution,
     })
+    const approvedStrategy = execution
+      ? applyApprovedDirectionToPhotoStrategy(strategy, execution)
+      : strategy
     const operatorCategorized = analyzedPhotos
       .filter(
         (photo): photo is AnalyzedPhoto & { operatorCategory: UploadedPhotoCategory } =>
@@ -186,19 +223,19 @@ export class PhotoAgent extends BaseAgent {
     const operatorPhotoIds = new Set(
       operatorCategorized.map(photo => photo.photoId)
     )
-    strategy.uploadedPhotoUsage = [
+    approvedStrategy.uploadedPhotoUsage = [
       ...operatorCategorized,
-      ...strategy.uploadedPhotoUsage.filter(
+      ...approvedStrategy.uploadedPhotoUsage.filter(
         photo => !operatorPhotoIds.has(photo.photoId)
       ),
     ]
     
     await this.logAction('photo_strategy_complete', {
-      uploadedCount: strategy.uploadedPhotoUsage.length,
-      toGenerateCount: strategy.photosToGenerate.length
+      uploadedCount: approvedStrategy.uploadedPhotoUsage.length,
+      toGenerateCount: approvedStrategy.photosToGenerate.length
     })
     
-    return strategy
+    return approvedStrategy
   }
   
   /**
@@ -521,6 +558,9 @@ Plan the photo strategy for this website.
 # BRAND CONTEXT:
 ${JSON.stringify(data.brandContext.visualIdentity, null, 2)}
 
+# APPROVED BRIEF AND CREATIVE DIRECTION:
+${data.execution ? JSON.stringify(data.execution, null, 2) : 'No approved execution context supplied.'}
+
 # ANALYZED UPLOADED PHOTOS:
 ${JSON.stringify(data.analyzedPhotos, null, 2)}
 
@@ -579,6 +619,7 @@ ${JSON.stringify(data.photoNeeds, null, 2)}
 4. For amenity shots: specify which amenity from amenityFocus insights
 5. Priority: high for hero/above-fold, medium for amenities, low for gallery
 6. Prefer authentic lifestyle coverage, warm lighting, and people where the brand/audience fit
+7. When approved execution context is supplied, its imagery subjects, treatment, hero composition, and audience needs take precedence
 `
     
     const response = await this.callClaude(prompt, {

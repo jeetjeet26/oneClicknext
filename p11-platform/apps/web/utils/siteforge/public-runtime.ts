@@ -44,7 +44,8 @@ export async function loadSiteForgePublicRuntimeConfig(
     throw new Error(`Failed to load LumaLeasing runtime configuration: ${lumaError.message}`)
   }
 
-  const apiBaseUrl = getAppBaseUrl()
+  const apiBaseUrl =
+    process.env.SITEFORGE_PUBLIC_RUNTIME_BASE_URL?.trim() || getAppBaseUrl()
   return {
     enabled: Boolean(luma?.is_active && luma.api_key),
     apiKey: luma?.api_key || '',

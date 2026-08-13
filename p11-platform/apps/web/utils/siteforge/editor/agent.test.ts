@@ -2,8 +2,12 @@ import { describe, expect, it } from 'vitest'
 import {
   assertSiteForgeEditorAgentOutcome,
   runtimeExtensionRequestSchema,
+  validateSiteForgeEditorOperations,
 } from './agent'
-import type { BlueprintPatchOperation } from '@/types/siteforge'
+import type {
+  BlueprintPatchOperation,
+  SiteBlueprint,
+} from '@/types/siteforge'
 
 describe('SiteForge editor agent runtime extension contract', () => {
   it('accepts exactly one bounded allowlisted overlay proposal', () => {
@@ -84,5 +88,114 @@ describe('SiteForge editor agent runtime extension contract', () => {
         clarification: null,
       })
     ).toThrow(/exactly one/)
+  })
+
+  it('rejects block content that cannot pass final artifact validation', () => {
+    const blueprint = {
+      version: 1,
+      updatedAt: new Date().toISOString(),
+      pages: [
+        {
+          slug: 'home',
+          title: 'Home',
+          purpose: 'Primary property landing page',
+          sections: [],
+        },
+      ],
+    } as SiteBlueprint
+    const operations = [
+      {
+        version: 2,
+        op: 'page.upsert',
+        page: {
+          slug: 'home',
+          title: 'Home',
+          purpose: 'Primary property landing page',
+          seo: {
+            title: 'Property Home',
+            description:
+              'Review approved property information and contact options for this apartment community.',
+            canonicalPath: '/',
+            noIndex: false,
+            structuredData: ['WebPage'],
+          },
+          sections: [
+            {
+              id: 'hero',
+              type: 'hero',
+              acfBlock: 'acf/top-slides',
+              order: 0,
+              content: {},
+              reasoning: 'Use a governed property hero',
+            },
+          ],
+        },
+      },
+    ] as BlueprintPatchOperation[]
+
+    expect(() =>
+      validateSiteForgeEditorOperations({ blueprint, operations })
+    ).toThrow(/slides/)
+  })
+
+  it('rejects factual copy with an untrusted evidence identity', () => {
+    const blueprint = {
+      version: 1,
+      updatedAt: new Date().toISOString(),
+      pages: [
+        {
+          slug: 'home',
+          title: 'Home',
+          purpose: 'Primary property landing page',
+          sections: [],
+        },
+      ],
+    } as SiteBlueprint
+    const operations = [
+      {
+        version: 2,
+        op: 'page.upsert',
+        page: {
+          slug: 'home',
+          title: 'Home',
+          purpose: 'Primary property landing page',
+          seo: {
+            title: 'Property Home',
+            description:
+              'Review approved property information and contact options for this apartment community.',
+            canonicalPath: '/',
+            noIndex: false,
+            structuredData: ['WebPage'],
+          },
+          sections: [
+            {
+              id: 'home-hero',
+              type: 'hero',
+              acfBlock: 'acf/text-section',
+              order: 0,
+              content: {
+                headline: 'Unverified property claim',
+                content: 'Unverified property claim',
+                layout: 'center',
+                background: 'white',
+              },
+              reasoning: 'Attempt to publish unsupported copy',
+              evidenceIds: ['untrusted-evidence-id'],
+            },
+          ],
+        },
+      },
+    ] as BlueprintPatchOperation[]
+
+    expect(() =>
+      validateSiteForgeEditorOperations({ blueprint, operations })
+    ).toThrow(/does not retain an exact claim/)
+    expect(() =>
+      validateSiteForgeEditorOperations({
+        blueprint,
+        operations,
+        verifiedEvidenceIds: ['untrusted-evidence-id'],
+      })
+    ).not.toThrow()
   })
 })

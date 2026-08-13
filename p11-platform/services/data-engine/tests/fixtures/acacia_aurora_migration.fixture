@@ -1,0 +1,14 @@
+{
+  "source": {
+    "name": "Acacia",
+    "url": "https://www.dividendhomes.com",
+    "role": "read_only",
+    "allowed_methods": ["GET", "HEAD", "OPTIONS"],
+    "mutation_allowed": false
+  },
+  "target": {
+    "name": "Aurora",
+    "url": "https://aurora.siteforge.example",
+    "role": "write_target"
+  }
+}

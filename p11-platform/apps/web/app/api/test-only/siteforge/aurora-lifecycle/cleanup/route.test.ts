@@ -108,4 +108,39 @@ describe('Aurora lifecycle cleanup route', () => {
       identity.websiteId
     )
   })
+
+  it('removes only overlays unreferenced by retained artifacts', async () => {
+    const { selectUnreferencedAuroraOverlays } = await import('./route')
+
+    expect(
+      selectUnreferencedAuroraOverlays(
+        [
+          {
+            id: '66666666-6666-4666-8666-666666666666',
+            storagePath: 'overlays/site/first.zip',
+          },
+          {
+            id: '77777777-7777-4777-8777-777777777777',
+            storagePath: 'overlays/site/second.zip',
+          },
+        ],
+        [
+          {
+            artifactId: '88888888-8888-4888-888888888888',
+            overlayId: '66666666-6666-4666-8666-666666666666',
+          },
+          {
+            artifactId: '99999999-9999-4999-899999999999',
+            overlayId: '77777777-7777-4777-8777-777777777777',
+          },
+        ],
+        ['88888888-8888-4888-888888888888']
+      )
+    ).toEqual([
+      {
+        id: '66666666-6666-4666-8666-666666666666',
+        storagePath: 'overlays/site/first.zip',
+      },
+    ])
+  })
 })

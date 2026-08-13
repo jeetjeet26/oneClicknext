@@ -55,6 +55,25 @@ describe('wordpress-client', () => {
     )
   })
 
+  it('rejects a successful manifest response with a missing or malformed hash', async () => {
+    const client = new WordPressAPIClient('https://example.com', {
+      username: 'admin',
+      password: 'app-password',
+    })
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ page_ids: [1] }))
+      .mockResolvedValueOnce(
+        jsonResponse({ content_hash: 'not-a-sha256', page_ids: [1] })
+      )
+
+    await expect(client.getContentManifest()).rejects.toThrow(
+      'did not include a valid artifact hash'
+    )
+    await expect(client.getContentManifest()).rejects.toThrow(
+      'did not include a valid artifact hash'
+    )
+  })
+
   it('activates indexing only when WordPress confirms the exact production hash', async () => {
     const hash = 'b'.repeat(64)
     fetchMock.mockResolvedValueOnce(

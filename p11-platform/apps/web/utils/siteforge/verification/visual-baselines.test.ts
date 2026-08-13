@@ -42,7 +42,7 @@ describe('policy-v16 visual baseline repository', () => {
       environment: 'production',
       access_mode: 'public',
       require_indexable: true,
-      policy_version: 'siteforge-browser-certification-v16',
+      policy_version: 'siteforge-browser-certification-v17',
       binding_hash: 'f'.repeat(64),
       evidence_digest: '1'.repeat(64),
       screenshot_storage_path: 'browser-certification/approved/mobile.png',

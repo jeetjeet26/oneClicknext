@@ -1,0 +1,82 @@
+{
+  "key": "group_siteforge_form",
+  "title": "SiteForge form",
+  "fields": [
+    {
+      "key": "field_siteforge_form_heading_0",
+      "name": "heading",
+      "label": "heading",
+      "type": "text"
+    },
+    {
+      "key": "field_siteforge_form_subheading_1",
+      "name": "subheading",
+      "label": "subheading",
+      "type": "text"
+    },
+    {
+      "key": "field_siteforge_form_form_type_2",
+      "name": "form_type",
+      "label": "form_type",
+      "type": "select",
+      "choices": {
+        "contact": "contact",
+        "tour": "tour",
+        "register": "register"
+      },
+      "default_value": "contact"
+    },
+    {
+      "key": "field_siteforge_form_redirect_url_3",
+      "name": "redirect_url",
+      "label": "redirect_url",
+      "type": "url"
+    },
+    {
+      "key": "field_siteforge_form_provider_4",
+      "name": "provider",
+      "label": "provider",
+      "type": "select",
+      "choices": {
+        "p11_lumaleasing": "p11_lumaleasing"
+      },
+      "default_value": "p11_lumaleasing"
+    },
+    {
+      "key": "field_siteforge_form_consent_text_5",
+      "name": "consent_text",
+      "label": "consent_text",
+      "type": "textarea"
+    },
+    {
+      "key": "field_siteforge_form_variant_6",
+      "name": "variant",
+      "label": "variant",
+      "type": "select",
+      "choices": {
+        "card": "card",
+        "split": "split",
+        "minimal": "minimal"
+      },
+      "default_value": "card"
+    }
+  ],
+  "location": [
+    [
+      {
+        "param": "block",
+        "operator": "==",
+        "value": "acf/form"
+      }
+    ]
+  ],
+  "menu_order": 0,
+  "position": "normal",
+  "style": "default",
+  "label_placement": "top",
+  "instruction_placement": "label",
+  "active": true,
+  "description": "Versioned SiteForge block contract.",
+  "show_in_rest": 1,
+  "modified": 1785441600
+}

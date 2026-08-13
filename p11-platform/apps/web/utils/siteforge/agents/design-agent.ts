@@ -6,6 +6,10 @@
 import { BaseAgent, type VectorSearchResult } from './base-agent'
 import { WordPressMcpClient, type ThemeDesignTokens } from '@/utils/mcp/wordpress-client'
 import type { BrandContext } from './brand-agent'
+import {
+  siteForgeCompositionProfile,
+  type SiteForgeCreativeExecutionContext,
+} from '@/utils/siteforge/generation/creative-execution'
 
 export interface DesignSystem {
   colorSystem: {
@@ -71,6 +75,127 @@ interface DesignInsights {
   colorPreferences: VectorSearchResult[]
 }
 
+export function applyApprovedCreativeDirectionToDesignSystem(
+  designSystem: DesignSystem,
+  execution: SiteForgeCreativeExecutionContext
+): DesignSystem {
+  const { direction } = execution
+  const profile = siteForgeCompositionProfile(direction)
+  const typographyScale =
+    profile === 'immersive'
+      ? 'luxury'
+      : profile === 'conversion'
+        ? 'compact'
+        : 'balanced'
+  const spacingScale =
+    profile === 'immersive'
+      ? 'luxury'
+      : profile === 'conversion'
+        ? 'tight'
+        : 'balanced'
+  const motionCues = [
+    direction.hero.mediaTreatment,
+    direction.layout.sectionRhythm,
+  ]
+    .join(' ')
+    .toLowerCase()
+  const animationLevel =
+    /\b(motion|sequence|reveal|cinematic|immersive)\b/.test(motionCues)
+      ? 'subtle'
+      : 'none'
+
+  return {
+    ...designSystem,
+    colorSystem: {
+      ...designSystem.colorSystem,
+      primary: direction.palette.primary,
+      secondary: direction.palette.secondary,
+      accent: direction.palette.accent,
+      background: direction.palette.background,
+      reasoning: `Exact approved creative-direction palette. ${direction.rationale}`,
+    },
+    typography: {
+      ...designSystem.typography,
+      headingFont: direction.typography.headingFamily,
+      bodyFont: direction.typography.bodyFamily,
+      headingWeight: profile === 'conversion' ? 600 : 400,
+      scale: typographyScale,
+      reasoning: `${direction.typography.scale}; ${direction.typography.weightStrategy}`,
+    },
+    spacing: {
+      ...designSystem.spacing,
+      scale: spacingScale,
+      containerMaxWidth: profile === 'immersive' ? '1440px' : '1200px',
+      sectionPadding:
+        profile === 'immersive'
+          ? 'clamp(5rem, 10vw, 10rem)'
+          : profile === 'conversion'
+            ? 'clamp(2.5rem, 5vw, 5rem)'
+            : 'clamp(4rem, 8vw, 8rem)',
+      reasoning: `${direction.layout.density}; ${direction.layout.sectionRhythm}`,
+    },
+    componentStyles: {
+      hero: {
+        layout:
+          profile === 'editorial'
+            ? 'split'
+            : profile === 'immersive'
+              ? 'fullwidth'
+              : 'centered',
+        variant:
+          profile === 'immersive'
+            ? 'cinematic'
+            : profile === 'conversion'
+              ? 'minimal'
+              : 'split',
+        treatment:
+          profile === 'immersive'
+            ? 'overlay'
+            : profile === 'conversion'
+              ? 'minimal'
+              : 'split',
+        reasoning: `${direction.hero.composition}; ${direction.hero.mediaTreatment}`,
+      },
+      amenityShowcase: {
+        layout:
+          profile === 'immersive'
+            ? 'carousel'
+            : profile === 'conversion'
+              ? 'grid'
+              : 'masonry',
+        variant:
+          profile === 'immersive'
+            ? 'editorial'
+            : profile === 'conversion'
+              ? 'amenity-grid'
+              : 'editorial',
+        treatment: profile === 'conversion' ? 'mixed' : 'photo-heavy',
+        reasoning: `${direction.imagery.style}; ${direction.imagery.treatment}`,
+      },
+      ctaSections: {
+        layout: profile === 'conversion' ? 'sticky' : 'inline',
+        variant: profile === 'conversion' ? 'sticky' : 'inline',
+        treatment: profile === 'editorial' ? 'button' : 'banner',
+        reasoning: `${direction.cta.placement}; ${direction.cta.style}`,
+      },
+    },
+    animations: {
+      level: animationLevel,
+      types: animationLevel === 'none' ? [] : ['fadeIn', 'slideUp'],
+      reasoning:
+        animationLevel === 'none'
+          ? 'The approved direction does not require motion.'
+          : `Restrained motion supports ${direction.layout.sectionRhythm}.`,
+    },
+    customCSS: {
+      needed: false,
+      css: '',
+      reasoning:
+        'Approved direction is constrained to registered theme tokens and component variants.',
+    },
+  }
+}
+
 /**
  * Design Agent - Creates design system from brand context
  * Aligns with WordPress theme capabilities when possible
@@ -88,7 +213,8 @@ export class DesignAgent extends BaseAgent {
    */
   async createSystem(
     brandContext: BrandContext,
-    instanceId?: string
+    instanceId?: string,
+    execution?: SiteForgeCreativeExecutionContext
   ): Promise<DesignSystem> {
     
     await this.logAction('design_system_start', { propertyId: this.propertyId })
@@ -116,7 +242,8 @@ export class DesignAgent extends BaseAgent {
     const designSystem = await this.synthesizeDesignSystem({
       brandContext,
       themeTokens,
-      designInsights
+      designInsights,
+      execution,
     })
     
     // 5. OVERRIDE with BrandForge structured values (exact hex codes)
@@ -150,15 +277,20 @@ export class DesignAgent extends BaseAgent {
       
       console.log('✅ Applied BrandForge typography:', designSystem.typography)
     }
+
+    const approvedDesignSystem = execution
+      ? applyApprovedCreativeDirectionToDesignSystem(designSystem, execution)
+      : designSystem
     
     await this.logAction('design_system_complete', {
-      strategy: designSystem.colorSystem.strategy,
-      customCSSNeeded: designSystem.customCSS?.needed || false,
+      strategy: approvedDesignSystem.colorSystem.strategy,
+      customCSSNeeded: approvedDesignSystem.customCSS?.needed || false,
       usedBrandForgeColors: hasBrandForgeColors,
-      usedBrandForgeTypography: hasBrandForgeTypography
+      usedBrandForgeTypography: hasBrandForgeTypography,
+      usedApprovedCreativeDirection: Boolean(execution),
     })
     
-    return designSystem
+    return approvedDesignSystem
   }
   
   /**
@@ -193,6 +325,7 @@ export class DesignAgent extends BaseAgent {
     brandContext: BrandContext
     themeTokens: ThemeDesignTokens
     designInsights: DesignInsights
+    execution?: SiteForgeCreativeExecutionContext
   }): Promise<DesignSystem> {
     
     const systemPrompt = `You are a design system architect specializing in real estate web design. You create design systems that:
@@ -207,6 +340,9 @@ Create a design system for this property's website.
 
 # BRAND CONTEXT:
 ${JSON.stringify(data.brandContext, null, 2)}
+
+# APPROVED BRIEF AND CREATIVE DIRECTION:
+${data.execution ? JSON.stringify(data.execution, null, 2) : 'No approved execution context supplied.'}
 
 # DESIGN INSIGHTS (Vector search):
 
@@ -308,6 +444,7 @@ Create a design system that expresses brand personality using theme capabilities
 4. Favor strong hierarchy, thoughtful spacing, and clear CTA prominence when the brand context supports it
 5. Custom CSS only when theme limitations prevent brand expression
 6. Every choice must be justified by brand context or design insights
+7. When approved execution context is supplied, follow it exactly; do not invent CSS, blocks, variants, or runtime extensions
 
 # EXAMPLE (for sophisticated-relaxed resort brand):
 

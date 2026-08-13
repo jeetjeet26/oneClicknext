@@ -6,7 +6,10 @@ import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { validatePropertyManagerAccess } from '@/utils/services/auth-guard'
 import { createRequestContext } from '@/utils/services/request-context'
-import { CloudwaysProviderClient } from '@/utils/siteforge/providers/cloudways-provider'
+import {
+  CloudwaysProviderClient,
+  getCloudwaysProviderCredentials,
+} from '@/utils/siteforge/providers/cloudways-provider'
 import {
   AURORA_LIFECYCLE_DOMAIN,
   assertActiveAuroraLifecycleLease,
@@ -204,9 +207,8 @@ export async function POST(request: NextRequest) {
       client,
       bootstrapOperation ? 'bootstrap' : 'mutation'
     )
-    const apiKey = process.env.CLOUDWAYS_API_KEY?.trim()
-    const email = process.env.CLOUDWAYS_EMAIL?.trim()
-    if (!apiKey || !email) {
+    const cloudwaysCredentials = getCloudwaysProviderCredentials()
+    if (!cloudwaysCredentials) {
       throw new AuroraLifecycleControlError(
         'Cloudways API credentials are required',
         503,
@@ -266,7 +268,7 @@ export async function POST(request: NextRequest) {
         'provider_target_mismatch'
       )
     }
-    const provider = new CloudwaysProviderClient({ apiKey, email })
+    const provider = new CloudwaysProviderClient(cloudwaysCredentials)
     let response: Record<string, unknown>
 
     if (parsed.data.operation === 'start_backup') {

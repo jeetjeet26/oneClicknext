@@ -6,11 +6,13 @@ import { AlertTriangle, CheckCircle2, Loader2, RefreshCw } from 'lucide-react'
 type DomainStatus = 'missing' | 'conflicted' | 'needs_review' | 'ready' | 'stale'
 
 type DomainReport = {
-  status: DomainStatus
+  state: DomainStatus
   blocking: boolean
-  messages: string[]
+  reasons: string[]
   sourceIds: string[]
 }
+
+type SiteForgeCapability = 'crm' | 'tours' | 'chatbot' | 'analytics'
 
 type ReadinessSnapshot = {
   id: string
@@ -18,23 +20,54 @@ type ReadinessSnapshot = {
   status: 'draft' | 'needs_review' | 'ready' | 'approved' | 'stale'
   domain_reports: Record<string, DomainReport>
   unresolved_conflicts: unknown[]
+  snapshot_payload?: {
+    enabledCapabilities?: SiteForgeCapability[]
+  } | null
   approved_at?: string | null
   created_at: string
 }
 
 const remediation: Record<string, string> = {
-  identity: '/dashboard/properties',
+  identityContact: '/dashboard/properties',
   brand: '/dashboard/brandforge',
   assets: '/dashboard/community',
-  facts: '/dashboard/community',
+  propertyFacts: '/dashboard/community',
   units: '/dashboard/community',
   neighborhood: '/dashboard/community',
   legal: '/dashboard/community',
   integrations: '/dashboard/settings/crm',
 }
 
-export function SiteForgeReadinessCard({ propertyId }: { propertyId: string }) {
+export function readinessRemediationUrl(
+  domain: string,
+  propertyId: string,
+): string {
+  return domain === 'brand'
+    ? `/dashboard/brandforge/${propertyId}`
+    : remediation[domain] || '/dashboard/community'
+}
+
+export const SITEFORGE_CAPABILITIES: Array<{
+  value: SiteForgeCapability
+  label: string
+}> = [
+  { value: 'crm', label: 'CRM lead delivery' },
+  { value: 'tours', label: 'Tour scheduling' },
+  { value: 'chatbot', label: 'Property chatbot' },
+  { value: 'analytics', label: 'Analytics and tag manager' },
+]
+
+export function SiteForgeReadinessCard({
+  propertyId,
+  onChanged,
+}: {
+  propertyId: string
+  onChanged?: () => void
+}) {
   const [snapshot, setSnapshot] = useState<ReadinessSnapshot | null>(null)
+  const [enabledCapabilities, setEnabledCapabilities] = useState<
+    SiteForgeCapability[]
+  >([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
@@ -45,7 +78,11 @@ export function SiteForgeReadinessCard({ propertyId }: { propertyId: string }) {
     )
     const body = await response.json().catch(() => null)
     if (!response.ok) throw new Error(body?.error || 'Could not load readiness')
-    setSnapshot(body?.snapshots?.[0] || null)
+    const latest = body?.snapshots?.[0] || null
+    setSnapshot(latest)
+    setEnabledCapabilities(
+      latest?.snapshot_payload?.enabledCapabilities || []
+    )
   }, [propertyId])
 
   useEffect(() => {
@@ -61,11 +98,12 @@ export function SiteForgeReadinessCard({ propertyId }: { propertyId: string }) {
       const response = await fetch('/api/onboarding/readiness', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ propertyId }),
+        body: JSON.stringify({ propertyId, enabledCapabilities }),
       })
       const body = await response.json()
       if (!response.ok) throw new Error(body.error || 'Readiness check failed')
       setSnapshot(body.snapshot)
+      onChanged?.()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Readiness check failed')
     } finally {
@@ -92,6 +130,7 @@ export function SiteForgeReadinessCard({ propertyId }: { propertyId: string }) {
       const body = await response.json()
       if (!response.ok) throw new Error(body.error || 'Readiness approval failed')
       setSnapshot(body.snapshot)
+      onChanged?.()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Readiness approval failed')
     } finally {
@@ -120,6 +159,41 @@ export function SiteForgeReadinessCard({ propertyId }: { propertyId: string }) {
         </button>
       </div>
 
+      <fieldset
+        className="space-y-2 rounded-lg border border-slate-200 p-3"
+        disabled={busy}
+      >
+        <legend className="px-1 text-sm font-medium text-slate-800">
+          Enabled SiteForge capabilities
+        </legend>
+        <div className="grid gap-2 sm:grid-cols-2">
+          {SITEFORGE_CAPABILITIES.map(capability => (
+            <label
+              key={capability.value}
+              className="flex items-center gap-2 text-sm text-slate-700"
+            >
+              <input
+                type="checkbox"
+                checked={enabledCapabilities.includes(capability.value)}
+                onChange={event =>
+                  setEnabledCapabilities(current =>
+                    event.target.checked
+                      ? [...current, capability.value]
+                      : current.filter(value => value !== capability.value)
+                  )
+                }
+              />
+              {capability.label}
+            </label>
+          ))}
+        </div>
+        <p className="text-xs text-slate-500">
+          These selections are validated against configured integrations and
+          frozen into the approved readiness snapshot. Changing them and
+          checking readiness creates a new snapshot for approval.
+        </p>
+      </fieldset>
+
       {snapshot ? (
         <>
           <div className="flex items-center gap-2 text-sm">
@@ -143,21 +217,19 @@ export function SiteForgeReadinessCard({ propertyId }: { propertyId: string }) {
                     {domain}
                   </span>
                   <span className={`rounded-full px-2 py-0.5 text-xs ${
-                    report.status === 'ready'
+                    report.state === 'ready'
                       ? 'bg-emerald-50 text-emerald-700'
                       : 'bg-amber-50 text-amber-700'
                   }`}>
-                    {report.status.replace('_', ' ')}
+                    {report.state.replace('_', ' ')}
                   </span>
                 </div>
-                {report.messages.map(message => (
-                  <p key={message} className="mt-1 text-xs text-slate-500">{message}</p>
+                {report.reasons.map(reason => (
+                  <p key={reason} className="mt-1 text-xs text-slate-500">{reason}</p>
                 ))}
-                {report.status !== 'ready' && (
+                {report.state !== 'ready' && (
                   <a
-                    href={domain === 'brand'
-                      ? `/dashboard/brandforge/${propertyId}`
-                      : remediation[domain] || '/dashboard/community'}
+                    href={readinessRemediationUrl(domain, propertyId)}
                     className="mt-2 inline-block text-xs font-medium text-indigo-600 hover:underline"
                   >
                     Resolve {domain}

@@ -18,6 +18,7 @@ import {
 import { provisionAuroraTargets } from '@/utils/siteforge/testing/aurora-lifecycle-bootstrap'
 import {
   CloudwaysProviderClient,
+  getCloudwaysProviderCredentials,
   parseCloudwaysApplicationHostname,
 } from '@/utils/siteforge/providers/cloudways-provider'
 import { SshWordPressInstaller } from '@/utils/siteforge/wordpress/wordpress-installer'
@@ -57,6 +58,30 @@ function record(value: Json | null | undefined): Record<string, Json | undefined
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, Json | undefined>)
     : {}
+}
+
+export function deriveAuroraSemanticCoverage(
+  artifacts: Array<{ edit_intent: string | null }>,
+  extensions: Array<{ id: string }>
+) {
+  const intents = artifacts
+    .map(artifact => artifact.edit_intent?.toLowerCase() || '')
+    .join('\n')
+  return {
+    copy: intents.includes('copy:'),
+    topology: intents.includes('topology:'),
+    navigation: intents.includes('navigation'),
+    footer: intents.includes('footer'),
+    forms: intents.includes('forms:'),
+    seo: intents.includes('seo'),
+    redirects: intents.includes('redirect'),
+    media: intents.includes('media:'),
+    knowledge: intents.includes('knowledge:'),
+    responsive: intents.includes('responsive:'),
+    accessibility: intents.includes('accessibility:'),
+    customInteraction:
+      intents.includes('custom interaction:') || extensions.length > 0,
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -115,12 +140,11 @@ export async function POST(request: NextRequest) {
       'bootstrap'
     )
     if (parsed.data.operation === 'install_verified_base_theme') {
-      const apiKey = process.env.CLOUDWAYS_API_KEY?.trim()
-      const email = process.env.CLOUDWAYS_EMAIL?.trim()
+      const cloudwaysCredentials = getCloudwaysProviderCredentials()
       const providerIdentity = exact.target.site_url
         ? parseCloudwaysApplicationHostname(exact.target.site_url)
         : null
-      if (!apiKey || !email) {
+      if (!cloudwaysCredentials) {
         throw new AuroraLifecycleControlError(
           'Cloudways API credentials are required',
           503,
@@ -162,7 +186,7 @@ export async function POST(request: NextRequest) {
       ) {
         throw new Error('Immutable base theme package digest mismatch')
       }
-      const cloudways = new CloudwaysProviderClient({ apiKey, email })
+      const cloudways = new CloudwaysProviderClient(cloudwaysCredentials)
       const application = await cloudways.getApplication({
         serverId: providerIdentity.serverId,
         applicationId: providerIdentity.applicationId,
@@ -301,12 +325,11 @@ export async function POST(request: NextRequest) {
         ? parsed.data.stagingOperationId
         : ''
     if (parsed.data.operation === 'create_and_provision_verified_targets') {
-      const apiKey = process.env.CLOUDWAYS_API_KEY?.trim()
-      const email = process.env.CLOUDWAYS_EMAIL?.trim()
+      const cloudwaysCredentials = getCloudwaysProviderCredentials()
       const providerIdentity = exact.target.site_url
         ? parseCloudwaysApplicationHostname(exact.target.site_url)
         : null
-      if (!apiKey || !email) {
+      if (!cloudwaysCredentials) {
         throw new AuroraLifecycleControlError(
           'Cloudways API credentials are required',
           503,
@@ -320,7 +343,7 @@ export async function POST(request: NextRequest) {
           'provider_identity_missing'
         )
       }
-      const cloudways = new CloudwaysProviderClient({ apiKey, email })
+      const cloudways = new CloudwaysProviderClient(cloudwaysCredentials)
       // Reuse a staging identity already bound to this lifecycle lease so
       // repeated bootstrap attempts stay idempotent instead of cloning again.
       const { data: leaseRow } = await client
@@ -462,7 +485,47 @@ export async function GET(request: NextRequest) {
       )
     }
     const client = createServiceClient()
-    const exact = await loadExactAuroraIdentity(identity, client)
+    const { data: phaseLease, error: phaseLeaseError } = await client
+      .from('shared_jobs')
+      .select('payload, output, lifecycle_status, lease_owner')
+      .eq('domain', AURORA_LIFECYCLE_DOMAIN)
+      .eq('subject_id', identity.websiteId)
+      .single()
+    if (phaseLeaseError || !phaseLease) {
+      throw new AuroraLifecycleControlError(
+        'Owned Aurora lifecycle lease was not found',
+        409,
+        'lease_not_owned'
+      )
+    }
+    const phasePayload = record(phaseLease.payload)
+    const phaseOutput = record(phaseLease.output)
+    const exactLeaseIdentity = [
+      'ownerId',
+      'propertyId',
+      'websiteId',
+      'targetId',
+      'rolloutAssignmentId',
+      'expiresAt',
+    ].every(key => phasePayload[key] === identity[key as keyof typeof identity])
+    const phaseCleaned = phaseOutput.cleanupVerified === true
+    if (
+      !exactLeaseIdentity ||
+      (!phaseCleaned &&
+        (phaseLease.lifecycle_status !== 'running' ||
+          phaseLease.lease_owner !== identity.ownerId))
+    ) {
+      throw new AuroraLifecycleControlError(
+        'Aurora lifecycle lease is not owned by this run',
+        409,
+        'lease_not_owned'
+      )
+    }
+    const phase =
+      !phaseCleaned && phaseOutput.phase === 'mutation'
+        ? 'mutation'
+        : 'bootstrap'
+    const exact = await loadExactAuroraIdentity(identity, client, phase)
     const [
       { data: website },
       { data: artifacts },
@@ -550,23 +613,10 @@ export async function GET(request: NextRequest) {
             : []
         )
       : []
-    const intents = (artifacts || [])
-      .map(artifact => artifact.edit_intent?.toLowerCase() || '')
-      .join('\n')
-    const semanticCoverage = {
-      copy: intents.includes('copy:'),
-      topology: intents.includes('topology:'),
-      navigation: intents.includes('navigation'),
-      footer: intents.includes('footer'),
-      forms: intents.includes('forms:'),
-      seo: intents.includes('seo'),
-      redirects: intents.includes('redirect'),
-      media: intents.includes('media:'),
-      knowledge: intents.includes('knowledge:'),
-      responsive: intents.includes('responsive:'),
-      accessibility: intents.includes('accessibility:'),
-      customInteraction: intents.includes('custom interaction:'),
-    }
+    const semanticCoverage = deriveAuroraSemanticCoverage(
+      artifacts || [],
+      extensions || []
+    )
     const ownedResourceIds = cleaned
       ? []
       : [

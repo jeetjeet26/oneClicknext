@@ -11,6 +11,16 @@ type DomainReport = {
   sourceIds: string[]
 }
 
+export const MINIMUM_APPROVED_PROPERTY_PHOTOS = 3
+const PROPERTY_PHOTO_ROLES = new Set([
+  'hero',
+  'amenity',
+  'gallery',
+  'interior',
+  'exterior',
+  'lifestyle',
+])
+
 export type OnboardingSnapshotPayload = {
   property: Tables<'properties'>
   contacts: Tables<'property_contacts'>[]
@@ -20,8 +30,66 @@ export type OnboardingSnapshotPayload = {
   pointsOfInterest: Tables<'property_points_of_interest'>[]
   legal: Tables<'property_legal_configs'> | null
   integrations: Tables<'integration_credentials'>[]
+  analyticsDestinations: Array<{
+    id: string
+    websiteId: string | null
+    type: string
+    identity: string
+    consentMode: string
+  }>
   chatbotContext: Tables<'property_chatbot_contexts'> | null
   enabledCapabilities: string[]
+}
+
+export function evaluateCapabilityReadiness(input: {
+  enabledCapabilities: string[]
+  integrations: Array<{
+    id: string
+    platform: string
+    status: string | null
+    verified_at: string | null
+  }>
+  analyticsDestinations: Array<{
+    destination_type: string
+    destination_identity: string
+    consent_mode: string
+    enabled: boolean
+  }>
+  hasChatbotContext: boolean
+}) {
+  const enabledProviders = new Set(
+    input.integrations
+      .filter(integration => integration.status === 'active' && integration.verified_at)
+      .map(integration => integration.platform),
+  )
+  const hasValidatedAnalyticsDestination = input.analyticsDestinations.some(
+    destination =>
+      destination.enabled
+      && ['required', 'not_required'].includes(destination.consent_mode)
+      && (
+        (destination.destination_type === 'ga4'
+          && /^G-[A-Z0-9]{6,20}$/.test(destination.destination_identity))
+        || (destination.destination_type === 'gtm'
+          && /^GTM-[A-Z0-9]{4,20}$/.test(destination.destination_identity))
+      ),
+  )
+  const capabilityProvider: Record<string, string[]> = {
+    crm: ['hubspot', 'salesforce', 'entrata', 'yardi', 'realpage', 'lasso'],
+    tours: ['luma', 'lumaleasing', 'google_calendar'],
+    analytics: ['google_analytics', 'google_tag_manager'],
+  }
+
+  return input.enabledCapabilities.flatMap(capability => {
+    if (capability === 'chatbot') {
+      return input.hasChatbotContext ? [] : ['chatbot context is missing']
+    }
+    if (capability === 'analytics' && hasValidatedAnalyticsDestination) return []
+    const providers = capabilityProvider[capability]
+    if (!providers) return []
+    return providers.some(provider => enabledProviders.has(provider))
+      ? []
+      : [`${capability} is enabled but no active provider is configured`]
+  })
 }
 
 function report(
@@ -45,6 +113,52 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {}
 }
 
+export function evaluateRequiredAssetReadiness<
+  T extends {
+    id: string
+    asset_role: string | null
+    asset_type: string
+    approval_status: string
+    rights_status: string
+    expires_at: string | null
+  },
+>(
+  assets: T[],
+  now = new Date(),
+) {
+  const approvedRightsCleared = assets.filter(asset =>
+    asset.approval_status === 'approved'
+    && ['owned', 'licensed', 'generated'].includes(asset.rights_status)
+    && (!asset.expires_at || new Date(asset.expires_at) > now),
+  )
+  const primaryLogo = approvedRightsCleared.find(
+    asset => asset.asset_role === 'primary_logo',
+  )
+  const propertyPhotography = approvedRightsCleared.filter(
+    asset =>
+      asset.asset_type === 'image'
+      && Boolean(asset.asset_role && PROPERTY_PHOTO_ROLES.has(asset.asset_role)),
+  )
+  const reasons = [
+    ...(!primaryLogo
+      ? ['An approved, rights-cleared primary logo is required']
+      : []),
+    ...(propertyPhotography.length < MINIMUM_APPROVED_PROPERTY_PHOTOS
+      ? [
+          `At least ${MINIMUM_APPROVED_PROPERTY_PHOTOS} approved, rights-cleared property photos are required (${propertyPhotography.length} available)`,
+        ]
+      : []),
+  ]
+
+  return {
+    approvedRightsCleared,
+    primaryLogo,
+    propertyPhotography,
+    ready: reasons.length === 0,
+    reasons,
+  }
+}
+
 export async function buildOnboardingSnapshot(
   input: {
     orgId: string
@@ -64,6 +178,7 @@ export async function buildOnboardingSnapshot(
     poisResult,
     legalResult,
     integrationsResult,
+    analyticsDestinationsResult,
     chatbotResult,
   ] = await Promise.all([
     client.from('properties').select('*').eq('id', input.propertyId).eq('org_id', input.orgId).single(),
@@ -74,6 +189,11 @@ export async function buildOnboardingSnapshot(
     client.from('property_points_of_interest').select('*').eq('property_id', input.propertyId),
     client.from('property_legal_configs').select('*').eq('property_id', input.propertyId).eq('status', 'approved').order('version', { ascending: false }).limit(1).maybeSingle(),
     client.from('integration_credentials').select('*').eq('property_id', input.propertyId),
+    client
+      .from('siteforge_analytics_destinations')
+      .select('id, website_id, destination_type, destination_identity, consent_mode, enabled')
+      .eq('property_id', input.propertyId)
+      .eq('enabled', true),
     client.from('property_chatbot_contexts').select('*').eq('property_id', input.propertyId).maybeSingle(),
   ])
 
@@ -86,6 +206,7 @@ export async function buildOnboardingSnapshot(
     poisResult.error,
     legalResult.error,
     integrationsResult.error,
+    analyticsDestinationsResult.error,
     chatbotResult.error,
   ].find(Boolean)
   if (queryError || !propertyResult.data) {
@@ -100,37 +221,22 @@ export async function buildOnboardingSnapshot(
   const pointsOfInterest = poisResult.data || []
   const legal = legalResult.data
   const integrations = integrationsResult.data || []
+  const analyticsDestinations = analyticsDestinationsResult.data || []
   const chatbotContext = chatbotResult.data
   const propertySettings = asRecord(property.settings)
   const additionalUrls = Array.isArray(propertySettings.additionalUrls)
     ? propertySettings.additionalUrls.filter(value => typeof value === 'string')
     : []
 
-  const approvedAssets = assets.filter(asset =>
-    asset.approval_status === 'approved'
-    && ['owned', 'licensed', 'generated'].includes(asset.rights_status)
-    && (!asset.expires_at || new Date(asset.expires_at) > new Date()),
-  )
-  const primaryLogo = approvedAssets.find(asset => asset.asset_role === 'primary_logo')
+  const assetReadiness = evaluateRequiredAssetReadiness(assets)
+  const approvedAssets = assetReadiness.approvedRightsCleared
   const approvedPois = pointsOfInterest.filter(poi => poi.approval_status === 'approved')
   const approvedUnits = units.filter(unit => unit.active && unit.review_status === 'approved')
-  const enabledProviders = new Set(
-    integrations
-      .filter(integration => integration.status === 'active' && integration.verified_at)
-      .map(integration => integration.platform),
-  )
-  const capabilityProvider: Record<string, string[]> = {
-    crm: ['hubspot', 'salesforce', 'entrata', 'yardi', 'realpage', 'lasso'],
-    tours: ['luma', 'lumaleasing', 'google_calendar'],
-    analytics: ['google_analytics', 'google_tag_manager'],
-  }
-  const integrationFailures = enabledCapabilities.flatMap(capability => {
-    if (capability === 'chatbot') return chatbotContext ? [] : ['chatbot context is missing']
-    const providers = capabilityProvider[capability]
-    if (!providers) return []
-    return providers.some(provider => enabledProviders.has(provider))
-      ? []
-      : [`${capability} is enabled but no active provider is configured`]
+  const integrationFailures = evaluateCapabilityReadiness({
+    enabledCapabilities,
+    integrations,
+    analyticsDestinations,
+    hasChatbotContext: Boolean(chatbotContext),
   })
 
   const primaryContact = contacts.find(contact => contact.is_primary)
@@ -159,9 +265,9 @@ export async function buildOnboardingSnapshot(
       brand && brand.approval_status === 'reviewing' ? 'needs_review' : 'missing',
     ),
     assets: report(
-      Boolean(primaryLogo),
+      assetReadiness.ready,
       true,
-      ['An approved, rights-cleared primary logo is required'],
+      assetReadiness.reasons,
       approvedAssets.map(asset => asset.id),
       assets.length ? 'needs_review' : 'missing',
     ),
@@ -199,7 +305,10 @@ export async function buildOnboardingSnapshot(
       integrationFailures.length === 0,
       enabledCapabilities.length > 0,
       integrationFailures,
-      integrations.map(integration => integration.id),
+      [
+        ...integrations.map(integration => integration.id),
+        ...analyticsDestinations.map(destination => destination.id),
+      ],
       'needs_review',
     ),
   }
@@ -223,6 +332,13 @@ export async function buildOnboardingSnapshot(
     pointsOfInterest: approvedPois,
     legal,
     integrations,
+    analyticsDestinations: analyticsDestinations.map(destination => ({
+      id: destination.id,
+      websiteId: destination.website_id,
+      type: destination.destination_type,
+      identity: destination.destination_identity,
+      consentMode: destination.consent_mode,
+    })),
     chatbotContext,
     enabledCapabilities,
   }

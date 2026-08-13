@@ -1,6 +1,14 @@
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { strToU8, zipSync } from 'fflate'
@@ -92,6 +100,14 @@ function resolveGitSha(explicitGitSha, sourceDirectory) {
   return gitSha.toLowerCase()
 }
 
+/**
+ * @param {{
+ *   sourceDirectory?: string,
+ *   outputDirectory?: string,
+ *   v3Enabled?: boolean,
+ *   gitSha?: string,
+ * }} [options]
+ */
 export async function buildSiteForgeRuntimePlugin({
   sourceDirectory = pluginDir,
   outputDirectory = outputDir,
@@ -165,6 +181,11 @@ export async function buildSiteForgeRuntimePlugin({
       `${archivePath}.manifest.sha256`,
       `${manifestSha256}  ${path.basename(manifestPath)}\n`
     )
+  } else {
+    await Promise.all([
+      rm(`${archivePath}.manifest.json`, { force: true }),
+      rm(`${archivePath}.manifest.sha256`, { force: true }),
+    ])
   }
   return {
     archivePath,
@@ -176,9 +197,99 @@ export async function buildSiteForgeRuntimePlugin({
   }
 }
 
+function parseDigest(content, filename) {
+  const match = content.trim().match(/^([a-f0-9]{64})\s+\*?([^\s]+)$/i)
+  if (!match || match[2] !== filename) {
+    throw new Error(
+      `Invalid digest file for ${filename}; expected "<sha256>  ${filename}"`
+    )
+  }
+  return match[1].toLowerCase()
+}
+
+/**
+ * @param {{
+ *   sourceDirectory?: string,
+ *   outputDirectory?: string,
+ *   v3Enabled?: boolean,
+ *   gitSha?: string,
+ * }} [options]
+ */
+export async function checkSiteForgeRuntimePluginArtifact({
+  sourceDirectory = pluginDir,
+  outputDirectory = outputDir,
+  v3Enabled = isSiteForgeRuntimeV3Enabled(),
+  gitSha,
+} = {}) {
+  const filename = 'oneclick-siteforge-runtime.zip'
+  const archivePath = path.join(outputDirectory, filename)
+  const [checkedArchive, checkedDigest] = await Promise.all([
+    readFile(archivePath),
+    readFile(`${archivePath}.sha256`, 'utf8'),
+  ])
+  const checkedHash = sha256(checkedArchive)
+  const expectedHash = parseDigest(checkedDigest, filename)
+  if (checkedHash !== expectedHash) {
+    throw new Error(
+      `SiteForge runtime artifact digest mismatch: expected ${expectedHash}, received ${checkedHash}`
+    )
+  }
+
+  const temporaryDirectory = await mkdtemp(
+    path.join(tmpdir(), 'siteforge-runtime-check-')
+  )
+  try {
+    const rebuilt = await buildSiteForgeRuntimePlugin({
+      sourceDirectory,
+      outputDirectory: temporaryDirectory,
+      v3Enabled,
+      gitSha,
+    })
+    if (rebuilt.archiveHash !== checkedHash) {
+      throw new Error(
+        `SiteForge runtime artifact drift detected: checked ${checkedHash}, rebuilt ${rebuilt.archiveHash}; run npm run ${v3Enabled ? 'runtime:build:v3' : 'runtime:build'} with the same Git SHA`
+      )
+    }
+    if (v3Enabled) {
+      const manifestFilename = `${filename}.manifest.json`
+      const [checkedManifest, checkedManifestDigest] = await Promise.all([
+        readFile(path.join(outputDirectory, manifestFilename)),
+        readFile(
+          path.join(outputDirectory, `${filename}.manifest.sha256`),
+          'utf8'
+        ),
+      ])
+      const checkedManifestHash = sha256(checkedManifest)
+      const expectedManifestHash = parseDigest(
+        checkedManifestDigest,
+        manifestFilename
+      )
+      if (
+        checkedManifestHash !== expectedManifestHash ||
+        rebuilt.manifestSha256 !== checkedManifestHash
+      ) {
+        throw new Error(
+          'SiteForge runtime v3 manifest drift detected; rebuild the runtime-v3 package'
+        )
+      }
+    }
+    return rebuilt
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true })
+  }
+}
+
 if (path.resolve(process.argv[1] || '') === fileURLToPath(import.meta.url)) {
-  const result = await buildSiteForgeRuntimePlugin()
+  const args = process.argv.slice(2)
+  const unknown = args.filter((arg) => !['--check', '--v3'].includes(arg))
+  if (unknown.length) throw new Error(`Unknown command ${unknown.join(' ')}`)
+  const v3Enabled = args.includes('--v3')
+    ? true
+    : isSiteForgeRuntimeV3Enabled()
+  const result = args.includes('--check')
+    ? await checkSiteForgeRuntimePluginArtifact({ v3Enabled })
+    : await buildSiteForgeRuntimePlugin({ v3Enabled })
   console.log(
-    `Built ${result.archivePath} (${result.archiveHash}, ${result.files} files).`
+    `${args.includes('--check') ? 'Verified' : 'Built'} ${result.archivePath} (${result.archiveHash}, runtime-v${result.runtimeContractVersion}, ${result.files} files).`
   )
 }

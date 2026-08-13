@@ -4,8 +4,17 @@
 // Created: December 16, 2025
 
 import Anthropic from '@anthropic-ai/sdk'
+import {
+  generateText,
+  Output,
+  type FlexibleSchema,
+} from 'ai'
 import { createServiceClient } from '@/utils/supabase/admin'
-import { SITEFORGE_CLAUDE_MODEL, SITEFORGE_EMBEDDING_MODEL } from '@/utils/siteforge/models'
+import {
+  SITEFORGE_CLAUDE_MODEL,
+  SITEFORGE_EDITOR_MODEL,
+  SITEFORGE_EMBEDDING_MODEL,
+} from '@/utils/siteforge/models'
 import type { Json } from '@/types/supabase'
 import {
   brandContractToStorageSections,
@@ -155,8 +164,37 @@ export abstract class BaseAgent {
   }
   
   /**
-   * Call the configured Claude model.
-   * JSON mode relies on prompt instructions and robust response parsing.
+   * Generate schema-validated output through the AI SDK structured-output
+   * contract. New SiteForge generation code must use this path.
+   */
+  protected async callClaudeStructured<T>(
+    prompt: string,
+    schema: FlexibleSchema<T>,
+    options: {
+      systemPrompt?: string
+      maxTokens?: number
+      name?: string
+      description?: string
+    } = {}
+  ): Promise<T> {
+    const result = await generateText({
+      model: SITEFORGE_EDITOR_MODEL,
+      instructions: options.systemPrompt || undefined,
+      prompt,
+      maxOutputTokens: options.maxTokens || 30_000,
+      output: Output.object({
+        schema,
+        name: options.name,
+        description: options.description,
+      }),
+    })
+
+    return result.output
+  }
+
+  /**
+   * Legacy text generation compatibility for agents not yet migrated to
+   * callClaudeStructured. jsonMode does not provide a structured contract.
    */
   protected async callClaude(
     prompt: string,
@@ -184,138 +222,29 @@ export abstract class BaseAgent {
       throw new Error('Claude response has no text content')
     }
     
-    let responseText = textContent.text
-    
-    // Extract JSON from XML wrapper if present (e.g., <json>...</json>)
-    if (options.jsonMode) {
-      const xmlMatch = responseText.match(/<json>([\s\S]*?)<\/json>/)
-      if (xmlMatch) {
-        responseText = xmlMatch[1].trim()
-      }
-    }
-    
-    // Extract JSON if in code blocks
-    if (options.jsonMode) {
-      if (responseText.includes('```json')) {
-        const jsonMatch = responseText.match(/```json\n([\s\S]*?)\n```/)
-        if (jsonMatch) {
-          responseText = jsonMatch[1]
-        }
-      } else if (responseText.includes('```')) {
-        const jsonMatch = responseText.match(/```\n([\s\S]*?)\n```/)
-        if (jsonMatch) {
-          responseText = jsonMatch[1]
-        }
-      }
-      
-      // Clean up common JSON issues from Claude. Newer reasoning models can
-      // emit literal control characters inside otherwise valid JSON strings.
-      responseText = escapeControlCharactersInJsonStrings(responseText)
-
-      // Remove trailing commas before closing brackets/braces (multiple passes)
-      for (let i = 0; i < 5; i++) {
-        responseText = responseText.replace(/,(\s*[}\]])/g, '$1')
-      }
-      // Remove any remaining problematic trailing commas in arrays
-      responseText = responseText.replace(/,(\s*\])/g, '$1')
-      responseText = responseText.replace(/,(\s*\})/g, '$1')
-    }
-    
-    return responseText
+    return textContent.text
   }
   
   /**
-   * Robust JSON parser with multiple fallback strategies
-   * Returns parsed object or throws with helpful error
+   * Legacy JSON compatibility parser. It intentionally accepts only a direct
+   * JSON value or one exact historical wrapper; it is not the primary
+   * generation contract and does not infer keys or extract arbitrary objects.
    */
   protected parseJSON<T>(response: string, agentName: string): T {
-    // Pre-clean common Claude issues BEFORE any parsing
-    let cleaned = escapeControlCharactersInJsonStrings(response)
-    
-    // Remove unquoted annotations after strings like: "value" (annotation)
-    // This is a common Claude habit - it adds comments in parentheses
-    cleaned = cleaned.replace(/"([^"]*?)"\s*\(([^)]+)\)/g, '"$1 ($2)"')
-    
-    // Remove trailing commas everywhere (multiple passes for nested)
-    for (let i = 0; i < 3; i++) {
-      cleaned = cleaned.replace(/,(\s*[}\]])/g, '$1')
-    }
-    
-    // Strategy 1: Direct parse (fastest path)
     try {
-      return JSON.parse(cleaned) as T
-    } catch (e) {
-      console.warn(`[${agentName}] Direct parse failed:`, (e as Error).message)
-    }
-    
-    // Strategy 2: Extract JSON from response and clean more aggressively
-    try {
-      // Find JSON object/array in response
-      const jsonMatch = cleaned.match(/(\{[\s\S]*\}|\[[\s\S]*\])/)
-      if (jsonMatch) {
-        let extracted = jsonMatch[1]
-        
-        // Aggressive cleanup
-        // Remove trailing commas (multiple patterns)
-        extracted = extracted.replace(/,(\s*[}\]])/g, '$1')
-        extracted = extracted.replace(/,\s*,/g, ',')  // Double commas
-        extracted = extracted.replace(/\[\s*,/g, '[')  // Leading comma in array
-        extracted = extracted.replace(/{\s*,/g, '{')   // Leading comma in object
-        
-        // Remove unquoted annotations again (in case they're nested)
-        extracted = extracted.replace(/"([^"]*?)"\s*\(([^)]+)\)/g, '"$1 ($2)"')
-        
-        // Fix unquoted keys (common Claude issue)
-        extracted = extracted.replace(/(\s*)(\w+)(\s*):/g, '$1"$2"$3:')
-        // But don't double-quote already quoted keys
-        extracted = extracted.replace(/""/g, '"')
-        
-        const result = JSON.parse(extracted) as T
-        console.log(`✅ [${agentName}] Recovered JSON with cleanup (strategy 2)`)
-        return result
+      return JSON.parse(response) as T
+    } catch {
+      const compatible = unwrapLegacyJson(response)
+      try {
+        return JSON.parse(compatible) as T
+      } catch (error) {
+        console.error(`[${agentName}] Legacy JSON compatibility parse failed`, {
+          message: error instanceof Error ? error.message : 'invalid JSON',
+          responseLength: response.length,
+        })
+        throw new Error(`${agentName} returned invalid legacy JSON`)
       }
-    } catch (e) {
-      console.warn(`[${agentName}] Strategy 2 failed:`, (e as Error).message)
     }
-    
-    // Strategy 3: Line-by-line cleanup for stubborn cases
-    try {
-      let lines = cleaned.split('\n')
-      
-      // Find start and end of JSON
-      const startIdx = lines.findIndex(l => l.trim().startsWith('{') || l.trim().startsWith('['))
-      let endIdx = lines.length - 1
-      for (let i = lines.length - 1; i >= 0; i--) {
-        if (lines[i].trim().endsWith('}') || lines[i].trim().endsWith(']')) {
-          endIdx = i
-          break
-        }
-      }
-      
-      if (startIdx >= 0) {
-        lines = lines.slice(startIdx, endIdx + 1)
-        let cleaned = lines.join('\n')
-        
-        // Final cleanup pass
-        cleaned = cleaned.replace(/,(\s*[}\]])/g, '$1')
-        cleaned = cleaned.replace(/,\s*\n\s*}/g, '\n}')
-        cleaned = cleaned.replace(/,\s*\n\s*\]/g, '\n]')
-        
-        const result = JSON.parse(cleaned) as T
-        console.log(`✅ [${agentName}] Recovered JSON with line-by-line cleanup (strategy 3)`)
-        return result
-      }
-    } catch (e) {
-      console.warn(`[${agentName}] Strategy 3 failed:`, (e as Error).message)
-    }
-    
-    // All strategies failed - log useful debug info
-    console.error(`❌ [${agentName}] All JSON parse strategies failed`)
-    console.error(`Response length: ${response.length}`)
-    console.error(`First 500 chars:`, response.substring(0, 500))
-    console.error(`Last 500 chars:`, response.substring(response.length - 500))
-    
-    throw new Error(`${agentName} returned invalid JSON - see logs for details`)
   }
   
   /**
@@ -494,6 +423,24 @@ function escapeControlCharactersInJsonStrings(input: string): string {
   }
 
   return output
+}
+
+function unwrapLegacyJson(response: string): string {
+  const trimmed = response.trim()
+  let value = trimmed
+
+  if (value.startsWith('<json>') && value.endsWith('</json>')) {
+    value = value.slice('<json>'.length, -'</json>'.length).trim()
+  } else if (value.startsWith('```json') && value.endsWith('```')) {
+    value = value.slice('```json'.length, -'```'.length).trim()
+  } else if (value.startsWith('```') && value.endsWith('```')) {
+    value = value.slice('```'.length, -'```'.length).trim()
+  }
+
+  return escapeControlCharactersInJsonStrings(value).replace(
+    /,(\s*[}\]])/g,
+    '$1'
+  )
 }
 
 // Type definitions

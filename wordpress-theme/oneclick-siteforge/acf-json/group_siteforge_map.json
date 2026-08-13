@@ -1,0 +1,67 @@
+{
+  "key": "group_siteforge_map",
+  "title": "SiteForge map",
+  "fields": [
+    {
+      "key": "field_siteforge_map_address_0",
+      "name": "address",
+      "label": "address",
+      "type": "text"
+    },
+    {
+      "key": "field_siteforge_map_latitude_1",
+      "name": "latitude",
+      "label": "latitude",
+      "type": "number"
+    },
+    {
+      "key": "field_siteforge_map_longitude_2",
+      "name": "longitude",
+      "label": "longitude",
+      "type": "number"
+    },
+    {
+      "key": "field_siteforge_map_zoom_level_3",
+      "name": "zoom_level",
+      "label": "zoom_level",
+      "type": "number",
+      "default_value": 15
+    },
+    {
+      "key": "field_siteforge_map_show_directions_4",
+      "name": "show_directions",
+      "label": "show_directions",
+      "type": "true_false",
+      "default_value": 1
+    },
+    {
+      "key": "field_siteforge_map_variant_5",
+      "name": "variant",
+      "label": "variant",
+      "type": "select",
+      "choices": {
+        "standard": "standard",
+        "immersive": "immersive"
+      },
+      "default_value": "standard"
+    }
+  ],
+  "location": [
+    [
+      {
+        "param": "block",
+        "operator": "==",
+        "value": "acf/map"
+      }
+    ]
+  ],
+  "menu_order": 0,
+  "position": "normal",
+  "style": "default",
+  "label_placement": "top",
+  "instruction_placement": "label",
+  "active": true,
+  "description": "Versioned SiteForge block contract.",
+  "show_in_rest": 1,
+  "modified": 1785441600
+}

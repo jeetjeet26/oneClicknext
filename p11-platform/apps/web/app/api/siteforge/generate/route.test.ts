@@ -13,6 +13,8 @@ const createServiceClientMock = vi.fn()
 const validatePropertyAccessMock = vi.fn()
 const serviceFromMock = vi.fn()
 const serviceRpcMock = vi.fn()
+const loadApprovedGenerationContextMock = vi.fn()
+const publishSiteForgeArtifactMock = vi.fn()
 
 vi.mock('@/utils/supabase/server', () => ({
   createClient: createClientMock,
@@ -38,16 +40,85 @@ vi.mock('workflow/api', () => ({
   start: vi.fn(),
 }))
 
+vi.mock('@/utils/siteforge/artifacts/repository', () => ({
+  publishSiteForgeArtifact: publishSiteForgeArtifactMock,
+}))
+
+vi.mock('@/utils/siteforge/plans/repository', () => {
+  class MockSiteForgePlanError extends Error {
+    constructor(
+      message: string,
+      readonly statusCode: number
+    ) {
+      super(message)
+    }
+  }
+  return {
+    SiteForgePlanError: MockSiteForgePlanError,
+    loadApprovedSiteForgeGenerationContext: loadApprovedGenerationContextMock,
+  }
+})
+
+const websiteId = '66666666-6666-4666-8666-666666666666'
 const planId = '11111111-1111-4111-8111-111111111111'
 const planVersionId = '22222222-2222-4222-8222-222222222222'
 const propertyId = '33333333-3333-4333-8333-333333333333'
 const contentHash = 'a'.repeat(64)
 
 const validRequest = {
+  websiteId,
   planId,
   confirmedRevision: 1,
   contentHash,
   idempotencyKey: 'siteforge-generation-1',
+}
+
+const evidenceSnapshot = {
+  schemaVersion: 1,
+  capturedAt: '2026-07-30T17:00:00.000Z',
+  websiteId,
+  propertyId,
+  orgId: '55555555-5555-4555-8555-555555555555',
+  plan: {
+    id: planId,
+    versionId: planVersionId,
+    revision: 1,
+    contentHash,
+  },
+  brief: { id: '77777777-7777-4777-8777-777777777777', version: 1, contentHash: 'b'.repeat(64) },
+  creativeDirection: {
+    setId: '88888888-8888-4888-8888-888888888888',
+    setVersion: 1,
+    setContentHash: 'c'.repeat(64),
+    directionId: '99999999-9999-4999-8999-999999999999',
+    directionContentHash: 'd'.repeat(64),
+  },
+  onboarding: { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', contentHash: 'e'.repeat(64) },
+  brand: {
+    assetId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    contractVersion: '1.0',
+    contractHash: 'f'.repeat(64),
+  },
+  assetManifest: {
+    assets: [{
+      id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+      role: 'hero',
+      fileUrl: 'https://cdn.example.com/hero.jpg',
+      contentHash: '1'.repeat(64),
+      rightsStatus: 'owned',
+      rightsEvidenceHash: '2'.repeat(64),
+      approvalStatus: 'approved',
+      expiresAt: null,
+    }],
+    contentHash: '3'.repeat(64),
+  },
+  inventory: {
+    required: false,
+    rowCount: 0,
+    contentHash: '4'.repeat(64),
+    latestSourceUpdatedAt: null,
+  },
+  contentHash: '5'.repeat(64),
 }
 
 const structuredPlan = {
@@ -142,6 +213,21 @@ describe('siteforge generate route', () => {
       from: serviceFromMock,
       rpc: serviceRpcMock,
     })
+    loadApprovedGenerationContextMock.mockResolvedValue({
+      websiteId,
+      propertyId,
+      orgId: evidenceSnapshot.orgId,
+      planVersionId,
+      plan: structuredPlan,
+      brief: { objective: 'Lease verified apartment homes.' },
+      creativeDirection: { name: 'Warm editorial' },
+      evidenceSnapshot,
+    })
+    publishSiteForgeArtifactMock.mockResolvedValue({
+      id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+      version: 1,
+      contentHash: '6'.repeat(64),
+    })
   })
 
   it('returns 401 when unauthenticated', async () => {
@@ -172,17 +258,14 @@ describe('siteforge generate route', () => {
 
   it('fails closed when the requested plan is not confirmed', async () => {
     mockAuthenticatedUser(authGetUserMock)
-    serviceFromMock.mockReturnValue(
-      singleQuery({
-        data: {
-          id: planId,
-          property_id: propertyId,
-          status: 'ready_for_review',
-          current_revision: 1,
-          confirmed_version_id: null,
-        },
-        error: null,
-      })
+    const { SiteForgePlanError } = await import(
+      '@/utils/siteforge/plans/repository'
+    )
+    loadApprovedGenerationContextMock.mockRejectedValueOnce(
+      new SiteForgePlanError(
+        'A matching confirmed plan is required for generation',
+        409
+      )
     )
 
     const { POST } = await import('./route')
@@ -199,51 +282,54 @@ describe('siteforge generate route', () => {
     )
   })
 
+  it('fails closed when approved rights-cleared generation evidence is missing', async () => {
+    mockAuthenticatedUser(authGetUserMock)
+    const { SiteForgePlanError } = await import(
+      '@/utils/siteforge/plans/repository'
+    )
+    loadApprovedGenerationContextMock.mockRejectedValueOnce(
+      new SiteForgePlanError(
+        'Generation requires an approved rights-cleared asset manifest',
+        409
+      )
+    )
+
+    const { POST } = await import('./route')
+    const response = await POST(
+      makeJsonRequest('http://localhost/api/siteforge/generate', {
+        body: validRequest,
+      })
+    )
+
+    await expectJsonError(
+      response,
+      409,
+      'Generation requires an approved rights-cleared asset manifest'
+    )
+  })
+
   it('supports deterministic simulation from a confirmed plan', async () => {
     mockAuthenticatedUser(authGetUserMock)
     validatePropertyAccessMock.mockResolvedValue({ authorized: true })
 
-    const planQuery = singleQuery({
-      data: {
-        id: planId,
-        property_id: propertyId,
-        status: 'confirmed',
-        current_revision: 1,
-        confirmed_version_id: planVersionId,
-      },
-      error: null,
-    })
-    const planVersionQuery = singleQuery({
-      data: {
-        id: planVersionId,
-        plan: structuredPlan,
-        content_hash: contentHash,
-      },
-      error: null,
-    })
     const propertyQuery = singleQuery({
-      data: { id: propertyId, name: 'P11 Demo', org_id: 'org-1' },
+      data: {
+        id: propertyId,
+        name: 'P11 Demo',
+        org_id: evidenceSnapshot.orgId,
+      },
       error: null,
     })
 
-    const versionsBuilder: Record<string, unknown> = {}
-    versionsBuilder.select = vi.fn(() => versionsBuilder)
-    versionsBuilder.eq = vi.fn(() => versionsBuilder)
-    versionsBuilder.order = vi.fn(() => versionsBuilder)
-    versionsBuilder.limit = vi.fn().mockResolvedValue({ data: [], error: null })
-
-    const websiteInsert = vi.fn()
-    const websiteBuilder = {
-      select: vi.fn(() => versionsBuilder),
-      insert: websiteInsert,
-    }
-    const websiteInsertBuilder: Record<string, unknown> = {}
-    websiteInsertBuilder.select = vi.fn(() => websiteInsertBuilder)
-    websiteInsertBuilder.single = vi.fn().mockResolvedValue({
-      data: { id: 'website-1' },
+    const websiteUpdate = vi.fn()
+    const websiteUpdateBuilder: Record<string, unknown> = {}
+    websiteUpdateBuilder.eq = vi.fn(() => websiteUpdateBuilder)
+    websiteUpdateBuilder.select = vi.fn(() => websiteUpdateBuilder)
+    websiteUpdateBuilder.single = vi.fn().mockResolvedValue({
+      data: { id: websiteId },
       error: null,
     })
-    websiteInsert.mockReturnValue(websiteInsertBuilder)
+    websiteUpdate.mockReturnValue(websiteUpdateBuilder)
 
     const jobInsert = vi.fn()
     const jobInsertBuilder: Record<string, unknown> = {}
@@ -289,18 +375,18 @@ describe('siteforge generate route', () => {
       error: null,
     })
 
-    let planCallCount = 0
     serviceFromMock.mockImplementation((table: string) => {
       if (table === 'siteforge_plans') {
-        planCallCount += 1
-        if (planCallCount === 1) return planQuery
         return {
           update: vi.fn(() => planUpdateBuilder),
         }
       }
-      if (table === 'siteforge_plan_versions') return planVersionQuery
       if (table === 'properties') return propertyQuery
-      if (table === 'property_websites') return websiteBuilder
+      if (table === 'property_websites') {
+        return {
+          update: websiteUpdate,
+        }
+      }
       if (table === 'website_assets') return assetBuilder
       if (table === 'siteforge_jobs') {
         return {
@@ -326,18 +412,20 @@ describe('siteforge generate route', () => {
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toEqual(
       expect.objectContaining({
-        websiteId: 'website-1',
+        websiteId,
         status: 'queued',
         localSimulation: true,
       })
     )
-    expect(websiteInsert).toHaveBeenCalledWith(
+    expect(websiteUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
         generation_status: 'ready_for_preview',
         generation_input: expect.objectContaining({
+          websiteId,
           planId,
           confirmedRevision: 1,
           contentHash,
+          evidenceSnapshot,
         }),
       })
     )

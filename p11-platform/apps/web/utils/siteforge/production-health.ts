@@ -9,10 +9,12 @@ export const SITEFORGE_HEALTH_CHECKS = [
   'tls',
   'reachability',
   'links',
+  'redirects',
   'forms',
   'widget',
   'tours',
   'inventory',
+  'connector_freshness',
   'indexability',
   'sitemap',
   'brand',
@@ -20,6 +22,10 @@ export const SITEFORGE_HEALTH_CHECKS = [
   'accessibility',
   'performance',
   'identity',
+  'runtime',
+  'plugin_vulnerabilities',
+  'expiring_specials',
+  'content_drift',
 ] as const
 
 export type SiteForgeHealthCheck = (typeof SITEFORGE_HEALTH_CHECKS)[number]
@@ -39,11 +45,44 @@ export type SiteForgeHealthTarget = {
   artifactId: string | null
   contentHash: string | null
   url: string
+  declaredPages?: string[]
+  connectors?: Array<{
+    id: string
+    capability: string
+    status: string
+    lastSuccessAt: string | null
+    freshnessSeconds: number | null
+  }>
+}
+
+export function recordedLaunchOperatorForHealthRestore(release: {
+  created_by: string | null
+  approved_by: string | null
+} | null): string | null {
+  if (
+    !release?.created_by ||
+    !release.approved_by ||
+    release.created_by === release.approved_by
+  ) {
+    return null
+  }
+  return release.created_by
+}
+
+type SiteForgeFetchedDocument = {
+  url: string
+  requestedUrl?: string
+  redirected?: boolean
+  body: string
+  status: number
+  elapsedMs: number
+  headers: Headers
 }
 
 type ProbeContext = SiteForgeHealthTarget & {
   fetch: typeof fetch
-  document: () => Promise<{ body: string; status: number; elapsedMs: number; headers: Headers }>
+  document: () => Promise<Omit<SiteForgeFetchedDocument, 'url'>>
+  documents: () => Promise<SiteForgeFetchedDocument[]>
 }
 
 export type SiteForgeHealthProbe = (
@@ -113,6 +152,30 @@ const fail = (
   evidence?: SiteForgeProbeResult['evidence']
 ): SiteForgeProbeResult => ({ passed: false, summary, severity, evidence })
 
+export function declaredSiteForgePagePaths(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return [
+    ...new Set(
+      value.flatMap(page => {
+        if (!page || typeof page !== 'object' || Array.isArray(page)) return []
+        const record = page as Record<string, unknown>
+        const raw =
+          typeof record.slug === 'string'
+            ? record.slug
+            : typeof record.path === 'string'
+              ? record.path
+              : null
+        if (!raw) return []
+        const path = raw.trim()
+        if (!path || path === '/' || path.startsWith('//') || /^https?:/i.test(path)) {
+          return []
+        }
+        return [`/${path.replace(/^\/+|\/+$/g, '')}/`]
+      })
+    ),
+  ].sort()
+}
+
 async function fetchWithTimeout(
   fetcher: typeof fetch,
   url: string,
@@ -154,33 +217,75 @@ export function createDefaultSiteForgeHealthProbes(): SiteForgeHealthProbes {
           })
     },
     links: async context => {
-      const { body } = await context.document()
-      const hrefs = [...body.matchAll(/href=["']([^"'#]+)["']/gi)]
-        .map(match => match[1])
-        .filter(Boolean)
-        .slice(0, 20)
-      const malformed = hrefs.filter(href => {
+      const documents = await context.documents()
+      const broken = documents
+        .filter(document => document.status < 200 || document.status >= 400)
+        .map(document => ({ url: document.url, status: document.status }))
+      return broken.length === 0
+        ? pass('Declared and sampled internal pages are reachable', {
+            sampled: documents.length,
+            declared: context.declaredPages?.length || 0,
+          })
+        : fail('Broken declared or internal pages were found', 'high', {
+            broken,
+            declared: context.declaredPages || [],
+          })
+    },
+    redirects: async context => {
+      const documents = await context.documents()
+      const redirects = documents
+        .filter(document => document.redirected)
+        .map(document => ({
+          from: document.requestedUrl || document.url,
+          to: document.url,
+          status: document.status,
+        }))
+      const unsafe = redirects.filter(redirect => {
         try {
-          new URL(href, context.url)
-          return false
+          return new URL(redirect.from).origin !== new URL(redirect.to).origin
         } catch {
           return true
         }
       })
-      return malformed.length === 0
-        ? pass('Sampled links are syntactically valid', { sampled: hrefs.length })
-        : fail('Malformed links were found', 'medium', { malformed })
+      return unsafe.length
+        ? fail('A declared-page journey redirected outside production', 'high', {
+            redirects,
+            unsafe,
+          })
+        : pass('Declared-page redirects remain on the production origin', {
+            checked: documents.length,
+            redirects,
+          })
     },
     forms: async context => {
-      const { body } = await context.document()
-      const forms = [...body.matchAll(/<form\b[^>]*>/gi)].map(match => match[0])
+      const documents = await context.documents()
+      const forms = documents.flatMap(document =>
+        [...document.body.matchAll(/<form\b[^>]*>/gi)].map(match => ({
+          url: document.url,
+          markup: match[0],
+        }))
+      )
       if (!forms.length) return pass('No production forms are configured', { applicable: false })
-      const invalid = forms.filter(form => !/\b(action|data-endpoint)=/i.test(form))
+      const invalid = forms.filter(form => {
+        const action =
+          form.markup.match(/\baction=["']([^"']+)["']/i)?.[1] ||
+          form.markup.match(/\bdata-endpoint=["']([^"']+)["']/i)?.[1]
+        const method = form.markup.match(/\bmethod=["']([^"']+)["']/i)?.[1] || 'get'
+        return (
+          !action ||
+          /^(?:javascript:|mailto:|#)/i.test(action.trim()) ||
+          !['get', 'post'].includes(method.toLowerCase())
+        )
+      })
       return invalid.length === 0
-        ? pass('Production forms expose submission targets', { forms: forms.length })
-        : fail('A production form lacks a submission target', 'high', {
+        ? pass('Production forms expose safe declarative submission targets', {
+            forms: forms.length,
+            submissionsAttempted: 0,
+          })
+        : fail('A production form lacks a safe submission target', 'high', {
             forms: forms.length,
             invalid: invalid.length,
+            submissionsAttempted: 0,
           })
     },
     widget: async context => {
@@ -206,20 +311,77 @@ export function createDefaultSiteForgeHealthProbes(): SiteForgeHealthProbes {
         { applicable: configured }
       )
     },
+    connector_freshness: async context => {
+      const connectors = context.connectors || []
+      if (!connectors.length) {
+        return pass('No production connector freshness contracts are configured', {
+          applicable: false,
+        })
+      }
+      const now = Date.now()
+      const stale = connectors.filter(connector => {
+        if (connector.status !== 'active' && connector.status !== 'healthy') return true
+        if (!connector.freshnessSeconds) return false
+        const lastSuccess = connector.lastSuccessAt
+          ? Date.parse(connector.lastSuccessAt)
+          : Number.NaN
+        return (
+          !Number.isFinite(lastSuccess) ||
+          now - lastSuccess > connector.freshnessSeconds * 1_000
+        )
+      })
+      return stale.length
+        ? fail('One or more production connectors are stale', 'high', {
+            stale,
+            connectors: connectors.length,
+          })
+        : pass('Production connector freshness contracts are satisfied', {
+            connectors: connectors.length,
+          })
+    },
     indexability: async context => {
-      const { body } = await context.document()
-      return contains(body, /<meta[^>]+(?:name=["']robots["'][^>]+content=["'][^"']*noindex|content=["'][^"']*noindex[^>]+name=["']robots["'])/i)
-        ? fail('Production homepage is marked noindex', 'high')
-        : pass('Production homepage is indexable')
+      const documents = await context.documents()
+      const blocked = documents
+        .filter(
+          document =>
+            /\bnoindex\b/i.test(document.headers.get('x-robots-tag') || '') ||
+            contains(
+              document.body,
+              /<meta[^>]+(?:name=["']robots["'][^>]+content=["'][^"']*noindex|content=["'][^"']*noindex[^>]+name=["']robots["'])/i
+            )
+        )
+        .map(document => document.url)
+      return blocked.length
+        ? fail('Production pages are marked noindex', 'high', { blocked })
+        : pass('Sampled production pages are indexable', {
+            sampled: documents.length,
+          })
     },
     sitemap: async context => {
+      const sitemapUrl = `${context.url}/wp-sitemap.xml`
       const response = await fetchWithTimeout(
         context.fetch,
-        `${context.url}/sitemap.xml`
+        sitemapUrl
       )
-      return response.ok
-        ? pass('Sitemap is reachable', { status: response.status })
-        : fail('Sitemap is unavailable', 'medium', { status: response.status })
+      const body = await response.text()
+      const robotsUrl = `${context.url}/robots.txt`
+      const robots = await fetchWithTimeout(context.fetch, robotsUrl)
+      const robotsBody = await robots.text()
+      const validXml = /<(?:urlset|sitemapindex)\b/i.test(body)
+      const sitemapReferenced = [...robotsBody.matchAll(/^sitemap:\s*(\S+)/gim)]
+        .map(match => normalizeUrl(match[1]))
+        .includes(normalizeUrl(response.url || sitemapUrl))
+      return response.ok && robots.ok && validXml && sitemapReferenced
+        ? pass('Sitemap and robots declarations are aligned', {
+            sitemapStatus: response.status,
+            robotsStatus: robots.status,
+          })
+        : fail('Sitemap and robots declarations are unavailable or misaligned', 'high', {
+            sitemapStatus: response.status,
+            robotsStatus: robots.status,
+            validXml,
+            sitemapReferenced,
+          })
     },
     brand: async context => {
       const { body } = await context.document()
@@ -241,33 +403,122 @@ export function createDefaultSiteForgeHealthProbes(): SiteForgeHealthProbes {
         : fail('Legal navigation is incomplete', 'high', { privacy, housing })
     },
     accessibility: async context => {
-      const { body } = await context.document()
-      const hasLanguage = /<html[^>]+\blang=["'][^"']+["']/i.test(body)
-      const images = [...body.matchAll(/<img\b[^>]*>/gi)].map(match => match[0])
-      const missingAlt = images.filter(image => !/\balt=["'][^"']*["']/i.test(image)).length
-      return hasLanguage && missingAlt === 0
-        ? pass('Baseline accessibility checks pass', { images: images.length })
+      const documents = await context.documents()
+      const failures = documents.flatMap(document => {
+        const hasLanguage = /<html[^>]+\blang=["'][^"']+["']/i.test(
+          document.body
+        )
+        const images = [...document.body.matchAll(/<img\b[^>]*>/gi)].map(
+          match => match[0]
+        )
+        const missingAlt = images.filter(
+          image => !/\balt=["'][^"']*["']/i.test(image)
+        ).length
+        return hasLanguage && missingAlt === 0
+          ? []
+          : [{ url: document.url, hasLanguage, missingAlt }]
+      })
+      return failures.length === 0
+        ? pass('Baseline accessibility checks pass across sampled pages', {
+            pages: documents.length,
+          })
         : fail('Baseline accessibility checks failed', 'medium', {
-            hasLanguage,
-            missingAlt,
+            failures,
           })
     },
     performance: async context => {
-      const { body, elapsedMs } = await context.document()
-      const passed = elapsedMs <= 5_000 && body.length <= 5_000_000
-      return passed
-        ? pass('Homepage performance is within safety bounds', {
-            elapsedMs,
-            bytes: body.length,
+      const documents = await context.documents()
+      const failures = documents
+        .filter(document => document.elapsedMs > 5_000 || document.body.length > 5_000_000)
+        .map(document => ({
+          url: document.url,
+          elapsedMs: document.elapsedMs,
+          bytes: document.body.length,
+        }))
+      return failures.length === 0
+        ? pass('Declared-page performance is within safety bounds', {
+            pages: documents.length,
+            worstElapsedMs: Math.max(0, ...documents.map(document => document.elapsedMs)),
           })
-        : fail('Homepage exceeded performance safety bounds', 'medium', {
-            elapsedMs,
-            bytes: body.length,
+        : fail('A declared page exceeded performance safety bounds', 'medium', {
+            failures,
           })
     },
     identity: async context => {
+      if (!context.artifactId) {
+        return pass('No promoted artifact identifier is recorded', { applicable: false })
+      }
+      const { body, headers } = await context.document()
+      const remoteArtifactId =
+        headers.get('x-siteforge-artifact-id') ||
+        body.match(/data-siteforge-artifact-id=["']([^"']+)["']/i)?.[1] ||
+        null
+      if (!remoteArtifactId) {
+        return fail('Remote artifact identity marker is unavailable', 'critical', {
+          expectedArtifactId: context.artifactId,
+        })
+      }
+      return remoteArtifactId === context.artifactId
+        ? pass('Remote artifact identity matches production', { remoteArtifactId })
+        : fail('Remote artifact identity does not match production', 'critical', {
+            expectedArtifactId: context.artifactId,
+            remoteArtifactId,
+          })
+    },
+    runtime: async context => {
+      const { body, headers } = await context.document()
+      const runtimeStatus =
+        headers.get('x-siteforge-runtime-status') ||
+        body.match(/data-siteforge-runtime-status=["']([^"']+)["']/i)?.[1] ||
+        null
+      return runtimeStatus && !['healthy', 'ready', 'ok'].includes(runtimeStatus.toLowerCase())
+        ? fail('Production runtime reports a degraded state', 'critical', {
+            runtimeStatus,
+          })
+        : pass(
+            runtimeStatus
+              ? 'Production runtime reports healthy'
+              : 'Runtime health contract is not exposed',
+            { applicable: Boolean(runtimeStatus), runtimeStatus }
+          )
+    },
+    plugin_vulnerabilities: async context => {
+      const { body, headers } = await context.document()
+      const raw =
+        headers.get('x-siteforge-plugin-vulnerabilities') ||
+        body.match(/data-siteforge-plugin-vulnerabilities=["'](\d+)["']/i)?.[1] ||
+        null
+      const count = raw === null ? null : Number(raw)
+      return count !== null && Number.isFinite(count) && count > 0
+        ? fail('Production reports vulnerable runtime plugins', 'critical', { count })
+        : pass(
+            count === null
+              ? 'Plugin vulnerability contract is not exposed'
+              : 'No plugin vulnerabilities are reported',
+            { applicable: count !== null, count }
+          )
+    },
+    expiring_specials: async context => {
+      const documents = await context.documents()
+      const expiries = documents.flatMap(document =>
+        [...document.body.matchAll(/data-(?:special-)?expires-at=["']([^"']+)["']/gi)].map(
+          match => ({ url: document.url, expiresAt: match[1] })
+        )
+      )
+      const expired = expiries.filter(item => {
+        const value = Date.parse(item.expiresAt)
+        return Number.isFinite(value) && value <= Date.now()
+      })
+      return expired.length
+        ? fail('Expired specials remain visible in production', 'medium', { expired })
+        : pass('No expired specials were detected', {
+            applicable: expiries.length > 0,
+            expiries,
+          })
+    },
+    content_drift: async context => {
       if (!context.contentHash) {
-        return pass('No promoted artifact identity is recorded', { applicable: false })
+        return pass('No promoted content hash is recorded', { applicable: false })
       }
       const { body, headers } = await context.document()
       const remoteHash =
@@ -275,13 +526,13 @@ export function createDefaultSiteForgeHealthProbes(): SiteForgeHealthProbes {
         body.match(/data-siteforge-content-hash=["']([a-f0-9]{64})["']/i)?.[1] ||
         null
       if (!remoteHash) {
-        return fail('Remote artifact identity marker is unavailable', 'critical', {
+        return fail('Production content-drift evidence is unavailable', 'high', {
           expectedHash: context.contentHash,
         })
       }
       return remoteHash === context.contentHash
-        ? pass('Remote artifact identity matches production', { remoteHash })
-        : fail('Remote artifact identity does not match production', 'critical', {
+        ? pass('Production content hash matches the promoted artifact', { remoteHash })
+        : fail('Production content drift was detected', 'critical', {
             expectedHash: context.contentHash,
             remoteHash,
           })
@@ -327,8 +578,9 @@ export async function runSiteForgeHealth(
 
   const fetcher = options.fetch || fetch
   let documentPromise:
-    | Promise<{ body: string; status: number; elapsedMs: number; headers: Headers }>
+    | Promise<Omit<SiteForgeFetchedDocument, 'url'>>
     | undefined
+  let documentsPromise: Promise<SiteForgeFetchedDocument[]> | undefined
   const context: ProbeContext = {
     ...target,
     url,
@@ -338,6 +590,8 @@ export async function runSiteForgeHealth(
         const start = Date.now()
         const response = await fetchWithTimeout(fetcher, url)
         return {
+          requestedUrl: url,
+          redirected: response.redirected || normalizeUrl(response.url || url) !== url,
           body: await response.text(),
           status: response.status,
           elapsedMs: Date.now() - start,
@@ -345,6 +599,53 @@ export async function runSiteForgeHealth(
         }
       })()
       return documentPromise
+    },
+    documents: () => {
+      documentsPromise ||= (async () => {
+        const homepage = await context.document()
+        const origin = new URL(url).origin
+        const internalUrls = [
+          ...new Set(
+            [
+              ...(context.declaredPages || []),
+              ...[...homepage.body.matchAll(/href=["']([^"'#]+)["']/gi)].map(
+                match => match[1]
+              ),
+            ].flatMap(candidateValue => {
+              try {
+                const candidate = new URL(candidateValue, url)
+                return candidate.origin === origin &&
+                  ['http:', 'https:'].includes(candidate.protocol)
+                  ? [candidate.toString()]
+                  : []
+              } catch {
+                return []
+              }
+            })
+          ),
+        ]
+          .filter(candidate => normalizeUrl(candidate) !== url)
+          .slice(0, 10)
+        const linked = await Promise.all(
+          internalUrls.map(async candidate => {
+            const startedAt = Date.now()
+            const response = await fetchWithTimeout(fetcher, candidate)
+            return {
+              url: response.url || candidate,
+              requestedUrl: candidate,
+              redirected:
+                response.redirected ||
+                normalizeUrl(response.url || candidate) !== normalizeUrl(candidate),
+              body: await response.text(),
+              status: response.status,
+              elapsedMs: Date.now() - startedAt,
+              headers: response.headers,
+            }
+          })
+        )
+        return [{ url, ...homepage }, ...linked]
+      })()
+      return documentsPromise
     },
   }
   const probes = { ...createDefaultSiteForgeHealthProbes(), ...options.probes }
@@ -388,12 +689,18 @@ export async function runSiteForgeHealth(
 
   for (const [check, result] of entries) {
     if (result.passed) {
-      await service
-        .from('siteforge_incidents')
-        .update({ status: 'resolved', resolved_at: completedAt, updated_at: completedAt })
-        .eq('website_id', target.websiteId)
-        .eq('dedupe_key', `production-health:${check}`)
-        .neq('status', 'resolved')
+      if (options.trigger !== 'repair') {
+        await service
+          .from('siteforge_incidents')
+          .update({
+            status: 'resolved',
+            resolved_at: completedAt,
+            updated_at: completedAt,
+          })
+          .eq('website_id', target.websiteId)
+          .eq('dedupe_key', `production-health:${check}`)
+          .neq('status', 'resolved')
+      }
       continue
     }
     const incidentValues = {
@@ -427,7 +734,11 @@ export async function runSiteForgeHealth(
   }
 
   const requiresSafetyRestore = failed.some(
-    ([check]) => check === 'identity' || check === 'reachability'
+    ([check]) =>
+      check === 'identity' ||
+      check === 'content_drift' ||
+      check === 'reachability' ||
+      check === 'runtime'
   )
   if (requiresSafetyRestore && options.trigger !== 'restore') {
     try {
@@ -460,7 +771,7 @@ async function requestSafetyRestore(
     .order('release_version', { ascending: false })
     .limit(1)
     .maybeSingle()
-  const actorId = release?.approved_by || release?.created_by
+  const actorId = recordedLaunchOperatorForHealthRestore(release)
   if (!release?.backup_id || !actorId) return
   await requestLaunchRestore(
     {

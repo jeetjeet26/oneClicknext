@@ -3,8 +3,10 @@ import type { GeneratedPage } from '@/types/siteforge'
 import type { Json } from '@/types/supabase'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { normalizeLegacyPages } from '@/utils/siteforge/blueprint'
-import { CloudwaysProviderClient } from '@/utils/siteforge/providers/cloudways-provider'
-import { getConfiguredDnsProvider } from '@/utils/siteforge/providers/dns-provider'
+import {
+  CloudwaysProviderClient,
+  getCloudwaysProviderCredentials,
+} from '@/utils/siteforge/providers/cloudways-provider'
 import {
   buildRenderedCertificationTruth,
   certifyRenderedWordPressArtifact,
@@ -28,6 +30,10 @@ import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
 import { loadVerifiedSiteForgeRelease } from '@/utils/siteforge/artifacts/release'
 import { deployArtifactBoundRuntimeV3 } from '@/utils/siteforge/workflows/runtime-deployment-v3'
 import { buildReleaseCertificationBinding } from '@/utils/siteforge/verification/certification-binding'
+import {
+  executeDnsCutover,
+  prepareDnsCutover,
+} from '@/utils/siteforge/launch/dns-cutover'
 
 export interface SiteForgeProductionCertificationInput {
   sharedJobId: string
@@ -43,6 +49,13 @@ export interface SiteForgeProductionCertificationInput {
   productionUrl: string
   startedAt: string
   evidenceOnly?: boolean
+}
+
+export class ProductionProjectionReconciliationError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options)
+    this.name = 'ProductionProjectionReconciliationError'
+  }
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -128,7 +141,7 @@ async function assertProductionNotCancelled(
   const leaseOwner = `siteforge-production:${input.sharedJobId}`
   if (job.lease_owner !== leaseOwner) {
     const now = new Date()
-    const { data: claimed, error: claimError } = await client
+    const claim = client
       .from('shared_jobs')
       .update({
         lifecycle_status: 'running',
@@ -140,7 +153,11 @@ async function assertProductionNotCancelled(
       .eq('id', input.sharedJobId)
       .eq('domain', 'siteforge.production-certification')
       .in('lifecycle_status', ['queued', 'running', 'retrying'])
-      .is('lease_owner', null)
+    const claimForCurrentOwner =
+      job.lease_owner?.startsWith('siteforge-retry:')
+        ? claim.eq('lease_owner', job.lease_owner)
+        : claim.is('lease_owner', null)
+    const { data: claimed, error: claimError } = await claimForCurrentOwner
       .select('id')
       .maybeSingle()
     if (claimError || !claimed) {
@@ -157,6 +174,412 @@ export async function restoreProductionProtection(
     ...input,
     targetMode: 'staging',
   })
+}
+
+export function productionFailurePosture(input: {
+  runtimeV3: boolean
+  protectionRestored: boolean
+}): 'protected_noindex' | 'supervised_recovery' {
+  return !input.runtimeV3 && input.protectionRestored
+    ? 'protected_noindex'
+    : 'supervised_recovery'
+}
+
+export function buildProductionRecoveryEscalation(input: {
+  releaseId: string
+  sharedJobId: string
+  message: string
+  restoreError: string
+}) {
+  return {
+    dedupe_key: `production-certification-recovery:${input.releaseId}`,
+    severity: 'critical' as const,
+    status: 'open' as const,
+    category: 'supervised_recovery',
+    title: 'SiteForge production requires supervised recovery',
+    summary: input.message,
+    evidence: {
+      releaseId: input.releaseId,
+      sharedJobId: input.sharedJobId,
+      restoreRequestFailed: true,
+      restoreError: input.restoreError,
+      executionRequiresOperator: true,
+    } as Json,
+  }
+}
+
+export function assertPublicLaunchCertificationChecks(
+  report: unknown,
+  expectedUrl: string
+): void {
+  const certification = asRecord(report)
+  const browser = asRecord(certification.browser)
+  const checks = Array.isArray(browser.checks)
+    ? browser.checks.map(asRecord)
+    : []
+  const expected = new URL(expectedUrl)
+  const actual = new URL(String(certification.targetUrl || ''))
+  const requiredCodes = [
+    'interaction.forms_widgets_keyboard_focus',
+    'consent.script_blocking',
+  ]
+  if (
+    expected.protocol !== 'https:' ||
+    actual.protocol !== 'https:' ||
+    actual.hostname !== expected.hostname ||
+    certification.passed !== true ||
+    browser.passed !== true ||
+    browser.evidenceAccepted !== true ||
+    requiredCodes.some(
+      code =>
+        !checks.some(check => check.code === code && check.passed === true)
+    )
+  ) {
+    throw new FatalError(
+      'Public production certification is missing exact SSL/domain, form, analytics, or consent evidence'
+    )
+  }
+}
+
+export async function verifyProductionDomainTransport(
+  expectedUrl: string
+): Promise<{ url: string; status: number; verifiedAt: string }> {
+  const expected = new URL(expectedUrl)
+  if (expected.protocol !== 'https:') {
+    throw new FatalError('Production domain must use HTTPS')
+  }
+  const response = await fetch(expected, {
+    method: 'GET',
+    redirect: 'follow',
+    signal: AbortSignal.timeout(30_000),
+  })
+  const finalUrl = new URL(response.url || expected.toString())
+  if (
+    !response.ok ||
+    finalUrl.protocol !== 'https:' ||
+    finalUrl.hostname !== expected.hostname
+  ) {
+    throw new FatalError(
+      'Production SSL/domain verification did not reach the exact canonical hostname'
+    )
+  }
+  return {
+    url: finalUrl.toString(),
+    status: response.status,
+    verifiedAt: new Date().toISOString(),
+  }
+}
+
+export async function applyOrderedFailClosedProjectionUpdates(
+  steps: Array<{
+    name: string
+    apply: () => Promise<void>
+    compensate: () => Promise<void>
+  }>
+): Promise<void> {
+  const attempted: typeof steps = []
+  try {
+    for (const step of steps) {
+      attempted.push(step)
+      await step.apply()
+    }
+  } catch (cause) {
+    const compensationFailures: string[] = []
+    for (const step of [...attempted].reverse()) {
+      try {
+        await step.compensate()
+      } catch (compensationError) {
+        compensationFailures.push(
+          `${step.name}: ${
+            compensationError instanceof Error
+              ? compensationError.message
+              : String(compensationError)
+          }`
+        )
+      }
+    }
+    const message = cause instanceof Error ? cause.message : String(cause)
+    throw new Error(
+      compensationFailures.length
+        ? `${message}; fail-closed compensation also failed (${compensationFailures.join('; ')})`
+        : message
+    )
+  }
+}
+
+export async function convergeProductionReleaseAndProjections<T>(input: {
+  checkpointCertification: () => Promise<T>
+  transitionProductionCertified: (release: T) => Promise<T>
+  transitionLive: (release: T) => Promise<T>
+  reconcileLiveProjections: (release: T) => Promise<void>
+}): Promise<T> {
+  const checkpointed = await input.checkpointCertification()
+  const productionCertified =
+    await input.transitionProductionCertified(checkpointed)
+  const live = await input.transitionLive(productionCertified)
+  try {
+    await input.reconcileLiveProjections(live)
+  } catch (cause) {
+    throw new ProductionProjectionReconciliationError(
+      `The release is live but its projections require reconciliation: ${
+        cause instanceof Error ? cause.message : String(cause)
+      }`,
+      { cause }
+    )
+  }
+  return live
+}
+
+export async function markSiteForgeProductionProjectionReconciliationRequired(
+  input: SiteForgeProductionCertificationInput,
+  message: string
+) {
+  'use step'
+  const client = createServiceClient()
+  const release = await getLaunchRelease(
+    input.releaseId,
+    input.propertyId,
+    client
+  )
+  if (
+    release.state !== 'live' ||
+    !release.production_certification_report ||
+    !release.production_certified_at
+  ) {
+    throw new Error(
+      'Projection reconciliation can only be scheduled from an authoritative certified live release'
+    )
+  }
+  const now = new Date().toISOString()
+  const [{ error: jobError }, { error: websiteError }] = await Promise.all([
+    client
+      .from('shared_jobs')
+      .update({
+        lifecycle_status: 'failed',
+        status_reason: 'production_projection_reconciliation_required',
+        stage: 'reconciling_production_truth',
+        current_step: 'Retry to reconcile production launch projections',
+        error_message: message,
+        error_details: {
+          message,
+          releaseId: release.id,
+          authoritativeReleaseState: 'live',
+          retryable: true,
+        } as Json,
+        retry_at: now,
+        available_at: now,
+        lease_owner: null,
+        lease_expires_at: null,
+        finished_at: now,
+        updated_at: now,
+      })
+      .eq('id', input.sharedJobId)
+      .eq('domain', 'siteforge.production-certification')
+      .neq('lifecycle_status', 'cancelled'),
+    client
+      .from('property_websites')
+      .update({
+        current_step: 'Production is live; projections require reconciliation',
+        error_message: message,
+        updated_at: now,
+      })
+      .eq('id', input.websiteId),
+  ])
+  if (jobError || websiteError) {
+    throw new Error(
+      `The live release could not record its retryable reconciliation state: ${
+        jobError?.message || websiteError?.message
+      }`
+    )
+  }
+}
+
+export async function reconcileProductionLiveProjections(
+  input: SiteForgeProductionCertificationInput,
+  report: Json,
+  certification: unknown,
+  targetDomain: string | null,
+  completedAt: string,
+  client: ReturnType<typeof createServiceClient>
+) {
+  const release = await getLaunchRelease(
+    input.releaseId,
+    input.propertyId,
+    client
+  )
+  if (
+    release.state !== 'live' ||
+    release.website_id !== input.websiteId ||
+    release.artifact_id !== input.artifactId ||
+    release.artifact_content_hash !== input.contentHash
+  ) {
+    throw new Error(
+      'Live projections cannot reconcile before the exact launch release is live'
+    )
+  }
+  const requireProjection = async (
+    label: string,
+    result: PromiseLike<{ data: { id: string } | null; error: { message: string } | null }>
+  ) => {
+    const { data, error } = await result
+    if (error || !data) {
+      throw new Error(
+        `${label}: ${error?.message || 'projection identity changed'}`
+      )
+    }
+  }
+  await applyOrderedFailClosedProjectionUpdates([
+    {
+      name: 'deployment',
+      apply: () =>
+        requireProjection(
+          'Failed to mark the certified deployment live',
+          client
+            .from('siteforge_artifact_deployments')
+            .update({
+              status: 'live',
+              certification_report: report,
+              remote_manifest_hash: input.contentHash,
+              deployed_url: input.productionUrl,
+              deployed_at: completedAt,
+              certified_at: completedAt,
+              externally_promoted_at: input.startedAt,
+            })
+            .eq('id', input.deploymentId)
+            .eq('artifact_id', input.artifactId)
+            .select('id')
+            .maybeSingle()
+        ),
+      compensate: async () => {
+        const { error } = await client
+          .from('siteforge_artifact_deployments')
+          .update({ status: 'production_certifying', certified_at: null })
+          .eq('id', input.deploymentId)
+          .eq('artifact_id', input.artifactId)
+        if (error) throw error
+      },
+    },
+    {
+      name: 'target',
+      apply: () =>
+        requireProjection(
+          'Failed to mark the production target ready',
+          client
+            .from('siteforge_wordpress_targets')
+            .update({
+              protection_mode: 'public',
+              status: 'ready',
+              site_url: input.productionUrl,
+              updated_at: completedAt,
+            })
+            .eq('id', input.targetId)
+            .eq('target_type', 'production')
+            .select('id')
+            .maybeSingle()
+        ),
+      compensate: async () => {
+        const { error } = await client
+          .from('siteforge_wordpress_targets')
+          .update({ status: 'provisioning', updated_at: completedAt })
+          .eq('id', input.targetId)
+          .eq('target_type', 'production')
+        if (error) throw error
+      },
+    },
+    {
+      name: 'website',
+      apply: () =>
+        requireProjection(
+          'Failed to mark the website production projection live',
+          client
+            .from('property_websites')
+            .update({
+              editor_lifecycle_status: 'production_live',
+              production_target_id: input.targetId,
+              production_artifact_id: input.artifactId,
+              production_content_hash: input.contentHash,
+              production_url: input.productionUrl,
+              production_certified_at: completedAt,
+              production_certification_report: report,
+              externally_promoted_artifact_id: input.artifactId,
+              externally_promoted_at: input.startedAt,
+              deployed_artifact_version_id: input.artifactId,
+              deployed_content_hash: input.contentHash,
+              deployed_at: completedAt,
+              wp_url: input.productionUrl,
+              domain_status: targetDomain ? 'attached' : 'not_configured',
+              ssl_status: 'active',
+              domain_configured_at: targetDomain ? completedAt : null,
+              current_step: 'Production artifact certified and indexable',
+              error_message: null,
+              updated_at: completedAt,
+            })
+            .eq('id', input.websiteId)
+            .eq('staging_artifact_id', input.artifactId)
+            .select('id')
+            .maybeSingle()
+        ),
+      compensate: async () => {
+        const { error } = await client
+          .from('property_websites')
+          .update({
+            editor_lifecycle_status: 'certifying_production',
+            production_certified_at: null,
+            current_step: 'Reconciling production launch projections',
+            updated_at: completedAt,
+          })
+          .eq('id', input.websiteId)
+          .eq('production_artifact_id', input.artifactId)
+        if (error) throw error
+      },
+    },
+    {
+      name: 'job',
+      apply: () =>
+        requireProjection(
+          'Failed to complete the production certification job',
+          client
+            .from('shared_jobs')
+            .update({
+              lifecycle_status: 'succeeded',
+              status_reason: 'production_live',
+              stage: 'production_live',
+              progress: 100,
+              current_step: 'Production artifact certified and indexable',
+              output: {
+                productionUrl: input.productionUrl,
+                artifactId: input.artifactId,
+                contentHash: input.contentHash,
+                certification,
+              } as unknown as Json,
+              heartbeat_at: completedAt,
+              lease_owner: null,
+              lease_expires_at: null,
+              finished_at: completedAt,
+              updated_at: completedAt,
+            })
+            .eq('id', input.sharedJobId)
+            .eq('domain', 'siteforge.production-certification')
+            .select('id')
+            .maybeSingle()
+        ),
+      compensate: async () => {
+        const { error } = await client
+          .from('shared_jobs')
+          .update({
+            lifecycle_status: 'retrying',
+            status_reason: 'production_projection_reconciliation_required',
+            stage: 'reconciling_production_truth',
+            current_step: 'Reconciling production launch projections',
+            finished_at: null,
+            updated_at: completedAt,
+          })
+          .eq('id', input.sharedJobId)
+          .eq('domain', 'siteforge.production-certification')
+        if (error) throw error
+      },
+    },
+  ])
 }
 
 export async function certifySiteForgeProduction(
@@ -177,12 +600,54 @@ export async function certifySiteForgeProduction(
     client
   )
   if (
-    (input.evidenceOnly
-      ? launchRelease.state !== 'live'
-      : launchRelease.state !== 'promoted') ||
     launchRelease.website_id !== input.websiteId ||
     launchRelease.artifact_id !== input.artifactId ||
     launchRelease.artifact_content_hash !== input.contentHash
+  ) {
+    throw new FatalError(
+      'Production certification is not linked to the exact promoted launch release'
+    )
+  }
+  if (!input.evidenceOnly && launchRelease.state === 'live') {
+    if (
+      !launchRelease.production_certification_report ||
+      !launchRelease.production_certified_at
+    ) {
+      throw new FatalError(
+        'Live release is missing its persisted production certification checkpoint'
+      )
+    }
+    const { data: resumeWebsite, error: resumeWebsiteError } = await client
+      .from('property_websites')
+      .select('target_domain')
+      .eq('id', input.websiteId)
+      .eq('property_id', input.propertyId)
+      .single()
+    if (resumeWebsiteError || !resumeWebsite) {
+      throw new FatalError(
+        'Website projection is unavailable for production reconciliation'
+      )
+    }
+    await reconcileProductionLiveProjections(
+      input,
+      launchRelease.production_certification_report,
+      launchRelease.production_certification_report,
+      resumeWebsite.target_domain,
+      launchRelease.production_certified_at,
+      client
+    )
+    return {
+      productionUrl: input.productionUrl,
+      artifactId: input.artifactId,
+      contentHash: input.contentHash,
+      certification: launchRelease.production_certification_report,
+      reconciled: true as const,
+    }
+  }
+  if (
+    input.evidenceOnly
+      ? launchRelease.state !== 'live'
+      : launchRelease.state !== 'promoted'
   ) {
     throw new FatalError(
       'Production certification is not linked to the exact promoted launch release'
@@ -307,13 +772,14 @@ export async function certifySiteForgeProduction(
     publicRuntime.conversionEndpoint,
     approvedImageDigests
   )
+  let dnsCutoverEvidence: Json | null = null
 
   if (input.evidenceOnly) {
     await setStage(
       input,
       'running_optional_browser_qa',
       50,
-      'Running optional production browser QA'
+      'Running production browser recertification'
     )
     await assertProductionNotCancelled(input, client)
     const browserQa = await certifyRenderedWordPressArtifact({
@@ -347,7 +813,7 @@ export async function certifySiteForgeProduction(
         status: browserQa.passed ? 'passed' : 'failed',
         report: browserQa as unknown as Json,
         evidence_manifest: {
-          phase: 'optional_public_qa',
+          phase: 'public_recertification',
           targetUrl: input.productionUrl,
           bindingHash: browserQa.bindingHash,
           evidenceHash: browserQa.evidenceHash,
@@ -362,19 +828,20 @@ export async function certifySiteForgeProduction(
         `Failed to persist optional production browser QA: ${evidenceError.message}`
       )
     }
+    if (!browserQa.passed) {
+      throw new FatalError(
+        'Production browser recertification failed; supervised recovery is required'
+      )
+    }
     const finishedAt = new Date().toISOString()
     const { error: jobError } = await client
       .from('shared_jobs')
       .update({
         lifecycle_status: 'succeeded',
-        status_reason: browserQa.passed
-          ? 'optional_browser_qa_passed'
-          : 'optional_browser_qa_completed_with_warnings',
-        stage: 'optional_browser_qa_complete',
+        status_reason: 'browser_recertification_passed',
+        stage: 'browser_recertification_complete',
         progress: 100,
-        current_step: browserQa.passed
-          ? 'Optional browser QA passed'
-          : 'Optional browser QA completed with non-blocking warnings',
+        current_step: 'Production browser recertification passed',
         output: {
           artifactId: input.artifactId,
           contentHash: input.contentHash,
@@ -404,43 +871,64 @@ export async function certifySiteForgeProduction(
       20,
       'Attaching and verifying production DNS'
     )
+    const cloudwaysCredentials = getCloudwaysProviderCredentials()
     if (
       credentials.provider !== 'cloudways' ||
       !credentials.providerMetadata ||
-      !process.env.CLOUDWAYS_API_KEY ||
-      !process.env.CLOUDWAYS_EMAIL
+      !cloudwaysCredentials
     ) {
       throw new FatalError(
         'Cloudways metadata is required to attach the production domain'
       )
     }
-    const dns = getConfiguredDnsProvider()
-    if (!dns)
-      throw new FatalError(
-        'A DNS provider is required for production activation'
-      )
-    const dnsRecord = await dns.upsertAddressRecord({
-      hostname: website.target_domain,
+    const dnsInput = {
+      releaseId: launchRelease.id,
+      websiteId: input.websiteId,
+      propertyId: input.propertyId,
+      orgId: input.orgId,
+      targetDomain: website.target_domain,
       address: credentials.providerMetadata.publicIp,
-    })
-    const cloudways = new CloudwaysProviderClient({
-      apiKey: process.env.CLOUDWAYS_API_KEY,
-      email: process.env.CLOUDWAYS_EMAIL,
-    })
+      actorId: input.actorId,
+    }
+    const preparedDns = await prepareDnsCutover(dnsInput, client)
+    const cloudways = new CloudwaysProviderClient(cloudwaysCredentials)
+    // Prepare the application hostname and certificate while traffic remains
+    // on the prior DNS identity. The persisted snapshot above makes the
+    // subsequent idempotent upserts recoverable.
     await cloudways.configureApplicationDomain({
       applicationId: credentials.providerMetadata.applicationId,
-      domain: website.target_domain,
+      domain: preparedDns.policy.canonicalHostname,
     })
-    await cloudways.verifyDns(website.target_domain)
+    const dnsCutover = await executeDnsCutover(dnsInput, client)
+    dnsCutoverEvidence = dnsCutover as unknown as Json
+    if (!dnsCutover.propagation.propagated) {
+      throw new FatalError(
+        'DNS cutover is recorded but public propagation is still pending; production remains protected'
+      )
+    }
+    await cloudways.verifyDns(preparedDns.policy.canonicalHostname)
+    const transport = await verifyProductionDomainTransport(
+      `https://${preparedDns.policy.canonicalHostname}`
+    )
+    dnsCutoverEvidence = {
+      ...asRecord(dnsCutoverEvidence),
+      transport,
+      noDowntimePosture: {
+        rollbackSnapshotPersistedBeforeMutation: true,
+        applicationDomainPreparedBeforeDnsMutation: true,
+        protectedUntilPublicBrowserCertification: true,
+      },
+    } as Json
     const { error } = await client
       .from('property_websites')
       .update({
         domain_status: 'pending_dns',
-        ssl_status: 'pending',
-        dns_record_id: dnsRecord.recordId,
+        ssl_status: 'active',
+        dns_record_id: dnsCutover.snapshotId,
         updated_at: new Date().toISOString(),
       })
       .eq('id', input.websiteId)
+      .eq('target_domain', preparedDns.policy.canonicalHostname)
     if (error)
       throw new Error(
         `Failed to persist production DNS state: ${error.message}`
@@ -617,9 +1105,14 @@ export async function certifySiteForgeProduction(
         'Production activation failed indexability certification'
       )
     }
+    assertPublicLaunchCertificationChecks(certification, input.productionUrl)
   } catch (cause) {
     if (runtimeV3) {
-      throw cause
+      throw new FatalError(
+        `Production certification failed after activation; supervised recovery is required: ${
+          cause instanceof Error ? cause.message : String(cause)
+        }`
+      )
     }
     try {
       await restoreProductionProtection(wp!, {
@@ -644,135 +1137,64 @@ export async function certifySiteForgeProduction(
   const report = {
     ...asRecord(certification),
     ...(runtimeEvidence ? { runtimeEvidence } : {}),
+    ...(dnsCutoverEvidence ? { dnsCutoverEvidence } : {}),
   } as Json
-  const [
-    { error: deploymentCompleteError },
-    { error: targetCompleteError },
-    { error: websiteCompleteError },
-    { error: jobCompleteError },
-  ] = await Promise.all([
-    client
-      .from('siteforge_artifact_deployments')
-      .update({
-        status: 'live',
-        certification_report: report,
-        remote_manifest_hash: input.contentHash,
-        deployed_url: input.productionUrl,
-        deployed_at: completedAt,
-        certified_at: completedAt,
-        externally_promoted_at: input.startedAt,
-      })
-      .eq('id', input.deploymentId)
-      .eq('artifact_id', input.artifactId),
-    client
-      .from('siteforge_wordpress_targets')
-      .update({
-        protection_mode: 'public',
-        status: 'ready',
-        site_url: input.productionUrl,
-        updated_at: completedAt,
-      })
-      .eq('id', input.targetId)
-      .eq('target_type', 'production'),
-    client
-      .from('property_websites')
-      .update({
-        editor_lifecycle_status: 'production_live',
-        production_target_id: input.targetId,
-        production_artifact_id: input.artifactId,
-        production_content_hash: input.contentHash,
-        production_url: input.productionUrl,
-        production_certified_at: completedAt,
-        production_certification_report: report,
-        externally_promoted_artifact_id: input.artifactId,
-        externally_promoted_at: input.startedAt,
-        deployed_artifact_version_id: input.artifactId,
-        deployed_content_hash: input.contentHash,
-        deployed_at: completedAt,
-        wp_url: input.productionUrl,
-        domain_status: website.target_domain ? 'attached' : 'not_configured',
-        ssl_status: 'active',
-        domain_configured_at: website.target_domain ? completedAt : null,
-        current_step: 'Production artifact certified and indexable',
-        error_message: null,
-        updated_at: completedAt,
-      })
-      .eq('id', input.websiteId)
-      .eq('staging_artifact_id', input.artifactId),
-    client
-      .from('shared_jobs')
-      .update({
-        lifecycle_status: 'succeeded',
-        status_reason: 'production_live',
-        stage: 'production_live',
-        progress: 100,
-        current_step: 'Production artifact certified and indexable',
-        output: {
-          productionUrl: input.productionUrl,
+  await convergeProductionReleaseAndProjections({
+    checkpointCertification: async () => {
+      const { data, error } = await client
+        .from('siteforge_launch_releases')
+        .update({
+          production_certification_report: report,
+          production_certified_at: completedAt,
+        })
+        .eq('id', launchRelease.id)
+        .eq('state', 'promoted')
+        .eq('state_version', launchRelease.state_version)
+        .select('*')
+        .single()
+      if (error || !data) {
+        throw new Error(
+          'Production passed public certification but the release checkpoint failed'
+        )
+      }
+      return data
+    },
+    transitionProductionCertified: checkpointed =>
+      transitionLaunchRelease(
+        checkpointed,
+        'production_certified',
+        'system',
+        input.actorId,
+        'Exact promoted artifact passed production certification',
+        { certificationReport: report },
+        input.sharedJobId,
+        client
+      ),
+    transitionLive: productionCertified =>
+      transitionLaunchRelease(
+        productionCertified,
+        'live',
+        'system',
+        input.actorId,
+        'Production certification completed and the release is live',
+        {
           artifactId: input.artifactId,
           contentHash: input.contentHash,
-          certification,
-        } as unknown as Json,
-        heartbeat_at: completedAt,
-        lease_owner: null,
-        lease_expires_at: null,
-        finished_at: completedAt,
-        updated_at: completedAt,
-      })
-      .eq('id', input.sharedJobId)
-      .eq('domain', 'siteforge.production-certification'),
-  ])
-  const completionError =
-    deploymentCompleteError ||
-    targetCompleteError ||
-    websiteCompleteError ||
-    jobCompleteError
-  if (completionError) {
-    throw new Error(
-      `Failed to persist production truth: ${completionError.message}`
-    )
-  }
-
-  const { data: checkpointedRelease, error: releaseError } = await client
-    .from('siteforge_launch_releases')
-    .update({
-      production_certification_report: report,
-      production_certified_at: completedAt,
-    })
-    .eq('id', launchRelease.id)
-    .eq('state', 'promoted')
-    .eq('state_version', launchRelease.state_version)
-    .select('*')
-    .single()
-  if (releaseError || !checkpointedRelease) {
-    throw new Error(
-      'Production succeeded but launch certification could not be checkpointed'
-    )
-  }
-  const productionCertified = await transitionLaunchRelease(
-    checkpointedRelease,
-    'production_certified',
-    'system',
-    input.actorId,
-    'Exact promoted artifact passed production certification',
-    { certificationReport: report },
-    input.sharedJobId,
-    client
-  )
-  await transitionLaunchRelease(
-    productionCertified,
-    'live',
-    'system',
-    input.actorId,
-    'Production certification completed and the release is live',
-    {
-      artifactId: input.artifactId,
-      contentHash: input.contentHash,
-      productionUrl: input.productionUrl,
-    },
-    input.sharedJobId,
-    client
-  )
+          productionUrl: input.productionUrl,
+        },
+        input.sharedJobId,
+        client
+      ),
+    reconcileLiveProjections: () =>
+      reconcileProductionLiveProjections(
+        input,
+        report,
+        certification,
+        website.target_domain,
+        completedAt,
+        client
+      ),
+  })
 
   return {
     productionUrl: input.productionUrl,
@@ -858,14 +1280,51 @@ export async function failSiteForgeProductionCertification(
       client
     )
   } catch (restoreError) {
+    const restoreMessage =
+      restoreError instanceof Error ? restoreError.message : String(restoreError)
+    const escalation = buildProductionRecoveryEscalation({
+      releaseId: input.releaseId,
+      sharedJobId: input.sharedJobId,
+      message,
+      restoreError: restoreMessage,
+    })
+    const { data: existingIncident } = await client
+      .from('siteforge_incidents')
+      .select('id')
+      .eq('website_id', input.websiteId)
+      .eq('dedupe_key', escalation.dedupe_key)
+      .neq('status', 'resolved')
+      .maybeSingle()
+    const incidentValues = {
+      org_id: input.orgId,
+      property_id: input.propertyId,
+      website_id: input.websiteId,
+      artifact_id: input.artifactId,
+      ...escalation,
+      updated_at: now,
+    }
+    const incidentResult = existingIncident
+      ? await client
+          .from('siteforge_incidents')
+          .update(incidentValues)
+          .eq('id', existingIncident.id)
+      : await client.from('siteforge_incidents').insert(incidentValues)
+    await client
+      .from('property_websites')
+      .update({
+        editor_lifecycle_status: 'staging_ready',
+        current_step:
+          'Production certification failed; supervised recovery required',
+        error_message: message,
+        updated_at: now,
+      })
+      .eq('id', input.websiteId)
     console.error(
       '[siteforge_production_certification] restore request failed',
       {
         releaseId: input.releaseId,
-        error:
-          restoreError instanceof Error
-            ? restoreError.message
-            : String(restoreError),
+        error: restoreMessage,
+        incidentPersisted: !incidentResult.error,
       }
     )
   }

@@ -3,6 +3,8 @@ import {
   CloudwaysProviderClient,
   CloudwaysUnsupportedOperationError,
   assertStagingApplicationParent,
+  getCloudwaysProviderCredentials,
+  hasCloudwaysProviderCredentials,
   parseCloudwaysApplicationHostname,
 } from "./cloudways-provider";
 
@@ -31,6 +33,28 @@ describe("Cloudways API v2 provider", () => {
     expect(
       parseCloudwaysApplicationHostname("https://apartments.example.com"),
     ).toBeNull();
+  });
+
+  it("prefers an explicit access token and preserves the legacy credential pair", () => {
+    expect(
+      getCloudwaysProviderCredentials({
+        CLOUDWAYS_ACCESS_TOKEN: " modern-token ",
+        CLOUDWAYS_EMAIL: "legacy@example.com",
+        CLOUDWAYS_API_KEY: "legacy-key",
+      }),
+    ).toEqual({ accessToken: "modern-token" });
+    expect(
+      getCloudwaysProviderCredentials({
+        CLOUDWAYS_EMAIL: " legacy@example.com ",
+        CLOUDWAYS_API_KEY: " legacy-key ",
+      }),
+    ).toEqual({
+      email: "legacy@example.com",
+      apiKey: "legacy-key",
+    });
+    expect(
+      hasCloudwaysProviderCredentials({ CLOUDWAYS_API_KEY: "partial" }),
+    ).toBe(false);
   });
 
   it("resolves an exact preview hostname when legacy URL ids drift", async () => {
@@ -102,6 +126,57 @@ describe("Cloudways API v2 provider", () => {
         method: "POST",
         body: undefined,
       }),
+    );
+  });
+
+  it("retries transient Cloudways 500 responses", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(response({}, 500))
+      .mockResolvedValueOnce(
+        response({
+          data: {
+            operation_id: "operation-retried",
+            application_id: "staging-retried",
+          },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const pending = new CloudwaysProviderClient({
+      accessToken: "cw_access-token",
+    }).createStagingApplication({
+      serverId: "server-123",
+      parentApplicationId: "production-456",
+      label: "retry-transient-provider-error",
+    });
+    await vi.runAllTimersAsync();
+
+    await expect(pending).resolves.toEqual({
+      operationId: "operation-retried",
+      applicationId: "staging-retried",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("deletes an exact Cloudways application from its owning server", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(
+      response({ operation_id: "delete-123" }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      new CloudwaysProviderClient({
+        accessToken: "cw_access-token",
+      }).deleteApplication({
+        serverId: "server-123",
+        applicationId: "staging-456",
+      }),
+    ).resolves.toEqual({ operationId: "delete-123" });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.cloudways.com/api/v2/app/staging-456?server_id=server-123",
+      expect.objectContaining({ method: "DELETE" }),
     );
   });
 
@@ -306,8 +381,7 @@ describe("Cloudways API v2 provider", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await new CloudwaysProviderClient({
-      email: "ops@example.com",
-      apiKey: "cw_access-token",
+      accessToken: "modern-access-token",
     }).configureApplicationDomain({
       applicationId: "app-123",
       domain: "apartments.example.com",
@@ -319,7 +393,7 @@ describe("Cloudways API v2 provider", () => {
       "https://api.cloudways.com/api/v2/applications/app-123/cname",
       expect.objectContaining({
         headers: expect.objectContaining({
-          Authorization: "Bearer cw_access-token",
+          Authorization: "Bearer modern-access-token",
         }),
       }),
     );

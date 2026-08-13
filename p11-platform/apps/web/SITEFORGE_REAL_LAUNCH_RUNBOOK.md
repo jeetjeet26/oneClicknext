@@ -34,6 +34,30 @@ Do not check the roadmap item until every condition passes in one run.
 - Ensure the local web app and Supabase stack use the same environment.
 - Publish and assign the exact runtime-v3 package before the run.
 
+## First-party artifact preparation
+
+From a clean checkout, prepare and verify the first-party inputs before any
+provider mutation:
+
+```bash
+npm run siteforge:artifacts:generate
+SITEFORGE_THEME_SIGNING_KEY='<operator-supplied-key>' \
+  npm run siteforge:artifacts:build
+SITEFORGE_THEME_SIGNING_KEY='<same-key>' \
+  npm run siteforge:artifacts:drift-check
+```
+
+Use the same explicit Git SHA and signing key for build and drift check. The
+build creates the signed base-theme archive and a runtime-v3 archive with an
+immutable package manifest. It does not publish either package, enable a
+rollout, or prove anything about a WordPress target.
+
+ACF JSON is generated first-party source and is covered by the drift check.
+ACF Pro itself is a licensed external input: place the approved
+`runtime-assets/advanced-custom-fields-pro.zip` beside its checked digest and
+run `npm run siteforge:deployment-assets:verify`. Never claim that this
+repository reproduced the ACF Pro binary.
+
 The complete fail-closed environment contract is
 `utils/siteforge/testing/aurora-lifecycle-e2e.ts`
 (`AURORA_LIFECYCLE_REQUIRED_ENV`). In particular, configure:
@@ -46,7 +70,27 @@ The complete fail-closed environment contract is
 - `AURORA_LIFECYCLE_CLEANUP_CONFIRM=DELETE_OWNED_AURORA_RESOURCES`
 - all SiteForge runtime/editor/lifecycle flags required by the preflight
 
+The current boolean opt-ins are exact, case-sensitive values:
+
+```text
+AURORA_LIFECYCLE_E2E=1
+SITEFORGE_AURORA_LIFECYCLE_CONTROL_ENABLED=true
+SITEFORGE_RUNTIME_V3_ENABLED=true
+SITEFORGE_SEMANTIC_EDITOR_ENABLED=true
+SITEFORGE_RUNTIME_EXTENSIONS_ENABLED=true
+```
+
+These Aurora requirements are stricter than normal product defaults. Runtime
+v3 and runtime extensions default off; the semantic editor defaults on unless
+explicitly disabled. A built runtime-v3 ZIP does not enable runtime v3.
+
 Keep credentials in the operator environment. Do not add them to the repo.
+
+The default local smoke is intentionally non-provider-backed. It verifies the
+approved plan, immutable generation artifact, persisted local preview
+architecture, and the fail-closed deterministic-quality, canonical-preview
+approval, staging, launch-preparation, and rollback-revision boundaries. Only
+the opt-in Aurora test may satisfy the provider acceptance gate above.
 
 ## Run
 

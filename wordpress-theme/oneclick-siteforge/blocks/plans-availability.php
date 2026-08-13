@@ -13,9 +13,34 @@ $data_source = oneclick_get_block_field( 'data_source', $block, 'siteforge' );
 $display_style = oneclick_get_block_field( 'display_style', $block, 'cards' );
 $filter_options = oneclick_get_block_field( 'filter_options', $block, array() );
 $floor_plans = oneclick_get_block_field( 'floor_plans', $block, array() );
+$inventory_snapshot = oneclick_get_block_field( 'inventory_snapshot', $block, array() );
 $show_pricing = (bool) oneclick_get_block_field( 'show_pricing', $block, true );
 $show_availability = (bool) oneclick_get_block_field( 'show_availability', $block, true );
 $floor_plans = is_array( $floor_plans ) ? $floor_plans : array();
+$inventory_snapshot = is_array( $inventory_snapshot ) ? $inventory_snapshot : array();
+$inventory_available = ! empty( $floor_plans )
+	&& ! empty( $inventory_snapshot['captured_at'] )
+	&& is_string( $inventory_snapshot['content_hash'] ?? null )
+	&& 1 === preg_match( '/^[a-f0-9]{64}$/', $inventory_snapshot['content_hash'] );
+$inventory_max_age = max( 1, min( 168, absint( $inventory_snapshot['max_age_hours'] ?? 24 ) ) );
+foreach ( $inventory_available ? $floor_plans : array() as $floor_plan ) {
+	$source_at = $floor_plan['source_updated_at'] ?? ( $floor_plan['effective_at'] ?? null );
+	if (
+		'stale_inventory' === ( $floor_plan['pricingHiddenReason'] ?? '' )
+		|| ! is_string( $source_at )
+		|| false === strtotime( $source_at )
+		|| strtotime( $source_at ) < time() - ( $inventory_max_age * HOUR_IN_SECONDS )
+		|| ( ! empty( $floor_plan['expires_at'] ) && strtotime( $floor_plan['expires_at'] ) <= time() )
+	) {
+		$inventory_available = false;
+		break;
+	}
+}
+if ( ! $inventory_available ) {
+	$floor_plans = array();
+	$show_pricing = false;
+	$show_availability = false;
+}
 ?>
 
 <section <?php echo oneclick_get_block_wrapper_attributes( $block, array( 'class' => 'block-plans-availability' ) ); ?> data-source="<?php echo esc_attr( $data_source ); ?>" data-style="<?php echo esc_attr( $display_style ); ?>">
@@ -64,7 +89,7 @@ $floor_plans = is_array( $floor_plans ) ? $floor_plans : array();
 
 			<div class="plans-container" id="plans-container">
 				<?php
-				if ( ! empty( $floor_plans ) ) {
+				if ( $inventory_available ) {
 					?>
 					<div class="plans-list">
 						<?php foreach ( $floor_plans as $floor_plan ) { ?>
@@ -117,9 +142,9 @@ $floor_plans = is_array( $floor_plans ) ? $floor_plans : array();
 					<?php
 				} elseif ( in_array( $data_source, array( 'siteforge', 'manual' ), true ) ) {
 					?>
-					<div class="plans-empty-state">
-						<h2><?php esc_html_e( 'Floor plans coming soon', 'oneclick-siteforge' ); ?></h2>
-						<p><?php esc_html_e( 'Check back soon for reviewed layouts, pricing, and availability.', 'oneclick-siteforge' ); ?></p>
+					<div class="plans-unavailable" role="status">
+						<h2><?php esc_html_e( 'Floor-plan inventory unavailable', 'oneclick-siteforge' ); ?></h2>
+						<p><?php esc_html_e( 'Current pricing and availability cannot be verified. Please contact the property directly.', 'oneclick-siteforge' ); ?></p>
 					</div>
 					<?php
 				} elseif ( 'interactive' === $display_style ) {

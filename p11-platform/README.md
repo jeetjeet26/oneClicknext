@@ -168,7 +168,7 @@ p11-platform/
 
 ### 1. Prerequisites
 
-- Node.js 20.11+
+- Node.js 24.x
 - Python 3.11+
 - Docker (for local Supabase) or a hosted Supabase project
 - OpenAI API key
@@ -259,6 +259,9 @@ This runs Playwright smoke coverage against the seeded local stack, including:
 - unauthenticated redirect to login
 - seeded local sign-in into an authenticated app route
 - seeded LumaLeasing tour availability via local fixtures
+- SiteForge approved-plan generation, persisted local preview architecture, and
+  fail-closed quality/approval/staging/launch/rollback gates without claiming
+  WordPress or Cloudways success
 
 ### 7. Inspect Recent Cron Runs
 
@@ -296,6 +299,58 @@ npm run check:runtime-config-hardening
 ```
 
 This check is also enforced inside `npm run check:foundation`, so regressions are blocked during normal foundation validation.
+
+### 11. SiteForge Artifact Reproducibility
+
+SiteForge has three distinct artifact operations. Run them from
+`p11-platform/apps/web` in this order on a clean checkout:
+
+```bash
+# Regenerate the tracked ACF JSON contract and remove stale generated groups.
+npm run siteforge:artifacts:generate
+
+# Build the signed base theme and the runtime-v3 plugin from the current Git SHA.
+SITEFORGE_THEME_SIGNING_KEY='<operator-supplied-key>' \
+  npm run siteforge:artifacts:build
+
+# Regenerate in temporary directories and compare with the built artifacts.
+SITEFORGE_THEME_SIGNING_KEY='<same-key>' \
+  npm run siteforge:artifacts:drift-check
+```
+
+`siteforge:artifacts:generate` must leave a clean checkout unchanged.
+`siteforge:artifacts:build` first checks that the tracked ACF JSON matches the
+generator, then writes deterministic first-party archives and SHA-256 sidecars
+under `runtime-assets/`. Reproducibility requires the same source tree, Git SHA,
+theme signing key, and runtime contract selection.
+
+The ACF Pro archive is a licensed third-party input, not an artifact generated
+by this repository. Place the exact licensed
+`runtime-assets/advanced-custom-fields-pro.zip` beside its checked
+`.sha256` file, then run `npm run siteforge:deployment-assets:verify` to verify
+the complete deployment bundle. Do not describe a first-party build as
+reproducing ACF Pro.
+
+Runtime-v3 is fail-closed and has separate build and application flags:
+
+- `npm run runtime:build:v3` explicitly creates a contract-v3 package.
+- `SITEFORGE_RUNTIME_V3_ENABLED` defaults to disabled and must equal `true` to
+  load, publish, or deploy runtime-v3 releases.
+- `SITEFORGE_SEMANTIC_EDITOR_ENABLED` is enabled unless explicitly set to
+  `false`.
+- `SITEFORGE_RUNTIME_EXTENSIONS_ENABLED` defaults to disabled and must equal
+  `true` for governed extensions.
+- Building a v3 archive does not enable v3 rollout or mutate a target.
+
+The destructive Aurora lifecycle remains a separate opt-in provider test. Its
+current preflight requires `AURORA_LIFECYCLE_E2E=1` and exact `true` values for
+`SITEFORGE_AURORA_LIFECYCLE_CONTROL_ENABLED`,
+`SITEFORGE_RUNTIME_V3_ENABLED`, `SITEFORGE_SEMANTIC_EDITOR_ENABLED`, and
+`SITEFORGE_RUNTIME_EXTENSIONS_ENABLED`, plus every identity, credential,
+digest, signing, lease, and cleanup value listed by
+`AURORA_LIFECYCLE_REQUIRED_ENV`. Normal local smoke does not set these flags
+and does not fabricate canonical WordPress, Cloudways staging, launch, or
+rollback evidence.
 
 ---
 

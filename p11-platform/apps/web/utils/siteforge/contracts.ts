@@ -286,10 +286,70 @@ export const siteForgeArtifactSchema = z.object({
 })
 
 export const createGenerationRequestSchema = z.object({
+  websiteId: z.string().uuid(),
   planId: z.string().uuid(),
   confirmedRevision: z.number().int().positive(),
   contentHash: z.string().min(32).max(128),
   idempotencyKey: z.string().min(8).max(200),
+})
+
+const generationHashSchema = z.string().regex(/^[a-f0-9]{64}$/)
+
+export const siteForgeGenerationAssetEvidenceSchema = z.object({
+  id: z.string().uuid(),
+  role: z.string().min(1),
+  fileUrl: z.string().url(),
+  contentHash: generationHashSchema,
+  rightsStatus: z.enum(['owned', 'licensed', 'generated']),
+  rightsEvidenceHash: generationHashSchema,
+  approvalStatus: z.literal('approved'),
+  expiresAt: z.string().datetime().nullable(),
+})
+
+export const siteForgeGenerationEvidenceSnapshotSchema = z.object({
+  schemaVersion: z.literal(1),
+  capturedAt: z.string().datetime(),
+  websiteId: z.string().uuid(),
+  propertyId: z.guid(),
+  orgId: z.guid(),
+  plan: z.object({
+    id: z.string().uuid(),
+    versionId: z.string().uuid(),
+    revision: z.number().int().positive(),
+    contentHash: generationHashSchema,
+  }),
+  brief: z.object({
+    id: z.string().uuid(),
+    version: z.number().int().positive(),
+    contentHash: generationHashSchema,
+  }),
+  creativeDirection: z.object({
+    setId: z.string().uuid(),
+    setVersion: z.number().int().positive(),
+    setContentHash: generationHashSchema,
+    directionId: z.string().uuid(),
+    directionContentHash: generationHashSchema,
+  }),
+  onboarding: z.object({
+    id: z.string().uuid(),
+    contentHash: generationHashSchema,
+  }),
+  brand: z.object({
+    assetId: z.string().uuid(),
+    contractVersion: z.literal('1.0'),
+    contractHash: generationHashSchema,
+  }),
+  assetManifest: z.object({
+    assets: z.array(siteForgeGenerationAssetEvidenceSchema).min(1),
+    contentHash: generationHashSchema,
+  }),
+  inventory: z.object({
+    required: z.boolean(),
+    rowCount: z.number().int().nonnegative(),
+    contentHash: generationHashSchema,
+    latestSourceUpdatedAt: z.iso.datetime({ offset: true }).nullable(),
+  }),
+  contentHash: generationHashSchema,
 })
 
 export const siteForgeJobStatusResponseSchema = z.object({
@@ -313,6 +373,9 @@ export type ConfirmedSiteForgePlan = z.infer<typeof confirmedSiteForgePlanSchema
 export type SiteForgeReadinessReport = z.infer<typeof siteForgeReadinessReportSchema>
 export type SiteForgeArtifact = z.infer<typeof siteForgeArtifactSchema>
 export type CreateGenerationRequest = z.infer<typeof createGenerationRequestSchema>
+export type SiteForgeGenerationEvidenceSnapshot = z.infer<
+  typeof siteForgeGenerationEvidenceSnapshotSchema
+>
 export type SiteForgeJobStatusResponse = z.infer<typeof siteForgeJobStatusResponseSchema>
 
 export { ACF_BLOCK_TYPES }

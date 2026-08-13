@@ -40,6 +40,28 @@ function oneclick_get_block_wrapper_attributes( $block, $extra_attrs = array() )
 	} elseif ( ! empty( $block['id'] ) ) {
 		$attrs['id'] = $block['id'];
 	}
+	if ( ! empty( $block['siteforgeA11y'] ) && is_array( $block['siteforgeA11y'] ) ) {
+		foreach ( $block['siteforgeA11y'] as $annotation ) {
+			if ( ! is_array( $annotation ) ) {
+				continue;
+			}
+			if ( ! empty( $annotation['role'] ) && empty( $attrs['role'] ) ) {
+				$attrs['role'] = $annotation['role'];
+			}
+			if ( ! empty( $annotation['accessibleName'] ) && empty( $attrs['aria-label'] ) ) {
+				$attrs['aria-label'] = $annotation['accessibleName'];
+			}
+			if ( ! empty( $annotation['description'] ) && empty( $attrs['aria-description'] ) ) {
+				$attrs['aria-description'] = $annotation['description'];
+			}
+			if ( ! empty( $annotation['liveRegion'] ) && 'off' !== $annotation['liveRegion'] && empty( $attrs['aria-live'] ) ) {
+				$attrs['aria-live'] = $annotation['liveRegion'];
+			}
+			if ( ! empty( $annotation['keyboardBehavior'] ) ) {
+				$attrs['data-siteforge-keyboard'] = implode( ' ', array_map( 'sanitize_key', $annotation['keyboardBehavior'] ) );
+			}
+		}
+	}
 
 	if ( isset( $extra_attrs['class'] ) ) {
 		$attrs['class'] = trim( $attrs['class'] . ' ' . $extra_attrs['class'] );

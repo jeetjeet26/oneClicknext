@@ -96,6 +96,19 @@ describe('SiteForge first-party telemetry ingress', () => {
         ignoreDuplicates: true,
       })
     )
+    expect(persistTouchesMock).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        orgId: '33333333-3333-4333-8333-333333333333',
+        propertyId: '22222222-2222-4222-8222-222222222222',
+      },
+      expect.objectContaining({
+        websiteId,
+        artifactId: '44444444-4444-4444-8444-444444444444',
+        consent: expect.objectContaining({ state: 'granted' }),
+      }),
+      undefined
+    )
   })
 
   it('rejects unconsented analytics before storage', async () => {
@@ -133,5 +146,23 @@ describe('SiteForge first-party telemetry ingress', () => {
 
     expect(response.status).toBe(401)
     expect(upsertMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects telemetry whose page origin differs from the certified origin', async () => {
+    const { POST } = await import('./route')
+    const response = await POST(
+      request({
+        eventType: 'page_view',
+        idempotencyKey: 'telemetry-12345678',
+        sessionId: 'session-12345678',
+        consentState: 'granted',
+        pageUrl: 'https://attacker.example.com/',
+      }),
+      routeContext
+    )
+
+    expect(response.status).toBe(403)
+    expect(upsertMock).not.toHaveBeenCalled()
+    expect(persistTouchesMock).not.toHaveBeenCalled()
   })
 })

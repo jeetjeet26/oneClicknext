@@ -1,0 +1,88 @@
+{
+  "key": "group_siteforge_plans_availability",
+  "title": "SiteForge plans availability",
+  "fields": [
+    {
+      "key": "field_siteforge_plans_availability_data_source_0",
+      "name": "data_source",
+      "label": "data_source",
+      "type": "text"
+    },
+    {
+      "key": "field_siteforge_plans_availability_display_style_1",
+      "name": "display_style",
+      "label": "display_style",
+      "type": "select",
+      "choices": {
+        "cards": "cards",
+        "interactive": "interactive",
+        "list": "list"
+      },
+      "default_value": "cards"
+    },
+    {
+      "key": "field_siteforge_plans_availability_filter_options_2",
+      "name": "filter_options",
+      "label": "filter_options",
+      "type": "checkbox",
+      "choices": {
+        "bedrooms": "bedrooms",
+        "bathrooms": "bathrooms",
+        "square_footage": "square_footage",
+        "price": "price",
+        "availability": "availability"
+      }
+    },
+    {
+      "key": "field_siteforge_plans_availability_show_pricing_3",
+      "name": "show_pricing",
+      "label": "show_pricing",
+      "type": "true_false",
+      "default_value": 1
+    },
+    {
+      "key": "field_siteforge_plans_availability_show_availability_4",
+      "name": "show_availability",
+      "label": "show_availability",
+      "type": "true_false",
+      "default_value": 1
+    },
+    {
+      "key": "field_siteforge_plans_availability_freshness_hours_5",
+      "name": "freshness_hours",
+      "label": "freshness_hours",
+      "type": "number",
+      "default_value": 168
+    },
+    {
+      "key": "field_siteforge_plans_availability_variant_6",
+      "name": "variant",
+      "label": "variant",
+      "type": "select",
+      "choices": {
+        "cards": "cards",
+        "details": "details",
+        "preleasing": "preleasing"
+      },
+      "default_value": "cards"
+    }
+  ],
+  "location": [
+    [
+      {
+        "param": "block",
+        "operator": "==",
+        "value": "acf/plans-availability"
+      }
+    ]
+  ],
+  "menu_order": 0,
+  "position": "normal",
+  "style": "default",
+  "label_placement": "top",
+  "instruction_placement": "label",
+  "active": true,
+  "description": "Versioned SiteForge block contract.",
+  "show_in_rest": 1,
+  "modified": 1785441600
+}

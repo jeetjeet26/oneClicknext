@@ -2,7 +2,8 @@ import { z } from 'zod'
 import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
 
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/)
-const POLICY_VERSION = 'siteforge-browser-certification-v16' as const
+export const SITEFORGE_CERTIFICATION_BINDING_POLICY_VERSION =
+  'siteforge-browser-certification-v17' as const
 
 export const certificationArtifactBindingSchema = z.object({
   artifactId: z.string().uuid(),
@@ -30,10 +31,11 @@ export function buildCertificationBindingHash(input: {
   environment: 'protected_preview' | 'staging' | 'production'
   access: 'protected' | 'public'
   requireIndexable: boolean
-  policyVersion?: typeof POLICY_VERSION
+  policyVersion?: typeof SITEFORGE_CERTIFICATION_BINDING_POLICY_VERSION
 }): string {
   return hashSiteForgeContent({
-    policyVersion: input.policyVersion ?? POLICY_VERSION,
+    policyVersion:
+      input.policyVersion ?? SITEFORGE_CERTIFICATION_BINDING_POLICY_VERSION,
     targetUrl: normalizedUrl(input.targetUrl),
     environment: input.environment,
     access: input.access,
