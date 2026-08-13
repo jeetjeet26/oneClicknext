@@ -38,6 +38,8 @@ services:
       # Data Engine API Key
       - key: DATA_ENGINE_API_KEY
         sync: false
+      - key: SITEFORGE_MIGRATION_MANIFEST_SECRET
+        sync: false
       
       # CRM Integrations (optional)
       - key: SALESFORCE_CLIENT_ID

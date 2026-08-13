@@ -364,7 +364,7 @@ export async function loadApprovedSiteForgeGenerationContext(
   const { data: assetRows, error: assetError } = await supabase
     .from('content_assets')
     .select(
-      'id, asset_role, file_url, content_hash, rights_status, rights_metadata, approval_status, expires_at'
+      'id, asset_role, asset_type, file_url, content_hash, rights_status, rights_metadata, approval_status, curation_status, expires_at, duplicate_of'
     )
     .eq('property_id', website.property_id)
     .eq('org_id', website.org_id)
@@ -374,7 +374,16 @@ export async function loadApprovedSiteForgeGenerationContext(
   if (assetError) {
     generationConflict(`Failed to load approved asset manifest: ${assetError.message}`)
   }
-  const assets = (assetRows || []).flatMap(asset => {
+  const currentAssetReadiness = evaluateRequiredAssetReadiness(
+    assetRows || [],
+    now,
+  )
+  if (!currentAssetReadiness.ready) {
+    generationConflict(
+      `Generation asset manifest no longer satisfies readiness: ${currentAssetReadiness.reasons.join('; ')}`,
+    )
+  }
+  const assets = currentAssetReadiness.approvedRightsCleared.flatMap(asset => {
     const expired = asset.expires_at && new Date(asset.expires_at) <= now
     if (
       expired ||
@@ -732,6 +741,7 @@ export async function createPlanRevision(
           typeof value.id !== 'string'
           || typeof value.asset_type !== 'string'
           || typeof value.approval_status !== 'string'
+          || typeof value.curation_status !== 'string'
           || typeof value.rights_status !== 'string'
         ) {
           return []
@@ -742,9 +752,12 @@ export async function createPlanRevision(
             typeof value.asset_role === 'string' ? value.asset_role : null,
           asset_type: value.asset_type,
           approval_status: value.approval_status,
+          curation_status: value.curation_status,
           rights_status: value.rights_status,
           expires_at:
             typeof value.expires_at === 'string' ? value.expires_at : null,
+          duplicate_of:
+            typeof value.duplicate_of === 'string' ? value.duplicate_of : null,
         }]
       })
     : []

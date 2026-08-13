@@ -88,6 +88,7 @@ def test_manifest_contains_complete_migration_inventory_and_evidence():
     manifest = build_migration_manifest(
         context,
         FIXTURE["target"]["url"],
+        "11111111-1111-4111-8111-111111111111",
         dns_snapshot={
             "captureMode": "read_only",
             "status": "captured",
@@ -98,6 +99,7 @@ def test_manifest_contains_complete_migration_inventory_and_evidence():
         generated_at="2026-08-10T12:00:00Z",
     )
 
+    assert manifest["propertyId"] == "11111111-1111-4111-8111-111111111111"
     assert manifest["sourceReadOnly"] is True
     assert manifest["sourceInventory"]["proposedIA"][0]["targetUrl"] == (
         "https://aurora.siteforge.example/"
@@ -134,6 +136,7 @@ def test_manifest_requires_positive_checked_url_count():
         build_migration_manifest(
             context,
             FIXTURE["target"]["url"],
+            "11111111-1111-4111-8111-111111111111",
             signing_secret=SIGNING_SECRET,
         )
 

@@ -15,8 +15,10 @@ function asset(
     asset_role: role,
     asset_type: 'image',
     approval_status: 'approved',
+    curation_status: 'approved',
     rights_status: 'owned',
     expires_at: null,
+    duplicate_of: null,
     ...overrides,
   }
 }
@@ -30,8 +32,8 @@ describe('onboarding asset readiness', () => {
 
     expect(result.ready).toBe(false)
     expect(result.reasons).toEqual([
-      'An approved, rights-cleared primary logo is required',
-      `At least ${MINIMUM_APPROVED_PROPERTY_PHOTOS} approved, rights-cleared property photos are required (2 available)`,
+      'An approved, curated, rights-cleared primary logo is required',
+      `At least ${MINIMUM_APPROVED_PROPERTY_PHOTOS} approved, curated, rights-cleared property photos are required (2 available)`,
     ])
   })
 
@@ -54,6 +56,24 @@ describe('onboarding asset readiness', () => {
       'photo-1',
       'photo-5',
       'photo-6',
+    ])
+  })
+
+  it('rejects uncurated and duplicate assets before readiness approval', () => {
+    const result = evaluateRequiredAssetReadiness([
+      asset('logo', 'primary_logo', { curation_status: 'needs_review' }),
+      asset('photo-1', 'hero'),
+      asset('photo-2', 'interior'),
+      asset('photo-3', 'exterior', { duplicate_of: 'photo-1' }),
+      asset('photo-4', 'amenity'),
+    ])
+
+    expect(result.ready).toBe(false)
+    expect(result.primaryLogo).toBeUndefined()
+    expect(result.propertyPhotography.map(photo => photo.id)).toEqual([
+      'photo-1',
+      'photo-2',
+      'photo-4',
     ])
   })
 })

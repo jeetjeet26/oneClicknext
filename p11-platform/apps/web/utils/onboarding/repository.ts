@@ -1,5 +1,6 @@
 import { createServiceClient } from '@/utils/supabase/admin'
 import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
+import { getAssetUsability } from '@/utils/siteforge/assets/curation'
 import type { Json, Tables } from '@/types/supabase'
 
 type ServiceClient = ReturnType<typeof createServiceClient>
@@ -119,17 +120,17 @@ export function evaluateRequiredAssetReadiness<
     asset_role: string | null
     asset_type: string
     approval_status: string
+    curation_status: string
     rights_status: string
     expires_at: string | null
+    duplicate_of?: string | null
   },
 >(
   assets: T[],
   now = new Date(),
 ) {
-  const approvedRightsCleared = assets.filter(asset =>
-    asset.approval_status === 'approved'
-    && ['owned', 'licensed', 'generated'].includes(asset.rights_status)
-    && (!asset.expires_at || new Date(asset.expires_at) > now),
+  const approvedRightsCleared = assets.filter(
+    asset => getAssetUsability(asset, now).usable,
   )
   const primaryLogo = approvedRightsCleared.find(
     asset => asset.asset_role === 'primary_logo',
@@ -141,11 +142,11 @@ export function evaluateRequiredAssetReadiness<
   )
   const reasons = [
     ...(!primaryLogo
-      ? ['An approved, rights-cleared primary logo is required']
+      ? ['An approved, curated, rights-cleared primary logo is required']
       : []),
     ...(propertyPhotography.length < MINIMUM_APPROVED_PROPERTY_PHOTOS
       ? [
-          `At least ${MINIMUM_APPROVED_PROPERTY_PHOTOS} approved, rights-cleared property photos are required (${propertyPhotography.length} available)`,
+          `At least ${MINIMUM_APPROVED_PROPERTY_PHOTOS} approved, curated, rights-cleared property photos are required (${propertyPhotography.length} available)`,
         ]
       : []),
   ]
@@ -345,12 +346,17 @@ export async function buildOnboardingSnapshot(
   const contentHash = hashSiteForgeContent(payload)
   const status = unresolvedConflicts.length ? 'needs_review' : 'ready'
 
-  const { data: existing } = await client
+  const { data: existing, error: existingError } = await client
     .from('property_onboarding_snapshots')
     .select('*')
     .eq('property_id', input.propertyId)
     .eq('content_hash', contentHash)
     .maybeSingle()
+  if (existingError) {
+    throw new Error(
+      `Failed to inspect onboarding snapshot: ${existingError.message}`,
+    )
+  }
   if (existing) return existing
 
   const { data: snapshot, error } = await client
@@ -375,6 +381,20 @@ export async function buildOnboardingSnapshot(
     })
     .select('*')
     .single()
+  if (error?.code === '23505') {
+    const { data: racedSnapshot, error: racedSnapshotError } = await client
+      .from('property_onboarding_snapshots')
+      .select('*')
+      .eq('property_id', input.propertyId)
+      .eq('content_hash', contentHash)
+      .single()
+    if (racedSnapshotError || !racedSnapshot) {
+      throw new Error(
+        `Failed to load concurrently persisted onboarding snapshot: ${racedSnapshotError?.message || 'snapshot not found'}`,
+      )
+    }
+    return racedSnapshot
+  }
   if (error || !snapshot) {
     throw new Error(`Failed to persist onboarding snapshot: ${error?.message}`)
   }

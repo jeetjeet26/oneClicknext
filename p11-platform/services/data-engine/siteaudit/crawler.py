@@ -23,7 +23,10 @@ from urllib.parse import urljoin, urlparse
 import httpx
 
 from siteaudit.models import CrawlContext, PageRecord
-from siteaudit.migration_manifest import assert_read_only_http_method
+from siteaudit.migration_manifest import (
+    SourceMutationProhibitedError,
+    assert_read_only_source_request,
+)
 from siteaudit.page_parser import extract_security_headers, is_same_origin, normalize_url, parse_page
 
 logger = logging.getLogger(__name__)
@@ -113,7 +116,7 @@ class SiteCrawler:
     async def _load_discovery_files(self, client: httpx.AsyncClient) -> None:
         robots_url = urljoin(self.origin, "/robots.txt")
         try:
-            assert_read_only_http_method("GET")
+            assert_read_only_source_request("GET", robots_url, self.seed_url)
             response = await client.get(robots_url)
             if response.status_code == 200 and response.text:
                 self.robots_reachable = True
@@ -136,8 +139,9 @@ class SiteCrawler:
             await self._load_sitemap(client, sitemap_url, seen_sitemaps)
 
         try:
-            assert_read_only_http_method("GET")
-            response = await client.get(urljoin(self.origin, "/llms.txt"))
+            llms_url = urljoin(self.origin, "/llms.txt")
+            assert_read_only_source_request("GET", llms_url, self.seed_url)
+            response = await client.get(llms_url)
             if response.status_code == 200 and response.text:
                 content_type = response.headers.get("content-type", "")
                 if "html" not in content_type.lower():
@@ -151,9 +155,9 @@ class SiteCrawler:
             return
         seen.add(sitemap_url)
         try:
-            assert_read_only_http_method("GET")
+            assert_read_only_source_request("GET", sitemap_url, self.seed_url)
             response = await client.get(sitemap_url)
-        except httpx.HTTPError:
+        except (httpx.HTTPError, SourceMutationProhibitedError, ValueError):
             return
         if response.status_code != 200 or not response.text:
             return
@@ -295,7 +299,9 @@ class SiteCrawler:
             redirect_chain: List[Dict[str, Any]] = []
             try:
                 for _ in range(6):
-                    assert_read_only_http_method("GET")
+                    assert_read_only_source_request(
+                        "GET", current_url, self.seed_url
+                    )
                     response = await client.get(current_url)
                     if response.status_code in (301, 302, 303, 307, 308):
                         location = response.headers.get("location")
@@ -358,6 +364,9 @@ class SiteCrawler:
                             if is_same_origin(image["src"], self.origin) and not self._robots_allows(image["src"]):
                                 blocked.append(image["src"])
                         record.blocked_resources = blocked
+            except SourceMutationProhibitedError:
+                record.fetch_error = "cross_origin_redirect_blocked"
+                record.redirect_chain = redirect_chain
             except httpx.HTTPError as error:
                 record.fetch_error = type(error).__name__
             return record
@@ -378,14 +387,14 @@ class SiteCrawler:
         async def probe(src: str) -> None:
             async with semaphore:
                 try:
-                    assert_read_only_http_method("HEAD")
-                    response = await client.head(src, follow_redirects=True)
+                    assert_read_only_source_request("HEAD", src, self.seed_url)
+                    response = await client.head(src, follow_redirects=False)
                     size = response.headers.get("content-length")
                     broken = response.status_code >= 400
                     for ref in unique[src]:
                         ref["bytes"] = int(size) if size and size.isdigit() else None
                         ref["broken"] = broken
-                except httpx.HTTPError:
+                except (httpx.HTTPError, SourceMutationProhibitedError, ValueError):
                     for ref in unique[src]:
                         ref["bytes"] = None
                         ref["broken"] = None  # unknown, do not flag

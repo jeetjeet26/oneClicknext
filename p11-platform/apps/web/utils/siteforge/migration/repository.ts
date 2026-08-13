@@ -68,6 +68,7 @@ function assertMigrationStatusTransition(
 
 function manifestContent(input: SiteForgeMigrationManifestInput) {
   return {
+    propertyId: input.propertyId,
     sourceUrl: input.sourceUrl,
     sourceReadOnly: input.sourceReadOnly,
     sourceInventory: input.sourceInventory,

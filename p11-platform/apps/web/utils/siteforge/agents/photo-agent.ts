@@ -9,7 +9,6 @@ import { SITEFORGE_CLAUDE_MODEL } from '@/utils/siteforge/models'
 import type { BrandContext } from './brand-agent'
 import type { ArchitectureProposal } from './architecture-agent'
 import type { GeneratedPage } from '@/types/siteforge'
-import { createSiteForgePlaceholderPhotos } from './photo-placeholders'
 import { 
   isImagenAvailable, 
   generateAndUploadImage, 
@@ -255,28 +254,21 @@ export class PhotoAgent extends BaseAgent {
     })
     
     const hasApprovedUploads = strategy.uploadedPhotoUsage.length > 0
-    const canGenerateMissingPhotos = hasApprovedUploads && isImagenAvailable()
+    if (!hasApprovedUploads) {
+      throw new Error(
+        'Photo execution requires approved, curated property photography.',
+      )
+    }
 
-    // Never invent property imagery when no approved source photos exist. Use
-    // explicit, replaceable placeholders so the site can still be generated.
-    // A partial manual upload also keeps placeholders for uncovered categories
-    // when Imagen is unavailable instead of failing the whole website.
-    const generatedPhotos: Photo[] =
-      !hasApprovedUploads ||
-      (!isImagenAvailable() && strategy.photosToGenerate.length > 0)
-        ? createSiteForgePlaceholderPhotos(strategy)
-        : []
-
-    if (canGenerateMissingPhotos) {
-      for (const spec of strategy.photosToGenerate) {
-        const photo = await this.generatePhoto(spec, brandContext)
-        generatedPhotos.push(photo)
-
-        // Add delay between generations to avoid rate limiting
-        if (isImagenAvailable() && strategy.photosToGenerate.indexOf(spec) < strategy.photosToGenerate.length - 1) {
-          await new Promise(resolve => setTimeout(resolve, 2000))
-        }
-      }
+    // Generation is evidence-bound: newly synthesized images cannot enter the
+    // current artifact until they are persisted, curated, and approved in a
+    // later readiness snapshot. Reuse the approved upload set for uncovered
+    // slots instead of producing an output the generation gate must reject.
+    const generatedPhotos: Photo[] = []
+    if (strategy.photosToGenerate.length > 0) {
+      await this.logAction('photo_generation_deferred_for_approval', {
+        deferredCount: strategy.photosToGenerate.length,
+      })
     }
 
     // Combine with uploaded

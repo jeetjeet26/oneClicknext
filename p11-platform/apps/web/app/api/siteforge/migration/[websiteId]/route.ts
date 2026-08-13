@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { createClient } from '@/utils/supabase/server'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { createRequestContext } from '@/utils/services/request-context'
+import { getDataEngineUrl } from '@/utils/services/runtime-config'
 import {
   createMigrationManifest,
   listMigrationManifests,
@@ -10,6 +11,51 @@ import {
 } from '@/utils/siteforge/migration/repository'
 
 const propertyIdSchema = z.guid()
+const manifestCaptureSchema = z
+  .object({
+    propertyId: propertyIdSchema,
+    crawlId: z.guid(),
+    targetUrl: z
+      .url()
+      .refine(value => ['http:', 'https:'].includes(new URL(value).protocol)),
+  })
+  .strict()
+
+async function captureCrawlerManifest(input: z.infer<typeof manifestCaptureSchema>) {
+  const response = await fetch(`${getDataEngineUrl()}/jobs/siteaudit/manifest`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-API-Key': process.env.DATA_ENGINE_API_KEY || '',
+      'X-Correlation-ID': input.crawlId,
+    },
+    body: JSON.stringify({
+      crawl_id: input.crawlId,
+      target_url: input.targetUrl,
+    }),
+    cache: 'no-store',
+  })
+  const body: unknown = await response.json().catch(() => null)
+  if (
+    !response.ok
+    || !body
+    || typeof body !== 'object'
+    || !('manifest' in body)
+  ) {
+    throw new SiteForgeMigrationError(
+      'Failed to generate migration manifest from the completed source crawl',
+      response.status >= 400 && response.status < 500 ? response.status : 502
+    )
+  }
+  const manifest = (body as { manifest: Record<string, unknown> }).manifest
+  if (manifest.propertyId !== input.propertyId) {
+    throw new SiteForgeMigrationError(
+      'The source crawl does not belong to this property',
+      403
+    )
+  }
+  return manifest
+}
 
 async function authorize(request: NextRequest, propertyId: string) {
   const supabase = await createClient()
@@ -105,10 +151,14 @@ export async function POST(
         { status: auth.status, headers: ctx.responseHeaders }
       )
     }
+    const capture = manifestCaptureSchema.safeParse(body)
+    const manifestInput = capture.success
+      ? await captureCrawlerManifest(capture.data)
+      : body
     const manifest = await createMigrationManifest({
       websiteId,
       userId: auth.user.id,
-      manifest: body,
+      manifest: manifestInput,
     })
     ctx.logSuccess(201, { websiteId, manifestId: manifest.id })
     return NextResponse.json(

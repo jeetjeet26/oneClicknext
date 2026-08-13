@@ -27,6 +27,16 @@ def assert_read_only_http_method(method: str) -> None:
         )
 
 
+def assert_read_only_source_request(method: str, url: str, source_url: str) -> None:
+    """Allow only read methods on the approved source origin."""
+
+    assert_read_only_http_method(method)
+    if _origin(url) != _origin(source_url):
+        raise SourceMutationProhibitedError(
+            "Source crawler cannot cross the approved source origin"
+        )
+
+
 def _origin(value: str) -> str:
     parsed = urlparse(value)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
@@ -56,11 +66,7 @@ class ReadOnlySourceGuard:
         return _origin(self.target_url)
 
     def assert_request(self, method: str, url: str) -> None:
-        assert_read_only_http_method(method)
-        if _origin(url) != self.source_origin:
-            raise SourceMutationProhibitedError(
-                "Source crawler cannot cross the approved source origin"
-            )
+        assert_read_only_source_request(method, url, self.source_url)
 
     def proof(self) -> Dict[str, Any]:
         return {
@@ -215,6 +221,7 @@ def _side_by_side_evidence(
 def build_migration_manifest(
     context: CrawlContext,
     target_url: str,
+    property_id: str,
     *,
     dns_snapshot: Optional[Mapping[str, Any]] = None,
     target_evidence: Optional[Mapping[str, Mapping[str, Any]]] = None,
@@ -334,6 +341,7 @@ def build_migration_manifest(
         }
 
     manifest: Dict[str, Any] = {
+        "propertyId": property_id,
         "sourceUrl": context.seed_url,
         "sourceReadOnly": True,
         "sourceInventory": {

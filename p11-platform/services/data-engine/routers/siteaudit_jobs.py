@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from siteaudit.executor import SiteAuditExecutor
+from siteaudit.migration_manifest import build_migration_manifest
 from utils.auth import verify_api_key
 from utils.supabase_client import get_supabase_client
 
@@ -22,6 +23,11 @@ router = APIRouter(prefix="/jobs/siteaudit", tags=["SiteAudit"])
 class CrawlRequest(BaseModel):
     crawl_id: str
     resume: bool = False
+
+
+class ManifestRequest(BaseModel):
+    crawl_id: str
+    target_url: str
 
 
 def _get_crawl_or_404(crawl_id: str) -> dict:
@@ -106,3 +112,33 @@ async def get_siteaudit_status(
         "finished_at": crawl.get("finished_at"),
         "batch_id": crawl.get("batch_id"),
     }
+
+
+@router.post("/manifest")
+async def generate_migration_manifest(
+    request: ManifestRequest,
+    _: str = Depends(verify_api_key),
+):
+    crawl = _get_crawl_or_404(request.crawl_id)
+    if crawl.get("status") != "completed":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Crawl {request.crawl_id} is not completed",
+        )
+    executor = SiteAuditExecutor(get_supabase_client())
+    context = executor.load_persisted_context(crawl)
+    if not context.pages:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Crawl {request.crawl_id} has no persisted pages",
+        )
+    try:
+        manifest = build_migration_manifest(
+            context,
+            request.target_url,
+            str(crawl["property_id"]),
+            crawl_id=request.crawl_id,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return {"success": True, "manifest": manifest}

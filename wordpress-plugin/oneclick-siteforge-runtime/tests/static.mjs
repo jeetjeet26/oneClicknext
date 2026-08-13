@@ -64,6 +64,8 @@ assert(v3Materializer.includes('materialization_readback_failed'))
 assert(!plans.includes('generateMockPlans'))
 assert(!plans.includes('Floor plan placeholder'))
 assert(plans.includes('inventory unavailable'))
+assert(plans.includes('data-family="'))
+assert(plans.includes("parsed.protocol === 'http:' || parsed.protocol === 'https:'"))
 
 for (const name of await readdir(path.join(themeDir, 'blocks'))) {
   if (!name.endsWith('.php')) continue

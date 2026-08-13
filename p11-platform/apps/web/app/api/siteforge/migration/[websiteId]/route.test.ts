@@ -1,7 +1,12 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { NextRequest } from 'next/server'
 
-const { getUserMock, validatePropertyAccessMock } = vi.hoisted(() => ({
+const {
+  createMigrationManifestMock,
+  getUserMock,
+  validatePropertyAccessMock,
+} = vi.hoisted(() => ({
+  createMigrationManifestMock: vi.fn(),
   getUserMock: vi.fn(),
   validatePropertyAccessMock: vi.fn(),
 }))
@@ -12,11 +17,14 @@ vi.mock('@/utils/supabase/server', () => ({
 vi.mock('@/utils/services/auth-guard', () => ({
   validatePropertyAccess: validatePropertyAccessMock,
 }))
+vi.mock('@/utils/services/runtime-config', () => ({
+  getDataEngineUrl: vi.fn(() => 'http://data-engine.local'),
+}))
 vi.mock('@/utils/siteforge/migration/repository', () => ({
   SiteForgeMigrationError: class SiteForgeMigrationError extends Error {
     statusCode = 500
   },
-  createMigrationManifest: vi.fn(),
+  createMigrationManifest: createMigrationManifestMock,
   listMigrationManifests: vi.fn(),
 }))
 
@@ -27,6 +35,10 @@ describe('SiteForge migration manifest route', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     getUserMock.mockResolvedValue({ data: { user: null }, error: null })
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
   })
 
   it('requires authentication before listing source crawl evidence', async () => {
@@ -50,5 +62,62 @@ describe('SiteForge migration manifest route', () => {
       { params: Promise.resolve({ websiteId }) }
     )
     expect(response.status).toBe(401)
+  })
+
+  it('captures a signed manifest from a completed data-engine crawl', async () => {
+    getUserMock.mockResolvedValue({
+      data: { user: { id: '33333333-3333-4333-8333-333333333333' } },
+      error: null,
+    })
+    validatePropertyAccessMock.mockResolvedValue({ authorized: true })
+    createMigrationManifestMock.mockResolvedValue({ id: 'manifest-1' })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            manifest: {
+              propertyId,
+              sourceUrl: 'https://source.example.com',
+              sourceReadOnly: true,
+            },
+          }),
+          { status: 200 }
+        )
+      )
+    )
+    const { POST } = await import('./route')
+    const crawlId = '44444444-4444-4444-8444-444444444444'
+    const response = await POST(
+      new NextRequest(`http://localhost/api/siteforge/migration/${websiteId}`, {
+        method: 'POST',
+        body: JSON.stringify({
+          propertyId,
+          crawlId,
+          targetUrl: 'https://target.example.com',
+        }),
+      }),
+      { params: Promise.resolve({ websiteId }) }
+    )
+
+    expect(response.status).toBe(201)
+    expect(fetch).toHaveBeenCalledWith(
+      'http://data-engine.local/jobs/siteaudit/manifest',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          crawl_id: crawlId,
+          target_url: 'https://target.example.com',
+        }),
+      })
+    )
+    expect(createMigrationManifestMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        manifest: expect.objectContaining({
+          propertyId,
+          sourceUrl: 'https://source.example.com',
+        }),
+      })
+    )
   })
 })

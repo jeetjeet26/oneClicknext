@@ -122,6 +122,7 @@ function minimalManifest() {
     },
   }
   const content = {
+    propertyId: manifest.propertyId,
     sourceUrl: manifest.sourceUrl,
     sourceReadOnly: manifest.sourceReadOnly,
     sourceInventory: manifest.sourceInventory,

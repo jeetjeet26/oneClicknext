@@ -418,16 +418,38 @@ function arrange(overrides: {
       error: null,
     }),
     content_assets: query({
-      data: overrides.assets ?? [{
-        id: ids.asset,
-        asset_role: 'hero',
-        file_url: 'https://cdn.example.com/hero.jpg',
-        content_hash: 'e'.repeat(64),
-        rights_status: 'owned',
-        rights_metadata: { license: 'operator-owned' },
-        approval_status: 'approved',
-        expires_at: null,
-      }],
+      data: overrides.assets ?? [
+        {
+          id: ids.asset,
+          asset_role: 'hero',
+          asset_type: 'image',
+          file_url: 'https://cdn.example.com/hero.jpg',
+          content_hash: 'e'.repeat(64),
+          rights_status: 'owned',
+          rights_metadata: { license: 'operator-owned' },
+          approval_status: 'approved',
+          curation_status: 'approved',
+          duplicate_of: null,
+          expires_at: null,
+        },
+        ...[
+          ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'primary_logo'],
+          ['bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'interior'],
+          ['cccccccc-cccc-4ccc-8ccc-cccccccccccc', 'exterior'],
+        ].map(([id, role]) => ({
+          id,
+          asset_role: role,
+          asset_type: 'image',
+          file_url: `https://cdn.example.com/${role}.jpg`,
+          content_hash: 'f'.repeat(64),
+          rights_status: 'owned',
+          rights_metadata: { license: 'operator-owned' },
+          approval_status: 'approved',
+          curation_status: 'approved',
+          duplicate_of: null,
+          expires_at: null,
+        })),
+      ],
       error: null,
     }),
     property_units: query({
@@ -482,7 +504,11 @@ describe('loadApprovedSiteForgeGenerationContext', () => {
       creativeDirection: { directionId: ids.direction },
       onboarding: { id: ids.onboarding, contentHash: onboardingHash },
       brand: { assetId: ids.brand, contractHash: brandHash },
-      assetManifest: { assets: [{ id: ids.asset, rightsStatus: 'owned' }] },
+      assetManifest: {
+        assets: expect.arrayContaining([
+          expect.objectContaining({ id: ids.asset, rightsStatus: 'owned' }),
+        ]),
+      },
       inventory: { required: true, rowCount: 1 },
     })
     expect(context.evidenceSnapshot.contentHash).toMatch(/^[a-f0-9]{64}$/)
@@ -537,7 +563,7 @@ describe('loadApprovedSiteForgeGenerationContext', () => {
     {
       name: 'missing rights-cleared assets',
       assets: [],
-      message: 'approved rights-cleared asset manifest',
+      message: 'asset manifest no longer satisfies readiness',
     },
   ])('fails closed for $name', async ({ inventory, assets, message }) => {
     const { client, contentHash } = arrange({ inventory, assets })

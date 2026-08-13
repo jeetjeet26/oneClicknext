@@ -429,14 +429,29 @@ async function createApprovedSiteForgeGeneration(
       rights_status: 'owned',
       rights_metadata: { basis: 'local smoke fixture' },
       approval_status: 'approved',
+      curation_status: 'approved',
       approved_at: approvedAt,
-      source_identity: `local-smoke:property-photo:${index + 1}`,
+      source_identity: `local-smoke:${role}:${index + 1}`,
     })),
     { onConflict: 'id' }
   )
   expect(
     photoError,
     'Failed to seed the approved property photography required by SiteForge readiness.'
+  ).toBeNull()
+  const { error: logoCurationError } = await service
+    .from('content_assets')
+    .update({
+      approval_status: 'approved',
+      curation_status: 'approved',
+      rights_status: 'owned',
+      approved_at: approvedAt,
+    })
+    .eq('property_id', propertyId)
+    .eq('asset_role', 'primary_logo')
+  expect(
+    logoCurationError,
+    'Failed to curate the approved primary logo required by SiteForge readiness.'
   ).toBeNull()
 
   const inventoryConfirmedAt = new Date().toISOString()

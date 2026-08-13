@@ -11,6 +11,7 @@ import logging
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 from supabase import Client
 
@@ -141,6 +142,9 @@ class SiteAuditExecutor:
                 internal_links=row.get("internal_links") or [],
                 external_links=row.get("external_links") or [],
                 structured_data=row.get("structured_data") or {},
+                content=row.get("content") or {},
+                forms=row.get("forms") or [],
+                provenance=row.get("provenance") or {},
                 mixed_content=row.get("mixed_content") or [],
                 blocked_resources=row.get("blocked_resources") or [],
                 page_type=row.get("page_type") or "unknown",
@@ -151,6 +155,19 @@ class SiteAuditExecutor:
                 fetch_error=row.get("fetch_error"),
             ))
         return pages
+
+    def load_persisted_context(self, crawl: Dict[str, Any]) -> CrawlContext:
+        """Rehydrate a completed crawl for deterministic manifest generation."""
+
+        seed_url = str(crawl["seed_url"])
+        parsed = urlparse(seed_url)
+        pages = self._load_existing_pages(str(crawl["id"]))
+        return CrawlContext(
+            origin=f"{parsed.scheme}://{parsed.netloc}",
+            seed_url=seed_url,
+            pages=pages,
+            sitemap_urls=sorted(page.url for page in pages if page.in_sitemap),
+        )
 
     def _upsert_pages(self, crawl_id: str, pages: List[PageRecord]) -> None:
         rows = [page.to_row(crawl_id) for page in pages]

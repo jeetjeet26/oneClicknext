@@ -109,7 +109,9 @@ document.addEventListener('DOMContentLoaded', function() {
   function createPlanCard(plan) {
     const sqft = String(plan.sqft || plan.sqftMax || plan.sqftMin || '');
     const price = plan.price || (plan.rentMin != null ? '$' + Number(plan.rentMin).toLocaleString() : '');
-    let html = '<div class="plan-card" data-bedrooms="' + escapeHtml(plan.bedrooms) + '" data-sqft="' + escapeHtml(sqft.replace(/,/g, '')) + '">';
+    const familyFriendly = plan.family_friendly === true || plan.familyFriendly === true;
+    const availabilityUrl = safeHttpUrl(plan.availabilityUrl || plan.availability_url);
+    let html = '<div class="plan-card" data-bedrooms="' + escapeHtml(plan.bedrooms) + '" data-sqft="' + escapeHtml(sqft.replace(/,/g, '')) + '" data-family="' + (familyFriendly ? 'true' : 'false') + '">';
     html += '<div class="plan-header">';
     html += '<h3>' + escapeHtml(plan.name) + '</h3>';
     if (price) html += '<div class="plan-price">' + escapeHtml(price) + '</div>';
@@ -119,8 +121,8 @@ document.addEventListener('DOMContentLoaded', function() {
     if (plan.bathrooms != null) html += '<p><strong>Bathrooms:</strong> ' + escapeHtml(plan.bathrooms) + '</p>';
     if (sqft) html += '<p><strong>Square Footage:</strong> ' + escapeHtml(sqft) + ' sq ft</p>';
     html += '</div>';
-    if (plan.availabilityUrl || plan.availability_url) {
-      html += '<a class="btn btn-primary" href="' + escapeHtml(plan.availabilityUrl || plan.availability_url) + '">Check availability</a>';
+    if (availabilityUrl) {
+      html += '<a class="btn btn-primary" href="' + escapeHtml(availabilityUrl) + '">Check availability</a>';
     }
     html += '</div>';
 
@@ -131,6 +133,18 @@ document.addEventListener('DOMContentLoaded', function() {
     return String(value == null ? '' : value).replace(/[&<>"']/g, function(character) {
       return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' })[character];
     });
+  }
+
+  function safeHttpUrl(value) {
+    if (!value) return '';
+    try {
+      const parsed = new URL(String(value), window.location.origin);
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+        ? parsed.href
+        : '';
+    } catch (error) {
+      return '';
+    }
   }
 
   function setupFilters(filtersContainer, container) {

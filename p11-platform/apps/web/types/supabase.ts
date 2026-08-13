@@ -1,4 +1,4 @@
-// schema_migration_version: 20260813025222
+// schema_migration_version: 20260813030312
 export type Json =
   | string
   | number
@@ -2953,6 +2953,7 @@ export type Database = {
           blocked_by_robots: boolean | null
           blocked_resources: Json | null
           canonical_url: string | null
+          content: Json
           content_type: string | null
           crawl_depth: number | null
           crawl_id: string
@@ -2960,6 +2961,7 @@ export type Database = {
           external_links: Json | null
           fetch_error: string | null
           final_url: string | null
+          forms: Json
           h1s: Json | null
           h2s: Json | null
           html_bytes: number | null
@@ -2972,6 +2974,7 @@ export type Database = {
           meta_robots: string | null
           mixed_content: Json | null
           page_type: string | null
+          provenance: Json
           redirect_chain: Json | null
           response_headers: Json | null
           status_code: number | null
@@ -2985,6 +2988,7 @@ export type Database = {
           blocked_by_robots?: boolean | null
           blocked_resources?: Json | null
           canonical_url?: string | null
+          content?: Json
           content_type?: string | null
           crawl_depth?: number | null
           crawl_id: string
@@ -2992,6 +2996,7 @@ export type Database = {
           external_links?: Json | null
           fetch_error?: string | null
           final_url?: string | null
+          forms?: Json
           h1s?: Json | null
           h2s?: Json | null
           html_bytes?: number | null
@@ -3004,6 +3009,7 @@ export type Database = {
           meta_robots?: string | null
           mixed_content?: Json | null
           page_type?: string | null
+          provenance?: Json
           redirect_chain?: Json | null
           response_headers?: Json | null
           status_code?: number | null
@@ -3017,6 +3023,7 @@ export type Database = {
           blocked_by_robots?: boolean | null
           blocked_resources?: Json | null
           canonical_url?: string | null
+          content?: Json
           content_type?: string | null
           crawl_depth?: number | null
           crawl_id?: string
@@ -3024,6 +3031,7 @@ export type Database = {
           external_links?: Json | null
           fetch_error?: string | null
           final_url?: string | null
+          forms?: Json
           h1s?: Json | null
           h2s?: Json | null
           html_bytes?: number | null
@@ -3036,6 +3044,7 @@ export type Database = {
           meta_robots?: string | null
           mixed_content?: Json | null
           page_type?: string | null
+          provenance?: Json
           redirect_chain?: Json | null
           response_headers?: Json | null
           status_code?: number | null
@@ -16518,4 +16527,3 @@ export const Constants = {
     },
   },
 } as const
-
