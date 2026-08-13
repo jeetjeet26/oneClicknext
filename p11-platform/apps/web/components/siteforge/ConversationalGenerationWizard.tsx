@@ -741,7 +741,13 @@ export function ConversationalGenerationWizard({
   
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="flex h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] max-w-4xl flex-col gap-0 overflow-hidden p-0 sm:h-[min(90dvh,900px)]">
+      <DialogContent
+        className={`flex w-[calc(100vw-1rem)] max-w-4xl flex-col gap-0 overflow-hidden p-0 ${
+          phase === 'assets'
+            ? 'h-auto max-h-[calc(100dvh-1rem)] sm:max-h-[min(90dvh,900px)]'
+            : 'h-[calc(100dvh-1rem)] sm:h-[min(90dvh,900px)]'
+        }`}
+      >
         <DialogHeader className="shrink-0 border-b px-6 py-5 pr-12">
           <DialogTitle className="flex items-center gap-2">
             <span>🎨</span>
@@ -754,7 +760,11 @@ export function ConversationalGenerationWizard({
             {phase === 'failed' && 'Generation Needs Attention'}
           </DialogTitle>
         </DialogHeader>
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable] px-4 pb-5 sm:px-6 sm:pb-6">
+        <div
+          className={`min-h-0 overflow-y-auto overscroll-contain [scrollbar-gutter:stable] px-4 pb-5 sm:px-6 sm:pb-6 ${
+            phase === 'assets' ? 'shrink' : 'flex-1'
+          }`}
+        >
           {/* Phase 1: Analyzing */}
           {phase === 'analyzing' && (
           <div className="flex flex-col items-center justify-center py-12 space-y-4">
