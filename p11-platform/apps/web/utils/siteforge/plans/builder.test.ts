@@ -103,6 +103,29 @@ describe('buildSiteForgePlan', () => {
     ])
   })
 
+  it('captures tour interest without requiring a scheduling integration', () => {
+    const input = buildInput()
+    const plan = buildSiteForgePlan({
+      ...input,
+      onboardingSnapshot: {
+        ...input.onboardingSnapshot,
+        enabledCapabilities: ['analytics'],
+      },
+      preferences: {
+        ctaPriority: 'tours',
+        enabledCapabilities: ['analytics'],
+      },
+    })
+
+    expect(plan.conversionStrategy).toMatchObject({
+      primaryAction: 'tours',
+      leadDestination: 'p11_lumaleasing',
+      tourDestination: 'unconfigured',
+      requiredForms: ['contact'],
+    })
+    expect(plan.enabledCapabilities).toEqual(['analytics'])
+  })
+
   it.each([
     ['standard', ['home', 'floor-plans', 'amenities', 'neighborhood', 'contact']],
     [

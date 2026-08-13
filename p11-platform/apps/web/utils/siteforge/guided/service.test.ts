@@ -283,13 +283,14 @@ describe("SiteForge guided service persistence", () => {
         },
       ],
     };
+    const buildReadiness = vi.fn(async () => ({
+      id: "snapshot-2",
+      status: "approved",
+    }));
     const service = createSiteForgeGuidedService(
       dependencies(store.client, {
         loadSources: vi.fn(async () => refreshedSources),
-        buildReadiness: vi.fn(async () => ({
-          id: "snapshot-2",
-          status: "approved",
-        })),
+        buildReadiness,
         listBriefs: vi.fn(async () => []),
         saveBrief: vi.fn(async () => ({
           id: "brief-1",
@@ -317,6 +318,10 @@ describe("SiteForge guided service persistence", () => {
     );
 
     expect(result.state.sources).toEqual(refreshedSources);
+    expect(buildReadiness).toHaveBeenCalledWith(
+      expect.objectContaining({ enabledCapabilities: [] }),
+      store.client,
+    );
     expect(result.state.prepared).toMatchObject({
       recommendedDirectionName: "Conversion Clarity",
       scoredDirections: [{ id: "conversion", name: "Conversion Clarity" }],

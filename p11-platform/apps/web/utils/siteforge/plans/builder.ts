@@ -176,10 +176,9 @@ export function buildSiteForgePlan(input: BuildSiteForgePlanInput): SiteForgePla
   const capturedAt = input.capturedAt || new Date().toISOString()
   const preferences = generationPreferencesSchema.parse(input.preferences || {})
   const primaryAction = preferences.ctaPriority || 'contact'
-  const enabledCapabilities = Array.from(new Set([
-    ...preferences.enabledCapabilities,
-    ...(primaryAction === 'tours' ? ['tours' as const] : []),
-  ]))
+  const enabledCapabilities = Array.from(
+    new Set(preferences.enabledCapabilities)
+  )
   const operatorDirection = input.operatorDirection?.trim()
   const siteType = siteForgeSiteTypeSchema.parse(input.siteType || 'standard')
   const sourceId = input.brandAssetId
@@ -389,13 +388,17 @@ export function buildSiteForgePlan(input: BuildSiteForgePlanInput): SiteForgePla
       primaryAction,
       secondaryAction: primaryAction === 'contact' ? 'tours' : 'contact',
       // Lead capture always posts to the platform conversion endpoint (the
-      // WordPress form block supports no other provider). The CRM capability
-      // only controls downstream syncing of captured leads.
+      // WordPress form block supports no other provider). A tour-focused CTA
+      // can still capture a TourSpark lead when no scheduling integration is
+      // configured; only live calendar booking requires the tours capability.
       leadDestination: 'p11_lumaleasing',
       tourDestination: enabledCapabilities.includes('tours')
         ? 'p11_lumaleasing'
         : 'unconfigured',
-      requiredForms: primaryAction === 'tours' ? ['tour', 'contact'] : ['contact'],
+      requiredForms:
+        primaryAction === 'tours' && enabledCapabilities.includes('tours')
+          ? ['tour', 'contact']
+          : ['contact'],
     },
     floorPlanStrategy: {
       source: 'property_units',

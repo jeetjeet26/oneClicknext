@@ -583,12 +583,6 @@ export function createSiteForgeGuidedService(
       const enabledCapabilities = strings(
         record(existingOnboarding.data?.snapshot_payload).enabledCapabilities,
       );
-      if (
-        state.answers.primaryAction === "tours" &&
-        !enabledCapabilities.includes("tours")
-      ) {
-        enabledCapabilities.push("tours");
-      }
       const readiness = await deps.buildReadiness(
         {
           orgId: state.orgId,
