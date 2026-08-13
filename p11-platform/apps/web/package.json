@@ -15,7 +15,7 @@
     "schema:types:stamp": "node ./scripts/stamp-supabase-types-version.mjs",
     "theme:acf:generate": "node ./scripts/generate-siteforge-acf.mjs",
     "theme:acf:check": "node ./scripts/generate-siteforge-acf.mjs --check",
-    "theme:validate": "npm run theme:acf:check && node ./scripts/build-siteforge-theme.mjs --validate",
+    "theme:validate": "node ./scripts/validate-siteforge-build-inputs.mjs",
     "theme:build": "node ./scripts/build-siteforge-theme.mjs --build",
     "theme:check": "node ./scripts/build-siteforge-theme.mjs --check",
     "runtime:build": "node ./scripts/build-siteforge-runtime-plugin.mjs",

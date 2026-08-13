@@ -12,8 +12,32 @@ import {
   validateSiteForgeTheme,
   verifyRuntimeArtifact,
 } from './build-siteforge-theme.mjs'
+import { validateSiteForgeBuildInputs } from './validate-siteforge-build-inputs.mjs'
 
 describe('SiteForge theme package', () => {
+  it('skips monorepo-only source validation only inside a Vercel deploy root', async () => {
+    const missingRoot = path.join(
+      tmpdir(),
+      `missing-siteforge-source-${Date.now()}`
+    )
+
+    await expect(
+      validateSiteForgeBuildInputs({
+        deploymentEnvironment: '1',
+        sourceThemeDir: missingRoot,
+        acfOutputDir: path.join(missingRoot, 'acf-json'),
+      })
+    ).resolves.toEqual({ skipped: true })
+
+    await expect(
+      validateSiteForgeBuildInputs({
+        deploymentEnvironment: undefined,
+        sourceThemeDir: missingRoot,
+        acfOutputDir: path.join(missingRoot, 'acf-json'),
+      })
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
   it('contains every ACF schema, render template, variant contract, and metadata file', async () => {
     const result = await validateSiteForgeTheme()
     const functionsPhp = await readFile(
