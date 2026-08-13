@@ -518,7 +518,7 @@ describe('loadApprovedSiteForgeGenerationContext', () => {
 
   it.each([
     {
-      name: 'synthetic inventory',
+      name: 'synthetic-only inventory',
       inventory: [{
         canonical_key: 'fake-a1',
         unit_type: 'Fake',
@@ -541,7 +541,7 @@ describe('loadApprovedSiteForgeGenerationContext', () => {
         source_updated_at: '2026-08-10T12:00:00.000Z',
         imported_at: '2026-08-10T12:00:00.000Z',
       }],
-      message: 'stale, synthetic, expired, or incomplete',
+      message: 'requires approved floor-plan inventory',
     },
     {
       name: 'missing rights-cleared assets',

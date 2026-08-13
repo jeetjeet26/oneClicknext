@@ -139,6 +139,7 @@ export async function POST(req: NextRequest) {
               source_metadata: { brandAssetId },
               rights_status: 'generated',
               approval_status: 'approved',
+              curation_status: 'approved',
               approved_by: user.id,
               approved_at: approvedAt,
               alt_text: variant.alt,

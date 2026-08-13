@@ -5,6 +5,7 @@ import { createServiceClient } from '@/utils/supabase/admin'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { createRequestContext } from '@/utils/services/request-context'
 import { buildOnboardingSnapshot } from '@/utils/onboarding/repository'
+import { evaluateReadinessApproval } from '@/utils/onboarding/readiness-policy'
 
 const buildSchema = z.object({
   propertyId: z.guid(),
@@ -44,7 +45,15 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Failed to load readiness' }, { status: 500, headers: ctx.responseHeaders })
   }
   ctx.logSuccess(200, { snapshotCount: data.length })
-  return NextResponse.json({ snapshots: data }, { headers: ctx.responseHeaders })
+  return NextResponse.json(
+    {
+      snapshots: data.map(snapshot => ({
+        ...snapshot,
+        approvalEligibility: evaluateReadinessApproval(snapshot),
+      })),
+    },
+    { headers: ctx.responseHeaders },
+  )
 }
 
 export async function POST(request: NextRequest) {
@@ -63,7 +72,15 @@ export async function POST(request: NextRequest) {
       orgId: access.orgId,
     })
     ctx.logSuccess(201, { snapshotId: snapshot.id, status: snapshot.status })
-    return NextResponse.json({ snapshot }, { status: 201, headers: ctx.responseHeaders })
+    return NextResponse.json(
+      {
+        snapshot: {
+          ...snapshot,
+          approvalEligibility: evaluateReadinessApproval(snapshot),
+        },
+      },
+      { status: 201, headers: ctx.responseHeaders },
+    )
   } catch (error) {
     ctx.logError(500, error)
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Readiness build failed' }, { status: 500, headers: ctx.responseHeaders })

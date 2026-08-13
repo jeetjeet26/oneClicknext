@@ -1,13 +1,20 @@
 import { createServiceClient } from '@/utils/supabase/admin'
 import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
 import { getAssetUsability } from '@/utils/siteforge/assets/curation'
+import { isSyntheticInventorySource } from '@/utils/siteforge/providers/inventory-policy'
 import type { Json, Tables } from '@/types/supabase'
+import {
+  evaluateReadinessApproval,
+  readinessApprovalPolicyForDomain,
+  type ReadinessApprovalPolicy,
+} from './readiness-policy'
 
 type ServiceClient = ReturnType<typeof createServiceClient>
 type DomainState = 'missing' | 'conflicted' | 'needs_review' | 'ready' | 'stale'
 type DomainReport = {
   state: DomainState
   blocking: boolean
+  approvalPolicy: ReadinessApprovalPolicy
   reasons: string[]
   sourceIds: string[]
 }
@@ -38,6 +45,7 @@ export type OnboardingSnapshotPayload = {
     consentMode: string
   }>
   chatbotContext: Tables<'property_chatbot_contexts'> | null
+  requestedCapabilities: string[]
   enabledCapabilities: string[]
 }
 
@@ -94,14 +102,15 @@ export function evaluateCapabilityReadiness(input: {
 
 function report(
   ready: boolean,
-  blocking: boolean,
+  approvalPolicy: ReadinessApprovalPolicy,
   reasons: string[],
   sourceIds: string[],
   stateWhenNotReady: DomainState = 'missing',
 ): DomainReport {
   return {
     state: ready ? 'ready' : stateWhenNotReady,
-    blocking: !ready && blocking,
+    blocking: !ready && approvalPolicy !== 'advisory',
+    approvalPolicy,
     reasons: ready ? [] : reasons,
     sourceIds,
   }
@@ -226,13 +235,27 @@ export async function buildOnboardingSnapshot(
   const assetReadiness = evaluateRequiredAssetReadiness(assets)
   const approvedAssets = assetReadiness.approvedRightsCleared
   const approvedPois = pointsOfInterest.filter(poi => poi.approval_status === 'approved')
-  const approvedUnits = units.filter(unit => unit.active && unit.review_status === 'approved')
+  const approvedUnits = units.filter(
+    unit =>
+      unit.active &&
+      unit.review_status === 'approved' &&
+      !isSyntheticInventorySource(unit),
+  )
   const integrationFailures = evaluateCapabilityReadiness({
     enabledCapabilities,
     integrations,
     analyticsDestinations,
     hasChatbotContext: Boolean(chatbotContext),
   })
+  const availableCapabilities = enabledCapabilities.filter(
+    capability =>
+      evaluateCapabilityReadiness({
+        enabledCapabilities: [capability],
+        integrations,
+        analyticsDestinations,
+        hasChatbotContext: Boolean(chatbotContext),
+      }).length === 0,
+  )
 
   const primaryContact = contacts.find(contact => contact.is_primary)
   const contactReady = Boolean(primaryContact?.phone && primaryContact.email)
@@ -248,33 +271,33 @@ export async function buildOnboardingSnapshot(
   const domains: Record<string, DomainReport> = {
     identityContact: report(
       contactReady && Boolean(property.name && addressReady),
-      true,
+      readinessApprovalPolicyForDomain('identityContact'),
       ['Property identity, address, primary leasing phone, and email are required'],
       [property.id, ...contacts.map(contact => contact.id)],
     ),
     brand: report(
       brandReady,
-      true,
+      readinessApprovalPolicyForDomain('brand'),
       ['An approved, hashed BrandForge contract is required'],
       brand ? [brand.id] : [],
       brand && brand.approval_status === 'reviewing' ? 'needs_review' : 'missing',
     ),
     assets: report(
       assetReadiness.ready,
-      true,
+      readinessApprovalPolicyForDomain('assets'),
       assetReadiness.reasons,
       approvedAssets.map(asset => asset.id),
       assets.length ? 'needs_review' : 'missing',
     ),
     propertyFacts: report(
       Array.isArray(property.amenities) && property.amenities.length > 0,
-      true,
+      readinessApprovalPolicyForDomain('propertyFacts'),
       ['Approved property amenities/facts are required'],
       [property.id],
     ),
     units: report(
       approvedUnits.length > 0,
-      true,
+      readinessApprovalPolicyForDomain('units'),
       ['At least one active, approved floor plan or unit source is required'],
       approvedUnits.map(unit => unit.id),
       units.length ? 'needs_review' : 'missing',
@@ -284,21 +307,23 @@ export async function buildOnboardingSnapshot(
     // domain is still reported so operators can see it is missing.
     neighborhood: report(
       approvedPois.length > 0,
-      false,
+      readinessApprovalPolicyForDomain('neighborhood'),
       ['No sourced and approved points of interest; the neighborhood section will be omitted'],
       approvedPois.map(poi => poi.id),
       pointsOfInterest.length ? 'needs_review' : 'missing',
     ),
     legal: report(
       Boolean(legal?.approved_at && legal.effective_at),
-      true,
+      readinessApprovalPolicyForDomain('legal'),
       ['Approved legal, consent, jurisdiction, reviewer, and effective date are required'],
       legal ? [legal.id] : [],
       legal ? 'needs_review' : 'missing',
     ),
     integrations: report(
       integrationFailures.length === 0,
-      enabledCapabilities.length > 0,
+      enabledCapabilities.length > 0
+        ? readinessApprovalPolicyForDomain('integrations')
+        : 'advisory',
       integrationFailures,
       [
         ...integrations.map(integration => integration.id),
@@ -314,6 +339,7 @@ export async function buildOnboardingSnapshot(
       domain,
       reasons: value.reasons,
       sourceIds: value.sourceIds,
+      approvalPolicy: value.approvalPolicy,
     }))
   const sourceReferences = Object.entries(domains).flatMap(([domain, value]) =>
     value.sourceIds.map(sourceId => ({ domain, sourceId })),
@@ -335,7 +361,8 @@ export async function buildOnboardingSnapshot(
       consentMode: destination.consent_mode,
     })),
     chatbotContext,
-    enabledCapabilities,
+    requestedCapabilities: enabledCapabilities,
+    enabledCapabilities: availableCapabilities,
   }
   const contentHash = hashSiteForgeContent(payload)
   const status = unresolvedConflicts.length ? 'needs_review' : 'ready'
@@ -410,6 +437,7 @@ export async function approveOnboardingSnapshot(
     snapshotId: string
     userId: string
     rationale: string
+    allowManagerOverride?: boolean
   },
   client: ServiceClient = createServiceClient(),
 ) {
@@ -421,12 +449,18 @@ export async function approveOnboardingSnapshot(
     .eq('org_id', input.orgId)
     .single()
   if (error || !snapshot) throw new Error('Onboarding snapshot not found')
-  if (snapshot.status !== 'ready') {
-    throw new Error('Only a fully ready onboarding snapshot can be approved')
+  const eligibility = evaluateReadinessApproval(snapshot)
+  if (!eligibility.canApprove) {
+    throw new Error('Resolve required onboarding conflicts before approval')
   }
-  if (Array.isArray(snapshot.unresolved_conflicts) && snapshot.unresolved_conflicts.length) {
-    throw new Error('Resolve onboarding conflicts before approval')
+  if (
+    eligibility.requiresManagerOverride &&
+    !input.allowManagerOverride
+  ) {
+    throw new Error('Manager override confirmation is required')
   }
+  const managerOverride = eligibility.requiresManagerOverride
+  const overrideConflicts = eligibility.overrideableConflicts as unknown as Json
 
   const { data: job, error: jobError } = await client
     .from('shared_jobs')
@@ -438,7 +472,11 @@ export async function approveOnboardingSnapshot(
       subject_id: snapshot.id,
       lifecycle_status: 'succeeded',
       dedupe_key: `approve:${snapshot.id}`,
-      payload: { snapshotHash: snapshot.content_hash },
+      payload: {
+        snapshotHash: snapshot.content_hash,
+        managerOverride,
+        overrideConflicts,
+      },
       attempt_count: 1,
       started_at: new Date().toISOString(),
       finished_at: new Date().toISOString(),
@@ -459,9 +497,16 @@ export async function approveOnboardingSnapshot(
       execution_status: 'executed',
       requested_by: input.userId,
       reviewed_by: input.userId,
-      request_payload: { snapshotId: snapshot.id },
-      execution_payload: { snapshotHash: snapshot.content_hash },
-      execution_result: { approved: true },
+      request_payload: {
+        snapshotId: snapshot.id,
+        managerOverride,
+        overrideConflicts,
+      },
+      execution_payload: {
+        snapshotHash: snapshot.content_hash,
+        managerOverride,
+      },
+      execution_result: { approved: true, managerOverride },
       policy_reason: input.rationale,
       decided_at: new Date().toISOString(),
       executed_at: new Date().toISOString(),
@@ -477,7 +522,12 @@ export async function approveOnboardingSnapshot(
     decision_status: 'approved',
     decision_reason: input.rationale,
     reviewer_profile_id: input.userId,
-    decision_payload: { snapshotId: snapshot.id, contentHash: snapshot.content_hash },
+    decision_payload: {
+      snapshotId: snapshot.id,
+      contentHash: snapshot.content_hash,
+      managerOverride,
+      overrideConflicts,
+    },
   })
   if (approvalError) throw new Error(`Failed to record onboarding approval: ${approvalError.message}`)
 
@@ -491,7 +541,10 @@ export async function approveOnboardingSnapshot(
       approved_at: approvedAt,
     })
     .eq('id', snapshot.id)
-    .eq('status', 'ready')
+    .in(
+      'status',
+      managerOverride ? ['needs_review'] : ['ready'],
+    )
     .select('*')
     .single()
   if (updateError || !approved) throw new Error(`Failed to approve onboarding snapshot: ${updateError?.message}`)

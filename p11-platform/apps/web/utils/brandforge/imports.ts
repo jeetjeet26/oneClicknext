@@ -277,7 +277,7 @@ export async function confirmBrandImport(input: {
   if (referencedAssetIds.length) {
     const { data: assets, error: assetError } = await client
       .from('content_assets')
-      .select('id, approval_status, rights_status, expires_at')
+      .select('id, approval_status, rights_status, expires_at, duplicate_of')
       .eq('property_id', input.propertyId)
       .in('id', referencedAssetIds)
     if (assetError) throw new Error(`Failed to validate brand assets: ${assetError.message}`)
@@ -286,12 +286,21 @@ export async function confirmBrandImport(input: {
         .filter(asset =>
           asset.approval_status === 'approved'
           && ['owned', 'licensed', 'generated'].includes(asset.rights_status)
-          && (!asset.expires_at || new Date(asset.expires_at) > new Date()),
+          && (!asset.expires_at || new Date(asset.expires_at) > new Date())
+          && !asset.duplicate_of
         )
         .map(asset => asset.id),
     )
     const blocked = referencedAssetIds.filter(id => !approvedIds.has(id))
     if (blocked.length) throw new Error(`Brand references unapproved or rights-blocked assets: ${blocked.join(', ')}`)
+    const { error: curationError } = await client
+      .from('content_assets')
+      .update({ curation_status: 'approved' })
+      .eq('property_id', input.propertyId)
+      .in('id', referencedAssetIds)
+    if (curationError) {
+      throw new Error(`Failed to curate approved brand assets: ${curationError.message}`)
+    }
   }
 
   const brandInsert: TablesInsert<'property_brand_assets'> = {

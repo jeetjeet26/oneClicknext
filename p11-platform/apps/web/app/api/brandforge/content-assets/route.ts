@@ -208,6 +208,8 @@ export async function PATCH(request: NextRequest) {
     .from('content_assets')
     .update({
       approval_status: parsed.data.approvalStatus,
+      curation_status:
+        parsed.data.approvalStatus === 'approved' ? 'approved' : 'rejected',
       rights_status: parsed.data.rightsStatus,
       rights_metadata: (parsed.data.rightsMetadata || {}) as Json,
       alt_text: parsed.data.altText,

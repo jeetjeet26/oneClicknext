@@ -1,33 +1,56 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { AlertTriangle, Check, Loader2, Save } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Textarea } from '@/components/ui/textarea'
+import {
+  RepeatableSection,
+  StringListInput,
+  StructuredInput,
+  TagInput,
+} from './SiteForgeStructuredInputs'
 import type {
   SiteForgeBrief,
   SiteForgeBriefContradiction,
 } from '@/utils/siteforge/briefs/contracts'
 import type { PersistedSiteForgeBrief } from '@/utils/siteforge/briefs/repository'
 
-function lines(value: string): string[] {
-  return value
-    .split('\n')
-    .map(item => item.trim())
-    .filter(Boolean)
-}
+type Objective = SiteForgeBrief['objectives'][number]
+type Audience = SiteForgeBrief['audiences'][number]
+type Stakeholder = SiteForgeBrief['stakeholders'][number]
+type Approver = SiteForgeBrief['approvers'][number]
+type Constraint = SiteForgeBrief['legalConstraints'][number]
+type Reference = SiteForgeBrief['references'][number]
+type Kpi = SiteForgeBrief['kpis'][number]
 
-function cells(value: string): string[][] {
-  return lines(value).map(line => line.split('|').map(item => item.trim()))
+const EMPTY_OBJECTIVE: Objective = {
+  statement: '',
+  priority: 'primary',
+  successSignal: '',
 }
+const EMPTY_AUDIENCE: Audience = { segment: '', needs: [], objections: [] }
+const EMPTY_STAKEHOLDER: Stakeholder = {
+  name: '',
+  role: '',
+  decisionRights: [],
+}
+const EMPTY_APPROVER: Approver = { name: '', role: '' }
+const EMPTY_CONSTRAINT: Constraint = {
+  name: '',
+  requirement: '',
+  blocking: true,
+}
+const EMPTY_REFERENCE: Reference = { label: '' }
+const EMPTY_KPI: Kpi = { name: '', target: '', measurement: '' }
 
 export const EMPTY_SITEFORGE_BRIEF: SiteForgeBrief = {
   title: '',
   summary: '',
-  objectives: [{ statement: '', priority: 'primary', successSignal: '' }],
-  audiences: [{ segment: '', needs: [], objections: [] }],
+  objectives: [{ ...EMPTY_OBJECTIVE }],
+  audiences: [{ ...EMPTY_AUDIENCE }],
   conversion: { primaryAction: '', secondaryActions: [], funnelNotes: '' },
   scope: { includedPages: ['Home'], excludedItems: [] },
   stakeholders: [],
@@ -43,89 +66,40 @@ export const EMPTY_SITEFORGE_BRIEF: SiteForgeBrief = {
   kpis: [],
 }
 
-export function buildBriefFromEditorFields(input: {
-  base: SiteForgeBrief
-  objectives: string
-  audiences: string
-  stakeholders: string
-  approvers: string
-  legalConstraints: string
-  integrationConstraints: string
-  references: string
-  kpis: string
-}): SiteForgeBrief {
+export function updateBriefItem<T>(
+  items: T[],
+  index: number,
+  changes: Partial<T>
+): T[] {
+  return items.map((item, itemIndex) =>
+    itemIndex === index ? { ...item, ...changes } : item
+  )
+}
+
+export function removeBriefItem<T>(items: T[], index: number): T[] {
+  return items.filter((_, itemIndex) => itemIndex !== index)
+}
+
+export function hydrateBriefEditorContent(saved: PersistedSiteForgeBrief) {
   return {
-    ...input.base,
-    objectives: cells(input.objectives).map(
-      ([statement = '', successSignal = '', priority = 'secondary']) => ({
-        statement,
-        successSignal,
-        priority: priority === 'primary' ? 'primary' : 'secondary',
-      })
-    ),
-    audiences: cells(input.audiences).map(
-      ([segment = '', needs = '', objections = '']) => ({
-        segment,
-        needs: needs.split(',').map(item => item.trim()).filter(Boolean),
-        objections: objections
-          .split(',')
-          .map(item => item.trim())
-          .filter(Boolean),
-      })
-    ),
-    stakeholders: cells(input.stakeholders).map(
-      ([name = '', role = '', email = '', rights = '']) => ({
-        name,
-        role,
-        ...(email ? { email } : {}),
-        decisionRights: rights
-          .split(',')
-          .map(item => item.trim())
-          .filter(Boolean),
-      })
-    ),
-    approvers: cells(input.approvers).map(
-      ([name = '', role = '', email = '']) => ({
-        name,
-        role,
-        ...(email ? { email } : {}),
-      })
-    ),
-    legalConstraints: cells(input.legalConstraints).map(
-      ([name = '', requirement = '', blocking = 'true']) => ({
-        name,
-        requirement,
-        blocking: blocking !== 'false',
-      })
-    ),
-    integrationConstraints: cells(input.integrationConstraints).map(
-      ([name = '', requirement = '', blocking = 'true']) => ({
-        name,
-        requirement,
-        blocking: blocking !== 'false',
-      })
-    ),
-    references: cells(input.references).map(
-      ([label = '', url = '', sourceId = '', notes = '']) => ({
-        label,
-        ...(url ? { url } : {}),
-        ...(sourceId ? { sourceId } : {}),
-        ...(notes ? { notes } : {}),
-      })
-    ),
-    kpis: cells(input.kpis).map(
-      ([name = '', target = '', measurement = '', owner = '']) => ({
-        name,
-        target,
-        measurement,
-        ...(owner ? { owner } : {}),
-      })
-    ),
+    brief: saved.brief,
+    contradictions: saved.unresolvedContradictions,
   }
 }
 
-function joinRows(rows: Array<Array<string | undefined>>): string {
-  return rows.map(row => row.map(value => value || '').join(' | ')).join('\n')
+export function briefHasUnresolvedContradictions(
+  contradictions: SiteForgeBriefContradiction[]
+): boolean {
+  return contradictions.length > 0
+}
+
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <label className="space-y-1.5 text-sm font-medium">
+      <span>{label}</span>
+      {children}
+    </label>
+  )
 }
 
 export function SiteForgeBriefEditor({
@@ -136,16 +110,10 @@ export function SiteForgeBriefEditor({
   onChanged?: () => void
 }) {
   const [briefs, setBriefs] = useState<PersistedSiteForgeBrief[]>([])
-  const [base, setBase] = useState<SiteForgeBrief>(EMPTY_SITEFORGE_BRIEF)
-  const [objectives, setObjectives] = useState('')
-  const [audiences, setAudiences] = useState('')
-  const [stakeholders, setStakeholders] = useState('')
-  const [approvers, setApprovers] = useState('')
-  const [legal, setLegal] = useState('')
-  const [integrations, setIntegrations] = useState('')
-  const [references, setReferences] = useState('')
-  const [kpis, setKpis] = useState('')
-  const [contradictions, setContradictions] = useState('')
+  const [brief, setBrief] = useState<SiteForgeBrief>(EMPTY_SITEFORGE_BRIEF)
+  const [contradictions, setContradictions] = useState<
+    SiteForgeBriefContradiction[]
+  >([])
   const [decisionReason, setDecisionReason] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -167,118 +135,17 @@ export function SiteForgeBriefEditor({
     )
   }, [load])
 
-  function resume(brief: PersistedSiteForgeBrief) {
-    setBase(brief.brief)
-    setObjectives(
-      joinRows(
-        brief.brief.objectives.map(item => [
-          item.statement,
-          item.successSignal,
-          item.priority,
-        ])
-      )
+  function resume(saved: PersistedSiteForgeBrief) {
+    const content = hydrateBriefEditorContent(saved)
+    setBrief(content.brief)
+    setContradictions(content.contradictions)
+    setMessage(
+      `Resumed brief version ${saved.version}. Saving creates a new immutable version.`
     )
-    setAudiences(
-      joinRows(
-        brief.brief.audiences.map(item => [
-          item.segment,
-          item.needs.join(', '),
-          item.objections.join(', '),
-        ])
-      )
-    )
-    setStakeholders(
-      joinRows(
-        brief.brief.stakeholders.map(item => [
-          item.name,
-          item.role,
-          item.email,
-          item.decisionRights.join(', '),
-        ])
-      )
-    )
-    setApprovers(
-      joinRows(
-        brief.brief.approvers.map(item => [
-          item.name,
-          item.role,
-          item.email,
-        ])
-      )
-    )
-    setLegal(
-      joinRows(
-        brief.brief.legalConstraints.map(item => [
-          item.name,
-          item.requirement,
-          String(item.blocking),
-        ])
-      )
-    )
-    setIntegrations(
-      joinRows(
-        brief.brief.integrationConstraints.map(item => [
-          item.name,
-          item.requirement,
-          String(item.blocking),
-        ])
-      )
-    )
-    setReferences(
-      joinRows(
-        brief.brief.references.map(item => [
-          item.label,
-          item.url,
-          item.sourceId,
-          item.notes,
-        ])
-      )
-    )
-    setKpis(
-      joinRows(
-        brief.brief.kpis.map(item => [
-          item.name,
-          item.target,
-          item.measurement,
-          item.owner,
-        ])
-      )
-    )
-    setContradictions(
-      joinRows(
-        brief.unresolvedContradictions.map(item => [
-          item.field,
-          item.description,
-          item.sources.join(', '),
-          item.resolutionNeeded,
-        ])
-      )
-    )
-    setMessage(`Resumed brief version ${brief.version}. Saving creates a new immutable version.`)
   }
 
   function currentContent() {
-    const brief = buildBriefFromEditorFields({
-      base,
-      objectives,
-      audiences,
-      stakeholders,
-      approvers,
-      legalConstraints: legal,
-      integrationConstraints: integrations,
-      references,
-      kpis,
-    })
-    const unresolvedContradictions: SiteForgeBriefContradiction[] = cells(
-      contradictions
-    ).map(([field = '', description = '', sources = '', resolutionNeeded = ''], index) => ({
-      id: `contradiction-${index + 1}`,
-      field,
-      description,
-      sources: sources.split(',').map(item => item.trim()).filter(Boolean),
-      resolutionNeeded,
-    }))
-    return { brief, unresolvedContradictions }
+    return { brief, unresolvedContradictions: contradictions }
   }
 
   async function save(status: 'draft' | 'ready_for_review') {
@@ -332,9 +199,8 @@ export function SiteForgeBriefEditor({
             decisionReason,
             ...(decisionStatus === 'modified'
               ? {
-                  modifiedBrief: currentContent().brief,
-                  unresolvedContradictions:
-                    currentContent().unresolvedContradictions,
+                  modifiedBrief: brief,
+                  unresolvedContradictions: contradictions,
                 }
               : {}),
           }),
@@ -356,76 +222,484 @@ export function SiteForgeBriefEditor({
   const current = briefs[0]
   return (
     <div className="space-y-4">
-      {error ? <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
-      {message ? <p role="status" className="rounded-md bg-emerald-50 p-3 text-sm text-emerald-700">{message}</p> : null}
+      {error ? (
+        <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+          {error}
+        </p>
+      ) : null}
+      {message ? (
+        <p
+          role="status"
+          className="rounded-md bg-emerald-50 p-3 text-sm text-emerald-700"
+        >
+          {message}
+        </p>
+      ) : null}
+
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center justify-between gap-3">
             Durable website brief
-            {current ? <Badge variant="outline">v{current.version} · {current.status}</Badge> : null}
+            {current ? (
+              <Badge variant="outline">
+                v{current.version} · {current.status}
+              </Badge>
+            ) : null}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Title"><input className="h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={base.title} onChange={event => setBase(value => ({ ...value, title: event.target.value }))} /></Field>
-            <Field label="Primary conversion"><input className="h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={base.conversion.primaryAction} onChange={event => setBase(value => ({ ...value, conversion: { ...value.conversion, primaryAction: event.target.value } }))} /></Field>
+            <StructuredInput
+              label="Title"
+              value={brief.title}
+              onChange={title => setBrief(value => ({ ...value, title }))}
+              placeholder="The Aurora website brief"
+              required
+            />
+            <StructuredInput
+              label="Primary conversion"
+              value={brief.conversion.primaryAction}
+              onChange={primaryAction =>
+                setBrief(value => ({
+                  ...value,
+                  conversion: { ...value.conversion, primaryAction },
+                }))
+              }
+              placeholder="Schedule a tour"
+              required
+            />
           </div>
-          <Field label="Summary"><Textarea value={base.summary} onChange={event => setBase(value => ({ ...value, summary: event.target.value }))} /></Field>
-          <StructuredField label="Objectives" hint="statement | success signal | primary/secondary" value={objectives} onChange={setObjectives} />
-          <StructuredField label="Audiences" hint="segment | comma-separated needs | comma-separated objections" value={audiences} onChange={setAudiences} />
-          <div className="grid gap-3 sm:grid-cols-2">
-            <StructuredField label="Included pages" hint="one per line" value={base.scope.includedPages.join('\n')} onChange={value => setBase(currentBase => ({ ...currentBase, scope: { ...currentBase.scope, includedPages: lines(value) } }))} />
-            <StructuredField label="Excluded scope" hint="one per line" value={base.scope.excludedItems.join('\n')} onChange={value => setBase(currentBase => ({ ...currentBase, scope: { ...currentBase.scope, excludedItems: lines(value) } }))} />
+
+          <Field label="Summary">
+            <Textarea
+              value={brief.summary}
+              onChange={event =>
+                setBrief(value => ({ ...value, summary: event.target.value }))
+              }
+              placeholder="Describe the website's purpose and positioning."
+              required
+            />
+          </Field>
+
+          <RepeatableSection
+            label="Objectives"
+            description="Define what the website should accomplish and how you will recognize success."
+            addLabel="Add objective"
+            items={brief.objectives}
+            onAdd={() =>
+              setBrief(value => ({
+                ...value,
+                objectives: [...value.objectives, { ...EMPTY_OBJECTIVE }],
+              }))
+            }
+            onRemove={index =>
+              setBrief(value => ({
+                ...value,
+                objectives: removeBriefItem(value.objectives, index),
+              }))
+            }
+            renderItem={index => {
+              const objective = brief.objectives[index]
+              return (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <StructuredInput
+                    label="Objective"
+                    value={objective.statement}
+                    onChange={statement =>
+                      setBrief(value => ({
+                        ...value,
+                        objectives: updateBriefItem(value.objectives, index, {
+                          statement,
+                        }),
+                      }))
+                    }
+                    placeholder="Increase qualified tour requests"
+                    required
+                  />
+                  <StructuredInput
+                    label="Success signal"
+                    value={objective.successSignal}
+                    onChange={successSignal =>
+                      setBrief(value => ({
+                        ...value,
+                        objectives: updateBriefItem(value.objectives, index, {
+                          successSignal,
+                        }),
+                      }))
+                    }
+                    placeholder="15% more completed requests"
+                    required
+                  />
+                  <Field label="Priority">
+                    <select
+                      className="h-9 w-full rounded-md border bg-transparent px-3 text-sm"
+                      value={objective.priority}
+                      onChange={event =>
+                        setBrief(value => ({
+                          ...value,
+                          objectives: updateBriefItem(value.objectives, index, {
+                            priority: event.target.value as Objective['priority'],
+                          }),
+                        }))
+                      }
+                    >
+                      <option value="primary">Primary</option>
+                      <option value="secondary">Secondary</option>
+                    </select>
+                  </Field>
+                </div>
+              )
+            }}
+          />
+
+          <RepeatableSection
+            label="Audiences"
+            description="Describe each audience separately; add needs and objections as tags."
+            addLabel="Add audience"
+            items={brief.audiences}
+            onAdd={() =>
+              setBrief(value => ({
+                ...value,
+                audiences: [...value.audiences, { ...EMPTY_AUDIENCE }],
+              }))
+            }
+            onRemove={index =>
+              setBrief(value => ({
+                ...value,
+                audiences: removeBriefItem(value.audiences, index),
+              }))
+            }
+            renderItem={index => {
+              const audience = brief.audiences[index]
+              return (
+                <div className="space-y-3">
+                  <StructuredInput
+                    label="Audience segment"
+                    value={audience.segment}
+                    onChange={segment =>
+                      setBrief(value => ({
+                        ...value,
+                        audiences: updateBriefItem(value.audiences, index, {
+                          segment,
+                        }),
+                      }))
+                    }
+                    placeholder="Downtown renters"
+                    required
+                  />
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <TagInput
+                      label="Needs"
+                      values={audience.needs}
+                      onChange={needs =>
+                        setBrief(value => ({
+                          ...value,
+                          audiences: updateBriefItem(value.audiences, index, {
+                            needs,
+                          }),
+                        }))
+                      }
+                      placeholder="Availability"
+                    />
+                    <TagInput
+                      label="Objections"
+                      values={audience.objections}
+                      onChange={objections =>
+                        setBrief(value => ({
+                          ...value,
+                          audiences: updateBriefItem(value.audiences, index, {
+                            objections,
+                          }),
+                        }))
+                      }
+                      placeholder="Parking cost"
+                    />
+                  </div>
+                </div>
+              )
+            }}
+          />
+
+          <div className="grid gap-3 lg:grid-cols-3">
+            <StringListInput
+              label="Included pages"
+              addLabel="Add page"
+              values={brief.scope.includedPages}
+              onChange={includedPages =>
+                setBrief(value => ({
+                  ...value,
+                  scope: { ...value.scope, includedPages },
+                }))
+              }
+              placeholder="Floor Plans"
+              required
+            />
+            <StringListInput
+              label="Excluded scope"
+              addLabel="Add excluded item"
+              values={brief.scope.excludedItems}
+              onChange={excludedItems =>
+                setBrief(value => ({
+                  ...value,
+                  scope: { ...value.scope, excludedItems },
+                }))
+              }
+              placeholder="Resident portal"
+            />
+            <StringListInput
+              label="Secondary actions"
+              addLabel="Add action"
+              values={brief.conversion.secondaryActions}
+              onChange={secondaryActions =>
+                setBrief(value => ({
+                  ...value,
+                  conversion: { ...value.conversion, secondaryActions },
+                }))
+              }
+              placeholder="View availability"
+            />
           </div>
-          <Field label="Conversion funnel notes"><Textarea value={base.conversion.funnelNotes} onChange={event => setBase(value => ({ ...value, conversion: { ...value.conversion, funnelNotes: event.target.value } }))} /></Field>
-          <StructuredField label="Secondary actions" hint="one per line" value={base.conversion.secondaryActions.join('\n')} onChange={value => setBase(currentBase => ({ ...currentBase, conversion: { ...currentBase.conversion, secondaryActions: lines(value) } }))} />
-          <StructuredField label="Stakeholders" hint="name | role | email | decision rights" value={stakeholders} onChange={setStakeholders} />
-          <StructuredField label="Approvers" hint="name | role | email" value={approvers} onChange={setApprovers} />
+
+          <Field label="Conversion funnel notes">
+            <Textarea
+              value={brief.conversion.funnelNotes}
+              onChange={event =>
+                setBrief(value => ({
+                  ...value,
+                  conversion: {
+                    ...value.conversion,
+                    funnelNotes: event.target.value,
+                  },
+                }))
+              }
+              placeholder="Explain how visitors should progress toward the primary action."
+              required
+            />
+          </Field>
+
+          <PeopleFields
+            brief={brief}
+            setBrief={setBrief}
+          />
+
           <div className="grid gap-3 sm:grid-cols-3">
-            <Field label="Launch date"><input className="h-9 w-full rounded-md border bg-transparent px-3 text-sm" type="date" value={base.launchTarget.targetDate || ''} onChange={event => setBase(value => ({ ...value, launchTarget: { ...value.launchTarget, targetDate: event.target.value || null } }))} /></Field>
-            <Field label="Timezone"><input className="h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={base.launchTarget.timezone} onChange={event => setBase(value => ({ ...value, launchTarget: { ...value.launchTarget, timezone: event.target.value } }))} /></Field>
+            <Field label="Launch date">
+              <input
+                className="h-9 w-full rounded-md border bg-transparent px-3 text-sm"
+                type="date"
+                value={brief.launchTarget.targetDate || ''}
+                onChange={event =>
+                  setBrief(value => ({
+                    ...value,
+                    launchTarget: {
+                      ...value.launchTarget,
+                      targetDate: event.target.value || null,
+                    },
+                  }))
+                }
+              />
+            </Field>
+            <StructuredInput
+              label="Timezone"
+              value={brief.launchTarget.timezone}
+              onChange={timezone =>
+                setBrief(value => ({
+                  ...value,
+                  launchTarget: { ...value.launchTarget, timezone },
+                }))
+              }
+              placeholder="America/Los_Angeles"
+              required
+            />
             <Field label="Flexibility">
-              <select className="h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={base.launchTarget.flexibility} onChange={event => setBase(value => ({ ...value, launchTarget: { ...value.launchTarget, flexibility: event.target.value as SiteForgeBrief['launchTarget']['flexibility'] } }))}>
-                <option value="fixed">Fixed</option><option value="target">Target</option><option value="flexible">Flexible</option>
+              <select
+                className="h-9 w-full rounded-md border bg-transparent px-3 text-sm"
+                value={brief.launchTarget.flexibility}
+                onChange={event =>
+                  setBrief(value => ({
+                    ...value,
+                    launchTarget: {
+                      ...value.launchTarget,
+                      flexibility: event.target
+                        .value as SiteForgeBrief['launchTarget']['flexibility'],
+                    },
+                  }))
+                }
+              >
+                <option value="fixed">Fixed</option>
+                <option value="target">Target</option>
+                <option value="flexible">Flexible</option>
               </select>
             </Field>
           </div>
-          <StructuredField label="Legal constraints" hint="name | requirement | true/false blocking" value={legal} onChange={setLegal} />
-          <StructuredField label="Integration constraints" hint="name | requirement | true/false blocking" value={integrations} onChange={setIntegrations} />
-          <StructuredField label="References" hint="label | URL | source ID | notes" value={references} onChange={setReferences} />
-          <StructuredField label="KPIs" hint="name | target | measurement | owner" value={kpis} onChange={setKpis} />
-          <StructuredField label="Unresolved contradictions" hint="field | description | source A, source B | resolution needed" value={contradictions} onChange={setContradictions} />
-          {lines(contradictions).length ? (
-            <p className="flex items-center gap-2 text-sm text-amber-700"><AlertTriangle className="h-4 w-4" /> Approval remains blocked until every contradiction is resolved.</p>
+
+          <ConstraintFields brief={brief} setBrief={setBrief} />
+          <ReferenceFields brief={brief} setBrief={setBrief} />
+          <KpiFields brief={brief} setBrief={setBrief} />
+
+          <RepeatableSection
+            label="Unresolved contradictions"
+            description="Record conflicts between trusted sources. Approval is blocked until this list is empty."
+            addLabel="Add contradiction"
+            items={contradictions}
+            onAdd={() =>
+              setContradictions(value => [
+                ...value,
+                {
+                  id: `contradiction-${Date.now()}`,
+                  field: '',
+                  description: '',
+                  sources: [],
+                  resolutionNeeded: '',
+                },
+              ])
+            }
+            onRemove={index =>
+              setContradictions(value => removeBriefItem(value, index))
+            }
+            renderItem={index => {
+              const contradiction = contradictions[index]
+              return (
+                <div className="space-y-3">
+                  <StructuredInput
+                    label="Affected field"
+                    value={contradiction.field}
+                    onChange={field =>
+                      setContradictions(value =>
+                        updateBriefItem(value, index, { field })
+                      )
+                    }
+                    required
+                  />
+                  <Field label="Conflict description">
+                    <Textarea
+                      value={contradiction.description}
+                      onChange={event =>
+                        setContradictions(value =>
+                          updateBriefItem(value, index, {
+                            description: event.target.value,
+                          })
+                        )
+                      }
+                      required
+                    />
+                  </Field>
+                  <TagInput
+                    label="Conflicting sources (at least two)"
+                    values={contradiction.sources}
+                    onChange={sources =>
+                      setContradictions(value =>
+                        updateBriefItem(value, index, { sources })
+                      )
+                    }
+                    placeholder="Approved readiness snapshot"
+                  />
+                  <Field label="Resolution needed">
+                    <Textarea
+                      value={contradiction.resolutionNeeded}
+                      onChange={event =>
+                        setContradictions(value =>
+                          updateBriefItem(value, index, {
+                            resolutionNeeded: event.target.value,
+                          })
+                        )
+                      }
+                      required
+                    />
+                  </Field>
+                </div>
+              )
+            }}
+          />
+
+          {contradictions.length ? (
+            <p className="flex items-center gap-2 text-sm text-amber-700">
+              <AlertTriangle className="h-4 w-4" />
+              Approval remains blocked until every contradiction is resolved.
+            </p>
           ) : null}
+
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" disabled={busy} onClick={() => void save('draft')}><Save className="mr-2 h-4 w-4" />Save draft</Button>
-            <Button disabled={busy} onClick={() => void save('ready_for_review')}><Check className="mr-2 h-4 w-4" />Save for review</Button>
+            <Button
+              variant="outline"
+              disabled={busy}
+              onClick={() => void save('draft')}
+            >
+              <Save className="mr-2 h-4 w-4" />
+              Save draft
+            </Button>
+            <Button
+              disabled={busy}
+              onClick={() => void save('ready_for_review')}
+            >
+              <Check className="mr-2 h-4 w-4" />
+              Save for review
+            </Button>
           </div>
         </CardContent>
       </Card>
+
       {current?.status === 'ready_for_review' ? (
         <Card>
-          <CardHeader><CardTitle>Shared approval decision</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle>Shared approval decision</CardTitle>
+          </CardHeader>
           <CardContent className="space-y-3">
-            <Textarea value={decisionReason} onChange={event => setDecisionReason(event.target.value)} placeholder="Required rationale" />
+            <Textarea
+              value={decisionReason}
+              onChange={event => setDecisionReason(event.target.value)}
+              placeholder="Required rationale"
+            />
             <div className="flex flex-wrap gap-2">
-              <Button disabled={busy || !decisionReason.trim() || current.unresolvedContradictions.length > 0} onClick={() => void decide('approved')}>Approve exact brief</Button>
-              <Button variant="outline" disabled={busy || !decisionReason.trim()} onClick={() => void decide('modified')}>Save fields as modification</Button>
-              <Button variant="destructive" disabled={busy || !decisionReason.trim()} onClick={() => void decide('denied')}>Deny</Button>
+              <Button
+                disabled={
+                  busy ||
+                  !decisionReason.trim() ||
+                  briefHasUnresolvedContradictions(
+                    current.unresolvedContradictions
+                  )
+                }
+                onClick={() => void decide('approved')}
+              >
+                Approve exact brief
+              </Button>
+              <Button
+                variant="outline"
+                disabled={busy || !decisionReason.trim()}
+                onClick={() => void decide('modified')}
+              >
+                Save fields as modification
+              </Button>
+              <Button
+                variant="destructive"
+                disabled={busy || !decisionReason.trim()}
+                onClick={() => void decide('denied')}
+              >
+                Deny
+              </Button>
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
             </div>
           </CardContent>
         </Card>
       ) : null}
+
       {briefs.length ? (
         <Card>
-          <CardHeader><CardTitle>Version history</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle>Version history</CardTitle>
+          </CardHeader>
           <CardContent className="space-y-2">
-            {briefs.map(brief => (
-              <button key={brief.id} type="button" onClick={() => resume(brief)} className="flex w-full items-center justify-between rounded-md border p-3 text-left text-sm hover:bg-gray-50">
-                <span>v{brief.version} · {brief.brief.title}</span>
-                <Badge variant="secondary">{brief.status}</Badge>
+            {briefs.map(saved => (
+              <button
+                key={saved.id}
+                type="button"
+                onClick={() => resume(saved)}
+                className="flex w-full items-center justify-between rounded-md border p-3 text-left text-sm hover:bg-gray-50"
+              >
+                <span>
+                  v{saved.version} · {saved.brief.title}
+                </span>
+                <Badge variant="secondary">{saved.status}</Badge>
               </button>
             ))}
           </CardContent>
@@ -435,10 +709,372 @@ export function SiteForgeBriefEditor({
   )
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return <label className="space-y-1.5 text-sm font-medium"><span>{label}</span>{children}</label>
+function PeopleFields({
+  brief,
+  setBrief,
+}: {
+  brief: SiteForgeBrief
+  setBrief: React.Dispatch<React.SetStateAction<SiteForgeBrief>>
+}) {
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      <RepeatableSection
+        label="Stakeholders"
+        addLabel="Add stakeholder"
+        items={brief.stakeholders}
+        onAdd={() =>
+          setBrief(value => ({
+            ...value,
+            stakeholders: [...value.stakeholders, { ...EMPTY_STAKEHOLDER }],
+          }))
+        }
+        onRemove={index =>
+          setBrief(value => ({
+            ...value,
+            stakeholders: removeBriefItem(value.stakeholders, index),
+          }))
+        }
+        renderItem={index => {
+          const person = brief.stakeholders[index]
+          return (
+            <div className="space-y-3">
+              <StructuredInput
+                label="Name"
+                value={person.name}
+                onChange={name =>
+                  setBrief(value => ({
+                    ...value,
+                    stakeholders: updateBriefItem(value.stakeholders, index, {
+                      name,
+                    }),
+                  }))
+                }
+                required
+              />
+              <StructuredInput
+                label="Role"
+                value={person.role}
+                onChange={role =>
+                  setBrief(value => ({
+                    ...value,
+                    stakeholders: updateBriefItem(value.stakeholders, index, {
+                      role,
+                    }),
+                  }))
+                }
+                required
+              />
+              <StructuredInput
+                label="Email"
+                type="email"
+                value={person.email || ''}
+                onChange={email =>
+                  setBrief(value => ({
+                    ...value,
+                    stakeholders: updateBriefItem(value.stakeholders, index, {
+                      email: email || undefined,
+                    }),
+                  }))
+                }
+              />
+              <TagInput
+                label="Decision rights"
+                values={person.decisionRights}
+                onChange={decisionRights =>
+                  setBrief(value => ({
+                    ...value,
+                    stakeholders: updateBriefItem(value.stakeholders, index, {
+                      decisionRights,
+                    }),
+                  }))
+                }
+                placeholder="Brand"
+              />
+            </div>
+          )
+        }}
+      />
+      <RepeatableSection
+        label="Approvers"
+        addLabel="Add approver"
+        items={brief.approvers}
+        onAdd={() =>
+          setBrief(value => ({
+            ...value,
+            approvers: [...value.approvers, { ...EMPTY_APPROVER }],
+          }))
+        }
+        onRemove={index =>
+          setBrief(value => ({
+            ...value,
+            approvers: removeBriefItem(value.approvers, index),
+          }))
+        }
+        renderItem={index => {
+          const person = brief.approvers[index]
+          return (
+            <div className="space-y-3">
+              <StructuredInput
+                label="Name"
+                value={person.name}
+                onChange={name =>
+                  setBrief(value => ({
+                    ...value,
+                    approvers: updateBriefItem(value.approvers, index, { name }),
+                  }))
+                }
+                required
+              />
+              <StructuredInput
+                label="Role"
+                value={person.role}
+                onChange={role =>
+                  setBrief(value => ({
+                    ...value,
+                    approvers: updateBriefItem(value.approvers, index, { role }),
+                  }))
+                }
+                required
+              />
+              <StructuredInput
+                label="Email"
+                type="email"
+                value={person.email || ''}
+                onChange={email =>
+                  setBrief(value => ({
+                    ...value,
+                    approvers: updateBriefItem(value.approvers, index, {
+                      email: email || undefined,
+                    }),
+                  }))
+                }
+              />
+            </div>
+          )
+        }}
+      />
+    </div>
+  )
 }
 
-function StructuredField({ label, hint, value, onChange }: { label: string; hint: string; value: string; onChange: (value: string) => void }) {
-  return <Field label={label}><Textarea value={value} onChange={event => onChange(event.target.value)} placeholder={hint} rows={3} /><span className="block text-xs font-normal text-gray-500">{hint}</span></Field>
+function ConstraintFields({
+  brief,
+  setBrief,
+}: {
+  brief: SiteForgeBrief
+  setBrief: React.Dispatch<React.SetStateAction<SiteForgeBrief>>
+}) {
+  function section(
+    label: string,
+    key: 'legalConstraints' | 'integrationConstraints'
+  ) {
+    const constraints = brief[key]
+    return (
+      <RepeatableSection
+        label={label}
+        addLabel={`Add ${label.toLowerCase().replace(/s$/, '')}`}
+        items={constraints}
+        onAdd={() =>
+          setBrief(value => ({
+            ...value,
+            [key]: [...value[key], { ...EMPTY_CONSTRAINT }],
+          }))
+        }
+        onRemove={index =>
+          setBrief(value => ({
+            ...value,
+            [key]: removeBriefItem(value[key], index),
+          }))
+        }
+        renderItem={index => {
+          const constraint = constraints[index]
+          return (
+            <div className="space-y-3">
+              <StructuredInput
+                label="Name"
+                value={constraint.name}
+                onChange={name =>
+                  setBrief(value => ({
+                    ...value,
+                    [key]: updateBriefItem(value[key], index, { name }),
+                  }))
+                }
+                required
+              />
+              <Field label="Requirement">
+                <Textarea
+                  value={constraint.requirement}
+                  onChange={event =>
+                    setBrief(value => ({
+                      ...value,
+                      [key]: updateBriefItem(value[key], index, {
+                        requirement: event.target.value,
+                      }),
+                    }))
+                  }
+                  required
+                />
+              </Field>
+              <label className="flex items-center gap-2 text-sm font-medium">
+                <input
+                  type="checkbox"
+                  checked={constraint.blocking}
+                  onChange={event =>
+                    setBrief(value => ({
+                      ...value,
+                      [key]: updateBriefItem(value[key], index, {
+                        blocking: event.target.checked,
+                      }),
+                    }))
+                  }
+                />
+                Blocks approval or launch
+              </label>
+            </div>
+          )
+        }}
+      />
+    )
+  }
+
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      {section('Legal constraints', 'legalConstraints')}
+      {section('Integration constraints', 'integrationConstraints')}
+    </div>
+  )
+}
+
+function ReferenceFields({
+  brief,
+  setBrief,
+}: {
+  brief: SiteForgeBrief
+  setBrief: React.Dispatch<React.SetStateAction<SiteForgeBrief>>
+}) {
+  return (
+    <RepeatableSection
+      label="References"
+      addLabel="Add reference"
+      items={brief.references}
+      onAdd={() =>
+        setBrief(value => ({
+          ...value,
+          references: [...value.references, { ...EMPTY_REFERENCE }],
+        }))
+      }
+      onRemove={index =>
+        setBrief(value => ({
+          ...value,
+          references: removeBriefItem(value.references, index),
+        }))
+      }
+      renderItem={index => {
+        const reference = brief.references[index]
+        function update(changes: Partial<Reference>) {
+          setBrief(value => ({
+            ...value,
+            references: updateBriefItem(value.references, index, changes),
+          }))
+        }
+        return (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <StructuredInput
+              label="Label"
+              value={reference.label}
+              onChange={label => update({ label })}
+              required
+            />
+            <StructuredInput
+              label="URL"
+              type="url"
+              value={reference.url || ''}
+              onChange={url => update({ url: url || undefined })}
+              placeholder="https://"
+            />
+            <StructuredInput
+              label="Source ID"
+              value={reference.sourceId || ''}
+              onChange={sourceId =>
+                update({ sourceId: sourceId || undefined })
+              }
+            />
+            <StructuredInput
+              label="Notes"
+              value={reference.notes || ''}
+              onChange={notes => update({ notes: notes || undefined })}
+            />
+          </div>
+        )
+      }}
+    />
+  )
+}
+
+function KpiFields({
+  brief,
+  setBrief,
+}: {
+  brief: SiteForgeBrief
+  setBrief: React.Dispatch<React.SetStateAction<SiteForgeBrief>>
+}) {
+  return (
+    <RepeatableSection
+      label="KPIs"
+      addLabel="Add KPI"
+      items={brief.kpis}
+      onAdd={() =>
+        setBrief(value => ({
+          ...value,
+          kpis: [...value.kpis, { ...EMPTY_KPI }],
+        }))
+      }
+      onRemove={index =>
+        setBrief(value => ({
+          ...value,
+          kpis: removeBriefItem(value.kpis, index),
+        }))
+      }
+      renderItem={index => {
+        const kpi = brief.kpis[index]
+        function update(changes: Partial<Kpi>) {
+          setBrief(value => ({
+            ...value,
+            kpis: updateBriefItem(value.kpis, index, changes),
+          }))
+        }
+        return (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <StructuredInput
+              label="Metric"
+              value={kpi.name}
+              onChange={name => update({ name })}
+              placeholder="Tour requests"
+              required
+            />
+            <StructuredInput
+              label="Target"
+              value={kpi.target}
+              onChange={target => update({ target })}
+              placeholder="+15%"
+              required
+            />
+            <StructuredInput
+              label="Measurement"
+              value={kpi.measurement}
+              onChange={measurement => update({ measurement })}
+              placeholder="Submitted tour forms"
+              required
+            />
+            <StructuredInput
+              label="Owner"
+              value={kpi.owner || ''}
+              onChange={owner => update({ owner: owner || undefined })}
+              placeholder="Leasing"
+            />
+          </div>
+        )
+      }}
+    />
+  )
 }

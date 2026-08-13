@@ -4,10 +4,12 @@ import { createClient } from '@/utils/supabase/server'
 import { validatePropertyManagerAccess } from '@/utils/services/auth-guard'
 import { createRequestContext } from '@/utils/services/request-context'
 import { approveOnboardingSnapshot } from '@/utils/onboarding/repository'
+import { evaluateReadinessApproval } from '@/utils/onboarding/readiness-policy'
 
 const bodySchema = z.object({
   propertyId: z.guid(),
   rationale: z.string().min(10).max(2_000),
+  allowManagerOverride: z.boolean().default(false),
 })
 
 export async function POST(
@@ -34,9 +36,18 @@ export async function POST(
       snapshotId: parsedSnapshotId.data,
       userId: user.id,
       rationale: parsedBody.data.rationale,
+      allowManagerOverride: parsedBody.data.allowManagerOverride,
     })
     ctx.logSuccess(200, { snapshotId: snapshot.id })
-    return NextResponse.json({ snapshot }, { headers: ctx.responseHeaders })
+    return NextResponse.json(
+      {
+        snapshot: {
+          ...snapshot,
+          approvalEligibility: evaluateReadinessApproval(snapshot),
+        },
+      },
+      { headers: ctx.responseHeaders },
+    )
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Approval failed'
     ctx.logError(409, error)

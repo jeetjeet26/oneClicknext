@@ -28,7 +28,7 @@ type PropertyAsset = {
   createdAt?: string
 }
 
-type FloorPlanDraft = {
+export type FloorPlanDraft = {
   id: string
   name: string
   bedrooms: string
@@ -93,6 +93,26 @@ function emptyFloorPlan(): FloorPlanDraft {
     availabilityUrl: '',
     applyUrl: '',
   }
+}
+
+export function buildManualFloorPlanPreviewRows(
+  floorPlans: FloorPlanDraft[]
+) {
+  return floorPlans.map((row) => ({
+    name: row.name,
+    bedrooms: row.bedrooms,
+    bathrooms: row.bathrooms,
+    sqftMin: row.sqftMin,
+    sqftMax: row.sqftMax,
+    rentMin: row.rentMin,
+    rentMax: row.rentMax,
+    availableCount: row.availableCount,
+    specials: row.specials,
+    imageUrl: row.imageUrl,
+    imageAlt: row.imageAlt,
+    availabilityUrl: row.availabilityUrl,
+    applyUrl: row.applyUrl,
+  }))
 }
 
 async function responseError(response: Response, fallback: string) {
@@ -324,32 +344,11 @@ export function PropertyAssetsStep({
           csv: await csvFile.text(),
         }
       } else {
-        const pendingLayout = floorPlans.find(row =>
-          row.imageAssetId
-          && assets.find(asset => asset.id === row.imageAssetId)?.approvalStatus !== 'approved'
-        )
-        if (pendingLayout) {
-          throw new Error('Approve ownership and rights for each uploaded floor-plan image before previewing')
-        }
         payload = {
           propertyId,
           sourceType: 'manual',
           sourceIdentity: 'siteforge-manual-entry',
-          rows: floorPlans.map((row) => ({
-            name: row.name,
-            bedrooms: row.bedrooms,
-            bathrooms: row.bathrooms,
-            sqftMin: row.sqftMin,
-            sqftMax: row.sqftMax,
-            rentMin: row.rentMin,
-            rentMax: row.rentMax,
-            availableCount: row.availableCount,
-            specials: row.specials,
-            imageUrl: row.imageUrl,
-            imageAlt: row.imageAlt,
-            availabilityUrl: row.availabilityUrl,
-            applyUrl: row.applyUrl,
-          })),
+          rows: buildManualFloorPlanPreviewRows(floorPlans),
         }
       }
 
@@ -727,20 +726,6 @@ export function PropertyAssetsStep({
                     />
                   </label>
                 </div>
-                {row.imageAssetId
-                  && assets.find(asset => asset.id === row.imageAssetId)?.approvalStatus !== 'approved'
-                  && (
-                    <button
-                      type="button"
-                      className="text-xs font-medium text-emerald-700 hover:underline"
-                      onClick={() => {
-                        const asset = assets.find(item => item.id === row.imageAssetId)
-                        if (asset) void approveAsset(asset)
-                      }}
-                    >
-                      Confirm ownership and approve layout image
-                    </button>
-                  )}
                 {row.imageUrl && (
                   <div className="text-xs text-green-700 dark:text-green-400">
                     Layout image attached

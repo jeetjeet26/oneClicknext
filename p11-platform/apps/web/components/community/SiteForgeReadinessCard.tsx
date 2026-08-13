@@ -8,6 +8,7 @@ type DomainStatus = 'missing' | 'conflicted' | 'needs_review' | 'ready' | 'stale
 type DomainReport = {
   state: DomainStatus
   blocking: boolean
+  approvalPolicy?: 'required' | 'manager_override' | 'advisory'
   reasons: string[]
   sourceIds: string[]
 }
@@ -21,10 +22,15 @@ type ReadinessSnapshot = {
   domain_reports: Record<string, DomainReport>
   unresolved_conflicts: unknown[]
   snapshot_payload?: {
+    requestedCapabilities?: SiteForgeCapability[]
     enabledCapabilities?: SiteForgeCapability[]
   } | null
   approved_at?: string | null
   created_at: string
+  approvalEligibility?: {
+    canApprove: boolean
+    requiresManagerOverride: boolean
+  }
 }
 
 const remediation: Record<string, string> = {
@@ -70,6 +76,7 @@ export function SiteForgeReadinessCard({
   >([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [overrideRationale, setOverrideRationale] = useState('')
 
   const load = useCallback(async () => {
     if (!propertyId) return
@@ -81,7 +88,9 @@ export function SiteForgeReadinessCard({
     const latest = body?.snapshots?.[0] || null
     setSnapshot(latest)
     setEnabledCapabilities(
-      latest?.snapshot_payload?.enabledCapabilities || []
+      latest?.snapshot_payload?.requestedCapabilities ||
+      latest?.snapshot_payload?.enabledCapabilities ||
+      []
     )
   }, [propertyId])
 
@@ -113,6 +122,15 @@ export function SiteForgeReadinessCard({
 
   async function approve() {
     if (!snapshot) return
+    const requiresManagerOverride =
+      snapshot.approvalEligibility?.requiresManagerOverride === true
+    const rationale = requiresManagerOverride
+      ? overrideRationale.trim()
+      : 'Approved from Community Setup readiness review'
+    if (requiresManagerOverride && rationale.length < 10) {
+      setError('Enter a manager override rationale of at least 10 characters')
+      return
+    }
     setBusy(true)
     setError('')
     try {
@@ -123,7 +141,8 @@ export function SiteForgeReadinessCard({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             propertyId,
-            rationale: 'Approved from Community Setup readiness review',
+            rationale,
+            allowManagerOverride: requiresManagerOverride,
           }),
         }
       )
@@ -221,7 +240,13 @@ export function SiteForgeReadinessCard({
                       ? 'bg-emerald-50 text-emerald-700'
                       : 'bg-amber-50 text-amber-700'
                   }`}>
-                    {report.state.replace('_', ' ')}
+                    {report.state === 'ready'
+                      ? 'ready'
+                      : report.approvalPolicy === 'manager_override'
+                        ? 'manager warning'
+                        : report.approvalPolicy === 'advisory'
+                          ? 'advisory'
+                          : 'required'}
                   </span>
                 </div>
                 {report.reasons.map(reason => (
@@ -238,14 +263,33 @@ export function SiteForgeReadinessCard({
               </div>
             ))}
           </div>
-          {snapshot.status === 'ready' && (
+          {snapshot.approvalEligibility?.requiresManagerOverride && (
+            <label className="block space-y-1 text-sm font-medium text-slate-800">
+              Manager override rationale
+              <textarea
+                value={overrideRationale}
+                onChange={event => setOverrideRationale(event.target.value)}
+                rows={3}
+                maxLength={2_000}
+                placeholder="Explain why the remaining operational warnings are acceptable."
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal"
+              />
+            </label>
+          )}
+          {snapshot.approvalEligibility?.canApprove && (
             <button
               type="button"
-              disabled={busy}
+              disabled={
+                busy ||
+                (snapshot.approvalEligibility.requiresManagerOverride &&
+                  overrideRationale.trim().length < 10)
+              }
               onClick={() => void approve()}
               className="w-full rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
             >
-              Approve and freeze readiness snapshot
+              {snapshot.approvalEligibility.requiresManagerOverride
+                ? 'Approve with manager override'
+                : 'Approve and freeze readiness snapshot'}
             </button>
           )}
         </>

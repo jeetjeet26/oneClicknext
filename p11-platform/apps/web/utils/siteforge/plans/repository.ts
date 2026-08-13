@@ -27,6 +27,7 @@ import {
 } from '@/utils/brandforge/normalize'
 import { brandContextFromContract } from '@/utils/siteforge/brand-contract-adapter'
 import { createApprovedFloorPlanSnapshot } from '@/utils/siteforge/providers/floor-plans'
+import { isSyntheticInventorySource } from '@/utils/siteforge/providers/inventory-policy'
 import {
   hashSiteForgeBrief,
   siteForgeBriefContradictionsSchema,
@@ -98,9 +99,6 @@ type LoadApprovedGenerationContextInput = {
   confirmedRevision: number
   contentHash: string
 }
-
-const SYNTHETIC_INVENTORY_PATTERN =
-  /(?:^|[^a-z])(demo|example|fake|mock|placeholder|seed|synthetic|test)(?:[^a-z]|$)/i
 
 function generationConflict(message: string): never {
   throw new SiteForgePlanError(message, 409)
@@ -426,7 +424,9 @@ export async function loadApprovedSiteForgeGenerationContext(
   if (inventoryError) {
     generationConflict(`Failed to load approved inventory evidence: ${inventoryError.message}`)
   }
-  const inventory = inventoryRows || []
+  const inventory = (inventoryRows || []).filter(
+    row => !isSyntheticInventorySource(row),
+  )
   if (inventoryRequired && inventory.length === 0) {
     generationConflict('Confirmed plan requires approved floor-plan inventory')
   }
@@ -435,10 +435,8 @@ export async function loadApprovedSiteForgeGenerationContext(
   if (
     inventoryRequired &&
     inventory.some((row, index) => {
-      const sourceIdentity = `${row.source} ${row.source_identity}`
       const timestamp = inventoryTimestamps[index]
       return (
-        SYNTHETIC_INVENTORY_PATTERN.test(sourceIdentity) ||
         !timestamp ||
         now.getTime() - new Date(timestamp).getTime() > freshnessMs ||
         Boolean(row.expires_at && new Date(row.expires_at) <= now) ||
@@ -451,7 +449,7 @@ export async function loadApprovedSiteForgeGenerationContext(
     })
   ) {
     generationConflict(
-      'Approved floor-plan inventory is stale, synthetic, expired, or incomplete'
+      'Approved floor-plan inventory is stale, expired, or incomplete'
     )
   }
   const latestSourceUpdatedAt = inventoryTimestamps
@@ -803,36 +801,33 @@ export async function createPlanRevision(
       409,
     )
   }
-  const [
-    { count: activeFloorPlanCount, error: floorPlanCountError },
-    { data: latestFloorPlan, error: latestFloorPlanError },
-  ] = await Promise.all([
-    supabase
-      .from('property_units')
-      .select('id', { count: 'exact', head: true })
-      .eq('property_id', property.id)
-      .eq('active', true)
-      .eq('review_status', 'approved'),
-    supabase
-      .from('property_units')
-      .select('source_updated_at, effective_at, imported_at')
-      .eq('property_id', property.id)
-      .eq('active', true)
-      .eq('review_status', 'approved')
-      .order('source_updated_at', { ascending: false, nullsFirst: false })
-      .limit(1)
-      .maybeSingle(),
-  ])
-  if (floorPlanCountError || latestFloorPlanError) {
+  const { data: reviewedFloorPlans, error: floorPlanError } = await supabase
+    .from('property_units')
+    .select(
+      'source, source_identity, source_updated_at, effective_at, imported_at',
+    )
+    .eq('property_id', property.id)
+    .eq('active', true)
+    .eq('review_status', 'approved')
+  if (floorPlanError) {
     throw new SiteForgePlanError('Failed to evaluate floor-plan readiness', 503)
   }
+  const publishableFloorPlans = (reviewedFloorPlans || []).filter(
+    floorPlan => !isSyntheticInventorySource(floorPlan),
+  )
+  const latestFloorPlanTimestamp = publishableFloorPlans
+    .flatMap(floorPlan => {
+      const timestamp =
+        floorPlan.source_updated_at ||
+        floorPlan.effective_at ||
+        floorPlan.imported_at
+      return timestamp ? [timestamp] : []
+    })
+    .sort()
+    .at(-1) || null
   const readiness = buildReadinessReport(plan, pinnedBrandContext, {
-    activeCount: activeFloorPlanCount || 0,
-    latestUpdatedAt:
-      latestFloorPlan?.source_updated_at ||
-      latestFloorPlan?.effective_at ||
-      latestFloorPlan?.imported_at ||
-      null,
+    activeCount: publishableFloorPlans.length,
+    latestUpdatedAt: latestFloorPlanTimestamp,
   })
   const contentHash = hashSiteForgeContent(plan)
   const now = new Date().toISOString()
