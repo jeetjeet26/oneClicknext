@@ -742,7 +742,7 @@ export function ConversationalGenerationWizard({
   return (
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent
-        className={`flex w-[calc(100vw-1rem)] max-w-4xl flex-col gap-0 overflow-hidden p-0 ${
+        className={`flex w-[calc(100vw-1rem)] max-w-4xl flex-col gap-0 overflow-clip p-0 ${
           phase === 'assets'
             ? 'h-auto max-h-[calc(100dvh-1rem)] sm:max-h-[min(90dvh,900px)]'
             : 'h-[calc(100dvh-1rem)] sm:h-[min(90dvh,900px)]'
