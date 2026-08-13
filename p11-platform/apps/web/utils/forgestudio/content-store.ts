@@ -175,6 +175,7 @@ async function insertRevisionWithVariants(input: {
       revision_id: revisionRow.id,
       org_id: input.orgId,
       property_id: input.propertyId,
+      variant_key: `${variant.platform}:${variant.contentFormat}:1`,
       platform: variant.platform,
       caption: variant.caption,
       hashtags: variant.hashtags,
