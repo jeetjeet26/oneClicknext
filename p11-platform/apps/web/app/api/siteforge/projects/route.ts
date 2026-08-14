@@ -11,6 +11,7 @@ import {
 const projectRequestSchema = z
   .object({
     propertyId: z.guid(),
+    mode: z.enum(['new', 'resume']).default('resume'),
   })
   .strict()
 
@@ -51,6 +52,7 @@ export async function POST(request: NextRequest) {
     const result = await createOrReuseSiteForgeProject({
       orgId: access.orgId,
       propertyId: parsed.data.propertyId,
+      mode: parsed.data.mode,
     })
     ctx.logSuccess(result.reused ? 200 : 201, {
       websiteId: result.project.websiteId,

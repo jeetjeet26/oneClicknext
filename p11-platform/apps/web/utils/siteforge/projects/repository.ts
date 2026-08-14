@@ -83,7 +83,11 @@ async function findReusableProject(
 }
 
 export async function createOrReuseSiteForgeProject(
-  input: { orgId: string; propertyId: string },
+  input: {
+    orgId: string
+    propertyId: string
+    mode?: 'new' | 'resume'
+  },
   client: ServiceClient = createServiceClient()
 ): Promise<{ project: SiteForgeProjectShell; reused: boolean }> {
   const { data: property, error: propertyError } = await client
@@ -103,9 +107,11 @@ export async function createOrReuseSiteForgeProject(
     throw new SiteForgeProjectError('Property not found', 404)
   }
 
-  const reusable = await findReusableProject(input, client)
-  if (reusable) {
-    return { project: presentProject(reusable), reused: true }
+  if (input.mode !== 'new') {
+    const reusable = await findReusableProject(input, client)
+    if (reusable) {
+      return { project: presentProject(reusable), reused: true }
+    }
   }
 
   const { data: latest, error: latestError } = await client
@@ -131,7 +137,7 @@ export async function createOrReuseSiteForgeProject(
       version: (latest?.version || 0) + 1,
       generation_status: 'queued',
       generation_progress: 0,
-      current_step: 'Planning project',
+      current_step: 'Guided discovery',
     })
     .select(
       'id, org_id, property_id, generation_status, generation_progress, current_step, version, created_at'

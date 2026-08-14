@@ -2549,6 +2549,23 @@ test.describe('local smoke flows', () => {
     }
   })
 
+  test('siteforge new website opens guided conversation without the legacy asset modal', async ({
+    page,
+  }) => {
+    await login(page)
+    await page.goto('/dashboard/siteforge')
+    await page.getByRole('button', { name: 'Start New Website' }).click()
+
+    await expect(page).toHaveURL(/\/dashboard\/siteforge\/[0-9a-f-]+$/i)
+    await expect(
+      page.getByRole('heading', { name: 'Build your property website' })
+    ).toBeVisible()
+    await expect(page.getByText('Conversation', { exact: true }).first()).toBeVisible()
+    await expect(
+      page.getByRole('heading', { name: /Add Property Assets/i })
+    ).toHaveCount(0)
+  })
+
   test('siteforge guided shell remains readable in light and dark themes', async ({
     page,
   }) => {

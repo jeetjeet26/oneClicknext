@@ -81,6 +81,24 @@ describe('/api/siteforge/projects', () => {
     expect(createOrReuseProject).toHaveBeenCalledWith({
       orgId: ORG_ID,
       propertyId: PROPERTY_ID,
+      mode: 'resume',
+    })
+  })
+
+  it('passes an explicit new-project intent without reusing an abandoned shell', async () => {
+    const { POST } = await import('./route')
+    const response = await POST(
+      new Request('http://localhost/api/siteforge/projects', {
+        method: 'POST',
+        body: JSON.stringify({ propertyId: PROPERTY_ID, mode: 'new' }),
+      }) as NextRequest
+    )
+
+    expect(response.status).toBe(201)
+    expect(createOrReuseProject).toHaveBeenCalledWith({
+      orgId: ORG_ID,
+      propertyId: PROPERTY_ID,
+      mode: 'new',
     })
   })
 

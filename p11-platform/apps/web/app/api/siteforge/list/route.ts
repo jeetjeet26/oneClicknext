@@ -25,6 +25,10 @@ function transformWebsite(website: Record<string, unknown>) {
     pagesGenerated: website.pages_generated,
     assetsManifest: website.assets_manifest,
     generationStartedAt: website.generation_started_at,
+    isPlanning:
+      website.generation_status === 'queued' &&
+      !website.generation_started_at &&
+      !website.generation_input,
     generationCompletedAt: website.generation_completed_at,
     generationDurationSeconds: website.generation_duration_seconds,
     pageViews: website.page_views,

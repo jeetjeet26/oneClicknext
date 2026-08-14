@@ -94,7 +94,37 @@ describe('SiteForge project shell repository', () => {
       version: 5,
       generation_status: 'queued',
       generation_progress: 0,
-      current_step: 'Planning project',
+      current_step: 'Guided discovery',
     })
+  })
+
+  it('creates a distinct shell for explicit new-project intent', async () => {
+    const inserted = vi.fn()
+    const client = {
+      from: vi
+        .fn()
+        .mockReturnValueOnce(
+          query({
+            data: { id: PROPERTY_ID, org_id: ORG_ID },
+            error: null,
+          })
+        )
+        .mockReturnValueOnce(query({ data: { version: 4 }, error: null }))
+        .mockReturnValueOnce(query({ data: shellRow, error: null }, inserted)),
+    }
+
+    const result = await createOrReuseSiteForgeProject(
+      { orgId: ORG_ID, propertyId: PROPERTY_ID, mode: 'new' },
+      client as never
+    )
+
+    expect(result.reused).toBe(false)
+    expect(client.from).toHaveBeenCalledTimes(3)
+    expect(inserted).toHaveBeenCalledWith(
+      expect.objectContaining({
+        version: 5,
+        current_step: 'Guided discovery',
+      })
+    )
   })
 })

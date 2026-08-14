@@ -7,7 +7,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { usePropertyContext } from '@/components/layout/PropertyContext'
-import { ConversationalGenerationWizard } from '@/components/siteforge'
 import {
   Globe,
   Plus,
@@ -35,6 +34,7 @@ interface Website {
   version: number
   createdAt: string
   generationCompletedAt: string | null
+  isPlanning: boolean
 }
 
 export default function SiteForgePage() {
@@ -43,7 +43,7 @@ export default function SiteForgePage() {
   const [websites, setWebsites] = useState<Website[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [showGenerationWizard, setShowGenerationWizard] = useState(false)
+  const [creatingProject, setCreatingProject] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
 
   const fetchWebsites = useCallback(async () => {
@@ -87,6 +87,34 @@ export default function SiteForgePage() {
     }
   }, [currentProperty?.id, propertyLoading])
 
+  const startNewWebsite = useCallback(async () => {
+    if (!currentProperty?.id || creatingProject) return
+    setCreatingProject(true)
+    setError(null)
+    try {
+      const response = await fetch('/api/siteforge/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          propertyId: currentProperty.id,
+          mode: 'new',
+        }),
+      })
+      const body = await response.json().catch(() => ({}))
+      if (!response.ok || !body.project?.websiteId) {
+        throw new Error(body.error || 'Could not start a new SiteForge website')
+      }
+      router.push(`/dashboard/siteforge/${body.project.websiteId}`)
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : 'Could not start a new SiteForge website'
+      )
+      setCreatingProject(false)
+    }
+  }, [creatingProject, currentProperty?.id, router])
+
   useEffect(() => {
     fetchWebsites()
   }, [fetchWebsites, refreshKey])
@@ -97,16 +125,17 @@ export default function SiteForgePage() {
       'regeneratePropertyId'
     )
     if (requestedPropertyId === currentProperty.id) {
-      setShowGenerationWizard(true)
       router.replace('/dashboard/siteforge', { scroll: false })
+      void startNewWebsite()
     }
-  }, [currentProperty?.id, propertyLoading, router])
+  }, [currentProperty?.id, propertyLoading, router, startNewWebsite])
 
   const handleRefresh = () => {
     setRefreshKey(prev => prev + 1)
   }
 
-  const getStatusIcon = (status: string) => {
+  const getStatusIcon = (status: string, isPlanning = false) => {
+    if (isPlanning) return <Sparkles className="w-5 h-5 text-indigo-500" />
     switch (status) {
       case 'complete':
         return <CheckCircle className="w-5 h-5 text-emerald-500" />
@@ -127,7 +156,8 @@ export default function SiteForgePage() {
     }
   }
 
-  const getStatusLabel = (status: string) => {
+  const getStatusLabel = (status: string, isPlanning = false) => {
+    if (isPlanning) return 'Planning'
     const labels: Record<string, string> = {
       queued: 'Queued',
       analyzing_brand: 'Analyzing Brand',
@@ -199,7 +229,7 @@ export default function SiteForgePage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
             <Globe className="w-7 h-7 text-indigo-500" />
-            <span className="text-gray-900 dark:text-gray-900">SiteForge</span>
+            <span>SiteForge</span>
           </h1>
           <p className="text-gray-700 dark:text-gray-300 mt-1">
             AI-powered WordPress website generation
@@ -215,12 +245,16 @@ export default function SiteForgePage() {
             Refresh
           </button>
           <button
-            onClick={() => setShowGenerationWizard(true)}
-            disabled={!currentProperty || propertyLoading}
+            onClick={() => void startNewWebsite()}
+            disabled={!currentProperty || propertyLoading || creatingProject}
             className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <Plus className="w-4 h-4" />
-            Generate Website
+            {creatingProject ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Plus className="w-4 h-4" />
+            )}
+            Start New Website
           </button>
         </div>
       </div>
@@ -271,11 +305,16 @@ export default function SiteForgePage() {
             Generate your first AI-powered WordPress website in just 3 minutes.
           </p>
           <button
-            onClick={() => setShowGenerationWizard(true)}
-            className="inline-flex items-center gap-2 px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors font-medium"
+            onClick={() => void startNewWebsite()}
+            disabled={creatingProject}
+            className="inline-flex items-center gap-2 px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors font-medium disabled:opacity-50"
           >
-            <Sparkles size={18} />
-            Generate Your First Website
+            {creatingProject ? (
+              <Loader2 size={18} className="animate-spin" />
+            ) : (
+              <Sparkles size={18} />
+            )}
+            Start Your First Website
           </button>
         </div>
       )}
@@ -303,8 +342,8 @@ export default function SiteForgePage() {
                       {getWebsiteTitle(website, index)}
                     </h3>
                     <span className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border ${getStatusBadgeStyle(website.generationStatus)}`}>
-                      {getStatusIcon(website.generationStatus)}
-                      {getStatusLabel(website.generationStatus)}
+                      {getStatusIcon(website.generationStatus, website.isPlanning)}
+                      {getStatusLabel(website.generationStatus, website.isPlanning)}
                     </span>
                   </div>
                   {website.brandSource && (
@@ -315,9 +354,10 @@ export default function SiteForgePage() {
                 </div>
 
                 {/* Progress Bar (for generating) */}
-                {!['complete', 'failed', 'deploy_failed', 'ready_for_preview'].includes(
-                  website.generationStatus
-                ) && (
+                {!website.isPlanning &&
+                  !['complete', 'failed', 'deploy_failed', 'ready_for_preview'].includes(
+                    website.generationStatus
+                  ) && (
                   <div className="mb-4">
                     <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
                       <span>{website.currentStep ? getStatusLabel(website.currentStep) : 'Processing...'}</span>
@@ -418,7 +458,7 @@ export default function SiteForgePage() {
                     className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm font-medium"
                   >
                     <Eye size={14} />
-                    View Details
+                    Resume
                   </button>
                   {website.wpUrl && website.generationStatus === 'complete' && (
                     <button
@@ -434,16 +474,6 @@ export default function SiteForgePage() {
             </div>
           ))}
         </div>
-      )}
-
-      {/* Generation Wizard Modal */}
-      {showGenerationWizard && currentProperty && (
-        <ConversationalGenerationWizard
-          propertyId={currentProperty.id}
-          propertyName={currentProperty.name}
-          open={showGenerationWizard}
-          onClose={() => setShowGenerationWizard(false)}
-        />
       )}
     </div>
   )

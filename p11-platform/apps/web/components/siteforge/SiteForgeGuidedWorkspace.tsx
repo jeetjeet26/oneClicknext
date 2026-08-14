@@ -40,7 +40,6 @@ import type {
   ScoredDirection,
 } from "@/utils/siteforge/guided/journey";
 import { PropertyAssetsStep } from "./PropertyAssetsStep";
-import { SiteForgeDirector } from "./SiteForgeDirector";
 import { SiteForgeCreativeDirectionOverview } from "./SiteForgeCreativeDirectionOverview";
 import {
   buildGuidedJourney,
@@ -606,6 +605,7 @@ export function SiteForgeGuidedWorkspace({
               <button
                 type="button"
                 onClick={() => setActiveStep(item.id)}
+                disabled={item.state === "upcoming"}
                 className={`h-full w-full rounded-xl border p-3 text-left ${
                   activeStep === item.id
                     ? "border-primary bg-accent text-accent-foreground"
@@ -614,7 +614,7 @@ export function SiteForgeGuidedWorkspace({
                       : item.state === "needs_attention"
                         ? "border-destructive/50 bg-destructive/10"
                         : "bg-background"
-                }`}
+                } disabled:cursor-not-allowed disabled:opacity-60`}
                 aria-current={item.id === activeStep ? "step" : undefined}
               >
                 <span className="mb-2 flex h-7 w-7 items-center justify-center rounded-full bg-muted text-xs font-semibold">
@@ -938,13 +938,54 @@ export function SiteForgeGuidedWorkspace({
         </summary>
         <div className="border-t p-4 sm:p-6">
           <p className="mb-5 text-sm text-muted-foreground">
-            Inspect plan, artifact, job, delivery, ownership, and recovery
-            details.
+            Read-only support information for the current guided journey.
           </p>
-          <SiteForgeDirector websiteId={websiteId} initialSnapshot={director} />
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <DiagnosticValue
+              label="Journey stage"
+              value={director?.stage.label || "Loading"}
+            />
+            <DiagnosticValue
+              label="Status"
+              value={director?.stage.status || "unknown"}
+            />
+            <DiagnosticValue
+              label="Build progress"
+              value={`${progressPercent(director)}%`}
+            />
+            <DiagnosticValue
+              label="Artifact"
+              value={
+                director?.artifact.current.version
+                  ? `Revision ${director.artifact.current.version}`
+                  : "Not created"
+              }
+            />
+          </div>
+          {director?.blockers.length ? (
+            <div className="mt-4 rounded-lg border border-warning/40 bg-warning/10 p-4">
+              <p className="text-sm font-semibold">Needs attention</p>
+              <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+                {director.blockers.map(blocker => (
+                  <li key={`${blocker.code}-${blocker.entityId || ""}`}>
+                    {blocker.message}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
         </div>
       </details>
     </main>
+  );
+}
+
+function DiagnosticValue({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border bg-background p-3">
+      <p className="text-xs font-medium text-muted-foreground">{label}</p>
+      <p className="mt-1 text-sm font-semibold capitalize">{value}</p>
+    </div>
   );
 }
 
