@@ -19,6 +19,19 @@ export function classifySiteForgeGenerationFailure(
   failedCheckpoint: string
 ): SiteForgeGenerationFailure {
   const message = workflowErrorMessage(error)
+  if (
+    /outside the approved rights-cleared asset manifest/i.test(message) &&
+    /logo-(?:primary|variation)-\d+/i.test(message)
+  ) {
+    return {
+      code: 'legacy_logo_identity_failure',
+      retryable: true,
+      failedCheckpoint,
+      message,
+      safeMessage:
+        'The previous build used outdated logo references. SiteForge has repaired that path and the build can now be restarted.',
+    }
+  }
   const deterministicAssetMismatch =
     /outside the approved rights-cleared asset manifest|approved evidence snapshot|pinned .* (?:hash|context)|does not match the confirmed plan/i.test(
       message

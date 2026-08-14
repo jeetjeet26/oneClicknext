@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database, Json } from '@/types/supabase'
 import { createServiceClient } from '@/utils/supabase/admin'
+import { classifySiteForgeGenerationFailure } from '@/utils/siteforge/workflows/generation-failure'
 import { buildSiteForgeDirectorCommands } from './command-registry'
 import type {
   SiteForgeArtifactIdentity,
@@ -246,6 +247,34 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {}
 }
 
+function projectedJobFailure(job: JobSource) {
+  const details = asRecord(job.error_details)
+  if (
+    typeof details.code === 'string' &&
+    typeof details.safeMessage === 'string'
+  ) {
+    return {
+      code: details.code,
+      safeMessage: details.safeMessage,
+      failedCheckpoint:
+        typeof details.failedCheckpoint === 'string'
+          ? details.failedCheckpoint
+          : null,
+      retryable: details.retryable === true,
+    }
+  }
+  const classified = classifySiteForgeGenerationFailure(
+    job.error_message || `${job.domain} failed`,
+    job.current_step || job.stage
+  )
+  return {
+    code: classified.code,
+    safeMessage: classified.safeMessage,
+    failedCheckpoint: classified.failedCheckpoint,
+    retryable: classified.retryable,
+  }
+}
+
 function currentIdentity(
   artifact: ArtifactSource | null
 ): SiteForgeArtifactIdentity {
@@ -405,11 +434,12 @@ function deriveBlockers(
     if (latestJobDomains.has(job.domain)) continue
     latestJobDomains.add(job.domain)
     if (job.lifecycle_status === 'failed') {
+      const failure = projectedJobFailure(job)
       blockers.push({
         code: `job_failed:${job.domain}`,
         severity: 'blocker',
         source: 'job',
-        message: job.error_message || `${job.domain} failed.`,
+        message: failure.safeMessage,
         entityId: job.id,
       })
     }
@@ -621,7 +651,8 @@ export function deriveSiteForgeDirectorSnapshot(
   const { website, artifact, release } = source
   const blockers = deriveBlockers(source, now)
   const jobs: SiteForgeDirectorJob[] = source.jobs.map(job => {
-    const details = asRecord(job.error_details)
+    const failure =
+      job.lifecycle_status === 'failed' ? projectedJobFailure(job) : null
     return {
       id: job.id,
       domain: job.domain,
@@ -635,16 +666,10 @@ export function deriveSiteForgeDirectorSnapshot(
       cancelRequested: job.cancel_requested,
       retryAt: job.retry_at,
       errorMessage: job.error_message,
-      failureCode: typeof details.code === 'string' ? details.code : null,
-      failureReason:
-        typeof details.safeMessage === 'string'
-          ? details.safeMessage
-          : job.error_message,
-      failedCheckpoint:
-        typeof details.failedCheckpoint === 'string'
-          ? details.failedCheckpoint
-          : null,
-      retryable: details.retryable === true,
+      failureCode: failure?.code || null,
+      failureReason: failure?.safeMessage || null,
+      failedCheckpoint: failure?.failedCheckpoint || null,
+      retryable: failure?.retryable === true,
       createdAt: job.created_at,
       updatedAt: job.updated_at,
     }

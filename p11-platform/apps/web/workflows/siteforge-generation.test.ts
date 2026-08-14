@@ -3,6 +3,21 @@ import { FatalError } from 'workflow'
 import { classifySiteForgeGenerationFailure } from '@/utils/siteforge/workflows/generation-failure'
 
 describe('SiteForge generation failure classification', () => {
+  it('allows legacy temporary logo identities to restart after repair', () => {
+    expect(
+      classifySiteForgeGenerationFailure(
+        new Error(
+          'Photo output is outside the approved rights-cleared asset manifest: logo-primary-1786659527450, logo-variation-1786659527450-0'
+        ),
+        'executing_photos'
+      )
+    ).toMatchObject({
+      code: 'legacy_logo_identity_failure',
+      retryable: true,
+      safeMessage: expect.stringContaining('outdated logo references'),
+    })
+  })
+
   it('marks deterministic evidence mismatch as nonretryable', () => {
     expect(
       classifySiteForgeGenerationFailure(

@@ -2549,6 +2549,70 @@ test.describe('local smoke flows', () => {
     }
   })
 
+  test('siteforge guided shell remains readable in light and dark themes', async ({
+    page,
+  }) => {
+    await login(page)
+    const propertyId = await resolvePropertyIdForSmoke(page)
+    const projectResponse = await callAuthedApi(page, '/api/siteforge/projects', {
+      method: 'POST',
+      body: { propertyId },
+    })
+    expectApiOk(projectResponse, 'SiteForge project shell')
+    const websiteId = (
+      projectResponse.data as { project?: { websiteId?: string } }
+    ).project?.websiteId
+    expect(websiteId).toBeTruthy()
+
+    for (const theme of ['light', 'dark'] as const) {
+      await page.goto(`/dashboard/siteforge/${websiteId}`)
+      await page.evaluate(value => localStorage.setItem('theme', value), theme)
+      await page.reload()
+      await expect(
+        page.getByRole('heading', { name: 'Build your property website' })
+      ).toBeVisible()
+      const evidence = await page.evaluate(() => {
+        const channels = (value: string) =>
+          (value.match(/\d+(?:\.\d+)?/g) || []).slice(0, 3).map(Number)
+        const luminance = (rgb: number[]) => {
+          const values = rgb.map(value => {
+            const channel = value / 255
+            return channel <= 0.04045
+              ? channel / 12.92
+              : Math.pow((channel + 0.055) / 1.055, 2.4)
+          })
+          return 0.2126 * values[0]! + 0.7152 * values[1]! + 0.0722 * values[2]!
+        }
+        const main = document.querySelector('main') || document.body
+        const style = getComputedStyle(main)
+        let backgroundNode: Element | null = main
+        let backgroundColor = style.backgroundColor
+        while (
+          backgroundNode.parentElement &&
+          (backgroundColor === 'transparent' ||
+            /rgba\([^)]*,\s*0\s*\)$/.test(backgroundColor))
+        ) {
+          backgroundNode = backgroundNode.parentElement
+          backgroundColor = getComputedStyle(backgroundNode).backgroundColor
+        }
+        const foreground = luminance(channels(style.color))
+        const background = luminance(channels(backgroundColor))
+        return {
+          light: document.documentElement.classList.contains('light'),
+          dark: document.documentElement.classList.contains('dark'),
+          contrast:
+            (Math.max(foreground, background) + 0.05) /
+            (Math.min(foreground, background) + 0.05),
+        }
+      })
+      expect(evidence).toMatchObject({
+        [theme]: true,
+        [theme === 'light' ? 'dark' : 'light']: false,
+      })
+      expect(evidence.contrast).toBeGreaterThanOrEqual(4.5)
+    }
+  })
+
   test('siteforge default local lifecycle preserves exact artifact gates through launch and rollback', async ({
     page,
   }) => {

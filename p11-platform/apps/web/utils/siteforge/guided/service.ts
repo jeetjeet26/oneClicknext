@@ -31,6 +31,7 @@ import {
 import { normalizeBrandAssetRow } from "@/utils/brandforge/normalize";
 import { brandContextFromContract } from "@/utils/siteforge/brand-contract-adapter";
 import { hashSiteForgeContent } from "@/utils/siteforge/content-hash";
+import { classifySiteForgeGenerationFailure } from "@/utils/siteforge/workflows/generation-failure";
 import {
   guidedJourneyStateSchema,
   type GuidedAttachment,
@@ -430,6 +431,14 @@ export function createSiteForgeGuidedService(
       orgId: website.org_id,
     });
     const failure = record(latestGeneration?.error_details);
+    const legacyFailure =
+      latestGeneration?.lifecycle_status === "failed" &&
+      typeof failure.safeMessage !== "string"
+        ? classifySiteForgeGenerationFailure(
+            latestGeneration.error_message || "SiteForge generation failed",
+            "Generation failed",
+          )
+        : null;
     const question = nextGuidedQuestion(state.answers);
     const preparedDirections = state.prepared
       ? await deps.getDirections(
@@ -462,12 +471,13 @@ export function createSiteForgeGuidedService(
         generationFailureReason:
           typeof failure.safeMessage === "string"
             ? failure.safeMessage
-            : latestGeneration?.error_message,
-        generationRetryable: failure.retryable === true,
+            : legacyFailure?.safeMessage,
+        generationRetryable:
+          failure.retryable === true || legacyFailure?.retryable === true,
         failedCheckpoint:
           typeof failure.failedCheckpoint === "string"
             ? failure.failedCheckpoint
-            : null,
+            : legacyFailure?.failedCheckpoint || null,
         previewUrl: website.canonical_preview_url || website.staging_url,
         productionUrl: website.production_url,
       }),
