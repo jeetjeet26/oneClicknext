@@ -17,6 +17,7 @@ import {
 import type { SiteForgeBrief } from '@/utils/siteforge/briefs/contracts'
 import type { SiteForgePlan } from '@/utils/siteforge/contracts'
 import { generateDeterministicCreativeDirections } from '@/utils/siteforge/directions/generator'
+import { normalizeBrandForgeContract } from '@/utils/brandforge/normalize'
 import {
   assertRegisteredSiteForgeArchitecture,
   composeApprovedSiteForgeArchitecture,
@@ -79,7 +80,26 @@ const sources = {
 
 const directions = generateDeterministicCreativeDirections({
   brief,
-  brand: {},
+  brand: normalizeBrandForgeContract(
+    {
+      typography: {
+        roles: [
+          { role: 'headline', family: 'Fraunces', weights: [600], usage: 'Headings' },
+          { role: 'body', family: 'Inter', weights: [400], usage: 'Body' },
+        ],
+      },
+      colors: {
+        roles: [
+          { role: 'primary', name: 'Ink', hex: '#24324A', usage: 'Primary' },
+          { role: 'secondary', name: 'Sage', hex: '#6F7C65', usage: 'Secondary' },
+          { role: 'accent', name: 'Clay', hex: '#D68B5B', usage: 'Accent' },
+          { role: 'background', name: 'Paper', hex: '#F7F4EE', usage: 'Background' },
+          { role: 'text', name: 'Dark ink', hex: '#172033', usage: 'Text' },
+        ],
+      },
+    },
+    { origin: 'generated', approvalStatus: 'approved' }
+  ),
   sources,
 })
 

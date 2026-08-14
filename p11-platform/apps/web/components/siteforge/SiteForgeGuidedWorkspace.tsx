@@ -31,6 +31,7 @@ import type {
 } from "@/utils/siteforge/director/contracts";
 import type {
   GuidedAttachment,
+  GuidedCreativeDirectionOverview,
   GuidedJourneyState,
   GuidedQuestion,
 } from "@/utils/siteforge/guided/contracts";
@@ -40,6 +41,7 @@ import type {
 } from "@/utils/siteforge/guided/journey";
 import { PropertyAssetsStep } from "./PropertyAssetsStep";
 import { SiteForgeDirector } from "./SiteForgeDirector";
+import { SiteForgeCreativeDirectionOverview } from "./SiteForgeCreativeDirectionOverview";
 import {
   buildGuidedJourney,
   buildPreparedRecommendation,
@@ -49,6 +51,7 @@ import {
   plainSiteForgeProgress,
   type SiteForgeGuidedConfirmResponse,
   type SiteForgeGuidedConversationResponse,
+  type SiteForgeGuidedDirectionEditResponse,
   type SiteForgeGuidedPrepareResponse,
   type SiteForgeGuidedSnapshotResponse,
   type SiteForgeGuidedStepId,
@@ -92,7 +95,9 @@ function isActiveJob(snapshot: SiteForgeDirectorSnapshot | null) {
 
 function progressPercent(snapshot: SiteForgeDirectorSnapshot | null) {
   if (snapshot?.artifact.current.artifactId) return 100;
-  const value = snapshot?.jobs[0]?.progress || 0;
+  const value =
+    snapshot?.jobs.find((job) => job.domain === "siteforge.generation")
+      ?.progress || 0;
   return Math.min(100, Math.max(0, Math.round(value)));
 }
 
@@ -110,6 +115,8 @@ export function SiteForgeGuidedWorkspace({
   );
   const [state, setState] = useState<GuidedJourneyState | null>(null);
   const [question, setQuestion] = useState<GuidedQuestion | null>(null);
+  const [creativeDirection, setCreativeDirection] =
+    useState<GuidedCreativeDirectionOverview | null>(null);
   const [projection, setProjection] = useState<GuidedJourneyProjection | null>(
     null,
   );
@@ -146,6 +153,7 @@ export function SiteForgeGuidedWorkspace({
     (payload: SiteForgeGuidedSnapshotResponse, navigate = true) => {
       setState(payload.state);
       setQuestion(payload.question);
+      setCreativeDirection(payload.creativeDirection);
       setProjection(payload.journey);
       if (navigate) setActiveStep(inferGuidedStep(null, payload.journey));
     },
@@ -439,6 +447,68 @@ export function SiteForgeGuidedWorkspace({
     }
   }
 
+  async function editCreativeDirection(
+    instruction?: string,
+    alternativeDirectionId?: string,
+  ) {
+    if (!state?.prepared || !creativeDirection || busy) return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(
+        `/api/siteforge/guided/${websiteId}/direction`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            clientRequestId: crypto.randomUUID(),
+            ...(instruction ? { instruction } : {}),
+            ...(alternativeDirectionId ? { alternativeDirectionId } : {}),
+            expectedRevision: state.revision,
+            expected: {
+              directionSetContentHash:
+                creativeDirection.directionSetContentHash,
+              selectedDirectionContentHash:
+                creativeDirection.selected.contentHash,
+            },
+          }),
+        },
+      );
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(
+          friendlySiteForgeError(
+            body,
+            "SiteForge could not edit that direction. Nothing changed.",
+          ),
+        );
+      }
+      const payload = body as SiteForgeGuidedDirectionEditResponse;
+      applyPayload(payload, false);
+      setNotice(
+        payload.editOutcome?.outcome === "clarification"
+          ? payload.editOutcome.question ||
+              "SiteForge needs one more detail before changing the direction."
+          : payload.editOutcome?.outcome === "rejection"
+            ? payload.editOutcome.reason ||
+              "That change conflicts with the pinned property or brand truth."
+            : payload.duplicate
+              ? "That edit was already applied."
+              : "A new immutable creative direction version is ready.",
+      );
+    } catch (cause) {
+      setError(
+        friendlySiteForgeError(
+          cause instanceof Error ? cause.message : cause,
+          "SiteForge could not edit that direction. Nothing changed.",
+        ),
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function retryBuild(command: SiteForgeDirectorCommand) {
     setBusy(true);
     setError("");
@@ -454,7 +524,9 @@ export function SiteForgeGuidedWorkspace({
           friendlySiteForgeError(body, "The build could not restart."),
         );
       }
-      setNotice("The build restarted from its last safe checkpoint.");
+      setNotice(
+        "A new attempt started with the same approved inputs. Nothing was published.",
+      );
       await refreshAll();
     } catch (cause) {
       setError(
@@ -465,8 +537,14 @@ export function SiteForgeGuidedWorkspace({
     }
   }
 
+  const latestGenerationJob = director?.jobs.find(
+    (job) => job.domain === "siteforge.generation",
+  );
   const retryCommand = director?.commands.find(
-    (command) => command.type === "retry_job" && command.available,
+    (command) =>
+      command.type === "retry_job" &&
+      command.available &&
+      command.target.path.includes(latestGenerationJob?.id || "/missing/"),
   );
   const hasArtifact = Boolean(director?.artifact.current.artifactId);
 
@@ -492,8 +570,7 @@ export function SiteForgeGuidedWorkspace({
             </Badge>
             <Button
               size="sm"
-              variant="outline"
-              className="border-white/30 bg-transparent text-white hover:bg-white/10"
+              variant="inverted"
               onClick={() => void refreshAll()}
               disabled={refreshing}
             >
@@ -515,14 +592,14 @@ export function SiteForgeGuidedWorkspace({
                 onClick={() => setActiveStep(item.id)}
                 className={`h-full w-full rounded-xl border p-3 text-left ${
                   activeStep === item.id
-                    ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-950/30"
+                    ? "border-primary bg-accent text-accent-foreground"
                     : item.state === "complete"
-                      ? "border-emerald-200 bg-emerald-50/70 dark:bg-emerald-950/20"
+                      ? "border-success/40 bg-success/10"
                       : item.state === "needs_attention"
-                        ? "border-red-300 bg-red-50 dark:bg-red-950/20"
+                        ? "border-destructive/50 bg-destructive/10"
                         : "bg-background"
                 }`}
-                aria-current={item.id === currentStep ? "step" : undefined}
+                aria-current={item.id === activeStep ? "step" : undefined}
               >
                 <span className="mb-2 flex h-7 w-7 items-center justify-center rounded-full bg-muted text-xs font-semibold">
                   {item.state === "complete" ? (
@@ -534,6 +611,15 @@ export function SiteForgeGuidedWorkspace({
                 <span className="block text-xs font-semibold">
                   {item.label}
                 </span>
+                <span className="mt-1 block text-[11px] text-muted-foreground">
+                  {item.id === currentStep
+                    ? "Current"
+                    : item.state === "complete"
+                      ? "Complete"
+                      : item.state === "needs_attention"
+                        ? "Needs attention"
+                        : "Not started"}
+                </span>
               </button>
             </li>
           ))}
@@ -543,7 +629,7 @@ export function SiteForgeGuidedWorkspace({
       {error ? (
         <div
           role="alert"
-          className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-900 dark:bg-red-950/30 dark:text-red-100"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/40 bg-destructive/10 p-4 text-sm text-foreground"
         >
           <span>{error}</span>
           {retryAction ? (
@@ -566,7 +652,7 @@ export function SiteForgeGuidedWorkspace({
       {notice ? (
         <div
           role="status"
-          className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100"
+          className="rounded-xl border border-success/40 bg-success/10 p-4 text-sm text-foreground"
         >
           {notice}
         </div>
@@ -653,6 +739,18 @@ export function SiteForgeGuidedWorkspace({
                   title={recommendation.headline}
                   description={recommendation.summary}
                 />
+                {creativeDirection ? (
+                  <SiteForgeCreativeDirectionOverview
+                    overview={creativeDirection}
+                    busy={busy}
+                    onEdit={instruction =>
+                      void editCreativeDirection(instruction)
+                    }
+                    onSelectAlternative={directionId =>
+                      void editCreativeDirection(undefined, directionId)
+                    }
+                  />
+                ) : null}
                 <div className="grid gap-4 lg:grid-cols-2">
                   <InfoCard
                     title="Who the site serves"
@@ -660,10 +758,6 @@ export function SiteForgeGuidedWorkspace({
                       recommendation.audience ||
                       "Prospective residents seeking practical property information."
                     }
-                  />
-                  <InfoCard
-                    title="Creative direction"
-                    detail={recommendation.visualDirection}
                   />
                   <Card>
                     <CardHeader>
@@ -687,7 +781,7 @@ export function SiteForgeGuidedWorkspace({
                     <CardContent className="space-y-2 text-sm text-muted-foreground">
                       {recommendation.priorities.map((item) => (
                         <p key={item} className="flex gap-2">
-                          <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+                          <Check className="mt-0.5 h-4 w-4 shrink-0 text-success" />
                           {item}
                         </p>
                       ))}
@@ -725,20 +819,39 @@ export function SiteForgeGuidedWorkspace({
           ) : null}
 
           {activeStep === "build" ? (
-            <EmptyStep
-              title={
-                state?.generation
-                  ? "Your build is safely underway"
-                  : "Build starts from the approved recommendation"
-              }
-              detail="The Build this site action creates a private revision and never publishes it automatically."
-              action={
-                state?.generation ? "View progress" : "Review recommendation"
-              }
-              onAction={() =>
-                setActiveStep(state?.generation ? "progress" : "recommendation")
-              }
-            />
+            projection?.blocker ? (
+              <EmptyStep
+                title={projection.headline}
+                detail={projection.explanation}
+                action={
+                  projection.retryable && retryCommand
+                    ? "Retry this build"
+                    : "Review recommendation"
+                }
+                onAction={() => {
+                  if (projection.retryable && retryCommand) {
+                    void retryBuild(retryCommand);
+                  } else {
+                    setActiveStep("recommendation");
+                  }
+                }}
+              />
+            ) : (
+              <EmptyStep
+                title={
+                  state?.generation
+                    ? "Your build is safely underway"
+                    : "Build starts from the approved recommendation"
+                }
+                detail="The Build this site action creates a private revision and never publishes it automatically."
+                action={
+                  state?.generation ? "View progress" : "Review recommendation"
+                }
+                onAction={() =>
+                  setActiveStep(state?.generation ? "progress" : "recommendation")
+                }
+              />
+            )
           ) : null}
 
           {activeStep === "progress" ? (
@@ -853,7 +966,7 @@ function ConversationStep({
       <Card>
         <CardHeader className="border-b bg-muted/20">
           <CardTitle className="flex items-center gap-2">
-            <MessageCircle className="h-5 w-5 text-indigo-600" />
+            <MessageCircle className="h-5 w-5 text-primary" />
             Property discovery
           </CardTitle>
           <CardDescription>
@@ -870,15 +983,15 @@ function ConversationStep({
               {state.turns.map((turn) => (
                 <div
                   key={turn.id}
-                  className={`max-w-[88%] rounded-2xl px-4 py-3 text-sm ${turn.role === "user" ? "ml-auto bg-indigo-600 text-white" : "bg-muted"}`}
+                  className={`max-w-[88%] rounded-2xl px-4 py-3 text-sm ${turn.role === "user" ? "ml-auto bg-primary text-primary-foreground" : "bg-muted text-foreground"}`}
                 >
                   {turn.content}
                 </div>
               ))}
             </div>
           ) : null}
-          <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-4 dark:bg-indigo-950/30">
-            <p className="text-xs font-semibold uppercase tracking-wide text-indigo-600">
+          <div className="rounded-xl border border-primary/40 bg-accent p-4 text-accent-foreground">
+            <p className="text-xs font-semibold uppercase tracking-wide text-primary">
               Current question
             </p>
             <p className="mt-2 font-medium">
@@ -919,6 +1032,8 @@ function ConversationStep({
                       type="button"
                       className="rounded-full border px-3 py-1 text-xs"
                       onClick={() => onRemoveAttachment(index)}
+                      aria-label={`Remove attachment ${attachment.name}`}
+                      title={`Remove ${attachment.name}`}
                     >
                       {attachment.name} ×
                     </button>
@@ -1015,10 +1130,12 @@ function ProgressStep({
   onRetry: () => void;
   onPreview: () => void;
 }) {
-  const latest = snapshot?.jobs[0];
+  const latest = snapshot?.jobs.find(
+    (job) => job.domain === "siteforge.generation",
+  );
   const hasArtifact = Boolean(snapshot?.artifact.current.artifactId);
   const failed =
-    latest?.lifecycleStatus === "failed" ||
+    ["failed", "cancelled"].includes(latest?.lifecycleStatus || "") ||
     snapshot?.stage.status === "blocked";
   const progress = progressPercent(snapshot);
   return (
@@ -1034,7 +1151,8 @@ function ProgressStep({
         }
         description={
           failed
-            ? "Nothing was published. Retry safely from the last completed checkpoint."
+            ? latest?.failureReason ||
+              "Nothing was published. Review the approved inputs before the next attempt."
             : "You can leave and return; durable progress resumes automatically."
         }
       />
@@ -1052,12 +1170,18 @@ function ProgressStep({
             <div
               className="h-3 overflow-hidden rounded-full bg-muted"
               role="progressbar"
+              aria-label="Website build progress"
               aria-valuemin={0}
               aria-valuemax={100}
               aria-valuenow={progress}
+              aria-valuetext={`${progress}% — ${
+                hasArtifact
+                  ? "Website ready"
+                  : plainSiteForgeProgress(latest?.stage, latest?.currentStep)
+              }`}
             >
               <div
-                className={`h-full ${failed ? "bg-red-500" : "bg-indigo-600"}`}
+                className={`h-full ${failed ? "bg-destructive" : "bg-primary"}`}
                 style={{ width: `${progress}%` }}
               />
             </div>
@@ -1096,7 +1220,7 @@ function StepHeading({
 }) {
   return (
     <div>
-      <p className="text-sm font-semibold text-indigo-600">{eyebrow}</p>
+      <p className="text-sm font-semibold text-primary">{eyebrow}</p>
       <h2 className="mt-1 text-2xl font-semibold">{title}</h2>
       <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
         {description}
@@ -1132,7 +1256,7 @@ function EmptyStep({
   return (
     <Card className="mx-auto max-w-2xl border-dashed text-center">
       <CardContent className="px-6 py-14">
-        <Sparkles className="mx-auto h-8 w-8 text-indigo-500" />
+        <Sparkles className="mx-auto h-8 w-8 text-primary" />
         <h2 className="mt-4 text-xl font-semibold">{title}</h2>
         <p className="mx-auto mt-2 max-w-lg text-sm text-muted-foreground">
           {detail}

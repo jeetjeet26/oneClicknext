@@ -1,11 +1,11 @@
 import * as React from "react"
 
-export interface CardProps extends React.HTMLAttributes<HTMLDivElement> {}
+export type CardProps = React.HTMLAttributes<HTMLDivElement>
 
 export function Card({ className = '', ...props }: CardProps) {
   return (
     <div
-      className={`rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-sm ${className}`}
+      className={`rounded-xl border border-border bg-card text-card-foreground shadow-sm ${className}`}
       {...props}
     />
   )
@@ -23,7 +23,7 @@ export function CardHeader({ className = '', ...props }: React.HTMLAttributes<HT
 export function CardTitle({ className = '', ...props }: React.HTMLAttributes<HTMLHeadingElement>) {
   return (
     <h3
-      className={`text-lg font-semibold leading-none tracking-tight text-gray-900 dark:text-white ${className}`}
+      className={`text-lg font-semibold leading-none tracking-tight text-card-foreground ${className}`}
       {...props}
     />
   )
@@ -32,7 +32,7 @@ export function CardTitle({ className = '', ...props }: React.HTMLAttributes<HTM
 export function CardDescription({ className = '', ...props }: React.HTMLAttributes<HTMLParagraphElement>) {
   return (
     <p
-      className={`text-sm text-gray-500 dark:text-gray-400 ${className}`}
+      className={`text-sm text-muted-foreground ${className}`}
       {...props}
     />
   )

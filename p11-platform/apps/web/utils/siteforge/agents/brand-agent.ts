@@ -25,8 +25,10 @@ export interface BrandTypography {
 export interface BrandLogoAssets {
   primaryUrl?: string
   primaryAssetId?: string
+  primaryContentHash?: string
   variations?: string[]
   variantAssetIds?: string[]
+  variantContentHashes?: string[]
   concept?: string
   style?: string
 }

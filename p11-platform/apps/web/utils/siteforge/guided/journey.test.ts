@@ -219,5 +219,48 @@ describe("SiteForge guided journey", () => {
       stage: "launch",
       previewUrl: "https://aurora.example",
     });
+    expect(
+      projectGuidedJourney(
+        state({
+          status: "building",
+          generation: {
+            jobId: "job-1",
+            status: "running",
+            duplicate: false,
+            startedAt: "2026-08-13T18:00:00.000Z",
+          },
+        }),
+        {
+          generationStatus: "failed",
+          generationFailureReason:
+            "A temporary provider problem interrupted the build.",
+          generationRetryable: true,
+          failedCheckpoint: "generating_content",
+        },
+      ),
+    ).toMatchObject({
+      stage: "build",
+      headline: "The build needs attention",
+      blocker: "A temporary provider problem interrupted the build.",
+      retryable: true,
+      recommendedAction: "Retry this build",
+    });
+    expect(
+      projectGuidedJourney(
+        state({
+          generation: {
+            jobId: "job-1",
+            status: "running",
+            duplicate: false,
+            startedAt: "2026-08-13T18:00:00.000Z",
+          },
+        }),
+        { generationStatus: "cancelled" },
+      ),
+    ).toMatchObject({
+      stage: "build",
+      headline: "The build was cancelled",
+      retryable: false,
+    });
   });
 });

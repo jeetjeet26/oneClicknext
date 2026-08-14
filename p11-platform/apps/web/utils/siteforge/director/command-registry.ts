@@ -59,6 +59,7 @@ export function buildSiteForgeDirectorCommands(
     job =>
       job.lifecycleStatus === 'failed' &&
       !job.cancelRequested &&
+      job.retryable &&
       job.attemptCount < job.maxAttempts
   )
   const openIncident = context.incidents.find(

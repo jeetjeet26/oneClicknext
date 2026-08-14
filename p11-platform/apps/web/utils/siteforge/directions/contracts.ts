@@ -63,11 +63,56 @@ export const siteForgeDirectionPreviewSchema = z.object({
   typographyPairing: text,
 })
 
+export const siteForgeEditableDirectionSchema =
+  siteForgeCreativeDirectionSchema.omit({ provenance: true })
+
+export const siteForgeDirectionPatchSchema = z
+  .object({
+    rationale: text.optional(),
+    typography: siteForgeEditableDirectionSchema.shape.typography.optional(),
+    palette: siteForgeEditableDirectionSchema.shape.palette.optional(),
+    hero: siteForgeEditableDirectionSchema.shape.hero.optional(),
+    layout: siteForgeEditableDirectionSchema.shape.layout.optional(),
+    imagery: siteForgeEditableDirectionSchema.shape.imagery.optional(),
+    cta: siteForgeEditableDirectionSchema.shape.cta.optional(),
+    voice: siteForgeEditableDirectionSchema.shape.voice.optional(),
+    tradeoffs: siteForgeEditableDirectionSchema.shape.tradeoffs.optional(),
+  })
+  .strict()
+  .refine(value => Object.keys(value).length > 0, {
+    message: 'At least one creative direction field must change',
+  })
+
+export const siteForgeDirectionEditOutcomeSchema = z.discriminatedUnion(
+  'outcome',
+  [
+    z.object({
+      outcome: z.literal('patch'),
+      summary: text.max(500),
+      patch: siteForgeDirectionPatchSchema,
+    }),
+    z.object({
+      outcome: z.literal('clarification'),
+      question: text.max(500),
+    }),
+    z.object({
+      outcome: z.literal('rejection'),
+      reason: text.max(500),
+    }),
+  ]
+)
+
 export type SiteForgeCreativeDirection = z.infer<
   typeof siteForgeCreativeDirectionSchema
 >
 export type SiteForgeDirectionPreview = z.infer<
   typeof siteForgeDirectionPreviewSchema
+>
+export type SiteForgeDirectionPatch = z.infer<
+  typeof siteForgeDirectionPatchSchema
+>
+export type SiteForgeDirectionEditOutcome = z.infer<
+  typeof siteForgeDirectionEditOutcomeSchema
 >
 
 export type SiteForgeDirectionCandidate = {
@@ -86,6 +131,33 @@ export function hashSiteForgeDirection(input: {
   previewManifest: SiteForgeDirectionPreview
 }): string {
   return hashSiteForgeContent({ schemaVersion: 1, ...input })
+}
+
+export function deriveSiteForgeDirectionPreview(
+  direction: SiteForgeCreativeDirection
+): SiteForgeDirectionPreview {
+  const hero = `${direction.hero.composition} ${direction.hero.mediaTreatment}`.toLowerCase()
+  const layout = `${direction.layout.system} ${direction.layout.sectionRhythm}`.toLowerCase()
+  return siteForgeDirectionPreviewSchema.parse({
+    paletteSwatches: [
+      direction.palette.primary,
+      direction.palette.secondary,
+      direction.palette.accent,
+      direction.palette.background,
+      direction.palette.text,
+    ],
+    heroMode: /full|cinematic|viewport|immersive/.test(hero)
+      ? 'cinematic-full-bleed'
+      : /panel|availability|information/.test(hero)
+        ? 'conversion-panel'
+        : 'editorial-split',
+    layoutMode: /card|modular|conversion/.test(layout)
+      ? 'modular-cards'
+      : /band|full-width|chapter/.test(layout)
+        ? 'immersive-bands'
+        : 'offset-grid',
+    typographyPairing: `${direction.typography.headingFamily} / ${direction.typography.bodyFamily}`,
+  })
 }
 
 export function hashSiteForgeDirectionSet(input: {

@@ -58,7 +58,10 @@ function readyState() {
   });
 }
 
-function fakeClient(seed = initialState()) {
+function fakeClient(
+  seed = initialState(),
+  generationJobs: Array<Record<string, unknown>> = [],
+) {
   const snapshots: Array<{
     id: string;
     context_hash: string;
@@ -101,6 +104,20 @@ function fakeClient(seed = initialState()) {
             data: { snapshot_payload: { enabledCapabilities: [] } },
             error: null,
           })),
+        };
+        return chain;
+      }
+      if (table === "shared_jobs") {
+        const result = { data: generationJobs, error: null };
+        const chain = {
+          select: vi.fn(() => chain),
+          eq: vi.fn(() => chain),
+          order: vi.fn(() => chain),
+          limit: vi.fn(() => chain),
+          then: (
+            resolve: (value: typeof result) => unknown,
+            reject?: (reason: unknown) => unknown,
+          ) => Promise.resolve(result).then(resolve, reject),
         };
         return chain;
       }
@@ -183,11 +200,61 @@ function dependencies(
     createPlan: unused,
     getPlan: unused,
     decidePlan: unused,
+    editDirection: unused,
     ...overrides,
   } as never;
 }
 
 describe("SiteForge guided service persistence", () => {
+  it("projects the latest generation failure with only its safe reason", async () => {
+    const building = guidedJourneyStateSchema.parse({
+      ...readyState(),
+      status: "building",
+      generation: {
+        jobId: "old-job",
+        status: "running",
+        duplicate: false,
+        startedAt: "2026-08-13T18:00:00.000Z",
+      },
+    });
+    const store = fakeClient(building, [
+      {
+        id: "latest-job",
+        subject_id: "website-1",
+        lifecycle_status: "failed",
+        error_message: "Safe fallback",
+        error_details: {
+          retryable: false,
+          failedCheckpoint: "executing_photos",
+          safeMessage:
+            "The approved website assets no longer match the pinned build evidence.",
+          diagnostics: { message: "raw internal asset ids" },
+        },
+        payload: { websiteId: "website-1" },
+        created_at: "2026-08-13T18:02:00.000Z",
+      },
+      {
+        id: "older-job",
+        subject_id: "website-1",
+        lifecycle_status: "running",
+        error_details: null,
+        payload: { websiteId: "website-1" },
+        created_at: "2026-08-13T18:01:00.000Z",
+      },
+    ]);
+    const service = createSiteForgeGuidedService(dependencies(store.client));
+
+    const snapshot = await service.snapshot("website-1");
+
+    expect(snapshot.journey).toMatchObject({
+      stage: "build",
+      retryable: false,
+      blocker:
+        "The approved website assets no longer match the pinned build evidence.",
+    });
+    expect(JSON.stringify(snapshot)).not.toContain("raw internal asset ids");
+  });
+
   it("persists a turn, resumes it in a new service instance, and deduplicates retries", async () => {
     const store = fakeClient();
     const service = createSiteForgeGuidedService(dependencies(store.client));
@@ -336,5 +403,91 @@ describe("SiteForge guided service persistence", () => {
           state.preparation?.planId === "plan-1" && state.prepared === null,
       ),
     ).toBe(true);
+  });
+
+  it("updates prepared direction identities after an accepted conversational edit", async () => {
+    const prepared = guidedJourneyStateSchema.parse({
+      ...readyState(),
+      revision: 20,
+      status: "ready_to_build",
+      prepared: {
+        idempotencyKey: "prepare-request-1",
+        briefVersionId: "brief-1",
+        briefContentHash: "a".repeat(64),
+        directionSetId: "set-1",
+        directionSetContentHash: "b".repeat(64),
+        recommendedDirectionId: "direction-1",
+        selectedDirectionContentHash: "c".repeat(64),
+        recommendedDirectionName: "Editorial Confidence",
+        recommendedDirectionScore: 90,
+        recommendationReason: "Best balance.",
+        scoredDirections: [],
+        planId: "plan-1",
+        planVersionId: "plan-version-1",
+        planRevision: 1,
+        planContentHash: "d".repeat(64),
+        preparedAt: "2026-08-13T18:00:00.000Z",
+      },
+    });
+    const store = fakeClient(prepared);
+    const revisedSet = {
+      id: "set-2",
+      contentHash: "e".repeat(64),
+      selectedDirectionId: "direction-2",
+      directions: [
+        {
+          id: "direction-2",
+          ordinal: 1,
+          name: "Editorial Confidence",
+          contentHash: "f".repeat(64),
+          direction: { rationale: "Warmer editorial direction." },
+          previewManifest: {},
+        },
+      ],
+    };
+    const editDirection = vi.fn(async () => ({
+      outcome: {
+        outcome: "patch" as const,
+        summary: "Made the hero warmer.",
+        patch: { rationale: "Warmer editorial direction." },
+      },
+      duplicate: false,
+      directionSet: revisedSet,
+    }));
+    const service = createSiteForgeGuidedService(
+      dependencies(store.client, {
+        editDirection,
+        getDirections: vi.fn(async () => revisedSet),
+      }),
+    );
+
+    const result = await service.editDirection(
+      "website-1",
+      {
+        clientRequestId: "direction-edit-request-1",
+        instruction: "Make the hero warmer",
+        expectedRevision: 20,
+        expected: {
+          directionSetContentHash: "b".repeat(64),
+          selectedDirectionContentHash: "c".repeat(64),
+        },
+      },
+      "user-1",
+    );
+
+    expect(result.state.prepared).toMatchObject({
+      directionSetId: "set-2",
+      directionSetContentHash: "e".repeat(64),
+      recommendedDirectionId: "direction-2",
+      selectedDirectionContentHash: "f".repeat(64),
+      recommendationReason: "Made the hero warmer.",
+    });
+    expect(editDirection).toHaveBeenCalledWith(
+      expect.objectContaining({
+        expectedSetContentHash: "b".repeat(64),
+        expectedDirectionContentHash: "c".repeat(64),
+      }),
+      store.client,
+    );
   });
 });

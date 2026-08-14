@@ -13,19 +13,7 @@ import {
   validateSiteForgeOutput,
   type SiteForgeGenerationWorkflowInput,
 } from '@/utils/siteforge/workflows/generation-steps'
-
-function workflowErrorMessage(error: unknown): string {
-  if (
-    error &&
-    typeof error === 'object' &&
-    'message' in error &&
-    typeof error.message === 'string' &&
-    error.message.trim()
-  ) {
-    return error.message
-  }
-  return 'SiteForge generation failed'
-}
+import { classifySiteForgeGenerationFailure } from '@/utils/siteforge/workflows/generation-failure'
 
 export async function siteForgeGenerationWorkflow(
   input: SiteForgeGenerationWorkflowInput
@@ -37,7 +25,9 @@ export async function siteForgeGenerationWorkflow(
     websiteId: input.websiteId,
   })
 
+  let checkpoint = 'starting'
   try {
+    checkpoint = 'assembling_context'
     await assertSiteForgeJobActive(input)
     await updateSiteForgeGenerationStage(
       input,
@@ -47,6 +37,7 @@ export async function siteForgeGenerationWorkflow(
     )
     const confirmedPlan = await loadConfirmedSiteForgePlan(input)
 
+    checkpoint = 'analyzing_brand'
     await assertSiteForgeJobActive(input)
     await updateSiteForgeGenerationStage(
       input,
@@ -56,6 +47,7 @@ export async function siteForgeGenerationWorkflow(
     )
     const brandContext = await analyzeSiteForgeBrand(input)
 
+    checkpoint = 'planning_architecture'
     await assertSiteForgeJobActive(input)
     await updateSiteForgeGenerationStage(
       input,
@@ -66,6 +58,7 @@ export async function siteForgeGenerationWorkflow(
     const { architecture, designSystem } =
       await planSiteForgeArchitectureAndDesign(input, brandContext, confirmedPlan)
 
+    checkpoint = 'planning_photos'
     await assertSiteForgeJobActive(input)
     await updateSiteForgeGenerationStage(
       input,
@@ -79,6 +72,7 @@ export async function siteForgeGenerationWorkflow(
       architecture
     )
 
+    checkpoint = 'generating_content'
     await assertSiteForgeJobActive(input)
     await updateSiteForgeGenerationStage(
       input,
@@ -92,6 +86,7 @@ export async function siteForgeGenerationWorkflow(
       brandContext
     )
 
+    checkpoint = 'executing_photos'
     await assertSiteForgeJobActive(input)
     await updateSiteForgeGenerationStage(
       input,
@@ -106,6 +101,7 @@ export async function siteForgeGenerationWorkflow(
       brandContext
     )
 
+    checkpoint = 'validating_quality'
     await assertSiteForgeJobActive(input)
     await updateSiteForgeGenerationStage(
       input,
@@ -122,6 +118,7 @@ export async function siteForgeGenerationWorkflow(
       brandContext
     )
 
+    checkpoint = 'publishing_artifact'
     await assertSiteForgeJobActive(input)
     await updateSiteForgeGenerationStage(
       input,
@@ -139,6 +136,7 @@ export async function siteForgeGenerationWorkflow(
       pages,
       qualityReport
     )
+    checkpoint = 'completing'
     await completeSiteForgeGeneration(input, output)
 
     console.info('[siteforge_workflow] run completed', {
@@ -150,8 +148,10 @@ export async function siteForgeGenerationWorkflow(
       ...output,
     }
   } catch (error) {
-    const message = workflowErrorMessage(error)
-    await failSiteForgeGeneration(input, message)
+    await failSiteForgeGeneration(
+      input,
+      classifySiteForgeGenerationFailure(error, checkpoint)
+    )
     throw error
   }
 }

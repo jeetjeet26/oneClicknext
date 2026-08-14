@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SiteForgeBrief } from '@/utils/siteforge/briefs/contracts'
+import { normalizeBrandForgeContract } from '@/utils/brandforge/normalize'
 import {
   assertMateriallyDistinctDirections,
   hashSiteForgeDirectionSet,
@@ -52,20 +53,35 @@ const sources = {
   brandContractHash: 'c'.repeat(64),
 }
 
+function brand(
+  colors = ['#123456', '#ABCDEF', '#F4F1EA', '#111111']
+) {
+  return normalizeBrandForgeContract(
+    {
+      typography: {
+        roles: [
+          { role: 'headline', family: 'Fraunces', weights: [600], usage: 'Headings' },
+          { role: 'body', family: 'Source Sans 3', weights: [400], usage: 'Body' },
+        ],
+      },
+      colors: {
+        roles: colors.map((hex, index) => ({
+          role: ['primary', 'secondary', 'background', 'text'][index],
+          name: `Color ${index + 1}`,
+          hex,
+          usage: 'Approved brand use',
+        })),
+      },
+    },
+    { origin: 'generated', approvalStatus: 'approved' }
+  )
+}
+
 describe('SiteForge deterministic creative directions', () => {
   it('generates three materially distinct structured options with provenance', () => {
     const directions = generateDeterministicCreativeDirections({
       brief,
-      brand: {
-        section_7_typography: {
-          heading: 'Fraunces',
-          body: 'Source Sans 3',
-        },
-        section_8_colors: {
-          primary: '#123456',
-          accent: '#ABCDEF',
-        },
-      },
+      brand: brand(),
       sources,
     })
     expect(directions).toHaveLength(3)
@@ -81,12 +97,12 @@ describe('SiteForge deterministic creative directions', () => {
   it('is deterministic and changes the set hash when a direction is selected', () => {
     const first = generateDeterministicCreativeDirections({
       brief,
-      brand: {},
+      brand: brand(),
       sources,
     })
     const second = generateDeterministicCreativeDirections({
       brief,
-      brand: {},
+      brand: brand(),
       sources,
     })
     expect(second).toEqual(first)

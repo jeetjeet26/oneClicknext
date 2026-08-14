@@ -11,7 +11,7 @@ export function Select({ value, onValueChange, children, className = '', ...prop
     <select
       value={value}
       onChange={(e) => onValueChange?.(e.target.value)}
-      className={`w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent ${className}`}
+      className={`w-full rounded-lg border border-input bg-background px-4 py-2.5 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${className}`}
       {...props}
     >
       {children}
@@ -20,11 +20,14 @@ export function Select({ value, onValueChange, children, className = '', ...prop
 }
 
 export function SelectTrigger({ id, className = '' }: { id?: string; className?: string }) {
+  void id
+  void className
   // This is just a placeholder for API compatibility - not actually rendered
   return null
 }
 
 export function SelectValue({ placeholder }: { placeholder?: string }) {
+  void placeholder
   // This is just a placeholder for API compatibility - not actually rendered
   return null
 }

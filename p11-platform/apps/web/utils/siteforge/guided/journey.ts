@@ -482,12 +482,38 @@ export function projectGuidedJourney(
   state: GuidedJourneyState,
   runtime?: {
     generationStatus?: string | null;
+    generationFailureReason?: string | null;
+    generationRetryable?: boolean;
+    failedCheckpoint?: string | null;
     previewUrl?: string | null;
     productionUrl?: string | null;
   },
 ): GuidedJourneyProjection {
   const progress = guidedDiscoveryProgress(state.answers);
   const runtimeStatus = runtime?.generationStatus || "";
+  if (["failed", "cancelled"].includes(runtimeStatus)) {
+    const cancelled = runtimeStatus === "cancelled";
+    const retryable = !cancelled && runtime?.generationRetryable === true;
+    const reason =
+      runtime?.generationFailureReason ||
+      (cancelled
+        ? "The build was cancelled. Nothing was published."
+        : "The build stopped and needs review before another attempt.");
+    return {
+      stage: "build",
+      headline: cancelled ? "The build was cancelled" : "The build needs attention",
+      explanation: reason,
+      recommendedAction: retryable
+        ? "Retry this build"
+        : cancelled
+          ? "Return to the recommendation"
+          : "Review approved inputs",
+      progress,
+      blocker: reason,
+      retryable,
+      previewUrl: runtime?.previewUrl || null,
+    };
+  }
   if (
     runtime?.productionUrl ||
     ["deployed", "live", "production", "published"].includes(runtimeStatus)

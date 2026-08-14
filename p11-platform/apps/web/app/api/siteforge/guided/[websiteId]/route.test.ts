@@ -8,6 +8,7 @@ const {
   conversationMock,
   prepareMock,
   confirmMock,
+  editDirectionMock,
   generateMock,
   websiteMaybeSingleMock,
   profileMaybeSingleMock,
@@ -18,6 +19,7 @@ const {
   conversationMock: vi.fn(),
   prepareMock: vi.fn(),
   confirmMock: vi.fn(),
+  editDirectionMock: vi.fn(),
   generateMock: vi.fn(),
   websiteMaybeSingleMock: vi.fn(),
   profileMaybeSingleMock: vi.fn(),
@@ -57,6 +59,7 @@ vi.mock("@/utils/siteforge/guided/service", async (importOriginal) => {
       conversation: conversationMock,
       prepare: prepareMock,
       confirm: confirmMock,
+      editDirection: editDirectionMock,
     })),
   };
 });
@@ -69,6 +72,7 @@ import { GET as getSnapshot } from "./snapshot/route";
 import { POST as postConversation } from "./conversation/route";
 import { POST as postPrepare } from "./prepare/route";
 import { POST as postConfirm } from "./confirm/route";
+import { POST as postDirection } from "./direction/route";
 import { SiteForgeGuidedError } from "@/utils/siteforge/guided/service";
 
 const websiteId = "11111111-1111-4111-8111-111111111111";
@@ -123,6 +127,14 @@ beforeEach(() => {
   confirmMock.mockResolvedValue({
     ...snapshotResult,
     duplicate: false,
+  });
+  editDirectionMock.mockResolvedValue({
+    ...snapshotResult,
+    duplicate: false,
+    editOutcome: {
+      outcome: "patch",
+      summary: "Made the hero warmer.",
+    },
   });
   generateMock.mockResolvedValue(
     NextResponse.json({ jobId: "job-1", status: "queued" }),
@@ -305,5 +317,60 @@ describe("SiteForge guided routes", () => {
     expect(response.status).toBe(200);
     expect(confirmMock).toHaveBeenCalledTimes(1);
     expect(await response.json()).toMatchObject({ duplicate: false });
+  });
+
+  it("strictly validates, authorizes, and classifies creative direction edits", async () => {
+    const invalid = await postDirection(
+      request(`/api/siteforge/guided/${websiteId}/direction`, {
+        clientRequestId: "short",
+        instruction: "",
+        expectedRevision: 2,
+        expected: {},
+      }),
+      routeContext,
+    );
+    expect(invalid.status).toBe(400);
+    expect(editDirectionMock).not.toHaveBeenCalled();
+
+    validatePropertyAccessMock.mockResolvedValueOnce({ authorized: false });
+    const forbidden = await postDirection(
+      request(`/api/siteforge/guided/${websiteId}/direction`, {
+        clientRequestId: "direction-request-1",
+        instruction: "Make the hero warmer",
+        expectedRevision: 2,
+        expected: {
+          directionSetContentHash: "a".repeat(64),
+          selectedDirectionContentHash: "b".repeat(64),
+        },
+      }),
+      routeContext,
+    );
+    expect(forbidden.status).toBe(403);
+
+    editDirectionMock.mockRejectedValueOnce(
+      new SiteForgeGuidedError(
+        "Creative direction changed; reload before editing",
+        409,
+        "source_changed",
+        false,
+      ),
+    );
+    const stale = await postDirection(
+      request(`/api/siteforge/guided/${websiteId}/direction`, {
+        clientRequestId: "direction-request-2",
+        instruction: "Make the hero warmer",
+        expectedRevision: 2,
+        expected: {
+          directionSetContentHash: "a".repeat(64),
+          selectedDirectionContentHash: "b".repeat(64),
+        },
+      }),
+      routeContext,
+    );
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toMatchObject({
+      classification: "source_changed",
+      retryable: false,
+    });
   });
 });

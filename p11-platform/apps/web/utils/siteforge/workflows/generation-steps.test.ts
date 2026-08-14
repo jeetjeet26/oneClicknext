@@ -291,6 +291,45 @@ describe('SiteForge durable generation steps', () => {
     ).toThrow('outside the approved rights-cleared asset manifest')
   })
 
+  it('accepts only the exact pinned Aurora logo URL and content', async () => {
+    const { assertApprovedGenerationPhotoManifest } = await import(
+      './generation-steps'
+    )
+    const logoId = input.evidenceSnapshot.assetManifest.assets[0].id
+    const pinnedUrl = input.evidenceSnapshot.assetManifest.assets[0].fileUrl
+    const pinnedHash = input.evidenceSnapshot.assetManifest.assets[0].contentHash
+    const manifest = {
+      photos: [{
+        id: logoId,
+        sourceAssetId: logoId,
+        contentHash: pinnedHash,
+        url: pinnedUrl,
+        type: 'brandforge' as const,
+        category: 'logo',
+        quality: 10,
+      }],
+      byCategory: {
+        hero: [],
+        amenities: [],
+        lifestyle: [],
+        gallery: [],
+        logos: [],
+      },
+      assignments: {},
+      stats: { uploaded: 0, generated: 0, fromBrandForge: 1, total: 1 },
+    }
+
+    expect(() =>
+      assertApprovedGenerationPhotoManifest(input, manifest)
+    ).not.toThrow()
+    expect(() =>
+      assertApprovedGenerationPhotoManifest(input, {
+        ...manifest,
+        photos: [{ ...manifest.photos[0], contentHash: '9'.repeat(64) }],
+      })
+    ).toThrow('outside the approved rights-cleared asset manifest')
+  })
+
   it('resolves the exact approved legal contract from pinned plan evidence', async () => {
     const { resolveApprovedLegalContractForGeneration } = await import(
       './generation-steps'

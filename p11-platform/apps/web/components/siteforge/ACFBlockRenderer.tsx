@@ -122,6 +122,30 @@ function externalLinkProps(href: string) {
     : {}
 }
 
+export function accessibleTextColor(background: string): '#111827' | '#ffffff' {
+  const value = background.trim()
+  const match = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(value)
+  if (!match) return '#111827'
+  const hex =
+    match[1].length === 3
+      ? match[1]
+          .split('')
+          .map(character => character + character)
+          .join('')
+      : match[1]
+  const channels = [0, 2, 4].map(offset => {
+    const channel = Number.parseInt(hex.slice(offset, offset + 2), 16) / 255
+    return channel <= 0.04045
+      ? channel / 12.92
+      : ((channel + 0.055) / 1.055) ** 2.4
+  })
+  const luminance =
+    0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+  const whiteContrast = 1.05 / (luminance + 0.05)
+  const darkContrast = (luminance + 0.05) / 0.068
+  return whiteContrast >= darkContrast ? '#ffffff' : '#111827'
+}
+
 function DegradedBlock({
   title,
   detail,
@@ -131,12 +155,12 @@ function DegradedBlock({
 }) {
   return (
     <div
-      className="rounded-lg border border-amber-200 bg-amber-50 p-6 dark:border-amber-800 dark:bg-amber-900/20"
+      className="rounded-lg border border-amber-300 bg-amber-50 p-6 text-amber-950"
       data-preview-state="degraded"
       role="status"
     >
-      <p className="font-semibold text-amber-900 dark:text-amber-100">{title}</p>
-      <p className="mt-2 text-sm text-amber-800 dark:text-amber-200">{detail}</p>
+      <p className="font-semibold">{title}</p>
+      <p className="mt-2 text-sm text-amber-900">{detail}</p>
     </div>
   )
 }
@@ -250,7 +274,7 @@ export function ACFBlockRenderer({
   const blockContent = asRecord(content)
   if (Object.keys(blockContent).length === 0) {
     return (
-      <div className={className} data-acf-block={blockType}>
+      <div className={`siteforge-preview-light ${className}`} data-acf-block={blockType}>
         <DegradedBlock
           title="Content not generated for this section"
           detail={`The P11 approximation cannot render ${blockType} without source content.`}
@@ -276,7 +300,7 @@ export function ACFBlockRenderer({
   
   if (!Renderer) {
     return (
-      <div className={className} data-acf-block={blockType}>
+      <div className={`siteforge-preview-light ${className}`} data-acf-block={blockType}>
         <DegradedBlock
           title={`Unsupported block type: ${blockType}`}
           detail="This block is preserved in the artifact but has no P11 approximation. Review it in the exact WordPress preview."
@@ -299,7 +323,7 @@ export function ACFBlockRenderer({
 
   return (
     <div
-      className={wrapperClassName}
+      className={`siteforge-preview-light ${wrapperClassName}`}
       style={brandStyles}
       data-acf-block={resolvedBlockType}
       data-siteforge-variant={normalizedVariant || undefined}
@@ -318,7 +342,7 @@ export function ACFBlockRenderer({
  */
 function HeroSlides({ content, designSystem }: BlockComponentProps) {
   const slides = getRecordArray(content, 'slides')
-  const colors = designSystem?.colors || {}
+  const colors = designSystem?.colorSystem || designSystem?.colors || {}
   const typography = designSystem?.typography || {}
   
   // Do not fake complete hero output when content is missing.
@@ -373,9 +397,12 @@ function HeroSlides({ content, designSystem }: BlockComponentProps) {
               <a
                 href={getString(slide, 'cta_link')}
                 {...externalLinkProps(getString(slide, 'cta_link'))}
-                className="inline-block rounded-lg px-6 py-3 font-semibold text-white transition hover:opacity-90"
+                className="inline-block rounded-lg px-6 py-3 font-semibold transition hover:opacity-90"
                 style={{
                   backgroundColor: colors.accent || colors.primary || '#4F46E5',
+                  color: accessibleTextColor(
+                    colors.accent || colors.primary || '#4F46E5'
+                  ),
                   fontFamily: typography.bodyFont ? `'${typography.bodyFont}', sans-serif` : undefined
                 }}
               >
@@ -397,11 +424,12 @@ function TextSection({ content, designSystem }: BlockComponentProps) {
   const typography = designSystem?.typography || {}
   
   const bgClasses: Record<string, string> = {
-    white: 'bg-white dark:bg-gray-900',
-    light: 'bg-gray-50 dark:bg-gray-800',
-    dark: 'bg-gray-900 dark:bg-black text-white'
+    white: 'bg-white text-gray-900',
+    light: 'bg-gray-50 text-gray-900',
+    dark: 'bg-gray-900 text-white'
   }
-  const bgClass = bgClasses[String(content.background)] || 'bg-white dark:bg-gray-900'
+  const bgClass = bgClasses[String(content.background)] || 'bg-white text-gray-900'
+  const isDarkBackground = content.background === 'dark'
   
   const alignClasses: Record<string, string> = {
     center: 'text-center mx-auto',
@@ -414,13 +442,17 @@ function TextSection({ content, designSystem }: BlockComponentProps) {
     <div className={`p-6 md:p-8 rounded-lg ${bgClass}`}>
       <div className={`max-w-3xl ${alignClass}`}>
         <h3 
-          className="text-2xl font-bold mb-4 text-gray-900 dark:text-white"
+          className={`mb-4 text-2xl font-bold ${
+            isDarkBackground ? 'text-white' : 'text-gray-900'
+          }`}
           style={{ fontFamily: typography.headingFont ? `'${typography.headingFont}', serif` : undefined }}
         >
           {getString(content, 'headline')}
         </h3>
         <div 
-          className="prose dark:prose-invert max-w-none text-gray-600 dark:text-gray-300"
+          className={`prose max-w-none ${
+            isDarkBackground ? 'text-gray-200' : 'text-gray-700'
+          }`}
           style={{ fontFamily: typography.bodyFont ? `'${typography.bodyFont}', sans-serif` : undefined }}
           dangerouslySetInnerHTML={{ __html: getSanitizedHtml(content, 'content') }}
         />
@@ -435,7 +467,7 @@ function TextSection({ content, designSystem }: BlockComponentProps) {
 function ContentGrid({ content, designSystem }: BlockComponentProps) {
   const items = getRecordArray(content, 'items')
   const cols = content.columns || 3
-  const colors = designSystem?.colors || {}
+  const colors = designSystem?.colorSystem || designSystem?.colors || {}
   const typography = designSystem?.typography || {}
   
   const colsClasses: Record<string, string> = {
@@ -451,7 +483,7 @@ function ContentGrid({ content, designSystem }: BlockComponentProps) {
   return (
     <div className={`grid grid-cols-1 ${colsClass} gap-6 p-4`}>
       {items.map((item, idx) => (
-        <div key={idx} className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-sm border border-gray-100 dark:border-gray-700">
+        <div key={idx} className="rounded-lg border border-gray-200 bg-white p-6 text-gray-900 shadow-sm">
           {getString(item, 'icon') && (
             <div 
               className="w-12 h-12 rounded-lg flex items-center justify-center mb-4"
@@ -466,13 +498,13 @@ function ContentGrid({ content, designSystem }: BlockComponentProps) {
             </div>
           )}
           <h4 
-            className="font-semibold text-gray-900 dark:text-white mb-2"
+            className="mb-2 font-semibold text-gray-900"
             style={{ fontFamily: typography.headingFont ? `'${typography.headingFont}', serif` : undefined }}
           >
             {getString(item, 'headline')}
           </h4>
           <p 
-            className="text-sm text-gray-600 dark:text-gray-400"
+            className="text-sm text-gray-700"
             style={{ fontFamily: typography.bodyFont ? `'${typography.bodyFont}', sans-serif` : undefined }}
           >
             {getString(item, 'description')}
@@ -488,7 +520,7 @@ function ContentGrid({ content, designSystem }: BlockComponentProps) {
  */
 function FeatureSection({ content, designSystem }: BlockComponentProps) {
   const isImageLeft = content.layout === 'image-left'
-  const colors = designSystem?.colors || {}
+  const colors = designSystem?.colorSystem || designSystem?.colors || {}
   const typography = designSystem?.typography || {}
   const image = getImage(content)
   
@@ -506,20 +538,20 @@ function FeatureSection({ content, designSystem }: BlockComponentProps) {
             decoding="async"
           />
         ) : (
-          <div className="flex aspect-video items-center justify-center rounded-lg bg-gray-200 dark:bg-gray-700">
-            <span className="text-gray-500 dark:text-gray-400">Image unavailable</span>
+          <div className="flex aspect-video items-center justify-center rounded-lg bg-gray-200">
+            <span className="text-gray-600">Image unavailable</span>
           </div>
         )}
       </div>
       <div className="w-full md:w-1/2">
         <h3 
-          className="text-2xl font-bold mb-4 text-gray-900 dark:text-white"
+          className="mb-4 text-2xl font-bold text-gray-900"
           style={{ fontFamily: typography.headingFont ? `'${typography.headingFont}', serif` : undefined }}
         >
           {getString(content, 'headline')}
         </h3>
         <div 
-          className="prose dark:prose-invert max-w-none text-gray-600 dark:text-gray-300 mb-6"
+          className="prose mb-6 max-w-none text-gray-700"
           style={{ fontFamily: typography.bodyFont ? `'${typography.bodyFont}', sans-serif` : undefined }}
           dangerouslySetInnerHTML={{ __html: getSanitizedHtml(content, 'content') }}
         />
@@ -527,8 +559,11 @@ function FeatureSection({ content, designSystem }: BlockComponentProps) {
           <a 
             href={getString(content, 'cta_link')}
             {...externalLinkProps(getString(content, 'cta_link'))}
-            className="inline-block text-white font-medium px-5 py-2 rounded-lg transition hover:opacity-90"
-            style={{ backgroundColor: colors.primary || '#4F46E5' }}
+            className="inline-block rounded-lg px-5 py-2 font-medium transition hover:opacity-90"
+            style={{
+              backgroundColor: colors.primary || '#4F46E5',
+              color: accessibleTextColor(colors.primary || '#4F46E5'),
+            }}
           >
             {getString(content, 'cta_text')}
           </a>
@@ -570,8 +605,8 @@ function Gallery({ content }: BlockComponentProps) {
               />
             ))
           : indices.map((idx: number) => (
-              <div key={idx} className="flex aspect-square items-center justify-center rounded-lg bg-gray-200 dark:bg-gray-700">
-                <span className="text-gray-500 dark:text-gray-400">Image unavailable</span>
+              <div key={idx} className="flex aspect-square items-center justify-center rounded-lg bg-gray-200">
+                <span className="text-gray-600">Image unavailable</span>
               </div>
             ))}
       </div>
@@ -583,7 +618,7 @@ function Gallery({ content }: BlockComponentProps) {
  * Form Section - Contact/inquiry form
  */
 function FormSection({ blockIdentity, content, designSystem }: BlockComponentProps) {
-  const colors = designSystem?.colors || {}
+  const colors = designSystem?.colorSystem || designSystem?.colors || {}
   const typography = designSystem?.typography || {}
   const idPrefix = domIdPrefix(blockIdentity)
   const fieldIds = {
@@ -603,15 +638,15 @@ function FormSection({ blockIdentity, content, designSystem }: BlockComponentPro
   }
   
   return (
-    <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-8 max-w-xl mx-auto">
+    <div className="mx-auto max-w-xl rounded-lg bg-gray-50 p-8 text-gray-900">
       <h3 
-        className="text-2xl font-bold mb-2 text-gray-900 dark:text-white text-center"
+        className="mb-2 text-center text-2xl font-bold text-gray-900"
         style={{ fontFamily: typography.headingFont ? `'${typography.headingFont}', serif` : undefined }}
       >
         {getString(content, 'heading')}
       </h3>
       <p 
-        className="text-gray-600 dark:text-gray-400 mb-6 text-center"
+        className="mb-6 text-center text-gray-700"
         style={{ fontFamily: typography.bodyFont ? `'${typography.bodyFont}', sans-serif` : undefined }}
       >
         {getString(content, 'subheading')}
@@ -622,7 +657,7 @@ function FormSection({ blockIdentity, content, designSystem }: BlockComponentPro
           id={fieldIds.name}
           type="text" 
           placeholder="Your Name" 
-          className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700"
+          className="w-full rounded-lg border border-gray-300 bg-white px-4 py-3 text-gray-900"
           disabled
         />
         <label className="sr-only" htmlFor={fieldIds.email}>Email</label>
@@ -630,7 +665,7 @@ function FormSection({ blockIdentity, content, designSystem }: BlockComponentPro
           id={fieldIds.email}
           type="email" 
           placeholder="Email Address" 
-          className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700"
+          className="w-full rounded-lg border border-gray-300 bg-white px-4 py-3 text-gray-900"
           disabled
         />
         <label className="sr-only" htmlFor={fieldIds.phone}>Phone</label>
@@ -638,7 +673,7 @@ function FormSection({ blockIdentity, content, designSystem }: BlockComponentPro
           id={fieldIds.phone}
           type="tel" 
           placeholder="Phone Number" 
-          className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700"
+          className="w-full rounded-lg border border-gray-300 bg-white px-4 py-3 text-gray-900"
           disabled
         />
         <label className="sr-only" htmlFor={fieldIds.message}>Message</label>
@@ -646,14 +681,17 @@ function FormSection({ blockIdentity, content, designSystem }: BlockComponentPro
           id={fieldIds.message}
           placeholder="Message" 
           rows={3}
-          className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700"
+          className="w-full rounded-lg border border-gray-300 bg-white px-4 py-3 text-gray-900"
           disabled
         />
         <button 
           type="button"
           disabled
-          className="w-full text-white font-semibold py-3 rounded-lg transition hover:opacity-90"
-          style={{ backgroundColor: colors.primary || '#4F46E5' }}
+          className="w-full rounded-lg py-3 font-semibold transition hover:opacity-90"
+          style={{
+            backgroundColor: colors.primary || '#4F46E5',
+            color: accessibleTextColor(colors.primary || '#4F46E5'),
+          }}
         >
           Submit
         </button>
@@ -684,9 +722,9 @@ function MapSection({ content }: BlockComponentProps) {
   }
 
   return (
-    <div className="p-4 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
-      <h4 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Location block</h4>
-      <div className="mt-2 text-sm text-gray-700 dark:text-gray-300 space-y-1">
+    <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 text-gray-900">
+      <h4 className="text-sm font-semibold">Location block</h4>
+      <div className="mt-2 space-y-1 text-sm text-gray-700">
         {address && <p>Address: {address}</p>}
         {hasCoordinates && (
           <p>
@@ -699,12 +737,12 @@ function MapSection({ content }: BlockComponentProps) {
             href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-block text-sm font-medium text-blue-700 underline dark:text-blue-300"
+            className="inline-block text-sm font-medium text-blue-700 underline"
           >
             Get directions
           </a>
         )}
-        <div className="pt-1 text-xs text-gray-500 dark:text-gray-400">
+        <div className="pt-1 text-xs text-gray-600">
           Live map tiles are intentionally omitted; this keyless location fallback uses only sourced data.
         </div>
       </div>
@@ -717,7 +755,7 @@ function MapSection({ content }: BlockComponentProps) {
  */
 function LinksSection({ content, designSystem }: BlockComponentProps) {
   const links = getRecordArray(content, 'links')
-  const colors = designSystem?.colors || {}
+  const colors = designSystem?.colorSystem || designSystem?.colors || {}
   
   return (
     <div className="flex flex-wrap gap-4 justify-center p-4">
@@ -728,10 +766,17 @@ function LinksSection({ content, designSystem }: BlockComponentProps) {
           {...externalLinkProps(getString(link, 'url'))}
           className={`px-6 py-3 rounded-lg font-medium transition hover:opacity-90 ${
             getString(link, 'style') !== 'primary'
-              ? 'bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-900 dark:text-white'
-              : 'text-white'
+              ? 'bg-gray-200 text-gray-900 hover:bg-gray-300'
+              : ''
           }`}
-          style={getString(link, 'style') === 'primary' ? { backgroundColor: colors.primary || '#4F46E5' } : undefined}
+          style={
+            getString(link, 'style') === 'primary'
+              ? {
+                  backgroundColor: colors.primary || '#4F46E5',
+                  color: accessibleTextColor(colors.primary || '#4F46E5'),
+                }
+              : undefined
+          }
         >
           {getString(link, 'text')}
         </a>
@@ -750,15 +795,15 @@ function AccordionSection({ content, designSystem }: BlockComponentProps) {
   return (
     <div className="space-y-3 p-4">
       {items.map((item, idx) => (
-        <details key={idx} className="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
+        <details key={idx} className="overflow-hidden rounded-lg border border-gray-200">
           <summary
-            className="cursor-pointer bg-gray-50 px-4 py-3 font-medium text-gray-900 dark:bg-gray-800 dark:text-white"
+            className="cursor-pointer bg-gray-50 px-4 py-3 font-medium text-gray-900"
             style={{ fontFamily: typography.headingFont ? `'${typography.headingFont}', serif` : undefined }}
           >
             {getString(item, 'title')}
           </summary>
           <div 
-            className="px-4 py-3 text-gray-600 dark:text-gray-300 prose dark:prose-invert max-w-none"
+            className="prose max-w-none px-4 py-3 text-gray-700"
             style={{ fontFamily: typography.bodyFont ? `'${typography.bodyFont}', sans-serif` : undefined }}
             dangerouslySetInnerHTML={{ __html: getSanitizedHtml(item, 'content') }}
           />
@@ -794,13 +839,13 @@ function ImageSection({ content, designSystem }: BlockComponentProps) {
           decoding="async"
         />
       ) : (
-        <div className="flex aspect-video items-center justify-center rounded-lg bg-gray-200 dark:bg-gray-700">
-          <span className="text-gray-500 dark:text-gray-400">Image unavailable</span>
+        <div className="flex aspect-video items-center justify-center rounded-lg bg-gray-200">
+          <span className="text-gray-600">Image unavailable</span>
         </div>
       )}
       {getString(content, 'caption') && (
         <p 
-          className="text-center text-sm text-gray-500 dark:text-gray-400 mt-2 italic"
+          className="mt-2 text-center text-sm italic text-gray-600"
           style={{ fontFamily: typography.bodyFont ? `'${typography.bodyFont}', sans-serif` : undefined }}
         >
           {getString(content, 'caption')}
@@ -834,7 +879,7 @@ function MenuSection({ content, designSystem }: BlockComponentProps) {
   const typography = designSystem?.typography || {}
   
   return (
-    <div className="flex flex-wrap gap-2 justify-center p-4 bg-gray-100 dark:bg-gray-800 rounded-lg">
+    <div className="flex flex-wrap justify-center gap-2 rounded-lg bg-gray-100 p-4">
       {items.map((item: unknown, idx: number) => {
         const menuItem =
           item && typeof item === 'object' && !Array.isArray(item)
@@ -854,7 +899,7 @@ function MenuSection({ content, designSystem }: BlockComponentProps) {
           key={`${label}-${idx}`}
           href={link}
           {...(link ? externalLinkProps(link) : {})}
-          className="px-4 py-2 bg-white dark:bg-gray-700 rounded-full text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600 cursor-pointer transition"
+          className="cursor-pointer rounded-full bg-white px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
           style={{ fontFamily: typography.bodyFont ? `'${typography.bodyFont}', sans-serif` : undefined }}
         >
           {label}
@@ -875,7 +920,7 @@ const FLOOR_PLAN_PLACEHOLDER_SLOTS = [
  * Plans Availability - explicit placeholders without invented inventory facts
  */
 function PlansAvailability({ content, designSystem }: BlockComponentProps) {
-  const colors = designSystem?.colors || {}
+  const colors = designSystem?.colorSystem || designSystem?.colors || {}
   const typography = designSystem?.typography || {}
   const floorPlans = getRecordArray(content, 'floor_plans')
   const showPricing = content.show_pricing !== false
@@ -892,13 +937,13 @@ function PlansAvailability({ content, designSystem }: BlockComponentProps) {
         style={{ background: `linear-gradient(135deg, ${gradientFrom} 0%, ${gradientTo} 100%)` }}
       >
         <h4
-          className="text-lg font-semibold text-gray-900 dark:text-white mb-2"
+          className="mb-2 text-lg font-semibold text-gray-900"
           style={{ fontFamily: typography.headingFont ? `'${typography.headingFont}', serif` : undefined }}
         >
           Floor plans coming soon
         </h4>
         <p
-          className="text-sm text-gray-700 dark:text-gray-300 mb-5"
+          className="mb-5 text-sm text-gray-700"
           style={{ fontFamily: typography.bodyFont ? `'${typography.bodyFont}', sans-serif` : undefined }}
         >
           These placeholders reserve the final layout without inventing pricing, availability, or
@@ -908,11 +953,11 @@ function PlansAvailability({ content, designSystem }: BlockComponentProps) {
           {FLOOR_PLAN_PLACEHOLDER_SLOTS.map((label) => (
             <div
               key={label}
-              className="rounded-lg border border-dashed border-gray-300 bg-white/60 p-4 dark:border-gray-600 dark:bg-gray-900/40"
+              className="rounded-lg border border-dashed border-gray-300 bg-white/60 p-4"
             >
-              <div className="mb-3 aspect-[4/3] rounded-md bg-gray-200/80 dark:bg-gray-700/80" />
-              <div className="mb-2 h-3 w-2/3 rounded bg-gray-300 dark:bg-gray-600" />
-              <div className="h-3 w-1/2 rounded bg-gray-200 dark:bg-gray-700" />
+              <div className="mb-3 aspect-[4/3] rounded-md bg-gray-200/80" />
+              <div className="mb-2 h-3 w-2/3 rounded bg-gray-300" />
+              <div className="h-3 w-1/2 rounded bg-gray-200" />
               <span className="sr-only">{label}; details to be added</span>
             </div>
           ))}
@@ -927,13 +972,13 @@ function PlansAvailability({ content, designSystem }: BlockComponentProps) {
       style={{ background: `linear-gradient(135deg, ${gradientFrom} 0%, ${gradientTo} 100%)` }}
     >
       <h4
-        className="mb-2 text-center text-lg font-semibold text-gray-900 dark:text-white"
+        className="mb-2 text-center text-lg font-semibold text-gray-900"
         style={{ fontFamily: typography.headingFont ? `'${typography.headingFont}', serif` : undefined }}
       >
         Floor Plans Available
       </h4>
       <p
-        className="mb-6 text-center text-sm text-gray-600 dark:text-gray-400"
+        className="mb-6 text-center text-sm text-gray-700"
         style={{ fontFamily: typography.bodyFont ? `'${typography.bodyFont}', sans-serif` : undefined }}
       >
         {floorPlans.length} reviewed plan{floorPlans.length === 1 ? '' : 's'}
@@ -965,7 +1010,7 @@ function PlansAvailability({ content, designSystem }: BlockComponentProps) {
           return (
             <article
               key={getString(plan, 'id', `${name}-${index}`)}
-              className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-900"
+              className="overflow-hidden rounded-lg border border-gray-200 bg-white text-gray-900 shadow-sm"
             >
               {imageUrl && (
                 // The preview supports user-managed Supabase and provider URLs.
@@ -980,20 +1025,20 @@ function PlansAvailability({ content, designSystem }: BlockComponentProps) {
               )}
               <div className="space-y-2 p-4">
                 <div className="flex items-start justify-between gap-3">
-                  <h5 className="font-semibold text-gray-900 dark:text-white">{name}</h5>
+                  <h5 className="font-semibold text-gray-900">{name}</h5>
                   {showPricing && rent && (
-                    <span className="shrink-0 text-sm font-semibold text-gray-900 dark:text-white">
+                    <span className="shrink-0 text-sm font-semibold text-gray-900">
                       {rent}
                     </span>
                   )}
                 </div>
-                <p className="text-sm text-gray-700 dark:text-gray-300">
+                <p className="text-sm text-gray-700">
                   {bedrooms === 0 ? 'Studio' : `${bedrooms} bedroom${bedrooms === 1 ? '' : 's'}`}
                   {bathrooms >= 0 ? ` · ${bathrooms} bath${bathrooms === 1 ? '' : 's'}` : ''}
                   {sqft ? ` · ${sqft}` : ''}
                 </p>
                 {showAvailability && availableCount >= 0 && (
-                  <p className="text-sm text-gray-600 dark:text-gray-400">
+                  <p className="text-sm text-gray-700">
                     {availableCount} available
                   </p>
                 )}
@@ -1012,7 +1057,7 @@ function PlansAvailability({ content, designSystem }: BlockComponentProps) {
 function PointsOfInterest({ content, designSystem }: BlockComponentProps) {
   const categories = getStringArray(content, 'categories')
   const points = getRecordArray(content, 'points')
-  const colors = designSystem?.colors || {}
+  const colors = designSystem?.colorSystem || designSystem?.colors || {}
   const typography = designSystem?.typography || {}
   
   // Generate category badge colors from brand
@@ -1022,7 +1067,7 @@ function PointsOfInterest({ content, designSystem }: BlockComponentProps) {
   return (
     <div className="p-4">
       <p 
-        className="text-lg font-medium text-gray-900 dark:text-white mb-4"
+        className="mb-4 text-lg font-medium text-gray-900"
         style={{ fontFamily: typography.headingFont ? `'${typography.headingFont}', serif` : undefined }}
       >
         {getString(content, 'intro_text')}
@@ -1032,16 +1077,16 @@ function PointsOfInterest({ content, designSystem }: BlockComponentProps) {
           {points.map((point, index) => (
             <li
               key={`${getString(point, 'name')}-${index}`}
-              className="rounded-lg border border-gray-200 p-4 dark:border-gray-700"
+              className="rounded-lg border border-gray-200 p-4 text-gray-900"
             >
               <p className="font-medium">{getString(point, 'name')}</p>
               {getString(point, 'category') ? (
-                <p className="text-sm capitalize text-gray-600 dark:text-gray-400">
+                <p className="text-sm capitalize text-gray-700">
                   {getString(point, 'category')}
                 </p>
               ) : null}
               {getString(point, 'address') ? (
-                <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+                <p className="mt-1 text-sm text-gray-700">
                   {getString(point, 'address')}
                 </p>
               ) : null}

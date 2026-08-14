@@ -308,6 +308,12 @@ describe('SiteForge Director snapshot derivation', () => {
             cancel_requested: false,
             retry_at: null,
             error_message: 'Provider unavailable',
+            error_details: {
+              code: 'temporary_provider_failure',
+              retryable: true,
+              failedCheckpoint: 'generating_content',
+              safeMessage: 'A temporary provider problem interrupted the build.',
+            },
             payload: { websiteId: WEBSITE_ID },
             created_at: '2026-08-10T10:00:00.000Z',
             updated_at: '2026-08-10T10:05:00.000Z',

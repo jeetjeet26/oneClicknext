@@ -1,9 +1,10 @@
 import type { SiteForgeBrief } from '@/utils/siteforge/briefs/contracts'
+import type { BrandForgeContractV1 } from '@/utils/brandforge/contracts'
 import {
   assertMateriallyDistinctDirections,
+  deriveSiteForgeDirectionPreview,
   hashSiteForgeDirection,
   siteForgeCreativeDirectionSchema,
-  siteForgeDirectionPreviewSchema,
   type SiteForgeDirectionCandidate,
 } from './contracts'
 
@@ -16,43 +17,39 @@ type SourceIdentity = {
   brandContractHash: string
 }
 
-function collectStrings(value: unknown, output: string[] = []): string[] {
-  if (typeof value === 'string') output.push(value.trim())
-  else if (Array.isArray(value)) value.forEach(item => collectStrings(item, output))
-  else if (value && typeof value === 'object') {
-    Object.values(value as Record<string, unknown>).forEach(item =>
-      collectStrings(item, output)
+function brandPalette(
+  brand: BrandForgeContractV1
+): [string, string, string, string, string] {
+  const colors = brand.colors.roles
+  if (!colors.length) {
+    throw new Error('Pinned BrandForge contract has no approved palette')
+  }
+  const byRole = (role: BrandForgeContractV1['colors']['roles'][number]['role']) =>
+    colors.find(color => color.role === role)?.hex.toUpperCase()
+  const fallback = colors[0]!.hex.toUpperCase()
+  return [
+    byRole('primary') || fallback,
+    byRole('secondary') || colors[1]?.hex.toUpperCase() || fallback,
+    byRole('accent') || colors[2]?.hex.toUpperCase() || fallback,
+    byRole('background') || byRole('surface') || fallback,
+    byRole('text') || byRole('muted') || fallback,
+  ]
+}
+
+function brandFonts(brand: BrandForgeContractV1): [string, string] {
+  const heading = brand.typography.roles.find(role => role.role === 'headline')
+  const body = brand.typography.roles.find(role => role.role === 'body')
+  if (!heading || !body) {
+    throw new Error(
+      'Pinned BrandForge contract must approve headline and body fonts'
     )
   }
-  return output.filter(Boolean)
-}
-
-function brandPalette(brand: Record<string, unknown>): string[] {
-  const colors = collectStrings(brand.section_8_colors)
-    .flatMap(value => value.match(/#[0-9a-f]{6}\b/gi) || [])
-    .map(value => value.toUpperCase())
-  return Array.from(
-    new Set([
-      ...colors,
-      '#24324A',
-      '#6F7C65',
-      '#D68B5B',
-      '#F7F4EE',
-      '#172033',
-    ])
-  ).slice(0, 5)
-}
-
-function brandFonts(brand: Record<string, unknown>): [string, string] {
-  const values = collectStrings(brand.section_7_typography).filter(value =>
-    /[a-z]/i.test(value)
-  )
-  return [values[0] || 'Cormorant Garamond', values[1] || 'Inter']
+  return [heading.family, body.family]
 }
 
 export function generateDeterministicCreativeDirections(input: {
   brief: SiteForgeBrief
-  brand: Record<string, unknown>
+  brand: BrandForgeContractV1
   sources: SourceIdentity
 }): SiteForgeDirectionCandidate[] {
   const [primary, secondary, accent, background, text] = brandPalette(
@@ -136,7 +133,7 @@ export function generateDeterministicCreativeDirections(input: {
           primary: secondary,
           secondary: primary,
           accent,
-          background: '#FFFFFF',
+          background,
           text,
         },
         hero: {
@@ -171,7 +168,7 @@ export function generateDeterministicCreativeDirections(input: {
         provenance,
       },
       previewManifest: {
-        paletteSwatches: [secondary, primary, accent, '#FFFFFF', text],
+        paletteSwatches: [secondary, primary, accent, background, text],
         heroMode: 'conversion-panel',
         layoutMode: 'modular-cards',
         typographyPairing: `${bodyFamily} / ${bodyFamily}`,
@@ -238,9 +235,7 @@ export function generateDeterministicCreativeDirections(input: {
     const direction = siteForgeCreativeDirectionSchema.parse(
       candidate.direction
     )
-    const previewManifest = siteForgeDirectionPreviewSchema.parse(
-      candidate.previewManifest
-    )
+    const previewManifest = deriveSiteForgeDirectionPreview(direction)
     const ordinal = index + 1
     return {
       ordinal,

@@ -92,6 +92,10 @@ export type SiteForgeDirectorJob = {
   cancelRequested: boolean
   retryAt: string | null
   errorMessage: string | null
+  failureCode: string | null
+  failureReason: string | null
+  failedCheckpoint: string | null
+  retryable: boolean
   createdAt: string
   updatedAt: string
 }

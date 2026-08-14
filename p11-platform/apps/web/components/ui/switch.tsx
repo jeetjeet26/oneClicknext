@@ -24,16 +24,16 @@ export function Switch({
       onClick={() => onCheckedChange?.(!checked)}
       className={`
         relative inline-flex h-6 w-11 items-center rounded-full
-        transition-colors focus-visible:outline focus-visible:outline-2 
-        focus-visible:outline-offset-2 focus-visible:outline-blue-600
-        ${checked ? 'bg-blue-600' : 'bg-gray-200'}
+        transition-colors focus-visible:outline-none focus-visible:ring-2
+        focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background
+        ${checked ? 'bg-primary' : 'bg-input'}
         ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
         ${className}
       `}
     >
       <span
         className={`
-          inline-block h-4 w-4 transform rounded-full bg-white 
+          inline-block h-4 w-4 transform rounded-full bg-white shadow-sm
           transition-transform
           ${checked ? 'translate-x-6' : 'translate-x-1'}
         `}

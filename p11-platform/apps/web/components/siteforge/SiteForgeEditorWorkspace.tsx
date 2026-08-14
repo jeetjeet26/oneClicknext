@@ -711,7 +711,7 @@ export function SiteForgeEditorWorkspace({
   }
   if (!payload) {
     return (
-      <div role="alert" className="p-8 text-sm text-red-600">
+      <div role="alert" className="p-8 text-sm text-destructive">
         {error || 'Editor unavailable'}
       </div>
     )
@@ -862,7 +862,7 @@ export function SiteForgeEditorWorkspace({
             {payload.extensionRequests?.length ? (
               <section
                 aria-labelledby="runtime-extension-review-heading"
-                className="space-y-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-amber-950"
+                className="space-y-3 rounded-lg border border-warning/50 bg-warning/10 p-3 text-foreground"
               >
                 <div>
                   <h2
@@ -998,7 +998,7 @@ export function SiteForgeEditorWorkspace({
                         </pre>
                       </details>
                       {!request.review.reviewComplete ? (
-                        <p role="alert" className="font-medium text-red-700">
+                        <p role="alert" className="font-medium text-destructive">
                           Approval blocked:{' '}
                           {request.review.reviewError ||
                             'package or validation data is incomplete'}
@@ -1077,7 +1077,7 @@ export function SiteForgeEditorWorkspace({
                         </p>
                       )}
                       {extensionDecisionErrors[request.id] ? (
-                        <p id={errorId} role="alert" className="text-red-700">
+                        <p id={errorId} role="alert" className="text-destructive">
                           {extensionDecisionErrors[request.id]}
                         </p>
                       ) : null}
@@ -1123,7 +1123,7 @@ export function SiteForgeEditorWorkspace({
             {editJobFailure ? (
               <div
                 role="alert"
-                className="mr-6 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-950"
+                className="mr-6 rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-sm text-foreground"
               >
                 <p className="font-semibold">Edit {editJobFailure.status}</p>
                 {editJobFailure.errorMessage ? (
@@ -1151,7 +1151,7 @@ export function SiteForgeEditorWorkspace({
 
           <div className="space-y-2 border-t p-4">
             {selectedElement ? (
-              <div className="flex items-start justify-between gap-2 rounded border border-indigo-300 bg-indigo-50 p-2 text-xs text-indigo-950 dark:border-indigo-800 dark:bg-indigo-950/30 dark:text-indigo-100">
+              <div className="flex items-start justify-between gap-2 rounded border border-primary/50 bg-accent p-2 text-xs text-accent-foreground">
                 <span>
                   Editing {selectedElement.label} on /{selectedElement.pageSlug}
                 </span>
@@ -1159,6 +1159,7 @@ export function SiteForgeEditorWorkspace({
                   type="button"
                   onClick={() => setSelectedElement(null)}
                   aria-label="Clear selected preview element"
+                  className="rounded-sm px-1 text-base leading-none"
                 >
                   ×
                 </button>
@@ -1171,6 +1172,7 @@ export function SiteForgeEditorWorkspace({
                   type="button"
                   onClick={() => setElementContext('')}
                   aria-label="Clear edit context"
+                  className="rounded-sm px-1 text-base leading-none"
                 >
                   ×
                 </button>
@@ -1251,7 +1253,7 @@ export function SiteForgeEditorWorkspace({
               </Button>
             </div>
             {error ? (
-              <p role="alert" className="text-xs text-red-600">
+              <p role="alert" className="text-xs text-destructive">
                 {error}
               </p>
             ) : null}
@@ -1266,8 +1268,25 @@ export function SiteForgeEditorWorkspace({
               className="flex gap-2"
               role="tablist"
               aria-label="Preview source"
+              onKeyDown={(event) => {
+                if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return
+                event.preventDefault()
+                setPreviewSource((current) =>
+                  current === 'p11' ? 'wordpress' : 'p11'
+                )
+                const nextId =
+                  previewSource === 'p11'
+                    ? 'siteforge-preview-tab-wordpress'
+                    : 'siteforge-preview-tab-p11'
+                requestAnimationFrame(() => document.getElementById(nextId)?.focus())
+              }}
             >
               <Button
+                id="siteforge-preview-tab-p11"
+                role="tab"
+                aria-selected={previewSource === 'p11'}
+                aria-controls="siteforge-preview-panel-p11"
+                tabIndex={previewSource === 'p11' ? 0 : -1}
                 size="sm"
                 variant={previewSource === 'p11' ? 'default' : 'outline'}
                 onClick={() => setPreviewSource('p11')}
@@ -1275,6 +1294,11 @@ export function SiteForgeEditorWorkspace({
                 P11 preview
               </Button>
               <Button
+                id="siteforge-preview-tab-wordpress"
+                role="tab"
+                aria-selected={previewSource === 'wordpress'}
+                aria-controls="siteforge-preview-panel-wordpress"
+                tabIndex={previewSource === 'wordpress' ? 0 : -1}
                 size="sm"
                 variant={previewSource === 'wordpress' ? 'default' : 'outline'}
                 onClick={() => setPreviewSource('wordpress')}
@@ -1310,13 +1334,14 @@ export function SiteForgeEditorWorkspace({
                 </>
               ) : null}
             </div>
-            <div className="flex gap-2" aria-label="Preview viewport">
+            <div className="flex gap-2" role="group" aria-label="Preview viewport">
               {(['mobile', 'tablet', 'desktop'] as const).map((option) => (
                 <Button
                   key={option}
                   size="sm"
                   variant={viewport === option ? 'default' : 'outline'}
                   onClick={() => setViewport(option)}
+                  aria-pressed={viewport === option}
                 >
                   {option}
                 </Button>
@@ -1330,7 +1355,12 @@ export function SiteForgeEditorWorkspace({
             style={{ width: VIEWPORT_WIDTH[viewport] }}
           >
             {previewSource === 'wordpress' ? (
-              payload.previews?.wordpress && previewMatches ? (
+              <div
+                id="siteforge-preview-panel-wordpress"
+                role="tabpanel"
+                aria-labelledby="siteforge-preview-tab-wordpress"
+              >
+              {payload.previews?.wordpress && previewMatches ? (
                 <iframe
                   title="Exact WordPress preview"
                   src={payload.previews.wordpress}
@@ -1357,12 +1387,19 @@ export function SiteForgeEditorWorkspace({
                       : 'Render WordPress preview'}
                   </Button>
                 </div>
-              )
+              )}
+              </div>
             ) : (
-              <div key={`${previewRevision}-${viewport}`} className="bg-white">
-                <div className="sticky top-0 z-20 border-b bg-white/95 p-3 backdrop-blur">
+              <div
+                id="siteforge-preview-panel-p11"
+                role="tabpanel"
+                aria-labelledby="siteforge-preview-tab-p11"
+                key={`${previewRevision}-${viewport}`}
+                className="siteforge-preview-light bg-white text-gray-900"
+              >
+                <div className="sticky top-0 z-20 border-b border-gray-200 bg-white/95 p-3 text-gray-900 backdrop-blur">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex flex-wrap gap-2">
+                    <div className="flex flex-wrap gap-2" role="navigation" aria-label="Preview pages">
                       {previewPages.map(page => (
                         <Button
                           key={page.slug}
@@ -1373,12 +1410,17 @@ export function SiteForgeEditorWorkspace({
                               : 'outline'
                           }
                           onClick={() => setSelectedPreviewPage(page.slug)}
+                          aria-current={
+                            currentPreviewPage?.slug === page.slug
+                              ? 'page'
+                              : undefined
+                          }
                         >
                           {page.title}
                         </Button>
                       ))}
                     </div>
-                    <span className="text-xs text-muted-foreground">
+                    <span className="text-xs text-gray-600">
                       Instant approximation — WordPress remains release truth
                     </span>
                   </div>
@@ -1415,7 +1457,7 @@ export function SiteForgeEditorWorkspace({
                         >
                           <button
                             type="button"
-                            className="absolute right-3 top-3 z-10 rounded-md border border-indigo-300 bg-white/95 px-3 py-1.5 text-xs font-medium text-indigo-800 opacity-0 shadow-sm transition-opacity group-hover:opacity-100 focus:opacity-100 dark:bg-gray-950 dark:text-indigo-200"
+                            className="absolute right-3 top-3 z-10 rounded-md border border-indigo-300 bg-white/95 px-3 py-1.5 text-xs font-medium text-indigo-800 opacity-0 shadow-sm transition-opacity group-hover:opacity-100 focus:opacity-100"
                             aria-pressed={selected}
                             onClick={() =>
                               setSelectedElement({

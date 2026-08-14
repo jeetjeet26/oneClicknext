@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import {
   ACFBlockRenderer,
   EXPLICIT_ACF_PREVIEW_BLOCK_TYPES,
+  accessibleTextColor,
   getCriticalPreviewState,
 } from './ACFBlockRenderer'
 import { ACF_BLOCK_TYPES } from '@/types/siteforge'
@@ -13,6 +14,30 @@ import {
 } from './fixtures/preview-parity.fixture'
 
 describe('ACFBlockRenderer critical preview state', () => {
+  it('isolates generated previews from the app theme', () => {
+    const markup = renderToStaticMarkup(
+      React.createElement(ACFBlockRenderer, {
+        blockType: 'acf/text-section',
+        blockIdentity: 'light-preview',
+        content: {
+          background: 'light',
+          headline: 'A light generated surface',
+          content: '<p>Readable in either app theme.</p>',
+        },
+      })
+    )
+
+    expect(markup).toContain('siteforge-preview-light')
+    expect(markup).not.toContain('dark:')
+  })
+
+  it('chooses readable foregrounds for generated brand colors', () => {
+    expect(accessibleTextColor('#ffffff')).toBe('#111827')
+    expect(accessibleTextColor('#fef08a')).toBe('#111827')
+    expect(accessibleTextColor('#111827')).toBe('#ffffff')
+    expect(accessibleTextColor('#4338ca')).toBe('#ffffff')
+  })
+
   it('keeps explicit renderer coverage aligned with every registered ACF block', () => {
     expect([...EXPLICIT_ACF_PREVIEW_BLOCK_TYPES].sort()).toEqual(
       [...ACF_BLOCK_TYPES].sort()

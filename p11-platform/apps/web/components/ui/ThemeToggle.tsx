@@ -28,8 +28,9 @@ export function ThemeToggle() {
   return (
     <button
       onClick={toggleTheme}
-      className="flex items-center gap-2 px-3 py-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
+      className="flex items-center gap-2 rounded-lg px-3 py-2 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
       title={`Current theme: ${getLabel()}`}
+      aria-label={`Current theme: ${getLabel()}. Activate to change theme.`}
     >
       {getIcon()}
       <span className="text-sm font-medium hidden sm:inline">{getLabel()}</span>
@@ -39,7 +40,7 @@ export function ThemeToggle() {
 
 // Compact toggle for use in headers
 export function ThemeToggleCompact() {
-  const { theme, setTheme, resolvedTheme } = useTheme()
+  const { setTheme, resolvedTheme } = useTheme()
 
   const toggleTheme = () => {
     // Simple toggle between light and dark
@@ -49,8 +50,9 @@ export function ThemeToggleCompact() {
   return (
     <button
       onClick={toggleTheme}
-      className="p-2 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full transition-colors"
+      className="rounded-full p-2 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
       title={`Switch to ${resolvedTheme === 'dark' ? 'light' : 'dark'} mode`}
+      aria-label={`Switch to ${resolvedTheme === 'dark' ? 'light' : 'dark'} mode`}
     >
       {resolvedTheme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
     </button>

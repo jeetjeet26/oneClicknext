@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database, Json, Tables } from '@/types/supabase'
+import { normalizeBrandAssetRow } from '@/utils/brandforge/normalize'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { proposeSharedAction } from '@/utils/services/shared-executor'
 import {
@@ -229,6 +230,7 @@ export async function createSiteForgeDirectionSet(
     .select('*')
     .eq('id', brief.sources.brandAssetId)
     .eq('property_id', brief.propertyId)
+    .eq('approval_status', 'approved')
     .single()
   if (brandError || !brand) {
     throw new SiteForgeDirectionError(
@@ -241,7 +243,7 @@ export async function createSiteForgeDirectionSet(
     input.candidates ||
     generateDeterministicCreativeDirections({
       brief: brief.brief,
-      brand: brand as unknown as Record<string, unknown>,
+      brand: normalizeBrandAssetRow(brand as unknown as Record<string, unknown>),
       sources: {
         briefVersionId: brief.id,
         briefContentHash: brief.contentHash,

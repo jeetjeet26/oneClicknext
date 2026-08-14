@@ -71,8 +71,10 @@ export interface PhotoManifest {
   logoAssets?: {
     primaryUrl?: string
     primaryAssetId?: string
+    primaryContentHash?: string
     variations?: string[]
     variantAssetIds?: string[]
+    variantContentHashes?: string[]
   }
 }
 
@@ -289,26 +291,37 @@ export class PhotoAgent extends BaseAgent {
       logoAssets = {
         primaryUrl: brandContext.logoAssets.primaryUrl,
         primaryAssetId: brandContext.logoAssets.primaryAssetId,
+        primaryContentHash: brandContext.logoAssets.primaryContentHash,
         variations: brandContext.logoAssets.variations || [],
         variantAssetIds: brandContext.logoAssets.variantAssetIds || [],
+        variantContentHashes: brandContext.logoAssets.variantContentHashes || [],
       }
       
-      // Add primary logo
-      logoPhotos.push({
-        id: brandContext.logoAssets.primaryAssetId || `logo-primary-${Date.now()}`,
-        sourceAssetId: brandContext.logoAssets.primaryAssetId,
-        url: brandContext.logoAssets.primaryUrl,
-        type: 'brandforge',
-        category: 'logo',
-        quality: 10
-      })
+      // Logo identity must come from pinned, approved evidence. URL-only logos
+      // are bound before this step; an unknown logo is omitted and the
+      // generation evidence gate remains fail-closed.
+      if (brandContext.logoAssets.primaryAssetId) {
+        logoPhotos.push({
+          id: brandContext.logoAssets.primaryAssetId,
+          sourceAssetId: brandContext.logoAssets.primaryAssetId,
+          contentHash: brandContext.logoAssets.primaryContentHash,
+          url: brandContext.logoAssets.primaryUrl,
+          type: 'brandforge',
+          category: 'logo',
+          quality: 10
+        })
+      }
       
       // Add logo variations
+      const seenLogoUrls = new Set(logoPhotos.map(photo => photo.url))
       for (const [index, variationUrl] of (brandContext.logoAssets.variations || []).entries()) {
         const sourceAssetId = brandContext.logoAssets.variantAssetIds?.[index]
+        if (!sourceAssetId || seenLogoUrls.has(variationUrl)) continue
+        seenLogoUrls.add(variationUrl)
         logoPhotos.push({
-          id: sourceAssetId || `logo-variation-${Date.now()}-${index}`,
+          id: sourceAssetId,
           sourceAssetId,
+          contentHash: brandContext.logoAssets.variantContentHashes?.[index],
           url: variationUrl,
           type: 'brandforge',
           category: 'logo',

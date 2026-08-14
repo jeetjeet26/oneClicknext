@@ -1,4 +1,4 @@
-// schema_migration_version: 20260813195342
+// schema_migration_version: 20260813224636
 export type Json =
   | string
   | number
@@ -16080,6 +16080,46 @@ export type Database = {
       apply_property_unit_import: {
         Args: { p_confirmed_by: string; p_import_id: string }
         Returns: number
+      }
+      apply_siteforge_direction_edit: {
+        Args: {
+          p_actor_id: string
+          p_candidates: Json
+          p_client_request_id: string
+          p_expected_direction_hash: string
+          p_expected_set_hash: string
+          p_model: string
+          p_parent_set_id: string
+          p_property_id: string
+          p_request_summary: string
+          p_result_set_hash: string
+          p_selected_ordinal: number
+          p_tool_summary: string
+        }
+        Returns: {
+          approval_action_attempt_id: string | null
+          approved_at: string | null
+          approved_by: string | null
+          brief_version_id: string
+          confirmed_approval_id: string | null
+          content_hash: string
+          created_at: string
+          created_by: string | null
+          id: string
+          org_id: string
+          property_id: string
+          selected_direction_id: string | null
+          selection_notes: string | null
+          status: string
+          version: number
+          website_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "siteforge_creative_direction_sets"
+          isOneToOne: false
+          isSetofReturn: true
+        }
       }
       approve_siteforge_visual_baseline: {
         Args: {

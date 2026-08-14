@@ -138,6 +138,7 @@ describe('SiteForge job retry', () => {
         cancel_requested: false,
         attempt_count: 1,
         max_attempts: 3,
+        error_details: { retryable: true },
         payload: {
           websiteId: '33333333-3333-4333-8333-333333333333',
           propertyId,
@@ -217,6 +218,7 @@ describe('SiteForge job retry', () => {
         cancel_requested: false,
         attempt_count: 1,
         max_attempts: 3,
+        error_details: { retryable: true },
         payload: { websiteId, planVersionId, legacyJobId },
       },
       error: null,
@@ -301,5 +303,44 @@ describe('SiteForge job retry', () => {
         evidenceSnapshot,
       }),
     ])
+  })
+
+  it('refuses a deterministic nonretryable failure', async () => {
+    mockAuthenticatedUser(authGetUserMock)
+    validatePropertyAccessMock.mockResolvedValue({ authorized: true })
+    serviceFromMock.mockReturnValue(
+      jobQuery({
+        data: {
+          id: jobId,
+          domain: 'siteforge.generation',
+          org_id: orgId,
+          property_id: propertyId,
+          lifecycle_status: 'failed',
+          cancel_requested: false,
+          attempt_count: 1,
+          max_attempts: 3,
+          error_details: {
+            code: 'asset_evidence_mismatch',
+            retryable: false,
+            failedCheckpoint: 'executing_photos',
+          },
+          payload: {},
+        },
+        error: null,
+      })
+    )
+
+    const { POST } = await import('./route')
+    const response = await POST(
+      makeJsonRequest(`http://localhost/api/siteforge/jobs/${jobId}/retry`),
+      { params: Promise.resolve({ jobId }) }
+    )
+
+    await expectJsonError(
+      response,
+      409,
+      'This failure is not retryable. Review the approved inputs and prepare a new build when the issue is resolved.'
+    )
+    expect(startWorkflowMock).not.toHaveBeenCalled()
   })
 })

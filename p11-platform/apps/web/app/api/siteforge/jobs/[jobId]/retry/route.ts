@@ -78,7 +78,7 @@ export async function POST(
     const { data: job, error: jobError } = await serviceSupabase
       .from('shared_jobs')
       .select(
-        'id, domain, org_id, property_id, lifecycle_status, cancel_requested, attempt_count, max_attempts, payload'
+        'id, domain, org_id, property_id, lifecycle_status, cancel_requested, attempt_count, max_attempts, payload, error_details'
       )
       .eq('id', jobId)
       .in('domain', [
@@ -105,6 +105,21 @@ export async function POST(
     if (job.attempt_count >= job.max_attempts) {
       return NextResponse.json(
         { error: 'SiteForge job has exhausted its retry limit' },
+        { status: 409 }
+      )
+    }
+    const errorDetails =
+      job.error_details &&
+      typeof job.error_details === 'object' &&
+      !Array.isArray(job.error_details)
+        ? (job.error_details as Record<string, unknown>)
+        : {}
+    if (errorDetails.retryable !== true) {
+      return NextResponse.json(
+        {
+          error:
+            'This failure is not retryable. Review the approved inputs and prepare a new build when the issue is resolved.',
+        },
         { status: 409 }
       )
     }
@@ -284,7 +299,14 @@ export async function POST(
           stage: 'failed',
           current_step: 'Retry workflow failed to start',
           error_message: message,
-          error_details: { message },
+          error_details: {
+            code: 'retry_start_failed',
+            retryable: true,
+            failedCheckpoint: 'retry_start',
+            safeMessage:
+              'The retry could not start because the workflow provider is temporarily unavailable.',
+            diagnostics: { message },
+          },
           finished_at: new Date().toISOString(),
           lease_owner: null,
           lease_expires_at: null,

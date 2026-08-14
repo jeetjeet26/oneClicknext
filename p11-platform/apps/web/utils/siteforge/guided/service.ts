@@ -17,7 +17,12 @@ import {
   createSiteForgeDirectionSet,
   getSiteForgeDirectionSet,
   selectSiteForgeCreativeDirection,
+  SiteForgeDirectionError,
 } from "@/utils/siteforge/directions/repository";
+import {
+  editSiteForgeCreativeDirection,
+  selectSiteForgeCreativeDirectionAlternative,
+} from "@/utils/siteforge/directions/editor-service";
 import {
   createPlanRevision,
   decideSiteForgePlan,
@@ -75,6 +80,8 @@ type GuidedDependencies = {
   createPlan: typeof createPlanRevision;
   getPlan: typeof getCurrentPlanRevision;
   decidePlan: typeof decideSiteForgePlan;
+  editDirection: typeof editSiteForgeCreativeDirection;
+  selectDirectionAlternative: typeof selectSiteForgeCreativeDirectionAlternative;
 };
 
 const defaultDependencies = (): GuidedDependencies => ({
@@ -94,6 +101,8 @@ const defaultDependencies = (): GuidedDependencies => ({
   createPlan: createPlanRevision,
   getPlan: getCurrentPlanRevision,
   decidePlan: decideSiteForgePlan,
+  editDirection: editSiteForgeCreativeDirection,
+  selectDirectionAlternative: selectSiteForgeCreativeDirectionAlternative,
 });
 
 function record(value: unknown): Record<string, unknown> {
@@ -161,6 +170,18 @@ export class SiteForgeGuidedError extends Error {
 
 export function toSiteForgeGuidedError(error: unknown): SiteForgeGuidedError {
   if (error instanceof SiteForgeGuidedError) return error;
+  if (error instanceof SiteForgeDirectionError) {
+    return new SiteForgeGuidedError(
+      error.message,
+      error.statusCode,
+      error.statusCode === 409
+        ? "source_changed"
+        : error.statusCode >= 500
+          ? "temporary"
+          : "needs_attention",
+      error.statusCode >= 500,
+    );
+  }
   const classified = classifyGuidedError(error);
   return new SiteForgeGuidedError(
     classified.message,
@@ -223,6 +244,37 @@ export function createSiteForgeGuidedService(
       );
     }
     return parsed.data;
+  }
+
+  async function loadLatestGenerationJob(input: {
+    websiteId: string;
+    propertyId: string;
+    orgId: string;
+  }) {
+    const { data, error } = await deps.client
+      .from("shared_jobs")
+      .select(
+        "id, subject_id, lifecycle_status, error_message, error_details, payload, created_at",
+      )
+      .eq("org_id", input.orgId)
+      .eq("property_id", input.propertyId)
+      .eq("domain", "siteforge.generation")
+      .order("created_at", { ascending: false })
+      .limit(25);
+    if (error) {
+      throw new GuidedJourneyError(
+        "SiteForge could not load the latest build status.",
+        "temporary",
+        true,
+      );
+    }
+    return (data || []).find((job) => {
+      const payload = record(job.payload);
+      return (
+        job.subject_id === input.websiteId ||
+        payload.websiteId === input.websiteId
+      );
+    }) || null;
   }
 
   async function persistState(
@@ -372,12 +424,50 @@ export function createSiteForgeGuidedService(
       loadOrCreate(websiteId),
       loadWebsite(websiteId),
     ]);
+    const latestGeneration = await loadLatestGenerationJob({
+      websiteId,
+      propertyId: website.property_id,
+      orgId: website.org_id,
+    });
+    const failure = record(latestGeneration?.error_details);
     const question = nextGuidedQuestion(state.answers);
+    const preparedDirections = state.prepared
+      ? await deps.getDirections(
+          state.prepared.directionSetId,
+          state.propertyId,
+          deps.client,
+        )
+      : null;
+    const selectedDirection = preparedDirections?.directions.find(
+      (direction) => direction.id === preparedDirections.selectedDirectionId,
+    );
     return {
       state,
       question,
+      creativeDirection:
+        state.prepared && preparedDirections && selectedDirection
+          ? {
+              directionSetId: preparedDirections.id,
+              directionSetContentHash: preparedDirections.contentHash,
+              selected: selectedDirection,
+              alternatives: preparedDirections.directions.filter(
+                (direction) => direction.id !== selectedDirection.id,
+              ),
+              recommendationReason: state.prepared.recommendationReason,
+            }
+          : null,
       journey: projectGuidedJourney(state, {
-        generationStatus: website.generation_status,
+        generationStatus:
+          latestGeneration?.lifecycle_status || website.generation_status,
+        generationFailureReason:
+          typeof failure.safeMessage === "string"
+            ? failure.safeMessage
+            : latestGeneration?.error_message,
+        generationRetryable: failure.retryable === true,
+        failedCheckpoint:
+          typeof failure.failedCheckpoint === "string"
+            ? failure.failedCheckpoint
+            : null,
         previewUrl: website.canonical_preview_url || website.staging_url,
         productionUrl: website.production_url,
       }),
@@ -724,6 +814,16 @@ export function createSiteForgeGuidedService(
           true,
         );
       }
+      const recommendedCandidate = directionSet.directions.find(
+        (direction) => direction.id === recommended.id,
+      );
+      if (!recommendedCandidate) {
+        throw new GuidedJourneyError(
+          "SiteForge could not resolve the recommended creative direction.",
+          "temporary",
+          true,
+        );
+      }
       if (
         directionSet.selectedDirectionId !== recommended.id ||
         directionSet.status === "draft"
@@ -812,6 +912,7 @@ export function createSiteForgeGuidedService(
         directionSetId: directionSet.id,
         directionSetContentHash: directionSet.contentHash,
         recommendedDirectionId: recommended.id,
+        selectedDirectionContentHash: recommendedCandidate.contentHash,
         recommendedDirectionName: recommended.name,
         recommendedDirectionScore: recommended.score,
         recommendationReason: recommended.reason,
@@ -1033,7 +1134,167 @@ export function createSiteForgeGuidedService(
     }
   }
 
-  return { snapshot, conversation, prepare, confirm };
+  async function editDirection(
+    websiteId: string,
+    input: {
+      clientRequestId: string;
+      instruction?: string;
+      alternativeDirectionId?: string;
+      expectedRevision: number;
+      expected: {
+        directionSetContentHash: string;
+        selectedDirectionContentHash: string;
+      };
+    },
+    userId: string,
+  ) {
+    const state = await loadOrCreate(websiteId);
+    if (!state.prepared || state.generation) {
+      throw new SiteForgeGuidedError(
+        "Prepare a recommendation before editing its creative direction.",
+        409,
+        "needs_attention",
+        false,
+      );
+    }
+    if (input.expectedRevision !== state.revision) {
+      throw new SiteForgeGuidedError(
+        "The recommendation changed. Reload it before editing.",
+        409,
+        "source_changed",
+        false,
+      );
+    }
+    const duplicateTurn = state.turns.find(
+      (turn) =>
+        turn.role === "user" &&
+        turn.clientRequestId === input.clientRequestId,
+    );
+    if (duplicateTurn) {
+      return { ...(await snapshot(websiteId)), duplicate: true };
+    }
+    const baseInput = {
+      directionSetId: state.prepared.directionSetId,
+      propertyId: state.propertyId,
+      selectedDirectionId: state.prepared.recommendedDirectionId,
+      expectedSetContentHash: input.expected.directionSetContentHash,
+      expectedDirectionContentHash:
+        input.expected.selectedDirectionContentHash,
+      clientRequestId: input.clientRequestId,
+      actorId: userId,
+    };
+    const instruction =
+      input.instruction ||
+      `Select alternative creative direction ${input.alternativeDirectionId}.`;
+    const result = input.alternativeDirectionId
+      ? await deps.selectDirectionAlternative(
+          {
+            ...baseInput,
+            alternativeDirectionId: input.alternativeDirectionId,
+          },
+          deps.client,
+        )
+      : await deps.editDirection(
+          { ...baseInput, instruction },
+          deps.client,
+        );
+    if (result.outcome.outcome !== "patch") {
+      const now = deps.now().toISOString();
+      const assistantContent =
+        result.outcome.outcome === "clarification"
+          ? result.outcome.question
+          : result.outcome.reason;
+      await persistState({
+        ...state,
+        revision: state.revision + 1,
+        turns: [
+          ...state.turns,
+          {
+            id: `${input.clientRequestId}:user`,
+            clientRequestId: input.clientRequestId,
+            role: "user",
+            field: null,
+            content: instruction,
+            createdAt: now,
+          },
+          {
+            id: `${input.clientRequestId}:assistant`,
+            clientRequestId: input.clientRequestId,
+            role: "assistant",
+            field: null,
+            content: assistantContent,
+            createdAt: now,
+          },
+        ],
+        updatedAt: now,
+      });
+      return {
+        ...(await snapshot(websiteId)),
+        duplicate: false,
+        editOutcome: result.outcome,
+      };
+    }
+    const selected = result.directionSet.directions.find(
+      (direction) =>
+        direction.id === result.directionSet.selectedDirectionId,
+    );
+    if (!selected) {
+      throw new SiteForgeGuidedError(
+        "The revised creative direction could not be resumed.",
+        500,
+        "temporary",
+        true,
+      );
+    }
+    const now = deps.now().toISOString();
+    await persistState({
+      ...state,
+      revision: state.revision + 1,
+      prepared: {
+        ...state.prepared,
+        directionSetId: result.directionSet.id,
+        directionSetContentHash: result.directionSet.contentHash,
+        recommendedDirectionId: selected.id,
+        recommendedDirectionName: selected.name,
+        selectedDirectionContentHash: selected.contentHash,
+        recommendationReason: result.outcome.summary,
+      },
+      preparation: state.preparation
+        ? {
+            ...state.preparation,
+            directionSetId: result.directionSet.id,
+            updatedAt: now,
+          }
+        : null,
+      turns: [
+        ...state.turns,
+        {
+          id: `${input.clientRequestId}:user`,
+          clientRequestId: input.clientRequestId,
+          role: "user",
+          field: null,
+          content: instruction,
+          createdAt: now,
+        },
+        {
+          id: `${input.clientRequestId}:assistant`,
+          clientRequestId: input.clientRequestId,
+          role: "assistant",
+          field: null,
+          content: result.outcome.summary,
+          createdAt: now,
+        },
+      ],
+      updatedAt: now,
+    });
+    return {
+      ...(await snapshot(websiteId)),
+      duplicate: result.duplicate,
+      editOutcome: result.outcome,
+    };
+  }
+
+  return { snapshot, conversation, prepare, confirm, editDirection };
 }
 
 let singleton: ReturnType<typeof createSiteForgeGuidedService> | null = null;

@@ -43,7 +43,10 @@ import {
   brandForgeContractV1Schema,
 } from '@/utils/brandforge/contracts'
 import { hashBrandForgeContract } from '@/utils/brandforge/normalize'
-import { brandContextFromContract } from '@/utils/siteforge/brand-contract-adapter'
+import {
+  brandContextFromContract,
+  normalizeBrandAssetUrl,
+} from '@/utils/siteforge/brand-contract-adapter'
 import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
 import {
   assertSiteForgeGenerationEvidenceCurrent,
@@ -69,6 +72,14 @@ export type SiteForgeGenerationWorkflowInput = {
   approvedCreativeDirection?: Record<string, unknown>
   evidenceSnapshot?: SiteForgeGenerationEvidenceSnapshot
   startedAt: string
+}
+
+export type SiteForgeGenerationFailure = {
+  code: string
+  retryable: boolean
+  failedCheckpoint: string
+  message: string
+  safeMessage: string
 }
 
 export const SITEFORGE_LEGAL_REMEDIATION =
@@ -214,12 +225,20 @@ export function assertApprovedGenerationPhotoManifest(
   const approvedIds = new Set(
     input.evidenceSnapshot.assetManifest.assets.map(asset => asset.id)
   )
+  const approvedById = new Map(
+    input.evidenceSnapshot.assetManifest.assets.map(asset => [asset.id, asset])
+  )
   const invalid = manifest.photos.filter(photo => {
     const sourceId = photo.sourceAssetId || photo.id
+    const approved = approvedById.get(sourceId)
     return (
       photo.id.startsWith('siteforge-placeholder-') ||
       photo.url.toLowerCase().includes('placeholder') ||
-      !approvedIds.has(sourceId)
+      !approvedIds.has(sourceId) ||
+      !approved ||
+      normalizeBrandAssetUrl(photo.url) !== normalizeBrandAssetUrl(approved.fileUrl) ||
+      (photo.contentHash !== undefined &&
+        photo.contentHash !== approved.contentHash)
     )
   })
   if (invalid.length) {
@@ -386,7 +405,10 @@ export async function analyzeSiteForgeBrand(
   ) {
     throw new FatalError('Pinned onboarding snapshot hash does not match the confirmed plan')
   }
-  return brandContextFromContract(contract)
+  return brandContextFromContract(
+    contract,
+    input.evidenceSnapshot?.assetManifest.assets
+  )
 }
 
 export async function loadConfirmedSiteForgePlan(
@@ -1111,13 +1133,13 @@ export async function completeSiteForgeGeneration(
 
 export async function failSiteForgeGeneration(
   input: SiteForgeGenerationWorkflowInput,
-  message: string
+  failure: SiteForgeGenerationFailure
 ): Promise<void> {
   'use step'
 
   console.error('[siteforge_workflow] generation failed', {
     sharedJobId: input.sharedJobId,
-    message,
+    message: failure.message,
   })
   const supabase = createServiceClient()
   const now = new Date().toISOString()
@@ -1146,8 +1168,14 @@ export async function failSiteForgeGeneration(
         finished_at: now,
         lease_owner: null,
         lease_expires_at: null,
-        error_message: message,
-        error_details: { message } as Json,
+        error_message: failure.safeMessage,
+        error_details: {
+          code: failure.code,
+          retryable: failure.retryable,
+          failedCheckpoint: failure.failedCheckpoint,
+          safeMessage: failure.safeMessage,
+          diagnostics: { message: failure.message },
+        } as Json,
         updated_at: now,
       })
       .eq('id', input.sharedJobId)
@@ -1158,7 +1186,13 @@ export async function failSiteForgeGeneration(
       .update({
         status: 'failed',
         completed_at: now,
-        error_details: { message } as Json,
+        error_details: {
+          code: failure.code,
+          retryable: failure.retryable,
+          failedCheckpoint: failure.failedCheckpoint,
+          safeMessage: failure.safeMessage,
+          diagnostics: { message: failure.message },
+        } as Json,
       })
       .eq('id', input.legacyJobId)
       .select('id')
@@ -1167,7 +1201,7 @@ export async function failSiteForgeGeneration(
       .from('property_websites')
       .update({
         generation_status: 'failed',
-        error_message: message,
+        error_message: failure.safeMessage,
         updated_at: now,
       })
       .eq('id', input.websiteId)

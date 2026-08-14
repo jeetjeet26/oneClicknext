@@ -85,6 +85,7 @@ type JobSource = {
   cancel_requested: boolean
   retry_at: string | null
   error_message: string | null
+  error_details: Json
   payload: Json
   created_at: string
   updated_at: string
@@ -619,22 +620,35 @@ export function deriveSiteForgeDirectorSnapshot(
 ): SiteForgeDirectorSnapshot {
   const { website, artifact, release } = source
   const blockers = deriveBlockers(source, now)
-  const jobs: SiteForgeDirectorJob[] = source.jobs.map(job => ({
-    id: job.id,
-    domain: job.domain,
-    lifecycleStatus: job.lifecycle_status,
-    statusReason: job.status_reason,
-    stage: job.stage,
-    progress: job.progress,
-    currentStep: job.current_step,
-    attemptCount: job.attempt_count,
-    maxAttempts: job.max_attempts,
-    cancelRequested: job.cancel_requested,
-    retryAt: job.retry_at,
-    errorMessage: job.error_message,
-    createdAt: job.created_at,
-    updatedAt: job.updated_at,
-  }))
+  const jobs: SiteForgeDirectorJob[] = source.jobs.map(job => {
+    const details = asRecord(job.error_details)
+    return {
+      id: job.id,
+      domain: job.domain,
+      lifecycleStatus: job.lifecycle_status,
+      statusReason: job.status_reason,
+      stage: job.stage,
+      progress: job.progress,
+      currentStep: job.current_step,
+      attemptCount: job.attempt_count,
+      maxAttempts: job.max_attempts,
+      cancelRequested: job.cancel_requested,
+      retryAt: job.retry_at,
+      errorMessage: job.error_message,
+      failureCode: typeof details.code === 'string' ? details.code : null,
+      failureReason:
+        typeof details.safeMessage === 'string'
+          ? details.safeMessage
+          : job.error_message,
+      failedCheckpoint:
+        typeof details.failedCheckpoint === 'string'
+          ? details.failedCheckpoint
+          : null,
+      retryable: details.retryable === true,
+      createdAt: job.created_at,
+      updatedAt: job.updated_at,
+    }
+  })
   const jobDomains = new Map(source.jobs.map(job => [job.id, job.domain]))
   const pendingDecisions: SiteForgeDirectorDecision[] = source.actions
     .filter(action => action.proposal_decision_status === 'proposed')
@@ -1043,7 +1057,7 @@ export async function loadSiteForgeDirectorSnapshot(
     client
       .from('shared_jobs')
       .select(
-        'id, domain, subject_id, lifecycle_status, status_reason, stage, progress, current_step, attempt_count, max_attempts, cancel_requested, retry_at, error_message, payload, created_at, updated_at'
+        'id, domain, subject_id, lifecycle_status, status_reason, stage, progress, current_step, attempt_count, max_attempts, cancel_requested, retry_at, error_message, error_details, payload, created_at, updated_at'
       )
       .eq('org_id', tenant.orgId)
       .eq('property_id', tenant.propertyId)

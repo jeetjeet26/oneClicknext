@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  siteForgeCreativeDirectionSchema,
+  siteForgeDirectionPreviewSchema,
+} from "@/utils/siteforge/directions/contracts";
 
 export const GUIDED_DISCOVERY_FIELDS = [
   "objective",
@@ -92,6 +96,7 @@ export const guidedPreparedPackageSchema = z.object({
   directionSetId: z.string().min(1),
   directionSetContentHash: z.string().length(64),
   recommendedDirectionId: z.string().min(1),
+  selectedDirectionContentHash: z.string().length(64).optional(),
   recommendedDirectionName: text.max(240).optional(),
   recommendedDirectionScore: z.number().min(0).max(100),
   recommendationReason: text,
@@ -101,6 +106,23 @@ export const guidedPreparedPackageSchema = z.object({
   planRevision: z.number().int().positive(),
   planContentHash: z.string().length(64),
   preparedAt: z.string().datetime(),
+});
+
+export const guidedCreativeDirectionCandidateSchema = z.object({
+  id: z.string().min(1),
+  ordinal: z.number().int().positive(),
+  name: text.max(240),
+  direction: siteForgeCreativeDirectionSchema,
+  previewManifest: siteForgeDirectionPreviewSchema,
+  contentHash: z.string().length(64),
+});
+
+export const guidedCreativeDirectionOverviewSchema = z.object({
+  directionSetId: z.string().min(1),
+  directionSetContentHash: z.string().length(64),
+  selected: guidedCreativeDirectionCandidateSchema,
+  alternatives: z.array(guidedCreativeDirectionCandidateSchema).max(2),
+  recommendationReason: text,
 });
 
 export const guidedGenerationSchema = z.object({
@@ -180,6 +202,23 @@ export const guidedConfirmRequestSchema = z.object({
   }),
 });
 
+export const guidedDirectionEditRequestSchema = z.object({
+  clientRequestId: z.string().trim().min(8).max(160),
+  instruction: z.string().trim().min(2).max(2_000).optional(),
+  alternativeDirectionId: z.guid().optional(),
+  expectedRevision: z.number().int().nonnegative(),
+  expected: z.object({
+    directionSetContentHash: z.string().length(64),
+    selectedDirectionContentHash: z.string().length(64),
+  }),
+}).refine(
+  value =>
+    Boolean(value.instruction) !== Boolean(value.alternativeDirectionId),
+  {
+    message: "Provide either an edit instruction or one alternative direction.",
+  },
+);
+
 export const guidedQuestionSchema = z.object({
   field: guidedDiscoveryFieldSchema,
   question: text,
@@ -192,3 +231,6 @@ export type GuidedAttachment = z.infer<typeof guidedAttachmentSchema>;
 export type GuidedDiscoveryField = z.infer<typeof guidedDiscoveryFieldSchema>;
 export type GuidedJourneyState = z.infer<typeof guidedJourneyStateSchema>;
 export type GuidedQuestion = z.infer<typeof guidedQuestionSchema>;
+export type GuidedCreativeDirectionOverview = z.infer<
+  typeof guidedCreativeDirectionOverviewSchema
+>;

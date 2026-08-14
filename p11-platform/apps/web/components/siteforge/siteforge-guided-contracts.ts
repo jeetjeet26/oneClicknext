@@ -4,6 +4,7 @@ import type {
 } from "@/utils/siteforge/director/contracts";
 import type {
   GuidedAttachment,
+  GuidedCreativeDirectionOverview,
   GuidedJourneyState,
   GuidedQuestion,
 } from "@/utils/siteforge/guided/contracts";
@@ -38,6 +39,7 @@ export type SiteForgeGuidedRecommendation = {
 export type SiteForgeGuidedSnapshotResponse = {
   state: GuidedJourneyState;
   question: GuidedQuestion | null;
+  creativeDirection: GuidedCreativeDirectionOverview | null;
   journey: GuidedJourneyProjection;
   attachmentRoutes: {
     images: string;
@@ -63,6 +65,17 @@ export type SiteForgeGuidedPrepareResponse = SiteForgeGuidedSnapshotResponse & {
 export type SiteForgeGuidedConfirmResponse = SiteForgeGuidedSnapshotResponse & {
   duplicate: boolean;
 };
+
+export type SiteForgeGuidedDirectionEditResponse =
+  SiteForgeGuidedSnapshotResponse & {
+    duplicate: boolean;
+    editOutcome?: {
+      outcome: "patch" | "clarification" | "rejection";
+      summary?: string;
+      question?: string;
+      reason?: string;
+    };
+  };
 
 export type SiteForgeGuidedJourneyItem = {
   id: SiteForgeGuidedStepId;
