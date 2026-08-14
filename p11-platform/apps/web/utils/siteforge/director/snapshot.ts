@@ -249,6 +249,23 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function projectedJobFailure(job: JobSource) {
   const details = asRecord(job.error_details)
+  const diagnostics = asRecord(details.diagnostics)
+  const diagnosticMessage =
+    typeof diagnostics.message === 'string'
+      ? diagnostics.message
+      : job.error_message
+  if (details.code === 'generation_failure' && diagnosticMessage) {
+    const classified = classifySiteForgeGenerationFailure(
+      diagnosticMessage,
+      job.current_step || job.stage
+    )
+    return {
+      code: classified.code,
+      safeMessage: classified.safeMessage,
+      failedCheckpoint: classified.failedCheckpoint,
+      retryable: classified.retryable,
+    }
+  }
   if (
     typeof details.code === 'string' &&
     typeof details.safeMessage === 'string'

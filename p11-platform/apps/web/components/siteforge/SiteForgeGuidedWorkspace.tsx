@@ -189,7 +189,7 @@ export function SiteForgeGuidedWorkspace({
           ),
         );
       }
-      applyPayload(body as SiteForgeGuidedSnapshotResponse);
+      applyPayload(body as SiteForgeGuidedSnapshotResponse, !quiet);
       if (!quiet) setLoading(false);
     },
     [applyPayload, websiteId],
@@ -240,6 +240,22 @@ export function SiteForgeGuidedWorkspace({
     const timer = window.setInterval(() => void refreshAll(true), 8_000);
     return () => window.clearInterval(timer);
   }, [director, projection?.stage, refreshAll]);
+
+  useEffect(() => {
+    const generation = director?.jobs.find(
+      job => job.domain === "siteforge.generation",
+    );
+    if (
+      generation &&
+      ["failed", "cancelled", "succeeded"].includes(
+        generation.lifecycleStatus,
+      )
+    ) {
+      setNotice(current =>
+        /build is underway|attempt started/i.test(current) ? "" : current,
+      );
+    }
+  }, [director]);
 
   function addReference() {
     const value = referenceUrl.trim();

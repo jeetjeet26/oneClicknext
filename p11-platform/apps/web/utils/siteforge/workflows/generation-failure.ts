@@ -2,6 +2,9 @@ import { FatalError } from 'workflow'
 import type { SiteForgeGenerationFailure } from './generation-steps'
 
 function workflowErrorMessage(error: unknown): string {
+  if (typeof error === 'string' && error.trim()) {
+    return error.trim()
+  }
   if (
     error &&
     typeof error === 'object' &&
@@ -30,6 +33,20 @@ export function classifySiteForgeGenerationFailure(
       message,
       safeMessage:
         'The previous build used outdated logo references. SiteForge has repaired that path and the build can now be restarted.',
+    }
+  }
+  if (
+    /approved floor-plan inventory changed, became stale, or is no longer publishable/i.test(
+      message
+    )
+  ) {
+    return {
+      code: 'floor_plan_inventory_changed',
+      retryable: true,
+      failedCheckpoint,
+      message,
+      safeMessage:
+        'The approved floor-plan inventory changed during the build. Restart to use the current approved inventory.',
     }
   }
   const deterministicAssetMismatch =

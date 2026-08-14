@@ -431,11 +431,16 @@ export function createSiteForgeGuidedService(
       orgId: website.org_id,
     });
     const failure = record(latestGeneration?.error_details);
-    const legacyFailure =
+    const diagnostics = record(failure.diagnostics);
+    const projectedFailure =
       latestGeneration?.lifecycle_status === "failed" &&
-      typeof failure.safeMessage !== "string"
+      (typeof failure.safeMessage !== "string" ||
+        failure.code === "generation_failure")
         ? classifySiteForgeGenerationFailure(
-            latestGeneration.error_message || "SiteForge generation failed",
+            (typeof diagnostics.message === "string"
+              ? diagnostics.message
+              : latestGeneration.error_message) ||
+              "SiteForge generation failed",
             "Generation failed",
           )
         : null;
@@ -470,14 +475,14 @@ export function createSiteForgeGuidedService(
           latestGeneration?.lifecycle_status || website.generation_status,
         generationFailureReason:
           typeof failure.safeMessage === "string"
-            ? failure.safeMessage
-            : legacyFailure?.safeMessage,
+            ? projectedFailure?.safeMessage || failure.safeMessage
+            : projectedFailure?.safeMessage,
         generationRetryable:
-          failure.retryable === true || legacyFailure?.retryable === true,
+          failure.retryable === true || projectedFailure?.retryable === true,
         failedCheckpoint:
           typeof failure.failedCheckpoint === "string"
             ? failure.failedCheckpoint
-            : legacyFailure?.failedCheckpoint || null,
+            : projectedFailure?.failedCheckpoint || null,
         previewUrl: website.canonical_preview_url || website.staging_url,
         productionUrl: website.production_url,
       }),

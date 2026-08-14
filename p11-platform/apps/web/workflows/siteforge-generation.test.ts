@@ -6,15 +6,26 @@ describe('SiteForge generation failure classification', () => {
   it('allows legacy temporary logo identities to restart after repair', () => {
     expect(
       classifySiteForgeGenerationFailure(
-        new Error(
-          'Photo output is outside the approved rights-cleared asset manifest: logo-primary-1786659527450, logo-variation-1786659527450-0'
-        ),
+        'Photo output is outside the approved rights-cleared asset manifest: logo-primary-1786659527450, logo-variation-1786659527450-0',
         'executing_photos'
       )
     ).toMatchObject({
       code: 'legacy_logo_identity_failure',
       retryable: true,
       safeMessage: expect.stringContaining('outdated logo references'),
+    })
+  })
+
+  it('allows a build to restart with current approved floor-plan inventory', () => {
+    expect(
+      classifySiteForgeGenerationFailure(
+        'Approved floor-plan inventory changed, became stale, or is no longer publishable',
+        'publishing_artifact'
+      )
+    ).toMatchObject({
+      code: 'floor_plan_inventory_changed',
+      retryable: true,
+      failedCheckpoint: 'publishing_artifact',
     })
   })
 

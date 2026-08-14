@@ -6,6 +6,7 @@ import {
   type FloorPlanPreview,
 } from './floor-plans'
 import { enforceInventoryFreshness } from '@/utils/siteforge/operations/inventory'
+import { isSyntheticInventorySource } from './inventory-policy'
 
 export async function loadFreshApprovedFloorPlanInventory(
   propertyId: string,
@@ -27,8 +28,11 @@ export async function loadFreshApprovedFloorPlanInventory(
     throw new Error(`Failed to load approved floor-plan inventory: ${error.message}`)
   }
 
+  const inventory = (data || []).filter(
+    unit => !isSyntheticInventorySource(unit)
+  )
   const freshness = enforceInventoryFreshness(
-    (data || []).map((unit) => ({
+    inventory.map((unit) => ({
       ...unit,
       id: unit.canonical_key,
       rentMin: unit.rent_min ?? undefined,
@@ -40,13 +44,13 @@ export async function loadFreshApprovedFloorPlanInventory(
     })),
     {
       propertyId,
-      provider: (data?.[0]?.source || 'siteforge') as 'siteforge',
+      provider: (inventory[0]?.source || 'siteforge') as 'siteforge',
       maxAgeHours,
       now: new Date(capturedAt),
     }
   )
   const staleIds = new Set(freshness.revisionProposal.staleUnitIds)
-  const safeRows = (data || []).map((unit) =>
+  const safeRows = inventory.map((unit) =>
     staleIds.has(unit.canonical_key)
       ? {
           ...unit,
