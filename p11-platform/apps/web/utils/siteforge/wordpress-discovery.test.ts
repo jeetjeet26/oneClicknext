@@ -35,6 +35,7 @@ describe('wordpress-discovery', () => {
     expect(fetchMock).not.toHaveBeenCalled()
     expect(capabilities.availableBlocks).toEqual([...ACF_BLOCK_TYPES])
     expect(capabilities.theme.name).toBe('oneclick-siteforge')
+    expect(capabilities.theme.version).toBe('2.2.11')
     expect(Object.keys(capabilities.blockSchemas)).toHaveLength(ACF_BLOCK_TYPES.length)
   })
 
