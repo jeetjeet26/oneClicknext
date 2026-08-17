@@ -18,6 +18,11 @@ export function getSupabasePublishableKey(): string {
       'NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY or NEXT_PUBLIC_SUPABASE_ANON_KEY is not set'
     )
   }
+  if (supabasePublishableKey === '[SENSITIVE]') {
+    throw new Error(
+      'Supabase publishable key was redacted by the deployment environment'
+    )
+  }
 
   return supabasePublishableKey
 }

@@ -26,6 +26,17 @@ for (const p of envPaths) {
   if (existsSync(p)) loadDotenv({ path: p });
 }
 
+const publicSupabaseKey =
+  process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ??
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
+  "";
+
+if (publicSupabaseKey === "[SENSITIVE]") {
+  throw new Error(
+    "Refusing to build with Vercel's [SENSITIVE] placeholder as the public Supabase key. Use a remote build or inject the verified publishable key.",
+  );
+}
+
 const nextConfig: NextConfig = {
   /* config options here */
   allowedDevOrigins: ["127.0.0.1"],
@@ -49,8 +60,7 @@ const nextConfig: NextConfig = {
    */
   env: {
     NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
-    NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:
-      process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? "",
+    NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: publicSupabaseKey,
     NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "",
     NEXT_PUBLIC_SITE_URL: process.env.NEXT_PUBLIC_SITE_URL ?? "",
   },

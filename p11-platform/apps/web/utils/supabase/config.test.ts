@@ -29,6 +29,15 @@ describe('supabase config', () => {
     expect(getSupabasePublishableKey()).toBe('anon-key')
   })
 
+  it('rejects Vercel sensitive-value placeholders', () => {
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY = '[SENSITIVE]'
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = 'anon-key'
+
+    expect(() => getSupabasePublishableKey()).toThrow(
+      'Supabase publishable key was redacted'
+    )
+  })
+
   it('throws when the service role key is missing', () => {
     Reflect.deleteProperty(process.env, 'SUPABASE_SERVICE_ROLE_KEY')
 
