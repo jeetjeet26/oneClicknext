@@ -461,6 +461,95 @@ describe('SiteForge durable generation steps', () => {
     })
     expect(design.animations).toMatchObject({ level: 'none', types: [] })
   })
+
+  it('pins published colors and typography to exact BrandForge roles', async () => {
+    const { enforcePinnedBrandDesignSystem } = await import(
+      './generation-steps'
+    )
+    const result = enforcePinnedBrandDesignSystem(
+      {
+        colorSystem: {
+          primary: '#F5F1E8',
+          secondary: '#C9A962',
+          accent: '#F5F1E8',
+          background: '#C9A962',
+          strategy: 'brandforge',
+          reasoning: 'Creative direction remapped the palette.',
+        },
+        typography: {
+          headingFont: 'Montserrat',
+          headingWeight: 600,
+          bodyFont: 'Montserrat',
+          scale: 'balanced',
+          strategy: 'brandforge',
+          reasoning: 'Creative direction selected utility typography.',
+        },
+        spacing: {
+          scale: 'balanced',
+          containerMaxWidth: '1200px',
+          sectionPadding: '6rem',
+          reasoning: 'Approved direction.',
+        },
+        componentStyles: {
+          hero: {
+            layout: 'split',
+            variant: 'split',
+            treatment: 'split',
+            reasoning: 'Approved.',
+          },
+          amenityShowcase: {
+            layout: 'grid',
+            variant: 'editorial',
+            treatment: 'mixed',
+            reasoning: 'Approved.',
+          },
+          ctaSections: {
+            layout: 'inline',
+            variant: 'inline',
+            treatment: 'button',
+            reasoning: 'Approved.',
+          },
+        },
+        animations: {
+          level: 'subtle',
+          types: ['fadeIn'],
+          reasoning: 'Approved direction.',
+        },
+      },
+      {
+        colors: {
+          roles: [
+            { role: 'primary', hex: '#C9A962' },
+            { role: 'secondary', hex: '#F5F1E8' },
+            { role: 'accent', hex: '#7D8B74' },
+            { role: 'background', hex: '#FFFFFF' },
+          ],
+        },
+        typography: {
+          roles: [
+            {
+              role: 'headline',
+              family: 'Cormorant Garamond',
+              weights: [500],
+            },
+            { role: 'body', family: 'Montserrat', weights: [400] },
+          ],
+        },
+      } as never
+    )
+
+    expect(result.colorSystem).toMatchObject({
+      primary: '#C9A962',
+      secondary: '#F5F1E8',
+      accent: '#7D8B74',
+      background: '#FFFFFF',
+    })
+    expect(result.typography).toMatchObject({
+      headingFont: 'Cormorant Garamond',
+      headingWeight: 500,
+      bodyFont: 'Montserrat',
+    })
+  })
 })
 
 function approvedOnboardingSnapshot() {

@@ -313,16 +313,6 @@ export function evaluateDeterministicSiteForgeQuality(input: {
       : []
   )
   if (input.confirmedPlan) {
-    const expectedPageSignatures = input.confirmedPlan.pages
-      .filter(page => !legalPageSlugs.has(page.slug))
-      .map(page => ({
-        slug: page.slug,
-        title: page.title,
-        sections: page.sections.map(section => ({
-          id: section.id,
-          block: section.block,
-        })),
-      }))
     const actualPageSignatures = input.pages
       .filter(page => !legalPageSlugs.has(page.slug))
       .map(page => ({
@@ -332,6 +322,28 @@ export function evaluateDeterministicSiteForgeQuality(input: {
           id: section.id,
           block: section.acfBlock,
         })),
+      }))
+    const actualSectionIdsByPage = new Map(
+      actualPageSignatures.map(page => [
+        page.slug,
+        new Set(page.sections.map(section => section.id)),
+      ])
+    )
+    const expectedPageSignatures = input.confirmedPlan.pages
+      .filter(page => !legalPageSlugs.has(page.slug))
+      .map(page => ({
+        slug: page.slug,
+        title: page.title,
+        sections: page.sections
+          .filter(
+            section =>
+              section.required ||
+              actualSectionIdsByPage.get(page.slug)?.has(section.id)
+          )
+          .map(section => ({
+            id: section.id,
+            block: section.block,
+          })),
       }))
     const fidelityPassed =
       JSON.stringify(actualPageSignatures) === JSON.stringify(expectedPageSignatures)

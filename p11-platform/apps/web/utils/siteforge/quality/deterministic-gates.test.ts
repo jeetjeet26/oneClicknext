@@ -401,6 +401,27 @@ describe('deterministic SiteForge quality gates', () => {
     ).toEqual(expect.objectContaining({ passed: false, severity: 'blocker' }))
   })
 
+  it('allows an optional section to degrade when approved source data is absent', () => {
+    const planWithOptionalSection = structuredClone(confirmedPlan)
+    planWithOptionalSection.pages[0].sections.push({
+      id: 'optional-testimonials',
+      label: 'Resident testimonials',
+      purpose: 'Show approved resident feedback when available.',
+      block: 'acf/testimonials',
+      evidenceIds: [],
+      factsRequired: [],
+      required: false,
+    })
+
+    const report = evaluate(pages, {
+      confirmedPlan: planWithOptionalSection,
+    })
+
+    expect(
+      report.checks.find(check => check.id === 'confirmed_plan_fidelity')
+    ).toEqual(expect.objectContaining({ passed: true }))
+  })
+
   it('records post-generation topology divergence without weakening evidence gates', () => {
     const structurallyEdited = structuredClone(pages)
     structurallyEdited[0].sections[0].acfBlock = 'acf/content-grid'

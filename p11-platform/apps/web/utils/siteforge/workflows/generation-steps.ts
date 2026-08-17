@@ -1,6 +1,7 @@
 import { FatalError } from 'workflow'
 import { createServiceClient } from '@/utils/supabase/admin'
 import type { BrandContext } from '@/utils/siteforge/agents/brand-agent'
+import type { BrandForgeContractV1 } from '@/utils/brandforge/contracts'
 import {
   type ArchitectureProposal,
 } from '@/utils/siteforge/agents/architecture-agent'
@@ -479,6 +480,43 @@ export function applyApprovedGenerationPreferences(
   }
 }
 
+export function enforcePinnedBrandDesignSystem(
+  designSystem: DesignSystem,
+  contract: BrandForgeContractV1 | undefined
+): DesignSystem {
+  if (!contract) return designSystem
+
+  const color = (role: BrandForgeContractV1['colors']['roles'][number]['role']) =>
+    contract.colors.roles.find(value => value.role === role)?.hex
+  const headline = contract.typography.roles.find(
+    role => role.role === 'headline'
+  )
+  const body = contract.typography.roles.find(role => role.role === 'body')
+
+  return {
+    ...designSystem,
+    colorSystem: {
+      ...designSystem.colorSystem,
+      primary: color('primary') || designSystem.colorSystem.primary,
+      secondary: color('secondary') || designSystem.colorSystem.secondary,
+      accent: color('accent') || designSystem.colorSystem.accent,
+      background:
+        color('background') ||
+        color('surface') ||
+        designSystem.colorSystem.background,
+      reasoning: `${designSystem.colorSystem.reasoning} Exact role-bound BrandForge tokens enforced for publication.`,
+    },
+    typography: {
+      ...designSystem.typography,
+      headingFont: headline?.family || designSystem.typography.headingFont,
+      headingWeight:
+        headline?.weights[0] || designSystem.typography.headingWeight,
+      bodyFont: body?.family || designSystem.typography.bodyFont,
+      reasoning: `${designSystem.typography.reasoning} Exact role-bound BrandForge typography enforced for publication.`,
+    },
+  }
+}
+
 export async function planSiteForgeArchitectureAndDesign(
   input: SiteForgeGenerationWorkflowInput,
   brandContext: BrandContext,
@@ -677,7 +715,6 @@ export async function persistSiteForgeGenerationArtifact(
     planVersionId: input.planVersionId,
   })
   requireEvidenceBoundGenerationInput(input)
-  const execution = creativeExecutionFromInput(input)
   const generationTime = Math.max(
     0,
     Date.now() - new Date(input.startedAt).getTime()
@@ -869,35 +906,10 @@ export async function persistSiteForgeGenerationArtifact(
       preload: role.role === 'headline' || role.role === 'body',
     }
   })
-  // The design agent copies brand colors from its palette context, but the
-  // publish contract is the pinned BrandForge contract roles. Keep the
-  // agent's choice when it already used an approved hex for the role;
-  // otherwise pin the first approved hex so the immutable artifact can never
-  // ship substituted brand colors regardless of agent output.
-  const contractColorRoles =
-    confirmedPlan.brandSnapshot?.contract.colors.roles ?? []
-  const enforcedDesignSystem: DesignSystem = {
-    ...designSystem,
-    colorSystem: { ...designSystem.colorSystem },
-  }
-  for (const roleName of ['primary', 'secondary', 'accent'] as const) {
-    const approved = contractColorRoles.filter(
-      color => color.role === roleName
-    )
-    if (approved.length === 0) continue
-    const current = enforcedDesignSystem.colorSystem[roleName]?.toLowerCase()
-    if (!approved.some(color => color.hex.toLowerCase() === current)) {
-      enforcedDesignSystem.colorSystem[roleName] = approved[0].hex
-    }
-  }
-  enforcedDesignSystem.colorSystem = {
-    ...enforcedDesignSystem.colorSystem,
-    primary: execution.direction.palette.primary,
-    secondary: execution.direction.palette.secondary,
-    accent: execution.direction.palette.accent,
-    background: execution.direction.palette.background,
-    reasoning: `Exact hash-bound approved creative-direction palette. ${execution.direction.rationale}`,
-  }
+  const enforcedDesignSystem = enforcePinnedBrandDesignSystem(
+    designSystem,
+    confirmedPlan.brandSnapshot?.contract
+  )
   const wordpressThemeArtifact = buildWordPressThemeArtifact(
     enforcedDesignSystem,
     wordpressCapabilities,

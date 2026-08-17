@@ -63,6 +63,31 @@ export function classifySiteForgeGenerationFailure(
         'SiteForge produced a responsive spacing value that the theme artifact could not publish. That contract has been repaired and this build can be retried.',
     }
   }
+  const qualityGateFailure = message.match(
+    /Deterministic quality gates failed:\s*(.+)$/i
+  )
+  if (qualityGateFailure) {
+    const failedGateIds = qualityGateFailure[1]
+      .replace(/\([^)]*\)/g, '')
+      .split(',')
+      .map(value => value.trim())
+      .filter(Boolean)
+    if (
+      failedGateIds.length > 0 &&
+      failedGateIds.every(id =>
+        ['confirmed_plan_fidelity', 'exact_brand_tokens'].includes(id)
+      )
+    ) {
+      return {
+        code: 'deterministic_projection_contract_mismatch',
+        retryable: true,
+        failedCheckpoint,
+        message,
+        safeMessage:
+          'SiteForge detected an internal mismatch between optional page structure, creative styling, and the pinned brand contract. Those projections have been repaired and this build can be retried.',
+      }
+    }
+  }
   const deterministicAssetMismatch =
     /outside the approved rights-cleared asset manifest|approved evidence snapshot|pinned .* (?:hash|context)|does not match the confirmed plan/i.test(
       message
