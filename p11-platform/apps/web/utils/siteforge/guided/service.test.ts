@@ -201,6 +201,7 @@ function dependencies(
     getPlan: unused,
     decidePlan: unused,
     editDirection: unused,
+    loadBrandPresentation: vi.fn(async () => null),
     ...overrides,
   } as never;
 }

@@ -35,8 +35,10 @@ import { classifySiteForgeGenerationFailure } from "@/utils/siteforge/workflows/
 import {
   guidedJourneyStateSchema,
   type GuidedAttachment,
+  type GuidedCreativeDirectionOverview,
   type GuidedJourneyState,
 } from "./contracts";
+import type { BrandForgeContractV1 } from "@/utils/brandforge/contracts";
 import {
   buildGuidedBrief,
   classifyGuidedError,
@@ -50,6 +52,64 @@ import {
 } from "./journey";
 
 type ServiceClient = ReturnType<typeof createServiceClient>;
+
+async function loadGuidedBrandPresentation(
+  state: GuidedJourneyState,
+  client: ServiceClient,
+): Promise<GuidedCreativeDirectionOverview["brandPresentation"]> {
+  const { data: brandRow, error: brandError } = await client
+    .from("property_brand_assets")
+    .select("*")
+    .eq("id", state.sources.brandAssetId)
+    .eq("property_id", state.propertyId)
+    .eq("org_id", state.orgId)
+    .maybeSingle();
+  if (brandError || !brandRow) return null;
+
+  let contract: BrandForgeContractV1;
+  try {
+    contract = normalizeBrandAssetRow(
+      brandRow as unknown as Record<string, unknown>,
+    );
+  } catch {
+    return null;
+  }
+
+  const preferredLogo =
+    contract.logos.variants.find(logo => logo.role === "primary") ||
+    contract.logos.variants.find(logo => logo.role === "secondary") ||
+    contract.logos.variants.find(logo => logo.role === "mark") ||
+    null;
+  let logoUrl = preferredLogo?.url || null;
+  let logoAlt = preferredLogo?.alt || `${contract.identity.name} logo`;
+  if (!logoUrl && preferredLogo?.assetId) {
+    const { data: logoAsset } = await client
+      .from("content_assets")
+      .select("file_url, alt_text")
+      .eq("id", preferredLogo.assetId)
+      .eq("property_id", state.propertyId)
+      .eq("org_id", state.orgId)
+      .eq("approval_status", "approved")
+      .maybeSingle();
+    logoUrl = logoAsset?.file_url || null;
+    logoAlt = logoAsset?.alt_text || logoAlt;
+  }
+
+  return {
+    name: contract.identity.name,
+    logo:
+      preferredLogo && logoUrl
+        ? { url: logoUrl, alt: logoAlt, role: preferredLogo.role }
+        : null,
+    palette: contract.colors.roles.map(color => ({
+      role: color.role,
+      name: color.name,
+      hex: color.hex.toUpperCase(),
+      usage: color.usage,
+    })),
+    usageGuidelines: contract.colors.usageGuidelines,
+  };
+}
 
 type GenerationStart = (input: {
   websiteId: string;
@@ -83,6 +143,7 @@ type GuidedDependencies = {
   decidePlan: typeof decideSiteForgePlan;
   editDirection: typeof editSiteForgeCreativeDirection;
   selectDirectionAlternative: typeof selectSiteForgeCreativeDirectionAlternative;
+  loadBrandPresentation: typeof loadGuidedBrandPresentation;
 };
 
 const defaultDependencies = (): GuidedDependencies => ({
@@ -104,6 +165,7 @@ const defaultDependencies = (): GuidedDependencies => ({
   decidePlan: decideSiteForgePlan,
   editDirection: editSiteForgeCreativeDirection,
   selectDirectionAlternative: selectSiteForgeCreativeDirectionAlternative,
+  loadBrandPresentation: loadGuidedBrandPresentation,
 });
 
 function record(value: unknown): Record<string, unknown> {
@@ -445,13 +507,16 @@ export function createSiteForgeGuidedService(
           )
         : null;
     const question = nextGuidedQuestion(state.answers);
-    const preparedDirections = state.prepared
-      ? await deps.getDirections(
-          state.prepared.directionSetId,
-          state.propertyId,
-          deps.client,
-        )
-      : null;
+    const [preparedDirections, brandPresentation] = state.prepared
+      ? await Promise.all([
+          deps.getDirections(
+            state.prepared.directionSetId,
+            state.propertyId,
+            deps.client,
+          ),
+          deps.loadBrandPresentation(state, deps.client),
+        ])
+      : [null, null];
     const selectedDirection = preparedDirections?.directions.find(
       (direction) => direction.id === preparedDirections.selectedDirectionId,
     );
@@ -468,6 +533,7 @@ export function createSiteForgeGuidedService(
                 (direction) => direction.id !== selectedDirection.id,
               ),
               recommendationReason: state.prepared.recommendationReason,
+              brandPresentation,
             }
           : null,
       journey: projectGuidedJourney(state, {

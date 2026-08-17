@@ -69,6 +69,26 @@ type FloorPlanPreview = {
   canConfirm: boolean
 }
 
+type ExistingPropertyUnit = {
+  id: string
+  unit_type: string
+  bedrooms: number
+  bathrooms: number | string | null
+  sqft_min: number | null
+  sqft_max: number | null
+  rent_min: number | string | null
+  rent_max: number | string | null
+  available_count: number | null
+  move_in_specials: string | null
+  floor_plan_image_url: string | null
+  floor_plan_image_asset_id: string | null
+  floor_plan_image_alt: string | null
+  availability_url: string | null
+  apply_url: string | null
+  active: boolean
+  review_status: string
+}
+
 const photoCategories: Array<{ value: AssetCategory; label: string }> = [
   { value: 'hero', label: 'Hero / exterior' },
   { value: 'amenity', label: 'Amenities' },
@@ -120,6 +140,30 @@ export function buildManualFloorPlanPreviewRows(
   }))
 }
 
+export function existingUnitToFloorPlanDraft(
+  unit: ExistingPropertyUnit
+): FloorPlanDraft {
+  const value = (input: number | string | null) =>
+    input === null ? '' : String(input)
+  return {
+    id: unit.id,
+    name: unit.unit_type,
+    bedrooms: String(unit.bedrooms),
+    bathrooms: value(unit.bathrooms),
+    sqftMin: value(unit.sqft_min),
+    sqftMax: value(unit.sqft_max),
+    rentMin: value(unit.rent_min),
+    rentMax: value(unit.rent_max),
+    availableCount: value(unit.available_count),
+    specials: unit.move_in_specials || '',
+    imageUrl: unit.floor_plan_image_url || '',
+    imageAssetId: unit.floor_plan_image_asset_id || '',
+    imageAlt: unit.floor_plan_image_alt || '',
+    availabilityUrl: unit.availability_url || '',
+    applyUrl: unit.apply_url || '',
+  }
+}
+
 async function responseError(response: Response, fallback: string) {
   const body = await response.json().catch(() => null)
   return body && typeof body.error === 'string' ? body.error : fallback
@@ -166,14 +210,34 @@ export function PropertyAssetsStep({
       nextAssets.filter((asset) => asset.category !== 'floorplan').length
     )
   }, [onPhotoCountChange, propertyId])
+  const loadExistingFloorPlans = useCallback(async () => {
+    const response = await fetch(
+      `/api/properties/${encodeURIComponent(propertyId)}/units`
+    )
+    if (!response.ok) {
+      throw new Error(
+        await responseError(response, 'Could not load existing floor plans')
+      )
+    }
+    const body = await response.json()
+    const approvedUnits = Array.isArray(body.units)
+      ? (body.units as ExistingPropertyUnit[]).filter(
+          unit => unit.active && unit.review_status === 'approved'
+        )
+      : []
+    if (approvedUnits.length > 0) {
+      setFloorPlans(approvedUnits.map(existingUnitToFloorPlanDraft))
+    }
+  }, [propertyId])
 
   useEffect(() => {
-    void loadAssets().catch((error) => {
-      setAssetError(
-        error instanceof Error ? error.message : 'Could not load property assets'
-      )
+    void Promise.all([loadAssets(), loadExistingFloorPlans()]).catch(error => {
+      const message =
+        error instanceof Error ? error.message : 'Could not load property setup'
+      setAssetError(message)
+      setFloorPlanError(message)
     })
-  }, [loadAssets])
+  }, [loadAssets, loadExistingFloorPlans])
 
   async function uploadAsset(
     file: File,

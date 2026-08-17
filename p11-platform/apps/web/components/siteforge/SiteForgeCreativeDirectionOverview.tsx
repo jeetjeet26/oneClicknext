@@ -46,10 +46,76 @@ export function SiteForgeCreativeDirectionOverview({
           </div>
         </CardHeader>
         <CardContent className="space-y-6 p-5">
+          <section aria-labelledby="approved-brand">
+            <h3 id="approved-brand" className="text-sm font-semibold">
+              Latest approved Brand Book
+            </h3>
+            {overview.brandPresentation ? (
+              <div className="mt-3 grid gap-4 lg:grid-cols-[minmax(220px,0.7fr)_minmax(0,2fr)]">
+                <div className="flex min-h-44 items-center justify-center rounded-xl border bg-muted/20 p-5">
+                  {overview.brandPresentation.logo ? (
+                    // BrandForge stores approved user-managed logo URLs.
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={overview.brandPresentation.logo.url}
+                      alt={overview.brandPresentation.logo.alt}
+                      className="max-h-28 max-w-full object-contain"
+                    />
+                  ) : (
+                    <p className="font-semibold">
+                      {overview.brandPresentation.name}
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Full approved palette
+                  </p>
+                  <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
+                    {overview.brandPresentation.palette.map(color => (
+                      <div
+                        key={`${color.role}-${color.hex}`}
+                        className="overflow-hidden rounded-lg border"
+                        title={color.usage}
+                      >
+                        <div
+                          className="h-14"
+                          style={{ backgroundColor: color.hex }}
+                        />
+                        <div className="p-2 text-[11px]">
+                          <span className="block font-medium">{color.name}</span>
+                          <span className="block capitalize text-muted-foreground">
+                            {color.role}
+                          </span>
+                          <span className="font-mono text-muted-foreground">
+                            {color.hex}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  {overview.brandPresentation.usageGuidelines ? (
+                    <p className="mt-3 text-xs leading-5 text-muted-foreground">
+                      {overview.brandPresentation.usageGuidelines}
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+            ) : (
+              <p className="mt-2 text-sm text-muted-foreground">
+                The latest Brand Book presentation is unavailable.
+              </p>
+            )}
+          </section>
+
           <section aria-labelledby="direction-palette">
             <h3 id="direction-palette" className="text-sm font-semibold">
-              Approved palette
+              Proposed website color roles
             </h3>
+            <p className="mt-1 text-xs text-muted-foreground">
+              These roles map approved colors into this direction. The Brand
+              Book above remains the source of truth.
+            </p>
             <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
               {Object.entries(direction.palette).map(([role, color]) => (
                 <div key={role} className="overflow-hidden rounded-lg border">

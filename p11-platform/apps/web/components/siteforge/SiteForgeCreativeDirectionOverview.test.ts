@@ -78,6 +78,35 @@ describe('SiteForgeCreativeDirectionOverview', () => {
       selected: candidate('direction-1', 1, 'Editorial Confidence'),
       alternatives: [candidate('direction-2', 2, 'Conversion Clarity')],
       recommendationReason: 'Best fit for the approved brand and tour goal.',
+      brandPresentation: {
+        name: 'The Aurora',
+        logo: {
+          url: 'https://cdn.example.com/aurora-logo.svg',
+          alt: 'The Aurora',
+          role: 'primary',
+        },
+        palette: [
+          {
+            role: 'primary',
+            name: 'Mountain Sage',
+            hex: '#7D8B74',
+            usage: 'Primary brand color',
+          },
+          {
+            role: 'accent',
+            name: 'Aurora Gold',
+            hex: '#C9A962',
+            usage: 'Accents and calls to action',
+          },
+          {
+            role: 'background',
+            name: 'Alpine Cream',
+            hex: '#F5F1E8',
+            usage: 'Warm backgrounds',
+          },
+        ],
+        usageGuidelines: 'Use sage as the primary field and gold sparingly.',
+      },
     })
     const markup = renderToStaticMarkup(
       createElement(SiteForgeCreativeDirectionOverview, {
@@ -88,7 +117,10 @@ describe('SiteForgeCreativeDirectionOverview', () => {
       }),
     )
 
-    expect(markup).toContain('Approved palette')
+    expect(markup).toContain('Latest approved Brand Book')
+    expect(markup).toContain('Mountain Sage')
+    expect(markup).toContain('aurora-logo.svg')
+    expect(markup).toContain('Proposed website color roles')
     expect(markup).toContain('Fraunces')
     expect(markup).toContain('Hero and layout')
     expect(markup).toContain('Photography')

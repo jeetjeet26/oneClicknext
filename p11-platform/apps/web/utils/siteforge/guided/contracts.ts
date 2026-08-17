@@ -123,6 +123,44 @@ export const guidedCreativeDirectionOverviewSchema = z.object({
   selected: guidedCreativeDirectionCandidateSchema,
   alternatives: z.array(guidedCreativeDirectionCandidateSchema).max(2),
   recommendationReason: text,
+  brandPresentation: z
+    .object({
+      name: text.max(240),
+      logo: z
+        .object({
+          url: z.string().url(),
+          alt: z.string().trim().max(500),
+          role: z.enum([
+            "primary",
+            "secondary",
+            "monochrome",
+            "mark",
+            "favicon",
+          ]),
+        })
+        .nullable(),
+      palette: z
+        .array(
+          z.object({
+            role: z.enum([
+              "primary",
+              "secondary",
+              "accent",
+              "background",
+              "surface",
+              "text",
+              "muted",
+            ]),
+            name: text.max(240),
+            hex: z.string().regex(/^#[0-9a-f]{6}$/i),
+            usage: z.string().trim().max(2_000),
+          }),
+        )
+        .min(1),
+      usageGuidelines: z.string().trim().max(4_000),
+    })
+    .nullable()
+    .default(null),
 });
 
 export const guidedGenerationSchema = z.object({
