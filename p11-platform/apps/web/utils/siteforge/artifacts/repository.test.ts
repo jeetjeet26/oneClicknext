@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import {
@@ -9,6 +9,70 @@ import {
 describe('SiteForge artifact repository contracts', () => {
   it('uses the live-schema change type for generated artifacts', () => {
     expect(SITEFORGE_GENERATION_CHANGE_TYPE).toBe('generation')
+  })
+
+  it('pins generation to the published immutable base-theme package', async () => {
+    const assets: Record<string, unknown> = {}
+    assets.select = () => assets
+    assets.eq = () => assets
+    assets.order = () => Promise.resolve({ data: [], error: null })
+
+    const packages: Record<string, unknown> = {}
+    packages.select = () => packages
+    packages.eq = () => packages
+    packages.is = () => packages
+    packages.order = () => packages
+    packages.limit = () => packages
+    packages.maybeSingle = () =>
+      Promise.resolve({
+        data: {
+          package_sha256: 'a'.repeat(64),
+          storage_path: `runtime-packages/base_theme/${'a'.repeat(64)}/oneclick-siteforge.zip`,
+          manifest: { filename: 'oneclick-siteforge.zip', bytes: 86708 },
+        },
+        error: null,
+      })
+    const rpc = vi.fn().mockResolvedValue({
+      data: {
+        id: '77777777-7777-4777-8777-777777777777',
+        version: 1,
+        content_hash: 'b'.repeat(64),
+      },
+      error: null,
+    })
+    const client = {
+      from: (table: string) =>
+        table === 'website_assets' ? assets : packages,
+      rpc,
+    }
+
+    await expect(
+      publishSiteForgeArtifact(
+        {
+          websiteId: '22222222-2222-4222-8222-222222222222',
+          propertyId: '33333333-3333-4333-8333-333333333333',
+          orgId: '44444444-4444-4444-8444-444444444444',
+          sharedJobId: '55555555-5555-4555-8555-555555555555',
+          sourcePlanVersionId: '66666666-6666-4666-8666-666666666666',
+          blueprint: {
+            wordpressThemeArtifact: {
+              theme: { version: '2.2.11' },
+            },
+            pages: [],
+          },
+          qualityReport: {},
+          qualityScore: 100,
+        },
+        client as never
+      )
+    ).resolves.toMatchObject({ version: 1 })
+    expect(rpc).toHaveBeenCalledWith(
+      'publish_siteforge_artifact_revision',
+      expect.objectContaining({
+        p_base_theme_package_id: 'oneclick-siteforge@2.2.11',
+        p_base_theme_package_sha256: 'a'.repeat(64),
+      })
+    )
   })
 
   it('refuses to snapshot assets without approval and cleared rights', async () => {

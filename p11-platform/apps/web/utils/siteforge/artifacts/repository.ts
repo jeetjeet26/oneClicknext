@@ -1,7 +1,4 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { createHash } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
-import path from 'node:path'
 import type { Database, Json } from '@/types/supabase'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
@@ -52,12 +49,6 @@ export async function publishSiteForgeArtifact(
       sourcePlanVersionId: input.sourcePlanVersionId,
     },
   ]
-  const themePackage = await readFile(
-    path.resolve(process.cwd(), 'runtime-assets/oneclick-siteforge.zip')
-  )
-  const baseThemePackageSha256 = createHash('sha256')
-    .update(themePackage)
-    .digest('hex')
   const blueprintRecord =
     input.blueprint && typeof input.blueprint === 'object' && !Array.isArray(input.blueprint)
       ? (input.blueprint as Record<string, Json | undefined>)
@@ -78,6 +69,45 @@ export async function publishSiteForgeArtifact(
     typeof theme.version === 'string'
       ? `oneclick-siteforge@${theme.version}`
       : 'oneclick-siteforge'
+  const themeVersion =
+    typeof theme.version === 'string' ? theme.version : null
+  if (!themeVersion) {
+    throw new Error('SiteForge artifact is missing its base theme version')
+  }
+  const { data: baseThemePackage, error: packageError } = await client
+    .from('siteforge_runtime_packages')
+    .select('package_sha256, storage_path, manifest')
+    .eq('package_type', 'base_theme')
+    .eq('version', themeVersion)
+    .eq('publication_status', 'published')
+    .is('revoked_at', null)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (packageError || !baseThemePackage) {
+    throw new Error(
+      `Published SiteForge base theme ${themeVersion} is unavailable: ${
+        packageError?.message || 'missing package'
+      }`
+    )
+  }
+  const packageManifest =
+    baseThemePackage.manifest &&
+    typeof baseThemePackage.manifest === 'object' &&
+    !Array.isArray(baseThemePackage.manifest)
+      ? (baseThemePackage.manifest as Record<string, Json | undefined>)
+      : {}
+  if (
+    packageManifest.filename !== 'oneclick-siteforge.zip' ||
+    !/^runtime-packages\/base_theme\/[a-f0-9]{64}\/oneclick-siteforge\.zip$/.test(
+      baseThemePackage.storage_path
+    )
+  ) {
+    throw new Error(
+      `Published SiteForge base theme ${themeVersion} has an invalid immutable package identity`
+    )
+  }
+  const baseThemePackageSha256 = baseThemePackage.package_sha256
   const { data: created, error: createError } = await client.rpc(
     'publish_siteforge_artifact_revision',
     {
