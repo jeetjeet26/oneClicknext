@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
+import { ACF_BLOCK_TYPES } from '@/types/siteforge'
 import type { Tables } from '@/types/supabase'
 
 vi.mock('@/utils/supabase/admin', () => ({
@@ -46,6 +47,24 @@ describe('canonical WordPress preview workflow steps', () => {
       normalizeSiteForgePreviewCredential(' https://wordpress.example.com\\n ')
     ).toBe('https://wordpress.example.com')
     expect(normalizeSiteForgePreviewCredential('')).toBeUndefined()
+  })
+
+  it('reuses an exact installed theme, ACF, runtime, and block catalog', async () => {
+    const { isCanonicalPreviewInstallationCurrent } = await import(
+      './preview-steps'
+    )
+    const abilities = {
+      available_blocks: [...ACF_BLOCK_TYPES],
+      theme: { name: 'oneclick-siteforge', version: '2.2.11' },
+      plugins: ['advanced-custom-fields-pro', 'oneclick-siteforge-runtime'],
+    }
+
+    expect(
+      isCanonicalPreviewInstallationCurrent(abilities, '2.2.11')
+    ).toBe(true)
+    expect(
+      isCanonicalPreviewInstallationCurrent(abilities, '2.2.10')
+    ).toBe(false)
   })
 
   it('maps persisted asset columns into the WordPress client contract', async () => {

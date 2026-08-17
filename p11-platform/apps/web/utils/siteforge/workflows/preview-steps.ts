@@ -1,6 +1,6 @@
 import { FatalError } from "workflow";
 import { createServiceClient } from "@/utils/supabase/admin";
-import type { GeneratedPage } from "@/types/siteforge";
+import { ACF_BLOCK_TYPES, type GeneratedPage } from "@/types/siteforge";
 import type { Json } from "@/types/supabase";
 import { normalizeLegacyPages } from "@/utils/siteforge/blueprint";
 import { getPropertyContext } from "@/utils/siteforge/brand-intelligence";
@@ -73,6 +73,63 @@ export function buildRenderedPreviewCheckpoint(input: {
     editor_lifecycle_status: "preview_rendered",
     updated_at: input.renderedAt,
   };
+}
+
+export function isCanonicalPreviewInstallationCurrent(
+  value: unknown,
+  expectedThemeVersion: string,
+): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const abilities = value as Record<string, unknown>;
+  const theme =
+    abilities.theme &&
+    typeof abilities.theme === "object" &&
+    !Array.isArray(abilities.theme)
+      ? (abilities.theme as Record<string, unknown>)
+      : {};
+  const plugins = Array.isArray(abilities.plugins)
+    ? abilities.plugins.filter((plugin): plugin is string => typeof plugin === "string")
+    : [];
+  const blocks = Array.isArray(abilities.available_blocks)
+    ? abilities.available_blocks.filter(
+        (block): block is string => typeof block === "string",
+      )
+    : [];
+  return (
+    theme.name === "oneclick-siteforge" &&
+    theme.version === expectedThemeVersion &&
+    plugins.includes("advanced-custom-fields-pro") &&
+    plugins.includes("oneclick-siteforge-runtime") &&
+    ACF_BLOCK_TYPES.every(block => blocks.includes(block))
+  );
+}
+
+async function hasCurrentCanonicalPreviewInstallation(input: {
+  previewUrl: string;
+  username: string;
+  password: string;
+  expectedThemeVersion: string;
+}): Promise<boolean> {
+  try {
+    const response = await fetch(
+      `${input.previewUrl.replace(/\/$/, "")}/wp-json/siteforge/v1/abilities`,
+      {
+        headers: {
+          Authorization: `Basic ${Buffer.from(
+            `${input.username}:${input.password}`,
+          ).toString("base64")}`,
+        },
+        cache: "no-store",
+      },
+    );
+    if (!response.ok) return false;
+    return isCanonicalPreviewInstallationCurrent(
+      await response.json(),
+      input.expectedThemeVersion,
+    );
+  } catch {
+    return false;
+  }
 }
 
 async function assertPreviewNotCancelled(
@@ -196,6 +253,25 @@ export async function renderCanonicalWordPressPreview(
     throw new FatalError("Canonical preview artifact is invalid");
   }
   const blueprint = artifact.blueprint;
+  const blueprintThemeArtifact =
+    blueprint.wordpressThemeArtifact &&
+    typeof blueprint.wordpressThemeArtifact === "object" &&
+    !Array.isArray(blueprint.wordpressThemeArtifact)
+      ? (blueprint.wordpressThemeArtifact as Record<string, unknown>)
+      : {};
+  const blueprintTheme =
+    blueprintThemeArtifact.theme &&
+    typeof blueprintThemeArtifact.theme === "object" &&
+    !Array.isArray(blueprintThemeArtifact.theme)
+      ? (blueprintThemeArtifact.theme as Record<string, unknown>)
+      : {};
+  const expectedThemeVersion =
+    typeof blueprintTheme.version === "string" ? blueprintTheme.version : "";
+  if (!expectedThemeVersion) {
+    throw new FatalError(
+      "Canonical preview artifact is missing its base theme version",
+    );
+  }
   const pages = normalizeLegacyPages(
     Array.isArray(blueprint.pages)
       ? (blueprint.pages as unknown as GeneratedPage[])
@@ -326,21 +402,33 @@ export async function renderCanonicalWordPressPreview(
               password: application.app_password,
               applicationRoot: "public_html",
             };
-      if (!runtimeV3) {
+      const installationCurrent = await hasCurrentCanonicalPreviewInstallation({
+        previewUrl,
+        username,
+        password,
+        expectedThemeVersion,
+      });
+      if (!runtimeV3 && !installationCurrent) {
         await new SshWordPressInstaller().ensureInstalled({
           ssh: runtimeSsh,
           acfProLicenseKey,
         });
       }
     }
-    const health =
-      application?.public_ip && !runtimeV3
-        ? await new SiteForgeRuntimeClient({
-            baseUrl: previewUrl,
-            username,
-            applicationPassword: password,
-          }).getHealth()
-        : null;
+    let health = null;
+    if (application?.public_ip && !runtimeV3) {
+      try {
+        health = await new SiteForgeRuntimeClient({
+          baseUrl: previewUrl,
+          username,
+          applicationPassword: password,
+        }).getHealth();
+      } catch {
+        console.info(
+          "Canonical preview is using the installed legacy runtime contract",
+        );
+      }
+    }
     if (health && health.status !== "ok") {
       throw new FatalError(
         `Canonical preview runtime reported ${health.status} after installation`,
