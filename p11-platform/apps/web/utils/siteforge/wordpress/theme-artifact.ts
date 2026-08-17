@@ -13,6 +13,12 @@ import { DEFAULT_SITE_CONFIGURATION } from '@/utils/siteforge/blueprint'
 const hexColorSchema = z.string().regex(/^#[0-9a-f]{6}$/i)
 const cssDimensionSchema = z.string().regex(/^\d+(?:\.\d+)?(?:px|rem|em|vw|%)$/)
 
+function normalizeCssDimension(value: string, fallback: string): string {
+  return cssDimensionSchema.safeParse(value.trim()).success
+    ? value.trim()
+    : fallback
+}
+
 const themeJsonSchema = z
   .object({
     $schema: z.literal('https://schemas.wp.org/trunk/theme.json'),
@@ -235,9 +241,30 @@ export function buildWordPressThemeArtifact(
     designSystem.typography.bodyFont,
     'Inter, sans-serif'
   )
-  const configuration = siteConfigurationSchema.parse(
+  const parsedConfiguration = siteConfigurationSchema.parse(
     siteConfiguration || configurationFromDesignSystem(designSystem, headingFont, bodyFont)
   )
+  const sectionPaddingFallback = {
+    tight: '4rem',
+    balanced: '6rem',
+    luxury: '8rem',
+  }[designSystem.spacing.scale]
+  const configuration = siteConfigurationSchema.parse({
+    ...parsedConfiguration,
+    design: {
+      ...parsedConfiguration.design,
+      spacing: {
+        containerMaxWidth: normalizeCssDimension(
+          parsedConfiguration.design.spacing.containerMaxWidth,
+          '1400px'
+        ),
+        sectionPadding: normalizeCssDimension(
+          parsedConfiguration.design.spacing.sectionPadding,
+          sectionPaddingFallback
+        ),
+      },
+    },
+  })
   const fontFaceCss = fontAssets.flatMap(font =>
     font.source === 'asset' && font.url
       ? font.weights.map(weight => `@font-face{font-family:"${font.family.replace(/"/g, '')}";src:url("${font.url}") format("woff2");font-style:normal;font-weight:${weight};font-display:swap;}`)
@@ -297,13 +324,13 @@ export function buildWordPressThemeArtifact(
             {
               slug: 'section',
               name: 'Section',
-              size: designSystem.spacing.sectionPadding,
+              size: configuration.design.spacing.sectionPadding,
             },
           ],
         },
         layout: {
-          contentSize: designSystem.spacing.containerMaxWidth,
-          wideSize: designSystem.spacing.containerMaxWidth,
+          contentSize: configuration.design.spacing.containerMaxWidth,
+          wideSize: configuration.design.spacing.containerMaxWidth,
         },
       },
       styles: {
@@ -346,8 +373,8 @@ export function buildWordPressThemeArtifact(
       },
       spacing: {
         scale: designSystem.spacing.scale,
-        containerMaxWidth: designSystem.spacing.containerMaxWidth,
-        sectionPadding: designSystem.spacing.sectionPadding,
+        containerMaxWidth: configuration.design.spacing.containerMaxWidth,
+        sectionPadding: configuration.design.spacing.sectionPadding,
       },
     },
     fontAssets,

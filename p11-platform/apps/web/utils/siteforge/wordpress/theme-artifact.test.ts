@@ -77,6 +77,28 @@ describe('WordPress theme artifact', () => {
     expect(validateWordPressThemeArtifact(first)).toEqual(first)
   })
 
+  it('normalizes responsive spacing expressions before artifact validation', () => {
+    const artifact = buildWordPressThemeArtifact(
+      {
+        ...designSystem,
+        spacing: {
+          ...designSystem.spacing,
+          sectionPadding: 'clamp(5rem, 10vw, 10rem)',
+        },
+      },
+      getBuiltinThemeCapabilities()
+    )
+
+    expect(artifact.themeJson.settings.spacing.spacingSizes[2].size).toBe(
+      '8rem'
+    )
+    expect(artifact.designTokens.spacing.sectionPadding).toBe('8rem')
+    expect(artifact.siteConfiguration.design.spacing.sectionPadding).toBe(
+      '8rem'
+    )
+    expect(validateWordPressThemeArtifact(artifact)).toEqual(artifact)
+  })
+
   it('validates the stored payload before applying schema defaults', () => {
     const artifact = buildWordPressThemeArtifact(
       designSystem,

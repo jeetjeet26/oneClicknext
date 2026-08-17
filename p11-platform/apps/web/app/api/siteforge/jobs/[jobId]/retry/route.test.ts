@@ -196,7 +196,7 @@ describe('SiteForge job retry', () => {
     ])
   })
 
-  it('reconstructs the complete approved generation context before retrying', async () => {
+  it('reclassifies repaired spacing failures and reconstructs the approved context', async () => {
     mockAuthenticatedUser(authGetUserMock)
     validatePropertyAccessMock.mockResolvedValue({ authorized: true })
     startWorkflowMock.mockResolvedValue({
@@ -218,7 +218,16 @@ describe('SiteForge job retry', () => {
         cancel_requested: false,
         attempt_count: 1,
         max_attempts: 3,
-        error_details: { retryable: true },
+        error_message: 'The build stopped.',
+        error_details: {
+          code: 'generation_failure',
+          retryable: false,
+          failedCheckpoint: 'publishing_artifact',
+          diagnostics: {
+            message:
+              'Invalid themeJson spacingSizes and designTokens spacing sectionPadding',
+          },
+        },
         payload: { websiteId, planVersionId, legacyJobId },
       },
       error: null,

@@ -49,6 +49,20 @@ export function classifySiteForgeGenerationFailure(
         'The approved floor-plan inventory changed during the build. Restart to use the current approved inventory.',
     }
   }
+  if (
+    /themeJson[\s\S]*spacingSizes|designTokens[\s\S]*spacing[\s\S]*sectionPadding|Invalid string: must match pattern[\s\S]*(?:px\|rem\|em\|vw\|%)/i.test(
+      message
+    )
+  ) {
+    return {
+      code: 'theme_spacing_contract_mismatch',
+      retryable: true,
+      failedCheckpoint,
+      message,
+      safeMessage:
+        'SiteForge produced a responsive spacing value that the theme artifact could not publish. That contract has been repaired and this build can be retried.',
+    }
+  }
   const deterministicAssetMismatch =
     /outside the approved rights-cleared asset manifest|approved evidence snapshot|pinned .* (?:hash|context)|does not match the confirmed plan/i.test(
       message

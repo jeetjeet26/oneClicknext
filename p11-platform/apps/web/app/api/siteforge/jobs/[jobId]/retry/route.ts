@@ -12,6 +12,7 @@ import { siteForgeGenerationWorkflow } from '@/workflows/siteforge-generation'
 import { siteForgeStagingDeploymentWorkflow } from '@/workflows/siteforge-staging-deployment'
 import { siteForgeCanonicalPreviewWorkflow } from '@/workflows/siteforge-canonical-preview'
 import { siteForgeProductionCertificationWorkflow } from '@/workflows/siteforge-production-certification'
+import { classifySiteForgeGenerationFailure } from '@/utils/siteforge/workflows/generation-failure'
 
 const sharedPayloadSchema = z.object({
   planVersionId: z.guid(),
@@ -78,7 +79,7 @@ export async function POST(
     const { data: job, error: jobError } = await serviceSupabase
       .from('shared_jobs')
       .select(
-        'id, domain, org_id, property_id, lifecycle_status, cancel_requested, attempt_count, max_attempts, payload, error_details'
+        'id, domain, org_id, property_id, lifecycle_status, cancel_requested, attempt_count, max_attempts, payload, error_message, error_details'
       )
       .eq('id', jobId)
       .in('domain', [
@@ -114,7 +115,21 @@ export async function POST(
       !Array.isArray(job.error_details)
         ? (job.error_details as Record<string, unknown>)
         : {}
-    if (errorDetails.retryable !== true) {
+    const diagnostics =
+      errorDetails.diagnostics &&
+      typeof errorDetails.diagnostics === 'object' &&
+      !Array.isArray(errorDetails.diagnostics)
+        ? (errorDetails.diagnostics as Record<string, unknown>)
+        : {}
+    const projectedFailure = classifySiteForgeGenerationFailure(
+      typeof diagnostics.message === 'string'
+        ? diagnostics.message
+        : job.error_message || 'SiteForge generation failed',
+      typeof errorDetails.failedCheckpoint === 'string'
+        ? errorDetails.failedCheckpoint
+        : 'Generation failed'
+    )
+    if (errorDetails.retryable !== true && !projectedFailure.retryable) {
       return NextResponse.json(
         {
           error:
