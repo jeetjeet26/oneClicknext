@@ -233,6 +233,7 @@ export const siteForgeBlockContentSchemas = {
         .object({
           captured_at: z.string().datetime(),
           content_hash: z.string().regex(/^[a-f0-9]{64}$/),
+          max_age_hours: z.number().int().positive().max(8_760),
         })
         .strict()
         .optional(),

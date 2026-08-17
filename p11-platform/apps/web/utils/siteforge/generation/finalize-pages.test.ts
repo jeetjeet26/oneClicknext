@@ -384,6 +384,7 @@ describe('finalizeSiteForgePages', () => {
         inventory_snapshot: {
           captured_at: '2026-07-31T12:00:00.000Z',
           content_hash: 'b'.repeat(64),
+          max_age_hours: 24,
         },
         show_pricing: false,
         show_availability: true,

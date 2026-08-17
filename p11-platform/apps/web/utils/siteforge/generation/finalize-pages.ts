@@ -424,6 +424,13 @@ function normalizeContent(
         inventory_snapshot: {
           captured_at: floorPlanSnapshot.capturedAt,
           content_hash: floorPlanSnapshot.contentHash,
+          max_age_hours:
+            integrityContext.floorPlanStrategy?.freshnessHours ??
+            (
+              typeof raw.freshness_hours === 'number'
+                ? Math.round(raw.freshness_hours)
+                : 168
+            ),
         },
         display_style:
           integrityContext.floorPlanStrategy?.display ||

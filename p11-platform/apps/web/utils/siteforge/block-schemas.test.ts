@@ -141,6 +141,7 @@ describe('SiteForge exact block schemas', () => {
         inventory_snapshot: {
           captured_at: '2026-07-31T12:00:00.000Z',
           content_hash: 'a'.repeat(64),
+          max_age_hours: 168,
         },
         display_style: 'cards',
         filter_options: ['bedrooms', 'price', 'availability'],
