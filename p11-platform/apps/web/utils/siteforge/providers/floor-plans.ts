@@ -341,9 +341,28 @@ export function createFloorPlanPreview<Input>(
   const rawRows = adapter.preview(input)
   const errors = adapter.validate(rawRows)
   const invalidRows = new Set(errors.map((error) => error.row))
-  const rows = rawRows.flatMap((row, index) =>
-    invalidRows.has(index + 1) ? [] : adapter.normalize([row])
-  )
+  // Two rows resolving to the same canonical key would make the confirm
+  // upsert touch one row twice (Postgres rejects that), and SiteForge cannot
+  // guess which conflicting facts are true. Surface it at preview time.
+  const seenCanonicalKeys = new Map<string, number>()
+  const rows = rawRows.flatMap((row, index) => {
+    if (invalidRows.has(index + 1)) return []
+    const normalized = adapter.normalize([row])
+    const canonicalKey = normalized[0]?.canonical_key
+    if (canonicalKey) {
+      const firstRow = seenCanonicalKeys.get(canonicalKey)
+      if (firstRow !== undefined) {
+        errors.push({
+          row: index + 1,
+          field: 'name',
+          message: `Duplicate floor plan "${canonicalKey}" also appears on row ${firstRow}. Keep one row per floor plan.`,
+        })
+        return []
+      }
+      seenCanonicalKeys.set(canonicalKey, index + 1)
+    }
+    return normalized
+  })
   return {
     rows,
     errors,

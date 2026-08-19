@@ -765,6 +765,17 @@ export function classifyGuidedError(error: unknown): {
     };
   }
   const message = error instanceof Error ? error.message : "";
+  if (/^PLAN_V2_POLICY_BLOCKED/.test(message)) {
+    const detail = message.replace(/^PLAN_V2_POLICY_BLOCKED:\s*/, "").trim();
+    return {
+      kind: "needs_attention",
+      message: detail
+        ? `SiteForge cannot build the plan yet: ${detail}`
+        : "SiteForge cannot build the plan yet: a required policy prerequisite is unmet.",
+      retryable: false,
+      statusCode: 400,
+    };
+  }
   if (/stale|changed|reload|current source/i.test(message)) {
     return {
       kind: "source_changed",

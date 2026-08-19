@@ -174,6 +174,19 @@ describe("SiteForge guided journey", () => {
       statusCode: 503,
     });
     expect(
+      classifyGuidedError(
+        new Error(
+          "PLAN_V2_POLICY_BLOCKED: fair_housing requires an approved property policy version.",
+        ),
+      ),
+    ).toMatchObject({
+      kind: "needs_attention",
+      message:
+        "SiteForge cannot build the plan yet: fair_housing requires an approved property policy version.",
+      retryable: false,
+      statusCode: 400,
+    });
+    expect(
       projectGuidedJourney(
         state({
           status: "building",

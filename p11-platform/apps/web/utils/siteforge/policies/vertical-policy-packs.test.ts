@@ -84,6 +84,31 @@ describe('SiteForge vertical policy packs', () => {
     )
   })
 
+  it('warns but does not block when omit-mode evidence is missing', () => {
+    const result = evaluateVerticalPolicies({
+      manifest: manifest('rental.conventional_multifamily'),
+      evidence: [],
+      now: new Date('2026-08-13T12:00:00.000Z'),
+    })
+
+    const pricingIssues = result.issues.filter(
+      issue => issue.policyCode === 'pricing_availability'
+    )
+    expect(pricingIssues.length).toBeGreaterThan(0)
+    for (const issue of pricingIssues) {
+      expect(issue.code).toBe('missing_evidence')
+      expect(issue.severity).toBe('warning')
+      expect(issue.message).toContain('omitted from the site')
+    }
+    expect(
+      result.issues.some(
+        issue =>
+          issue.policyCode === 'pricing_availability'
+          && issue.severity === 'blocker'
+      )
+    ).toBe(false)
+  })
+
   it('keeps approved pricing and availability published until replacement', () => {
     const result = evaluateVerticalPolicies({
       manifest: manifest('rental.conventional_multifamily'),

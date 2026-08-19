@@ -48,6 +48,26 @@ describe('provider-neutral floor-plan adapters', () => {
     )
   })
 
+  it('flags duplicate canonical keys instead of letting confirm upsert fail', () => {
+    const preview = createFloorPlanPreview(new ManualFloorPlanAdapter(), [
+      { name: 'A1', bedrooms: 1, bathrooms: 1, sqftMin: 700 },
+      { name: 'B2', bedrooms: 2, bathrooms: 2, sqftMin: 950 },
+      { name: 'A1', bedrooms: 1, bathrooms: 1, sqftMin: 700 },
+    ])
+
+    expect(preview.rows.map(row => row.canonical_key)).toEqual([
+      'a1-1br-1ba-700sf',
+      'b2-2br-2ba-950sf',
+    ])
+    expect(preview.errors).toEqual([
+      expect.objectContaining({
+        row: 3,
+        field: 'name',
+        message: expect.stringContaining('also appears on row 1'),
+      }),
+    ])
+  })
+
   it('rejects a confirmed-through date before the effective date', () => {
     const preview = createFloorPlanPreview(new ManualFloorPlanAdapter(), [
       {

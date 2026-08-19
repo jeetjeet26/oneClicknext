@@ -255,11 +255,17 @@ export function evaluateVerticalPolicies(input: {
     for (const evidenceKind of definition.requiredEvidenceKinds) {
       const matching = input.evidence.filter(entry => entry.kind === evidenceKind)
       if (!matching.length) {
+        // Policies that omit unsourced facts degrade gracefully: the site
+        // simply omits those facts (solo-operator doctrine). Only policies
+        // that block publication treat absent evidence as a blocker.
+        const omitsFacts = definition.omissionMode === 'omit_unsourced_facts'
         issues.push({
           code: 'missing_evidence',
           policyCode,
-          severity: 'blocker',
-          message: `${policyCode} requires approved ${evidenceKind} evidence.`,
+          severity: omitsFacts ? 'warning' : 'blocker',
+          message: omitsFacts
+            ? `${policyCode}: no approved ${evidenceKind} evidence; those facts are omitted from the site until the operator supplies them.`
+            : `${policyCode} requires approved ${evidenceKind} evidence.`,
           evidenceIds: [],
           nonWaivable: definition.nonWaivable,
         })

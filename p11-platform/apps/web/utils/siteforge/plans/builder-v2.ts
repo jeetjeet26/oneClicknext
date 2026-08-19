@@ -141,10 +141,14 @@ export function buildSiteForgePlanV2(
     now: new Date(capturedAt),
   })
   if (!policyEvaluation.ready) {
-    const blockers = policyEvaluation.issues
-      .filter(issue => issue.severity === 'blocker')
-      .map(issue => `${issue.policyCode}:${issue.code}`)
-    throw new Error(`PLAN_V2_POLICY_BLOCKED: ${blockers.join(', ')}`)
+    const blockers = [
+      ...new Set(
+        policyEvaluation.issues
+          .filter(issue => issue.severity === 'blocker')
+          .map(issue => issue.message)
+      ),
+    ]
+    throw new Error(`PLAN_V2_POLICY_BLOCKED: ${blockers.join(' ')}`)
   }
   const hierarchyContentHash = hashSiteForgeContent(hierarchyEntries)
   const catalogContentHash = hashSiteForgeContent({
