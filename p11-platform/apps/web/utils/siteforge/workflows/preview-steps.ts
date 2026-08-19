@@ -484,6 +484,7 @@ export async function renderCanonicalWordPressPreview(
       applicationPassword: password,
       ssh: runtimeSsh,
       acfProLicenseKey,
+      reuseInstalledAcfPro: true,
       publicRuntime,
       expectedRemoteContentHash:
         target.runtime_contract_version === 3
@@ -689,6 +690,27 @@ export async function renderCanonicalWordPressPreview(
       publicRuntime,
       targetMode: "canonical_preview",
     });
+    if (release.overlayPackage && release.overlayContentHash) {
+      if (!runtimeSsh) {
+        throw new FatalError(
+          "Legacy canonical preview overlay requires Cloudways SSH access",
+        );
+      }
+      const installer = new SshWordPressInstaller();
+      const priorTheme = await installer.getActiveTheme({ ssh: runtimeSsh });
+      try {
+        await installer.installThemeOverlay({
+          ssh: runtimeSsh,
+          archive: release.overlayPackage,
+          contentHash: release.overlayContentHash,
+        });
+      } catch (error) {
+        await installer
+          .restoreActiveTheme({ ssh: runtimeSsh, theme: priorTheme })
+          .catch(() => undefined);
+        throw error;
+      }
+    }
   }
   if (!runtimeV2 && !runtimeV3 && release.artifact.themeOverlayId) {
     await captureOverlayRenderCertification(
@@ -756,6 +778,8 @@ export async function renderCanonicalWordPressPreview(
       artifactId: input.artifactId,
       contentHash: input.contentHash,
       artifactBinding: buildReleaseCertificationBinding(release),
+      editAcceptanceContract:
+        release.artifact.editAcceptanceContract || undefined,
       targetUrl: instance.url,
       credentials: instance.credentials,
       pages,

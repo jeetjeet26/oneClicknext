@@ -76,7 +76,10 @@ type RuntimeV3Client = Pick<
 
 type RuntimeV3Installer = Pick<
   SshWordPressInstaller,
-  'ensureInstalled' | 'installThemeOverlay'
+  | 'ensureInstalled'
+  | 'getActiveTheme'
+  | 'installThemeOverlay'
+  | 'restoreActiveTheme'
 >
 
 export interface SiteForgeRuntimeV3DeploymentResult {
@@ -104,6 +107,7 @@ export interface DeployArtifactBoundRuntimeV3Input {
   applicationPassword: string
   ssh: WordPressSshCredentials
   acfProLicenseKey: string
+  reuseInstalledAcfPro?: boolean
   publicRuntime: SiteForgePublicRuntimeConfig
   protection: {
     mode: 'noindex' | 'password_noindex' | 'public'
@@ -226,6 +230,7 @@ function verifiedPackageIdentities(
           {
             overlayId: release.artifact.themeOverlayId,
             contentHash: release.overlayContentHash,
+            themeSlug: runtimeV3OverlayThemeSlug(release.overlayContentHash),
             appliesToBaseThemeArchiveSha256:
               release.artifact.baseThemePackageSha256,
             package: packageIdentity({
@@ -250,6 +255,13 @@ function verifiedPackageIdentities(
 
 function runtimeId(prefix: string, value: string): string {
   return `${prefix}:${value.replace(/[^A-Za-z0-9._:-]+/g, '-')}`.slice(0, 240)
+}
+
+export function runtimeV3OverlayThemeSlug(contentHash: string): string {
+  if (!/^[a-f0-9]{64}$/.test(contentHash)) {
+    throw new Error('Runtime v3 overlay content hash is invalid')
+  }
+  return `oneclick-siteforge-overlay-${contentHash.slice(0, 12)}`
 }
 
 function assertExactPackageIdentities(
@@ -316,6 +328,8 @@ function assertExactPackageIdentities(
         release.artifact.overlayPackageSha256 ||
       overlays[0].package.archiveBytes !== release.overlayPackage.byteLength ||
       overlays[0].contentHash !== release.overlayContentHash ||
+      overlays[0].themeSlug !==
+        runtimeV3OverlayThemeSlug(release.overlayContentHash) ||
       overlays[0].appliesToBaseThemeArchiveSha256 !==
         release.artifact.baseThemePackageSha256
     ) {
@@ -427,6 +441,7 @@ export function buildArtifactBoundRuntimeV3Release(input: {
           ? `siteforge-public-key:${input.publicRuntime.websiteId}`
           : null,
         conversionEndpoint: input.publicRuntime.conversionEndpoint,
+        conversionKey: input.publicRuntime.conversionKey,
         telemetryEndpoint: input.publicRuntime.telemetryEndpoint,
         allowedOrigins: [input.siteUrl],
       },
@@ -683,6 +698,9 @@ export async function deployArtifactBoundRuntimeV3(
       applicationPassword: input.applicationPassword,
     })
   const installer = input.installer || new SshWordPressInstaller()
+  let priorTheme: Awaited<ReturnType<RuntimeV3Installer['getActiveTheme']>> | null =
+    null
+  let themeChanged = false
   const sleep =
     input.sleep ||
     ((milliseconds: number) =>
@@ -712,6 +730,8 @@ export async function deployArtifactBoundRuntimeV3(
       'installing_runtime_v3',
       'Installing exact signed runtime v3 and base-theme bytes'
     )
+    priorTheme = await installer.getActiveTheme({ ssh: input.ssh })
+    themeChanged = true
     await installer.ensureInstalled({
       ssh: input.ssh,
       runtimeContractVersion: 3,
@@ -719,26 +739,68 @@ export async function deployArtifactBoundRuntimeV3(
       runtimePluginArchive: input.release.runtimePackage,
       runtimePluginIdentity: runtimePackageIdentity,
       acfProLicenseKey: input.acfProLicenseKey,
+      reuseInstalledAcfPro: input.reuseInstalledAcfPro,
     })
     if (input.release.overlayPackage && input.release.overlayContentHash) {
-      await installer.installThemeOverlay({
+      const activatedOverlay = await installer.installThemeOverlay({
         ssh: input.ssh,
         archive: input.release.overlayPackage,
         contentHash: input.release.overlayContentHash,
       })
+      const expectedOverlay = immutableRelease.identity.overlays[0]?.themeSlug
+      if (!expectedOverlay || activatedOverlay !== expectedOverlay) {
+        throw new Error(
+          'SiteForge runtime v3 activated overlay does not match immutable overlay identity'
+        )
+      }
     }
-
     await input.assertActive?.()
     await input.onProgress?.(
       'verifying_runtime_v3',
       'Verifying installed package and remote concurrency identity'
     )
+    let repairingRemoteMaterializationDrift = false
+    const statePromise = runtime
+      .getState(input.release.artifact.websiteId)
+      .catch(error => {
+        const failure =
+          error &&
+          typeof error === 'object' &&
+          'failure' in error &&
+          error.failure &&
+          typeof error.failure === 'object' &&
+          'code' in error.failure
+            ? error.failure
+            : null
+        const errorMessage =
+          typeof failure?.message === 'string'
+            ? failure.message
+            : error instanceof Error
+              ? error.message
+              : ''
+        const materializationDrift =
+          failure?.code === 'stale_remote_state' ||
+          errorMessage.includes(
+            'no longer matches the active SiteForge v3 resource graph'
+          )
+        if (
+          materializationDrift &&
+          expectedRemoteContentHash !== null
+        ) {
+          repairingRemoteMaterializationDrift = true
+          return null
+        }
+        throw error
+      })
     const [health, state, capabilities] = await Promise.all([
       runtime.getHealth(),
-      runtime.getState(input.release.artifact.websiteId),
+      statePromise,
       runtime.getCapabilities(),
     ])
-    if (health.status !== 'ok') {
+    if (
+      health.status !== 'ok' &&
+      !(health.status === 'degraded' && repairingRemoteMaterializationDrift)
+    ) {
       throw new Error(`SiteForge runtime v3 is ${health.status}`)
     }
     if (
@@ -750,8 +812,9 @@ export async function deployArtifactBoundRuntimeV3(
         'SiteForge runtime v3 health version does not match the verified installed package'
       )
     }
-    const actualRemoteContentHash =
-      state?.identity?.artifactContentHash ?? null
+    const actualRemoteContentHash = repairingRemoteMaterializationDrift
+      ? expectedRemoteContentHash
+      : (state?.identity?.artifactContentHash ?? null)
     if (actualRemoteContentHash !== expectedRemoteContentHash) {
       throw new Error(
         'SiteForge runtime v3 remote content hash does not match the expected target identity'
@@ -854,6 +917,30 @@ export async function deployArtifactBoundRuntimeV3(
     await input.assertActive?.()
     const readback = await runtime.getState(input.release.artifact.websiteId)
     assertRemoteState(readback, immutableRelease, deployment.transactionId)
+    const expectedActiveTheme = immutableRelease.identity.overlays[0]?.themeSlug
+      ? {
+          stylesheet: immutableRelease.identity.overlays[0].themeSlug,
+          template: 'oneclick-siteforge',
+        }
+      : {
+          stylesheet: 'oneclick-siteforge',
+          template: 'oneclick-siteforge',
+        }
+    const activeTheme = await installer.getActiveTheme({
+      ssh: input.ssh,
+      rememberForRollback: false,
+      requireStylesheetCss: Boolean(
+        immutableRelease.identity.overlays[0]?.themeSlug
+      ),
+    })
+    if (
+      activeTheme.stylesheet !== expectedActiveTheme.stylesheet ||
+      activeTheme.template !== expectedActiveTheme.template
+    ) {
+      throw new Error(
+        'SiteForge runtime v3 active WordPress theme does not match the immutable release'
+      )
+    }
 
     const completedAt = new Date().toISOString()
     const evidence = {
@@ -974,7 +1061,32 @@ export async function deployArtifactBoundRuntimeV3(
       evidence,
     }
   } catch (error) {
-    await persistFailure(input, deploymentId, error)
-    throw error
+    let terminalError =
+      error instanceof SiteForgeRuntimeV3ClientError &&
+      error.failure.details
+        ? new Error(
+            `${error.message}: ${JSON.stringify(error.failure.details)}`,
+            { cause: error }
+          )
+        : error
+    if (themeChanged && priorTheme) {
+      try {
+        await installer.restoreActiveTheme({
+          ssh: input.ssh,
+          theme: priorTheme,
+        })
+      } catch (restoreError) {
+        terminalError = new Error(
+          `Runtime v3 failed and prior WordPress theme could not be restored: ${
+            restoreError instanceof Error
+              ? restoreError.message
+              : String(restoreError)
+          }`,
+          { cause: error }
+        )
+      }
+    }
+    await persistFailure(input, deploymentId, terminalError)
+    throw terminalError
   }
 }

@@ -3,10 +3,12 @@ import { z } from 'zod'
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { createRequestContext } from '@/utils/services/request-context'
+import { validateSiteForgeOwnerOperatorAccess } from '@/utils/services/auth-guard'
 import type { Json } from '@/types/supabase'
 import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
 import { isSiteForgeRuntimeExtensionsEnabled } from '@/utils/siteforge/editor/feature'
 import {
+  assertPassingOverlayRenderedEffectEvidence,
   inspectStoredOverlayPackage,
   overlayManifestSchema,
   overlayRuntimeCompatibilitySchema,
@@ -18,6 +20,10 @@ import {
   AuroraLifecycleControlError,
   registerAuroraOwnedResource,
 } from '@/utils/siteforge/testing/aurora-lifecycle-control'
+import {
+  queueCanonicalPreviewAfterPublication,
+  type CanonicalPreviewQueueResult,
+} from '@/utils/siteforge/workflows/canonical-preview-queue'
 
 const decisionSchema = z.object({
   decision: z.enum(['approved', 'rejected']),
@@ -65,6 +71,10 @@ function publishedIdentity(
   }
 }
 
+function overlayThemeSlug(contentHash: string): string {
+  return `oneclick-siteforge-overlay-${contentHash.slice(0, 12)}`
+}
+
 function artifactHasExactOverlay(
   artifact: PublishedArtifact,
   sourceArtifactId: string,
@@ -92,6 +102,7 @@ function artifactHasExactOverlay(
     overlayIdentity.overlayId === overlayId &&
     overlayIdentity.packageSha256 === packageSha256 &&
     overlayIdentity.contentHash === contentHash &&
+    overlayIdentity.themeSlug === overlayThemeSlug(contentHash) &&
     overlayIdentity.signature === signature
   )
 }
@@ -181,6 +192,29 @@ async function reconcilePublishedExtension(input: {
   return current
 }
 
+async function queuePublishedPreview(input: {
+  extension: ExtensionRequest
+  artifact: PublishedArtifact
+  service: ServiceClient
+}): Promise<CanonicalPreviewQueueResult> {
+  try {
+    return await queueCanonicalPreviewAfterPublication({
+      service: input.service,
+      orgId: input.extension.org_id,
+      propertyId: input.extension.property_id,
+      websiteId: input.extension.website_id,
+      artifactId: input.artifact.id,
+      contentHash: input.artifact.content_hash,
+    })
+  } catch (error) {
+    return {
+      status: 'pending',
+      jobId: null,
+      reason: error instanceof Error ? error.message : String(error),
+    }
+  }
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ requestId: string }> }
@@ -217,33 +251,32 @@ export async function POST(
       )
     }
     const service = createServiceClient()
-    const [{ data: extension }, { data: profile }] = await Promise.all([
-      service
-        .from('siteforge_runtime_extension_requests')
-        .select(
-          'id, org_id, property_id, website_id, artifact_id, capability, reason, requested_behavior, status, immutable_package_sha256, runtime_compatibility, decision_by, created_at'
-        )
-        .eq('id', requestId)
-        .single(),
-      service
-        .from('profiles')
-        .select('org_id, role')
-        .eq('id', user.id)
-        .single(),
-    ])
+    const { data: extension } = await service
+      .from('siteforge_runtime_extension_requests')
+      .select(
+        'id, org_id, property_id, website_id, artifact_id, capability, reason, requested_behavior, status, immutable_package_sha256, runtime_compatibility, decision_by, created_at'
+      )
+      .eq('id', requestId)
+      .single()
     if (!extension) {
       return NextResponse.json(
         { error: 'Runtime extension request not found' },
         { status: 404, headers: ctx.responseHeaders }
       )
     }
+    const ownerOperator = await validateSiteForgeOwnerOperatorAccess(
+      user.id,
+      extension.property_id
+    )
     if (
-      !profile ||
-      profile.org_id !== extension.org_id ||
-      !['admin', 'manager'].includes(profile.role || '')
+      !ownerOperator.authorized ||
+      ownerOperator.orgId !== extension.org_id
     ) {
       return NextResponse.json(
-        { error: 'Forbidden' },
+        {
+          error: 'SiteForge owner/operator capability required',
+          capability: ownerOperator.capability,
+        },
         { status: 403, headers: ctx.responseHeaders }
       )
     }
@@ -328,6 +361,51 @@ export async function POST(
       )
     }
     const identity = compatibility.data
+    if (!identity.renderedEffectContract) {
+      return NextResponse.json(
+        {
+          error:
+            '[extension_rendered_effect_contract_missing] Runtime extension has no immutable rendered-effect contract',
+        },
+        { status: 409, headers: ctx.responseHeaders }
+      )
+    }
+    const { data: renderedEffectOverlay, error: renderedEffectError } =
+      await service
+        .from('siteforge_theme_overlays')
+        .select('screenshot_manifest')
+        .eq('id', identity.overlayId)
+        .eq('website_id', extension.website_id)
+        .eq('property_id', extension.property_id)
+        .eq('org_id', extension.org_id)
+        .single()
+    if (renderedEffectError || !renderedEffectOverlay) {
+      return NextResponse.json(
+        {
+          error:
+            '[extension_rendered_effect_unavailable] Runtime extension rendered evidence is unavailable',
+        },
+        { status: 409, headers: ctx.responseHeaders }
+      )
+    }
+    try {
+      assertPassingOverlayRenderedEffectEvidence({
+        contract: identity.renderedEffectContract,
+        evidence: renderedEffectOverlay.screenshot_manifest,
+        parentArtifactId: extension.artifact_id,
+        parentContentHash: identity.sourceContentHash,
+      })
+    } catch (error) {
+      return NextResponse.json(
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : '[extension_rendered_effect_unproven] Runtime extension rendered evidence failed',
+        },
+        { status: 409, headers: ctx.responseHeaders }
+      )
+    }
     if (extension.status === 'building') {
       const reconciled = await reconcilePublishedExtension({
         extension,
@@ -345,12 +423,18 @@ export async function POST(
           { kind: 'artifact', id: reconciled.id },
           service
         )
+        const previewQueue = await queuePublishedPreview({
+          extension,
+          artifact: reconciled,
+          service,
+        })
         return NextResponse.json(
           {
             requestId,
             status: 'approved',
             artifact: publishedIdentity(reconciled, extension.artifact_id),
             reconciled: true,
+            previewQueue,
           },
           { headers: ctx.responseHeaders }
         )
@@ -508,6 +592,7 @@ export async function POST(
       contractVersion: 1,
       overlayId: overlay.id,
       contentHash: overlay.content_hash,
+      themeSlug: overlayThemeSlug(overlay.content_hash),
       packageSha256: overlay.package_sha256,
       signature: overlay.signature,
       storagePath: overlay.storage_path,
@@ -622,6 +707,11 @@ export async function POST(
       { kind: 'artifact', id: published.id },
       service
     )
+    const previewQueue = await queuePublishedPreview({
+      extension,
+      artifact: published,
+      service,
+    })
     ctx.logSuccess(200, {
       requestId,
       decision: 'approved',
@@ -632,6 +722,7 @@ export async function POST(
         requestId,
         status: 'approved',
         artifact: publishedIdentity(published, extension.artifact_id),
+        previewQueue,
       },
       { headers: ctx.responseHeaders }
     )

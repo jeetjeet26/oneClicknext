@@ -2,6 +2,7 @@ import {
   blueprintPatchOperationsSchema,
   generatedPageSchema,
   pageSectionSchema,
+  siteForgeRedirectPlanSchema,
   siteConfigurationSchema,
   type GeneratedPage,
   type PageSection,
@@ -62,11 +63,59 @@ export const DEFAULT_SITE_CONFIGURATION: SiteConfiguration = siteConfigurationSc
 export function ensureSectionIds(pages: GeneratedPage[]): GeneratedPage[] {
   return pages.map(page => ({
     ...page,
-    sections: (page.sections || []).map(section => ({
-      ...normalizeLegacySection(section),
-      id: section.id || globalThis.crypto?.randomUUID?.() || fallbackId(),
-    })),
+    sections: (page.sections || []).map(section => {
+      const id = section.id || globalThis.crypto?.randomUUID?.() || fallbackId()
+      return {
+        ...normalizeLegacySection(section),
+        id,
+        content: ensureNestedElementIds(section.content, id),
+      }
+    }),
   }))
+}
+
+export function ensureNestedElementIds(
+  content: Record<string, unknown>,
+  sectionId: string
+): Record<string, unknown> {
+  const next = structuredClone(content)
+  for (const field of [
+    'slides',
+    'items',
+    'links',
+    'images',
+    'points',
+    'plans',
+    'testimonials',
+    'offerings',
+    'entities',
+    'rows',
+    'milestones',
+    'documents',
+    'events',
+  ]) {
+    const collection = next[field]
+    if (!Array.isArray(collection)) continue
+    next[field] = collection.map(item => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return item
+      const row = item as Record<string, unknown>
+      const existing = [
+        row.target_id,
+        row.itemId,
+        row.item_id,
+        row.id,
+        row.fieldId,
+      ].find(value => typeof value === 'string' && value.length > 0)
+      if (existing) return row
+      return {
+        ...row,
+        target_id: `${sectionId}:${field}:${
+          globalThis.crypto?.randomUUID?.() || fallbackId()
+        }`,
+      }
+    })
+  }
+  return next
 }
 
 /**
@@ -108,6 +157,8 @@ export function applyBlueprintPatch(blueprint: SiteBlueprint, ops: BlueprintPatc
 
   for (const op of validatedOps) {
     const before = comparableBlueprintState(next)
+    const pagesRequiringOrderNormalization =
+      orderNormalizationPageSlugs(next.pages, op)
 
     if (op.op === 'page.upsert') {
       const page = ensureSectionIds([op.page])[0]
@@ -119,6 +170,35 @@ export function applyBlueprintPatch(blueprint: SiteBlueprint, ops: BlueprintPatc
         throw operationTargetError(op.op, `page "${op.pageSlug}"`)
       }
       next.pages = next.pages.filter(page => page.slug !== op.pageSlug)
+    } else if (op.op === 'page.update') {
+      const page = next.pages.find(candidate => candidate.slug === op.pageSlug)
+      if (!page) {
+        throw operationTargetError(op.op, `page "${op.pageSlug}"`)
+      }
+      Object.assign(page, deepMerge(page, op.value))
+    } else if (op.op === 'page.move') {
+      const index = next.pages.findIndex(
+        candidate => candidate.slug === op.pageSlug
+      )
+      if (index < 0) {
+        throw operationTargetError(op.op, `page "${op.pageSlug}"`)
+      }
+      const page = next.pages.splice(index, 1)[0]!
+      next.pages.splice(
+        Math.min(op.toOrder - 1, next.pages.length),
+        0,
+        page
+      )
+    } else if (op.op === 'redirect.upsert') {
+      const redirects = [...(next.runtimeRedirects || [])]
+      const existing = redirects.findIndex(
+        redirect => redirect.sourcePath === op.redirect.sourcePath
+      )
+      if (existing >= 0) redirects[existing] = op.redirect
+      else redirects.push(op.redirect)
+      next.runtimeRedirects = redirects.sort((left, right) =>
+        left.sourcePath.localeCompare(right.sourcePath)
+      )
     } else if (op.op === 'section.upsert') {
       const page = next.pages.find(candidate => candidate.slug === op.pageSlug)
       if (!page) {
@@ -141,7 +221,7 @@ export function applyBlueprintPatch(blueprint: SiteBlueprint, ops: BlueprintPatc
       if (!hit) {
         throw operationTargetError(op.op, `section "${op.sectionId}"`)
       }
-      Object.assign(hit.section, op.value)
+      Object.assign(hit.section, deepMerge(hit.section, op.value))
     } else if (op.op === 'section.remove') {
       const hit = findSection(next.pages, op.sectionId)
       if (!hit) {
@@ -222,26 +302,54 @@ export function applyBlueprintPatch(blueprint: SiteBlueprint, ops: BlueprintPatc
       }
     }
 
-    next.pages = next.pages.map(page => ({
-      ...page,
-      sections: normalizeOrder(page.sections || []),
-    }))
+    if (pagesRequiringOrderNormalization.size) {
+      next.pages = next.pages.map(page =>
+        pagesRequiringOrderNormalization.has(page.slug)
+          ? {
+              ...page,
+              sections: normalizeOrder(page.sections || []),
+            }
+          : page
+      )
+    }
     validatePatchedBlueprint(next)
     if (comparableBlueprintState(next) === before) {
       throw new Error(`Blueprint operation "${op.op}" had no effect`)
     }
   }
 
-  // normalize order fields per page
-  next.pages = next.pages.map(page => ({
-    ...page,
-    sections: normalizeOrder(page.sections || []),
-  }))
-
   return {
     ...next,
     updatedAt: new Date().toISOString(),
   }
+}
+
+function orderNormalizationPageSlugs(
+  pages: GeneratedPage[],
+  operation: BlueprintPatchOperation
+): Set<string> {
+  const slugs = new Set<string>()
+  if (operation.op === 'page.upsert') {
+    slugs.add(operation.page.slug)
+    return slugs
+  }
+  if (operation.op === 'section.upsert' || operation.op === 'add_section') {
+    slugs.add(operation.pageSlug)
+    return slugs
+  }
+  if (
+    operation.op === 'section.remove' ||
+    operation.op === 'section.move' ||
+    operation.op === 'remove_section' ||
+    operation.op === 'move_section'
+  ) {
+    const source = findSection(pages, operation.sectionId)
+    if (source) slugs.add(source.page.slug)
+    if (operation.op === 'section.move' && operation.pageSlug) {
+      slugs.add(operation.pageSlug)
+    }
+  }
+  return slugs
 }
 
 function insertSection(page: GeneratedPage, section: PageSection, afterSectionId?: string): void {
@@ -318,12 +426,16 @@ function operationTargetError(operation: string, target: string): Error {
 function comparableBlueprintState(blueprint: SiteBlueprint): string {
   return JSON.stringify({
     pages: blueprint.pages,
+    runtimeRedirects: blueprint.runtimeRedirects,
     siteConfiguration: blueprint.siteConfiguration,
   })
 }
 
 function validatePatchedBlueprint(blueprint: SiteBlueprint): void {
   generatedPageSchema.array().parse(blueprint.pages)
+  siteForgeRedirectPlanSchema.array().max(2_000).parse(
+    blueprint.runtimeRedirects || []
+  )
   for (const page of blueprint.pages) {
     pageSectionSchema.array().parse(page.sections)
   }

@@ -19,6 +19,7 @@ import {
   loadApprovedSiteForgeGenerationContext,
   SiteForgePlanError,
 } from '@/utils/siteforge/plans/repository'
+import { createExecutionBudget } from '@/utils/services/execution-budget'
 
 export async function terminalizeOrphanGenerationJob(
   serviceSupabase: ReturnType<typeof createServiceClient>,
@@ -198,6 +199,52 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    try {
+      await createExecutionBudget({
+        orgId: property.org_id,
+        propertyId,
+        websiteId,
+        jobId: sharedJob.id,
+        policyVersion: 'siteforge.autonomous-web-team.v1',
+        limits: {
+          maxCostCents: 80_000,
+          maxInputTokens: 2_000_000,
+          maxOutputTokens: 500_000,
+          maxModelAttempts: 40,
+          maxBrowserRuns: 12,
+          maxProviderCalls: 100,
+          maxRepairOperations: 24,
+          maxWallSeconds: 21_600,
+        },
+        modelPolicy: {
+          domain: 'siteforge',
+          mode: 'bounded',
+          source: 'central_model_policy',
+        },
+        metadata: {
+          planId,
+          planVersionId: planVersion.id,
+          contentHash,
+          idempotencyKey,
+        },
+        startedAt: nowIso,
+      })
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Failed to create execution budget'
+      await terminalizeOrphanGenerationJob(
+        serviceSupabase,
+        sharedJob.id,
+        message
+      )
+      return NextResponse.json(
+        { error: 'Failed to reserve SiteForge execution budget' },
+        { status: 500 }
+      )
+    }
+
     const simulatedPages = localSimulationEnabled
       ? buildLocalSimulationPages(property.name)
       : undefined
@@ -267,66 +314,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to prepare website' }, { status: 500 })
     }
 
-    // Create job for async processing
-    const jobPayload = {
-      website_id: website.id,
-      job_type: 'full_generation',
-      status: localSimulationEnabled ? 'complete' : 'queued',
-      input_params: {
-        sharedJobId: sharedJob.id,
-        propertyId,
-        planId,
-        planVersionId: planVersion.id,
-        confirmedRevision,
-        contentHash,
-        idempotencyKey,
-        evidenceSnapshot: generationContext.evidenceSnapshot,
-        localSimulation: localSimulationEnabled,
-      },
-      output_data: localSimulationEnabled
-        ? {
-            mode: 'local_simulation',
-            completedAt: nowIso,
-          }
-        : null,
-      started_at: localSimulationEnabled ? nowIso : null,
-      completed_at: localSimulationEnabled ? nowIso : null,
-      shared_job_id: sharedJob.id,
-    }
-
-    const { data: job, error: jobError } = await serviceSupabase
-      .from('siteforge_jobs')
-      .insert(jobPayload as never)
-      .select()
-      .single()
-
-    if (jobError || !job) {
-      console.error('Error creating job:', jobError)
-      await serviceSupabase
-        .from('property_websites')
-        .update({
-          generation_status: 'failed',
-          error_message: 'Failed to create durable generation job',
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', website.id)
-
-      await serviceSupabase
-        .from('shared_jobs')
-        .update({
-          lifecycle_status: 'failed',
-          status_reason: 'compatibility_job_failed',
-          stage: 'failed',
-          current_step: 'Failed to create compatibility job',
-          error_message: 'Failed to create compatibility SiteForge job',
-          finished_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', sharedJob.id)
-
-      return NextResponse.json({ error: 'Failed to create generation job' }, { status: 500 })
-    }
-
     try {
       await consumeConfirmedSiteForgePlan(
         {
@@ -358,14 +345,6 @@ export async function POST(request: NextRequest) {
           })
           .eq('id', sharedJob.id),
         serviceSupabase
-          .from('siteforge_jobs')
-          .update({
-            status: 'failed',
-            completed_at: new Date().toISOString(),
-            error_details: { message } as Json,
-          })
-          .eq('id', job.id),
-        serviceSupabase
           .from('property_websites')
           .update({
             generation_status: 'failed',
@@ -384,7 +363,6 @@ export async function POST(request: NextRequest) {
         const run = await start(siteForgeGenerationWorkflow, [
           {
             sharedJobId: sharedJob.id,
-            legacyJobId: job.id,
             websiteId: website.id,
             propertyId,
             orgId: property.org_id,
@@ -407,7 +385,6 @@ export async function POST(request: NextRequest) {
             payload: {
               ...sharedJobPayload,
               websiteId: website.id,
-              legacyJobId: job.id,
             } as Json,
             status_reason: 'workflow_queued',
             current_step: 'Durable workflow queued',
@@ -434,14 +411,6 @@ export async function POST(request: NextRequest) {
               updated_at: new Date().toISOString(),
             })
             .eq('id', sharedJob.id),
-          serviceSupabase
-            .from('siteforge_jobs')
-            .update({
-              status: 'failed',
-              completed_at: new Date().toISOString(),
-              error_details: { message } as Json,
-            })
-            .eq('id', job.id),
           serviceSupabase
             .from('property_websites')
             .update({

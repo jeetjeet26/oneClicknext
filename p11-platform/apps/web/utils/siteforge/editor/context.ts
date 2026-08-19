@@ -80,6 +80,7 @@ export interface SiteForgeEditorSnapshot {
   conversationHistory: Json
   wordpressCapabilities: Json
   renderedEvidence: RenderedEditorEvidence
+  visualAttachments: Tables<'siteforge_edit_attachments'>[]
 }
 
 function asJson(value: unknown): Json {
@@ -159,6 +160,8 @@ export async function buildSiteForgeEditorSnapshot(
   input: {
     websiteId: string
     sessionId: string
+    userMessageId?: string
+    attachmentIds?: string[]
     expectedArtifactId: string
     expectedContentHash: string
   },
@@ -190,6 +193,7 @@ export async function buildSiteForgeEditorSnapshot(
     messagesResult,
     certificationResult,
     runtimeTargetResult,
+    attachmentsResult,
   ] = await Promise.all([
     client
       .from('siteforge_blueprint_versions')
@@ -246,6 +250,19 @@ export async function buildSiteForgeEditorSnapshot(
       .eq('target_type', 'canonical_preview')
       .eq('is_active', true)
       .maybeSingle(),
+    client
+      .from('siteforge_edit_attachments')
+      .select('*')
+      .eq('session_id', input.sessionId)
+      .eq('website_id', input.websiteId)
+      .eq('artifact_id', input.expectedArtifactId)
+      .eq('artifact_content_hash', input.expectedContentHash)
+      .in(
+        'id',
+        input.attachmentIds?.length
+          ? input.attachmentIds
+          : ['00000000-0000-0000-0000-000000000000']
+      ),
   ])
 
   if (artifactResult.error || !artifactResult.data) {
@@ -281,6 +298,23 @@ export async function buildSiteForgeEditorSnapshot(
   if (runtimeTargetResult.error) {
     throw new Error(
       `Editor WordPress runtime capability unavailable: ${runtimeTargetResult.error.message}`
+    )
+  }
+  if (attachmentsResult.error) {
+    throw new Error(
+      `Editor visual context unavailable: ${attachmentsResult.error.message}`
+    )
+  }
+  if (
+    (input.attachmentIds?.length || 0) !==
+      (attachmentsResult.data?.length || 0) ||
+    (input.userMessageId &&
+      (attachmentsResult.data || []).some(
+        attachment => attachment.user_message_id !== input.userMessageId
+      ))
+  ) {
+    throw new Error(
+      'Editor visual context no longer matches the submitted immutable turn'
     )
   }
   const certificationRequired = false
@@ -351,5 +385,6 @@ export async function buildSiteForgeEditorSnapshot(
       targetTypes: ['canonical_preview', 'staging'],
     }),
     renderedEvidence,
+    visualAttachments: attachmentsResult.data || [],
   }
 }

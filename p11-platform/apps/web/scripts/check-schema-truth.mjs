@@ -7,6 +7,7 @@ const TYPES_FILE = path.join(ROOT, 'types', 'supabase.ts')
 const TARGET_DIRS = [
   path.join(ROOT, 'app', 'api'),
   path.join(ROOT, 'utils', 'services'),
+  path.join(ROOT, 'utils', 'real-estate'),
   path.join(ROOT, 'utils', 'siteforge'),
   path.join(ROOT, 'workflows'),
 ]

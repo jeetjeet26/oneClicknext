@@ -9,6 +9,7 @@
     "supabase:stop": "npx supabase stop",
     "supabase:reset": "npx supabase db reset --local --yes && node ./scripts/write-local-supabase-env.mjs",
     "supabase:env:local": "node ./scripts/write-local-supabase-env.mjs",
+    "test:db:vertical": "npx supabase test db supabase/tests/vertical_platform_v2.test.sql",
     "local:start": "bash ./scripts/local-dev.sh",
     "smoke:local": "cd ./apps/web && npm run test:smoke"
   },

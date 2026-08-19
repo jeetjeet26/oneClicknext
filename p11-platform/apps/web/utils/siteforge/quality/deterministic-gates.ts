@@ -9,6 +9,7 @@ import {
 import type { SiteForgePlan } from '@/utils/siteforge/contracts'
 import { hashBrandForgeContract } from '@/utils/brandforge/normalize'
 import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
+import { compileBrandPublicationPackage } from '@/utils/siteforge/brand-design-compiler'
 
 const approvedLegalPolicyBodiesSchema = z
   .object({
@@ -380,6 +381,31 @@ export function evaluateDeterministicSiteForgeQuality(input: {
 
     if (brandSnapshot) {
       const contract = brandSnapshot.contract
+      let compiledBrandPublication:
+        ReturnType<typeof compileBrandPublicationPackage> | undefined
+      try {
+        compiledBrandPublication = compileBrandPublicationPackage(contract)
+      } catch {
+        compiledBrandPublication = undefined
+      }
+      const publicationPackagePassed = Boolean(
+        compiledBrandPublication
+        && input.themeArtifact.brandPublication
+        && hashSiteForgeContent(input.themeArtifact.brandPublication)
+          === hashSiteForgeContent(compiledBrandPublication),
+      )
+      checks.push({
+        id: 'brand_publication_package',
+        category: 'fidelity',
+        passed: publicationPackagePassed,
+        severity: 'blocker',
+        message: publicationPackagePassed
+          ? 'The theme artifact contains the deterministic locked brand publication package.'
+          : 'The theme artifact is missing or mismatches the compiled brand publication package.',
+        locations: publicationPackagePassed
+          ? []
+          : ['wordpressThemeArtifact.brandPublication'],
+      })
       const primaryLogo = contract.logos.variants.find(logo => logo.role === 'primary')
       const headline = contract.typography.roles.find(font => font.role === 'headline')
       const body = contract.typography.roles.find(font => font.role === 'body')
@@ -599,14 +625,16 @@ export function evaluateDeterministicSiteForgeQuality(input: {
       && hashSiteForgeContent(photo) === hashSiteForgeContent(legacyAsset)
     return approved || unchangedLegacyAsset ? [] : [photo.id]
   })
+  // Solo-operator doctrine: rights/approval state is advisory metadata and
+  // never blocks publication.
   checks.push({
     id: 'asset_rights_and_approval',
     category: 'fidelity',
     passed: unapprovedAssets.length === 0,
-    severity: 'blocker',
+    severity: 'warning',
     message: unapprovedAssets.length === 0
       ? 'Every new or changed asset is approved and rights-cleared.'
-      : 'One or more new or changed assets lacks approval or usable rights.',
+      : 'One or more new or changed assets lacks recorded approval or rights metadata (advisory only).',
     locations: unapprovedAssets,
   })
   const sectionIds = input.pages.flatMap((page) =>

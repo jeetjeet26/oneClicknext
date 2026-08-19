@@ -2837,7 +2837,7 @@ test.describe('local smoke flows', () => {
     await page.getByRole('tab', { name: 'Build & review' }).click()
     await expect(
       page.getByText(
-        /Production promotion requires a separate, expiring manager launch approval/
+        /Production changes only through the owner Launch action/
       )
     ).toBeVisible()
     await expect(

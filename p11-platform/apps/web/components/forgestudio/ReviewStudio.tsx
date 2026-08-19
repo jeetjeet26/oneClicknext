@@ -16,13 +16,32 @@ import {
 
 interface Variant {
   id: string
+  variant_key: string
+  sequence_index: number
   platform: string
   caption: string
   hashtags: string[]
   call_to_action: string | null
+  asset_ids: string[]
   media_urls: string[]
   alt_text: string | null
   content_format: string
+  storyboard: Array<{
+    index: number
+    description: string
+    durationSeconds?: number | null
+    overlayText?: string | null
+  }>
+  overlay_text: string[]
+  safe_area: {
+    topPercent: number
+    rightPercent: number
+    bottomPercent: number
+    leftPercent: number
+  }
+  subtitle_text: string | null
+  thumbnail_asset_id: string | null
+  platform_options: Record<string, unknown>
   validation: { issues?: Array<{ code: string; message: string }> } | null
 }
 
@@ -47,6 +66,7 @@ interface Revision {
 
 interface Publication {
   id: string
+  variant_id: string
   platform: string
   status: string
   scheduled_for: string
@@ -100,7 +120,7 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const [editingPlatform, setEditingPlatform] = useState<string | null>(null)
+  const [editingVariantId, setEditingVariantId] = useState<string | null>(null)
   const [editedCaptions, setEditedCaptions] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
 
@@ -108,7 +128,9 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
   const [reviewing, setReviewing] = useState<'approved' | 'denied' | null>(null)
 
   const [scheduleAt, setScheduleAt] = useState('')
-  const [scheduleConnections, setScheduleConnections] = useState<string[]>([])
+  const [scheduleTargets, setScheduleTargets] = useState<string[]>([])
+  const [experimentKey, setExperimentKey] = useState('')
+  const [experimentGroup, setExperimentGroup] = useState<'control' | 'treatment'>('treatment')
   const [scheduling, setScheduling] = useState(false)
 
   const load = useCallback(async () => {
@@ -173,13 +195,17 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
     return connections.filter((conn) => variantPlatforms.has(channelKey(conn.platform)))
   }, [connections, detail])
 
-  const hasEdits = Object.entries(editedCaptions).some(([platform, caption]) => {
-    const variant = detail?.variants.find((item) => item.platform === platform)
+  const hasEdits = Object.entries(editedCaptions).some(([variantId, caption]) => {
+    const variant = detail?.variants.find((item) => item.id === variantId)
     return variant && caption !== variant.caption
   })
 
   const saveEditsAsNewRevision = async () => {
     if (!detail || !revision) return
+    if (!reviewNote.trim()) {
+      setError('Describe why the content was modified before saving a new revision.')
+      return
+    }
     setSaving(true)
     setError(null)
     try {
@@ -188,27 +214,38 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
           (revision.content.conceptSummary as string) || detail.concept_summary || 'Updated concept',
         variants: detail.variants.map((variant) => ({
           platform: variant.platform,
-          caption: editedCaptions[variant.platform] ?? variant.caption,
+          variantKey: variant.variant_key,
+          sequenceIndex: variant.sequence_index,
+          caption: editedCaptions[variant.id] ?? variant.caption,
           hashtags: variant.hashtags,
           callToAction: variant.call_to_action,
           linkUrl: null,
-          assetIds: [],
+          assetIds: variant.asset_ids,
           mediaUrls: variant.media_urls,
           altText: variant.alt_text,
           contentFormat: variant.content_format,
-          platformOptions: {},
+          platformOptions: variant.platform_options,
+          storyboard: variant.storyboard,
+          overlayText: variant.overlay_text,
+          safeArea: variant.safe_area,
+          subtitleText: variant.subtitle_text,
+          thumbnailAssetId: variant.thumbnail_asset_id,
         })),
         claims: revision.claims,
       }
       const res = await fetch(`/api/forgestudio/packages/${packageId}/revisions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content }),
+        body: JSON.stringify({
+          content,
+          modificationReason: reviewNote.trim(),
+        }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Failed to save revision')
       setEditedCaptions({})
-      setEditingPlatform(null)
+      setEditingVariantId(null)
+      setReviewNote('')
       await load()
       onChanged()
     } catch (err) {
@@ -220,13 +257,17 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
 
   const submitReview = async (decision: 'approved' | 'denied') => {
     if (!revision) return
+    if (!reviewNote.trim()) {
+      setError('A review rationale is required for every approval or denial.')
+      return
+    }
     setReviewing(decision)
     setError(null)
     try {
       const res = await fetch(`/api/forgestudio/revisions/${revision.id}/approval`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ decision, note: reviewNote.trim() || null }),
+        body: JSON.stringify({ decision, note: reviewNote.trim() }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Review failed')
@@ -240,7 +281,7 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
   }
 
   const submitSchedule = async () => {
-    if (!revision || !scheduleAt || scheduleConnections.length === 0) return
+    if (!revision || !scheduleAt || scheduleTargets.length === 0) return
     setScheduling(true)
     setError(null)
     try {
@@ -251,23 +292,49 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           revisionId: revision.id,
-          destinations: scheduleConnections.map((connectionId) => ({
-            connectionId,
-            scheduledFor,
-            timezone,
-          })),
+          destinations: scheduleTargets.map((target) => {
+            const [connectionId, variantId] = target.split(':')
+            return {
+              connectionId,
+              variantId,
+              scheduledFor,
+              timezone,
+              experimentKey: experimentKey.trim() || undefined,
+              experimentGroup: experimentKey.trim() ? experimentGroup : undefined,
+            }
+          }),
         }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Scheduling failed')
       setScheduleAt('')
-      setScheduleConnections([])
+      setScheduleTargets([])
       await load()
       onChanged()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Scheduling failed')
     } finally {
       setScheduling(false)
+    }
+  }
+
+  const updatePublication = async (
+    publicationId: string,
+    action: 'retry' | 'cancel'
+  ) => {
+    setError(null)
+    try {
+      const response = await fetch(`/api/forgestudio/publications/${publicationId}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || `Failed to ${action} publication`)
+      await load()
+      onChanged()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : `Failed to ${action} publication`)
     }
   }
 
@@ -386,8 +453,8 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
               {/* Channel variants side by side */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {detail.variants.map((variant) => {
-                  const isEditing = editingPlatform === variant.platform
-                  const caption = editedCaptions[variant.platform] ?? variant.caption
+                  const isEditing = editingVariantId === variant.id
+                  const caption = editedCaptions[variant.id] ?? variant.caption
                   return (
                     <div
                       key={variant.id}
@@ -397,13 +464,13 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
                         <span className="text-sm font-semibold text-slate-900 dark:text-white capitalize">
                           {variant.platform}
                           <span className="ml-2 text-xs font-normal text-slate-500">
-                            {variant.content_format}
+                            {variant.content_format} · {variant.variant_key}
                           </span>
                         </span>
                         {isPending && (
                           <button
                             onClick={() =>
-                              setEditingPlatform(isEditing ? null : variant.platform)
+                              setEditingVariantId(isEditing ? null : variant.id)
                             }
                             className="text-slate-400 hover:text-violet-600"
                           >
@@ -426,7 +493,7 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
                           onChange={(event) =>
                             setEditedCaptions((prev) => ({
                               ...prev,
-                              [variant.platform]: event.target.value,
+                              [variant.id]: event.target.value,
                             }))
                           }
                           rows={5}
@@ -445,6 +512,23 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
                       )}
                       {variant.call_to_action && (
                         <p className="text-xs text-slate-500">CTA: {variant.call_to_action}</p>
+                      )}
+                      {variant.overlay_text.length > 0 && (
+                        <p className="text-xs text-slate-500">
+                          Overlays: {variant.overlay_text.join(' · ')}
+                        </p>
+                      )}
+                      {variant.storyboard.length > 0 && (
+                        <ol className="text-xs text-slate-500 list-decimal list-inside space-y-1">
+                          {variant.storyboard.map((frame) => (
+                            <li key={frame.index}>{frame.description}</li>
+                          ))}
+                        </ol>
+                      )}
+                      {variant.subtitle_text && (
+                        <p className="text-xs text-slate-500 line-clamp-3">
+                          Subtitles: {variant.subtitle_text}
+                        </p>
                       )}
                     </div>
                   )
@@ -482,15 +566,20 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
                   <input
                     value={reviewNote}
                     onChange={(event) => setReviewNote(event.target.value)}
-                    placeholder="Optional note (why approved / what to fix)"
+                    placeholder="Required rationale: why approved or what must change"
                     className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-sm"
                   />
                   <div className="flex gap-2">
                     <button
                       onClick={() => submitReview('approved')}
-                      disabled={reviewing !== null || unsupportedClaims.length > 0}
+                      disabled={
+                        reviewing !== null ||
+                        unsupportedClaims.length > 0 ||
+                        validationIssues.length > 0 ||
+                        !reviewNote.trim()
+                      }
                       className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium ${
-                        unsupportedClaims.length > 0
+                        unsupportedClaims.length > 0 || validationIssues.length > 0
                           ? 'bg-slate-100 dark:bg-slate-700 text-slate-400 cursor-not-allowed'
                           : 'bg-green-600 text-white hover:bg-green-700'
                       }`}
@@ -504,7 +593,7 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
                     </button>
                     <button
                       onClick={() => submitReview('denied')}
-                      disabled={reviewing !== null}
+                      disabled={reviewing !== null || !reviewNote.trim()}
                       className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium text-red-600 border border-red-200 dark:border-red-500/30 hover:bg-red-50 dark:hover:bg-red-500/10"
                     >
                       {reviewing === 'denied' ? (
@@ -524,37 +613,56 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
                   <h4 className="text-sm font-semibold text-slate-900 dark:text-white flex items-center gap-1.5">
                     <Calendar className="w-4 h-4" /> Schedule publications
                   </h4>
-                  <div className="flex flex-wrap gap-2">
+                  <div className="space-y-3">
                     {eligibleConnections.map((connection) => {
-                      const selected = scheduleConnections.includes(connection.id)
-                      const alreadyScheduled = detail.publications.some(
-                        (publication) =>
-                          publication.platform === channelKey(connection.platform) &&
-                          !['cancelled', 'failed'].includes(publication.status)
+                      const platform = channelKey(connection.platform)
+                      const variants = detail.variants.filter(
+                        (variant) => variant.platform === platform
                       )
                       return (
-                        <button
+                        <div
                           key={connection.id}
-                          onClick={() =>
-                            setScheduleConnections((prev) =>
-                              selected
-                                ? prev.filter((id) => id !== connection.id)
-                                : [...prev, connection.id]
-                            )
-                          }
-                          disabled={alreadyScheduled}
-                          className={`px-3 py-1.5 rounded-full text-sm border ${
-                            alreadyScheduled
-                              ? 'bg-slate-100 dark:bg-slate-700 text-slate-400 cursor-not-allowed'
-                              : selected
-                                ? 'bg-violet-600 text-white border-violet-600'
-                                : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-600'
-                          }`}
+                          className="rounded-lg border border-slate-200 dark:border-slate-700 p-3"
                         >
-                          {channelKey(connection.platform)} ·{' '}
-                          {connection.account_username || connection.account_name}
-                          {alreadyScheduled && ' (scheduled)'}
-                        </button>
+                          <p className="text-sm font-medium capitalize mb-2">
+                            {platform} · {connection.account_username || connection.account_name}
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            {variants.map((variant) => {
+                              const target = `${connection.id}:${variant.id}`
+                              const selected = scheduleTargets.includes(target)
+                              const alreadyScheduled = detail.publications.some(
+                                (publication) =>
+                                  publication.variant_id === variant.id &&
+                                  !['cancelled', 'failed'].includes(publication.status)
+                              )
+                              return (
+                                <button
+                                  key={variant.id}
+                                  type="button"
+                                  onClick={() =>
+                                    setScheduleTargets((current) =>
+                                      selected
+                                        ? current.filter((value) => value !== target)
+                                        : [...current, target]
+                                    )
+                                  }
+                                  disabled={alreadyScheduled}
+                                  className={`px-3 py-1.5 rounded-full text-xs border ${
+                                    alreadyScheduled
+                                      ? 'bg-slate-100 dark:bg-slate-700 text-slate-400 cursor-not-allowed'
+                                      : selected
+                                        ? 'bg-violet-600 text-white border-violet-600'
+                                        : 'border-slate-300 dark:border-slate-600'
+                                  }`}
+                                >
+                                  {variant.content_format} #{variant.sequence_index + 1}
+                                  {alreadyScheduled && ' (scheduled)'}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </div>
                       )
                     })}
                   </div>
@@ -567,7 +675,7 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
                     />
                     <button
                       onClick={submitSchedule}
-                      disabled={scheduling || !scheduleAt || scheduleConnections.length === 0}
+                      disabled={scheduling || !scheduleAt || scheduleTargets.length === 0}
                       className="flex items-center gap-1.5 px-4 py-2 bg-violet-600 text-white rounded-lg text-sm hover:bg-violet-700 disabled:opacity-50"
                     >
                       {scheduling ? (
@@ -577,6 +685,25 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
                       )}
                       Schedule
                     </button>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    <input
+                      value={experimentKey}
+                      onChange={(event) => setExperimentKey(event.target.value)}
+                      placeholder="Optional experiment key"
+                      className="px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-900 text-sm"
+                    />
+                    <select
+                      value={experimentGroup}
+                      onChange={(event) =>
+                        setExperimentGroup(event.target.value as 'control' | 'treatment')
+                      }
+                      disabled={!experimentKey.trim()}
+                      className="px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-900 text-sm disabled:opacity-50"
+                    >
+                      <option value="treatment">Treatment</option>
+                      <option value="control">Control</option>
+                    </select>
                   </div>
                   <p className="text-xs text-slate-500">
                     Times are in your local timezone (
@@ -601,19 +728,39 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
                           {publication.platform} ·{' '}
                           {new Date(publication.scheduled_for).toLocaleString()}
                         </span>
-                        <span
-                          className={`text-xs px-2 py-0.5 rounded-full ${
-                            publication.status === 'published'
-                              ? 'bg-green-100 text-green-700'
-                              : publication.status === 'failed'
-                                ? 'bg-red-100 text-red-700'
-                                : publication.status === 'cancelled'
-                                  ? 'bg-slate-100 text-slate-500'
-                                  : 'bg-amber-100 text-amber-700'
-                          }`}
-                        >
-                          {publication.status}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          {publication.status === 'failed' && (
+                            <button
+                              type="button"
+                              onClick={() => updatePublication(publication.id, 'retry')}
+                              className="text-xs text-violet-600 hover:underline"
+                            >
+                              Retry
+                            </button>
+                          )}
+                          {['scheduled', 'queued'].includes(publication.status) && (
+                            <button
+                              type="button"
+                              onClick={() => updatePublication(publication.id, 'cancel')}
+                              className="text-xs text-red-600 hover:underline"
+                            >
+                              Cancel
+                            </button>
+                          )}
+                          <span
+                            className={`text-xs px-2 py-0.5 rounded-full ${
+                              publication.status === 'published'
+                                ? 'bg-green-100 text-green-700'
+                                : publication.status === 'failed'
+                                  ? 'bg-red-100 text-red-700'
+                                  : publication.status === 'cancelled'
+                                    ? 'bg-slate-100 text-slate-500'
+                                    : 'bg-amber-100 text-amber-700'
+                            }`}
+                          >
+                            {publication.status}
+                          </span>
+                        </div>
                       </li>
                     ))}
                   </ul>

@@ -1,7 +1,12 @@
-import type { GeneratedPage, SiteConfiguration } from '@/types/siteforge'
+import {
+  siteConfigurationSchema,
+  siteBlueprintV3Schema,
+  type GeneratedPage,
+} from '@/types/siteforge'
 import type { Json } from '@/types/supabase'
 import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
 import {
+  hashRuntimeV3WireContent,
   runtimeV3OperationSchema,
   runtimeV3ResourceGraphSchema,
   type RuntimeV3Operation,
@@ -52,7 +57,7 @@ function withHash<T extends { resourceId: string }>(
 ): T & { contentHash: string } {
   return {
     ...value,
-    contentHash: hashSiteForgeContent(value),
+    contentHash: hashRuntimeV3WireContent(value),
   }
 }
 
@@ -168,15 +173,19 @@ export function compileSiteForgeRuntimeV3Descriptor(input: {
   assetManifest: RuntimeV3ArtifactAsset[]
 }): SiteForgeRuntimeV3Descriptor {
   const blueprint = record(input.blueprint)
+  const blueprintV3 =
+    blueprint.schemaVersion === 3
+      ? siteBlueprintV3Schema.parse(blueprint)
+      : null
   const pages = Array.isArray(blueprint.pages)
     ? (blueprint.pages as unknown as GeneratedPage[])
     : []
   if (!pages.length) {
     throw new Error('Runtime v3 compilation requires at least one page')
   }
-  const siteConfiguration = record(
+  const siteConfiguration = siteConfigurationSchema.parse(
     blueprint.siteConfiguration
-  ) as unknown as SiteConfiguration
+  )
   const pageIds = new Map(
     pages.map(page => [page.slug, runtimeId('page', page.slug)])
   )
@@ -189,10 +198,15 @@ export function compileSiteForgeRuntimeV3Descriptor(input: {
 
   for (const page of pages) {
     const pageId = pageIds.get(page.slug)!
-    for (const [index, section] of page.sections.entries()) {
+    for (const section of page.sections) {
+      if (!section.id) {
+        throw new Error(
+          `Runtime v3 compilation requires an immutable section identity on ${page.slug}`
+        )
+      }
       const sectionId = runtimeId(
         'section',
-        `${page.slug}:${section.id || `${section.type}-${index}`}`
+        `${page.slug}:${section.id}`
       )
       const content = record(section.content)
       let formId: string | null = null
@@ -239,7 +253,7 @@ export function compileSiteForgeRuntimeV3Descriptor(input: {
         if (existing) {
           existing.pageIds = [...new Set([...existing.pageIds, pageId])]
           existing.formIds = [...new Set([...existing.formIds, formId])]
-          existing.contentHash = hashSiteForgeContent({
+          existing.contentHash = hashRuntimeV3WireContent({
             ...existing,
             contentHash: undefined,
           })
@@ -269,7 +283,12 @@ export function compileSiteForgeRuntimeV3Descriptor(input: {
           variant: section.variant || null,
           anchor: section.id ? runtimeId('anchor', section.id) : null,
           cssClasses: section.cssClasses || [],
-          data: content,
+          data: section.presentation
+            ? {
+                ...content,
+                _siteforge_presentation: section.presentation,
+              }
+            : content,
           assetIds: referencedAssetIds(content, input.assetManifest),
           formId,
           integrationIds,
@@ -296,9 +315,11 @@ export function compileSiteForgeRuntimeV3Descriptor(input: {
         imageAssetId:
           page.slug === 'home' ? input.assetManifest[0]?.id || null : null,
       },
-      structuredData: (page.seo?.structuredData || ['WebPage']).map(type => ({
-        '@type': type,
-      })),
+      structuredData: (page.seo?.structuredData || ['WebPage']).map(value =>
+        typeof value === 'string'
+          ? { '@context': 'https://schema.org', '@type': value }
+          : value
+      ),
     })
   )
   const pageResources = pages.map((page, index) =>
@@ -337,6 +358,25 @@ export function compileSiteForgeRuntimeV3Descriptor(input: {
     assetIds: [],
     integrationIds: [],
   })
+  const configuration = withHash({
+    resourceId: 'component:site-configuration',
+    componentType: 'utility' as const,
+    data: siteConfiguration,
+    assetIds: [
+      siteConfiguration.media.logoAssetId,
+      siteConfiguration.media.faviconAssetId,
+    ].filter((value): value is string => Boolean(value)),
+    integrationIds: [],
+  })
+  const manifestPins = blueprintV3
+    ? withHash({
+        resourceId: 'component:manifest-pins',
+        componentType: 'utility' as const,
+        data: blueprintV3.manifestPins,
+        assetIds: [],
+        integrationIds: [],
+      })
+    : null
   const chrome = withHash({
     resourceId: 'chrome:primary',
     headerComponentId: header.resourceId,
@@ -345,6 +385,8 @@ export function compileSiteForgeRuntimeV3Descriptor(input: {
       header.resourceId,
       footer.resourceId,
       navigation.resourceId,
+      configuration.resourceId,
+      ...(manifestPins ? [manifestPins.resourceId] : []),
     ],
   })
   const legal = compileLegal(blueprint)
@@ -472,7 +514,13 @@ export function compileSiteForgeRuntimeV3Descriptor(input: {
     homepagePageId: pageIds.get('home') || pageResources[0].resourceId,
     pages: pageResources,
     sections: sectionResources,
-    globalComponents: [header, footer, navigation],
+    globalComponents: [
+      header,
+      footer,
+      navigation,
+      configuration,
+      ...(manifestPins ? [manifestPins] : []),
+    ],
     chrome,
     forms: formResources,
     redirects,
@@ -493,7 +541,7 @@ export function compileSiteForgeRuntimeV3Descriptor(input: {
       resourceKind: 'chrome',
       resourceId: chrome.resourceId,
       resourceHash: chrome.contentHash,
-      payloadHash: hashSiteForgeContent(resourceGraph),
+      payloadHash: hashRuntimeV3WireContent(resourceGraph),
       dependsOn: [],
     }),
   ]

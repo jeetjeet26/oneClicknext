@@ -8,6 +8,67 @@
   position: relative;
 }
 
+.variant-governed.block-governed-component {
+  display: block;
+}
+
+.block-governed-component .governed-container {
+  width: min(100% - 2rem, var(--container-max-width, 1400px));
+  margin-inline: auto;
+}
+
+.block-governed-component .governed-grid {
+  display: grid;
+}
+
+.block-governed-component .governed-stack {
+  display: flex;
+  flex-direction: column;
+}
+
+.block-governed-component .governed-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+[class*="presentation-effective-containerMode-"] > .site-container {
+  width: min(100% - 2rem, var(--container-max-width, 1400px));
+  margin-inline: auto;
+}
+
+.presentation-effective-containerMode-full-width > .site-container {
+  width: 100%;
+  max-width: none;
+}
+
+.presentation-effective-containerMode-full-bleed > .site-container {
+  width: 100vw;
+  max-width: none;
+  margin-inline: calc(50% - 50vw);
+}
+
+.presentation-effective-alignment-left { text-align: left; }
+.presentation-effective-alignment-center { text-align: center; }
+.presentation-effective-alignment-right { text-align: right; }
+.presentation-effective-alignment-stretch > .site-container { width: 100%; }
+.presentation-effective-widthPreset-narrow > .site-container { max-width: 760px; }
+.presentation-effective-widthPreset-content > .site-container { max-width: 1100px; }
+.presentation-effective-widthPreset-wide > .site-container { max-width: 1400px; }
+.presentation-effective-widthPreset-full > .site-container { max-width: none; }
+.presentation-effective-spacingPreset-none { padding-block: 0; }
+.presentation-effective-spacingPreset-compact { padding-block: 2rem; }
+.presentation-effective-spacingPreset-standard { padding-block: 4rem; }
+.presentation-effective-spacingPreset-spacious { padding-block: 7rem; }
+.presentation-effective-typographyPreset-editorial { font-family: var(--font-heading); }
+.presentation-effective-typographyPreset-display { font-size: clamp(1.125rem, 1.5vw, 1.5rem); }
+.presentation-effective-typographyPreset-compact { line-height: 1.4; }
+.presentation-effective-motionPreset-none,
+.presentation-effective-motionPreset-none * {
+  animation: none !important;
+  transition: none !important;
+}
+
 .site-container {
   max-width: var(--max-width);
   margin: 0 auto;
@@ -26,13 +87,13 @@
 
 .bg-dark {
   background-color: var(--color-primary);
-  color: var(--color-white);
+  color: var(--color-on-primary);
 }
 
 .bg-dark h2,
 .bg-dark h3,
 .bg-dark h4 {
-  color: var(--color-white);
+  color: var(--color-on-primary);
 }
 
 /* ===== Typography ===== */
@@ -62,7 +123,7 @@
 
 .btn-primary {
   background-color: var(--color-primary);
-  color: var(--color-white);
+  color: var(--color-on-primary);
   border-color: var(--color-primary);
 }
 
@@ -74,13 +135,13 @@
 
 .btn-secondary {
   background-color: transparent;
-  color: var(--color-primary);
+  color: var(--color-text);
   border-color: var(--color-primary);
 }
 
 .btn-secondary:hover {
   background-color: var(--color-primary);
-  color: var(--color-white);
+  color: var(--color-on-primary);
 }
 
 /* ===== Block: Top Slides ===== */
@@ -211,6 +272,62 @@
   .slide-subheadline {
     font-size: 1rem;
   }
+}
+
+/* Vertical Platform V2 source-governed collections. */
+.block-offering-browser,
+.block-entity-directory,
+.block-comparison-table,
+.block-timeline,
+.block-document-library,
+.block-events-directory {
+  padding: var(--section-spacing) var(--container-padding);
+}
+
+.block-comparison-table .table-scroll {
+  overflow-x: auto;
+}
+
+.block-comparison-table table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.block-comparison-table th,
+.block-comparison-table td {
+  padding: 1rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-primary) 20%, transparent);
+  text-align: left;
+  vertical-align: top;
+}
+
+.block-timeline .timeline-list,
+.block-document-library .document-list {
+  display: grid;
+  gap: 1.5rem;
+  padding: 0;
+  list-style: none;
+}
+
+.variant-cards.block-offering-browser,
+.variant-list.block-offering-browser,
+.variant-availability.block-offering-browser,
+.variant-cards.block-entity-directory,
+.variant-map.block-entity-directory,
+.variant-grouped.block-entity-directory,
+.variant-table.block-comparison-table,
+.variant-cards.block-comparison-table,
+.variant-compact.block-comparison-table,
+.variant-vertical.block-timeline,
+.variant-horizontal.block-timeline,
+.variant-milestones.block-timeline,
+.variant-list.block-document-library,
+.variant-cards.block-document-library,
+.variant-grouped.block-document-library,
+.variant-cards.block-events-directory,
+.variant-calendar.block-events-directory,
+.variant-list.block-events-directory {
+  position: relative;
 }
 
 /* ===== Block: Text Section ===== */
@@ -461,7 +578,7 @@
 .filter-group label {
   font-weight: 600;
   margin-bottom: var(--spacing-sm);
-  color: var(--color-primary);
+  color: var(--color-text);
 }
 
 .filter-select,
@@ -619,7 +736,7 @@
 .form-group label {
   font-weight: 600;
   margin-bottom: var(--spacing-sm);
-  color: var(--color-primary);
+  color: var(--color-text);
 }
 
 .form-group input,
@@ -860,6 +977,10 @@
   overflow: hidden;
 }
 
+.block-map .map-fallback {
+  text-align: center;
+}
+
 .map-embed {
   width: 100%;
   height: 500px;
@@ -1018,7 +1139,7 @@
 
 .submenu-link:hover {
   background-color: var(--color-primary);
-  color: var(--color-white);
+  color: var(--color-on-primary);
   border-color: var(--color-primary);
 }
 
@@ -1074,12 +1195,12 @@
 
 .accordion-button:hover {
   background-color: var(--color-accent);
-  color: var(--color-white);
+  color: var(--color-on-accent);
 }
 
 .accordion-button[aria-expanded="true"] {
   background-color: var(--color-primary);
-  color: var(--color-white);
+  color: var(--color-on-primary);
 }
 
 .accordion-icon {
@@ -1223,13 +1344,14 @@
 
 /* ===== SiteForge finite component variants ===== */
 .variant-cinematic.block-top-slides { min-height: min(88vh, 900px); }
-.variant-editorial.block-top-slides .slide-content { max-width: 52rem; text-align: left; }
+.variant-editorial.block-top-slides .slide-content { max-width: 52rem; margin-left: 0; margin-right: auto; text-align: left; }
 .variant-split.block-top-slides .slide-content { width: 50%; margin-left: auto; }
 .variant-panoramic.block-top-slides { height: clamp(420px, 58vw, 680px); min-height: 0; }
 .variant-panoramic.block-top-slides .slide-headline { max-width: 16ch; font-size: clamp(2.8rem, 5.8vw, 6rem); }
 .variant-immersive.block-top-slides { height: 100svh; min-height: 680px; }
 .variant-immersive.block-top-slides .slide-content { display: flex; align-items: flex-end; height: 100%; padding-bottom: clamp(4rem, 10vh, 8rem); }
-.variant-minimal.block-top-slides { height: clamp(520px, 70vh, 760px); }
+.variant-minimal.block-top-slides { height: clamp(380px, 52vh, 540px); min-height: 0; }
+.variant-minimal.block-top-slides .slide-headline { font-size: clamp(2.25rem, 4vw, 4rem); }
 .variant-minimal.block-top-slides .slide-overlay { background: rgb(0 0 0 / 22%); }
 .variant-minimal.block-top-slides .slide-subheadline { max-width: 38rem; }
 .variant-editorial.block-text-section { max-width: 58rem; margin-inline: auto; }
@@ -1259,11 +1381,15 @@
 .variant-carousel.block-content-grid .grid-layout { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; padding-bottom: 1rem; }
 .variant-carousel.block-content-grid .grid-item { min-width: min(82vw, 30rem); scroll-snap-align: center; }
 .variant-sticky.block-links { position: sticky; bottom: 0; z-index: 20; }
-.variant-banner.block-links { background: var(--color-primary); color: var(--color-white); }
+.variant-banner.block-links { background: var(--color-primary); color: var(--color-on-primary); }
 .variant-card.block-form { border-radius: 0.75rem; box-shadow: 0 1rem 3rem rgb(0 0 0 / 10%); }
 .variant-split.block-form form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
 .variant-standard.block-map { max-width: var(--container-max-width); margin-inline: auto; }
 .variant-immersive.block-map .map-container { min-height: 70vh; }
+.variant-centered.block-map { max-width: var(--container-max-width); margin-inline: auto; }
+.variant-centered.block-map .map-container,
+.variant-centered.block-map .map-fallback { text-align: center; }
+.variant-centered.block-map .map-actions { display: flex; justify-content: center; }
 .variant-contained.block-html-section { max-width: var(--container-max-width); margin-inline: auto; }
 .variant-full-width.block-html-section { width: 100%; }
 .variant-categorized.block-gallery .gallery-grid { gap: 2rem; }
@@ -1389,6 +1515,58 @@
   text-align: left;
 }
 
+/*
+ * The hero has no .site-container child, so the generic presentation rules
+ * above cannot reach it. Map the effective presentation classes onto
+ * .slide-content/.slide-text so alignment, width, and container edits from
+ * the semantic editor take effect in the canonical render.
+ */
+.block-top-slides.presentation-effective-alignment-left .slide-content,
+.block-top-slides.presentation-effective-alignment-left .slide-text {
+  margin-left: 0;
+  margin-right: auto;
+  text-align: left;
+}
+
+.block-top-slides.presentation-effective-alignment-center .slide-content,
+.block-top-slides.presentation-effective-alignment-center .slide-text {
+  margin-left: auto;
+  margin-right: auto;
+  text-align: center;
+}
+
+.block-top-slides.presentation-effective-alignment-right .slide-content,
+.block-top-slides.presentation-effective-alignment-right .slide-text {
+  margin-left: auto;
+  margin-right: 0;
+  text-align: right;
+}
+
+.block-top-slides.presentation-effective-widthPreset-narrow .slide-content {
+  width: min(100%, 760px);
+}
+
+.block-top-slides.presentation-effective-widthPreset-content .slide-content {
+  width: min(100%, 1100px);
+}
+
+.block-top-slides.presentation-effective-widthPreset-wide .slide-content {
+  width: min(100%, 1400px);
+}
+
+.block-top-slides.presentation-effective-widthPreset-full .slide-content {
+  width: 100%;
+}
+
+.block-top-slides.presentation-effective-containerMode-full-width .slide-content {
+  width: 100%;
+}
+
+.block-top-slides.presentation-effective-containerMode-full-bleed .slide-content {
+  width: 100%;
+  padding-inline: 0;
+}
+
 .block-top-slides .slide-text {
   max-width: 760px;
 }
@@ -1398,7 +1576,7 @@
   font-size: clamp(3.4rem, 7vw, 7.4rem);
   font-weight: 500;
   letter-spacing: -0.045em;
-  line-height: 0.92;
+  line-height: 1.12;
   text-wrap: balance;
 }
 
@@ -1682,6 +1860,11 @@
     min-height: 560px;
   }
 
+  .variant-minimal.block-top-slides {
+    height: clamp(350px, 56svh, 460px);
+    min-height: 0;
+  }
+
   .block-top-slides .slide-content {
     display: flex;
     align-items: flex-end;
@@ -1691,6 +1874,14 @@
 
   .block-top-slides .slide-headline {
     font-size: clamp(3rem, 14vw, 5rem);
+  }
+
+  .variant-minimal.block-top-slides .slide-headline {
+    font-size: clamp(1.9rem, 8vw, 2.8rem);
+  }
+
+  .variant-minimal.block-top-slides .slide-content {
+    padding-bottom: 3rem;
   }
 
   .feature-grid {

@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { describe, expect, it } from 'vitest'
 import { immutableSnapshotChanged } from './immutable-snapshot'
+import { buildSemanticEditCorrectionIntent } from './workflow-steps'
 
 describe('immutableSnapshotChanged', () => {
   it('accepts legacy artifacts where optional snapshots are absent', () => {
@@ -54,5 +55,48 @@ describe('semantic edit release identity', () => {
       'runtime_compatibility: JSON.stringify(runtimeCompatibility)'
     )
     expect(source).toContain('sourceContentHash: snapshot.artifact.contentHash')
+  })
+})
+
+describe('rendered self-verification', () => {
+  it('builds a bounded correction intent scoped to the exact rendered mismatches', () => {
+    const intent = buildSemanticEditCorrectionIntent(
+      'Left-align the hero text container',
+      {
+        status: 'failed',
+        reason: 'mismatch',
+        previewUrl: 'https://preview.example.com',
+        correctionPasses: 0,
+        failures: [
+          {
+            code: 'computed_style_mismatch',
+            pageSlug: 'home',
+            selector: '[data-siteforge-section="home-hero"]',
+            viewport: 'desktop',
+            expected: 'max-width: 1200px',
+            actual: 'none',
+            repairHint:
+              'Repair the compiled style token or selector and recapture computed styles.',
+          },
+        ],
+      }
+    )
+    expect(intent).toContain('Left-align the hero text container')
+    expect(intent).toContain('computed_style_mismatch')
+    expect(intent).toContain('max-width: 1200px')
+    expect(intent).toContain('Do not touch anything else')
+  })
+
+  it('verifies the render after publication with at most two correction passes', async () => {
+    const workflow = await readFile(
+      new URL('../../../workflows/siteforge-semantic-edit.ts', import.meta.url),
+      'utf8'
+    )
+    expect(workflow).toContain('verifyRenderedSemanticEdit')
+    expect(workflow).toContain('correctionPasses < 2')
+    expect(workflow).toContain('buildSemanticEditCorrectionIntent')
+    // Verification is honest but never destructive: the published revision
+    // stays published even when the rendered outcome cannot be corrected.
+    expect(workflow).toContain('completeSemanticEdit(input, finalProposal, output, verification)')
   })
 })

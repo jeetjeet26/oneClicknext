@@ -1,0 +1,134 @@
+{
+  "key": "group_siteforge_entity_directory",
+  "title": "SiteForge entity directory",
+  "fields": [
+    {
+      "key": "field_siteforge_entity_directory_heading_0",
+      "name": "heading",
+      "label": "heading",
+      "type": "text"
+    },
+    {
+      "key": "field_siteforge_entity_directory_intro_1",
+      "name": "intro",
+      "label": "intro",
+      "type": "textarea"
+    },
+    {
+      "key": "field_siteforge_entity_directory_entities_2",
+      "name": "entities",
+      "label": "entities",
+      "type": "repeater",
+      "layout": "block",
+      "button_label": "Add entities",
+      "sub_fields": [
+        {
+          "key": "field_siteforge_entity_directory_entities_id_0",
+          "name": "id",
+          "label": "id",
+          "type": "text"
+        },
+        {
+          "key": "field_siteforge_entity_directory_entities_name_1",
+          "name": "name",
+          "label": "name",
+          "type": "text"
+        },
+        {
+          "key": "field_siteforge_entity_directory_entities_type_2",
+          "name": "type",
+          "label": "type",
+          "type": "text"
+        },
+        {
+          "key": "field_siteforge_entity_directory_entities_description_3",
+          "name": "description",
+          "label": "description",
+          "type": "textarea"
+        },
+        {
+          "key": "field_siteforge_entity_directory_entities_location_4",
+          "name": "location",
+          "label": "location",
+          "type": "text"
+        },
+        {
+          "key": "field_siteforge_entity_directory_entities_image_5",
+          "name": "image",
+          "label": "image",
+          "type": "image",
+          "return_format": "id",
+          "preview_size": "medium"
+        },
+        {
+          "key": "field_siteforge_entity_directory_entities_url_6",
+          "name": "url",
+          "label": "url",
+          "type": "url"
+        }
+      ]
+    },
+    {
+      "key": "field_siteforge_entity_directory_catalog_snapshot_3",
+      "name": "catalog_snapshot",
+      "label": "catalog_snapshot",
+      "type": "group",
+      "sub_fields": [
+        {
+          "key": "field_siteforge_entity_directory_catalog_snapshot_captured_at_0",
+          "name": "captured_at",
+          "label": "captured_at",
+          "type": "text"
+        },
+        {
+          "key": "field_siteforge_entity_directory_catalog_snapshot_content_hash_1",
+          "name": "content_hash",
+          "label": "content_hash",
+          "type": "text"
+        },
+        {
+          "key": "field_siteforge_entity_directory_catalog_snapshot_fresh_until_2",
+          "name": "fresh_until",
+          "label": "fresh_until",
+          "type": "text"
+        }
+      ]
+    },
+    {
+      "key": "field_siteforge_entity_directory_group_by_4",
+      "name": "group_by",
+      "label": "group_by",
+      "type": "text"
+    },
+    {
+      "key": "field_siteforge_entity_directory_variant_5",
+      "name": "variant",
+      "label": "variant",
+      "type": "select",
+      "choices": {
+        "cards": "cards",
+        "map": "map",
+        "grouped": "grouped"
+      },
+      "default_value": "cards"
+    }
+  ],
+  "location": [
+    [
+      {
+        "param": "block",
+        "operator": "==",
+        "value": "acf/entity-directory"
+      }
+    ]
+  ],
+  "menu_order": 0,
+  "position": "normal",
+  "style": "default",
+  "label_placement": "top",
+  "instruction_placement": "label",
+  "active": true,
+  "description": "Versioned SiteForge block contract.",
+  "show_in_rest": 1,
+  "modified": 1785441600
+}

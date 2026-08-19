@@ -183,9 +183,12 @@ class SiteForge_Runtime_V3_Validation {
 		$overlay_ids = array();
 		foreach ( $value['overlays'] as $index => &$overlay ) {
 			$item_path = $path . '.overlays[' . $index . ']';
-			self::exact_keys( $overlay, array( 'overlayId', 'contentHash', 'appliesToBaseThemeArchiveSha256', 'package' ), $item_path );
+			self::exact_keys( $overlay, array( 'overlayId', 'contentHash', 'themeSlug', 'appliesToBaseThemeArchiveSha256', 'package' ), $item_path );
 			self::runtime_id( $overlay['overlayId'], $item_path . '.overlayId' );
 			self::hash_value( $overlay['contentHash'], $item_path . '.contentHash' );
+			if ( 'oneclick-siteforge-overlay-' . substr( $overlay['contentHash'], 0, 12 ) !== $overlay['themeSlug'] ) {
+				self::invalid( $item_path . '.themeSlug', 'Overlay child-theme slug must match its exact content identity.' );
+			}
 			self::hash_value( $overlay['appliesToBaseThemeArchiveSha256'], $item_path . '.appliesToBaseThemeArchiveSha256' );
 			if ( $overlay['appliesToBaseThemeArchiveSha256'] !== $value['baseTheme']['archiveSha256'] ) {
 				self::invalid( $item_path . '.appliesToBaseThemeArchiveSha256', 'Overlay must bind to the exact base theme archive.' );
@@ -573,13 +576,14 @@ class SiteForge_Runtime_V3_Validation {
 			self::invalid( $path . '.protection.passwordReference', 'Only password-protected targets carry a password reference.' );
 		}
 		$runtime = $value['publicRuntime'];
-		self::exact_keys( $runtime, array( 'enabled', 'apiBaseUrl', 'websiteId', 'keyReference', 'conversionEndpoint', 'telemetryEndpoint', 'allowedOrigins' ), $path . '.publicRuntime' );
+		self::exact_keys( $runtime, array( 'enabled', 'apiBaseUrl', 'websiteId', 'keyReference', 'conversionEndpoint', 'conversionKey', 'telemetryEndpoint', 'allowedOrigins' ), $path . '.publicRuntime' );
 		self::boolean_value( $runtime['enabled'], $path . '.publicRuntime.enabled' );
 		foreach ( array( 'apiBaseUrl', 'conversionEndpoint', 'telemetryEndpoint' ) as $key ) {
 			self::https_url( $runtime[ $key ], $path . '.publicRuntime.' . $key );
 		}
 		self::uuid( $runtime['websiteId'], $path . '.publicRuntime.websiteId' );
 		self::nullable_id( $runtime['keyReference'], $path . '.publicRuntime.keyReference' );
+		self::nonempty_string( $runtime['conversionKey'], $path . '.publicRuntime.conversionKey', 512 );
 		if ( $runtime['enabled'] && null === $runtime['keyReference'] ) {
 			self::invalid( $path . '.publicRuntime.keyReference', 'Enabled public runtime requires a key reference.' );
 		}

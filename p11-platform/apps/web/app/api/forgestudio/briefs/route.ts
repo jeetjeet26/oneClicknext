@@ -4,7 +4,10 @@ import { createClient as createServerClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { ContentStoreError, createBrief } from '@/utils/forgestudio/content-store'
-import { SOCIAL_PLATFORMS } from '@/utils/forgestudio/content-contract'
+import {
+  formatPlanItemSchema,
+  SOCIAL_PLATFORMS,
+} from '@/utils/forgestudio/content-contract'
 
 const createBriefSchema = z.object({
   propertyId: z.string().uuid(),
@@ -24,6 +27,7 @@ const createBriefSchema = z.object({
   channels: z.array(z.enum(SOCIAL_PLATFORMS)).min(1),
   connectionIds: z.array(z.string().uuid()).max(20).default([]),
   assetIds: z.array(z.string().uuid()).max(20).default([]),
+  formatPlan: z.array(formatPlanItemSchema).min(1).max(30),
   schedulingWindow: z.object({
     earliest: z.string().datetime({ offset: true }).optional(),
     latest: z.string().datetime({ offset: true }).optional(),
@@ -107,6 +111,7 @@ export async function POST(request: NextRequest) {
       channels: parsed.data.channels,
       connectionIds: parsed.data.connectionIds,
       assetIds: parsed.data.assetIds,
+      formatPlan: parsed.data.formatPlan,
       schedulingWindow: parsed.data.schedulingWindow,
     })
 

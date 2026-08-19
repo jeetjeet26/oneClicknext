@@ -74,4 +74,68 @@ describe('BrandForgeContractV1 normalization', () => {
     expect(hashBrandForgeContract(first)).toBe(hashBrandForgeContract(second))
     expect(brandContractToStorageSections(first).section_6_logo).toEqual(first.logos)
   })
+
+  it('upgrades legacy palette arrays into complete semantic website roles', () => {
+    const contract = normalizeBrandAssetRow({
+      brand_origin: 'generated',
+      approval_status: 'approved',
+      section_5_name_story: { name: 'The Aurora' },
+      section_8_colors: {
+        primary: [
+          {
+            name: 'Aurora Gold',
+            hex: '#C9A962',
+            usage: 'Accents, logo, CTAs',
+          },
+          {
+            name: 'Mountain Sage',
+            hex: '#7D8B74',
+            usage: 'Primary brand color',
+          },
+        ],
+        secondary: [
+          {
+            name: 'Alpine Cream',
+            hex: '#F5F1E8',
+            usage: 'Backgrounds',
+          },
+          {
+            name: 'Twilight Navy',
+            hex: '#2C3E50',
+            usage: 'Text, contrast',
+          },
+        ],
+      },
+    })
+
+    expect(contract.colors.roles).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: 'primary',
+          name: 'Mountain Sage',
+          hex: '#7D8B74',
+        }),
+        expect.objectContaining({
+          role: 'accent',
+          name: 'Aurora Gold',
+          hex: '#C9A962',
+        }),
+        expect.objectContaining({
+          role: 'background',
+          name: 'Alpine Cream',
+          hex: '#F5F1E8',
+        }),
+        expect.objectContaining({
+          role: 'text',
+          name: 'Twilight Navy',
+          hex: '#2C3E50',
+        }),
+        expect.objectContaining({
+          role: 'secondary',
+          name: 'Twilight Navy',
+          hex: '#2C3E50',
+        }),
+      ])
+    )
+  })
 })

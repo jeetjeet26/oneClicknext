@@ -6,6 +6,7 @@ import {
   isAllowedPublicWebsiteOrigin,
   normalizedLeadSubmissionSchema,
   resolvePublicWebsiteConversionContext,
+  siteForgeConversionOutcomeInputSchema,
   siteForgePublicConversionSchema,
 } from './conversions'
 
@@ -230,6 +231,29 @@ describe('provider-neutral conversion adapters', () => {
     ).toBe(false)
   })
 
+  it('validates lane-specific for-sale outcomes', () => {
+    const base = {
+      websiteId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      submissionId: 'for-sale-save-1',
+      conversionLane: 'plan_save',
+      sourceKind: 'online',
+      occurredAt: '2026-08-17T12:00:00.000Z',
+    } as const
+
+    expect(
+      siteForgeConversionOutcomeInputSchema.safeParse({
+        ...base,
+        outcomeKey: 'plan_saved',
+      }).success
+    ).toBe(true)
+    expect(
+      siteForgeConversionOutcomeInputSchema.safeParse({
+        ...base,
+        outcomeKey: 'home_saved',
+      }).success
+    ).toBe(false)
+  })
+
   it('persists attribution and provider idempotency through the P11 adapter', async () => {
     const fake = insertionClient()
     const result = await new P11ConversionAdapter(
@@ -340,6 +364,7 @@ describe('provider-neutral conversion adapters', () => {
       action: 'skipped',
     })
     const startLeadWorkflow = vi.fn().mockResolvedValue({ success: true })
+    const recordSubmission = vi.fn().mockResolvedValue(undefined)
 
     const result = await ingestPublicSiteForgeConversion(
       {
@@ -369,6 +394,7 @@ describe('provider-neutral conversion adapters', () => {
         startLeadWorkflow,
         trackEvent: vi.fn().mockResolvedValue(undefined),
         recordTelemetry: vi.fn().mockResolvedValue(undefined),
+        recordSubmission,
       }
     )
 
@@ -387,6 +413,27 @@ describe('provider-neutral conversion adapters', () => {
       '33333333-3333-4333-8333-333333333333',
       '22222222-2222-4222-8222-222222222222',
       'lead_created'
+    )
+    expect(recordSubmission).toHaveBeenNthCalledWith(
+      1,
+      fake.client,
+      expect.objectContaining({
+        websiteId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      }),
+      expect.objectContaining({
+        submissionId: 'siteforge-form-123',
+        formKind: 'contact',
+        status: 'received',
+      })
+    )
+    expect(recordSubmission).toHaveBeenLastCalledWith(
+      fake.client,
+      expect.any(Object),
+      expect.objectContaining({
+        submissionId: 'siteforge-form-123',
+        status: 'accepted',
+        leadId: '33333333-3333-4333-8333-333333333333',
+      })
     )
   })
 
@@ -428,6 +475,7 @@ describe('provider-neutral conversion adapters', () => {
         startLeadWorkflow,
         trackEvent,
         recordTelemetry: vi.fn().mockResolvedValue(undefined),
+        recordSubmission: vi.fn().mockResolvedValue(undefined),
       }
     )
 
@@ -493,6 +541,7 @@ describe('provider-neutral conversion adapters', () => {
         startLeadWorkflow: vi.fn().mockResolvedValue({ success: true }),
         trackEvent: vi.fn().mockResolvedValue(undefined),
         recordTelemetry: vi.fn().mockResolvedValue(undefined),
+        recordSubmission: vi.fn().mockResolvedValue(undefined),
         bookTour,
       }
     )

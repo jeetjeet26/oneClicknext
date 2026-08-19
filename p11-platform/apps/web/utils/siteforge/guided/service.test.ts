@@ -1,6 +1,50 @@
 import { describe, expect, it, vi } from "vitest";
+import { SITEFORGE_VERTICAL_MATRIX_V1 } from "@/fixtures/siteforge-vertical-matrix.v1";
+import { hashSiteForgeContent } from "@/utils/siteforge/content-hash";
+import { composeVerticalPacks } from "@/utils/siteforge/verticals/composition";
 import { guidedAnswersSchema, guidedJourneyStateSchema } from "./contracts";
 import { createSiteForgeGuidedService } from "./service";
+
+function adaptiveContext(profileHash = "f".repeat(64)) {
+  const fixture = SITEFORGE_VERTICAL_MATRIX_V1[0];
+  const manifest = composeVerticalPacks(fixture.request);
+  const entries = manifest.requiredEvidence.map((requirement) => ({
+    id: `test:${requirement.id}`,
+    kind: requirement.kind,
+    label: `Verified ${requirement.kind}`,
+    sourceType: "test",
+    sourceId: requirement.id,
+    url: null,
+    observedAt: "2026-08-13T18:00:00+00:00",
+    freshUntil: null,
+    content: { source: "test" },
+  }));
+  return {
+    profile: {
+      id: "profile-1",
+      version: 1,
+      contentHash: profileHash,
+      mappingStatus: "confirmed" as const,
+      mappingReason: null,
+      value: {
+        schemaVersion: 2 as const,
+        subjectKind: "real_estate_property" as const,
+        verticalKey: "multifamily_residential",
+        displayName: "Multifamily residential",
+        operatingModel: "rental_residential",
+        attributes: { siteforgeComposition: fixture.request },
+        audiences: [],
+        complianceTags: ["fair_housing"],
+        source: "operator" as const,
+      },
+    },
+    manifest,
+    evidence: {
+      contextHash: hashSiteForgeContent(entries),
+      entries,
+    },
+  };
+}
 
 function initialState() {
   return guidedJourneyStateSchema.parse({
@@ -121,6 +165,16 @@ function fakeClient(
         };
         return chain;
       }
+      if (table === "siteforge_vertical_activation_versions") {
+        const chain = {
+          select: vi.fn(() => chain),
+          eq: vi.fn(() => chain),
+          order: vi.fn(() => chain),
+          limit: vi.fn(() => chain),
+          maybeSingle: vi.fn(async () => ({ data: null, error: null })),
+        };
+        return chain;
+      }
       if (table !== "shared_context_snapshots") {
         throw new Error(`Unexpected table ${table}`);
       }
@@ -201,6 +255,7 @@ function dependencies(
     getPlan: unused,
     decidePlan: unused,
     editDirection: unused,
+    loadAdaptiveContext: vi.fn(async () => adaptiveContext()),
     loadBrandPresentation: vi.fn(async () => null),
     ...overrides,
   } as never;
@@ -261,7 +316,7 @@ describe("SiteForge guided service persistence", () => {
     const service = createSiteForgeGuidedService(dependencies(store.client));
     const first = await service.conversation("website-1", {
       clientRequestId: "turn-1",
-      expectedRevision: 0,
+      expectedRevision: 1,
       field: "objective",
       answer: "Increase qualified tour requests",
       attachments: [],
@@ -290,23 +345,18 @@ describe("SiteForge guided service persistence", () => {
     expect(store.snapshots).toHaveLength(persistedCount);
   });
 
-  it("rejects out-of-order answers before any durable write", async () => {
+  it("allows revising any known decision without a fixed sequence", async () => {
     const store = fakeClient();
     const service = createSiteForgeGuidedService(dependencies(store.client));
-    const before = store.snapshots.length;
-    await expect(
-      service.conversation("website-1", {
+    const result = await service.conversation("website-1", {
         clientRequestId: "turn-out-of-order",
-        expectedRevision: 0,
+        expectedRevision: 1,
         field: "renterNeeds",
         answer: "Floor-plan details",
         attachments: [],
-      }),
-    ).rejects.toMatchObject({
-      message:
-        "Answer the current question before moving to another discovery topic.",
-    });
-    expect(store.snapshots).toHaveLength(before);
+      });
+    expect(result.state.answers.renterNeeds).toEqual(["Floor-plan details"]);
+    expect(store.snapshots.length).toBeGreaterThan(1);
   });
 
   it("rejects a stale expected revision before writing", async () => {
@@ -324,7 +374,103 @@ describe("SiteForge guided service persistence", () => {
       statusCode: 409,
       kind: "source_changed",
     });
-    expect(store.snapshots).toHaveLength(1);
+    expect(store.snapshots).toHaveLength(2);
+  });
+
+  it("invalidates a prepared package when an answer is revised and preserves conversation", async () => {
+    const prepared = guidedJourneyStateSchema.parse({
+      ...readyState(),
+      revision: 20,
+      status: "ready_to_build",
+      prepared: {
+        idempotencyKey: "prepare-request-1",
+        briefVersionId: "brief-1",
+        briefContentHash: "a".repeat(64),
+        directionSetId: "set-1",
+        directionSetContentHash: "b".repeat(64),
+        recommendedDirectionId: "direction-1",
+        selectedDirectionContentHash: "c".repeat(64),
+        recommendedDirectionName: "Conversion Clarity",
+        recommendedDirectionScore: 90,
+        recommendationReason: "Best balance.",
+        scoredDirections: [],
+        planId: "plan-1",
+        planVersionId: "plan-version-1",
+        planRevision: 1,
+        planContentHash: "d".repeat(64),
+        preparedAt: "2026-08-13T18:00:00.000Z",
+      },
+    });
+    const store = fakeClient(prepared);
+    const service = createSiteForgeGuidedService(dependencies(store.client));
+
+    const result = await service.conversation(
+      "website-1",
+      {
+        clientRequestId: "revision-after-prepare",
+        expectedRevision: 21,
+        decisionId: "transaction.rental.decision.confirm",
+        answer: "apply",
+        attachments: [],
+      },
+      "user-1",
+    );
+
+    expect(result.state.prepared).toBeNull();
+    expect(result.state.preparation).toBeNull();
+    expect(result.state.turns.at(-2)).toMatchObject({
+      role: "user",
+      field: "transaction.rental.decision.confirm",
+    });
+    expect(
+      result.state.decisionAnswers["transaction.rental.decision.confirm"],
+    ).toMatchObject({
+      origin: "operator",
+      actor: { type: "user", id: "user-1" },
+      value: "apply",
+    });
+  });
+
+  it("invalidates a prepared package on vertical profile drift", async () => {
+    const prepared = guidedJourneyStateSchema.parse({
+      ...readyState(),
+      revision: 20,
+      status: "ready_to_build",
+      prepared: {
+        idempotencyKey: "prepare-request-1",
+        briefVersionId: "brief-1",
+        briefContentHash: "a".repeat(64),
+        directionSetId: "set-1",
+        directionSetContentHash: "b".repeat(64),
+        recommendedDirectionId: "direction-1",
+        selectedDirectionContentHash: "c".repeat(64),
+        recommendedDirectionName: "Conversion Clarity",
+        recommendedDirectionScore: 90,
+        recommendationReason: "Best balance.",
+        scoredDirections: [],
+        planId: "plan-1",
+        planVersionId: "plan-version-1",
+        planRevision: 1,
+        planContentHash: "d".repeat(64),
+        preparedAt: "2026-08-13T18:00:00.000Z",
+      },
+    });
+    const store = fakeClient(prepared);
+    const loadAdaptiveContext = vi
+      .fn()
+      .mockResolvedValueOnce(adaptiveContext("f".repeat(64)))
+      .mockResolvedValue(adaptiveContext("e".repeat(64)));
+    const service = createSiteForgeGuidedService(
+      dependencies(store.client, { loadAdaptiveContext }),
+    );
+
+    const result = await service.snapshot("website-1");
+
+    expect(result.state.sources.verticalProfile.contentHash).toBe(
+      "e".repeat(64),
+    );
+    expect(result.state.prepared).toBeNull();
+    expect(result.state.turns.length).toBeGreaterThan(0);
   });
 
   it("repins refreshed visual truth and checkpoints the plan before completion", async () => {
@@ -385,7 +531,7 @@ describe("SiteForge guided service persistence", () => {
       "user-1",
     );
 
-    expect(result.state.sources).toEqual(refreshedSources);
+    expect(result.state.sources).toMatchObject(refreshedSources);
     expect(buildReadiness).toHaveBeenCalledWith(
       expect.objectContaining({ enabledCapabilities: [] }),
       store.client,
@@ -467,7 +613,7 @@ describe("SiteForge guided service persistence", () => {
       {
         clientRequestId: "direction-edit-request-1",
         instruction: "Make the hero warmer",
-        expectedRevision: 20,
+        expectedRevision: 21,
         expected: {
           directionSetContentHash: "b".repeat(64),
           selectedDirectionContentHash: "c".repeat(64),

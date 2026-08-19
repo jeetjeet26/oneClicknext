@@ -7,6 +7,19 @@ vi.mock('@/utils/supabase/admin', () => ({
   createServiceClient: () => ({ from: fromMock, rpc: rpcMock }),
 }))
 
+vi.mock('@/utils/substrate/business-context-bridge', () => ({
+  buildBusinessContextBridge: vi.fn().mockResolvedValue({
+    propertyId: 'prop-1',
+    asOf: '2026-08-13T00:00:00Z',
+    readOnly: true,
+    bi: {
+      lastImportState: 'complete',
+      hasImportWarnings: false,
+      marketing30d: { spend: 100, clicks: 20, conversions: 2, impressions: 1000 },
+    },
+  }),
+}))
+
 vi.mock('openai', () => ({
   default: class {
     embeddings = {
@@ -19,7 +32,7 @@ const ASSET_ID = '44444444-4444-4444-8444-444444444444'
 
 function chainResolving(result: { data: unknown; error: unknown }) {
   const builder: Record<string, unknown> = {}
-  for (const method of ['select', 'eq', 'in', 'order', 'limit']) {
+  for (const method of ['select', 'eq', 'in', 'order', 'limit', 'lte', 'is']) {
     builder[method] = vi.fn(() => builder)
   }
   builder.single = vi.fn(async () => result)
@@ -73,7 +86,11 @@ describe('assembleForgeStudioContext', () => {
         return chainResolving({
           data: {
             id: 'brand-1',
-            generation_status: 'completed',
+            generation_status: 'complete',
+            approval_status: 'approved',
+            contract_version: 'brand.v1',
+            contract_hash: 'brand-hash',
+            approved_at: '2026-06-02T00:00:00Z',
             updated_at: '2026-06-01T00:00:00Z',
             section_1_introduction: null,
             section_2_positioning: { statement: 'Riverside living without the commute.' },
@@ -97,12 +114,54 @@ describe('assembleForgeStudioContext', () => {
               width: 1080,
               height: 1080,
               duration_seconds: null,
+              alt_text: 'Pool at sunset',
+              rights_status: 'owned',
+              approval_status: 'approved',
+              curation_status: 'selected',
+              expires_at: null,
+              duplicate_of: null,
             },
           ],
           error: null,
         })
       }
-      throw new Error(`Unexpected table ${table}`)
+      if (table === 'property_legal_configs') {
+        return chainResolving({
+          data: {
+            id: 'legal-1',
+            status: 'approved',
+            version: 1,
+            fair_housing: 'Equal Housing Opportunity',
+            pricing_disclaimer: 'Pricing changes.',
+            accessibility: 'Accessibility statement.',
+            effective_at: '2026-01-01T00:00:00Z',
+            approved_at: '2026-01-01T00:00:00Z',
+          },
+          error: null,
+        })
+      }
+      if (table === 'property_onboarding_snapshots') {
+        return chainResolving({
+          data: {
+            id: 'snapshot-1',
+            status: 'approved',
+            snapshot_payload: { property: { name: 'The Landing' } },
+            content_hash: 'snapshot-hash',
+            unresolved_conflicts: [],
+            approved_at: '2026-07-01T00:00:00Z',
+            updated_at: '2026-07-01T00:00:00Z',
+          },
+          error: null,
+        })
+      }
+      if (
+        table === 'forgestudio_config' ||
+        table === 'property_onboarding_snapshots' ||
+        table === 'property_legal_configs'
+      ) {
+        return chainResolving({ data: null, error: null })
+      }
+      return chainResolving({ data: [], error: null })
     })
   })
 
@@ -125,7 +184,9 @@ describe('assembleForgeStudioContext', () => {
     expect(bundle.assets).toHaveLength(1)
     expect(bundle.assets[0].fileUrl).toBe('https://cdn.example.com/pool.jpg')
     expect(bundle.brandVoice).toBe('Warm and neighborly')
-    expect(bundle.targetAudience).toBe('Young professionals')
+    expect(bundle.targetAudience).toBeNull()
+    expect(bundle.policy.legalConfigId).toBe('legal-1')
+    expect(ids.some((id) => id.startsWith('performance_signal:'))).toBe(true)
     expect(bundle.contextHash).toMatch(/^[a-f0-9]{64}$/)
 
     // No OPENAI_API_KEY → no KB sources, and no RPC call attempted.
@@ -168,7 +229,7 @@ describe('assembleForgeStudioContext', () => {
           error: null,
         })
       }
-      return chainResolving({ data: null, error: null })
+      return chainResolving({ data: [], error: null })
     })
 
     const { assembleForgeStudioContext } = await import('./context-assembler')

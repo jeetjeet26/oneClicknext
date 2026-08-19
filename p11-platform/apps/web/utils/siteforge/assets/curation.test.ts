@@ -14,29 +14,33 @@ const usableAsset = {
 }
 
 describe('SiteForge asset curation', () => {
-  it('only allows rights-cleared approved/selected assets into production', () => {
+  it('blocks only unapproved and duplicate assets; rights/curation/expiry are advisory', () => {
     expect(getAssetUsability(usableAsset)).toEqual({
       usable: true,
       blockers: [],
+      advisories: [],
     })
     expect(
       getAssetUsability({ ...usableAsset, rights_status: 'unknown' })
-    ).toMatchObject({ usable: false, blockers: ['rights_not_cleared'] })
+    ).toMatchObject({ usable: true, advisories: ['rights_unrecorded'] })
     expect(
       getAssetUsability({ ...usableAsset, curation_status: 'generated' })
-    ).toMatchObject({ usable: false, blockers: ['curation_required'] })
+    ).toMatchObject({ usable: true, advisories: ['curation_pending'] })
     expect(
       getAssetUsability({
         ...usableAsset,
         expires_at: '2020-01-01T00:00:00.000Z',
       })
-    ).toMatchObject({ usable: false, blockers: ['rights_expired'] })
+    ).toMatchObject({ usable: true, advisories: ['rights_expired'] })
+    expect(
+      getAssetUsability({ ...usableAsset, approval_status: 'pending' })
+    ).toMatchObject({ usable: false, blockers: ['approval_required'] })
     expect(
       getAssetUsability({ ...usableAsset, duplicate_of: crypto.randomUUID() })
     ).toMatchObject({ usable: false, blockers: ['duplicate'] })
   })
 
-  it('rejects approvals without cleared and current rights', () => {
+  it('allows approval and selection regardless of rights or expiry metadata', () => {
     expect(() =>
       buildValidatedAssetUpdate({
         current: {
@@ -53,7 +57,7 @@ describe('SiteForge asset curation', () => {
         },
         userId: crypto.randomUUID(),
       })
-    ).toThrow('Rights must be cleared')
+    ).not.toThrow()
 
     expect(() =>
       buildValidatedAssetUpdate({
@@ -72,7 +76,24 @@ describe('SiteForge asset curation', () => {
         },
         userId: crypto.randomUUID(),
       })
-    ).toThrow('Expired rights')
+    ).not.toThrow()
+  })
+
+  it('still enforces structural integrity on selection state', () => {
+    expect(() =>
+      buildValidatedAssetUpdate({
+        current: {
+          approval_status: 'pending',
+          curation_status: 'needs_review',
+          rights_status: 'owned',
+          rights_metadata: {},
+          expires_at: null,
+          duplicate_of: null,
+        },
+        patch: { curationStatus: 'selected' },
+        userId: crypto.randomUUID(),
+      })
+    ).toThrow('Selected assets must be approved')
   })
 
   it('builds a missing-shot checklist from usable assets only', () => {

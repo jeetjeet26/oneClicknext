@@ -1,0 +1,52 @@
+---
+description: SiteForge solo-operator doctrine — carve-outs from the general P0 fail-closed posture that must never be re-added
+alwaysApply: true
+---
+
+# SiteForge Solo-Operator Doctrine
+
+SiteForge is operated by a single owner replacing a $50k–$100k/site web team.
+There are no clients, reviewers, or approval chains. These carve-outs from the
+general fail-closed posture are deliberate product decisions. Do not re-add
+the removed gates "to be safe" — every re-added gate is a regression.
+
+## Carve-outs (deliberate, do not reverse)
+
+- **No approval ceremony.** Edits auto-execute; there are no scope
+  authorization prompts, client review surfaces, or approval chains. Launch is
+  a single owner button. Machine policy records decisions silently.
+- **No rights/curation gating.** Photo rights, curation status, and asset
+  provenance never block generation, edits, or launch. Image placeholders are
+  allowed; missing photos degrade gracefully.
+- **No truth expiry.** Inventory/floor-plan truth never expires or nulls out.
+  Freshness is informational, never a gate.
+- **Quality is advisory only.** The premium-creative score
+  (`utils/siteforge/quality/premium-creative.ts`) is surfaced in the UI and
+  quality reports but never blocks generation, edits, or launch.
+- **Targeted edits never regenerate.** A chat edit touches only what was
+  asked. Silent full-page or full-site regeneration is forbidden.
+- **The exact WordPress preview is ground truth.** The React preview is an
+  approximation; disputes resolve to the canonical WordPress render. Edits
+  self-verify against the rendered result with bounded correction passes.
+- **Owner self-serve promotion.** Staging → production promotion needs no
+  second party. Rollback stays verified and one action away.
+- **Models:** Sonnet for targeted/structural work, Fable for creative and
+  generation. Never Haiku. Escalation only goes upward (targeted →
+  structural → creative). Visual/presentation edits route straight to the
+  creative tier and use deterministic presentation recipes
+  (`utils/siteforge/editor/presentation-recipes.ts`).
+
+## What still fails closed
+
+Brand-contract immutability and content hashing, property-truth grounding (no
+invented facts), tenant-safe auth, schema truth, deterministic artifact
+identity through deploy, and verified rollback. These protect the owner and
+stay strict.
+
+## Retired surfaces (do not resurrect)
+
+Intake sessions, client review, solo step-up launch authority, the standalone
+staging provision route (the deploy route is the single Cloudways clone
+initiator), `siteforge_jobs` writes (read-only history), v1 execution-budget
+RPCs, and Vertical V2 allowlist gating (V2 is default-on; env vars are kill
+switches only).

@@ -7,6 +7,7 @@ const sharedJobsUpdateMock = vi.fn()
 const sharedActionInsertMock = vi.fn()
 const sharedActionUpdateMock = vi.fn()
 const sharedContextInsertMock = vi.fn()
+const createExecutionBudgetMock = vi.fn()
 const eqMock = vi.fn()
 
 vi.mock('@/utils/supabase/admin', () => ({
@@ -21,9 +22,14 @@ vi.mock('@/utils/substrate/business-context-bridge', () => ({
   }),
 }))
 
+vi.mock('@/utils/services/execution-budget', () => ({
+  createExecutionBudget: createExecutionBudgetMock,
+}))
+
 describe('runSharedExecutorJob', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    createExecutionBudgetMock.mockResolvedValue({ id: 'budget-1' })
     eqMock.mockResolvedValue({ error: null })
     sharedJobsUpdateMock.mockReturnValue({ eq: eqMock })
     sharedActionUpdateMock.mockReturnValue({ eq: eqMock })
@@ -151,6 +157,31 @@ describe('runSharedExecutorJob', () => {
       expect.objectContaining({
         lifecycle_status: 'succeeded',
         execution_status: 'executed',
+      })
+    )
+  })
+
+  it('creates a durable execution budget before running bounded work', async () => {
+    const { runSharedExecutorJob } = await import('./shared-executor')
+    await runSharedExecutorJob({
+      orgId: 'org-1',
+      propertyId: 'property-1',
+      domain: 'siteforge.generate',
+      subjectType: 'website',
+      subjectId: 'website-1',
+      executionBudget: {
+        websiteId: 'website-1',
+        policyVersion: 'siteforge.autonomy.v1',
+        limits: { maxCostCents: 50_000 },
+      },
+      execute: async () => ({ generated: true }),
+    })
+
+    expect(createExecutionBudgetMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        jobId: 'shared-job-1',
+        websiteId: 'website-1',
+        policyVersion: 'siteforge.autonomy.v1',
       })
     )
   })

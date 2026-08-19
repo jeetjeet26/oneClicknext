@@ -6,6 +6,7 @@ import pixelmatch from "pixelmatch";
 import { PNG } from "pngjs";
 import {
   chromium,
+  type BrowserContext,
   type Page,
   type Request as PlaywrightRequest,
   type Response as PlaywrightResponse,
@@ -18,6 +19,12 @@ import {
 } from "./browser-evidence";
 import { hashSiteForgeContent } from "@/utils/siteforge/content-hash";
 import type { CertificationArtifactBinding } from "./certification-binding";
+import {
+  evaluateSiteForgeRenderedEditEvidence,
+  siteForgePageUrl,
+  type SiteForgeEditAcceptanceContract,
+  type SiteForgeRenderedEditObservation,
+} from "@/utils/siteforge/editor/edit-acceptance";
 
 const VIEWPORTS = {
   desktop: { width: 1440, height: 1000 },
@@ -48,6 +55,155 @@ export type ApprovedBrowserBaseline = BrowserCertificationArtifactDescriptor & {
   approvedAt: string;
   approvedBy: string;
 };
+
+async function collectEditAcceptanceObservations(input: {
+  context: BrowserContext;
+  credentials?: { username: string; password: string };
+  contract: SiteForgeEditAcceptanceContract;
+  parentTargetUrl: string | null;
+  editedTargetUrl: string;
+}): Promise<SiteForgeRenderedEditObservation[]> {
+  const resources = [
+    ...input.contract.changedResources,
+    ...input.contract.expectedText,
+    ...input.contract.expectedAttributes,
+    ...input.contract.expectedComputedStyles,
+    ...input.contract.expectedInteractions,
+    ...input.contract.unchangedRegions,
+  ];
+  const uniqueResources = [
+    ...new Map(
+      resources.map((resource) => [
+        `${resource.pageSlug}|${resource.selector}`,
+        { pageSlug: resource.pageSlug, selector: resource.selector },
+      ]),
+    ).values(),
+  ];
+  const observations: SiteForgeRenderedEditObservation[] = [];
+  for (const viewport of input.contract.requiredViewports) {
+    const size = VIEWPORTS[viewport];
+    for (const phase of ["parent", "edited"] as const) {
+      const baseUrl =
+        phase === "parent" ? input.parentTargetUrl : input.editedTargetUrl;
+      if (!baseUrl) continue;
+      const byPage = new Map<
+        string,
+        Array<{ pageSlug: string; selector: string }>
+      >();
+      for (const resource of uniqueResources) {
+        const entries = byPage.get(resource.pageSlug) || [];
+        entries.push(resource);
+        byPage.set(resource.pageSlug, entries);
+      }
+      for (const [pageSlug, pageResources] of byPage) {
+        const page = await input.context.newPage();
+        try {
+          await configureCertificationPage(page, input.credentials);
+          await page.setViewportSize(size);
+          await page.goto(siteForgePageUrl(baseUrl, pageSlug), {
+            waitUntil: "domcontentloaded",
+            timeout: 30_000,
+          });
+          await waitForVisualStability(page);
+          for (const resource of pageResources) {
+            const styleProperties = [
+              ...new Set(
+                input.contract.expectedComputedStyles
+                  .filter(
+                    (expectation) =>
+                      expectation.pageSlug === pageSlug &&
+                      expectation.selector === resource.selector,
+                  )
+                  .map((expectation) => expectation.property),
+              ),
+            ];
+            const attributeNames = [
+              ...new Set(
+                input.contract.expectedAttributes
+                  .filter(
+                    (expectation) =>
+                      expectation.pageSlug === pageSlug &&
+                      expectation.selector === resource.selector,
+                  )
+                  .map((expectation) => expectation.attribute),
+              ),
+            ];
+            const interactions =
+              phase === "edited"
+                ? input.contract.expectedInteractions.filter(
+                    (expectation) =>
+                      expectation.pageSlug === pageSlug &&
+                      expectation.selector === resource.selector,
+                  )
+                : [];
+            const locator = page.locator(resource.selector);
+            const matched = await locator.count();
+            const first = locator.first();
+            const before = matched
+              ? await first.evaluate(
+                  (element, details) => {
+                    const html = element as HTMLElement;
+                    const style = getComputedStyle(html);
+                    return {
+                      text: html.innerText || html.textContent || "",
+                      html: html.outerHTML,
+                      attributes: Object.fromEntries(
+                        details.attributeNames.map((name) => [
+                          name,
+                          html.getAttribute(name),
+                        ]),
+                      ),
+                      computedStyles: Object.fromEntries(
+                        details.styleProperties.map((property) => [
+                          property,
+                          style.getPropertyValue(property).trim(),
+                        ]),
+                      ),
+                    };
+                  },
+                  { attributeNames, styleProperties },
+                )
+              : {
+                  text: "",
+                  html: "",
+                  attributes: {} as Record<string, string | null>,
+                  computedStyles: {} as Record<string, string>,
+                };
+            const interactionAttributes: Record<string, string | null> = {};
+            for (const interaction of interactions) {
+              if (interaction.action === "click") {
+                await first.click().catch(() => undefined);
+              } else {
+                await first.focus().catch(() => undefined);
+              }
+              if (interaction.expectedAttribute) {
+                interactionAttributes[interaction.expectedAttribute.name] =
+                  await first.getAttribute(interaction.expectedAttribute.name);
+              }
+            }
+            observations.push({
+              phase,
+              viewport,
+              pageSlug,
+              selector: resource.selector,
+              matched,
+              text: before.text.slice(0, 20_000),
+              attributes: before.attributes,
+              computedStyles: before.computedStyles,
+              interactionAttributes,
+              regionHash: matched
+                ? hashSiteForgeContent(before.html)
+                : null,
+            });
+          }
+        } finally {
+          await page.close();
+        }
+      }
+    }
+  }
+  return observations;
+}
 
 export type LighthouseReportArtifact =
   BrowserCertificationArtifactDescriptor & {
@@ -84,6 +240,8 @@ export type BrowserbaseCertifierInput = {
   requireIndexable: boolean;
   artifact: CertificationArtifactBinding;
   bindingHash: string;
+  editAcceptanceContract?: SiteForgeEditAcceptanceContract;
+  parentTargetUrl?: string;
   baselines?: ApprovedBrowserBaseline[];
   lighthouseReports?: LighthouseReportArtifact[];
   artifactWriter: BrowserCertificationArtifactWriter;
@@ -890,9 +1048,6 @@ export async function collectBrowserbaseCertificationEvidence(
     }).observe({ type: "layout-shift", buffered: true });
   });
 
-  const page = context.pages()[0] || (await context.newPage());
-  await configureCertificationPage(page, input.credentials);
-
   const screenshots: BrowserCertificationEvidence["screenshots"] = [];
   const baselineDiffs: BrowserCertificationEvidence["baselineDiffs"] = [];
   const pendingBaselineComparisons: Array<{
@@ -1059,7 +1214,25 @@ export async function collectBrowserbaseCertificationEvidence(
       );
     }
 
-    for (const expectedUrl of input.expectedUrls) {
+    if (input.expectedUrls[0]) {
+      const consentPage = await context.newPage();
+      try {
+        await configureCertificationPage(consentPage, input.credentials);
+        await consentPage.goto(input.expectedUrls[0], {
+          waitUntil: "domcontentloaded",
+          timeout: 30_000,
+        });
+        await consentPage.waitForTimeout(750);
+        consent = await testConsent(consentPage);
+      } finally {
+        await consentPage.close();
+      }
+    }
+
+    await Promise.all(input.expectedUrls.map(async (expectedUrl) => {
+      const page = await context.newPage();
+      await configureCertificationPage(page, input.credentials);
+      try {
       const network: BrowserCertificationEvidence["interactions"]["pages"][number]["network"] =
         [];
       const requestEntries = new Map<PlaywrightRequest, number>();
@@ -1181,8 +1354,10 @@ export async function collectBrowserbaseCertificationEvidence(
         ),
       });
       seoPages.push(await collectSeo(page, expectedUrl));
-      if (!consent) consent = await testConsent(page);
-    }
+      } finally {
+        await page.close();
+      }
+    }));
 
     for (const pending of pendingBaselineComparisons) {
       const baselineBytes = await input.artifactReader(pending.baseline);
@@ -1251,6 +1426,21 @@ export async function collectBrowserbaseCertificationEvidence(
     const robotsUrl = new URL("/robots.txt", target).toString();
     const robotsResponse = await context.request.get(robotsUrl);
     const robotsBody = await robotsResponse.text();
+    const editAcceptance = input.editAcceptanceContract
+      ? evaluateSiteForgeRenderedEditEvidence({
+          contract: input.editAcceptanceContract,
+          editedArtifactId: input.artifact.artifactId,
+          parentTargetUrl: input.parentTargetUrl || null,
+          editedTargetUrl: input.targetUrl,
+          observations: await collectEditAcceptanceObservations({
+            context,
+            credentials: input.credentials,
+            contract: input.editAcceptanceContract,
+            parentTargetUrl: input.parentTargetUrl || null,
+            editedTargetUrl: input.targetUrl,
+          }),
+        })
+      : undefined;
 
     return {
       evidenceVersion: SITEFORGE_BROWSER_EVIDENCE_VERSION,
@@ -1302,6 +1492,7 @@ export async function collectBrowserbaseCertificationEvidence(
         grantTested: false,
         scripts: [],
       },
+      ...(editAcceptance ? { editAcceptance } : {}),
     };
   } finally {
     await browser.close();

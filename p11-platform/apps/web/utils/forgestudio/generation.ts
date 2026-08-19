@@ -6,12 +6,11 @@
  * a versioned schema. Claims must cite sources from the bundle; sensitive
  * claims without authoritative citations fail closed before anything is saved.
  *
- * Model routing prefers the AI Gateway (`AI_GATEWAY_API_KEY`) and falls back
- * to direct OpenAI. Tests inject a deterministic fake model.
+ * Model routing uses the AI Gateway with Vercel OIDC or a Gateway API key.
+ * Tests inject a deterministic fake model.
  */
 
-import { generateObject } from 'ai'
-import { createOpenAI } from '@ai-sdk/openai'
+import { generateText, Output } from 'ai'
 import { z } from 'zod'
 import {
   CONTENT_CONTRACT_VERSION,
@@ -22,13 +21,19 @@ import {
   PLATFORM_HASHTAG_LIMITS,
   SOCIAL_PLATFORMS,
   type ContentClaim,
+  type FormatPlanItem,
   type RevisionContent,
   type SocialPlatform,
 } from '@/utils/forgestudio/content-contract'
 import type { TrustedContextBundle } from '@/utils/forgestudio/context-assembler'
+import {
+  FORGESTUDIO_MODEL_POLICY_VERSION,
+  forgeStudioGatewayOptions,
+  resolveForgeStudioTextModel,
+  type ForgeStudioTextTier,
+} from '@/utils/forgestudio/model-policy'
 
 export const GENERATION_PROMPT_VERSION = 'forgestudio.generation.v1'
-const DEFAULT_MODEL_ID = 'gpt-4o-mini'
 
 export class GenerationClaimError extends Error {
   unsupportedClaims: ContentClaim[]
@@ -51,6 +56,8 @@ export const generationOutputSchema = z.object({
     .describe('One or two sentences describing the coordinated creative concept.'),
   variants: z.array(
     z.object({
+      variantKey: z.string().min(3).max(200),
+      sequenceIndex: z.number().int().min(0),
       platform: z.enum(SOCIAL_PLATFORMS),
       caption: z.string().min(1).describe('Channel-native caption, no placeholder text.'),
       hashtags: z.array(z.string()).describe('Hashtags without the # prefix.'),
@@ -64,6 +71,26 @@ export const generationOutputSchema = z.object({
         .string()
         .nullable()
         .describe('The id of one provided community asset to attach, or null.'),
+      selectedAssetIds: z
+        .array(z.string())
+        .max(10)
+        .default([])
+        .describe('Ordered asset ids for this variant; carousels may select several.'),
+      storyboard: z.array(z.object({
+        index: z.number().int().min(0),
+        description: z.string().min(1).max(1000),
+        durationSeconds: z.number().positive().max(30).nullable(),
+        overlayText: z.string().max(300).nullable(),
+      })).max(20).default([]),
+      overlayText: z.array(z.string().max(300)).max(20).default([]),
+      safeArea: z.object({
+        topPercent: z.number().min(0).max(40),
+        rightPercent: z.number().min(0).max(40),
+        bottomPercent: z.number().min(0).max(40),
+        leftPercent: z.number().min(0).max(40),
+      }),
+      subtitleText: z.string().max(5000).nullable(),
+      thumbnailAssetId: z.string().nullable(),
     })
   ),
   claims: z.array(
@@ -95,6 +122,13 @@ type SourceKind =
   | 'kb_document'
   | 'asset'
   | 'operator_input'
+  | 'approved_snapshot'
+  | 'legal_policy'
+  | 'structured_inventory'
+  | 'approved_poi'
+  | 'approved_testimonial'
+  | 'market_signal'
+  | 'performance_signal'
 
 function citationSourceType(sourceId: string): SourceKind {
   const prefix = sourceId.split(':')[0]
@@ -104,6 +138,13 @@ function citationSourceType(sourceId: string): SourceKind {
     case 'kb_document':
     case 'asset':
     case 'operator_input':
+    case 'approved_snapshot':
+    case 'legal_policy':
+    case 'structured_inventory':
+    case 'approved_poi':
+    case 'approved_testimonial':
+    case 'market_signal':
+    case 'performance_signal':
       return prefix
     case 'channel_settings':
       return 'property_field'
@@ -119,11 +160,14 @@ export function buildGenerationPrompt(input: {
   audience?: string | null
   constraints?: Record<string, unknown>
   channels: SocialPlatform[]
+  formatPlan: FormatPlanItem[]
 }): { system: string; prompt: string } {
   const { bundle } = input
 
   const sourceList = bundle.sources
-    .map((source) => `- [${source.id}] (${source.kind}) ${source.label}: ${source.content}`)
+    .map((source) =>
+      `- [${source.id}] (${source.kind}; authority=${source.authority}; uses=${source.allowedUses.join(',')}; stale=${Boolean(source.stale)}; conflicted=${Boolean(source.conflicted)}) ${source.label}: ${source.content}`
+    )
     .join('\n')
 
   const assetList = bundle.assets.length
@@ -135,12 +179,15 @@ export function buildGenerationPrompt(input: {
         .join('\n')
     : '(none provided)'
 
-  const channelRules = input.channels
-    .map((platform) => {
+  const channelRules = input.formatPlan
+    .flatMap((plan) =>
+      Array.from({ length: plan.quantity }, (_, sequenceIndex) => ({ ...plan, sequenceIndex }))
+    )
+    .map(({ platform, contentFormat, sequenceIndex, objective }) => {
       const mediaNote = MEDIA_REQUIRED_PLATFORMS.includes(platform)
         ? ' Media is REQUIRED — select one of the provided assets.'
         : ''
-      return `- ${platform}: caption ≤ ${PLATFORM_CAPTION_LIMITS[platform]} chars including hashtags, ≤ ${PLATFORM_HASHTAG_LIMITS[platform]} hashtags.${mediaNote}`
+      return `- key=${platform}:${contentFormat}:${sequenceIndex + 1}; platform=${platform}; format=${contentFormat}; sequence=${sequenceIndex}; caption ≤ ${PLATFORM_CAPTION_LIMITS[platform]} chars including hashtags; ≤ ${PLATFORM_HASHTAG_LIMITS[platform]} hashtags.${mediaNote}${objective ? ` Objective: ${objective}` : ''}`
     })
     .join('\n')
 
@@ -160,7 +207,11 @@ HARD RULES:
 3. Claims about pricing, concessions, availability, testimonials, accessibility, or the neighborhood REQUIRE at least one supporting source id. If no source supports such a claim, do not make it.
 4. Produce one variant per requested channel; each variant must feel native to that channel (different hooks, structure, and length), not the same text copied.
 5. Hashtags must not include the # symbol. Never use placeholder text like [Property Name].
-6. Only reference assets from the provided asset list by their exact id.`
+6. Only reference assets from the provided asset list by their exact id.
+7. A source may support a public factual claim only when its allowed uses include "claim" and it is neither stale nor conflicted.
+8. Advisory market/performance signals may guide topic, timing, or format but must never be restated as facts about the property or competitors.
+9. Do not use demographic personas, protected-class proxies, neighborhood safety language, or exclusionary audience language.
+10. Produce exactly one variant for every requested format-plan key. Carousels need ordered assets and slide overlays; stories/reels/videos need safe areas, storyboard frames, subtitles, and thumbnail guidance.`
 
   const prompt = `OBJECTIVE: ${input.objective}
 ${input.topic ? `TOPIC: ${input.topic}` : ''}
@@ -181,17 +232,8 @@ Create one coordinated concept with a channel-specific variant for every request
   return { system, prompt }
 }
 
-function resolveModel(): Parameters<typeof generateObject>[0]['model'] {
-  const modelId = process.env.FORGESTUDIO_GENERATION_MODEL || DEFAULT_MODEL_ID
-  if (process.env.AI_GATEWAY_API_KEY) {
-    // Plain "provider/model" strings route through the AI Gateway.
-    return modelId.includes('/') ? modelId : `openai/${modelId}`
-  }
-  const apiKey = process.env.OPENAI_API_KEY
-  if (!apiKey) {
-    throw new Error('No AI provider configured: set AI_GATEWAY_API_KEY or OPENAI_API_KEY')
-  }
-  return createOpenAI({ apiKey })(modelId.includes('/') ? modelId.split('/')[1] : modelId)
+function resolveModel(tier: ForgeStudioTextTier): Parameters<typeof generateText>[0]['model'] {
+  return resolveForgeStudioTextModel(tier)
 }
 
 export type GenerationResult = {
@@ -201,8 +243,13 @@ export type GenerationResult = {
     promptVersion: string
     contractVersion: string
     contextHash: string
+    modelPolicyVersion: string
+    tier: ForgeStudioTextTier
     usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number }
     finishReason: string
+    warnings: unknown[]
+    providerMetadata: Record<string, unknown>
+    generationId?: string
   }
 }
 
@@ -217,22 +264,51 @@ export async function generateRevisionContent(input: {
   audience?: string | null
   constraints?: Record<string, unknown>
   channels: SocialPlatform[]
+  formatPlan: FormatPlanItem[]
+  actorId?: string | null
+  tier?: ForgeStudioTextTier
   /** Test seam: inject a deterministic model. */
-  model?: Parameters<typeof generateObject>[0]['model']
+  model?: Parameters<typeof generateText>[0]['model']
 }): Promise<GenerationResult> {
   const { system, prompt } = buildGenerationPrompt(input)
-  const model = input.model ?? resolveModel()
+  const tier = input.tier ?? 'quality'
+  const model = input.model ?? resolveModel(tier)
+  const gatewayOptions = forgeStudioGatewayOptions({
+    propertyId: input.bundle.propertyId,
+    actorId: input.actorId,
+    operation: 'text',
+    tier,
+  })
 
-  const result = await generateObject({
+  const result = await generateText({
     model,
-    schema: generationOutputSchema,
+    output: Output.object({ schema: generationOutputSchema }),
     system,
     prompt,
     temperature: 0.7,
+    maxRetries: 2,
+    abortSignal: AbortSignal.timeout(120_000),
+    ...(typeof model === 'string'
+      ? { providerOptions: { gateway: gatewayOptions } }
+      : {}),
   })
 
-  const output = result.object
-  const validSourceIds = new Set(input.bundle.sources.map((source) => source.id))
+  const output = result.output
+  const validSourceIds = new Set(
+    input.bundle.sources
+      .filter((source) =>
+        source.allowedUses.includes('claim') &&
+        !source.stale &&
+        !source.conflicted
+      )
+      .map((source) => source.id)
+  )
+  const approvedWebsiteUrl = input.bundle.sources.find(
+    (source) =>
+      source.id === 'property_field:website_url' &&
+      source.allowedUses.includes('claim') &&
+      source.content.startsWith('https://')
+  )?.content ?? null
   const assetById = new Map(input.bundle.assets.map((asset) => [asset.id, asset]))
 
   // Convert LLM claims (source id references) into contract claims (citations),
@@ -260,32 +336,64 @@ export async function generateRevisionContent(input: {
     .filter((variant) => requested.has(variant.platform))
     .map((variant) => {
       const asset = variant.selectedAssetId ? assetById.get(variant.selectedAssetId) : undefined
-      const mediaUrls = asset ? [asset.fileUrl] : []
+      const orderedAssetIds = [
+        ...variant.selectedAssetIds,
+        ...(variant.selectedAssetId ? [variant.selectedAssetId] : []),
+      ].filter((id, index, values) => values.indexOf(id) === index)
+      const selectedAssets = orderedAssetIds
+        .map((id) => assetById.get(id))
+        .filter((item): item is NonNullable<typeof item> => Boolean(item))
+      const primaryAsset = selectedAssets[0] ?? asset
+      const mediaUrls = selectedAssets.length
+        ? selectedAssets.map((item) => item.fileUrl)
+        : asset
+          ? [asset.fileUrl]
+          : []
       const inferredFormat =
-        asset && variant.contentFormat === 'text'
-          ? asset.assetType === 'video'
+        primaryAsset && variant.contentFormat === 'text'
+          ? primaryAsset.assetType === 'video'
             ? ('video' as const)
             : ('image' as const)
           : variant.contentFormat
       return {
+        variantKey: variant.variantKey,
+        sequenceIndex: variant.sequenceIndex,
         platform: variant.platform,
         caption: variant.caption,
         hashtags: variant.hashtags.map((tag) => tag.replace(/^#/, '')).filter(Boolean),
         callToAction: variant.callToAction,
-        linkUrl: null,
-        assetIds: asset ? [asset.id] : [],
+        linkUrl: approvedWebsiteUrl,
+        assetIds: selectedAssets.length
+          ? selectedAssets.map((item) => item.id)
+          : asset
+            ? [asset.id]
+            : [],
         mediaUrls,
         altText: variant.altText,
         contentFormat: inferredFormat,
         platformOptions: {},
+        storyboard: variant.storyboard,
+        overlayText: variant.overlayText,
+        safeArea: variant.safeArea,
+        subtitleText: variant.subtitleText,
+        thumbnailAssetId: variant.thumbnailAssetId &&
+          assetById.has(variant.thumbnailAssetId)
+          ? variant.thumbnailAssetId
+          : null,
       }
     })
 
-  const missingChannels = input.channels.filter(
-    (channel) => !variants.some((variant) => variant.platform === channel)
+  const expectedVariantKeys = input.formatPlan.flatMap((plan) =>
+    Array.from(
+      { length: plan.quantity },
+      (_, index) => `${plan.platform}:${plan.contentFormat}:${index + 1}`
+    )
   )
-  if (missingChannels.length > 0) {
-    throw new Error(`Generation did not produce variants for: ${missingChannels.join(', ')}`)
+  const missingVariantKeys = expectedVariantKeys.filter(
+    (key) => !variants.some((variant) => variant.variantKey === key)
+  )
+  if (missingVariantKeys.length > 0) {
+    throw new Error(`Generation did not produce variants for: ${missingVariantKeys.join(', ')}`)
   }
 
   const content: RevisionContent = {
@@ -301,16 +409,21 @@ export async function generateRevisionContent(input: {
       model:
         typeof model === 'string'
           ? model
-          : (model as { modelId?: string }).modelId ?? DEFAULT_MODEL_ID,
+          : (model as { modelId?: string }).modelId ?? resolveForgeStudioTextModel(tier),
       promptVersion: GENERATION_PROMPT_VERSION,
       contractVersion: CONTENT_CONTRACT_VERSION,
       contextHash: input.bundle.contextHash,
+      modelPolicyVersion: FORGESTUDIO_MODEL_POLICY_VERSION,
+      tier,
       usage: {
         inputTokens: result.usage?.inputTokens,
         outputTokens: result.usage?.outputTokens,
         totalTokens: result.usage?.totalTokens,
       },
       finishReason: String(result.finishReason ?? 'unknown'),
+      warnings: result.warnings ?? [],
+      providerMetadata: (result.providerMetadata ?? {}) as Record<string, unknown>,
+      generationId: result.response?.headers?.['x-vercel-ai-gateway-generation-id'],
     },
   }
 }

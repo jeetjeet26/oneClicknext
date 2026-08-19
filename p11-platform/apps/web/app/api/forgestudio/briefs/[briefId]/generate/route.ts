@@ -15,7 +15,11 @@ import {
   createPackageWithRevision,
   setBriefStatus,
 } from '@/utils/forgestudio/content-store'
-import { SOCIAL_PLATFORMS, type SocialPlatform } from '@/utils/forgestudio/content-contract'
+import {
+  formatPlanItemSchema,
+  SOCIAL_PLATFORMS,
+  type SocialPlatform,
+} from '@/utils/forgestudio/content-contract'
 
 export const maxDuration = 120
 
@@ -60,6 +64,15 @@ export async function POST(
         { status: 400 }
       )
     }
+    const parsedFormatPlan = formatPlanItemSchema.array().safeParse(brief.format_plan)
+    const formatPlan = parsedFormatPlan.success && parsedFormatPlan.data.length > 0
+      ? parsedFormatPlan.data
+      : channels.map((platform) => ({
+          platform,
+          contentFormat: platform === 'x' ? 'text' as const : 'image' as const,
+          quantity: 1,
+          objective: null,
+        }))
 
     await setBriefStatus(briefId, 'generating')
 
@@ -89,6 +102,8 @@ export async function POST(
         audience: brief.audience,
         constraints: (brief.constraints ?? {}) as Record<string, unknown>,
         channels,
+        formatPlan,
+        actorId: user.id,
       })
 
       // 3. Persist as a package with revision 1 (pending approval).

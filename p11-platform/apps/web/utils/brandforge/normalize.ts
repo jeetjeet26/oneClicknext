@@ -1,4 +1,5 @@
 import { sha256Hex } from '@/utils/sha256'
+import type { Json } from '@/types/supabase'
 import {
   BRAND_FORGE_CONTRACT_VERSION,
   brandForgeContractV1Schema,
@@ -62,6 +63,109 @@ function isoDatetime(value: unknown): string | undefined {
   if (!candidate) return undefined
   const parsed = new Date(candidate)
   return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString()
+}
+
+type ColorRole = BrandForgeContractV1['colors']['roles'][number]['role']
+type LegacyColorCandidate = {
+  name: string
+  hex: string
+  usage: string
+  sourceGroup: 'primary' | 'secondary' | 'accent'
+  sourceIndex: number
+}
+
+function colorLuminance(value: string): number {
+  const channels = value
+    .slice(1)
+    .match(/.{2}/g)!
+    .map(channel => Number.parseInt(channel, 16) / 255)
+    .map(channel =>
+      channel <= 0.03928
+        ? channel / 12.92
+        : Math.pow((channel + 0.055) / 1.055, 2.4)
+    )
+  return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+}
+
+function inferLegacyColorRole(candidate: LegacyColorCandidate): ColorRole {
+  const semantic = `${candidate.name} ${candidate.usage}`.toLowerCase()
+  if (/\b(text|copy|ink|contrast|foreground|body)\b/.test(semantic)) {
+    return 'text'
+  }
+  if (/\b(background|backgrounds|canvas|backdrop|page field)\b/.test(semantic)) {
+    return 'background'
+  }
+  if (/\b(accent|accents|cta|highlight|emphasis|logo)\b/.test(semantic)) {
+    return 'accent'
+  }
+  if (/\b(primary brand|core brand|signature color)\b/.test(semantic)) {
+    return 'primary'
+  }
+  if (candidate.sourceGroup === 'accent') return 'accent'
+  if (candidate.sourceGroup === 'secondary') return 'secondary'
+  return candidate.sourceIndex === 0 ? 'primary' : 'secondary'
+}
+
+function legacyColorRoles(colors: JsonRecord): JsonRecord[] {
+  const candidates: LegacyColorCandidate[] = []
+  for (const sourceGroup of ['primary', 'secondary', 'accent'] as const) {
+    const raw =
+      sourceGroup === 'accent'
+        ? colors.accents ?? colors.accent
+        : colors[sourceGroup]
+    array(raw).forEach((itemValue, sourceIndex) => {
+      const item = record(itemValue)
+      const colorValue = string(item.hex || item.value || item.color || itemValue)
+      if (!colorValue) return
+      candidates.push({
+        sourceGroup,
+        sourceIndex,
+        name: string(item.name) || sourceGroup,
+        hex: hex(colorValue),
+        usage: string(item.usage || item.description),
+      })
+    })
+  }
+  if (!candidates.length) return []
+
+  const roles = candidates.map(candidate => ({
+    role: inferLegacyColorRole(candidate),
+    name: candidate.name,
+    hex: candidate.hex,
+    usage: candidate.usage,
+  }))
+  const hasRole = (role: ColorRole) => roles.some(item => item.role === role)
+  const darkest = [...candidates].sort(
+    (left, right) => colorLuminance(left.hex) - colorLuminance(right.hex)
+  )[0]
+  const lightest = [...candidates].sort(
+    (left, right) => colorLuminance(right.hex) - colorLuminance(left.hex)
+  )[0]
+  const candidateFor = (role: ColorRole) => {
+    const exact = roles.find(item => item.role === role)
+    if (exact) return exact
+    if (role === 'text') return { ...darkest, role }
+    if (role === 'background') return { ...lightest, role }
+    if (role === 'secondary') {
+      const text = roles.find(item => item.role === 'text')
+      return { ...(text || candidates[1] || candidates[0]), role }
+    }
+    if (role === 'accent') {
+      const secondary = roles.find(item => item.role === 'secondary')
+      return { ...(secondary || candidates[1] || candidates[0]), role }
+    }
+    return { ...candidates[0], role }
+  }
+  for (const role of [
+    'primary',
+    'secondary',
+    'accent',
+    'background',
+    'text',
+  ] as const) {
+    if (!hasRole(role)) roles.push(candidateFor(role))
+  }
+  return roles
 }
 
 function sectionMeta(
@@ -177,20 +281,7 @@ export function normalizeBrandForgeContract(
 
   const colorRoles = array(colors.roles).map(record)
   if (!colorRoles.length) {
-    for (const role of ['primary', 'secondary', 'accent'] as const) {
-      const raw = role === 'accent' ? colors.accents ?? colors.accent : colors[role]
-      for (const itemValue of array(raw)) {
-        const item = record(itemValue)
-        const colorValue = string(item.hex || item.value || item.color || itemValue)
-        if (!colorValue) continue
-        colorRoles.push({
-          role,
-          name: string(item.name) || role,
-          hex: hex(colorValue),
-          usage: string(item.usage || item.description),
-        })
-      }
-    }
+    colorRoles.push(...legacyColorRoles(colors))
     for (const itemValue of array(colors.palette)) {
       const item = record(itemValue)
       if (!string(item.hex || item.value)) continue
@@ -351,20 +442,24 @@ export function hashBrandForgeContract(contract: BrandForgeContractV1): string {
   return sha256Hex(JSON.stringify(normalizeForHash(contract)))
 }
 
+function storageJson(value: unknown): Json {
+  return JSON.parse(JSON.stringify(value)) as Json
+}
+
 export function brandContractToStorageSections(contract: BrandForgeContractV1) {
   return {
-    section_1_introduction: contract.introduction,
-    section_2_positioning: contract.positioning,
-    section_3_target_audience: contract.audience,
-    section_4_personas: contract.personas,
-    section_5_name_story: contract.identity,
-    section_6_logo: contract.logos,
-    section_7_typography: contract.typography,
-    section_8_colors: contract.colors,
-    section_9_design_elements: contract.designElements,
-    section_10_photo_yep: contract.photographyYes,
-    section_11_photo_nope: contract.photographyNo,
-    section_12_implementation: contract.implementation,
+    section_1_introduction: storageJson(contract.introduction),
+    section_2_positioning: storageJson(contract.positioning),
+    section_3_target_audience: storageJson(contract.audience),
+    section_4_personas: storageJson(contract.personas),
+    section_5_name_story: storageJson(contract.identity),
+    section_6_logo: storageJson(contract.logos),
+    section_7_typography: storageJson(contract.typography),
+    section_8_colors: storageJson(contract.colors),
+    section_9_design_elements: storageJson(contract.designElements),
+    section_10_photo_yep: storageJson(contract.photographyYes),
+    section_11_photo_nope: storageJson(contract.photographyNo),
+    section_12_implementation: storageJson(contract.implementation),
   }
 }
 

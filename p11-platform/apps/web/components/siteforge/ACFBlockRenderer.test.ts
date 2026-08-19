@@ -61,11 +61,123 @@ describe('ACFBlockRenderer critical preview state', () => {
     }
   )
 
+  it('renders the actual governed-component render_plan tree with field resolution', () => {
+    const markup = renderToStaticMarkup(
+      React.createElement(ACFBlockRenderer, {
+        blockType: 'acf/governed-component',
+        blockIdentity: 'governed-tree',
+        content: {
+          component_key: 'property-highlight@1.0.0',
+          descriptor_hash: 'd'.repeat(64),
+          render_plan: {
+            nodeId: 'root',
+            primitive: 'section',
+            classes: ['property-highlight'],
+            properties: {},
+            accessibility: {
+              role: 'region',
+              name: { field: 'headline' },
+              description: null,
+              keyboard: [],
+              focusPolicy: 'none',
+              liveRegion: 'off',
+            },
+            children: [
+              {
+                nodeId: 'root-title',
+                primitive: 'text',
+                classes: [],
+                properties: { value: { field: 'headline' } },
+                accessibility: {
+                  role: null,
+                  name: null,
+                  description: null,
+                  keyboard: [],
+                  focusPolicy: 'none',
+                  liveRegion: 'off',
+                },
+                children: [],
+              },
+              {
+                nodeId: 'root-cta',
+                primitive: 'button',
+                classes: ['cta'],
+                properties: {
+                  label: { field: 'cta-label' },
+                  href: { field: 'cta-url' },
+                },
+                accessibility: {
+                  role: null,
+                  name: null,
+                  description: null,
+                  keyboard: ['Enter'],
+                  focusPolicy: 'natural',
+                  liveRegion: 'off',
+                },
+                children: [],
+              },
+            ],
+          },
+          component_values: {
+            headline: 'Rooftop lounge',
+            'cta-label': 'Book a tour',
+            'cta-url': '/tour',
+          },
+        },
+      })
+    )
+
+    // Same tag mapping and field resolution as blocks/governed-component.php.
+    expect(markup).toContain('data-siteforge-component="property-highlight@1.0.0"')
+    expect(markup).toContain('governed-section property-highlight')
+    expect(markup).toContain('<p class="governed-text"')
+    expect(markup).toContain('Rooftop lounge')
+    expect(markup).toContain('href="/tour"')
+    expect(markup).toContain('Book a tour')
+    expect(markup).toContain('aria-label="Rooftop lounge"')
+  })
+
+  it('degrades clearly when a governed component has no valid render plan', () => {
+    const markup = renderToStaticMarkup(
+      React.createElement(ACFBlockRenderer, {
+        blockType: 'acf/governed-component',
+        blockIdentity: 'governed-broken',
+        content: {
+          component_key: 'property-highlight@1.0.0',
+          descriptor_hash: 'd'.repeat(64),
+          render_plan: { nodeId: 'root', primitive: 'unknown-primitive' },
+          component_values: {},
+        },
+      })
+    )
+
+    expect(markup).toContain('data-preview-state="degraded"')
+    expect(markup).toContain('Governed component preview unavailable')
+  })
+
   it('marks hero degraded when slides are missing', () => {
     expect(getCriticalPreviewState('acf/top-slides', {})).toEqual({
       degraded: true,
       reason: 'missing_hero_slides',
     })
+  })
+
+  it('tightens the existing minimal hero without changing slide content', () => {
+    const markup = renderToStaticMarkup(
+      React.createElement(ACFBlockRenderer, {
+        blockType: 'acf/top-slides',
+        blockIdentity: 'minimal-hero',
+        variant: 'minimal',
+        content: registeredBlockPreviewFixtures['acf/top-slides'],
+      })
+    )
+
+    expect(markup).toContain('data-siteforge-variant="minimal"')
+    expect(markup).toContain('min-h-[360px] md:min-h-[440px]')
+    expect(markup).toContain(
+      'text-[clamp(2.25rem,10vw,3.4rem)] md:text-[clamp(2.75rem,5.2vw,5.4rem)]'
+    )
+    expect(markup.match(/Rooted in the city/g)).toHaveLength(1)
   })
 
   it('marks map degraded when location data is missing', () => {

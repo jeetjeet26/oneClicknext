@@ -1,5 +1,6 @@
 import { SITEFORGE_CERTIFICATION_POLICY_VERSION } from './browser-evidence'
 import type { CertificationArtifactBinding } from './certification-binding'
+import type { SiteForgeEditAcceptanceContract } from '@/utils/siteforge/editor/edit-acceptance'
 
 export async function collectBrowserCertificationEvidence(input: {
   targetUrl: string
@@ -10,6 +11,8 @@ export async function collectBrowserCertificationEvidence(input: {
   requireIndexable: boolean
   artifact: CertificationArtifactBinding
   bindingHash: string
+  editAcceptanceContract?: SiteForgeEditAcceptanceContract
+  parentTargetUrl?: string
 }): Promise<unknown | undefined> {
   const endpoint = process.env.SITEFORGE_BROWSER_CERTIFIER_URL
   if (!endpoint) return undefined
@@ -44,6 +47,8 @@ export async function collectBrowserCertificationEvidence(input: {
       targetUrl: input.targetUrl,
       expectedUrls: input.expectedUrls,
       credentials: input.credentials,
+      editAcceptanceContract: input.editAcceptanceContract,
+      parentTargetUrl: input.parentTargetUrl,
     }),
   })
   if (!response.ok) {

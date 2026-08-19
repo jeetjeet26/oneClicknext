@@ -14,6 +14,11 @@ import {
   buildCertificationBindingHash,
   type CertificationArtifactBinding,
 } from './certification-binding'
+import {
+  compileBrandPublicationPackage,
+  validateRenderedBrandInheritance,
+} from '@/utils/siteforge/brand-design-compiler'
+import type { SiteForgeEditAcceptanceContract } from '@/utils/siteforge/editor/edit-acceptance'
 
 const verificationCheckSchema = z.object({
   id: z.string(),
@@ -159,6 +164,8 @@ export async function certifyRenderedWordPressArtifact(input: {
   approvedImageUrls?: string[]
   approvedImageDigests?: string[]
   browserEvidence?: unknown
+  editAcceptanceContract?: SiteForgeEditAcceptanceContract
+  parentTargetUrl?: string
 }): Promise<RenderedCertificationReport> {
   if (
     input.artifactBinding.artifactId !== input.artifactId ||
@@ -410,26 +417,22 @@ export async function certifyRenderedWordPressArtifact(input: {
       }
     }
     const renderSurface = [...renderedHtml, ...cssBodies].join('\n')
-    const missingColors = input.brandContract.colors.roles
-      .filter(color => ['primary', 'secondary', 'accent'].includes(color.role))
-      .flatMap(color =>
-        renderSurface.toLowerCase().includes(color.hex.toLowerCase())
-          ? []
-          : [color.role],
-      )
-    const missingFonts = input.brandContract.typography.roles.flatMap(font =>
-      renderSurface.toLowerCase().includes(font.family.toLowerCase())
-        ? []
-        : [font.role],
+    const brandPublication = compileBrandPublicationPackage(input.brandContract)
+    const inheritance = validateRenderedBrandInheritance(
+      renderSurface,
+      brandPublication,
     )
     checks.push({
-      id: 'computed_brand_tokens',
-      passed: missingColors.length === 0 && missingFonts.length === 0,
+      id: 'computed_brand_inheritance',
+      passed: inheritance.passed,
       severity: 'blocker',
-      message: missingColors.length === 0 && missingFonts.length === 0
-        ? 'Rendered styles contain the approved brand colors and font families.'
-        : 'Rendered styles are missing approved brand colors or font families.',
-      evidence: { missingColors, missingFonts },
+      message: inheritance.passed
+        ? 'Rendered output preserves the compiled brand tokens and locked assets.'
+        : 'Rendered output is missing compiled brand tokens or locked assets.',
+      evidence: {
+        contractHash: brandPublication.contractHash,
+        violations: inheritance.violations,
+      },
     })
 
     const primaryLogo = input.brandContract.logos.variants.find(logo => logo.role === 'primary')
@@ -520,6 +523,8 @@ export async function certifyRenderedWordPressArtifact(input: {
       requireIndexable: input.requireIndexable,
       artifact: input.artifactBinding,
       bindingHash,
+      editAcceptanceContract: input.editAcceptanceContract,
+      parentTargetUrl: input.parentTargetUrl,
     })
   const browser = certifyBrowserEvidence({
     evidence: browserEvidence,
@@ -532,6 +537,7 @@ export async function certifyRenderedWordPressArtifact(input: {
     requireIndexable: input.requireIndexable,
     artifact: input.artifactBinding,
     bindingHash,
+    editAcceptanceContract: input.editAcceptanceContract,
   })
   const advisoryBrowserFindings = browserFindingsAreAdvisory(input)
   checks.push(

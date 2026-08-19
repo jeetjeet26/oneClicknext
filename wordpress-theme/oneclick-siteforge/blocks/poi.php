@@ -9,16 +9,17 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-$categories = get_field( 'categories' ) ?: array();
-$intro_text = get_field( 'intro_text' );
-$radius_miles = get_field( 'radius_miles' ) ?: 1;
-$points = get_field( 'points' ) ?: array();
+$runtime_data = is_array( $block['data'] ?? null ) ? $block['data'] : array();
+$categories = get_field( 'categories' ) ?: ( $runtime_data['categories'] ?? array() );
+$intro_text = get_field( 'intro_text' ) ?: ( $runtime_data['intro_text'] ?? '' );
+$radius_miles = get_field( 'radius_miles' ) ?: ( $runtime_data['radius_miles'] ?? 1 );
+$points = get_field( 'points' ) ?: ( $runtime_data['points'] ?? array() );
 $property_lat = oneclick_get_field( 'property_latitude' );
 $property_lng = oneclick_get_field( 'property_longitude' );
 $api_key = oneclick_get_field( 'google_maps_api_key' );
 $has_map = ! empty( $categories ) && ! empty( $property_lat ) && ! empty( $property_lng ) && ! empty( $api_key );
 
-if ( ! $has_map && empty( $points ) ) {
+if ( ! $has_map && empty( $points ) && empty( $intro_text ) ) {
 	return;
 }
 
@@ -66,7 +67,7 @@ $radius_meters = intval( $radius_miles ) * 1609.34;
 				</ul>
 			</div>
 		</div>
-		<?php } else { ?>
+		<?php } elseif ( ! empty( $points ) ) { ?>
 		<div class="poi-list" aria-label="<?php esc_attr_e( 'Nearby places', 'oneclick-siteforge' ); ?>">
 			<?php foreach ( $points as $point ) { ?>
 				<article class="poi-list-item">

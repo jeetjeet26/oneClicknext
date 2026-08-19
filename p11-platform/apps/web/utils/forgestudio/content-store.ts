@@ -63,6 +63,7 @@ export type CreateBriefInput = {
   channels?: string[]
   connectionIds?: string[]
   assetIds?: string[]
+  formatPlan?: unknown[]
   schedulingWindow?: Record<string, unknown>
 }
 
@@ -83,6 +84,7 @@ export async function createBrief(input: CreateBriefInput): Promise<Tables<'soci
       channels: input.channels ?? [],
       connection_ids: input.connectionIds ?? [],
       asset_ids: input.assetIds ?? [],
+      format_plan: (input.formatPlan ?? []) as Json,
       scheduling_window: (input.schedulingWindow ?? {}) as Json,
       status: 'draft',
     })
@@ -170,12 +172,16 @@ async function insertRevisionWithVariants(input: {
 
   const variantRows: TablesInsert<'social_content_variants'>[] = content.variants.map((variant) => {
     const issues = validateVariant(variant)
-    validation[variant.platform] = { issues }
+    const variantKey = variant.variantKey === 'primary'
+      ? `${variant.platform}:${variant.contentFormat}:${variant.sequenceIndex + 1}`
+      : variant.variantKey
+    validation[variantKey] = { issues }
     return {
       revision_id: revisionRow.id,
       org_id: input.orgId,
       property_id: input.propertyId,
-      variant_key: `${variant.platform}:${variant.contentFormat}:1`,
+      variant_key: variantKey,
+      sequence_index: variant.sequenceIndex,
       platform: variant.platform,
       caption: variant.caption,
       hashtags: variant.hashtags,
@@ -186,6 +192,11 @@ async function insertRevisionWithVariants(input: {
       alt_text: variant.altText ?? null,
       content_format: variant.contentFormat,
       platform_options: (variant.platformOptions ?? {}) as Json,
+      storyboard: variant.storyboard as unknown as Json,
+      overlay_text: variant.overlayText,
+      safe_area: variant.safeArea as unknown as Json,
+      subtitle_text: variant.subtitleText ?? null,
+      thumbnail_asset_id: variant.thumbnailAssetId ?? null,
       validation: { issues: issues } as unknown as Json,
     }
   })
@@ -351,6 +362,150 @@ export async function addRevision(
 // Approval
 // ---------------------------------------------------------------------------
 
+async function recordRevisionDecisionGovernance(input: {
+  revision: {
+    id: string
+    org_id: string
+    property_id: string
+    context_snapshot_id: string | null
+  }
+  reviewerId: string
+  decision: 'approved' | 'denied' | 'modified'
+  note?: string | null
+  validationIssueCount: number
+}): Promise<string> {
+  const supabase = createServiceClient()
+  const now = new Date().toISOString()
+  const { data: job, error: jobError } = await supabase
+    .from('shared_jobs')
+    .insert({
+      org_id: input.revision.org_id,
+      property_id: input.revision.property_id,
+      domain: 'forgestudio.revision-approval',
+      subject_type: 'social_content_revision',
+      subject_id: input.revision.id,
+      lifecycle_status: input.decision === 'denied' ? 'cancelled' : 'succeeded',
+      status_reason: `revision_${input.decision}`,
+      dedupe_key: `revision-decision:${input.revision.id}`,
+      payload: {
+        revisionId: input.revision.id,
+        decision: input.decision,
+      } as Json,
+      context_snapshot_id: input.revision.context_snapshot_id,
+      attempt_count: 1,
+      max_attempts: 1,
+      started_at: now,
+      finished_at: now,
+      stage: 'completed',
+      progress: 100,
+      current_step: `Revision ${input.decision}`,
+    })
+    .select('id')
+    .single()
+  if (jobError || !job) {
+    throw new ContentStoreError(`Failed to record approval job: ${jobError?.message || 'unknown error'}`, 500)
+  }
+
+  const { data: action, error: actionError } = await supabase
+    .from('shared_action_attempts')
+    .insert({
+      job_id: job.id,
+      org_id: input.revision.org_id,
+      property_id: input.revision.property_id,
+      action_type: 'review_social_content_revision',
+      lifecycle_status: input.decision === 'denied' ? 'cancelled' : 'succeeded',
+      proposal_decision_status: input.decision,
+      execution_status: input.decision === 'denied' ? 'cancelled' : 'executed',
+      requested_by: input.reviewerId,
+      reviewed_by: input.reviewerId,
+      request_payload: { revisionId: input.revision.id } as Json,
+      execution_payload: { decision: input.decision, note: input.note ?? null } as Json,
+      execution_result: { validationIssueCount: input.validationIssueCount } as Json,
+      policy_snapshot: {
+        policy: 'forgestudio.content-safety',
+        version: '2026-08-13',
+        deterministicValidationPassed: input.validationIssueCount === 0,
+      } as Json,
+      confidence_score: input.validationIssueCount === 0 ? 1 : 0,
+      policy_reason: input.note ?? `Exact revision ${input.decision}`,
+      proposed_at: now,
+      decided_at: now,
+      executed_at: now,
+    })
+    .select('id')
+    .single()
+  if (actionError || !action) {
+    await supabase.from('shared_jobs').update({
+      lifecycle_status: 'failed',
+      status_reason: 'action_ledger_failed',
+      error_message: actionError?.message ?? 'unknown error',
+    }).eq('id', job.id)
+    throw new ContentStoreError('Failed to record approval action ledger', 500)
+  }
+
+  const decisionReason = input.note?.trim() || `Exact revision ${input.decision}`
+  const [approvalResult, policyResult] = await Promise.all([
+    supabase.from('shared_approvals').insert({
+      action_attempt_id: action.id,
+      org_id: input.revision.org_id,
+      property_id: input.revision.property_id,
+      decision_status: input.decision,
+      decision_reason: decisionReason,
+      reviewer_profile_id: input.reviewerId,
+      decision_payload: { revisionId: input.revision.id } as Json,
+    }),
+    supabase.from('shared_policy_decisions').insert({
+      org_id: input.revision.org_id,
+      property_id: input.revision.property_id,
+      job_id: job.id,
+      action_attempt_id: action.id,
+      policy_name: 'forgestudio.content-safety',
+      policy_version: '2026-08-13',
+      decision_status: input.decision,
+      decision_reason: decisionReason,
+      confidence_score: input.validationIssueCount === 0 ? 1 : 0,
+      decision_payload: {
+        deterministicValidationPassed: input.validationIssueCount === 0,
+        validationIssueCount: input.validationIssueCount,
+      } as Json,
+    }),
+  ])
+  if (approvalResult.error || policyResult.error) {
+    throw new ContentStoreError('Failed to record shared approval or policy decision', 500)
+  }
+  return action.id
+}
+
+export async function recordRevisionModificationGovernance(input: {
+  revisionId: string
+  reviewerId: string
+  reason: string
+}): Promise<void> {
+  const supabase = createServiceClient()
+  const { data: revision, error } = await supabase
+    .from('social_content_revisions')
+    .select('id, org_id, property_id, context_snapshot_id')
+    .eq('id', input.revisionId)
+    .single()
+  if (error || !revision) {
+    throw new ContentStoreError('Edited revision not found for governance', 404)
+  }
+  const actionId = await recordRevisionDecisionGovernance({
+    revision,
+    reviewerId: input.reviewerId,
+    decision: 'modified',
+    note: input.reason,
+    validationIssueCount: 0,
+  })
+  const { error: linkError } = await supabase
+    .from('social_content_revisions')
+    .update({ shared_action_attempt_id: actionId })
+    .eq('id', input.revisionId)
+  if (linkError) {
+    throw new ContentStoreError('Failed to link edited revision to governance history', 500)
+  }
+}
+
 export async function setRevisionApproval(input: {
   revisionId: string
   decision: 'approved' | 'denied'
@@ -361,7 +516,7 @@ export async function setRevisionApproval(input: {
 
   const { data: revision, error: revisionError } = await supabase
     .from('social_content_revisions')
-    .select('id, package_id, approval_status, claims')
+    .select('id, package_id, org_id, property_id, context_snapshot_id, approval_status, claims')
     .eq('id', input.revisionId)
     .single()
 
@@ -376,6 +531,7 @@ export async function setRevisionApproval(input: {
     )
   }
 
+  let validationIssueCount = 0
   if (input.decision === 'approved') {
     const claims = revisionContentSchema.shape.claims.parse(revision.claims ?? [])
     const unsupported = findUnsupportedClaims(claims)
@@ -384,6 +540,40 @@ export async function setRevisionApproval(input: {
         `Cannot approve: ${unsupported.length} sensitive claim(s) lack citations (${unsupported
           .map((claim) => claim.type)
           .join(', ')})`,
+        409
+      )
+    }
+
+    const { data: variants, error: variantsError } = await supabase
+      .from('social_content_variants')
+      .select('variant_key, sequence_index, platform, caption, hashtags, call_to_action, link_url, asset_ids, media_urls, alt_text, content_format, platform_options, storyboard, overlay_text, safe_area, subtitle_text, thumbnail_asset_id')
+      .eq('revision_id', input.revisionId)
+    if (variantsError || !variants?.length) {
+      throw new ContentStoreError('Cannot approve: revision variants are unavailable', 409)
+    }
+    const issues = variants.flatMap((variant) => validateVariant({
+      variantKey: variant.variant_key,
+      sequenceIndex: variant.sequence_index,
+      platform: variant.platform as RevisionContent['variants'][number]['platform'],
+      caption: variant.caption,
+      hashtags: variant.hashtags ?? [],
+      callToAction: variant.call_to_action,
+      linkUrl: variant.link_url,
+      assetIds: variant.asset_ids ?? [],
+      mediaUrls: variant.media_urls ?? [],
+      altText: variant.alt_text,
+      contentFormat: variant.content_format as RevisionContent['variants'][number]['contentFormat'],
+      platformOptions: (variant.platform_options ?? {}) as Record<string, unknown>,
+      storyboard: (variant.storyboard ?? []) as RevisionContent['variants'][number]['storyboard'],
+      overlayText: variant.overlay_text ?? [],
+      safeArea: (variant.safe_area ?? {}) as RevisionContent['variants'][number]['safeArea'],
+      subtitleText: variant.subtitle_text,
+      thumbnailAssetId: variant.thumbnail_asset_id,
+    }))
+    validationIssueCount = issues.length
+    if (issues.length > 0) {
+      throw new ContentStoreError(
+        `Cannot approve: ${issues.map((issue) => issue.code).join(', ')}`,
         409
       )
     }
@@ -407,6 +597,39 @@ export async function setRevisionApproval(input: {
     throw new ContentStoreError('Revision review failed (it may have been reviewed concurrently)', 409)
   }
 
+  let sharedActionAttemptId: string
+  try {
+    sharedActionAttemptId = await recordRevisionDecisionGovernance({
+      revision,
+      reviewerId: input.reviewerId,
+      decision: input.decision,
+      note: input.note,
+      validationIssueCount,
+    })
+  } catch (error) {
+    await supabase
+      .from('social_content_revisions')
+      .update({
+        approval_status: 'pending',
+        approved_by: null,
+        approved_at: null,
+        approval_note: null,
+      })
+      .eq('id', input.revisionId)
+      .eq('approval_status', input.decision)
+    throw error
+  }
+
+  const { data: governed, error: governanceLinkError } = await supabase
+    .from('social_content_revisions')
+    .update({ shared_action_attempt_id: sharedActionAttemptId })
+    .eq('id', input.revisionId)
+    .select('*')
+    .single()
+  if (governanceLinkError || !governed) {
+    throw new ContentStoreError('Revision decision was recorded but governance linkage failed', 500)
+  }
+
   await supabase
     .from('social_content_packages')
     .update({
@@ -415,7 +638,7 @@ export async function setRevisionApproval(input: {
     })
     .eq('id', revision.package_id)
 
-  return updated
+  return governed
 }
 
 // ---------------------------------------------------------------------------
@@ -424,10 +647,121 @@ export async function setRevisionApproval(input: {
 
 export const PUBLICATION_JOB_DOMAIN = 'forgestudio.publication'
 
-export type ScheduleDestination = {
+async function createPublicationGovernance(input: {
+  jobId: string
+  orgId: string
+  propertyId: string
+  revisionId: string
   connectionId: string
   scheduledFor: string
+  requestedBy: string | null
+  approvedBy: string | null
+  approvalNote: string | null
+  contextSnapshotId: string | null
+  experimentKey?: string
+  experimentGroup?: 'control' | 'treatment'
+}): Promise<string> {
+  const supabase = createServiceClient()
+  const now = new Date().toISOString()
+  const reviewerId = input.approvedBy ?? input.requestedBy
+  if (!reviewerId) {
+    throw new ContentStoreError('Publication governance requires a reviewer identity', 409)
+  }
+  const { data: action, error: actionError } = await supabase
+    .from('shared_action_attempts')
+    .insert({
+      job_id: input.jobId,
+      org_id: input.orgId,
+      property_id: input.propertyId,
+      action_type: 'publish_social_content_revision',
+      lifecycle_status: 'queued',
+      proposal_decision_status: 'approved',
+      execution_status: 'approved_pending_execution',
+      requested_by: input.requestedBy,
+      reviewed_by: input.approvedBy,
+      request_payload: {
+        revisionId: input.revisionId,
+        connectionId: input.connectionId,
+        scheduledFor: input.scheduledFor,
+        experimentKey: input.experimentKey ?? null,
+        experimentGroup: input.experimentGroup ?? null,
+      } as Json,
+      execution_payload: {
+        revisionId: input.revisionId,
+        connectionId: input.connectionId,
+        scheduledFor: input.scheduledFor,
+        experimentKey: input.experimentKey ?? null,
+        experimentGroup: input.experimentGroup ?? null,
+      } as Json,
+      policy_snapshot: {
+        policy: 'forgestudio.social-publishing',
+        version: '2026-08-13',
+        exactRevisionApproved: true,
+        contextSnapshotId: input.contextSnapshotId,
+        experimentKey: input.experimentKey ?? null,
+        experimentGroup: input.experimentGroup ?? null,
+        rollback: 'cancel_before_remote_publish',
+      } as Json,
+      rollback_metadata: {
+        supportedBeforeRemotePublish: true,
+        operation: 'cancel_publication',
+      } as Json,
+      confidence_score: 1,
+      policy_reason: input.approvalNote ?? 'Exact revision approved for scheduled publication',
+      proposed_at: now,
+      decided_at: now,
+    })
+    .select('id')
+    .single()
+  if (actionError || !action) {
+    throw new ContentStoreError('Failed to create publication action ledger', 500)
+  }
+
+  const reason = input.approvalNote?.trim() || 'Exact revision approved for scheduled publication'
+  const [approvalResult, policyResult] = await Promise.all([
+    supabase.from('shared_approvals').insert({
+      action_attempt_id: action.id,
+      org_id: input.orgId,
+      property_id: input.propertyId,
+      decision_status: 'approved',
+      decision_reason: reason,
+      reviewer_profile_id: reviewerId,
+      decision_payload: {
+        revisionId: input.revisionId,
+        connectionId: input.connectionId,
+      } as Json,
+    }),
+    supabase.from('shared_policy_decisions').insert({
+      org_id: input.orgId,
+      property_id: input.propertyId,
+      job_id: input.jobId,
+      action_attempt_id: action.id,
+      policy_name: 'forgestudio.social-publishing',
+      policy_version: '2026-08-13',
+      decision_status: 'approved',
+      decision_reason: reason,
+      confidence_score: 1,
+      decision_payload: {
+        exactRevisionApproved: true,
+        scheduledFor: input.scheduledFor,
+        experimentKey: input.experimentKey ?? null,
+        experimentGroup: input.experimentGroup ?? null,
+      } as Json,
+    }),
+  ])
+  if (approvalResult.error || policyResult.error) {
+    throw new ContentStoreError('Failed to bind publication approval and policy records', 500)
+  }
+  return action.id
+}
+
+export type ScheduleDestination = {
+  connectionId: string
+  variantId?: string
+  scheduledFor: string
   timezone?: string
+  experimentKey?: string
+  experimentGroup?: 'control' | 'treatment'
 }
 
 export async function schedulePublications(input: {
@@ -440,7 +774,7 @@ export async function schedulePublications(input: {
 
   const { data: revision, error: revisionError } = await supabase
     .from('social_content_revisions')
-    .select('id, package_id, org_id, property_id, approval_status')
+    .select('id, package_id, org_id, property_id, approval_status, approved_by, approval_note, context_snapshot_id')
     .eq('id', input.revisionId)
     .single()
 
@@ -464,8 +798,9 @@ export async function schedulePublications(input: {
 
   const { data: variants, error: variantsError } = await supabase
     .from('social_content_variants')
-    .select('id, platform')
+    .select('id, platform, variant_key, sequence_index')
     .eq('revision_id', revision.id)
+    .order('sequence_index', { ascending: true })
 
   if (variantsError || !variants?.length) {
     throw new ContentStoreError('Revision has no channel variants', 409)
@@ -487,7 +822,13 @@ export async function schedulePublications(input: {
   }
 
   const connectionById = new Map((connections || []).map((conn) => [conn.id, conn]))
-  const variantByPlatform = new Map(variants.map((variant) => [variant.platform, variant]))
+  const variantsByPlatform = new Map<string, typeof variants>()
+  for (const variant of variants) {
+    variantsByPlatform.set(
+      variant.platform,
+      [...(variantsByPlatform.get(variant.platform) ?? []), variant]
+    )
+  }
   const created: Tables<'social_publications'>[] = []
 
   for (const destination of input.destinations) {
@@ -496,10 +837,13 @@ export async function schedulePublications(input: {
 
     // 'twitter' connections publish the 'x' variant.
     const platformKey = connection.platform === 'twitter' ? 'x' : connection.platform
-    const variant = variantByPlatform.get(platformKey)
+    const platformVariants = variantsByPlatform.get(platformKey) ?? []
+    const variant = destination.variantId
+      ? platformVariants.find((candidate) => candidate.id === destination.variantId)
+      : platformVariants[0]
     if (!variant) {
       throw new ContentStoreError(
-        `Revision has no variant for platform ${platformKey} (connection ${connection.id})`,
+        `Revision has no matching variant for platform ${platformKey} (connection ${connection.id})`,
         409
       )
     }
@@ -522,9 +866,10 @@ export async function schedulePublications(input: {
         subject_id: null,
         lifecycle_status: 'queued',
         status_reason: 'scheduled',
-        dedupe_key: `publication:${revision.id}:${connection.id}`,
+        dedupe_key: `publication:${revision.id}:${variant.id}:${connection.id}`,
         payload: {
           revisionId: revision.id,
+          variantId: variant.id,
           connectionId: connection.id,
           scheduledFor: scheduledForIso,
         } as Json,
@@ -538,7 +883,7 @@ export async function schedulePublications(input: {
     if (jobError || !job?.id) {
       if (isUniqueViolation(jobError)) {
         throw new ContentStoreError(
-          `This revision is already scheduled for connection ${connection.id}`,
+          `This format variant is already scheduled for connection ${connection.id}`,
           409
         )
       }
@@ -546,6 +891,35 @@ export async function schedulePublications(input: {
         `Failed to enqueue publication job: ${jobError?.message || 'unknown error'}`,
         500
       )
+    }
+
+    let sharedActionAttemptId: string
+    try {
+      sharedActionAttemptId = await createPublicationGovernance({
+        jobId: job.id,
+        orgId: revision.org_id,
+        propertyId: revision.property_id,
+        revisionId: revision.id,
+        connectionId: connection.id,
+        scheduledFor: scheduledForIso,
+        requestedBy: input.createdBy,
+        approvedBy: revision.approved_by,
+        approvalNote: revision.approval_note,
+        contextSnapshotId: revision.context_snapshot_id,
+        experimentKey: destination.experimentKey,
+        experimentGroup: destination.experimentGroup,
+      })
+    } catch (error) {
+      await supabase
+        .from('shared_jobs')
+        .update({
+          lifecycle_status: 'cancelled',
+          status_reason: 'publication_governance_failed',
+          error_message: error instanceof Error ? error.message : String(error),
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', job.id)
+      throw error
     }
 
     const { data: publication, error: publicationError } = await supabase
@@ -560,9 +934,12 @@ export async function schedulePublications(input: {
         platform: platformKey,
         scheduled_for: scheduledForIso,
         timezone: destination.timezone ?? 'UTC',
+        experiment_key: destination.experimentKey ?? null,
+        experiment_group: destination.experimentGroup ?? null,
         status: 'scheduled',
         max_attempts: input.maxAttempts ?? 3,
         shared_job_id: job.id,
+        shared_action_attempt_id: sharedActionAttemptId,
         created_by: input.createdBy,
       })
       .select('*')
@@ -644,6 +1021,17 @@ export async function cancelPublication(publicationId: string): Promise<Tables<'
       .eq('id', publication.shared_job_id)
       .in('lifecycle_status', ['queued', 'retrying'])
   }
+  if (publication.shared_action_attempt_id) {
+    await supabase
+      .from('shared_action_attempts')
+      .update({
+        lifecycle_status: 'cancelled',
+        execution_status: 'cancelled',
+        error_message: 'Publication cancelled before remote execution',
+        updated_at: nowIso,
+      })
+      .eq('id', publication.shared_action_attempt_id)
+  }
 
   return publication
 }
@@ -682,6 +1070,69 @@ export async function reschedulePublication(
       .eq('id', publication.shared_job_id)
       .in('lifecycle_status', ['queued', 'retrying'])
   }
+  if (publication.shared_action_attempt_id) {
+    await supabase
+      .from('shared_action_attempts')
+      .update({
+        execution_payload: {
+          publicationId,
+          scheduledFor: scheduledForIso,
+          rescheduledAt: nowIso,
+        } as Json,
+        policy_reason: 'Approved publication rescheduled within operator control',
+        updated_at: nowIso,
+      })
+      .eq('id', publication.shared_action_attempt_id)
+  }
 
+  return publication
+}
+
+export async function retryPublication(
+  publicationId: string
+): Promise<Tables<'social_publications'>> {
+  const supabase = createServiceClient()
+  const nowIso = new Date().toISOString()
+  const { data: publication, error } = await supabase
+    .from('social_publications')
+    .update({
+      status: 'queued',
+      last_error: null,
+      error_classification: null,
+      updated_at: nowIso,
+    })
+    .eq('id', publicationId)
+    .eq('status', 'failed')
+    .select('*')
+    .single()
+  if (error || !publication) {
+    throw new ContentStoreError('Only failed publications can be retried', 409)
+  }
+
+  if (publication.shared_job_id) {
+    await supabase
+      .from('shared_jobs')
+      .update({
+        lifecycle_status: 'retrying',
+        status_reason: 'operator_retry',
+        available_at: nowIso,
+        retry_at: nowIso,
+        finished_at: null,
+        error_message: null,
+        updated_at: nowIso,
+      })
+      .eq('id', publication.shared_job_id)
+  }
+  if (publication.shared_action_attempt_id) {
+    await supabase
+      .from('shared_action_attempts')
+      .update({
+        lifecycle_status: 'retrying',
+        execution_status: 'approved_pending_execution',
+        error_message: null,
+        updated_at: nowIso,
+      })
+      .eq('id', publication.shared_action_attempt_id)
+  }
   return publication
 }

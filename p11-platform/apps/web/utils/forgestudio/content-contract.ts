@@ -7,6 +7,7 @@
  */
 
 import { z } from 'zod'
+import { findFairHousingViolations } from '@/utils/compliance/fair-housing'
 
 export const CONTENT_CONTRACT_VERSION = 'forgestudio.social.v1'
 
@@ -65,6 +66,13 @@ export const citationSchema = z.object({
     'kb_document',
     'asset',
     'operator_input',
+    'approved_snapshot',
+    'legal_policy',
+    'structured_inventory',
+    'approved_poi',
+    'approved_testimonial',
+    'market_signal',
+    'performance_signal',
   ]),
   sourceId: z.string().min(1),
   snippet: z.string().max(500).optional(),
@@ -76,7 +84,23 @@ export const claimSchema = z.object({
   citations: z.array(citationSchema).default([]),
 })
 
+export const formatPlanItemSchema = z.object({
+  platform: z.enum(SOCIAL_PLATFORMS),
+  contentFormat: z.enum(CONTENT_FORMATS),
+  quantity: z.number().int().min(1).max(5).default(1),
+  objective: z.string().max(500).nullish(),
+})
+
+export const storyboardFrameSchema = z.object({
+  index: z.number().int().min(0),
+  description: z.string().min(1).max(1000),
+  durationSeconds: z.number().positive().max(30).nullish(),
+  overlayText: z.string().max(300).nullish(),
+})
+
 export const variantSchema = z.object({
+  variantKey: z.string().min(3).max(200).default('primary'),
+  sequenceIndex: z.number().int().min(0).default(0),
   platform: z.enum(SOCIAL_PLATFORMS),
   caption: z.string().min(1),
   hashtags: z.array(z.string().min(1).max(100)).default([]),
@@ -87,6 +111,21 @@ export const variantSchema = z.object({
   altText: z.string().max(1000).nullish(),
   contentFormat: z.enum(CONTENT_FORMATS).default('text'),
   platformOptions: z.record(z.string(), z.unknown()).default({}),
+  storyboard: z.array(storyboardFrameSchema).max(20).default([]),
+  overlayText: z.array(z.string().max(300)).max(20).default([]),
+  safeArea: z.object({
+    topPercent: z.number().min(0).max(40).default(10),
+    rightPercent: z.number().min(0).max(40).default(8),
+    bottomPercent: z.number().min(0).max(40).default(18),
+    leftPercent: z.number().min(0).max(40).default(8),
+  }).default({
+    topPercent: 10,
+    rightPercent: 8,
+    bottomPercent: 18,
+    leftPercent: 8,
+  }),
+  subtitleText: z.string().max(5000).nullish(),
+  thumbnailAssetId: z.string().uuid().nullish(),
 })
 
 export const revisionContentSchema = z.object({
@@ -99,6 +138,7 @@ export const revisionContentSchema = z.object({
 export type RevisionContent = z.infer<typeof revisionContentSchema>
 export type ContentVariant = z.infer<typeof variantSchema>
 export type ContentClaim = z.infer<typeof claimSchema>
+export type FormatPlanItem = z.infer<typeof formatPlanItemSchema>
 
 export type VariantValidationIssue = {
   code: string
@@ -150,10 +190,58 @@ export function validateVariant(variant: ContentVariant): VariantValidationIssue
     })
   }
 
+  if (variant.contentFormat === 'carousel' && variant.mediaUrls.length + variant.assetIds.length < 2) {
+    issues.push({
+      code: 'carousel_requires_multiple_assets',
+      message: 'Carousel variants require at least two ordered assets.',
+    })
+  }
+
+  if (
+    ['video', 'reel'].includes(variant.contentFormat) &&
+    variant.storyboard.length === 0
+  ) {
+    issues.push({
+      code: 'video_storyboard_required',
+      message: 'Video and reel variants require a storyboard before approval.',
+    })
+  }
+
+  if (
+    ['video', 'reel'].includes(variant.contentFormat) &&
+    !variant.subtitleText?.trim()
+  ) {
+    issues.push({
+      code: 'video_subtitles_required',
+      message: 'Video and reel variants require subtitle text for accessibility.',
+    })
+  }
+
+  if (
+    ['image', 'carousel', 'story'].includes(variant.contentFormat) &&
+    !variant.altText?.trim()
+  ) {
+    issues.push({
+      code: 'alt_text_required',
+      message: `${variant.contentFormat} variants require descriptive alt text.`,
+    })
+  }
+
   if (variant.mediaUrls.some((url) => !url.startsWith('https://'))) {
     issues.push({
       code: 'insecure_media_url',
       message: 'All media URLs must use https.',
+    })
+  }
+
+  for (const code of findFairHousingViolations([
+    variant.caption,
+    variant.callToAction,
+    variant.altText,
+  ].filter(Boolean).join(' '))) {
+    issues.push({
+      code: `fair_housing_${code}`,
+      message: 'Content contains deterministic Fair Housing risk language and cannot be approved.',
     })
   }
 

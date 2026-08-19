@@ -46,7 +46,8 @@ import { buildReleaseCertificationBinding } from '@/utils/siteforge/verification
 
 export type SiteForgeDeploymentWorkflowInput = {
   sharedJobId: string
-  legacyJobId: string
+  /** Historic siteforge_jobs row id; retained in old payloads, never written. */
+  legacyJobId?: string
   websiteId: string
   propertyId: string
   artifactId: string
@@ -195,17 +196,6 @@ export async function updateSiteForgeDeploymentStage(
     .eq('id', input.sharedJobId)
   if (sharedError) {
     throw new Error(`Failed to persist deployment stage: ${sharedError.message}`)
-  }
-
-  const { error: legacyError } = await supabase
-    .from('siteforge_jobs')
-    .update({
-      status: 'processing',
-      started_at: progress === 5 ? now : undefined,
-    })
-    .eq('id', input.legacyJobId)
-  if (legacyError) {
-    throw new Error(`Failed to persist compatibility deployment stage: ${legacyError.message}`)
   }
 
   const { error: websiteError } = await supabase
@@ -487,6 +477,8 @@ export async function runSiteForgeDeployment(
       artifactId: input.artifactId,
       contentHash: input.contentHash,
       artifactBinding: buildReleaseCertificationBinding(release),
+      editAcceptanceContract:
+        release.artifact.editAcceptanceContract || undefined,
       targetUrl: instance.url,
       credentials: instance.credentials,
       pages: deploySource.pages,
@@ -552,6 +544,8 @@ export async function runSiteForgeDeployment(
         artifactId: input.artifactId,
         contentHash: input.contentHash,
         artifactBinding: buildReleaseCertificationBinding(release),
+        editAcceptanceContract:
+          release.artifact.editAcceptanceContract || undefined,
         targetUrl: productionUrl,
         credentials: instance.credentials,
         pages: deploySource.pages,
@@ -685,19 +679,6 @@ export async function runSiteForgeDeployment(
     throw new Error(`Failed to complete shared deployment job: ${sharedCompleteError.message}`)
   }
 
-  const { error: legacyCompleteError } = await supabase
-    .from('siteforge_jobs')
-    .update({
-      status: 'complete',
-      completed_at: completedAt,
-      output_data: output as unknown as Json,
-      error_details: null,
-    })
-    .eq('id', input.legacyJobId)
-  if (legacyCompleteError) {
-    throw new Error(`Failed to complete compatibility deployment job: ${legacyCompleteError.message}`)
-  }
-
   console.info('[siteforge_deployment_workflow] deployment completed', {
     sharedJobId: input.sharedJobId,
     ...output,
@@ -809,7 +790,7 @@ async function runLegacyWorkflowThroughRuntimeV3(
     assetsAttempted: release.runtimeAssets.length,
   }
   const completedAt = new Date().toISOString()
-  const [websiteResult, sharedResult, legacyResult] = await Promise.all([
+  const [websiteResult, sharedResult] = await Promise.all([
     client
       .from('property_websites')
       .update({
@@ -847,21 +828,8 @@ async function runLegacyWorkflowThroughRuntimeV3(
         updated_at: completedAt,
       })
       .eq('id', input.sharedJobId),
-    client
-      .from('siteforge_jobs')
-      .update({
-        status: 'complete',
-        completed_at: completedAt,
-        output_data: {
-          ...output,
-          runtimeEvidence: result.evidence,
-        } as unknown as Json,
-        error_details: null,
-      })
-      .eq('id', input.legacyJobId),
   ])
-  const completionError =
-    websiteResult.error || sharedResult.error || legacyResult.error
+  const completionError = websiteResult.error || sharedResult.error
   if (completionError) {
     throw new Error(
       `Failed to persist runtime v3 deployment completion: ${completionError.message}`
@@ -939,14 +907,6 @@ export async function failSiteForgeDeployment(
         updated_at: now,
       })
       .eq('id', input.sharedJobId),
-    supabase
-      .from('siteforge_jobs')
-      .update({
-        status: 'failed',
-        completed_at: now,
-        error_details: { message, category } as Json,
-      })
-      .eq('id', input.legacyJobId),
     supabase
       .from('property_websites')
       .update({

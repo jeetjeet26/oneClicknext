@@ -80,4 +80,18 @@ describe('canonical WordPress preview route', () => {
     })
     expect(response.status).toBe(401)
   })
+
+  it('uses the exact immutable artifact identity for preview deduplication', async () => {
+    const { canonicalPreviewDedupeKey } = await import(
+      '@/utils/siteforge/workflows/canonical-preview-queue'
+    )
+    expect(
+      canonicalPreviewDedupeKey(
+        '22222222-2222-4222-8222-222222222222',
+        'a'.repeat(64)
+      )
+    ).toBe(
+      `siteforge-preview:22222222-2222-4222-8222-222222222222:${'a'.repeat(64)}`
+    )
+  })
 })

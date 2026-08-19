@@ -19,12 +19,19 @@ const bundle: TrustedContextBundle = {
       kind: 'property_field',
       label: 'Property name',
       content: 'The Landing at Riverside',
+      authority: 'authoritative',
+      sensitivity: 'public',
+      allowedUses: ['claim', 'topic'],
     },
     {
-      id: 'operator_input:0',
-      kind: 'operator_input',
-      label: 'Operator fact',
+      id: 'structured_inventory:unit-1',
+      kind: 'structured_inventory',
+      label: 'Approved inventory',
       content: 'One month free on 12-month leases signed in August',
+      authority: 'authoritative',
+      approvalStatus: 'approved',
+      sensitivity: 'sensitive',
+      allowedUses: ['claim', 'topic'],
     },
   ],
   assets: [
@@ -38,10 +45,20 @@ const bundle: TrustedContextBundle = {
       width: 1080,
       height: 1080,
       durationSeconds: null,
+      altText: 'Pool at sunset',
+      rightsStatus: 'owned',
+      approvalStatus: 'approved',
+      curationStatus: 'selected',
     },
   ],
   brandVoice: 'Warm and neighborly',
-  targetAudience: 'Young professionals',
+  targetAudience: null,
+  warnings: [],
+  policy: {
+    legalConfigId: 'legal-1',
+    fairHousingRequired: true,
+    sensitiveClaimsRequireApproval: true,
+  },
   contextHash: 'hash-123',
 }
 
@@ -63,6 +80,8 @@ const validOutput: GenerationOutput = {
   conceptSummary: 'Golden-hour pool moments with an August leasing special.',
   variants: [
     {
+      variantKey: 'instagram:image:1',
+      sequenceIndex: 0,
       platform: 'instagram',
       caption: 'Golden hour hits different at The Landing.',
       hashtags: ['#poollife', 'apartmentliving'],
@@ -70,8 +89,16 @@ const validOutput: GenerationOutput = {
       altText: 'Resort-style pool at sunset',
       contentFormat: 'image',
       selectedAssetId: ASSET_ID,
+      selectedAssetIds: [ASSET_ID],
+      storyboard: [],
+      overlayText: [],
+      safeArea: { topPercent: 10, rightPercent: 8, bottomPercent: 18, leftPercent: 8 },
+      subtitleText: null,
+      thumbnailAssetId: null,
     },
     {
+      variantKey: 'facebook:text:1',
+      sequenceIndex: 0,
       platform: 'facebook',
       caption: 'Summer evenings are better by the pool. Sign a 12-month lease in August and get one month free.',
       hashtags: [],
@@ -79,13 +106,19 @@ const validOutput: GenerationOutput = {
       altText: null,
       contentFormat: 'text',
       selectedAssetId: null,
+      selectedAssetIds: [],
+      storyboard: [],
+      overlayText: [],
+      safeArea: { topPercent: 10, rightPercent: 8, bottomPercent: 18, leftPercent: 8 },
+      subtitleText: null,
+      thumbnailAssetId: null,
     },
   ],
   claims: [
     {
       text: 'One month free on 12-month leases signed in August',
       type: 'concession',
-      sourceIds: ['operator_input:0'],
+      sourceIds: ['structured_inventory:unit-1'],
     },
   ],
 }
@@ -96,6 +129,10 @@ describe('generateRevisionContent', () => {
       bundle,
       objective: 'Drive August tours',
       channels: ['instagram', 'facebook'],
+      formatPlan: [
+        { platform: 'instagram', contentFormat: 'image', quantity: 1 },
+        { platform: 'facebook', contentFormat: 'text', quantity: 1 },
+      ],
       model: makeModel(validOutput),
     })
 
@@ -109,7 +146,7 @@ describe('generateRevisionContent', () => {
     expect(instagram.hashtags).toEqual(['poollife', 'apartmentliving'])
 
     expect(result.content.claims[0].citations).toEqual([
-      { sourceType: 'operator_input', sourceId: 'operator_input:0' },
+      { sourceType: 'structured_inventory', sourceId: 'structured_inventory:unit-1' },
     ])
 
     expect(result.metadata.contextHash).toBe('hash-123')
@@ -134,6 +171,10 @@ describe('generateRevisionContent', () => {
         bundle,
         objective: 'Drive August tours',
         channels: ['instagram', 'facebook'],
+        formatPlan: [
+          { platform: 'instagram', contentFormat: 'image', quantity: 1 },
+          { platform: 'facebook', contentFormat: 'text', quantity: 1 },
+        ],
         model: makeModel(output),
       })
     ).rejects.toThrowError(GenerationClaimError)
@@ -145,6 +186,11 @@ describe('generateRevisionContent', () => {
         bundle,
         objective: 'Drive August tours',
         channels: ['instagram', 'facebook', 'linkedin'],
+        formatPlan: [
+          { platform: 'instagram', contentFormat: 'image', quantity: 1 },
+          { platform: 'facebook', contentFormat: 'text', quantity: 1 },
+          { platform: 'linkedin', contentFormat: 'text', quantity: 1 },
+        ],
         model: makeModel(validOutput),
       })
     ).rejects.toThrow(/did not produce variants for: linkedin/)
@@ -162,9 +208,44 @@ describe('generateRevisionContent', () => {
       bundle,
       objective: 'Drive August tours',
       channels: ['instagram', 'facebook'],
+      formatPlan: [
+        { platform: 'instagram', contentFormat: 'image', quantity: 1 },
+        { platform: 'facebook', contentFormat: 'text', quantity: 1 },
+      ],
       model: makeModel(output),
     })
     const instagram = result.content.variants.find((variant) => variant.platform === 'instagram')!
     expect(instagram.contentFormat).toBe('image')
+  })
+
+  it('creates multiple coordinated formats for the same channel', async () => {
+    const instagram = validOutput.variants[0]
+    const output: GenerationOutput = {
+      ...validOutput,
+      variants: [
+        instagram,
+        {
+          ...instagram,
+          variantKey: 'instagram:story:1',
+          contentFormat: 'story',
+          overlayText: ['Tour your next home'],
+        },
+      ],
+    }
+    const result = await generateRevisionContent({
+      bundle,
+      objective: 'Create a coordinated Instagram campaign',
+      channels: ['instagram'],
+      formatPlan: [
+        { platform: 'instagram', contentFormat: 'image', quantity: 1 },
+        { platform: 'instagram', contentFormat: 'story', quantity: 1 },
+      ],
+      model: makeModel(output),
+    })
+
+    expect(result.content.variants.map((variant) => variant.variantKey)).toEqual([
+      'instagram:image:1',
+      'instagram:story:1',
+    ])
   })
 })

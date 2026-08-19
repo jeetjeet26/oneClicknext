@@ -146,7 +146,7 @@ export async function persistSiteForgeAssets(
       try {
         assertAssetCanBeUsed(sourceAsset)
       } catch {
-        throw new Error(`SiteForge source asset ${sourceAsset.id} is not approved and rights-cleared`)
+        throw new Error(`SiteForge source asset ${sourceAsset.id} is not usable (unapproved or duplicate)`)
       }
     }
     const rightsStatus: Photo['rightsStatus'] = sourceAsset

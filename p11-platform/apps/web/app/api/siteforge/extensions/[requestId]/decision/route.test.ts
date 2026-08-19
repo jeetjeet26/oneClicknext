@@ -5,6 +5,7 @@ import { buildOverlayPackageManifest } from '@/utils/siteforge/editor/overlay'
 import {
   computeOverlayContentHash,
   computeOverlaySignature,
+  deriveOverlayRenderedEffectContract,
   sha256OverlayValue,
 } from '@/utils/siteforge/editor/overlay-contract'
 import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
@@ -13,6 +14,7 @@ const {
   getUserMock,
   createServiceClientMock,
   replaceOverlayMock,
+  queuePreviewMock,
 } = vi.hoisted(() => ({
   getUserMock: vi.fn(),
   createServiceClientMock: vi.fn(),
@@ -21,6 +23,7 @@ const {
     themeOverlay: overlay,
     contentHash: 'f'.repeat(64),
   })),
+  queuePreviewMock: vi.fn(),
 }))
 
 vi.mock('@/utils/supabase/server', () => ({
@@ -31,6 +34,9 @@ vi.mock('@/utils/supabase/admin', () => ({
 }))
 vi.mock('@/utils/siteforge/wordpress/theme-artifact', () => ({
   replaceWordPressThemeArtifactOverlay: replaceOverlayMock,
+}))
+vi.mock('@/utils/siteforge/workflows/canonical-preview-queue', () => ({
+  queueCanonicalPreviewAfterPublication: queuePreviewMock,
 }))
 
 const REQUEST_ID = '11111111-1111-4111-8111-111111111111'
@@ -58,6 +64,10 @@ function fixture(status = 'proposed') {
     reason: 'Semantic operations cannot express this interaction',
     files: [
       {
+        path: 'assets/css/reviewed.css',
+        content: '.reviewed { opacity: 0.9; }',
+      },
+      {
         path: 'assets/js/reviewed.js',
         content: 'document.body.classList.add("reviewed")',
       },
@@ -67,7 +77,8 @@ function fixture(status = 'proposed') {
     buildOverlayPackageManifest(proposal)
   const contentHash = computeOverlayContentHash(proposal.reason, manifest)
   const archive = zipSync({
-    'assets/js/reviewed.js': strToU8(proposal.files[0].content),
+    'assets/css/reviewed.css': strToU8(proposal.files[0].content),
+    'assets/js/reviewed.js': strToU8(proposal.files[1].content),
     'functions.php': strToU8(functionsPhp),
     'style.css': strToU8(styleCss),
     'siteforge-overlay.json': strToU8(
@@ -107,6 +118,41 @@ function fixture(status = 'proposed') {
       validator: 'siteforge-static-sandbox-v1',
       reportSha256: hashSiteForgeContent(validationReport),
     },
+    renderedEffectContract: deriveOverlayRenderedEffectContract(proposal),
+  }
+  const renderedEffectEvidence = {
+    evidenceVersion: 'siteforge-overlay-rendered-effect-v1',
+    contractHash: compatibility.renderedEffectContract.contractHash,
+    parentArtifact: {
+      artifactId: SOURCE_ID,
+      contentHash: 'a'.repeat(64),
+    },
+    editedArtifact: {
+      artifactId: PUBLISHED_ID,
+      contentHash: 'f'.repeat(64),
+    },
+    viewportResults: compatibility.renderedEffectContract.requiredViewports.map(
+      viewport => ({
+        viewport,
+        selectors: compatibility.renderedEffectContract.selectors.map(
+          selector => ({
+            selector: selector.selector,
+            parentMatched: 0,
+            editedMatched: 1,
+            computedStyles: selector.computedStyles.map(style => ({
+              ...style,
+              parentValue: '1',
+              editedValue: style.value,
+              changed: true,
+            })),
+          })
+        ),
+      })
+    ),
+    unchangedRegionsPassed: true,
+    interactionChecksPassed: true,
+    passed: true,
+    failures: [],
   }
   return {
     archive,
@@ -151,6 +197,7 @@ function fixture(status = 'proposed') {
       package_sha256: packageSha256,
       signature,
       validation_report: validationReport,
+      screenshot_manifest: renderedEffectEvidence,
     },
   }
 }
@@ -190,6 +237,9 @@ function serviceFor(
       return { data: { id: 'updated' }, error: null }
     }
     if (table === 'profiles') return { data: state.profile, error: null }
+    if (table === 'properties') {
+      return { data: { org_id: ORG_ID }, error: null }
+    }
     if (table === 'siteforge_runtime_extension_requests') {
       if (filters.status && state.extension.status !== filters.status) {
         return { data: null, error: null }
@@ -278,6 +328,10 @@ describe('SiteForge runtime extension decisions', () => {
     vi.stubEnv('SITEFORGE_RUNTIME_EXTENSIONS_ENABLED', 'true')
     vi.stubEnv('SITEFORGE_OVERLAY_SIGNING_SECRET', SIGNING_SECRET)
     getUserMock.mockResolvedValue({ data: { user: null }, error: null })
+    queuePreviewMock.mockResolvedValue({
+      status: 'running',
+      jobId: '88888888-8888-4888-8888-888888888888',
+    })
   })
 
   it('validates the request identity and decision before side effects', async () => {
@@ -377,6 +431,10 @@ describe('SiteForge runtime extension decisions', () => {
     expect(await response.json()).toEqual(
       expect.objectContaining({
         status: 'approved',
+        previewQueue: {
+          status: 'running',
+          jobId: '88888888-8888-4888-8888-888888888888',
+        },
         artifact: expect.objectContaining({
           id: PUBLISHED_ID,
           parentArtifactId: SOURCE_ID,
@@ -385,6 +443,7 @@ describe('SiteForge runtime extension decisions', () => {
         }),
       })
     )
+    expect(queuePreviewMock).toHaveBeenCalledTimes(1)
   })
 
   it('reconciles an existing building revision and verifies exact trigger binding', async () => {
@@ -407,6 +466,7 @@ describe('SiteForge runtime extension decisions', () => {
           overlayId: OVERLAY_ID,
           packageSha256: data.overlay.package_sha256,
           contentHash: data.overlay.content_hash,
+          themeSlug: `oneclick-siteforge-overlay-${data.overlay.content_hash.slice(0, 12)}`,
           signature: data.overlay.signature,
         },
       },
@@ -427,6 +487,33 @@ describe('SiteForge runtime extension decisions', () => {
           parentArtifactId: SOURCE_ID,
           themeOverlayId: OVERLAY_ID,
           packageSha256: data.overlay.package_sha256,
+        }),
+      })
+    )
+  })
+
+  it('keeps immutable approval successful when preview queueing fails', async () => {
+    getUserMock.mockResolvedValue({
+      data: { user: { id: 'manager-1' } },
+      error: null,
+    })
+    queuePreviewMock.mockRejectedValue(new Error('preview service unavailable'))
+    const data = fixture()
+    createServiceClientMock.mockReturnValue(serviceFor(data).service)
+    const { POST } = await import('./route')
+    const response = await POST(
+      request({ decision: 'approved', reason: 'Reviewed and approved' }),
+      { params: Promise.resolve({ requestId: REQUEST_ID }) }
+    )
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual(
+      expect.objectContaining({
+        status: 'approved',
+        artifact: expect.objectContaining({ id: PUBLISHED_ID }),
+        previewQueue: expect.objectContaining({
+          status: 'pending',
+          reason: 'preview service unavailable',
         }),
       })
     )

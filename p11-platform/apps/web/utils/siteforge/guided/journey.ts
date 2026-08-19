@@ -7,11 +7,15 @@ import {
   type GuidedAnswers,
   type GuidedDiscoveryField,
   type GuidedJourneyState,
-  type GuidedQuestion,
+  type GuidedJourneyStateV1,
+  type GuidedQuestionV1,
+  type SiteStoryContract,
 } from "./contracts";
 import { siteForgeBriefSchema, type SiteForgeBrief } from "../briefs/contracts";
+import { adaptiveDiscoveryProgress } from "./adaptive-discovery";
+import type { AdaptiveVerticalContext } from "./adaptive-discovery";
 
-const QUESTIONS: Record<GuidedDiscoveryField, GuidedQuestion> = {
+const QUESTIONS: Record<GuidedDiscoveryField, GuidedQuestionV1> = {
   objective: {
     field: "objective",
     question: "What is the most important job this website should do?",
@@ -98,7 +102,7 @@ function isAnswered(
 
 export function nextGuidedQuestion(
   answers: GuidedAnswers,
-): GuidedQuestion | null {
+): GuidedQuestionV1 | null {
   const field = GUIDED_DISCOVERY_FIELDS.find(
     (item) => !isAnswered(answers, item),
   );
@@ -315,6 +319,7 @@ export function inferGuidedAnswersFromTruth(input: {
 export function buildGuidedBrief(input: {
   propertyName: string;
   answers: GuidedAnswers;
+  audienceLabel?: string;
   attachmentReferences?: Array<{
     label: string;
     url?: string;
@@ -353,7 +358,7 @@ export function buildGuidedBrief(input: {
     ],
     audiences: [
       {
-        segment: "Prospective residents",
+        segment: input.audienceLabel || "Prospective residents",
         needs: answers.renterNeeds,
         objections: [],
       },
@@ -414,6 +419,91 @@ export function buildGuidedBrief(input: {
   return brief;
 }
 
+export function buildAdaptiveGuidedBrief(input: {
+  propertyName: string;
+  answers: GuidedAnswers;
+  context: AdaptiveVerticalContext;
+  story: SiteStoryContract;
+  attachmentReferences?: Array<{
+    label: string;
+    url?: string;
+    sourceId?: string;
+    notes?: string;
+  }>;
+}): SiteForgeBrief {
+  const { manifest, profile } = input.context;
+  const northStar =
+    manifest.analyticsOutcomes.find((outcome) => outcome.northStar) ||
+    manifest.analyticsOutcomes[0];
+  const primaryConversion =
+    manifest.conversionIntentRecipes.at(-1) ||
+    manifest.conversionIntentRecipes[0];
+  const audienceLabels = profile.value.audiences.length
+    ? profile.value.audiences
+    : [input.story.audience.label];
+  return siteForgeBriefSchema.parse({
+    title: `${input.propertyName} website brief`,
+    summary:
+      input.story.promise,
+    objectives: [
+      {
+        statement: input.story.premise,
+        priority: "primary",
+        successSignal:
+          input.answers.successSignal ||
+          northStar?.outcome.replaceAll("_", " ") ||
+          "qualified inquiry",
+      },
+    ],
+    audiences: audienceLabels.map((segment) => ({
+      segment,
+      needs: input.story.audience.practicalNeeds,
+      objections: [],
+    })),
+    conversion: {
+      primaryAction:
+        primaryConversion?.intent.replaceAll("_", " ") || "inquiry",
+      secondaryActions: manifest.conversionIntentRecipes
+        .map((recipe) => recipe.intent.replaceAll("_", " "))
+        .filter(
+          (intent, index, values) =>
+            intent !== primaryConversion?.intent.replaceAll("_", " ") &&
+            values.indexOf(intent) === index,
+        ),
+      funnelNotes:
+        `${input.story.narrativeArc.join(" ")} Use only pack-declared conversion intents; provider resolution remains unconfigured until an approved adapter is bound.`,
+    },
+    scope: {
+      includedPages: manifest.pages.map((page) => page.title),
+      excludedItems: input.answers.pageScope?.excluded || [],
+    },
+    stakeholders: [],
+    approvers: [],
+    launchTarget: {
+      targetDate: input.answers.deadline?.date || null,
+      timezone: "UTC",
+      flexibility: input.answers.deadline?.flexibility || "flexible",
+    },
+    legalConstraints: manifest.policyCodes.map((code) => ({
+      name: code,
+      requirement: `Satisfy the pinned ${code} policy before publication.`,
+      blocking: true,
+    })),
+    integrationConstraints: [],
+    references: [
+      ...(input.answers.references || []),
+      ...(input.attachmentReferences || []),
+    ],
+    kpis: manifest.analyticsOutcomes.map((outcome) => ({
+      name: outcome.outcome.replaceAll("_", " "),
+      target: outcome.northStar
+        ? "Improve from the current measured baseline"
+        : "Track as a supporting outcome",
+      measurement: outcome.eventName,
+    })),
+  });
+}
+
 export type ScoredDirection = {
   id: string;
   name: string;
@@ -472,14 +562,16 @@ export type GuidedJourneyProjection = {
   headline: string;
   explanation: string;
   recommendedAction: string;
-  progress: ReturnType<typeof guidedDiscoveryProgress>;
+  progress:
+    | ReturnType<typeof guidedDiscoveryProgress>
+    | ReturnType<typeof adaptiveDiscoveryProgress>;
   blocker: string | null;
   retryable: boolean;
   previewUrl: string | null;
 };
 
 export function projectGuidedJourney(
-  state: GuidedJourneyState,
+  state: GuidedJourneyState | GuidedJourneyStateV1,
   runtime?: {
     generationStatus?: string | null;
     generationFailureReason?: string | null;
@@ -489,7 +581,10 @@ export function projectGuidedJourney(
     productionUrl?: string | null;
   },
 ): GuidedJourneyProjection {
-  const progress = guidedDiscoveryProgress(state.answers);
+  const progress =
+    state.schemaVersion === 2
+      ? adaptiveDiscoveryProgress(state)
+      : guidedDiscoveryProgress(state.answers);
   const runtimeStatus = runtime?.generationStatus || "";
   if (["failed", "cancelled"].includes(runtimeStatus)) {
     const cancelled = runtimeStatus === "cancelled";

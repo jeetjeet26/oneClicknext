@@ -11,6 +11,7 @@ class SiteForge_Runtime_V3_Materializer {
 	const PAGE_ARTIFACT_META = '_siteforge_v3_artifact_id';
 	const PAGE_HASH_META     = '_siteforge_v3_content_hash';
 	const MENU_ITEM_META     = '_siteforge_v3_navigation_item_id';
+	const MENU_RESOURCE_META = '_siteforge_v3_navigation_resource_id';
 
 	const RESOURCE_IDS_OPTION = 'oneclick_siteforge_runtime_resource_ids_v3';
 	const MENU_OWNERS_OPTION  = 'oneclick_siteforge_runtime_menu_owners_v3';
@@ -19,6 +20,7 @@ class SiteForge_Runtime_V3_Materializer {
 	const INTEGRATIONS_OPTION = 'oneclick_siteforge_integrations_v3';
 	const LEGAL_OPTION        = 'oneclick_siteforge_legal_v3';
 	const SEO_OPTION          = 'oneclick_siteforge_seo_v3';
+	const PENDING_THEME_OPTION = 'oneclick_siteforge_runtime_pending_theme_v3';
 
 	/** @var SiteForge_Runtime_V3_Assets */
 	private $assets;
@@ -52,6 +54,15 @@ class SiteForge_Runtime_V3_Materializer {
 			);
 		}
 
+		$active_theme = get_option( self::PENDING_THEME_OPTION, null );
+		if ( ! is_array( $active_theme ) || empty( $active_theme['stylesheet'] ) || empty( $active_theme['template'] ) ) {
+			$active_theme = array(
+				'stylesheet' => get_stylesheet(),
+				'template'   => get_template(),
+			);
+		}
+		delete_option( self::PENDING_THEME_OPTION );
+
 		return array(
 			'siteId'           => $site_id,
 			'pages'            => $pages,
@@ -59,6 +70,7 @@ class SiteForge_Runtime_V3_Materializer {
 			'options'          => $options,
 			'navMenuLocations' => get_theme_mod( 'nav_menu_locations', array() ),
 			'menus'            => $this->snapshot_owned_menus( $site_id ),
+			'activeTheme'      => $active_theme,
 		);
 	}
 
@@ -70,9 +82,11 @@ class SiteForge_Runtime_V3_Materializer {
 		$site_id     = $input['siteId'];
 		$artifact_id = $input['artifactId'];
 		$bindings    = $this->asset_bindings( $input['assetPreparationId'] );
+		$environment = isset( $input['release']['target']['environment'] ) ? (string) $input['release']['target']['environment'] : '';
+		$allow_legacy_adoption = in_array( $environment, array( 'canonical_preview', 'staging' ), true );
 
 		$this->assert_inventory_fresh( $graph['sections'] );
-		$this->assert_page_ownership( $graph, $site_id );
+		$this->assert_page_ownership( $graph, $site_id, $allow_legacy_adoption );
 
 		$sections = array();
 		foreach ( $graph['sections'] as $section ) {
@@ -103,7 +117,8 @@ class SiteForge_Runtime_V3_Materializer {
 				$bindings,
 				$site_id,
 				$artifact_id,
-				$presentation
+				$presentation,
+				$allow_legacy_adoption
 			);
 		}
 		ksort( $page_ids, SORT_STRING );
@@ -120,7 +135,7 @@ class SiteForge_Runtime_V3_Materializer {
 		$this->persist_option( 'page_on_front', absint( $front_page_id ), 'homepage ID' );
 
 		$resource_ids = $this->allocate_resource_ids( $graph, $page_ids, $menu_ids, $bindings, $site_id );
-		$spec         = $this->verification_spec( $graph, $input['release']['target'], $page_ids, $menu_ids, $resource_ids, $bindings, $site_id, $artifact_id );
+		$spec         = $this->verification_spec( $graph, $input['release']['identity'], $input['release']['target'], $page_ids, $menu_ids, $resource_ids, $bindings, $site_id, $artifact_id );
 		$verification = $this->verify( $spec );
 		if ( ! $verification['verified'] ) {
 			throw new SiteForge_Runtime_Exception(
@@ -191,12 +206,18 @@ class SiteForge_Runtime_V3_Materializer {
 			$this->repair_active_spec_after_menu_restore( $restored_menus );
 		}
 		set_theme_mod( 'nav_menu_locations', $locations );
+		if ( ! isset( $snapshot['activeTheme']['stylesheet'], $snapshot['activeTheme']['template'] ) ) {
+			throw new SiteForge_Runtime_Exception( 'siteforge_v3_materializer_snapshot_invalid', 'Snapshot is missing the prior active theme.', 500 );
+		}
+		switch_theme( $snapshot['activeTheme']['stylesheet'] );
 		$this->assert_snapshot( $snapshot, $restored_menus );
 	}
 
 	public function verify( $spec ) {
 		$checks = array();
 		foreach ( $spec['pages'] as $resource_id => $expected ) {
+			clean_post_cache( $expected['id'] );
+			wp_cache_delete( $expected['id'], 'post_meta' );
 			$post = get_post( $expected['id'] );
 			$actual = $post ? array(
 				'resourceId' => (string) get_post_meta( $post->ID, self::PAGE_RESOURCE_META, true ),
@@ -211,8 +232,20 @@ class SiteForge_Runtime_V3_Materializer {
 				'template'   => (string) get_page_template_slug( $post->ID ),
 				'seo'        => $this->seo_readback( $post->ID ),
 			) : null;
-			$passed = null !== $actual && hash_equals( $expected['readbackHash'], SiteForge_Runtime_Validation::hash( $actual ) );
-			$checks[] = $this->check( 'wordpress_page:' . $resource_id, $passed, $passed ? 'Page matches.' : 'Page readback mismatch.' );
+			$actual_hash = null !== $actual ? SiteForge_Runtime_Validation::hash( $actual ) : null;
+			$passed = null !== $actual_hash && hash_equals( $expected['readbackHash'], $actual_hash );
+			$checks[] = $this->check(
+				'wordpress_page:' . $resource_id,
+				$passed,
+				$passed
+					? 'Page matches.'
+					: sprintf(
+						'Page readback mismatch (expected %s, actual %s, artifact %s).',
+						$expected['readbackHash'],
+						null === $actual_hash ? 'missing' : $actual_hash,
+						null === $actual ? 'missing' : $actual['artifactId']
+					)
+			);
 		}
 		foreach ( $spec['removedPages'] as $resource_id ) {
 			$page_id  = $this->find_owned_page( $resource_id, $spec['siteId'] );
@@ -220,9 +253,18 @@ class SiteForge_Runtime_V3_Materializer {
 			$checks[] = $this->check( 'wordpress_page_removed:' . $resource_id, $passed, $passed ? 'Owned page removed.' : 'Owned page remains.' );
 		}
 		foreach ( $spec['optionHashes'] as $option => $hash ) {
+			wp_cache_delete( $option, 'options' );
+			wp_cache_delete( 'alloptions', 'options' );
+			wp_cache_delete( 'notoptions', 'options' );
 			$actual   = SiteForge_Runtime_Validation::hash( get_option( $option, null ) );
 			$passed   = hash_equals( $hash, $actual );
-			$checks[] = $this->check( 'wordpress_option:' . $option, $passed, $passed ? 'Option matches.' : 'Option readback mismatch.' );
+			$checks[] = $this->check(
+				'wordpress_option:' . $option,
+				$passed,
+				$passed
+					? 'Option matches.'
+					: sprintf( 'Option readback mismatch (expected %s, actual %s).', $hash, $actual )
+			);
 		}
 		$front_ok = 'page' === get_option( 'show_on_front' ) && absint( get_option( 'page_on_front' ) ) === absint( $spec['homepageId'] );
 		$checks[] = $this->check( 'wordpress_homepage', $front_ok, $front_ok ? 'Homepage matches.' : 'Homepage mismatch.' );
@@ -233,6 +275,13 @@ class SiteForge_Runtime_V3_Materializer {
 		}
 		$id_ok = SiteForge_Runtime_Validation::hash( get_option( self::RESOURCE_IDS_OPTION, array() ) ) === $spec['resourceIdsHash'];
 		$checks[] = $this->check( 'wordpress_resource_ids', $id_ok, $id_ok ? 'Resource IDs match.' : 'Resource ID mapping mismatch.' );
+		$theme = $this->theme_readback();
+		$stylesheet_ok = $spec['theme']['stylesheet'] === $theme['stylesheet'];
+		$template_ok   = $spec['theme']['template'] === $theme['template'];
+		$css_ok        = ! $spec['theme']['requiresOverlayCss'] || $theme['overlayCssLoaded'];
+		$checks[] = $this->check( 'wordpress_theme_stylesheet', $stylesheet_ok, $stylesheet_ok ? 'Active stylesheet matches.' : 'Active stylesheet mismatch.' );
+		$checks[] = $this->check( 'wordpress_theme_template', $template_ok, $template_ok ? 'Active template matches.' : 'Active template mismatch.' );
+		$checks[] = $this->check( 'wordpress_theme_overlay_css', $css_ok, $css_ok ? 'Overlay CSS is loaded.' : 'Overlay CSS is not loaded.' );
 
 		$verified = true;
 		foreach ( $checks as $check ) {
@@ -248,13 +297,13 @@ class SiteForge_Runtime_V3_Materializer {
 		);
 	}
 
-	private function apply_page( $page, $sections, $forms, $integrations, $seo, $bindings, $site_id, $artifact_id, $presentation ) {
+	private function apply_page( $page, $sections, $forms, $integrations, $seo, $bindings, $site_id, $artifact_id, $presentation, $allow_legacy_adoption = false ) {
 		$page_id = $this->find_owned_page( $page['resourceId'], $site_id );
 		if ( ! $page_id ) {
 			$existing = get_page_by_path( $page['slug'], OBJECT, 'page' );
 			if ( $existing ) {
 				$owner = (string) get_post_meta( $existing->ID, self::PAGE_SITE_META, true );
-				if ( $site_id !== $owner ) {
+				if ( $site_id !== $owner && ! ( '' === $owner && $allow_legacy_adoption && $this->is_legacy_siteforge_page( $existing->ID ) ) ) {
 					throw new SiteForge_Runtime_Exception( 'siteforge_v3_page_slug_conflict', 'A v3 page slug belongs to an unowned page.', 409, array( 'slug' => $page['slug'], 'pageId' => absint( $existing->ID ) ) );
 				}
 				$page_id = absint( $existing->ID );
@@ -298,6 +347,8 @@ class SiteForge_Runtime_V3_Materializer {
 		update_post_meta( $page_id, '_siteforge_page_content_hash', $page['contentHash'] );
 		update_post_meta( $page_id, '_siteforge_page_purpose', $page['purpose'] );
 		$this->apply_seo( $page_id, null !== $page['seoId'] ? $seo[ $page['seoId'] ] : null, $bindings );
+		clean_post_cache( $page_id );
+		wp_cache_delete( $page_id, 'post_meta' );
 		return $page_id;
 	}
 
@@ -311,16 +362,18 @@ class SiteForge_Runtime_V3_Materializer {
 				throw new SiteForge_Runtime_Exception( 'siteforge_v3_block_unsupported', 'The active theme does not register ' . $section['blockName'] . '.', 422 );
 			}
 			$data = $this->bind_assets( $section['data'], $bindings );
+			$data['_siteforge_section_id'] = $section['resourceId'];
 			if ( null !== $section['formId'] ) {
 				$form = $forms[ $section['formId'] ];
 				$data['_siteforge_form'] = $form;
 				$data['_siteforge_integration'] = $integrations[ $form['integrationId'] ];
 			}
 			$attrs = array(
-				'id'   => 'block_' . preg_replace( '/[^A-Za-z0-9_-]/', '_', $section['resourceId'] ),
-				'name' => $section['blockName'],
-				'data' => $data,
-				'mode' => 'preview',
+				'id'                 => 'block_' . preg_replace( '/[^A-Za-z0-9_-]/', '_', $section['resourceId'] ),
+				'name'               => $section['blockName'],
+				'data'               => $data,
+				'mode'               => 'preview',
+				'siteforgeSectionId' => $section['resourceId'],
 			);
 			if ( null !== $section['anchor'] ) {
 				$attrs['anchor'] = $section['anchor'];
@@ -430,15 +483,55 @@ class SiteForge_Runtime_V3_Materializer {
 		foreach ( $graph['globalComponents'] as $component ) {
 			$components[ $component['resourceId'] ] = $this->bind_assets( $component, $bindings );
 		}
+		$logo_attachment_id = 0;
+		foreach ( $graph['assets'] as $asset ) {
+			if ( false !== strpos( strtolower( $asset['role'] ), 'logo' ) && isset( $bindings[ $asset['assetId'] ] ) ) {
+				$logo_attachment_id = absint( $bindings[ $asset['assetId'] ]['attachmentId'] );
+				break;
+			}
+		}
+		if ( $logo_attachment_id ) {
+			set_theme_mod( 'custom_logo', $logo_attachment_id );
+		} else {
+			remove_theme_mod( 'custom_logo' );
+		}
 		$header = $components[ $graph['chrome']['headerComponentId'] ]['data'];
 		$footer = $components[ $graph['chrome']['footerComponentId'] ]['data'];
-		$configuration = array(
-			'header'           => $header,
-			'footer'           => $footer,
-			'globalComponents' => $components,
-			'chrome'           => $graph['chrome'],
-		);
+		$configuration_component = isset( $components['component:site-configuration'] )
+			? $components['component:site-configuration']['data']
+			: null;
+		if ( null !== $configuration_component ) {
+			$required_configuration = array( 'design', 'header', 'navigation', 'footer', 'media', 'motion', 'behavior' );
+			if (
+				! is_array( $configuration_component ) ||
+				array() !== array_diff( $required_configuration, array_keys( $configuration_component ) )
+			) {
+				throw new SiteForge_Runtime_Exception(
+					'siteforge_v3_site_configuration_incomplete',
+					'The v3 site configuration must project design, header, navigation, footer, media, motion, and behavior.',
+					422
+				);
+			}
+			$configuration = $configuration_component;
+		} else {
+			// Compatibility for artifacts compiled before complete configuration
+			// became a first-class v3 utility resource.
+			$configuration = array(
+				'header' => $header,
+				'footer' => $footer,
+			);
+		}
+		$configuration['header'] = $header;
+		$configuration['footer'] = $footer;
+		$configuration['globalComponents'] = $components;
+		$configuration['chrome'] = $graph['chrome'];
 		$this->persist_option( 'oneclick_siteforge_configuration', $configuration, 'chrome configuration' );
+		if ( null !== $configuration_component ) {
+			$design_tokens = $configuration['design'];
+			$design_tokens['content_hash'] = SiteForge_Runtime_Validation::hash( $configuration['design'] );
+			$this->persist_option( 'oneclick_siteforge_design_tokens', $design_tokens, 'design tokens' );
+			$this->persist_option( 'oneclick_siteforge_motion', $configuration['motion'], 'motion options' );
+		}
 		$this->persist_option( self::FORMS_OPTION, $graph['forms'], 'forms' );
 		$this->persist_option( self::REDIRECTS_OPTION, $graph['redirects'], 'redirects' );
 		$this->persist_option( self::INTEGRATIONS_OPTION, $graph['integrations'], 'integrations' );
@@ -491,7 +584,13 @@ class SiteForge_Runtime_V3_Materializer {
 			while ( ! empty( $pending ) ) {
 				$progress = false;
 				foreach ( $pending as $index => $item ) {
-					$item_key  = isset( $item['itemId'] ) ? (string) $item['itemId'] : ( isset( $item['id'] ) ? (string) $item['id'] : 'item:' . $index );
+					$item_key  = isset( $item['itemId'] ) ? (string) $item['itemId'] : ( isset( $item['id'] ) ? (string) $item['id'] : '' );
+					if ( '' === $item_key || ! preg_match( '/^[A-Za-z0-9][A-Za-z0-9._:-]*$/', $item_key ) ) {
+						throw new SiteForge_Runtime_Exception( 'siteforge_v3_navigation_identity_missing', 'Every v3 navigation item requires one stable explicit identity.', 422 );
+					}
+					if ( isset( $item_ids[ $item_key ] ) ) {
+						throw new SiteForge_Runtime_Exception( 'siteforge_v3_navigation_identity_duplicate', 'V3 navigation item identities must be unique.', 422, array( 'itemId' => $item_key ) );
+					}
 					$parent_key= isset( $item['parentItemId'] ) ? (string) $item['parentItemId'] : ( isset( $item['parentId'] ) ? (string) $item['parentId'] : '' );
 					if ( '' !== $parent_key && ! isset( $item_ids[ $parent_key ] ) ) {
 						continue;
@@ -520,6 +619,7 @@ class SiteForge_Runtime_V3_Materializer {
 						throw new SiteForge_Runtime_Exception( 'siteforge_v3_navigation_failed', 'Could not materialize a v3 menu item.', 500 );
 					}
 					update_post_meta( $item_id, self::MENU_ITEM_META, $item_key );
+					update_post_meta( $item_id, self::MENU_RESOURCE_META, $resource_id );
 					$item_ids[ $item_key ] = absint( $item_id );
 					unset( $pending[ $index ] );
 					$progress = true;
@@ -540,7 +640,7 @@ class SiteForge_Runtime_V3_Materializer {
 		return $menu_ids;
 	}
 
-	private function verification_spec( $graph, $target, $page_ids, $menu_ids, $resource_ids, $bindings, $site_id, $artifact_id ) {
+	private function verification_spec( $graph, $identity, $target, $page_ids, $menu_ids, $resource_ids, $bindings, $site_id, $artifact_id ) {
 		$sections = array();
 		foreach ( $graph['sections'] as $section ) {
 			$sections[ $section['resourceId'] ] = $section;
@@ -586,7 +686,7 @@ class SiteForge_Runtime_V3_Materializer {
 			);
 		}
 		$option_hashes = array();
-		foreach ( array( 'oneclick_siteforge_configuration', self::FORMS_OPTION, self::REDIRECTS_OPTION, self::INTEGRATIONS_OPTION, self::LEGAL_OPTION, self::SEO_OPTION, 'oneclick_siteforge_responsive_css_v3', 'oneclick_siteforge_legal', 'oneclick_siteforge_analytics', 'oneclick_siteforge_target', 'oneclick_siteforge_target_mode', 'oneclick_siteforge_protection', 'oneclick_siteforge_public_runtime', 'oneclick_siteforge_lumaleasing', 'blog_public', self::MENU_OWNERS_OPTION ) as $option ) {
+		foreach ( array( 'oneclick_siteforge_configuration', 'oneclick_siteforge_design_tokens', 'oneclick_siteforge_motion', self::FORMS_OPTION, self::REDIRECTS_OPTION, self::INTEGRATIONS_OPTION, self::LEGAL_OPTION, self::SEO_OPTION, 'oneclick_siteforge_responsive_css_v3', 'oneclick_siteforge_legal', 'oneclick_siteforge_analytics', 'oneclick_siteforge_target', 'oneclick_siteforge_target_mode', 'oneclick_siteforge_protection', 'oneclick_siteforge_public_runtime', 'oneclick_siteforge_lumaleasing', 'blog_public', self::MENU_OWNERS_OPTION ) as $option ) {
 			$option_hashes[ $option ] = SiteForge_Runtime_Validation::hash( get_option( $option, null ) );
 		}
 		$menus = array();
@@ -607,6 +707,7 @@ class SiteForge_Runtime_V3_Materializer {
 			'menus'           => $menus,
 			'resourceIdsHash' => SiteForge_Runtime_Validation::hash( get_option( self::RESOURCE_IDS_OPTION, array() ) ),
 			'targetHash'      => SiteForge_Runtime_Validation::hash( $target ),
+			'theme'           => $this->expected_theme( $identity ),
 		);
 	}
 
@@ -664,7 +765,7 @@ class SiteForge_Runtime_V3_Materializer {
 		return $output;
 	}
 
-	private function assert_page_ownership( $graph, $site_id ) {
+	private function assert_page_ownership( $graph, $site_id, $allow_legacy_adoption = false ) {
 		$desired = array();
 		foreach ( $graph['pages'] as $page ) {
 			$desired[ $page['resourceId'] ] = true;
@@ -672,7 +773,8 @@ class SiteForge_Runtime_V3_Materializer {
 			if ( $existing ) {
 				$owner = (string) get_post_meta( $existing->ID, self::PAGE_SITE_META, true );
 				$resource_id = (string) get_post_meta( $existing->ID, self::PAGE_RESOURCE_META, true );
-				if ( $site_id !== $owner || ( '' !== $resource_id && $page['resourceId'] !== $resource_id ) ) {
+				$adoptable_legacy = '' === $owner && '' === $resource_id && $allow_legacy_adoption && $this->is_legacy_siteforge_page( $existing->ID );
+				if ( ( $site_id !== $owner && ! $adoptable_legacy ) || ( '' !== $resource_id && $page['resourceId'] !== $resource_id ) ) {
 					throw new SiteForge_Runtime_Exception( 'siteforge_v3_page_slug_conflict', 'A desired slug is not owned by this exact v3 site resource.', 409, array( 'slug' => $page['slug'] ) );
 				}
 			}
@@ -689,6 +791,12 @@ class SiteForge_Runtime_V3_Materializer {
 				throw new SiteForge_Runtime_Exception( 'siteforge_v3_resource_incomplete', 'Complete v3 graph omitted an owned page without an exact removal tombstone.', 422, array( 'resourceId' => $resource_id ) );
 			}
 		}
+	}
+
+	private function is_legacy_siteforge_page( $page_id ) {
+		$artifact_id = (string) get_post_meta( $page_id, '_siteforge_artifact_id', true );
+		$content_hash = (string) get_post_meta( $page_id, '_siteforge_page_content_hash', true );
+		return '' !== $artifact_id && '' !== $content_hash;
 	}
 
 	private function presentation_maps( $graph ) {
@@ -800,14 +908,10 @@ class SiteForge_Runtime_V3_Materializer {
 				break;
 			}
 		}
-		$public_key = null;
-		if ( $runtime['enabled'] && null !== $runtime['keyReference'] && function_exists( 'apply_filters' ) ) {
-			$public_key = apply_filters( 'oneclick_siteforge_runtime_v3_resolve_secret', null, $runtime['keyReference'], 'public_runtime' );
-		}
-		$public_key = is_string( $public_key ) ? trim( $public_key ) : '';
+		$public_key = is_string( $runtime['conversionKey'] ) ? trim( $runtime['conversionKey'] ) : '';
 		return array(
 			'enabled'            => (bool) $runtime['enabled'],
-			'apiKey'             => $public_key,
+			'apiKey'             => '',
 			'apiBaseUrl'         => $runtime['apiBaseUrl'],
 			'websiteId'          => $runtime['websiteId'],
 			'conversionEndpoint' => $runtime['conversionEndpoint'],
@@ -856,6 +960,9 @@ class SiteForge_Runtime_V3_Materializer {
 
 	private function persist_option( $option, $value, $label ) {
 		$result = update_option( $option, $value, false );
+		wp_cache_delete( $option, 'options' );
+		wp_cache_delete( 'alloptions', 'options' );
+		wp_cache_delete( 'notoptions', 'options' );
 		if ( false === $result && $value != get_option( $option, null ) ) {
 			throw new SiteForge_Runtime_Exception( 'siteforge_v3_materialization_write_failed', 'Could not persist v3 ' . $label . '.', 500, array( 'option' => $option ) );
 		}
@@ -866,7 +973,8 @@ class SiteForge_Runtime_V3_Materializer {
 			self::RESOURCE_IDS_OPTION, self::MENU_OWNERS_OPTION, self::FORMS_OPTION,
 			self::REDIRECTS_OPTION, self::INTEGRATIONS_OPTION, self::LEGAL_OPTION, self::SEO_OPTION,
 			'oneclick_siteforge_responsive_css_v3',
-			'oneclick_siteforge_configuration', 'oneclick_siteforge_legal', 'oneclick_siteforge_analytics',
+			'oneclick_siteforge_configuration', 'oneclick_siteforge_design_tokens', 'oneclick_siteforge_motion',
+			'oneclick_siteforge_legal', 'oneclick_siteforge_analytics',
 			'oneclick_siteforge_target', 'oneclick_siteforge_target_mode', 'oneclick_siteforge_protection',
 			'oneclick_siteforge_public_runtime', 'oneclick_siteforge_lumaleasing', 'blog_public',
 			'show_on_front', 'page_on_front',
@@ -1027,6 +1135,12 @@ class SiteForge_Runtime_V3_Materializer {
 		if ( $expected_locations !== get_theme_mod( 'nav_menu_locations', array() ) ) {
 			throw new SiteForge_Runtime_Exception( 'siteforge_v3_materializer_rollback_readback_failed', 'Rollback menu-location readback failed.', 500 );
 		}
+		if (
+			$snapshot['activeTheme']['stylesheet'] !== get_stylesheet() ||
+			$snapshot['activeTheme']['template'] !== get_template()
+		) {
+			throw new SiteForge_Runtime_Exception( 'siteforge_v3_materializer_rollback_readback_failed', 'Rollback active-theme readback failed.', 500 );
+		}
 		foreach ( $snapshot['menus'] as $resource_id => $saved_menu ) {
 			if ( ! isset( $restored_menus[ $resource_id ] ) ) {
 				throw new SiteForge_Runtime_Exception( 'siteforge_v3_materializer_rollback_readback_failed', 'Rollback menu ownership readback failed.', 500, array( 'resourceId' => $resource_id ) );
@@ -1103,6 +1217,39 @@ class SiteForge_Runtime_V3_Materializer {
 
 	private function check( $name, $passed, $message ) {
 		return array( 'name' => $name, 'passed' => (bool) $passed, 'message' => $message );
+	}
+
+	private function expected_theme( $identity ) {
+		$overlays = isset( $identity['overlays'] ) && is_array( $identity['overlays'] ) ? $identity['overlays'] : array();
+		return array(
+			'stylesheet'        => empty( $overlays ) ? 'oneclick-siteforge' : $overlays[0]['themeSlug'],
+			'template'          => 'oneclick-siteforge',
+			'requiresOverlayCss'=> ! empty( $overlays ),
+		);
+	}
+
+	private function theme_readback() {
+		if ( function_exists( 'do_action' ) ) {
+			do_action( 'wp_enqueue_scripts' );
+		}
+		$stylesheet = get_stylesheet();
+		$loaded = false;
+		if ( function_exists( 'wp_styles' ) ) {
+			$styles = wp_styles();
+			foreach ( $styles->queue as $handle ) {
+				$registered = isset( $styles->registered[ $handle ] ) ? $styles->registered[ $handle ] : null;
+				$src = $registered ? (string) $registered->src : '';
+				if ( false !== strpos( $src, '/themes/' . $stylesheet . '/' ) && false !== strpos( $src, '.css' ) ) {
+					$loaded = true;
+					break;
+				}
+			}
+		}
+		return array(
+			'stylesheet'      => $stylesheet,
+			'template'        => get_template(),
+			'overlayCssLoaded'=> $loaded,
+		);
 	}
 
 	private function uuid() {

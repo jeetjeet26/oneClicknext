@@ -11,6 +11,7 @@ import {
   sleep,
   toAdapterError,
   type AdapterConnection,
+  type EngagementMetrics,
   type PublishOutcome,
   type SocialAdapter,
 } from './types'
@@ -20,6 +21,14 @@ const CONTAINER_POLL_INTERVAL_MS = 3_000
 const CONTAINER_POLL_MAX_ATTEMPTS = 20
 
 type GraphError = { error?: { message?: string; code?: number; is_transient?: boolean } }
+type InsightResponse = {
+  data?: Array<{ name: string; values?: Array<{ value?: number }> }>
+}
+
+function insightValue(response: InsightResponse, name: string): number | undefined {
+  const value = response.data?.find((item) => item.name === name)?.values?.[0]?.value
+  return typeof value === 'number' ? value : undefined
+}
 
 async function graphRequest<T>(
   path: string,
@@ -186,6 +195,30 @@ export const instagramAdapter: SocialAdapter = {
       return null
     }
   },
+
+  async fetchMetrics(connection, providerPostId): Promise<EngagementMetrics> {
+    const { token } = requireInstagramCredentials(connection)
+    const [detail, insights] = await Promise.all([
+      graphRequest<{ like_count?: number; comments_count?: number }>(`/${providerPostId}`, {
+        searchParams: { fields: 'like_count,comments_count', access_token: token },
+      }),
+      graphRequest<InsightResponse>(`/${providerPostId}/insights`, {
+        searchParams: {
+          metric: 'reach,saved,shares,views,total_interactions',
+          access_token: token,
+        },
+      }).catch(() => ({ data: [] })),
+    ])
+    return {
+      reach: insightValue(insights, 'reach'),
+      reactions: detail.like_count,
+      comments: detail.comments_count,
+      shares: insightValue(insights, 'shares'),
+      saves: insightValue(insights, 'saved'),
+      videoViews: insightValue(insights, 'views'),
+      providerPayload: { detail, insights },
+    }
+  },
 }
 
 function requireFacebookCredentials(connection: AdapterConnection): {
@@ -269,6 +302,37 @@ export const facebookAdapter: SocialAdapter = {
         : null
     } catch {
       return null
+    }
+  },
+
+  async fetchMetrics(connection, providerPostId): Promise<EngagementMetrics> {
+    const { token } = requireFacebookCredentials(connection)
+    const [detail, insights] = await Promise.all([
+      graphRequest<{
+        shares?: { count?: number }
+        comments?: { summary?: { total_count?: number } }
+        reactions?: { summary?: { total_count?: number } }
+      }>(`/${providerPostId}`, {
+        searchParams: {
+          fields: 'shares,comments.summary(true),reactions.summary(true)',
+          access_token: token,
+        },
+      }),
+      graphRequest<InsightResponse>(`/${providerPostId}/insights`, {
+        searchParams: {
+          metric: 'post_impressions,post_clicks,post_video_views',
+          access_token: token,
+        },
+      }).catch(() => ({ data: [] })),
+    ])
+    return {
+      impressions: insightValue(insights, 'post_impressions'),
+      clicks: insightValue(insights, 'post_clicks'),
+      videoViews: insightValue(insights, 'post_video_views'),
+      reactions: detail.reactions?.summary?.total_count,
+      comments: detail.comments?.summary?.total_count,
+      shares: detail.shares?.count,
+      providerPayload: { detail, insights },
     }
   },
 }

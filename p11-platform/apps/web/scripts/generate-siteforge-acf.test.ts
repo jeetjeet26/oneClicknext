@@ -15,7 +15,7 @@ describe('SiteForge ACF schema generation', () => {
     try {
       const first = await generateSiteForgeAcf({ outputDirectory })
       const expected = renderSiteForgeAcfGroups()
-      expect(first.count).toBe(15)
+      expect(first.count).toBe(22)
       expect(await readdir(outputDirectory)).toEqual(
         expect.arrayContaining(Object.keys(expected))
       )

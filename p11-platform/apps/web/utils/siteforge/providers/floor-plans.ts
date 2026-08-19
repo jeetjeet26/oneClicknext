@@ -59,6 +59,17 @@ export const floorPlanInputRowSchema = z
         message: 'imageAlt is required when imageUrl is provided',
       })
     }
+    if (
+      row.effectiveAt &&
+      row.expiresAt &&
+      new Date(row.expiresAt).getTime() < new Date(row.effectiveAt).getTime()
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['expiresAt'],
+        message: 'expiresAt must be at or after effectiveAt',
+      })
+    }
   })
 
 export type FloorPlanInputRow = z.input<typeof floorPlanInputRowSchema>

@@ -48,12 +48,14 @@ export interface UploadResult {
 
 // Asset metadata for database storage
 export interface AssetMetadata {
+  orgId?: string
   propertyId: string
   name: string
   description?: string
   assetType: AssetType
   fileUrl: string
   storagePath: string
+  storageBucket?: StorageBucket
   thumbnailUrl?: string
   fileSizeBytes?: number
   width?: number
@@ -66,6 +68,10 @@ export interface AssetMetadata {
   generationParams?: Record<string, unknown>
   tags?: string[]
   folder?: string
+  altText?: string
+  rightsStatus?: 'unknown' | 'owned' | 'licensed' | 'generated'
+  approvalStatus?: 'pending' | 'approved' | 'rejected'
+  curationStatus?: 'needs_review' | 'approved' | 'selected' | 'in_use' | 'rejected'
 }
 
 /**
@@ -473,26 +479,30 @@ export async function saveAssetMetadata(
     const { data, error } = await supabase
       .from('content_assets')
       .insert({
+        org_id: metadata.orgId,
         property_id: metadata.propertyId,
         name: metadata.name,
         description: metadata.description,
         asset_type: metadata.assetType,
         file_url: metadata.fileUrl,
         thumbnail_url: metadata.thumbnailUrl,
-        file_size: metadata.fileSizeBytes,
-        dimensions: {
-          width: metadata.width,
-          height: metadata.height,
-          duration_seconds: metadata.durationSeconds,
-          format: metadata.format,
-          storage_path: metadata.storagePath,
-          folder: metadata.folder,
-        } as Json,
+        file_size_bytes: metadata.fileSizeBytes,
+        width: metadata.width,
+        height: metadata.height,
+        duration_seconds: metadata.durationSeconds,
+        format: metadata.format,
+        storage_path: metadata.storagePath,
+        storage_bucket: metadata.storageBucket,
+        folder: metadata.folder,
         is_ai_generated: metadata.isAiGenerated ?? false,
         generation_provider: metadata.generationProvider,
         generation_prompt: metadata.generationPrompt,
         generation_params: metadata.generationParams as Json | undefined,
         tags: metadata.tags || [],
+        alt_text: metadata.altText,
+        rights_status: metadata.rightsStatus ?? 'unknown',
+        approval_status: metadata.approvalStatus ?? 'pending',
+        curation_status: metadata.curationStatus ?? 'needs_review',
       })
       .select()
       .single()
@@ -525,6 +535,7 @@ export async function uploadAndSaveGeneratedAsset(
   mimeType: string,
   options: {
     bucket: StorageBucket
+    orgId?: string
     propertyId: string
     folder?: string
     name: string
@@ -536,6 +547,7 @@ export async function uploadAndSaveGeneratedAsset(
     width?: number
     height?: number
     durationSeconds?: number
+    altText?: string
   }
 ): Promise<{ 
   success: boolean
@@ -562,12 +574,14 @@ export async function uploadAndSaveGeneratedAsset(
   const format = getExtensionFromMimeType(mimeType)
 
   const metadataResult = await saveAssetMetadata({
+    orgId: options.orgId,
     propertyId: options.propertyId,
     name: options.name,
     description: options.description,
     assetType,
     fileUrl: uploadResult.publicUrl,
     storagePath: uploadResult.storagePath!,
+    storageBucket: options.bucket,
     thumbnailUrl: assetType === 'image' ? uploadResult.publicUrl : undefined,
     fileSizeBytes: uploadResult.fileSize,
     width: options.width,
@@ -580,16 +594,23 @@ export async function uploadAndSaveGeneratedAsset(
     generationParams: options.generationParams,
     tags: options.tags,
     folder: options.folder,
+    altText: options.altText,
+    rightsStatus: 'generated',
+    approvalStatus: 'pending',
+    curationStatus: 'needs_review',
   })
 
   if (metadataResult.error) {
-    // Asset was uploaded but metadata save failed
-    // Return the URL anyway so the asset isn't lost
-    console.error('Metadata save failed, but asset was uploaded:', metadataResult.error)
+    const cleanup = await deleteAsset(options.bucket, uploadResult.storagePath!)
+    console.error('Metadata save failed; storage compensation attempted:', {
+      metadataError: metadataResult.error,
+      cleanup,
+    })
     return {
-      success: true,
-      publicUrl: uploadResult.publicUrl,
-      error: `Asset uploaded but metadata save failed: ${metadataResult.error}`,
+      success: false,
+      error: cleanup.success
+        ? `Asset metadata save failed and uploaded object was removed: ${metadataResult.error}`
+        : `Asset metadata save failed and storage cleanup also failed: ${metadataResult.error}; ${cleanup.error}`,
     }
   }
 

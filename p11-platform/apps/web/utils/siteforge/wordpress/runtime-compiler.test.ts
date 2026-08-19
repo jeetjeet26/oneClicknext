@@ -137,6 +137,28 @@ describe('SiteForge WordPress runtime v2 compiler', () => {
     )
   })
 
+  it('projects section presentation through the v2 runtime plan', () => {
+    const release = makeRelease()
+    release.blueprint.pages[0].sections[0].presentation = {
+      containerMode: 'contained',
+      spacingPreset: 'spacious',
+      breakpointOverrides: {
+        mobile: { spacingPreset: 'compact' },
+      },
+    }
+    release.artifactContentHash = hashRuntimeValue(release.blueprint)
+
+    const compiled = compileSiteForgeRuntimeRelease({
+      release,
+      expectedRemoteContentHash: null,
+    })
+
+    expect(
+      compiled.plan.pages.find(page => page.slug === 'home')?.sections[0]?.data
+        ._siteforge_presentation
+    ).toEqual(release.blueprint.pages[0].sections[0].presentation)
+  })
+
   it('rejects mutated artifacts and non-exact selected assets', () => {
     const changed = makeRelease()
     changed.blueprint.pages[0].title = 'Changed after release'

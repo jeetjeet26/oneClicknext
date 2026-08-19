@@ -125,7 +125,10 @@ export function SiteForgeGuidedWorkspace({
   const [activeStep, setActiveStep] = useState<SiteForgeGuidedStepId>(
     inferGuidedStep(initialSnapshot || null),
   );
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState<unknown>("");
+  const [revisionDecisionId, setRevisionDecisionId] = useState<string | null>(
+    null,
+  );
   const [referenceUrl, setReferenceUrl] = useState("");
   const [attachments, setAttachments] = useState<GuidedAttachment[]>([]);
   const [loading, setLoading] = useState(true);
@@ -147,6 +150,21 @@ export function SiteForgeGuidedWorkspace({
     [scoredDirections, state],
   );
   const currentStep = inferGuidedStep(director, projection);
+  const activeQuestion = useMemo<GuidedQuestion | null>(() => {
+    if (!revisionDecisionId) return question;
+    const decision = state?.decisions.find(
+      (item) => item.id === revisionDecisionId,
+    );
+    if (!decision) return question;
+    return {
+      ...decision,
+      field: decision.id,
+      question: `${decision.hypothesis} ${decision.prompt}`,
+      why: decision.validation.remediation,
+      optional: !decision.required,
+      currentAnswer: state?.decisionAnswers[decision.id] || null,
+    };
+  }, [question, revisionDecisionId, state]);
 
   const applyPayload = useCallback(
     (payload: SiteForgeGuidedSnapshotResponse, navigate = true) => {
@@ -154,6 +172,7 @@ export function SiteForgeGuidedWorkspace({
       setQuestion(payload.question);
       setCreativeDirection(payload.creativeDirection);
       setProjection(payload.journey);
+      setRevisionDecisionId(null);
       if (navigate) setActiveStep(inferGuidedStep(null, payload.journey));
     },
     [],
@@ -319,14 +338,14 @@ export function SiteForgeGuidedWorkspace({
   }
 
   async function sendAnswer() {
-    if (!state || !question || busy) return;
-    const answer = conversationAnswer(question.field, draft, attachments);
-    if (
-      !draft.trim() &&
-      !(question.field === "references" && attachments.length)
-    ) {
-      return;
-    }
+    if (!state || !activeQuestion || busy) return;
+    const answer = conversationAnswer(activeQuestion, draft, attachments);
+    const empty =
+      answer === null ||
+      answer === undefined ||
+      answer === "" ||
+      (Array.isArray(answer) && answer.length === 0);
+    if (empty) return;
     setBusy(true);
     setError("");
     setNotice("");
@@ -339,7 +358,7 @@ export function SiteForgeGuidedWorkspace({
           body: JSON.stringify({
             clientRequestId: crypto.randomUUID(),
             expectedRevision: state.revision,
-            field: question.field,
+            decisionId: activeQuestion.id,
             answer,
             attachments,
           }),
@@ -681,12 +700,19 @@ export function SiteForgeGuidedWorkspace({
           {activeStep === "conversation" ? (
             <ConversationStep
               state={state}
-              question={question}
+              question={activeQuestion}
               draft={draft}
               attachments={attachments}
               referenceUrl={referenceUrl}
               busy={busy}
               onDraftChange={setDraft}
+              onReviseDecision={(decisionId) => {
+                setRevisionDecisionId(decisionId);
+                setDraft(
+                  state?.decisionAnswers[decisionId]?.value ??
+                    "",
+                );
+              }}
               onReferenceUrlChange={setReferenceUrl}
               onAddReference={addReference}
               onRemoveAttachment={(index) =>
@@ -997,6 +1023,7 @@ function ConversationStep({
   referenceUrl,
   busy,
   onDraftChange,
+  onReviseDecision,
   onReferenceUrlChange,
   onAddReference,
   onRemoveAttachment,
@@ -1006,11 +1033,12 @@ function ConversationStep({
 }: {
   state: GuidedJourneyState | null;
   question: GuidedQuestion | null;
-  draft: string;
+  draft: unknown;
   attachments: GuidedAttachment[];
   referenceUrl: string;
   busy: boolean;
-  onDraftChange: (value: string) => void;
+  onDraftChange: (value: unknown) => void;
+  onReviseDecision: (decisionId: string) => void;
   onReferenceUrlChange: (value: string) => void;
   onAddReference: () => void;
   onRemoveAttachment: (index: number) => void;
@@ -1055,31 +1083,25 @@ function ConversationStep({
               {question?.question || "Discovery is complete."}
             </p>
             {question ? (
-              <p className="mt-1 text-xs text-muted-foreground">
-                {question.why}
-                {question.optional ? " You can answer “none”." : ""}
-              </p>
+              <>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {question.why}
+                  {question.optional ? " This is optional." : ""}
+                </p>
+                <Badge variant="outline" className="mt-3">
+                  {question.provenanceLabel}
+                </Badge>
+              </>
             ) : null}
           </div>
           {question ? (
             <>
-              <Textarea
+              <AdaptiveDecisionControl
+                question={question}
                 value={draft}
-                onChange={(event) => onDraftChange(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
-                    event.preventDefault();
-                    onSend();
-                  }
-                }}
-                placeholder={
-                  question.optional
-                    ? "Answer, or type “none”…"
-                    : "Answer in your own words…"
-                }
-                className="min-h-28"
                 disabled={busy}
-                aria-label="Answer current SiteForge question"
+                onChange={onDraftChange}
+                onSubmit={onSend}
               />
               {attachments.length ? (
                 <div className="flex flex-wrap gap-2">
@@ -1134,11 +1156,10 @@ function ConversationStep({
                   onClick={onSend}
                   disabled={
                     busy ||
-                    (!draft.trim() &&
-                      !(
-                        question.field === "references" &&
-                        attachments.length > 0
-                      ))
+                    draft === "" ||
+                    draft === null ||
+                    draft === undefined ||
+                    (Array.isArray(draft) && draft.length === 0)
                   }
                 >
                   {busy ? (
@@ -1151,11 +1172,54 @@ function ConversationStep({
               </div>
             </>
           ) : (
-            <Button onClick={onVisuals}>
-              Review photos and floor plans
-              <ArrowRight className="ml-2 h-4 w-4" />
-            </Button>
+            <div className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                All required decisions are resolved. Optional decisions never
+                block preparation.
+              </p>
+              <Button onClick={onVisuals}>
+                Review photos and floor plans
+                <ArrowRight className="ml-2 h-4 w-4" />
+              </Button>
+            </div>
           )}
+          {state?.decisions.length ? (
+            <div className="space-y-2 border-t pt-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Sourced decisions
+              </p>
+              {state.decisions
+                .filter((decision) => !decision.id.startsWith("legacy.v1."))
+                .map((decision) => {
+                  const answer = state.decisionAnswers[decision.id];
+                  return (
+                    <div
+                      key={decision.id}
+                      className="flex items-center justify-between gap-3 rounded-lg border p-3"
+                    >
+                      <div>
+                        <p className="text-sm font-medium">{decision.label}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {answer
+                            ? `${answer.origin} · ${Math.round(answer.confidence * 100)}% confidence`
+                            : decision.required
+                              ? "Needs confirmation"
+                              : "Optional"}
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => onReviseDecision(decision.id)}
+                      >
+                        Revise
+                      </Button>
+                    </div>
+                  );
+                })}
+            </div>
+          ) : null}
         </CardContent>
       </Card>
       <div className="space-y-4">
@@ -1169,6 +1233,152 @@ function ConversationStep({
         />
       </div>
     </div>
+  );
+}
+
+function AdaptiveDecisionControl({
+  question,
+  value,
+  disabled,
+  onChange,
+  onSubmit,
+}: {
+  question: GuidedQuestion;
+  value: unknown;
+  disabled: boolean;
+  onChange: (value: unknown) => void;
+  onSubmit: () => void;
+}) {
+  if (question.control === "enum") {
+    return (
+      <select
+        value={typeof value === "string" ? value : ""}
+        onChange={(event) => onChange(event.target.value)}
+        disabled={disabled}
+        className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+        aria-label={question.label}
+      >
+        <option value="">Select an option</option>
+        {question.options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    );
+  }
+
+  if (question.control === "multiselect") {
+    const selected = Array.isArray(value) ? value.map(String) : [];
+    return (
+      <fieldset
+        className="grid gap-2 rounded-lg border p-3 sm:grid-cols-2"
+        disabled={disabled}
+      >
+        <legend className="px-1 text-xs font-medium">{question.label}</legend>
+        {question.options.map((option) => (
+          <label key={option.value} className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={selected.includes(option.value)}
+              onChange={(event) =>
+                onChange(
+                  event.target.checked
+                    ? [...selected, option.value]
+                    : selected.filter((item) => item !== option.value),
+                )
+              }
+            />
+            {option.label}
+          </label>
+        ))}
+      </fieldset>
+    );
+  }
+
+  if (question.control === "ranking") {
+    const ranked =
+      Array.isArray(value) && value.length
+        ? value.map(String)
+        : question.options.map((option) => option.value);
+    const labels = new Map(
+      question.options.map((option) => [option.value, option.label]),
+    );
+    return (
+      <ol className="space-y-2" aria-label={question.label}>
+        {ranked.map((item, index) => (
+          <li
+            key={item}
+            className="flex items-center gap-2 rounded-lg border p-2 text-sm"
+          >
+            <span className="w-6 text-center font-semibold">{index + 1}</span>
+            <span className="flex-1">{labels.get(item) || item}</span>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={disabled || index === 0}
+              onClick={() => {
+                const next = [...ranked];
+                [next[index - 1], next[index]] = [
+                  next[index],
+                  next[index - 1],
+                ];
+                onChange(next);
+              }}
+            >
+              Up
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={disabled || index === ranked.length - 1}
+              onClick={() => {
+                const next = [...ranked];
+                [next[index], next[index + 1]] = [
+                  next[index + 1],
+                  next[index],
+                ];
+                onChange(next);
+              }}
+            >
+              Down
+            </Button>
+          </li>
+        ))}
+      </ol>
+    );
+  }
+
+  if (question.control === "date") {
+    return (
+      <input
+        type="date"
+        value={typeof value === "string" ? value : ""}
+        onChange={(event) => onChange(event.target.value)}
+        disabled={disabled}
+        className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+        aria-label={question.label}
+      />
+    );
+  }
+
+  return (
+    <Textarea
+      value={typeof value === "string" ? value : ""}
+      onChange={(event) => onChange(event.target.value)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" && !event.shiftKey) {
+          event.preventDefault();
+          onSubmit();
+        }
+      }}
+      placeholder={question.optional ? "Optional answer…" : "Enter an answer…"}
+      className="min-h-28"
+      disabled={disabled}
+      aria-label={question.label}
+    />
   );
 }
 

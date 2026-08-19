@@ -17,13 +17,13 @@ vi.mock('@/utils/supabase/server', () => ({
   createClient: vi.fn(async () => ({ auth: { getUser: getUserMock } })),
 }))
 vi.mock('@/utils/supabase/admin', () => ({
-  createServiceClient: vi.fn(() => ({
-    from: vi.fn(() => ({
-      select: vi.fn(() => ({
-        eq: vi.fn(() => ({ single: propertySingleMock })),
-      })),
-    })),
-  })),
+  createServiceClient: vi.fn(() => {
+    const builder: Record<string, unknown> = {}
+    builder.select = vi.fn(() => builder)
+    builder.eq = vi.fn(() => builder)
+    builder.single = propertySingleMock
+    return { from: vi.fn(() => builder) }
+  }),
 }))
 vi.mock('@/utils/services/auth-guard', () => ({
   validatePropertyAccess: validatePropertyAccessMock,
@@ -50,7 +50,10 @@ describe('floor-plan import preview route', () => {
       data: { user: { id: '33333333-3333-4333-8333-333333333333' } },
       error: null,
     })
-    validatePropertyAccessMock.mockResolvedValue({ authorized: true })
+    validatePropertyAccessMock.mockResolvedValue({
+      authorized: true,
+      orgId: '22222222-2222-4222-8222-222222222222',
+    })
     propertySingleMock.mockResolvedValue({
       data: {
         id: '11111111-1111-4111-8111-111111111111',

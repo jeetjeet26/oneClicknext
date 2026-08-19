@@ -11,7 +11,6 @@ describe('SiteForge editor dialogs', () => {
       [
         'components/siteforge/WebsitePreview.tsx',
         'components/siteforge/SiteForgeOperationsPanel.tsx',
-        'components/siteforge/ConversationalGenerationWizard.tsx',
       ].map(file => readFile(path.join(process.cwd(), file), 'utf8'))
     )
 

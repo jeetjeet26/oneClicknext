@@ -92,6 +92,9 @@ describe('setRevisionApproval', () => {
         data: {
           id: REVISION_ID,
           package_id: PACKAGE_ID,
+          org_id: 'org-1',
+          property_id: 'prop-1',
+          context_snapshot_id: 'snapshot-1',
           approval_status: 'pending',
           claims: [{ text: 'Rents from $999', type: 'pricing', citations: [] }],
         },
@@ -111,6 +114,9 @@ describe('setRevisionApproval', () => {
         data: {
           id: REVISION_ID,
           package_id: PACKAGE_ID,
+          org_id: 'org-1',
+          property_id: 'prop-1',
+          context_snapshot_id: 'snapshot-1',
           approval_status: 'pending',
           claims: [
             {
@@ -123,7 +129,27 @@ describe('setRevisionApproval', () => {
         error: null,
       },
       { data: approvedRow, error: null },
+      { data: { ...approvedRow, shared_action_attempt_id: 'action-1' }, error: null },
     ])
+    setResponses('social_content_variants', [{
+      data: [{
+        platform: 'facebook',
+        caption: 'One month free.',
+        hashtags: [],
+        call_to_action: null,
+        link_url: null,
+        asset_ids: [],
+        media_urls: [],
+        alt_text: null,
+        content_format: 'text',
+        platform_options: {},
+      }],
+      error: null,
+    }])
+    setResponses('shared_jobs', [{ data: { id: 'approval-job-1' }, error: null }])
+    setResponses('shared_action_attempts', [{ data: { id: 'action-1' }, error: null }])
+    setResponses('shared_approvals', [{ data: null, error: null }])
+    setResponses('shared_policy_decisions', [{ data: null, error: null }])
     setResponses('social_content_packages', [{ data: null, error: null }])
 
     const { setRevisionApproval } = await import('./content-store')
@@ -133,7 +159,7 @@ describe('setRevisionApproval', () => {
       reviewerId: 'user-1',
     })
 
-    expect(result).toEqual(approvedRow)
+    expect(result).toEqual({ ...approvedRow, shared_action_attempt_id: 'action-1' })
     const packageUpdates = updatesFor('social_content_packages')
     expect(packageUpdates).toHaveLength(1)
     expect(packageUpdates[0].args[0]).toMatchObject({ status: 'approved' })
@@ -146,13 +172,21 @@ describe('setRevisionApproval', () => {
         data: {
           id: REVISION_ID,
           package_id: PACKAGE_ID,
+          org_id: 'org-1',
+          property_id: 'prop-1',
+          context_snapshot_id: 'snapshot-1',
           approval_status: 'pending',
           claims: [{ text: 'Rents from $999', type: 'pricing', citations: [] }],
         },
         error: null,
       },
       { data: deniedRow, error: null },
+      { data: { ...deniedRow, shared_action_attempt_id: 'action-2' }, error: null },
     ])
+    setResponses('shared_jobs', [{ data: { id: 'approval-job-2' }, error: null }])
+    setResponses('shared_action_attempts', [{ data: { id: 'action-2' }, error: null }])
+    setResponses('shared_approvals', [{ data: null, error: null }])
+    setResponses('shared_policy_decisions', [{ data: null, error: null }])
     setResponses('social_content_packages', [{ data: null, error: null }])
 
     const { setRevisionApproval } = await import('./content-store')
@@ -162,7 +196,7 @@ describe('setRevisionApproval', () => {
       reviewerId: 'user-1',
       note: 'Pricing is stale',
     })
-    expect(result).toEqual(deniedRow)
+    expect(result).toEqual({ ...deniedRow, shared_action_attempt_id: 'action-2' })
   })
 })
 
@@ -173,6 +207,9 @@ describe('schedulePublications', () => {
     org_id: 'org-1',
     property_id: 'prop-1',
     approval_status: 'approved',
+    approved_by: 'manager-1',
+    approval_note: 'Approved for this campaign',
+    context_snapshot_id: 'snapshot-1',
   }
 
   it('rejects unapproved revisions', async () => {
@@ -229,6 +266,9 @@ describe('schedulePublications', () => {
       { data: { id: 'job-1' }, error: null },
       { data: null, error: null },
     ])
+    setResponses('shared_action_attempts', [{ data: { id: 'publish-action-1' }, error: null }])
+    setResponses('shared_approvals', [{ data: null, error: null }])
+    setResponses('shared_policy_decisions', [{ data: null, error: null }])
     setResponses('social_publications', [{ data: publicationRow, error: null }])
 
     const { schedulePublications } = await import('./content-store')
@@ -245,7 +285,7 @@ describe('schedulePublications', () => {
     expect(jobInserts[0].args[0]).toMatchObject({
       domain: 'forgestudio.publication',
       lifecycle_status: 'queued',
-      dedupe_key: `publication:${REVISION_ID}:${CONNECTION_ID}`,
+      dedupe_key: `publication:${REVISION_ID}:variant-1:${CONNECTION_ID}`,
     })
 
     const publicationInserts = insertsFor('social_publications')

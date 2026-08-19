@@ -153,42 +153,19 @@ export function buildSiteForgeDirectorCommands(
       },
     }),
     command({
-      id: `provision-staging:${context.websiteId}`,
-      type: 'provision_staging',
-      label: 'Provision staging',
-      description:
-        'Provision the existing staging target through the SiteForge staging route.',
-      unavailableReason:
-        context.artifact.deploymentDecision !== 'approved'
-          ? 'Approve the exact current artifact before provisioning staging.'
-          : context.artifact.stagingTargetId
-            ? 'A staging target is already linked.'
-            : null,
-      risk: 'supervised',
-      target: {
-        kind: 'route',
-        method: 'POST',
-        path: `/api/siteforge/staging/provision/${context.websiteId}`,
-      },
-      requiredInput: [],
-      payload: {},
-    }),
-    command({
       id: `deploy-staging:${context.websiteId}`,
       type: 'deploy_staging',
       label: 'Deploy to staging',
       description:
-        'Start the existing artifact deployment workflow for the approved current artifact.',
+        'Start the existing artifact deployment workflow for the approved current artifact. The deploy route provisions and clones the Cloudways staging target itself (single clone initiator).',
       unavailableReason:
         context.artifact.deploymentDecision !== 'approved'
           ? 'Approve the exact current artifact before deployment.'
-          : !context.artifact.stagingTargetId
-            ? 'Provision a staging target first.'
-            : context.artifact.stagingExact
-              ? 'The exact current artifact is already certified on staging.'
-              : activeJob
-                ? 'Wait for the active SiteForge job to finish.'
-                : null,
+          : context.artifact.stagingExact
+            ? 'The exact current artifact is already certified on staging.'
+            : activeJob
+              ? 'Wait for the active SiteForge job to finish.'
+              : null,
       risk: 'supervised',
       target: {
         kind: 'route',

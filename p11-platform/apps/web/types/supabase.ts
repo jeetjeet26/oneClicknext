@@ -1,4 +1,4 @@
-// schema_migration_version: 20260813224636
+// schema_migration_version: 20260819190000
 export type Json =
   | string
   | number
@@ -5113,6 +5113,7 @@ export type Database = {
           amenities: string[] | null
           brand_voice: string | null
           created_at: string | null
+          current_vertical_profile_version_id: string | null
           id: string
           name: string
           office_hours: Json | null
@@ -5124,6 +5125,7 @@ export type Database = {
           settings: Json | null
           social_media: Json | null
           special_features: string[] | null
+          subject_kind: string
           target_audience: string | null
           unit_count: number | null
           updated_at: string | null
@@ -5135,6 +5137,7 @@ export type Database = {
           amenities?: string[] | null
           brand_voice?: string | null
           created_at?: string | null
+          current_vertical_profile_version_id?: string | null
           id?: string
           name: string
           office_hours?: Json | null
@@ -5146,6 +5149,7 @@ export type Database = {
           settings?: Json | null
           social_media?: Json | null
           special_features?: string[] | null
+          subject_kind?: string
           target_audience?: string | null
           unit_count?: number | null
           updated_at?: string | null
@@ -5157,6 +5161,7 @@ export type Database = {
           amenities?: string[] | null
           brand_voice?: string | null
           created_at?: string | null
+          current_vertical_profile_version_id?: string | null
           id?: string
           name?: string
           office_hours?: Json | null
@@ -5168,6 +5173,7 @@ export type Database = {
           settings?: Json | null
           social_media?: Json | null
           special_features?: string[] | null
+          subject_kind?: string
           target_audience?: string | null
           unit_count?: number | null
           updated_at?: string | null
@@ -5176,11 +5182,93 @@ export type Database = {
         }
         Relationships: [
           {
+            foreignKeyName: "properties_current_vertical_profile_tenant_fkey"
+            columns: ["current_vertical_profile_version_id", "org_id", "id"]
+            isOneToOne: false
+            referencedRelation: "property_vertical_profile_versions"
+            referencedColumns: ["id", "org_id", "property_id"]
+          },
+          {
             foreignKeyName: "properties_org_id_fkey"
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "organizations"
             referencedColumns: ["id"]
+          },
+        ]
+      }
+      property_availability_snapshots: {
+        Row: {
+          availability: Json
+          content_hash: string
+          created_at: string
+          effective_at: string
+          expires_at: string | null
+          id: string
+          observed_at: string
+          offering_id: string
+          offering_version_id: string
+          org_id: string
+          property_id: string
+          source_identity: string
+          source_kind: string
+        }
+        Insert: {
+          availability: Json
+          content_hash: string
+          created_at?: string
+          effective_at: string
+          expires_at?: string | null
+          id?: string
+          observed_at: string
+          offering_id: string
+          offering_version_id: string
+          org_id: string
+          property_id: string
+          source_identity: string
+          source_kind: string
+        }
+        Update: {
+          availability?: Json
+          content_hash?: string
+          created_at?: string
+          effective_at?: string
+          expires_at?: string | null
+          id?: string
+          observed_at?: string
+          offering_id?: string
+          offering_version_id?: string
+          org_id?: string
+          property_id?: string
+          source_identity?: string
+          source_kind?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "property_availability_offering_tenant_fkey"
+            columns: ["offering_id", "org_id", "property_id"]
+            isOneToOne: false
+            referencedRelation: "property_offerings"
+            referencedColumns: ["id", "org_id", "property_id"]
+          },
+          {
+            foreignKeyName: "property_availability_snapshots_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_availability_version_tenant_fkey"
+            columns: [
+              "offering_version_id",
+              "org_id",
+              "property_id",
+              "offering_id",
+            ]
+            isOneToOne: false
+            referencedRelation: "property_offering_versions"
+            referencedColumns: ["id", "org_id", "property_id", "offering_id"]
           },
         ]
       }
@@ -5765,11 +5853,158 @@ export type Database = {
           },
         ]
       }
+      property_offering_versions: {
+        Row: {
+          content_hash: string
+          created_at: string
+          created_by: string | null
+          effective_at: string | null
+          expires_at: string | null
+          id: string
+          offering: Json
+          offering_id: string
+          org_id: string
+          property_id: string
+          source_identity: string | null
+          source_kind: string
+          version: number
+        }
+        Insert: {
+          content_hash: string
+          created_at?: string
+          created_by?: string | null
+          effective_at?: string | null
+          expires_at?: string | null
+          id?: string
+          offering: Json
+          offering_id: string
+          org_id: string
+          property_id: string
+          source_identity?: string | null
+          source_kind?: string
+          version: number
+        }
+        Update: {
+          content_hash?: string
+          created_at?: string
+          created_by?: string | null
+          effective_at?: string | null
+          expires_at?: string | null
+          id?: string
+          offering?: Json
+          offering_id?: string
+          org_id?: string
+          property_id?: string
+          source_identity?: string | null
+          source_kind?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "property_offering_versions_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_offering_versions_offering_tenant_fkey"
+            columns: ["offering_id", "org_id", "property_id"]
+            isOneToOne: false
+            referencedRelation: "property_offerings"
+            referencedColumns: ["id", "org_id", "property_id"]
+          },
+          {
+            foreignKeyName: "property_offering_versions_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      property_offerings: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          current_version_id: string | null
+          id: string
+          offering_key: string
+          offering_kind: string
+          org_id: string
+          property_id: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          current_version_id?: string | null
+          id?: string
+          offering_key: string
+          offering_kind: string
+          org_id: string
+          property_id: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          current_version_id?: string | null
+          id?: string
+          offering_key?: string
+          offering_kind?: string
+          org_id?: string
+          property_id?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "property_offerings_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_offerings_current_version_tenant_fkey"
+            columns: ["current_version_id", "org_id", "property_id", "id"]
+            isOneToOne: false
+            referencedRelation: "property_offering_versions"
+            referencedColumns: ["id", "org_id", "property_id", "offering_id"]
+          },
+          {
+            foreignKeyName: "property_offerings_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_offerings_property_tenant_fkey"
+            columns: ["property_id", "org_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id", "org_id"]
+          },
+          {
+            foreignKeyName: "property_offerings_property_tenant_fkey"
+            columns: ["property_id", "org_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id", "org_id"]
+          },
+        ]
+      }
       property_onboarding_snapshots: {
         Row: {
           approval_action_attempt_id: string | null
           approved_at: string | null
           approved_by: string | null
+          availability_content_hash: string | null
+          availability_snapshot_id: string | null
           brand_asset_id: string | null
           brand_contract_hash: string | null
           brand_contract_version: string | null
@@ -5778,7 +6013,11 @@ export type Database = {
           created_by: string | null
           domain_reports: Json
           id: string
+          offering_content_hash: string | null
+          offering_version_id: string | null
           org_id: string
+          policy_content_hash: string | null
+          policy_version_id: string | null
           property_id: string
           schema_version: number
           snapshot_payload: Json
@@ -5786,11 +6025,18 @@ export type Database = {
           status: string
           unresolved_conflicts: Json
           updated_at: string
+          vertical_pack_content_hash: string | null
+          vertical_pack_key: string | null
+          vertical_pack_version: number | null
+          vertical_profile_content_hash: string | null
+          vertical_profile_version_id: string | null
         }
         Insert: {
           approval_action_attempt_id?: string | null
           approved_at?: string | null
           approved_by?: string | null
+          availability_content_hash?: string | null
+          availability_snapshot_id?: string | null
           brand_asset_id?: string | null
           brand_contract_hash?: string | null
           brand_contract_version?: string | null
@@ -5799,7 +6045,11 @@ export type Database = {
           created_by?: string | null
           domain_reports?: Json
           id?: string
+          offering_content_hash?: string | null
+          offering_version_id?: string | null
           org_id: string
+          policy_content_hash?: string | null
+          policy_version_id?: string | null
           property_id: string
           schema_version?: number
           snapshot_payload?: Json
@@ -5807,11 +6057,18 @@ export type Database = {
           status?: string
           unresolved_conflicts?: Json
           updated_at?: string
+          vertical_pack_content_hash?: string | null
+          vertical_pack_key?: string | null
+          vertical_pack_version?: number | null
+          vertical_profile_content_hash?: string | null
+          vertical_profile_version_id?: string | null
         }
         Update: {
           approval_action_attempt_id?: string | null
           approved_at?: string | null
           approved_by?: string | null
+          availability_content_hash?: string | null
+          availability_snapshot_id?: string | null
           brand_asset_id?: string | null
           brand_contract_hash?: string | null
           brand_contract_version?: string | null
@@ -5820,7 +6077,11 @@ export type Database = {
           created_by?: string | null
           domain_reports?: Json
           id?: string
+          offering_content_hash?: string | null
+          offering_version_id?: string | null
           org_id?: string
+          policy_content_hash?: string | null
+          policy_version_id?: string | null
           property_id?: string
           schema_version?: number
           snapshot_payload?: Json
@@ -5828,8 +6089,49 @@ export type Database = {
           status?: string
           unresolved_conflicts?: Json
           updated_at?: string
+          vertical_pack_content_hash?: string | null
+          vertical_pack_key?: string | null
+          vertical_pack_version?: number | null
+          vertical_profile_content_hash?: string | null
+          vertical_profile_version_id?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "property_onboarding_availability_tenant_fkey"
+            columns: [
+              "availability_snapshot_id",
+              "org_id",
+              "property_id",
+              "availability_content_hash",
+            ]
+            isOneToOne: false
+            referencedRelation: "property_availability_snapshots"
+            referencedColumns: ["id", "org_id", "property_id", "content_hash"]
+          },
+          {
+            foreignKeyName: "property_onboarding_offering_tenant_fkey"
+            columns: [
+              "offering_version_id",
+              "org_id",
+              "property_id",
+              "offering_content_hash",
+            ]
+            isOneToOne: false
+            referencedRelation: "property_offering_versions"
+            referencedColumns: ["id", "org_id", "property_id", "content_hash"]
+          },
+          {
+            foreignKeyName: "property_onboarding_policy_tenant_fkey"
+            columns: [
+              "policy_version_id",
+              "org_id",
+              "property_id",
+              "policy_content_hash",
+            ]
+            isOneToOne: false
+            referencedRelation: "property_policy_versions"
+            referencedColumns: ["id", "org_id", "property_id", "content_hash"]
+          },
           {
             foreignKeyName: "property_onboarding_snapshots_approval_action_attempt_id_fkey"
             columns: ["approval_action_attempt_id"]
@@ -5892,6 +6194,18 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "vw_property_marketing_setup"
             referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "property_onboarding_vertical_profile_tenant_fkey"
+            columns: [
+              "vertical_profile_version_id",
+              "org_id",
+              "property_id",
+              "vertical_profile_content_hash",
+            ]
+            isOneToOne: false
+            referencedRelation: "property_vertical_profile_versions"
+            referencedColumns: ["id", "org_id", "property_id", "content_hash"]
           },
         ]
       }
@@ -6052,6 +6366,96 @@ export type Database = {
           },
         ]
       }
+      property_policy_versions: {
+        Row: {
+          approved_at: string | null
+          approved_by: string | null
+          content_hash: string
+          created_at: string
+          created_by: string | null
+          effective_at: string | null
+          expires_at: string | null
+          id: string
+          org_id: string
+          policy: Json
+          policy_key: string
+          policy_kind: string
+          property_id: string
+          status: string
+          version: number
+        }
+        Insert: {
+          approved_at?: string | null
+          approved_by?: string | null
+          content_hash: string
+          created_at?: string
+          created_by?: string | null
+          effective_at?: string | null
+          expires_at?: string | null
+          id?: string
+          org_id: string
+          policy: Json
+          policy_key: string
+          policy_kind: string
+          property_id: string
+          status?: string
+          version: number
+        }
+        Update: {
+          approved_at?: string | null
+          approved_by?: string | null
+          content_hash?: string
+          created_at?: string
+          created_by?: string | null
+          effective_at?: string | null
+          expires_at?: string | null
+          id?: string
+          org_id?: string
+          policy?: Json
+          policy_key?: string
+          policy_kind?: string
+          property_id?: string
+          status?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "property_policy_versions_approved_by_fkey"
+            columns: ["approved_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_policy_versions_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_policy_versions_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_policy_versions_property_tenant_fkey"
+            columns: ["property_id", "org_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id", "org_id"]
+          },
+          {
+            foreignKeyName: "property_policy_versions_property_tenant_fkey"
+            columns: ["property_id", "org_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id", "org_id"]
+          },
+        ]
+      }
       property_price_history: {
         Row: {
           available_count: number | null
@@ -6087,6 +6491,88 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "property_units"
             referencedColumns: ["id"]
+          },
+        ]
+      }
+      property_subject_relationships: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          ended_at: string | null
+          id: string
+          org_id: string
+          related_property_id: string
+          relationship_kind: string
+          relationship_metadata: Json
+          status: string
+          subject_property_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          ended_at?: string | null
+          id?: string
+          org_id: string
+          related_property_id: string
+          relationship_kind: string
+          relationship_metadata?: Json
+          status?: string
+          subject_property_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          ended_at?: string | null
+          id?: string
+          org_id?: string
+          related_property_id?: string
+          relationship_kind?: string
+          relationship_metadata?: Json
+          status?: string
+          subject_property_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "property_subject_relationships_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_subject_relationships_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_subject_relationships_related_tenant_fkey"
+            columns: ["related_property_id", "org_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id", "org_id"]
+          },
+          {
+            foreignKeyName: "property_subject_relationships_related_tenant_fkey"
+            columns: ["related_property_id", "org_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id", "org_id"]
+          },
+          {
+            foreignKeyName: "property_subject_relationships_subject_tenant_fkey"
+            columns: ["subject_property_id", "org_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id", "org_id"]
+          },
+          {
+            foreignKeyName: "property_subject_relationships_subject_tenant_fkey"
+            columns: ["subject_property_id", "org_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id", "org_id"]
           },
         ]
       }
@@ -6354,6 +6840,89 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "vw_property_marketing_setup"
             referencedColumns: ["property_id"]
+          },
+        ]
+      }
+      property_vertical_profile_versions: {
+        Row: {
+          content_hash: string
+          created_at: string
+          created_by: string | null
+          id: string
+          mapping_reason: string | null
+          mapping_status: string
+          org_id: string
+          profile: Json
+          property_id: string
+          subject_kind: string
+          version: number
+          vertical_key: string
+          vertical_pack_content_hash: string
+          vertical_pack_key: string
+          vertical_pack_version: number
+        }
+        Insert: {
+          content_hash: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          mapping_reason?: string | null
+          mapping_status?: string
+          org_id: string
+          profile: Json
+          property_id: string
+          subject_kind: string
+          version: number
+          vertical_key: string
+          vertical_pack_content_hash: string
+          vertical_pack_key: string
+          vertical_pack_version: number
+        }
+        Update: {
+          content_hash?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          mapping_reason?: string | null
+          mapping_status?: string
+          org_id?: string
+          profile?: Json
+          property_id?: string
+          subject_kind?: string
+          version?: number
+          vertical_key?: string
+          vertical_pack_content_hash?: string
+          vertical_pack_key?: string
+          vertical_pack_version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "property_vertical_profile_property_tenant_fkey"
+            columns: ["property_id", "org_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id", "org_id"]
+          },
+          {
+            foreignKeyName: "property_vertical_profile_property_tenant_fkey"
+            columns: ["property_id", "org_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id", "org_id"]
+          },
+          {
+            foreignKeyName: "property_vertical_profile_versions_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_vertical_profile_versions_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
           },
         ]
       }
@@ -7992,8 +8561,10 @@ export type Database = {
       shared_action_attempts: {
         Row: {
           action_type: string
+          compensation_state: string
           confidence_score: number | null
           created_at: string
+          deadline_at: string | null
           decided_at: string | null
           error_message: string | null
           executed_at: string | null
@@ -8003,6 +8574,7 @@ export type Database = {
           id: string
           job_id: string
           lifecycle_status: string
+          model_metadata: Json
           org_id: string
           policy_reason: string | null
           policy_snapshot: Json | null
@@ -8018,8 +8590,10 @@ export type Database = {
         }
         Insert: {
           action_type: string
+          compensation_state?: string
           confidence_score?: number | null
           created_at?: string
+          deadline_at?: string | null
           decided_at?: string | null
           error_message?: string | null
           executed_at?: string | null
@@ -8029,6 +8603,7 @@ export type Database = {
           id?: string
           job_id: string
           lifecycle_status?: string
+          model_metadata?: Json
           org_id: string
           policy_reason?: string | null
           policy_snapshot?: Json | null
@@ -8044,8 +8619,10 @@ export type Database = {
         }
         Update: {
           action_type?: string
+          compensation_state?: string
           confidence_score?: number | null
           created_at?: string
+          deadline_at?: string | null
           decided_at?: string | null
           error_message?: string | null
           executed_at?: string | null
@@ -8055,6 +8632,7 @@ export type Database = {
           id?: string
           job_id?: string
           lifecycle_status?: string
+          model_metadata?: Json
           org_id?: string
           policy_reason?: string | null
           policy_snapshot?: Json | null
@@ -8261,6 +8839,193 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "vw_property_marketing_setup"
             referencedColumns: ["property_id"]
+          },
+        ]
+      }
+      shared_execution_budget_events: {
+        Row: {
+          budget_id: string
+          created_at: string
+          event_type: string
+          id: string
+          idempotency_key: string
+          usage_delta: Json
+        }
+        Insert: {
+          budget_id: string
+          created_at?: string
+          event_type: string
+          id?: string
+          idempotency_key: string
+          usage_delta?: Json
+        }
+        Update: {
+          budget_id?: string
+          created_at?: string
+          event_type?: string
+          id?: string
+          idempotency_key?: string
+          usage_delta?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "shared_execution_budget_events_budget_id_fkey"
+            columns: ["budget_id"]
+            isOneToOne: false
+            referencedRelation: "shared_execution_budgets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      shared_execution_budgets: {
+        Row: {
+          created_at: string
+          deadline_at: string | null
+          id: string
+          job_id: string | null
+          max_browser_runs: number
+          max_cost_cents: number
+          max_input_tokens: number
+          max_model_attempts: number
+          max_output_tokens: number
+          max_provider_calls: number
+          max_repair_operations: number
+          max_wall_seconds: number
+          metadata: Json
+          model_policy: Json
+          org_id: string
+          policy_version: string
+          property_id: string | null
+          reserved_cost_cents: number
+          reserved_input_tokens: number
+          reserved_output_tokens: number
+          started_at: string
+          status: string
+          updated_at: string
+          used_browser_runs: number
+          used_cost_cents: number
+          used_input_tokens: number
+          used_model_attempts: number
+          used_output_tokens: number
+          used_provider_calls: number
+          used_repair_operations: number
+          website_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          deadline_at?: string | null
+          id?: string
+          job_id?: string | null
+          max_browser_runs?: number
+          max_cost_cents?: number
+          max_input_tokens?: number
+          max_model_attempts?: number
+          max_output_tokens?: number
+          max_provider_calls?: number
+          max_repair_operations?: number
+          max_wall_seconds?: number
+          metadata?: Json
+          model_policy?: Json
+          org_id: string
+          policy_version: string
+          property_id?: string | null
+          reserved_cost_cents?: number
+          reserved_input_tokens?: number
+          reserved_output_tokens?: number
+          started_at?: string
+          status?: string
+          updated_at?: string
+          used_browser_runs?: number
+          used_cost_cents?: number
+          used_input_tokens?: number
+          used_model_attempts?: number
+          used_output_tokens?: number
+          used_provider_calls?: number
+          used_repair_operations?: number
+          website_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          deadline_at?: string | null
+          id?: string
+          job_id?: string | null
+          max_browser_runs?: number
+          max_cost_cents?: number
+          max_input_tokens?: number
+          max_model_attempts?: number
+          max_output_tokens?: number
+          max_provider_calls?: number
+          max_repair_operations?: number
+          max_wall_seconds?: number
+          metadata?: Json
+          model_policy?: Json
+          org_id?: string
+          policy_version?: string
+          property_id?: string | null
+          reserved_cost_cents?: number
+          reserved_input_tokens?: number
+          reserved_output_tokens?: number
+          started_at?: string
+          status?: string
+          updated_at?: string
+          used_browser_runs?: number
+          used_cost_cents?: number
+          used_input_tokens?: number
+          used_model_attempts?: number
+          used_output_tokens?: number
+          used_provider_calls?: number
+          used_repair_operations?: number
+          website_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "shared_execution_budgets_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: true
+            referencedRelation: "shared_jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shared_execution_budgets_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shared_execution_budgets_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shared_execution_budgets_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "shared_execution_budgets_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "shared_execution_budgets_website_id_fkey"
+            columns: ["website_id"]
+            isOneToOne: false
+            referencedRelation: "property_websites"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shared_execution_budgets_website_id_fkey"
+            columns: ["website_id"]
+            isOneToOne: false
+            referencedRelation: "website_summary"
+            referencedColumns: ["id"]
           },
         ]
       }
@@ -8505,45 +9270,60 @@ export type Database = {
       shared_policy_decisions: {
         Row: {
           action_attempt_id: string | null
+          actor_type: string
           confidence_score: number | null
           created_at: string
+          decided_at: string
           decision_payload: Json
           decision_reason: string
           decision_status: string
+          enforcement_outcome: string | null
+          evaluator: string | null
           id: string
           job_id: string | null
           org_id: string
           policy_name: string
           policy_version: string | null
           property_id: string | null
+          source_hash: string | null
         }
         Insert: {
           action_attempt_id?: string | null
+          actor_type?: string
           confidence_score?: number | null
           created_at?: string
+          decided_at?: string
           decision_payload?: Json
           decision_reason: string
           decision_status: string
+          enforcement_outcome?: string | null
+          evaluator?: string | null
           id?: string
           job_id?: string | null
           org_id: string
           policy_name: string
           policy_version?: string | null
           property_id?: string | null
+          source_hash?: string | null
         }
         Update: {
           action_attempt_id?: string | null
+          actor_type?: string
           confidence_score?: number | null
           created_at?: string
+          decided_at?: string
           decision_payload?: Json
           decision_reason?: string
           decision_status?: string
+          enforcement_outcome?: string | null
+          evaluator?: string | null
           id?: string
           job_id?: string | null
           org_id?: string
           policy_name?: string
           policy_version?: string | null
           property_id?: string | null
+          source_hash?: string | null
         }
         Relationships: [
           {
@@ -9332,6 +10112,8 @@ export type Database = {
           approval_action_attempt_id: string | null
           asset_manifest: Json
           asset_manifest_hash: string | null
+          availability_content_hash: string | null
+          availability_snapshot_id: string | null
           base_theme_package_id: string | null
           base_theme_package_sha256: string | null
           blueprint: Json
@@ -9349,12 +10131,16 @@ export type Database = {
           edit_intent: string | null
           id: string
           motion_configuration: Json
+          offering_content_hash: string | null
+          offering_version_id: string | null
           operation_set: Json
           operation_set_hash: string | null
           org_id: string
           overlay_package_sha256: string | null
           parent_version_id: string | null
           patches_applied: Json | null
+          policy_content_hash: string | null
+          policy_version_id: string | null
           property_id: string
           quality_report: Json | null
           quality_score: number | null
@@ -9368,12 +10154,19 @@ export type Database = {
           source_plan_version_id: string | null
           theme_overlay_id: string | null
           version: number
+          vertical_pack_content_hash: string | null
+          vertical_pack_key: string | null
+          vertical_pack_version: number | null
+          vertical_profile_content_hash: string | null
+          vertical_profile_version_id: string | null
           website_id: string
         }
         Insert: {
           approval_action_attempt_id?: string | null
           asset_manifest?: Json
           asset_manifest_hash?: string | null
+          availability_content_hash?: string | null
+          availability_snapshot_id?: string | null
           base_theme_package_id?: string | null
           base_theme_package_sha256?: string | null
           blueprint: Json
@@ -9391,12 +10184,16 @@ export type Database = {
           edit_intent?: string | null
           id?: string
           motion_configuration?: Json
+          offering_content_hash?: string | null
+          offering_version_id?: string | null
           operation_set?: Json
           operation_set_hash?: string | null
           org_id: string
           overlay_package_sha256?: string | null
           parent_version_id?: string | null
           patches_applied?: Json | null
+          policy_content_hash?: string | null
+          policy_version_id?: string | null
           property_id: string
           quality_report?: Json | null
           quality_score?: number | null
@@ -9410,12 +10207,19 @@ export type Database = {
           source_plan_version_id?: string | null
           theme_overlay_id?: string | null
           version: number
+          vertical_pack_content_hash?: string | null
+          vertical_pack_key?: string | null
+          vertical_pack_version?: number | null
+          vertical_profile_content_hash?: string | null
+          vertical_profile_version_id?: string | null
           website_id: string
         }
         Update: {
           approval_action_attempt_id?: string | null
           asset_manifest?: Json
           asset_manifest_hash?: string | null
+          availability_content_hash?: string | null
+          availability_snapshot_id?: string | null
           base_theme_package_id?: string | null
           base_theme_package_sha256?: string | null
           blueprint?: Json
@@ -9433,12 +10237,16 @@ export type Database = {
           edit_intent?: string | null
           id?: string
           motion_configuration?: Json
+          offering_content_hash?: string | null
+          offering_version_id?: string | null
           operation_set?: Json
           operation_set_hash?: string | null
           org_id?: string
           overlay_package_sha256?: string | null
           parent_version_id?: string | null
           patches_applied?: Json | null
+          policy_content_hash?: string | null
+          policy_version_id?: string | null
           property_id?: string
           quality_report?: Json | null
           quality_score?: number | null
@@ -9452,6 +10260,11 @@ export type Database = {
           source_plan_version_id?: string | null
           theme_overlay_id?: string | null
           version?: number
+          vertical_pack_content_hash?: string | null
+          vertical_pack_key?: string | null
+          vertical_pack_version?: number | null
+          vertical_profile_content_hash?: string | null
+          vertical_profile_version_id?: string | null
           website_id?: string
         }
         Relationships: [
@@ -9553,6 +10366,54 @@ export type Database = {
             referencedRelation: "website_summary"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "siteforge_blueprints_availability_tenant_fkey"
+            columns: [
+              "availability_snapshot_id",
+              "org_id",
+              "property_id",
+              "availability_content_hash",
+            ]
+            isOneToOne: false
+            referencedRelation: "property_availability_snapshots"
+            referencedColumns: ["id", "org_id", "property_id", "content_hash"]
+          },
+          {
+            foreignKeyName: "siteforge_blueprints_offering_tenant_fkey"
+            columns: [
+              "offering_version_id",
+              "org_id",
+              "property_id",
+              "offering_content_hash",
+            ]
+            isOneToOne: false
+            referencedRelation: "property_offering_versions"
+            referencedColumns: ["id", "org_id", "property_id", "content_hash"]
+          },
+          {
+            foreignKeyName: "siteforge_blueprints_policy_tenant_fkey"
+            columns: [
+              "policy_version_id",
+              "org_id",
+              "property_id",
+              "policy_content_hash",
+            ]
+            isOneToOne: false
+            referencedRelation: "property_policy_versions"
+            referencedColumns: ["id", "org_id", "property_id", "content_hash"]
+          },
+          {
+            foreignKeyName: "siteforge_blueprints_vertical_profile_tenant_fkey"
+            columns: [
+              "vertical_profile_version_id",
+              "org_id",
+              "property_id",
+              "vertical_profile_content_hash",
+            ]
+            isOneToOne: false
+            referencedRelation: "property_vertical_profile_versions"
+            referencedColumns: ["id", "org_id", "property_id", "content_hash"]
+          },
         ]
       }
       siteforge_brief_versions: {
@@ -9560,6 +10421,8 @@ export type Database = {
           approval_action_attempt_id: string | null
           approved_at: string | null
           approved_by: string | null
+          availability_content_hash: string | null
+          availability_snapshot_id: string | null
           brand_asset_id: string | null
           brand_contract_hash: string | null
           brief: Json
@@ -9569,19 +10432,30 @@ export type Database = {
           created_by: string | null
           decision_reason: string | null
           id: string
+          offering_content_hash: string | null
+          offering_version_id: string | null
           onboarding_snapshot_hash: string | null
           onboarding_snapshot_id: string | null
           org_id: string
+          policy_content_hash: string | null
+          policy_version_id: string | null
           property_id: string
           status: string
           unresolved_contradictions: Json
           version: number
+          vertical_pack_content_hash: string | null
+          vertical_pack_key: string | null
+          vertical_pack_version: number | null
+          vertical_profile_content_hash: string | null
+          vertical_profile_version_id: string | null
           website_id: string
         }
         Insert: {
           approval_action_attempt_id?: string | null
           approved_at?: string | null
           approved_by?: string | null
+          availability_content_hash?: string | null
+          availability_snapshot_id?: string | null
           brand_asset_id?: string | null
           brand_contract_hash?: string | null
           brief?: Json
@@ -9591,19 +10465,30 @@ export type Database = {
           created_by?: string | null
           decision_reason?: string | null
           id?: string
+          offering_content_hash?: string | null
+          offering_version_id?: string | null
           onboarding_snapshot_hash?: string | null
           onboarding_snapshot_id?: string | null
           org_id: string
+          policy_content_hash?: string | null
+          policy_version_id?: string | null
           property_id: string
           status?: string
           unresolved_contradictions?: Json
           version: number
+          vertical_pack_content_hash?: string | null
+          vertical_pack_key?: string | null
+          vertical_pack_version?: number | null
+          vertical_profile_content_hash?: string | null
+          vertical_profile_version_id?: string | null
           website_id: string
         }
         Update: {
           approval_action_attempt_id?: string | null
           approved_at?: string | null
           approved_by?: string | null
+          availability_content_hash?: string | null
+          availability_snapshot_id?: string | null
           brand_asset_id?: string | null
           brand_contract_hash?: string | null
           brief?: Json
@@ -9613,13 +10498,22 @@ export type Database = {
           created_by?: string | null
           decision_reason?: string | null
           id?: string
+          offering_content_hash?: string | null
+          offering_version_id?: string | null
           onboarding_snapshot_hash?: string | null
           onboarding_snapshot_id?: string | null
           org_id?: string
+          policy_content_hash?: string | null
+          policy_version_id?: string | null
           property_id?: string
           status?: string
           unresolved_contradictions?: Json
           version?: number
+          vertical_pack_content_hash?: string | null
+          vertical_pack_key?: string | null
+          vertical_pack_version?: number | null
+          vertical_profile_content_hash?: string | null
+          vertical_profile_version_id?: string | null
           website_id?: string
         }
         Relationships: [
@@ -9720,6 +10614,54 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "website_summary"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_briefs_availability_tenant_fkey"
+            columns: [
+              "availability_snapshot_id",
+              "org_id",
+              "property_id",
+              "availability_content_hash",
+            ]
+            isOneToOne: false
+            referencedRelation: "property_availability_snapshots"
+            referencedColumns: ["id", "org_id", "property_id", "content_hash"]
+          },
+          {
+            foreignKeyName: "siteforge_briefs_offering_tenant_fkey"
+            columns: [
+              "offering_version_id",
+              "org_id",
+              "property_id",
+              "offering_content_hash",
+            ]
+            isOneToOne: false
+            referencedRelation: "property_offering_versions"
+            referencedColumns: ["id", "org_id", "property_id", "content_hash"]
+          },
+          {
+            foreignKeyName: "siteforge_briefs_policy_tenant_fkey"
+            columns: [
+              "policy_version_id",
+              "org_id",
+              "property_id",
+              "policy_content_hash",
+            ]
+            isOneToOne: false
+            referencedRelation: "property_policy_versions"
+            referencedColumns: ["id", "org_id", "property_id", "content_hash"]
+          },
+          {
+            foreignKeyName: "siteforge_briefs_vertical_profile_tenant_fkey"
+            columns: [
+              "vertical_profile_version_id",
+              "org_id",
+              "property_id",
+              "vertical_profile_content_hash",
+            ]
+            isOneToOne: false
+            referencedRelation: "property_vertical_profile_versions"
+            referencedColumns: ["id", "org_id", "property_id", "content_hash"]
           },
         ]
       }
@@ -9939,164 +10881,111 @@ export type Database = {
           },
         ]
       }
-      siteforge_client_decisions: {
+      siteforge_component_registry: {
         Row: {
-          artifact_content_hash: string
-          artifact_id: string
-          canonical_url: string | null
-          certification_evidence_id: string | null
-          certification_report_hash: string | null
-          certified_at: string | null
+          component_key: string
           created_at: string
-          decision: string
+          current_version_id: string | null
+          display_name: string
           id: string
-          org_id: string
-          property_id: string
-          rationale: string
-          review_session_id: string
-          review_token_id: string | null
-          reviewer_email: string | null
-          reviewer_name: string | null
-          website_id: string
+          lifecycle_status: string
+          updated_at: string
         }
         Insert: {
-          artifact_content_hash: string
-          artifact_id: string
-          canonical_url?: string | null
-          certification_evidence_id?: string | null
-          certification_report_hash?: string | null
-          certified_at?: string | null
+          component_key: string
           created_at?: string
-          decision: string
+          current_version_id?: string | null
+          display_name: string
           id?: string
-          org_id: string
-          property_id: string
-          rationale: string
-          review_session_id: string
-          review_token_id?: string | null
-          reviewer_email?: string | null
-          reviewer_name?: string | null
-          website_id: string
+          lifecycle_status?: string
+          updated_at?: string
         }
         Update: {
-          artifact_content_hash?: string
-          artifact_id?: string
-          canonical_url?: string | null
-          certification_evidence_id?: string | null
-          certification_report_hash?: string | null
-          certified_at?: string | null
+          component_key?: string
           created_at?: string
-          decision?: string
+          current_version_id?: string | null
+          display_name?: string
           id?: string
-          org_id?: string
-          property_id?: string
-          rationale?: string
-          review_session_id?: string
-          review_token_id?: string | null
-          reviewer_email?: string | null
-          reviewer_name?: string | null
-          website_id?: string
+          lifecycle_status?: string
+          updated_at?: string
         }
         Relationships: [
           {
-            foreignKeyName: "siteforge_client_decision_session_tenant_fkey"
-            columns: [
-              "review_session_id",
-              "org_id",
-              "property_id",
-              "website_id",
-            ]
+            foreignKeyName: "siteforge_component_registry_current_version_fkey"
+            columns: ["current_version_id"]
             isOneToOne: false
-            referencedRelation: "siteforge_review_sessions"
-            referencedColumns: ["id", "org_id", "property_id", "website_id"]
-          },
-          {
-            foreignKeyName: "siteforge_client_decision_token_tenant_fkey"
-            columns: [
-              "review_token_id",
-              "review_session_id",
-              "org_id",
-              "property_id",
-              "website_id",
-            ]
-            isOneToOne: false
-            referencedRelation: "siteforge_review_tokens"
-            referencedColumns: [
-              "id",
-              "review_session_id",
-              "org_id",
-              "property_id",
-              "website_id",
-            ]
-          },
-          {
-            foreignKeyName: "siteforge_client_decisions_artifact_id_fkey"
-            columns: ["artifact_id"]
-            isOneToOne: false
-            referencedRelation: "siteforge_blueprint_versions"
+            referencedRelation: "siteforge_component_versions"
             referencedColumns: ["id"]
           },
+        ]
+      }
+      siteforge_component_versions: {
+        Row: {
+          accessibility_contract: Json
+          certification_scenarios: Json
+          compiler_version: string
+          component_id: string
+          created_at: string
+          descriptor: Json
+          descriptor_sha256: string
+          id: string
+          package_manifest: Json
+          package_sha256: string
+          published_at: string
+          schema_version: number
+          semantic_version: string
+          signature: string | null
+          signature_algorithm: string | null
+          signing_key_id: string | null
+          v2_catalog_entry: Json
+          v3_catalog_entry: Json
+        }
+        Insert: {
+          accessibility_contract: Json
+          certification_scenarios: Json
+          compiler_version: string
+          component_id: string
+          created_at?: string
+          descriptor: Json
+          descriptor_sha256: string
+          id?: string
+          package_manifest: Json
+          package_sha256: string
+          published_at?: string
+          schema_version: number
+          semantic_version: string
+          signature?: string | null
+          signature_algorithm?: string | null
+          signing_key_id?: string | null
+          v2_catalog_entry: Json
+          v3_catalog_entry: Json
+        }
+        Update: {
+          accessibility_contract?: Json
+          certification_scenarios?: Json
+          compiler_version?: string
+          component_id?: string
+          created_at?: string
+          descriptor?: Json
+          descriptor_sha256?: string
+          id?: string
+          package_manifest?: Json
+          package_sha256?: string
+          published_at?: string
+          schema_version?: number
+          semantic_version?: string
+          signature?: string | null
+          signature_algorithm?: string | null
+          signing_key_id?: string | null
+          v2_catalog_entry?: Json
+          v3_catalog_entry?: Json
+        }
+        Relationships: [
           {
-            foreignKeyName: "siteforge_client_decisions_certification_evidence_id_fkey"
-            columns: ["certification_evidence_id"]
+            foreignKeyName: "siteforge_component_versions_component_id_fkey"
+            columns: ["component_id"]
             isOneToOne: false
-            referencedRelation: "siteforge_certification_evidence"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_client_decisions_org_id_fkey"
-            columns: ["org_id"]
-            isOneToOne: false
-            referencedRelation: "organizations"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_client_decisions_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "properties"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_client_decisions_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "vw_import_status"
-            referencedColumns: ["property_id"]
-          },
-          {
-            foreignKeyName: "siteforge_client_decisions_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "vw_property_marketing_setup"
-            referencedColumns: ["property_id"]
-          },
-          {
-            foreignKeyName: "siteforge_client_decisions_review_session_id_fkey"
-            columns: ["review_session_id"]
-            isOneToOne: false
-            referencedRelation: "siteforge_review_sessions"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_client_decisions_review_token_id_fkey"
-            columns: ["review_token_id"]
-            isOneToOne: false
-            referencedRelation: "siteforge_review_tokens"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_client_decisions_website_id_fkey"
-            columns: ["website_id"]
-            isOneToOne: false
-            referencedRelation: "property_websites"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_client_decisions_website_id_fkey"
-            columns: ["website_id"]
-            isOneToOne: false
-            referencedRelation: "website_summary"
+            referencedRelation: "siteforge_component_registry"
             referencedColumns: ["id"]
           },
         ]
@@ -10228,6 +11117,323 @@ export type Database = {
           },
           {
             foreignKeyName: "siteforge_connector_configs_website_tenant_fkey"
+            columns: ["website_id", "org_id", "property_id"]
+            isOneToOne: false
+            referencedRelation: "property_websites"
+            referencedColumns: ["id", "org_id", "property_id"]
+          },
+        ]
+      }
+      siteforge_conversion_intent_versions: {
+        Row: {
+          consent_requirement: string
+          content_hash: string
+          created_at: string
+          created_by: string | null
+          fallback_intent_key: string | null
+          field_schema: Json
+          id: string
+          intent_key: string
+          offering_kind: string | null
+          offline_outcome_key: string | null
+          org_id: string
+          policy: Json
+          property_id: string
+          provider_key: string
+          sensitivity: string
+          success_event: string
+          version: number
+          website_id: string
+        }
+        Insert: {
+          consent_requirement: string
+          content_hash: string
+          created_at?: string
+          created_by?: string | null
+          fallback_intent_key?: string | null
+          field_schema: Json
+          id?: string
+          intent_key: string
+          offering_kind?: string | null
+          offline_outcome_key?: string | null
+          org_id: string
+          policy?: Json
+          property_id: string
+          provider_key: string
+          sensitivity: string
+          success_event: string
+          version: number
+          website_id: string
+        }
+        Update: {
+          consent_requirement?: string
+          content_hash?: string
+          created_at?: string
+          created_by?: string | null
+          fallback_intent_key?: string | null
+          field_schema?: Json
+          id?: string
+          intent_key?: string
+          offering_kind?: string | null
+          offline_outcome_key?: string | null
+          org_id?: string
+          policy?: Json
+          property_id?: string
+          provider_key?: string
+          sensitivity?: string
+          success_event?: string
+          version?: number
+          website_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "siteforge_conversion_intent_versions_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_conversion_intent_versions_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_conversion_intent_website_tenant_fkey"
+            columns: ["website_id", "org_id", "property_id"]
+            isOneToOne: false
+            referencedRelation: "property_websites"
+            referencedColumns: ["id", "org_id", "property_id"]
+          },
+        ]
+      }
+      siteforge_conversion_outcomes: {
+        Row: {
+          content_hash: string
+          created_at: string
+          evidence: Json
+          id: string
+          intent_version_id: string | null
+          occurred_at: string
+          offering_id: string | null
+          org_id: string
+          outcome_key: string
+          property_id: string
+          provider_key: string | null
+          provider_outcome_id: string | null
+          recorded_by: string | null
+          source_kind: string
+          submission_row_id: string
+          website_id: string
+        }
+        Insert: {
+          content_hash: string
+          created_at?: string
+          evidence?: Json
+          id?: string
+          intent_version_id?: string | null
+          occurred_at: string
+          offering_id?: string | null
+          org_id: string
+          outcome_key: string
+          property_id: string
+          provider_key?: string | null
+          provider_outcome_id?: string | null
+          recorded_by?: string | null
+          source_kind: string
+          submission_row_id: string
+          website_id: string
+        }
+        Update: {
+          content_hash?: string
+          created_at?: string
+          evidence?: Json
+          id?: string
+          intent_version_id?: string | null
+          occurred_at?: string
+          offering_id?: string | null
+          org_id?: string
+          outcome_key?: string
+          property_id?: string
+          provider_key?: string | null
+          provider_outcome_id?: string | null
+          recorded_by?: string | null
+          source_kind?: string
+          submission_row_id?: string
+          website_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "siteforge_conversion_outcome_intent_tenant_fkey"
+            columns: [
+              "intent_version_id",
+              "org_id",
+              "property_id",
+              "website_id",
+            ]
+            isOneToOne: false
+            referencedRelation: "siteforge_conversion_intent_versions"
+            referencedColumns: ["id", "org_id", "property_id", "website_id"]
+          },
+          {
+            foreignKeyName: "siteforge_conversion_outcome_offering_tenant_fkey"
+            columns: ["offering_id", "org_id", "property_id"]
+            isOneToOne: false
+            referencedRelation: "property_offerings"
+            referencedColumns: ["id", "org_id", "property_id"]
+          },
+          {
+            foreignKeyName: "siteforge_conversion_outcome_submission_tenant_fkey"
+            columns: [
+              "submission_row_id",
+              "org_id",
+              "property_id",
+              "website_id",
+            ]
+            isOneToOne: false
+            referencedRelation: "siteforge_conversion_submissions"
+            referencedColumns: ["id", "org_id", "property_id", "website_id"]
+          },
+          {
+            foreignKeyName: "siteforge_conversion_outcomes_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_conversion_outcomes_recorded_by_fkey"
+            columns: ["recorded_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      siteforge_conversion_submissions: {
+        Row: {
+          artifact_id: string | null
+          consent_state: string
+          created_at: string
+          failure_code: string | null
+          form_kind: string
+          id: string
+          intent_key: string
+          intent_version_id: string | null
+          lead_id: string | null
+          offering_id: string | null
+          org_id: string
+          payload_hash: string
+          processed_at: string | null
+          property_id: string
+          provider_key: string
+          received_at: string
+          request_id: string | null
+          result_status: string
+          sensitivity: string
+          submission_id: string
+          submission_payload: Json
+          tour_id: string | null
+          updated_at: string
+          website_id: string
+        }
+        Insert: {
+          artifact_id?: string | null
+          consent_state: string
+          created_at?: string
+          failure_code?: string | null
+          form_kind: string
+          id?: string
+          intent_key?: string
+          intent_version_id?: string | null
+          lead_id?: string | null
+          offering_id?: string | null
+          org_id: string
+          payload_hash: string
+          processed_at?: string | null
+          property_id: string
+          provider_key?: string
+          received_at: string
+          request_id?: string | null
+          result_status?: string
+          sensitivity?: string
+          submission_id: string
+          submission_payload: Json
+          tour_id?: string | null
+          updated_at?: string
+          website_id: string
+        }
+        Update: {
+          artifact_id?: string | null
+          consent_state?: string
+          created_at?: string
+          failure_code?: string | null
+          form_kind?: string
+          id?: string
+          intent_key?: string
+          intent_version_id?: string | null
+          lead_id?: string | null
+          offering_id?: string | null
+          org_id?: string
+          payload_hash?: string
+          processed_at?: string | null
+          property_id?: string
+          provider_key?: string
+          received_at?: string
+          request_id?: string | null
+          result_status?: string
+          sensitivity?: string
+          submission_id?: string
+          submission_payload?: Json
+          tour_id?: string | null
+          updated_at?: string
+          website_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "siteforge_conversion_submission_intent_tenant_fkey"
+            columns: [
+              "intent_version_id",
+              "org_id",
+              "property_id",
+              "website_id",
+            ]
+            isOneToOne: false
+            referencedRelation: "siteforge_conversion_intent_versions"
+            referencedColumns: ["id", "org_id", "property_id", "website_id"]
+          },
+          {
+            foreignKeyName: "siteforge_conversion_submission_offering_tenant_fkey"
+            columns: ["offering_id", "org_id", "property_id"]
+            isOneToOne: false
+            referencedRelation: "property_offerings"
+            referencedColumns: ["id", "org_id", "property_id"]
+          },
+          {
+            foreignKeyName: "siteforge_conversion_submissions_lead_id_fkey"
+            columns: ["lead_id"]
+            isOneToOne: false
+            referencedRelation: "leads"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_conversion_submissions_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_conversion_submissions_tour_id_fkey"
+            columns: ["tour_id"]
+            isOneToOne: false
+            referencedRelation: "tours"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_conversion_website_tenant_fkey"
             columns: ["website_id", "org_id", "property_id"]
             isOneToOne: false
             referencedRelation: "property_websites"
@@ -10621,6 +11827,146 @@ export type Database = {
           },
           {
             foreignKeyName: "siteforge_dns_snapshots_website_id_fkey"
+            columns: ["website_id"]
+            isOneToOne: false
+            referencedRelation: "website_summary"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      siteforge_edit_attachments: {
+        Row: {
+          artifact_content_hash: string
+          artifact_id: string
+          byte_sha256: string
+          created_at: string
+          created_by: string
+          file_size_bytes: number
+          height: number | null
+          id: string
+          mime_type: string
+          org_id: string
+          original_filename: string
+          page_slug: string
+          property_id: string
+          session_id: string
+          storage_bucket: string
+          storage_path: string
+          user_message_id: string | null
+          viewport: string
+          website_id: string
+          width: number | null
+        }
+        Insert: {
+          artifact_content_hash: string
+          artifact_id: string
+          byte_sha256: string
+          created_at?: string
+          created_by: string
+          file_size_bytes: number
+          height?: number | null
+          id?: string
+          mime_type: string
+          org_id: string
+          original_filename: string
+          page_slug: string
+          property_id: string
+          session_id: string
+          storage_bucket?: string
+          storage_path: string
+          user_message_id?: string | null
+          viewport: string
+          website_id: string
+          width?: number | null
+        }
+        Update: {
+          artifact_content_hash?: string
+          artifact_id?: string
+          byte_sha256?: string
+          created_at?: string
+          created_by?: string
+          file_size_bytes?: number
+          height?: number | null
+          id?: string
+          mime_type?: string
+          org_id?: string
+          original_filename?: string
+          page_slug?: string
+          property_id?: string
+          session_id?: string
+          storage_bucket?: string
+          storage_path?: string
+          user_message_id?: string | null
+          viewport?: string
+          website_id?: string
+          width?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "siteforge_edit_attachments_artifact_id_fkey"
+            columns: ["artifact_id"]
+            isOneToOne: false
+            referencedRelation: "siteforge_blueprint_versions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_edit_attachments_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_edit_attachments_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_edit_attachments_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_edit_attachments_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "siteforge_edit_attachments_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "siteforge_edit_attachments_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "siteforge_edit_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_edit_attachments_user_message_id_fkey"
+            columns: ["user_message_id"]
+            isOneToOne: false
+            referencedRelation: "siteforge_edit_messages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_edit_attachments_website_id_fkey"
+            columns: ["website_id"]
+            isOneToOne: false
+            referencedRelation: "property_websites"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_edit_attachments_website_id_fkey"
             columns: ["website_id"]
             isOneToOne: false
             referencedRelation: "website_summary"
@@ -11485,6 +12831,73 @@ export type Database = {
           },
         ]
       }
+      siteforge_launch_policies: {
+        Row: {
+          confirmation_ttl_seconds: number
+          content_hash: string
+          created_at: string
+          created_by: string | null
+          id: string
+          org_id: string
+          policy: Json
+          property_id: string
+          required_aal: string
+          requires_distinct_approver: boolean
+          version: number
+          website_id: string
+        }
+        Insert: {
+          confirmation_ttl_seconds?: number
+          content_hash: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          org_id: string
+          policy: Json
+          property_id: string
+          required_aal?: string
+          requires_distinct_approver?: boolean
+          version: number
+          website_id: string
+        }
+        Update: {
+          confirmation_ttl_seconds?: number
+          content_hash?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          org_id?: string
+          policy?: Json
+          property_id?: string
+          required_aal?: string
+          requires_distinct_approver?: boolean
+          version?: number
+          website_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "siteforge_launch_policies_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_launch_policies_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_launch_policy_website_tenant_fkey"
+            columns: ["website_id", "org_id", "property_id"]
+            isOneToOne: false
+            referencedRelation: "property_websites"
+            referencedColumns: ["id", "org_id", "property_id"]
+          },
+        ]
+      }
       siteforge_launch_releases: {
         Row: {
           approval_expires_at: string | null
@@ -11504,6 +12917,11 @@ export type Database = {
           id: string
           launch_action_attempt_id: string | null
           launch_approval_id: string | null
+          launch_confirmation_observed_aal: string | null
+          launch_confirmation_required_aal: string | null
+          launch_confirmed_at: string | null
+          launch_policy_content_hash: string | null
+          launch_policy_id: string | null
           legal_rights_snapshot: Json
           live_at: string | null
           org_id: string
@@ -11544,6 +12962,11 @@ export type Database = {
           id?: string
           launch_action_attempt_id?: string | null
           launch_approval_id?: string | null
+          launch_confirmation_observed_aal?: string | null
+          launch_confirmation_required_aal?: string | null
+          launch_confirmed_at?: string | null
+          launch_policy_content_hash?: string | null
+          launch_policy_id?: string | null
           legal_rights_snapshot?: Json
           live_at?: string | null
           org_id: string
@@ -11584,6 +13007,11 @@ export type Database = {
           id?: string
           launch_action_attempt_id?: string | null
           launch_approval_id?: string | null
+          launch_confirmation_observed_aal?: string | null
+          launch_confirmation_required_aal?: string | null
+          launch_confirmed_at?: string | null
+          launch_policy_content_hash?: string | null
+          launch_policy_id?: string | null
           legal_rights_snapshot?: Json
           live_at?: string | null
           org_id?: string
@@ -11607,6 +13035,25 @@ export type Database = {
           website_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "siteforge_launch_release_policy_tenant_fkey"
+            columns: [
+              "launch_policy_id",
+              "org_id",
+              "property_id",
+              "website_id",
+              "launch_policy_content_hash",
+            ]
+            isOneToOne: false
+            referencedRelation: "siteforge_launch_policies"
+            referencedColumns: [
+              "id",
+              "org_id",
+              "property_id",
+              "website_id",
+              "content_hash",
+            ]
+          },
           {
             foreignKeyName: "siteforge_launch_releases_approved_by_fkey"
             columns: ["approved_by"]
@@ -12161,6 +13608,8 @@ export type Database = {
       }
       siteforge_plan_versions: {
         Row: {
+          availability_content_hash: string | null
+          availability_snapshot_id: string | null
           brand_asset_id: string | null
           brand_contract_hash: string | null
           brand_contract_version: string | null
@@ -12170,15 +13619,28 @@ export type Database = {
           created_at: string
           created_by: string | null
           id: string
+          offering_content_hash: string | null
+          offering_version_id: string | null
           onboarding_snapshot_hash: string | null
           onboarding_snapshot_id: string | null
+          org_id: string
           plan: Json
           plan_id: string
+          policy_content_hash: string | null
+          policy_version_id: string | null
           preferences: Json
+          property_id: string
           readiness_report: Json
           revision: number
+          vertical_pack_content_hash: string | null
+          vertical_pack_key: string | null
+          vertical_pack_version: number | null
+          vertical_profile_content_hash: string | null
+          vertical_profile_version_id: string | null
         }
         Insert: {
+          availability_content_hash?: string | null
+          availability_snapshot_id?: string | null
           brand_asset_id?: string | null
           brand_contract_hash?: string | null
           brand_contract_version?: string | null
@@ -12188,15 +13650,28 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           id?: string
+          offering_content_hash?: string | null
+          offering_version_id?: string | null
           onboarding_snapshot_hash?: string | null
           onboarding_snapshot_id?: string | null
+          org_id: string
           plan: Json
           plan_id: string
+          policy_content_hash?: string | null
+          policy_version_id?: string | null
           preferences?: Json
+          property_id: string
           readiness_report?: Json
           revision: number
+          vertical_pack_content_hash?: string | null
+          vertical_pack_key?: string | null
+          vertical_pack_version?: number | null
+          vertical_profile_content_hash?: string | null
+          vertical_profile_version_id?: string | null
         }
         Update: {
+          availability_content_hash?: string | null
+          availability_snapshot_id?: string | null
           brand_asset_id?: string | null
           brand_contract_hash?: string | null
           brand_contract_version?: string | null
@@ -12206,13 +13681,24 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           id?: string
+          offering_content_hash?: string | null
+          offering_version_id?: string | null
           onboarding_snapshot_hash?: string | null
           onboarding_snapshot_id?: string | null
+          org_id?: string
           plan?: Json
           plan_id?: string
+          policy_content_hash?: string | null
+          policy_version_id?: string | null
           preferences?: Json
+          property_id?: string
           readiness_report?: Json
           revision?: number
+          vertical_pack_content_hash?: string | null
+          vertical_pack_key?: string | null
+          vertical_pack_version?: number | null
+          vertical_profile_content_hash?: string | null
+          vertical_profile_version_id?: string | null
         }
         Relationships: [
           {
@@ -12251,11 +13737,94 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "siteforge_plan_versions_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "siteforge_plan_versions_plan_id_fkey"
             columns: ["plan_id"]
             isOneToOne: false
             referencedRelation: "siteforge_plans"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_plan_versions_plan_tenant_fkey"
+            columns: ["plan_id", "org_id", "property_id"]
+            isOneToOne: false
+            referencedRelation: "siteforge_plans"
+            referencedColumns: ["id", "org_id", "property_id"]
+          },
+          {
+            foreignKeyName: "siteforge_plan_versions_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_plan_versions_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "siteforge_plan_versions_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "siteforge_plans_availability_tenant_fkey"
+            columns: [
+              "availability_snapshot_id",
+              "org_id",
+              "property_id",
+              "availability_content_hash",
+            ]
+            isOneToOne: false
+            referencedRelation: "property_availability_snapshots"
+            referencedColumns: ["id", "org_id", "property_id", "content_hash"]
+          },
+          {
+            foreignKeyName: "siteforge_plans_offering_tenant_fkey"
+            columns: [
+              "offering_version_id",
+              "org_id",
+              "property_id",
+              "offering_content_hash",
+            ]
+            isOneToOne: false
+            referencedRelation: "property_offering_versions"
+            referencedColumns: ["id", "org_id", "property_id", "content_hash"]
+          },
+          {
+            foreignKeyName: "siteforge_plans_policy_tenant_fkey"
+            columns: [
+              "policy_version_id",
+              "org_id",
+              "property_id",
+              "policy_content_hash",
+            ]
+            isOneToOne: false
+            referencedRelation: "property_policy_versions"
+            referencedColumns: ["id", "org_id", "property_id", "content_hash"]
+          },
+          {
+            foreignKeyName: "siteforge_plans_vertical_profile_tenant_fkey"
+            columns: [
+              "vertical_profile_version_id",
+              "org_id",
+              "property_id",
+              "vertical_profile_content_hash",
+            ]
+            isOneToOne: false
+            referencedRelation: "property_vertical_profile_versions"
+            referencedColumns: ["id", "org_id", "property_id", "content_hash"]
           },
         ]
       }
@@ -12650,587 +14219,6 @@ export type Database = {
           },
           {
             foreignKeyName: "siteforge_restore_drills_website_id_fkey"
-            columns: ["website_id"]
-            isOneToOne: false
-            referencedRelation: "website_summary"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      siteforge_review_comments: {
-        Row: {
-          anchor: Json
-          artifact_id: string
-          author_email: string | null
-          author_name: string | null
-          author_profile_id: string | null
-          author_type: string
-          body: string
-          category: string
-          created_at: string
-          disposition_reason: string | null
-          id: string
-          org_id: string
-          page_path: string
-          parent_comment_id: string | null
-          property_id: string
-          resulting_artifact_id: string | null
-          review_session_id: string
-          revision_round_id: string | null
-          section_id: string | null
-          semantic_operations: Json
-          status: string
-          updated_at: string
-          viewport: string | null
-          website_id: string
-        }
-        Insert: {
-          anchor?: Json
-          artifact_id: string
-          author_email?: string | null
-          author_name?: string | null
-          author_profile_id?: string | null
-          author_type: string
-          body: string
-          category?: string
-          created_at?: string
-          disposition_reason?: string | null
-          id?: string
-          org_id: string
-          page_path: string
-          parent_comment_id?: string | null
-          property_id: string
-          resulting_artifact_id?: string | null
-          review_session_id: string
-          revision_round_id?: string | null
-          section_id?: string | null
-          semantic_operations?: Json
-          status?: string
-          updated_at?: string
-          viewport?: string | null
-          website_id: string
-        }
-        Update: {
-          anchor?: Json
-          artifact_id?: string
-          author_email?: string | null
-          author_name?: string | null
-          author_profile_id?: string | null
-          author_type?: string
-          body?: string
-          category?: string
-          created_at?: string
-          disposition_reason?: string | null
-          id?: string
-          org_id?: string
-          page_path?: string
-          parent_comment_id?: string | null
-          property_id?: string
-          resulting_artifact_id?: string | null
-          review_session_id?: string
-          revision_round_id?: string | null
-          section_id?: string | null
-          semantic_operations?: Json
-          status?: string
-          updated_at?: string
-          viewport?: string | null
-          website_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "siteforge_review_comment_parent_tenant_fkey"
-            columns: [
-              "parent_comment_id",
-              "review_session_id",
-              "org_id",
-              "property_id",
-              "website_id",
-            ]
-            isOneToOne: false
-            referencedRelation: "siteforge_review_comments"
-            referencedColumns: [
-              "id",
-              "review_session_id",
-              "org_id",
-              "property_id",
-              "website_id",
-            ]
-          },
-          {
-            foreignKeyName: "siteforge_review_comment_round_tenant_fkey"
-            columns: [
-              "revision_round_id",
-              "review_session_id",
-              "org_id",
-              "property_id",
-              "website_id",
-            ]
-            isOneToOne: false
-            referencedRelation: "siteforge_revision_rounds"
-            referencedColumns: [
-              "id",
-              "review_session_id",
-              "org_id",
-              "property_id",
-              "website_id",
-            ]
-          },
-          {
-            foreignKeyName: "siteforge_review_comment_session_tenant_fkey"
-            columns: [
-              "review_session_id",
-              "org_id",
-              "property_id",
-              "website_id",
-            ]
-            isOneToOne: false
-            referencedRelation: "siteforge_review_sessions"
-            referencedColumns: ["id", "org_id", "property_id", "website_id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_comments_artifact_id_fkey"
-            columns: ["artifact_id"]
-            isOneToOne: false
-            referencedRelation: "siteforge_blueprint_versions"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_comments_author_profile_id_fkey"
-            columns: ["author_profile_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_comments_org_id_fkey"
-            columns: ["org_id"]
-            isOneToOne: false
-            referencedRelation: "organizations"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_comments_parent_comment_id_fkey"
-            columns: ["parent_comment_id"]
-            isOneToOne: false
-            referencedRelation: "siteforge_review_comments"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_comments_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "properties"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_comments_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "vw_import_status"
-            referencedColumns: ["property_id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_comments_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "vw_property_marketing_setup"
-            referencedColumns: ["property_id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_comments_resulting_artifact_id_fkey"
-            columns: ["resulting_artifact_id"]
-            isOneToOne: false
-            referencedRelation: "siteforge_blueprint_versions"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_comments_review_session_id_fkey"
-            columns: ["review_session_id"]
-            isOneToOne: false
-            referencedRelation: "siteforge_review_sessions"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_comments_revision_round_id_fkey"
-            columns: ["revision_round_id"]
-            isOneToOne: false
-            referencedRelation: "siteforge_revision_rounds"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_comments_website_id_fkey"
-            columns: ["website_id"]
-            isOneToOne: false
-            referencedRelation: "property_websites"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_comments_website_id_fkey"
-            columns: ["website_id"]
-            isOneToOne: false
-            referencedRelation: "website_summary"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      siteforge_review_sessions: {
-        Row: {
-          artifact_content_hash: string
-          artifact_id: string
-          client_safe_summary: Json
-          closed_at: string | null
-          closes_at: string | null
-          id: string
-          instructions: string | null
-          opened_at: string
-          opened_by: string | null
-          org_id: string
-          property_id: string
-          status: string
-          title: string
-          website_id: string
-        }
-        Insert: {
-          artifact_content_hash: string
-          artifact_id: string
-          client_safe_summary?: Json
-          closed_at?: string | null
-          closes_at?: string | null
-          id?: string
-          instructions?: string | null
-          opened_at?: string
-          opened_by?: string | null
-          org_id: string
-          property_id: string
-          status?: string
-          title: string
-          website_id: string
-        }
-        Update: {
-          artifact_content_hash?: string
-          artifact_id?: string
-          client_safe_summary?: Json
-          closed_at?: string | null
-          closes_at?: string | null
-          id?: string
-          instructions?: string | null
-          opened_at?: string
-          opened_by?: string | null
-          org_id?: string
-          property_id?: string
-          status?: string
-          title?: string
-          website_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "siteforge_review_sessions_artifact_id_fkey"
-            columns: ["artifact_id"]
-            isOneToOne: false
-            referencedRelation: "siteforge_blueprint_versions"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_sessions_opened_by_fkey"
-            columns: ["opened_by"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_sessions_org_id_fkey"
-            columns: ["org_id"]
-            isOneToOne: false
-            referencedRelation: "organizations"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_sessions_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "properties"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_sessions_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "vw_import_status"
-            referencedColumns: ["property_id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_sessions_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "vw_property_marketing_setup"
-            referencedColumns: ["property_id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_sessions_website_id_fkey"
-            columns: ["website_id"]
-            isOneToOne: false
-            referencedRelation: "property_websites"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_sessions_website_id_fkey"
-            columns: ["website_id"]
-            isOneToOne: false
-            referencedRelation: "website_summary"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_tenant_fkey"
-            columns: ["website_id", "org_id", "property_id"]
-            isOneToOne: false
-            referencedRelation: "property_websites"
-            referencedColumns: ["id", "org_id", "property_id"]
-          },
-        ]
-      }
-      siteforge_review_tokens: {
-        Row: {
-          created_at: string
-          created_by: string | null
-          expires_at: string
-          id: string
-          last_used_at: string | null
-          org_id: string
-          permissions: Json
-          property_id: string
-          review_session_id: string
-          reviewer_email: string | null
-          reviewer_name: string | null
-          revoked_at: string | null
-          token_hash: string
-          website_id: string
-        }
-        Insert: {
-          created_at?: string
-          created_by?: string | null
-          expires_at: string
-          id?: string
-          last_used_at?: string | null
-          org_id: string
-          permissions?: Json
-          property_id: string
-          review_session_id: string
-          reviewer_email?: string | null
-          reviewer_name?: string | null
-          revoked_at?: string | null
-          token_hash: string
-          website_id: string
-        }
-        Update: {
-          created_at?: string
-          created_by?: string | null
-          expires_at?: string
-          id?: string
-          last_used_at?: string | null
-          org_id?: string
-          permissions?: Json
-          property_id?: string
-          review_session_id?: string
-          reviewer_email?: string | null
-          reviewer_name?: string | null
-          revoked_at?: string | null
-          token_hash?: string
-          website_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "siteforge_review_token_session_tenant_fkey"
-            columns: [
-              "review_session_id",
-              "org_id",
-              "property_id",
-              "website_id",
-            ]
-            isOneToOne: false
-            referencedRelation: "siteforge_review_sessions"
-            referencedColumns: ["id", "org_id", "property_id", "website_id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_tokens_created_by_fkey"
-            columns: ["created_by"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_tokens_org_id_fkey"
-            columns: ["org_id"]
-            isOneToOne: false
-            referencedRelation: "organizations"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_tokens_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "properties"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_tokens_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "vw_import_status"
-            referencedColumns: ["property_id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_tokens_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "vw_property_marketing_setup"
-            referencedColumns: ["property_id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_tokens_review_session_id_fkey"
-            columns: ["review_session_id"]
-            isOneToOne: false
-            referencedRelation: "siteforge_review_sessions"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_tokens_website_id_fkey"
-            columns: ["website_id"]
-            isOneToOne: false
-            referencedRelation: "property_websites"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_tokens_website_id_fkey"
-            columns: ["website_id"]
-            isOneToOne: false
-            referencedRelation: "website_summary"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      siteforge_revision_rounds: {
-        Row: {
-          assigned_to: string | null
-          created_at: string
-          due_at: string | null
-          id: string
-          org_id: string
-          property_id: string
-          requested_by_email: string | null
-          requested_by_name: string | null
-          resulting_artifact_id: string | null
-          resulting_content_hash: string | null
-          review_session_id: string
-          round_number: number
-          status: string
-          updated_at: string
-          website_id: string
-        }
-        Insert: {
-          assigned_to?: string | null
-          created_at?: string
-          due_at?: string | null
-          id?: string
-          org_id: string
-          property_id: string
-          requested_by_email?: string | null
-          requested_by_name?: string | null
-          resulting_artifact_id?: string | null
-          resulting_content_hash?: string | null
-          review_session_id: string
-          round_number: number
-          status?: string
-          updated_at?: string
-          website_id: string
-        }
-        Update: {
-          assigned_to?: string | null
-          created_at?: string
-          due_at?: string | null
-          id?: string
-          org_id?: string
-          property_id?: string
-          requested_by_email?: string | null
-          requested_by_name?: string | null
-          resulting_artifact_id?: string | null
-          resulting_content_hash?: string | null
-          review_session_id?: string
-          round_number?: number
-          status?: string
-          updated_at?: string
-          website_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "siteforge_revision_round_session_tenant_fkey"
-            columns: [
-              "review_session_id",
-              "org_id",
-              "property_id",
-              "website_id",
-            ]
-            isOneToOne: false
-            referencedRelation: "siteforge_review_sessions"
-            referencedColumns: ["id", "org_id", "property_id", "website_id"]
-          },
-          {
-            foreignKeyName: "siteforge_revision_rounds_assigned_to_fkey"
-            columns: ["assigned_to"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_revision_rounds_org_id_fkey"
-            columns: ["org_id"]
-            isOneToOne: false
-            referencedRelation: "organizations"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_revision_rounds_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "properties"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_revision_rounds_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "vw_import_status"
-            referencedColumns: ["property_id"]
-          },
-          {
-            foreignKeyName: "siteforge_revision_rounds_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "vw_property_marketing_setup"
-            referencedColumns: ["property_id"]
-          },
-          {
-            foreignKeyName: "siteforge_revision_rounds_resulting_artifact_id_fkey"
-            columns: ["resulting_artifact_id"]
-            isOneToOne: false
-            referencedRelation: "siteforge_blueprint_versions"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_revision_rounds_review_session_id_fkey"
-            columns: ["review_session_id"]
-            isOneToOne: false
-            referencedRelation: "siteforge_review_sessions"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_revision_rounds_website_id_fkey"
-            columns: ["website_id"]
-            isOneToOne: false
-            referencedRelation: "property_websites"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_revision_rounds_website_id_fkey"
             columns: ["website_id"]
             isOneToOne: false
             referencedRelation: "website_summary"
@@ -13835,6 +14823,88 @@ export type Database = {
           },
         ]
       }
+      siteforge_vertical_activation_versions: {
+        Row: {
+          approved_at: string | null
+          approved_by: string | null
+          content_hash: string
+          created_at: string
+          enabled: boolean
+          expires_at: string | null
+          id: string
+          mode: string
+          org_id: string
+          property_id: string
+          qualification_report_hash: string | null
+          reason: string
+          registry_version: number | null
+          version: number
+          vertical_pack_content_hash: string | null
+          vertical_profile_content_hash: string | null
+          website_id: string
+        }
+        Insert: {
+          approved_at?: string | null
+          approved_by?: string | null
+          content_hash: string
+          created_at?: string
+          enabled?: boolean
+          expires_at?: string | null
+          id?: string
+          mode: string
+          org_id: string
+          property_id: string
+          qualification_report_hash?: string | null
+          reason: string
+          registry_version?: number | null
+          version: number
+          vertical_pack_content_hash?: string | null
+          vertical_profile_content_hash?: string | null
+          website_id: string
+        }
+        Update: {
+          approved_at?: string | null
+          approved_by?: string | null
+          content_hash?: string
+          created_at?: string
+          enabled?: boolean
+          expires_at?: string | null
+          id?: string
+          mode?: string
+          org_id?: string
+          property_id?: string
+          qualification_report_hash?: string | null
+          reason?: string
+          registry_version?: number | null
+          version?: number
+          vertical_pack_content_hash?: string | null
+          vertical_profile_content_hash?: string | null
+          website_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "siteforge_vertical_activation_versions_approved_by_fkey"
+            columns: ["approved_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_vertical_activation_versions_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_vertical_activation_website_tenant_fkey"
+            columns: ["website_id", "org_id", "property_id"]
+            isOneToOne: false
+            referencedRelation: "property_websites"
+            referencedColumns: ["id", "org_id", "property_id"]
+          },
+        ]
+      }
       siteforge_visual_baselines: {
         Row: {
           access_mode: string
@@ -13875,6 +14945,7 @@ export type Database = {
           status: string
           superseded_at: string | null
           superseded_by: string | null
+          system_policy_decision_id: string | null
           viewport: string
           viewport_height: number
           viewport_width: number
@@ -13919,6 +14990,7 @@ export type Database = {
           status?: string
           superseded_at?: string | null
           superseded_by?: string | null
+          system_policy_decision_id?: string | null
           viewport: string
           viewport_height: number
           viewport_width: number
@@ -13963,6 +15035,7 @@ export type Database = {
           status?: string
           superseded_at?: string | null
           superseded_by?: string | null
+          system_policy_decision_id?: string | null
           viewport?: string
           viewport_height?: number
           viewport_width?: number
@@ -14058,6 +15131,13 @@ export type Database = {
             columns: ["superseded_by"]
             isOneToOne: false
             referencedRelation: "siteforge_visual_baselines"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_visual_baselines_system_policy_decision_id_fkey"
+            columns: ["system_policy_decision_id"]
+            isOneToOne: false
+            referencedRelation: "shared_policy_decisions"
             referencedColumns: ["id"]
           },
           {
@@ -16167,6 +17247,7 @@ export type Database = {
           status: string
           superseded_at: string | null
           superseded_by: string | null
+          system_policy_decision_id: string | null
           viewport: string
           viewport_height: number
           viewport_width: number
@@ -16448,6 +17529,8 @@ export type Database = {
           approval_action_attempt_id: string | null
           asset_manifest: Json
           asset_manifest_hash: string | null
+          availability_content_hash: string | null
+          availability_snapshot_id: string | null
           base_theme_package_id: string | null
           base_theme_package_sha256: string | null
           blueprint: Json
@@ -16465,12 +17548,16 @@ export type Database = {
           edit_intent: string | null
           id: string
           motion_configuration: Json
+          offering_content_hash: string | null
+          offering_version_id: string | null
           operation_set: Json
           operation_set_hash: string | null
           org_id: string
           overlay_package_sha256: string | null
           parent_version_id: string | null
           patches_applied: Json | null
+          policy_content_hash: string | null
+          policy_version_id: string | null
           property_id: string
           quality_report: Json | null
           quality_score: number | null
@@ -16484,6 +17571,11 @@ export type Database = {
           source_plan_version_id: string | null
           theme_overlay_id: string | null
           version: number
+          vertical_pack_content_hash: string | null
+          vertical_pack_key: string | null
+          vertical_pack_version: number | null
+          vertical_profile_content_hash: string | null
+          vertical_profile_version_id: string | null
           website_id: string
         }
         SetofOptions: {
@@ -16541,6 +17633,58 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      reserve_shared_execution_budget_v2: {
+        Args: {
+          p_browser_runs?: number
+          p_budget_id: string
+          p_cost_cents?: number
+          p_idempotency_key: string
+          p_input_tokens?: number
+          p_model_attempts?: number
+          p_output_tokens?: number
+          p_provider_calls?: number
+          p_repair_operations?: number
+        }
+        Returns: {
+          created_at: string
+          deadline_at: string | null
+          id: string
+          job_id: string | null
+          max_browser_runs: number
+          max_cost_cents: number
+          max_input_tokens: number
+          max_model_attempts: number
+          max_output_tokens: number
+          max_provider_calls: number
+          max_repair_operations: number
+          max_wall_seconds: number
+          metadata: Json
+          model_policy: Json
+          org_id: string
+          policy_version: string
+          property_id: string | null
+          reserved_cost_cents: number
+          reserved_input_tokens: number
+          reserved_output_tokens: number
+          started_at: string
+          status: string
+          updated_at: string
+          used_browser_runs: number
+          used_cost_cents: number
+          used_input_tokens: number
+          used_model_attempts: number
+          used_output_tokens: number
+          used_provider_calls: number
+          used_repair_operations: number
+          website_id: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "shared_execution_budgets"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       revoke_siteforge_visual_baseline: {
         Args: {
           p_action_attempt_id: string
@@ -16588,6 +17732,7 @@ export type Database = {
           status: string
           superseded_at: string | null
           superseded_by: string | null
+          system_policy_decision_id: string | null
           viewport: string
           viewport_height: number
           viewport_width: number
@@ -16617,6 +17762,8 @@ export type Database = {
           approval_action_attempt_id: string | null
           approved_at: string | null
           approved_by: string | null
+          availability_content_hash: string | null
+          availability_snapshot_id: string | null
           brand_asset_id: string | null
           brand_contract_hash: string | null
           brief: Json
@@ -16626,13 +17773,22 @@ export type Database = {
           created_by: string | null
           decision_reason: string | null
           id: string
+          offering_content_hash: string | null
+          offering_version_id: string | null
           onboarding_snapshot_hash: string | null
           onboarding_snapshot_id: string | null
           org_id: string
+          policy_content_hash: string | null
+          policy_version_id: string | null
           property_id: string
           status: string
           unresolved_contradictions: Json
           version: number
+          vertical_pack_content_hash: string | null
+          vertical_pack_key: string | null
+          vertical_pack_version: number | null
+          vertical_profile_content_hash: string | null
+          vertical_profile_version_id: string | null
           website_id: string
         }[]
         SetofOptions: {
@@ -16679,6 +17835,57 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      settle_shared_execution_budget_v2: {
+        Args: {
+          p_budget_id: string
+          p_idempotency_key: string
+          p_reserved_cost_cents?: number
+          p_reserved_input_tokens?: number
+          p_reserved_output_tokens?: number
+          p_used_cost_cents?: number
+          p_used_input_tokens?: number
+          p_used_output_tokens?: number
+        }
+        Returns: {
+          created_at: string
+          deadline_at: string | null
+          id: string
+          job_id: string | null
+          max_browser_runs: number
+          max_cost_cents: number
+          max_input_tokens: number
+          max_model_attempts: number
+          max_output_tokens: number
+          max_provider_calls: number
+          max_repair_operations: number
+          max_wall_seconds: number
+          metadata: Json
+          model_policy: Json
+          org_id: string
+          policy_version: string
+          property_id: string | null
+          reserved_cost_cents: number
+          reserved_input_tokens: number
+          reserved_output_tokens: number
+          started_at: string
+          status: string
+          updated_at: string
+          used_browser_runs: number
+          used_cost_cents: number
+          used_input_tokens: number
+          used_model_attempts: number
+          used_output_tokens: number
+          used_provider_calls: number
+          used_repair_operations: number
+          website_id: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "shared_execution_budgets"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       store_siteforge_credential_secret: {
         Args: { p_description?: string; p_name: string; p_secret: string }
         Returns: string
@@ -16712,6 +17919,11 @@ export type Database = {
           id: string
           launch_action_attempt_id: string | null
           launch_approval_id: string | null
+          launch_confirmation_observed_aal: string | null
+          launch_confirmation_required_aal: string | null
+          launch_confirmed_at: string | null
+          launch_policy_content_hash: string | null
+          launch_policy_id: string | null
           legal_rights_snapshot: Json
           live_at: string | null
           org_id: string

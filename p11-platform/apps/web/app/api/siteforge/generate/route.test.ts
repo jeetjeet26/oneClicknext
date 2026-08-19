@@ -16,6 +16,7 @@ const serviceRpcMock = vi.fn()
 const loadApprovedGenerationContextMock = vi.fn()
 const consumeConfirmedPlanMock = vi.fn()
 const publishSiteForgeArtifactMock = vi.fn()
+const createExecutionBudgetMock = vi.fn()
 
 vi.mock('@/utils/supabase/server', () => ({
   createClient: createClientMock,
@@ -27,6 +28,10 @@ vi.mock('@/utils/supabase/admin', () => ({
 
 vi.mock('@/utils/services/auth-guard', () => ({
   validatePropertyAccess: validatePropertyAccessMock,
+}))
+
+vi.mock('@/utils/services/execution-budget', () => ({
+  createExecutionBudget: createExecutionBudgetMock,
 }))
 
 vi.mock('@/utils/siteforge/agents', () => ({
@@ -237,6 +242,7 @@ describe('siteforge generate route', () => {
       version: 1,
       contentHash: '6'.repeat(64),
     })
+    createExecutionBudgetMock.mockResolvedValue({ id: 'budget-1' })
     consumeConfirmedPlanMock.mockResolvedValue(undefined)
   })
 
@@ -341,14 +347,6 @@ describe('siteforge generate route', () => {
     })
     websiteUpdate.mockReturnValue(websiteUpdateBuilder)
 
-    const jobInsert = vi.fn()
-    const jobInsertBuilder: Record<string, unknown> = {}
-    jobInsertBuilder.select = vi.fn(() => jobInsertBuilder)
-    jobInsertBuilder.single = vi.fn().mockResolvedValue({
-      data: { id: 'job-1' },
-      error: null,
-    })
-
     const sharedInsert = vi.fn()
     const sharedInsertBuilder: Record<string, unknown> = {}
     sharedInsertBuilder.select = vi.fn(() => sharedInsertBuilder)
@@ -398,11 +396,6 @@ describe('siteforge generate route', () => {
         }
       }
       if (table === 'website_assets') return assetBuilder
-      if (table === 'siteforge_jobs') {
-        return {
-          insert: jobInsert.mockReturnValue(jobInsertBuilder),
-        }
-      }
       if (table === 'shared_jobs') {
         return {
           insert: sharedInsert,
@@ -450,15 +443,9 @@ describe('siteforge generate route', () => {
       }),
       expect.anything()
     )
-    expect(jobInsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        status: 'complete',
-        input_params: expect.objectContaining({
-          planId,
-          localSimulation: true,
-        }),
-      })
-    )
+    // The legacy siteforge_jobs table is read-only compatibility now; the
+    // route must not write to it.
+    expect(serviceFromMock).not.toHaveBeenCalledWith('siteforge_jobs')
   })
 
   it('terminalizes an orphan generation job and requires the row update', async () => {

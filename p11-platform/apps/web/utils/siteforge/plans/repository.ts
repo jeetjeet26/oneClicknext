@@ -13,6 +13,11 @@ import {
 } from '@/utils/siteforge/contracts'
 import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
 import { buildSiteForgePlan } from './builder'
+import {
+  buildSiteForgePlanV2,
+  type BuildSiteForgePlanV2Input,
+} from './builder-v2'
+import type { AdaptiveVerticalContext } from '@/utils/siteforge/guided/adaptive-discovery'
 import { proposeSharedAction } from '@/utils/services/shared-executor'
 import {
   recordSharedApprovalDecision,
@@ -40,6 +45,7 @@ import {
   siteForgeCreativeDirectionSchema,
   siteForgeDirectionPreviewSchema,
 } from '@/utils/siteforge/directions/contracts'
+import { loadAdaptiveVerticalContext } from '@/utils/real-estate/repository'
 
 type ServiceClient = ReturnType<typeof createServiceClient>
 type SiteForgePlansTable = Database['public']['Tables']['siteforge_plans']
@@ -91,6 +97,14 @@ type CreatePlanRevisionInput = {
   conversationHistory: ConversationEntry[]
   planId?: string | null
   expectedRevision?: number | null
+  verticalContext?: AdaptiveVerticalContext
+  discovery?: {
+    decisionSetHash: string
+    answerHash: string
+    discoveryHash: string
+  }
+  siteStory?: BuildSiteForgePlanV2Input['siteStory']
+  selectedCreativeDirection?: BuildSiteForgePlanV2Input['selectedCreativeDirection']
 }
 
 export type PersistedPlanRevision = {
@@ -156,7 +170,7 @@ export function siteForgePlanRequirements(
       sections: ReadonlyArray<{ block: string; required?: boolean }>
     }>
   }
-): { assets: boolean; inventory: boolean } {
+): { assets: boolean; inventory: boolean; catalog: boolean } {
   const requiredSections = plan.pages.flatMap(page =>
     page.sections.filter(section => section.required !== false)
   )
@@ -166,6 +180,14 @@ export function siteForgePlanRequirements(
     ),
     inventory: requiredSections.some(
       section => section.block === 'acf/plans-availability'
+    ),
+    catalog: requiredSections.some(section =>
+      [
+        'acf/offering-browser',
+        'acf/entity-directory',
+        'acf/comparison-table',
+        'acf/events-directory',
+      ].includes(section.block)
     ),
   }
 }
@@ -214,11 +236,29 @@ export function pinModifiedPlanSources(
       400
     )
   }
+  const pinnedV2 =
+    currentPlan.schemaVersion === 2
+      ? {
+          verticalProfile: currentPlan.verticalProfile,
+          verticalPackManifest: currentPlan.verticalPackManifest,
+          subjectHierarchy: currentPlan.subjectHierarchy,
+          offeringCatalog: currentPlan.offeringCatalog,
+          policySet: currentPlan.policySet,
+          discovery: currentPlan.discovery,
+        }
+      : {}
+  if (
+    currentPlan.schemaVersion === 2 &&
+    modifiedPlan.schemaVersion !== 2
+  ) {
+    throw new SiteForgePlanError('Modified plan schema version cannot be changed', 400)
+  }
   return siteForgePlanSchema.parse({
     ...modifiedPlan,
     propertyId: currentPlan.propertyId,
     onboardingSnapshot: currentPlan.onboardingSnapshot,
     brandSnapshot: currentPlan.brandSnapshot,
+    ...pinnedV2,
   })
 }
 
@@ -307,8 +347,27 @@ export async function loadApprovedSiteForgeGenerationContext(
   ) {
     generationConflict('Confirmed plan does not match its pinned readiness truth')
   }
-  const { assets: assetsRequired, inventory: inventoryRequired } =
-    siteForgePlanRequirements(plan)
+  if (plan.schemaVersion === 2) {
+    const currentVerticalContext = await loadAdaptiveVerticalContext(
+      { orgId: website.org_id, propertyId: website.property_id },
+      supabase
+    )
+    if (
+      currentVerticalContext.profile.id !== plan.verticalProfile.id ||
+      currentVerticalContext.profile.version !== plan.verticalProfile.version ||
+      currentVerticalContext.profile.contentHash !==
+        plan.verticalProfile.contentHash ||
+      currentVerticalContext.manifest.contentHash !==
+        plan.verticalPackManifest.contentHash ||
+      currentVerticalContext.evidence.contextHash !==
+        plan.discovery.evidenceContextHash
+    ) {
+      generationConflict(
+        'Confirmed Plan V2 vertical, catalog, policy, hierarchy, or discovery evidence changed'
+      )
+    }
+  }
+  const { inventory: inventoryRequired } = siteForgePlanRequirements(plan)
 
   const { data: onboarding, error: onboardingError } = await supabase
     .from('property_onboarding_snapshots')
@@ -477,11 +536,7 @@ export async function loadApprovedSiteForgeGenerationContext(
     .eq('property_id', website.property_id)
     .eq('org_id', website.org_id)
     .eq('approval_status', 'approved')
-    .in('rights_status', ['owned', 'licensed', 'generated'])
     .order('id', { ascending: true })
-  if (assetError && assetsRequired) {
-    generationConflict(`Failed to load approved asset manifest: ${assetError.message}`)
-  }
   if (assetError) {
     console.warn('[siteforge_generation] optional asset manifest unavailable', {
       websiteId: website.id,
@@ -492,36 +547,34 @@ export async function loadApprovedSiteForgeGenerationContext(
     assetError ? [] : assetRows || [],
     now,
   )
-  if (assetsRequired && !currentAssetReadiness.ready) {
-    generationConflict(
-      `Generation asset manifest no longer satisfies readiness: ${currentAssetReadiness.reasons.join('; ')}`,
-    )
-  }
+  // Expiry and rights metadata are passive (solo-operator doctrine); only
+  // structural identity (role + immutable content hash) is required.
   const assets = currentAssetReadiness.approvedRightsCleared.flatMap(asset => {
-    const expired = asset.expires_at && new Date(asset.expires_at) <= now
     if (
-      expired ||
       !asset.asset_role ||
       !asset.content_hash ||
-      !/^[a-f0-9]{64}$/.test(asset.content_hash) ||
-      !isRecord(asset.rights_metadata)
+      !/^[a-f0-9]{64}$/.test(asset.content_hash)
     ) {
       return []
     }
+    const rightsStatus = ['owned', 'licensed', 'generated'].includes(
+      asset.rights_status || ''
+    )
+      ? (asset.rights_status as 'owned' | 'licensed' | 'generated')
+      : ('unknown' as const)
     return [{
       id: asset.id,
       role: asset.asset_role,
       fileUrl: asset.file_url,
       contentHash: asset.content_hash,
-      rightsStatus: asset.rights_status as 'owned' | 'licensed' | 'generated',
-      rightsEvidenceHash: hashSiteForgeContent(asset.rights_metadata),
+      rightsStatus,
+      rightsEvidenceHash: hashSiteForgeContent(
+        isRecord(asset.rights_metadata) ? asset.rights_metadata : {}
+      ),
       approvalStatus: 'approved' as const,
       expiresAt: asset.expires_at,
     }]
   })
-  if (assetsRequired && assets.length === 0) {
-    generationConflict('Generation requires an approved rights-cleared asset manifest')
-  }
   const assetManifestHash = hashSiteForgeContent(assets)
 
   const { data: inventoryRows, error: inventoryError } = await supabase
@@ -549,24 +602,7 @@ export async function loadApprovedSiteForgeGenerationContext(
   if (inventoryRequired && inventory.length === 0) {
     generationConflict('Confirmed plan requires approved floor-plan inventory')
   }
-  const freshnessMs = plan.floorPlanStrategy.freshnessHours * 3_600_000
   const inventoryTimestamps = inventory.map(row => latestInventoryTimestamp(row))
-  if (inventoryRequired) {
-    const expired = inventory.some(
-      row => row.expires_at && new Date(row.expires_at) <= now
-    )
-    const stale = inventoryTimestamps.some(
-      timestamp =>
-        !timestamp ||
-        now.getTime() - new Date(timestamp).getTime() > freshnessMs
-    )
-    if (expired) {
-      generationConflict('Approved floor-plan inventory has expired')
-    }
-    if (stale) {
-      generationConflict('Approved floor-plan inventory is stale')
-    }
-  }
   const latestSourceUpdatedAt = inventoryTimestamps
     .filter((value): value is string => Boolean(value))
     .sort()
@@ -576,8 +612,7 @@ export async function loadApprovedSiteForgeGenerationContext(
     now.toISOString()
   ).contentHash
 
-  const snapshotCore = {
-    schemaVersion: 1 as const,
+  const sharedSnapshotCore = {
     websiteId: website.id,
     propertyId: website.property_id,
     orgId: website.org_id,
@@ -609,17 +644,46 @@ export async function loadApprovedSiteForgeGenerationContext(
       contractHash: brandHash,
     },
     assetManifest: {
-      required: assetsRequired,
+      required: false,
       assets,
       contentHash: assetManifestHash,
     },
-    inventory: {
-      required: inventoryRequired,
-      rowCount: inventory.length,
-      contentHash: inventoryContentHash,
-      latestSourceUpdatedAt,
-    },
   }
+  const snapshotCore =
+    plan.schemaVersion === 2
+      ? {
+          ...sharedSnapshotCore,
+          schemaVersion: 2 as const,
+          verticalProfile: plan.verticalProfile,
+          verticalPackManifest: {
+            registryVersion: plan.verticalPackManifest.registryVersion,
+            contentHash: plan.verticalPackManifest.contentHash,
+            packContentHashes: plan.verticalPackManifest.packs.map(
+              pack => pack.contentHash
+            ),
+          },
+          subjectHierarchy: plan.subjectHierarchy,
+          catalogs: {
+            contentHash: plan.offeringCatalog.contentHash,
+            snapshots: plan.offeringCatalog.snapshots,
+          },
+          policies: {
+            contentHash: plan.policySet.contentHash,
+            requiredPolicyCodes: plan.policySet.requiredPolicyCodes,
+            evidenceIds: plan.policySet.evidenceIds,
+          },
+          discovery: plan.discovery,
+        }
+      : {
+          ...sharedSnapshotCore,
+          schemaVersion: 1 as const,
+          inventory: {
+            required: inventoryRequired,
+            rowCount: inventory.length,
+            contentHash: inventoryContentHash,
+            latestSourceUpdatedAt,
+          },
+        }
   const evidenceSnapshot = siteForgeGenerationEvidenceSnapshotSchema.parse({
     ...snapshotCore,
     capturedAt: now.toISOString(),
@@ -758,18 +822,6 @@ function buildReadinessReport(
         'The chosen Floor Plans page requires approved floor-plan inventory.',
       evidenceIds: [],
     })
-  } else if (requirements.inventory && floorPlans?.latestUpdatedAt) {
-    const ageHours =
-      (Date.now() - new Date(floorPlans.latestUpdatedAt).getTime()) / 3_600_000
-    if (ageHours > plan.floorPlanStrategy.freshnessHours) {
-      issues.push({
-        code: 'floor_plan_inventory_stale',
-        severity: 'blocker',
-        category: 'inventory',
-        message: `Floor-plan inventory is older than ${plan.floorPlanStrategy.freshnessHours} hours.`,
-        evidenceIds: [],
-      })
-    }
   }
 
   return siteForgeReadinessReportSchema.parse({
@@ -890,34 +942,6 @@ export async function createPlanRevision(
     && !Array.isArray(onboardingSnapshot.snapshot_payload)
       ? onboardingSnapshot.snapshot_payload
       : {}
-  const snapshotAssets = Array.isArray(snapshotPayload.assets)
-    ? snapshotPayload.assets.flatMap(value => {
-        if (!isRecord(value)) return []
-        if (
-          typeof value.id !== 'string'
-          || typeof value.asset_type !== 'string'
-          || typeof value.approval_status !== 'string'
-          || typeof value.curation_status !== 'string'
-          || typeof value.rights_status !== 'string'
-        ) {
-          return []
-        }
-        return [{
-          id: value.id,
-          asset_role:
-            typeof value.asset_role === 'string' ? value.asset_role : null,
-          asset_type: value.asset_type,
-          approval_status: value.approval_status,
-          curation_status: value.curation_status,
-          rights_status: value.rights_status,
-          expires_at:
-            typeof value.expires_at === 'string' ? value.expires_at : null,
-          duplicate_of:
-            typeof value.duplicate_of === 'string' ? value.duplicate_of : null,
-        }]
-      })
-    : []
-  const assetReadiness = evaluateRequiredAssetReadiness(snapshotAssets)
   const enabledCapabilities = Array.isArray(snapshotPayload.enabledCapabilities)
     ? snapshotPayload.enabledCapabilities.filter(
         (capability): capability is 'crm' | 'tours' | 'chatbot' | 'analytics' =>
@@ -927,7 +951,38 @@ export async function createPlanRevision(
           || capability === 'analytics',
       )
     : []
-  const plan = buildSiteForgePlan({
+  if (
+    input.verticalContext
+    && input.discovery
+    && (!input.siteStory || !input.selectedCreativeDirection)
+  ) {
+    throw new SiteForgePlanError(
+      'Site Story V3 and the selected creative direction are required for a V2 plan',
+      400,
+    )
+  }
+  const plan =
+    input.verticalContext && input.discovery
+      ? buildSiteForgePlanV2({
+          propertyId: property.id,
+          propertyName: property.name,
+          brandContext: pinnedBrandContext,
+          brandAssetId: brandRow.id,
+          brandContract,
+          brandContractHash,
+          onboardingSnapshot: {
+            id: onboardingSnapshot.id,
+            contentHash: onboardingSnapshot.content_hash,
+            enabledCapabilities,
+          },
+          verticalContext: input.verticalContext,
+          discovery: input.discovery,
+          siteStory: input.siteStory!,
+          selectedCreativeDirection: input.selectedCreativeDirection!,
+          preferences: input.preferences,
+          operatorDirection: input.operatorDirection,
+        })
+      : buildSiteForgePlan({
     propertyId: property.id,
     propertyName: property.name,
     brandContext: pinnedBrandContext,
@@ -943,13 +998,7 @@ export async function createPlanRevision(
     preferences: input.preferences,
     siteType: input.siteType,
     operatorDirection: input.operatorDirection,
-  })
-  if (siteForgePlanRequirements(plan).assets && !assetReadiness.ready) {
-    throw new SiteForgePlanError(
-      `The chosen pages require approved SiteForge assets: ${assetReadiness.reasons.join('; ')}. Rebuild and approve readiness.`,
-      409,
-    )
-  }
+        })
   const missingCapabilities = plan.enabledCapabilities.filter(
     capability => !enabledCapabilities.includes(capability),
   )
@@ -1024,25 +1073,47 @@ export async function createPlanRevision(
     }
     nextRevision = existing.current_revision + 1
   } else {
-    const insert: TablesInsert<'siteforge_plans'> & { website_id: string } = {
-      website_id: property.websiteId,
-      org_id: property.org_id,
-      property_id: property.id,
-      status: 'draft',
-      current_revision: 0,
-      created_by: input.userId,
-      created_at: now,
-      updated_at: now,
+    const { data: existing, error: existingError } = await siteForgePlans(
+      supabase
+    )
+      .select('id, current_revision, status')
+      .eq('website_id', property.websiteId)
+      .eq('property_id', property.id)
+      .eq('org_id', property.org_id)
+      .maybeSingle()
+    if (existingError) {
+      throw new SiteForgePlanError('Failed to reconcile SiteForge plan', 500)
     }
-    const { data: created, error } = await siteForgePlans(supabase)
-      .insert(insert)
-      .select('id')
-      .single()
+    if (existing) {
+      if (existing.status === 'consumed') {
+        throw new SiteForgePlanError(
+          'Consumed plans cannot be revised for changed source truth',
+          409
+        )
+      }
+      planId = existing.id
+      nextRevision = existing.current_revision + 1
+    } else {
+      const insert: TablesInsert<'siteforge_plans'> & { website_id: string } = {
+        website_id: property.websiteId,
+        org_id: property.org_id,
+        property_id: property.id,
+        status: 'draft',
+        current_revision: 0,
+        created_by: input.userId,
+        created_at: now,
+        updated_at: now,
+      }
+      const { data: created, error } = await siteForgePlans(supabase)
+        .insert(insert)
+        .select('id')
+        .single()
 
-    if (error || !created) {
-      throw new SiteForgePlanError('Failed to create SiteForge plan', 500)
+      if (error || !created) {
+        throw new SiteForgePlanError('Failed to create SiteForge plan', 500)
+      }
+      planId = created.id
     }
-    planId = created.id
   }
 
   const contextPayload = {
@@ -1058,7 +1129,7 @@ export async function createPlanRevision(
     onboardingSnapshotHash: onboardingSnapshot.content_hash,
     onboardingSnapshotPayload: onboardingSnapshot.snapshot_payload,
     preferences: input.preferences || {},
-    siteType: plan.siteType,
+    siteType: plan.schemaVersion === 1 ? plan.siteType : null,
   }
   const { data: contextSnapshot, error: contextError } = await supabase
     .from('shared_context_snapshots')
@@ -1080,6 +1151,8 @@ export async function createPlanRevision(
 
   const versionInsert: TablesInsert<'siteforge_plan_versions'> = {
     plan_id: planId,
+    org_id: property.org_id,
+    property_id: property.id,
     revision: nextRevision,
     context_snapshot_id: contextSnapshot.id,
     plan: plan as unknown as Json,
@@ -1426,6 +1499,8 @@ export async function decideSiteForgePlan(
       .from('siteforge_plan_versions')
       .insert({
         plan_id: current.planId,
+        org_id: input.orgId,
+        property_id: input.propertyId,
         revision: nextRevision,
         context_snapshot_id: priorVersion.context_snapshot_id,
         plan: modifiedPlan as unknown as Json,

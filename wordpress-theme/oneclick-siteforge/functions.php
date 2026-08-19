@@ -9,7 +9,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'ONECLICK_SITEFORGE_VERSION', '2.2.11' );
+define( 'ONECLICK_SITEFORGE_VERSION', '2.3.1' );
 define( 'ONECLICK_SITEFORGE_DIR', get_template_directory() );
 define( 'ONECLICK_SITEFORGE_URI', get_template_directory_uri() );
 
@@ -60,7 +60,24 @@ add_action( 'after_setup_theme', 'oneclick_siteforge_setup' );
 /**
  * Keep every canonical WordPress menu link safe when it opens a new tab.
  */
-function oneclick_siteforge_safe_menu_link_attributes( $atts ) {
+function oneclick_siteforge_safe_menu_link_attributes( $atts, $menu_item = null ) {
+	if ( is_object( $menu_item ) && ! empty( $menu_item->ID ) ) {
+		$item_id = (string) get_post_meta( $menu_item->ID, '_siteforge_v3_navigation_item_id', true );
+		$menu_id = (string) get_post_meta( $menu_item->ID, '_siteforge_v3_navigation_resource_id', true );
+		if (
+			preg_match( '/^[A-Za-z0-9][A-Za-z0-9._:-]*$/', $item_id ) &&
+			preg_match( '/^[A-Za-z0-9][A-Za-z0-9._:-]*$/', $menu_id )
+		) {
+			$path = array(
+				array( 'kind' => 'menu', 'id' => $menu_id ),
+				array( 'kind' => 'menu_item', 'id' => $item_id ),
+			);
+			$atts['data-siteforge-target-id'] = 'menu:' . $menu_id . '/menu_item:' . $item_id;
+			$atts['data-siteforge-target-kind'] = 'menu_item';
+			$atts['data-siteforge-resource-path'] = wp_json_encode( $path, JSON_UNESCAPED_SLASHES );
+			$atts['data-siteforge-display-value'] = (string) $menu_item->title;
+		}
+	}
 	if ( '_blank' !== ( $atts['target'] ?? '' ) ) {
 		return $atts;
 	}
@@ -69,7 +86,81 @@ function oneclick_siteforge_safe_menu_link_attributes( $atts ) {
 	$atts['rel'] = implode( ' ', $rel );
 	return $atts;
 }
-add_filter( 'nav_menu_link_attributes', 'oneclick_siteforge_safe_menu_link_attributes', 10, 1 );
+add_filter( 'nav_menu_link_attributes', 'oneclick_siteforge_safe_menu_link_attributes', 10, 2 );
+
+/**
+ * Keep core SiteForge pages discoverable when WordPress has no assigned menu.
+ */
+function oneclick_siteforge_primary_menu_fallback( $args = array() ) {
+	$excluded = array( 'privacy', 'terms', 'accessibility', 'sample-page' );
+	$pages    = get_pages(
+		array(
+			'post_status' => 'publish',
+			'sort_column' => 'menu_order,post_title',
+			'sort_order'  => 'ASC',
+		)
+	);
+	$pages = array_values(
+		array_filter(
+			$pages,
+			static function ( $page ) use ( $excluded ) {
+				return ! in_array( $page->post_name, $excluded, true ) &&
+					'1' !== (string) get_post_meta( $page->ID, '_siteforge_seo_noindex', true );
+			}
+		)
+	);
+	if ( empty( $pages ) ) {
+		return;
+	}
+	$container_class = is_array( $args ) ? ( $args['container_class'] ?? '' ) : ( $args->container_class ?? '' );
+	$menu_id         = is_array( $args ) ? ( $args['menu_id'] ?? 'primary-menu' ) : ( $args->menu_id ?? 'primary-menu' );
+	echo '<div class="' . esc_attr( $container_class ) . '"><ul id="' . esc_attr( $menu_id ) . '">';
+	foreach ( $pages as $page ) {
+		$current = is_page( $page->ID ) || ( is_front_page() && absint( get_option( 'page_on_front' ) ) === absint( $page->ID ) );
+		echo '<li class="menu-item' . ( $current ? ' current-menu-item' : '' ) . '">';
+		echo '<a href="' . esc_url( get_permalink( $page->ID ) ) . '"' . ( $current ? ' aria-current="page"' : '' ) . '>';
+		echo esc_html( $page->post_title );
+		echo '</a></li>';
+	}
+	echo '</ul></div>';
+}
+
+function oneclick_siteforge_relative_luminance( $hex ) {
+	if ( ! is_string( $hex ) || ! preg_match( '/^#[0-9a-fA-F]{6}$/', $hex ) ) {
+		return null;
+	}
+	$channels = array(
+		hexdec( substr( $hex, 1, 2 ) ) / 255,
+		hexdec( substr( $hex, 3, 2 ) ) / 255,
+		hexdec( substr( $hex, 5, 2 ) ) / 255,
+	);
+	foreach ( $channels as &$channel ) {
+		$channel = $channel <= 0.03928 ? $channel / 12.92 : pow( ( $channel + 0.055 ) / 1.055, 2.4 );
+	}
+	unset( $channel );
+	return 0.2126 * $channels[0] + 0.7152 * $channels[1] + 0.0722 * $channels[2];
+}
+
+function oneclick_siteforge_accessible_foreground( $background, $preferred ) {
+	$background_luminance = oneclick_siteforge_relative_luminance( $background );
+	if ( null === $background_luminance ) {
+		return $preferred;
+	}
+	$best       = $preferred;
+	$best_ratio = 0;
+	foreach ( array( $preferred, '#000000', '#FFFFFF' ) as $candidate ) {
+		$luminance = oneclick_siteforge_relative_luminance( $candidate );
+		if ( null === $luminance ) {
+			continue;
+		}
+		$ratio = ( max( $background_luminance, $luminance ) + 0.05 ) / ( min( $background_luminance, $luminance ) + 0.05 );
+		if ( $ratio > $best_ratio ) {
+			$best       = $candidate;
+			$best_ratio = $ratio;
+		}
+	}
+	return $best;
+}
 
 /**
  * Enqueue Theme Styles and Scripts
@@ -98,8 +189,11 @@ function oneclick_siteforge_enqueue_assets() {
 		$colors     = $siteforge_tokens['colors'] ?? array();
 		$typography = $siteforge_tokens['typography'] ?? array();
 		$spacing    = $siteforge_tokens['spacing'] ?? array();
+		$text_color = $colors['text'] ?? ( $colors['primary'] ?? '#1a1a1a' );
+		$on_primary = oneclick_siteforge_accessible_foreground( $colors['primary'] ?? '#1a1a1a', $text_color );
+		$on_accent  = oneclick_siteforge_accessible_foreground( $colors['accent'] ?? '#8a6d3b', $text_color );
 		$token_css  = sprintf(
-			'html:root{--color-primary:%1$s;--color-secondary:%2$s;--color-accent:%3$s;--color-background:%4$s;--color-bg:%4$s;--font-heading:%5$s;--font-body:%6$s;--container-max-width:%7$s;--max-width:%7$s;--section-padding:%8$s;--spacing-xxl:%8$s;--color-text:%9$s;}',
+			'html:root{--color-primary:%1$s;--color-on-primary:%10$s;--color-secondary:%2$s;--color-accent:%3$s;--color-on-accent:%11$s;--color-background:%4$s;--color-bg:%4$s;--font-heading:%5$s;--font-body:%6$s;--container-max-width:%7$s;--max-width:%7$s;--section-padding:%8$s;--spacing-xxl:%8$s;--color-text:%9$s;}',
 			$colors['primary'] ?? '#1a1a1a',
 			$colors['secondary'] ?? '#c9a96e',
 			$colors['accent'] ?? '#8a6d3b',
@@ -108,7 +202,9 @@ function oneclick_siteforge_enqueue_assets() {
 			$typography['bodyFont'] ?? 'Inter, sans-serif',
 			$spacing['containerMaxWidth'] ?? '1400px',
 			$spacing['sectionPadding'] ?? '6rem',
-			$colors['text'] ?? ( $colors['primary'] ?? '#1a1a1a' )
+			$text_color,
+			$on_primary,
+			$on_accent
 		);
 		wp_add_inline_style( 'oneclick-siteforge-style', $token_css );
 	}
@@ -346,6 +442,13 @@ function oneclick_siteforge_register_acf_blocks() {
 		'menu',
 		'accordion-section',
 		'html-section',
+		'offering-browser',
+		'entity-directory',
+		'comparison-table',
+		'timeline',
+		'document-library',
+		'events-directory',
+		'governed-component',
 	);
 
 	foreach ( $blocks as $block ) {
@@ -391,6 +494,13 @@ function oneclick_siteforge_get_block_title( $block_name ) {
 		'menu'               => 'Sub-Navigation',
 		'accordion-section'  => 'Expandable FAQ/List',
 		'html-section'       => 'Raw HTML',
+		'offering-browser'   => 'Offering Browser',
+		'entity-directory'   => 'Entity Directory',
+		'comparison-table'   => 'Offering Comparison',
+		'timeline'           => 'Development Timeline',
+		'document-library'   => 'Document Library',
+		'events-directory'   => 'Events Directory',
+		'governed-component' => 'Governed Component',
 	);
 
 	return isset( $titles[ $block_name ] ) ? $titles[ $block_name ] : $block_name;
@@ -416,6 +526,13 @@ function oneclick_siteforge_get_block_description( $block_name ) {
 		'menu'               => 'Horizontal navigation menu for in-page sections',
 		'accordion-section'  => 'Expandable accordion for FAQ or lists',
 		'html-section'       => 'Raw HTML for custom embeds',
+		'offering-browser'   => 'Source-governed offering catalog with pricing and availability controls',
+		'entity-directory'   => 'Directory of portfolio, corporate, or destination entities',
+		'comparison-table'   => 'Accessible comparison of offering attributes',
+		'timeline'           => 'Ordered milestones for development and launch stages',
+		'document-library'   => 'Approved downloadable documents grouped by category',
+		'events-directory'   => 'Source-governed event and programming directory',
+		'governed-component' => 'Data-only reusable component compiled from safe SiteForge primitives',
 	);
 
 	return isset( $descriptions[ $block_name ] ) ? $descriptions[ $block_name ] : '';
@@ -441,6 +558,13 @@ function oneclick_siteforge_get_block_icon( $block_name ) {
 		'menu'               => 'menu',
 		'accordion-section'  => 'list-view',
 		'html-section'       => 'code',
+		'offering-browser'   => 'screenoptions',
+		'entity-directory'   => 'networking',
+		'comparison-table'   => 'table-col-after',
+		'timeline'           => 'backup',
+		'document-library'   => 'media-document',
+		'events-directory'   => 'calendar-alt',
+		'governed-component' => 'layout',
 	);
 
 	return isset( $icons[ $block_name ] ) ? $icons[ $block_name ] : 'block-default';
@@ -829,6 +953,74 @@ function oneclick_get_field( $field_name, $empty_value = '' ) {
 function oneclick_sanitize_html( $html ) {
 	return wp_kses_post( $html );
 }
+
+/**
+ * Preserve immutable SiteForge asset provenance when WordPress rewrites media URLs.
+ */
+function oneclick_siteforge_custom_logo_provenance( $html ) {
+	$attachment_id = absint( get_theme_mod( 'custom_logo' ) );
+	if ( ! $attachment_id || false === strpos( $html, '<img ' ) ) {
+		return $html;
+	}
+	$source_url = (string) get_post_meta( $attachment_id, '_siteforge_source_url', true );
+	$asset_id   = (string) get_post_meta( $attachment_id, '_siteforge_asset_id', true );
+	$attributes = '';
+	if ( $source_url ) {
+		$attributes .= ' data-siteforge-source-url="' . esc_attr( $source_url ) . '"';
+	}
+	if ( $asset_id ) {
+		$attributes .= ' data-siteforge-asset-id="' . esc_attr( $asset_id ) . '"';
+	}
+	return $attributes ? preg_replace( '/<img\s/', '<img' . $attributes . ' ', $html, 1 ) : $html;
+}
+add_filter( 'get_custom_logo', 'oneclick_siteforge_custom_logo_provenance' );
+
+/**
+ * Provide a deterministic tour fallback when a property has no dedicated scheduler page.
+ */
+function oneclick_siteforge_tour_fallback_redirect() {
+	if ( ! is_404() ) {
+		return;
+	}
+	$path = trim( (string) wp_parse_url( $_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH ), '/' );
+	if ( 'schedule-a-tour' === $path ) {
+		wp_safe_redirect( home_url( '/contact/' ), 302 );
+		exit;
+	}
+}
+add_action( 'template_redirect', 'oneclick_siteforge_tour_fallback_redirect' );
+
+/**
+ * Emit baseline canonical social and structured metadata for every SiteForge page.
+ */
+function oneclick_siteforge_page_metadata() {
+	if ( ! is_singular( 'page' ) ) {
+		return;
+	}
+	$title       = wp_strip_all_tags( get_the_title() );
+	$description = wp_strip_all_tags( get_the_excerpt() );
+	if ( ! $description ) {
+		$description = wp_trim_words( wp_strip_all_tags( get_post_field( 'post_content', get_queried_object_id() ) ), 32 );
+	}
+	$canonical = get_permalink();
+	$logo_id   = absint( get_theme_mod( 'custom_logo' ) );
+	$image     = $logo_id ? wp_get_attachment_image_url( $logo_id, 'full' ) : '';
+	echo '<meta property="og:type" content="website" />' . "\n";
+	echo '<meta property="og:title" content="' . esc_attr( $title ) . '" />' . "\n";
+	echo '<meta property="og:description" content="' . esc_attr( $description ) . '" />' . "\n";
+	echo '<meta property="og:url" content="' . esc_url( $canonical ) . '" />' . "\n";
+	if ( $image ) {
+		echo '<meta property="og:image" content="' . esc_url( $image ) . '" />' . "\n";
+	}
+	$schema = array(
+		'@context' => 'https://schema.org',
+		'@type'    => is_front_page() ? 'ApartmentComplex' : 'WebPage',
+		'name'     => $title,
+		'url'      => $canonical,
+	);
+	echo '<script type="application/ld+json">' . wp_json_encode( $schema, JSON_UNESCAPED_SLASHES ) . '</script>' . "\n";
+}
+add_action( 'wp_head', 'oneclick_siteforge_page_metadata', 20 );
 
 /**
  * Custom Template Tags

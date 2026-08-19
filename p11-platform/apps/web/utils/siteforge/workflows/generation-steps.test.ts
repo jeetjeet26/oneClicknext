@@ -262,72 +262,31 @@ describe('SiteForge durable generation steps', () => {
     ).toThrow('non-publishable placeholder copy')
   })
 
-  it('fails closed when photo output is outside the approved manifest', async () => {
-    const { assertApprovedGenerationPhotoManifest } = await import(
-      './generation-steps'
-    )
+  it('allows evidence-safe fallback content when property evidence is absent', async () => {
+    const { assertPublishableGeneratedPages } = await import('./generation-steps')
 
     expect(() =>
-      assertApprovedGenerationPhotoManifest(input, {
-        photos: [
-          {
-            id: 'siteforge-placeholder-hero',
-            url: 'https://example.com/property-placeholder.png',
-            type: 'generated',
-            category: 'hero',
-            quality: 1,
-          },
-        ],
-        byCategory: {
-          hero: [],
-          amenities: [],
-          lifestyle: [],
-          gallery: [],
-          logos: [],
+      assertPublishableGeneratedPages([
+        {
+          slug: 'home',
+          title: 'Home',
+          purpose: 'Welcome prospects',
+          sections: [
+            {
+              id: 'hero',
+              type: 'hero',
+              acfBlock: 'acf/text-section',
+              order: 0,
+              reasoning: 'Evidence-safe fallback',
+              evidenceIds: ['siteforge-unverified-content-placeholder-v1'],
+              content: {
+                content: 'Discover a welcoming place designed around everyday life.',
+              },
+            },
+          ],
         },
-        assignments: {},
-        stats: { uploaded: 0, generated: 1, fromBrandForge: 0, total: 1 },
-      })
-    ).toThrow('outside the approved rights-cleared asset manifest')
-  })
-
-  it('accepts only the exact pinned Aurora logo URL and content', async () => {
-    const { assertApprovedGenerationPhotoManifest } = await import(
-      './generation-steps'
-    )
-    const logoId = input.evidenceSnapshot.assetManifest.assets[0].id
-    const pinnedUrl = input.evidenceSnapshot.assetManifest.assets[0].fileUrl
-    const pinnedHash = input.evidenceSnapshot.assetManifest.assets[0].contentHash
-    const manifest = {
-      photos: [{
-        id: logoId,
-        sourceAssetId: logoId,
-        contentHash: pinnedHash,
-        url: pinnedUrl,
-        type: 'brandforge' as const,
-        category: 'logo',
-        quality: 10,
-      }],
-      byCategory: {
-        hero: [],
-        amenities: [],
-        lifestyle: [],
-        gallery: [],
-        logos: [],
-      },
-      assignments: {},
-      stats: { uploaded: 0, generated: 0, fromBrandForge: 1, total: 1 },
-    }
-
-    expect(() =>
-      assertApprovedGenerationPhotoManifest(input, manifest)
+      ])
     ).not.toThrow()
-    expect(() =>
-      assertApprovedGenerationPhotoManifest(input, {
-        ...manifest,
-        photos: [{ ...manifest.photos[0], contentHash: '9'.repeat(64) }],
-      })
-    ).toThrow('outside the approved rights-cleared asset manifest')
   })
 
   it('resolves the exact approved legal contract from pinned plan evidence', async () => {
@@ -517,12 +476,26 @@ describe('SiteForge durable generation steps', () => {
         },
       },
       {
+        logos: {
+          variants: [
+            {
+              role: 'primary',
+              url: 'https://cdn.example.com/aurora-logo.svg',
+              alt: 'Aurora',
+              restrictions: [],
+            },
+          ],
+        },
+        positioning: {
+          voice: [],
+          prohibitedVoice: [],
+        },
         colors: {
           roles: [
-            { role: 'primary', hex: '#C9A962' },
-            { role: 'secondary', hex: '#F5F1E8' },
-            { role: 'accent', hex: '#7D8B74' },
-            { role: 'background', hex: '#FFFFFF' },
+            { role: 'primary', name: 'Gold', hex: '#C9A962', usage: 'Primary' },
+            { role: 'secondary', name: 'Ivory', hex: '#F5F1E8', usage: 'Secondary' },
+            { role: 'accent', name: 'Sage', hex: '#7D8B74', usage: 'Accent' },
+            { role: 'background', name: 'White', hex: '#FFFFFF', usage: 'Background' },
           ],
         },
         typography: {
@@ -531,9 +504,26 @@ describe('SiteForge durable generation steps', () => {
               role: 'headline',
               family: 'Cormorant Garamond',
               weights: [500],
+              usage: 'Headlines',
             },
-            { role: 'body', family: 'Montserrat', weights: [400] },
+            { role: 'body', family: 'Montserrat', weights: [400], usage: 'Body' },
           ],
+        },
+        photographyYes: {
+          description: '',
+          criteria: [],
+          exampleAssetIds: [],
+        },
+        photographyNo: {
+          description: '',
+          criteria: [],
+        },
+        designElements: {
+          elements: [],
+          usageNotes: '',
+        },
+        implementation: {
+          lockedRules: [],
         },
       } as never
     )

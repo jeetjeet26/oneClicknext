@@ -47,6 +47,7 @@ type BlockComponentProps = {
   blockIdentity: string
   content: BlockContent
   designSystem?: DesignSystem
+  variant?: string
 }
 
 function asRecord(value: unknown): BlockContent {
@@ -332,6 +333,7 @@ export function ACFBlockRenderer({
         blockIdentity={blockIdentity}
         content={blockContent}
         designSystem={designSystem}
+        variant={normalizedVariant}
       />
     </div>
   )
@@ -340,10 +342,11 @@ export function ACFBlockRenderer({
 /**
  * Hero Slides - Top carousel with CTAs
  */
-function HeroSlides({ content, designSystem }: BlockComponentProps) {
+function HeroSlides({ content, designSystem, variant }: BlockComponentProps) {
   const slides = getRecordArray(content, 'slides')
   const colors = designSystem?.colorSystem || designSystem?.colors || {}
   const typography = designSystem?.typography || {}
+  const isMinimal = variant === 'minimal'
   
   // Do not fake complete hero output when content is missing.
   if (slides.length === 0) {
@@ -357,7 +360,7 @@ function HeroSlides({ content, designSystem }: BlockComponentProps) {
   
   return (
     <div 
-      className="relative rounded-lg overflow-hidden"
+      className="relative overflow-hidden rounded-lg"
       style={{ 
         background: colors.primary 
           ? `linear-gradient(135deg, ${colors.primary} 0%, ${colors.secondary || colors.primary} 100%)`
@@ -367,50 +370,61 @@ function HeroSlides({ content, designSystem }: BlockComponentProps) {
       {slides.map((slide, idx) => {
         const image = getImage(slide)
         return (
-        <div key={idx} className="relative min-h-[420px] overflow-hidden p-8 text-white md:p-12">
-          {image && (
-            // SiteForge previews render approved remote asset URLs.
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={image.url}
-              alt={image.alt}
-              className="absolute inset-0 h-full w-full object-cover"
-              loading={idx === 0 ? 'eager' : 'lazy'}
-              decoding="async"
-            />
-          )}
-          <div className="absolute inset-0 bg-gradient-to-r from-black/75 via-black/45 to-black/15" />
-          <div className="relative z-10 max-w-2xl">
-            <h2 
-              className="text-3xl md:text-4xl font-bold mb-3"
-              style={{ fontFamily: typography.headingFont ? `'${typography.headingFont}', serif` : undefined }}
-            >
-              {getString(slide, 'headline')}
-            </h2>
-            <p 
-              className="text-lg text-gray-200 mb-6"
-              style={{ fontFamily: typography.bodyFont ? `'${typography.bodyFont}', sans-serif` : undefined }}
-            >
-              {getString(slide, 'subheadline')}
-            </p>
-            {getString(slide, 'cta_text') && getString(slide, 'cta_link') ? (
-              <a
-                href={getString(slide, 'cta_link')}
-                {...externalLinkProps(getString(slide, 'cta_link'))}
-                className="inline-block rounded-lg px-6 py-3 font-semibold transition hover:opacity-90"
-                style={{
-                  backgroundColor: colors.accent || colors.primary || '#4F46E5',
-                  color: accessibleTextColor(
-                    colors.accent || colors.primary || '#4F46E5'
-                  ),
-                  fontFamily: typography.bodyFont ? `'${typography.bodyFont}', sans-serif` : undefined
-                }}
+          <div
+            key={idx}
+            className={`relative overflow-hidden p-8 text-white md:p-12 ${
+              isMinimal
+                ? 'min-h-[360px] md:min-h-[440px]'
+                : 'min-h-[420px]'
+            }`}
+          >
+            {image && (
+              // SiteForge previews render approved remote asset URLs.
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={image.url}
+                alt={image.alt}
+                className="absolute inset-0 h-full w-full object-cover"
+                loading={idx === 0 ? 'eager' : 'lazy'}
+                decoding="async"
+              />
+            )}
+            <div className="absolute inset-0 bg-gradient-to-r from-black/75 via-black/45 to-black/15" />
+            <div className="relative z-10 max-w-2xl">
+              <h2
+                className={`mb-3 font-bold ${
+                  isMinimal
+                    ? 'text-[clamp(2.25rem,10vw,3.4rem)] md:text-[clamp(2.75rem,5.2vw,5.4rem)]'
+                    : 'text-3xl md:text-4xl'
+                }`}
+                style={{ fontFamily: typography.headingFont ? `'${typography.headingFont}', serif` : undefined }}
               >
-                {getString(slide, 'cta_text')}
-              </a>
-            ) : null}
+                {getString(slide, 'headline')}
+              </h2>
+              <p
+                className="text-lg text-gray-200 mb-6"
+                style={{ fontFamily: typography.bodyFont ? `'${typography.bodyFont}', sans-serif` : undefined }}
+              >
+                {getString(slide, 'subheadline')}
+              </p>
+              {getString(slide, 'cta_text') && getString(slide, 'cta_link') ? (
+                <a
+                  href={getString(slide, 'cta_link')}
+                  {...externalLinkProps(getString(slide, 'cta_link'))}
+                  className="inline-block rounded-lg px-6 py-3 font-semibold transition hover:opacity-90"
+                  style={{
+                    backgroundColor: colors.accent || colors.primary || '#4F46E5',
+                    color: accessibleTextColor(
+                      colors.accent || colors.primary || '#4F46E5'
+                    ),
+                    fontFamily: typography.bodyFont ? `'${typography.bodyFont}', sans-serif` : undefined
+                  }}
+                >
+                  {getString(slide, 'cta_text')}
+                </a>
+              ) : null}
+            </div>
           </div>
-        </div>
         )
       })}
     </div>
@@ -1174,6 +1188,274 @@ function Testimonials({ content }: BlockComponentProps) {
   )
 }
 
+function StructuredCollection({
+  content,
+  itemsKey,
+  emptyLabel,
+}: BlockComponentProps & { itemsKey: string; emptyLabel: string }) {
+  const heading = getString(content, 'heading', emptyLabel)
+  const intro = getString(content, 'intro')
+  const items = getRecordArray(content, itemsKey)
+  return (
+    <section className="px-6 py-16" style={{ background: 'var(--brand-background)' }}>
+      <div className="mx-auto max-w-6xl">
+        <h2
+          className="text-3xl font-bold md:text-5xl"
+          style={{ color: 'var(--brand-text)', fontFamily: 'var(--font-heading)' }}
+        >
+          {heading}
+        </h2>
+        {intro ? <p className="mt-4 max-w-3xl">{intro}</p> : null}
+        {items.length ? (
+          <div className="mt-8 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {items.map((item, index) => (
+              <article
+                key={getString(item, 'id', String(index))}
+                className="rounded-xl border p-5"
+                style={{ borderColor: 'color-mix(in srgb, var(--brand-text) 20%, transparent)' }}
+              >
+                <h3 className="text-lg font-semibold">
+                  {getString(item, 'name') ||
+                    getString(item, 'title') ||
+                    getString(item, 'label', `Item ${index + 1}`)}
+                </h3>
+                {getString(item, 'description') ? (
+                  <p className="mt-2 text-sm">{getString(item, 'description')}</p>
+                ) : null}
+              </article>
+            ))}
+          </div>
+        ) : (
+          <DegradedBlock
+            title={`${heading} is not available`}
+            detail="This source-governed collection has no approved records to display."
+          />
+        )}
+      </div>
+    </section>
+  )
+}
+
+function OfferingBrowser(props: BlockComponentProps) {
+  return <StructuredCollection {...props} itemsKey="offerings" emptyLabel="Offerings" />
+}
+
+function EntityDirectory(props: BlockComponentProps) {
+  return <StructuredCollection {...props} itemsKey="entities" emptyLabel="Directory" />
+}
+
+function Timeline(props: BlockComponentProps) {
+  return <StructuredCollection {...props} itemsKey="milestones" emptyLabel="Timeline" />
+}
+
+function DocumentLibrary(props: BlockComponentProps) {
+  return <StructuredCollection {...props} itemsKey="documents" emptyLabel="Documents" />
+}
+
+function EventsDirectory(props: BlockComponentProps) {
+  return <StructuredCollection {...props} itemsKey="events" emptyLabel="Events" />
+}
+
+function ComparisonTable({ content }: BlockComponentProps) {
+  const heading = getString(content, 'heading', 'Compare options')
+  const columns = getRecordArray(content, 'columns')
+  const rows = getRecordArray(content, 'rows')
+  return (
+    <section className="overflow-x-auto px-6 py-16">
+      <div className="mx-auto max-w-6xl">
+        <h2 className="mb-8 text-3xl font-bold">{heading}</h2>
+        {rows.length ? (
+          <table className="w-full border-collapse text-left">
+            <thead>
+              <tr>
+                <th className="border-b p-3">Offering</th>
+                {columns.map(column => (
+                  <th key={getString(column, 'key')} className="border-b p-3">
+                    {getString(column, 'label')}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(row => (
+                <tr key={getString(row, 'id')}>
+                  <th className="border-b p-3">{getString(row, 'label')}</th>
+                  {columns.map(column => {
+                    const values = asRecord(row.values)
+                    return (
+                      <td key={getString(column, 'key')} className="border-b p-3">
+                        {getString(values, getString(column, 'key'))}
+                      </td>
+                    )
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <DegradedBlock
+            title={`${heading} is not available`}
+            detail="No approved comparison records are available."
+          />
+        )}
+      </div>
+    </section>
+  )
+}
+
+// Mirrors blocks/governed-component.php: the preview walks the exact
+// render_plan tree with the same tag mapping and field resolution as the
+// canonical WordPress renderer, instead of showing a generic approximation.
+const GOVERNED_PRIMITIVE_TAGS: Record<string, keyof React.JSX.IntrinsicElements> =
+  {
+    section: 'section',
+    container: 'div',
+    grid: 'div',
+    stack: 'div',
+    text: 'p',
+    image: 'figure',
+    button: 'a',
+    list: 'ul',
+    form: 'form',
+    tabs: 'div',
+    accordion: 'div',
+    modal: 'dialog',
+    carousel: 'div',
+  }
+
+function resolveGovernedValue(
+  value: unknown,
+  values: BlockContent
+): unknown {
+  if (
+    value &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    typeof (value as Record<string, unknown>).field === 'string'
+  ) {
+    return values[(value as Record<string, string>).field] ?? ''
+  }
+  return value
+}
+
+function renderGovernedNode(
+  node: unknown,
+  values: BlockContent,
+  key: string
+): React.ReactNode {
+  const record = asRecord(node)
+  const nodeId = getString(record, 'nodeId')
+  const primitive = getString(record, 'primitive')
+  const Tag = GOVERNED_PRIMITIVE_TAGS[primitive]
+  if (!nodeId || !Tag) return null
+  const properties = asRecord(record.properties)
+  const accessibility = asRecord(record.accessibility)
+  const classes = [
+    `governed-${primitive}`,
+    ...(Array.isArray(record.classes)
+      ? record.classes.filter(
+          (value): value is string =>
+            typeof value === 'string' && /^[a-z][a-z0-9-]*$/.test(value)
+        )
+      : []),
+  ]
+  const display = resolveGovernedValue(
+    properties.value ?? properties.label ?? '',
+    values
+  )
+  const ariaName = resolveGovernedValue(accessibility.name, values)
+  const extraProps: Record<string, unknown> = {}
+  if (typeof accessibility.role === 'string' && accessibility.role) {
+    extraProps.role = accessibility.role
+  }
+  if (typeof ariaName === 'string' && ariaName) {
+    extraProps['aria-label'] = ariaName
+  }
+  if (Tag === 'dialog') extraProps['aria-modal'] = 'true'
+  if (Tag === 'a') {
+    const href = resolveGovernedValue(properties.href ?? '#', values)
+    extraProps.href = typeof href === 'string' && href ? href : '#'
+  }
+  if (Tag === 'form') extraProps.method = 'post'
+
+  let leaf: React.ReactNode = null
+  if (primitive === 'text' || primitive === 'button') {
+    leaf =
+      typeof display === 'string' || typeof display === 'number'
+        ? String(display)
+        : null
+  } else if (primitive === 'image') {
+    const asset = resolveGovernedValue(properties.asset, values)
+    const assetRecord = asRecord(asset)
+    const url =
+      typeof asset === 'string' ? asset : getString(assetRecord, 'url')
+    const alt = resolveGovernedValue(
+      properties.alt ?? accessibility.name ?? '',
+      values
+    )
+    leaf = url ? (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        className="governed-image"
+        src={url}
+        alt={
+          typeof alt === 'string' ? alt : getString(assetRecord, 'alt')
+        }
+      />
+    ) : null
+  }
+
+  const children = Array.isArray(record.children)
+    ? record.children.map((child, index) =>
+        renderGovernedNode(child, values, `${key}-${index}`)
+      )
+    : null
+
+  return (
+    <Tag
+      key={key}
+      className={[...new Set(classes)].join(' ')}
+      data-siteforge-node-id={nodeId}
+      {...extraProps}
+    >
+      {leaf}
+      {children}
+    </Tag>
+  )
+}
+
+function GovernedComponentPreview({
+  content,
+  designSystem,
+}: BlockComponentProps) {
+  const componentKey = getString(content, 'component_key')
+  const descriptorHash = getString(content, 'descriptor_hash')
+  const renderPlan = asRecord(content.render_plan)
+  const values = asRecord(content.component_values)
+  const rendered = renderGovernedNode(renderPlan, values, 'root')
+  if (!componentKey || !rendered) {
+    return (
+      <DegradedBlock
+        title="Governed component preview unavailable"
+        detail="This component has no valid render plan; the canonical WordPress preview shows the exact result."
+      />
+    )
+  }
+  return (
+    <section
+      className="block-governed-component"
+      data-siteforge-component={componentKey}
+      data-siteforge-descriptor-hash={descriptorHash}
+      style={{
+        background: designSystem?.colors?.background,
+        color: designSystem?.colors?.text,
+      }}
+    >
+      {rendered}
+    </section>
+  )
+}
+
 const REGISTERED_BLOCK_RENDERERS = {
   'acf/menu': MenuSection,
   'acf/top-slides': HeroSlides,
@@ -1190,6 +1472,13 @@ const REGISTERED_BLOCK_RENDERERS = {
   'acf/plans-availability': PlansAvailability,
   'acf/poi': PointsOfInterest,
   'acf/testimonials': Testimonials,
+  'acf/offering-browser': OfferingBrowser,
+  'acf/entity-directory': EntityDirectory,
+  'acf/comparison-table': ComparisonTable,
+  'acf/timeline': Timeline,
+  'acf/document-library': DocumentLibrary,
+  'acf/events-directory': EventsDirectory,
+  'acf/governed-component': GovernedComponentPreview,
 } satisfies Record<ACFBlockType, React.FC<BlockComponentProps>>
 
 export const EXPLICIT_ACF_PREVIEW_BLOCK_TYPES = Object.freeze(

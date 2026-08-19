@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { getRun, start } from 'workflow/api'
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
-import { validatePropertyAccess } from '@/utils/services/auth-guard'
+import { validateSiteForgeOwnerOperatorAccess } from '@/utils/services/auth-guard'
 import { createRequestContext } from '@/utils/services/request-context'
 import { isSiteForgeSemanticEditorEnabled } from '@/utils/siteforge/editor/feature'
 import { createEditorMessage } from '@/utils/siteforge/editor/repository'
@@ -13,8 +13,14 @@ import {
   assertActiveAuroraLifecycleLease,
   AuroraLifecycleControlError,
 } from '@/utils/siteforge/testing/aurora-lifecycle-control'
+import { siteForgeEditorScopeSchema } from '@/utils/siteforge/editor/scope'
+import { siteForgeEditorAttachmentIdsSchema } from '@/utils/siteforge/editor/attachments'
+import {
+  pageManagerActionSummary,
+  siteForgePageManagerActionSchema,
+} from '@/utils/siteforge/editor/page-manager'
 
-const turnSchema = z.object({
+export const turnSchema = z.object({
   userIntent: z.string().trim().min(1).max(8_000),
   expectedArtifactId: z.string().uuid(),
   expectedContentHash: z.string().regex(/^[a-f0-9]{64}$/),
@@ -27,7 +33,20 @@ const turnSchema = z.object({
     })
     .strict()
     .optional(),
-}).strict()
+  editScope: siteForgeEditorScopeSchema.optional(),
+  pageManagerAction: siteForgePageManagerActionSchema.optional(),
+  attachmentIds: siteForgeEditorAttachmentIdsSchema.optional(),
+})
+  .strict()
+  .superRefine((value, context) => {
+    if (value.pageManagerAction && value.elementContext) {
+      context.addIssue({
+        code: 'custom',
+        path: ['elementContext'],
+        message: 'Structured page management cannot target one section',
+      })
+    }
+  })
 
 export async function POST(
   request: NextRequest,
@@ -61,6 +80,12 @@ export async function POST(
         { status: 400, headers: ctx.responseHeaders }
       )
     }
+    const effectiveUserIntent = parsed.data.pageManagerAction
+      ? pageManagerActionSummary(parsed.data.pageManagerAction)
+      : parsed.data.userIntent
+    const effectiveEditScope = parsed.data.pageManagerAction
+      ? ({ kind: 'site' } as const)
+      : parsed.data.editScope
 
     const supabase = await createClient()
     const {
@@ -87,10 +112,16 @@ export async function POST(
       )
     }
 
-    const access = await validatePropertyAccess(user.id, session.property_id)
+    const access = await validateSiteForgeOwnerOperatorAccess(
+      user.id,
+      session.property_id
+    )
     if (!access.authorized) {
       return NextResponse.json(
-        { error: 'Forbidden' },
+        {
+          error: 'SiteForge owner/operator capability required',
+          capability: access.capability,
+        },
         { status: 403, headers: ctx.responseHeaders }
       )
     }
@@ -174,6 +205,54 @@ export async function POST(
       )
     }
 
+    const { data: conflictingJob } = await serviceClient
+      .from('shared_jobs')
+      .select('id, lifecycle_status, stage, current_step')
+      .eq('domain', 'siteforge.semantic_edit')
+      .eq('subject_id', session.website_id)
+      .in('lifecycle_status', ['queued', 'running', 'retrying'])
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (conflictingJob) {
+      return NextResponse.json(
+        {
+          error: 'Another semantic edit is already active for this website',
+          activeJob: conflictingJob,
+        },
+        { status: 409, headers: ctx.responseHeaders }
+      )
+    }
+
+    const attachmentIds = parsed.data.attachmentIds || []
+    const attachmentResult = attachmentIds.length
+      ? await serviceClient
+          .from('siteforge_edit_attachments')
+          .select(
+            'id, session_id, org_id, property_id, website_id, artifact_id, artifact_content_hash, user_message_id'
+          )
+          .in('id', attachmentIds)
+          .eq('session_id', session.id)
+          .eq('org_id', session.org_id)
+          .eq('property_id', session.property_id)
+          .eq('website_id', session.website_id)
+          .eq('artifact_id', artifact.id)
+          .eq('artifact_content_hash', artifact.content_hash)
+          .is('user_message_id', null)
+      : { data: [], error: null }
+    if (
+      attachmentResult.error ||
+      attachmentResult.data?.length !== attachmentIds.length
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            'One or more screenshots no longer match this editor session and artifact',
+        },
+        { status: 409, headers: ctx.responseHeaders }
+      )
+    }
+
     const now = new Date().toISOString()
     const { data: job, error: jobError } = await serviceClient
       .from('shared_jobs')
@@ -191,6 +270,9 @@ export async function POST(
           expectedArtifactId: artifact.id,
           expectedContentHash: artifact.content_hash,
           elementContext: parsed.data.elementContext || null,
+          editScope: effectiveEditScope || null,
+          pageManagerAction: parsed.data.pageManagerAction || null,
+          attachmentIds,
           ...(lifecycleIdentity
             ? {
                 lifecycleOwnerId: lifecycleIdentity.ownerId,
@@ -202,11 +284,28 @@ export async function POST(
         stage: 'queued',
         progress: 0,
         current_step: 'Preparing semantic edit',
+        attempt_count: 1,
         queued_at: now,
         updated_at: now,
       })
       .select('id')
       .single()
+    if (jobError?.code === '23505') {
+      const { data: activeJob } = await serviceClient
+        .from('shared_jobs')
+        .select('id, lifecycle_status, stage, current_step')
+        .eq('domain', 'siteforge.semantic_edit')
+        .eq('subject_id', session.website_id)
+        .in('lifecycle_status', ['queued', 'running', 'retrying'])
+        .maybeSingle()
+      return NextResponse.json(
+        {
+          error: 'Another semantic edit is already active for this website',
+          activeJob: activeJob || null,
+        },
+        { status: 409, headers: ctx.responseHeaders }
+      )
+    }
     if (jobError || !job) {
       return NextResponse.json(
         { error: 'Failed to create durable semantic edit job' },
@@ -225,7 +324,7 @@ export async function POST(
           propertyId: session.property_id,
           websiteId: session.website_id,
           role: 'user',
-          content: parsed.data.userIntent,
+          content: effectiveUserIntent,
           clientRequestId: parsed.data.clientRequestId,
           parentArtifactId: artifact.id,
           parentContentHash: artifact.content_hash,
@@ -236,6 +335,25 @@ export async function POST(
         serviceClient
       )
       userMessageId = userMessage.id
+      if (attachmentIds.length) {
+        const { data: boundAttachments, error: bindError } = await serviceClient
+          .from('siteforge_edit_attachments')
+          .update({ user_message_id: userMessage.id })
+          .in('id', attachmentIds)
+          .eq('session_id', session.id)
+          .is('user_message_id', null)
+          .select('id')
+        if (
+          bindError ||
+          boundAttachments?.length !== attachmentIds.length
+        ) {
+          throw new Error(
+            `Failed to bind immutable screenshot context: ${
+              bindError?.message || 'attachment changed'
+            }`
+          )
+        }
+      }
       const assistantMessage = await createEditorMessage(
         {
           sessionId: session.id,
@@ -262,8 +380,11 @@ export async function POST(
           propertyId: session.property_id,
           orgId: session.org_id,
           userId: user.id,
-          userIntent: parsed.data.userIntent,
+          userIntent: effectiveUserIntent,
+          attachmentIds,
           elementContext: parsed.data.elementContext,
+          editScope: effectiveEditScope,
+          pageManagerAction: parsed.data.pageManagerAction,
           expectedArtifactId: artifact.id,
           expectedContentHash: artifact.content_hash,
         },

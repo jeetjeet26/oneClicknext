@@ -9,6 +9,11 @@ import { normalizeFontFamily } from '@/utils/siteforge/agents/brand-typography'
 import type { WordPressCapabilities } from '@/utils/mcp/wordpress-client'
 import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
 import { DEFAULT_SITE_CONFIGURATION } from '@/utils/siteforge/blueprint'
+import {
+  assertDesignSystemBrandInheritance,
+  brandPublicationPackageSchema,
+  type BrandPublicationPackage,
+} from '@/utils/siteforge/brand-design-compiler'
 
 const hexColorSchema = z.string().regex(/^#[0-9a-f]{6}$/i)
 const cssDimensionSchema = z.string().regex(/^\d+(?:\.\d+)?(?:px|rem|em|vw|%)$/)
@@ -125,6 +130,7 @@ const wordpressThemeArtifactCoreSchema = z
       fallback: z.string().min(1),
       preload: z.boolean(),
     }).strict()).default([]),
+    brandPublication: brandPublicationPackageSchema.optional(),
     componentVariants: z.record(
       z.string(),
       z.object({
@@ -208,7 +214,11 @@ export function buildWordPressThemeArtifact(
   // after an artifact was generated never invalidate that artifact (add-only
   // compatibility guarantee).
   requiredBlocks: readonly string[] = ACF_BLOCK_TYPES,
+  brandPublication?: BrandPublicationPackage,
 ): WordPressThemeArtifact {
+  if (brandPublication) {
+    assertDesignSystemBrandInheritance(designSystem, brandPublication)
+  }
   const missingBlocks = requiredBlocks.filter(
     (block) =>
       !capabilities.availableBlocks.includes(block) ||
@@ -378,6 +388,7 @@ export function buildWordPressThemeArtifact(
       },
     },
     fontAssets,
+    brandPublication,
     componentVariants: {
       hero: {
         selected: selections.hero,
@@ -452,6 +463,7 @@ export function rebuildWordPressThemeArtifactFromDesignSystem(
     siteConfiguration,
     existing.fontAssets,
     Object.keys(existing.acfSchemas),
+    existing.brandPublication,
   )
 }
 
@@ -693,14 +705,56 @@ function configurationFromDesignSystem(
   })
 }
 
+function relativeLuminance(hex: string): number {
+  const channels = hex
+    .replace('#', '')
+    .match(/.{2}/g)!
+    .map(value => Number.parseInt(value, 16) / 255)
+    .map(value =>
+      value <= 0.03928
+        ? value / 12.92
+        : Math.pow((value + 0.055) / 1.055, 2.4)
+    )
+  return (
+    0.2126 * channels[0] +
+    0.7152 * channels[1] +
+    0.0722 * channels[2]
+  )
+}
+
+function accessibleForeground(background: string, preferred: string): string {
+  const backgroundLuminance = relativeLuminance(background)
+  return [preferred, '#000000', '#FFFFFF'].reduce((best, candidate) => {
+    const ratio = (candidate: string) => {
+      const luminance = relativeLuminance(candidate)
+      return (
+        (Math.max(backgroundLuminance, luminance) + 0.05) /
+        (Math.min(backgroundLuminance, luminance) + 0.05)
+      )
+    }
+    return ratio(candidate) > ratio(best) ? candidate : best
+  })
+}
+
 function buildOverlayCss(configuration: SiteConfiguration): string {
   const { design, motion, header, footer, media } = configuration
+  const onPrimary = accessibleForeground(
+    design.colors.primary,
+    design.colors.text
+  )
+  const onAccent = accessibleForeground(
+    design.colors.accent,
+    design.colors.text
+  )
   return [
     ':root{',
     `--color-primary:${design.colors.primary};`,
+    `--color-on-primary:${onPrimary};`,
     `--color-secondary:${design.colors.secondary};`,
     `--color-accent:${design.colors.accent};`,
+    `--color-on-accent:${onAccent};`,
     `--color-background:${design.colors.background};`,
+    `--color-bg:${design.colors.background};`,
     `--color-text:${design.colors.text};`,
     `--font-heading:${design.typography.headingFont};`,
     `--font-body:${design.typography.bodyFont};`,

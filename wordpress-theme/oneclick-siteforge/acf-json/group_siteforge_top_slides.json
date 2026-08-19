@@ -11,7 +11,13 @@
       "button_label": "Add slides",
       "sub_fields": [
         {
-          "key": "field_siteforge_top_slides_slides_image_0",
+          "key": "field_siteforge_top_slides_slides_target_id_0",
+          "name": "target_id",
+          "label": "target_id",
+          "type": "text"
+        },
+        {
+          "key": "field_siteforge_top_slides_slides_image_1",
           "name": "image",
           "label": "image",
           "type": "image",
@@ -19,25 +25,25 @@
           "preview_size": "medium"
         },
         {
-          "key": "field_siteforge_top_slides_slides_headline_1",
+          "key": "field_siteforge_top_slides_slides_headline_2",
           "name": "headline",
           "label": "headline",
           "type": "text"
         },
         {
-          "key": "field_siteforge_top_slides_slides_subheadline_2",
+          "key": "field_siteforge_top_slides_slides_subheadline_3",
           "name": "subheadline",
           "label": "subheadline",
           "type": "text"
         },
         {
-          "key": "field_siteforge_top_slides_slides_cta_text_3",
+          "key": "field_siteforge_top_slides_slides_cta_text_4",
           "name": "cta_text",
           "label": "cta_text",
           "type": "text"
         },
         {
-          "key": "field_siteforge_top_slides_slides_cta_link_4",
+          "key": "field_siteforge_top_slides_slides_cta_link_5",
           "name": "cta_link",
           "label": "cta_link",
           "type": "url"

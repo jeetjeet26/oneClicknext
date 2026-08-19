@@ -3,11 +3,16 @@ import { z } from 'zod'
 import { createClient as createServerClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
-import { addRevision, ContentStoreError } from '@/utils/forgestudio/content-store'
+import {
+  addRevision,
+  ContentStoreError,
+  recordRevisionModificationGovernance,
+} from '@/utils/forgestudio/content-store'
 import { revisionContentSchema } from '@/utils/forgestudio/content-contract'
 
 const createRevisionSchema = z.object({
   content: revisionContentSchema,
+  modificationReason: z.string().min(3).max(2000),
 })
 
 async function resolvePackageProperty(packageId: string) {
@@ -98,6 +103,11 @@ export async function POST(
     const revision = await addRevision(packageId, {
       content: parsed.data.content,
       author: { kind: 'user', userId: user.id },
+    })
+    await recordRevisionModificationGovernance({
+      revisionId: revision.id,
+      reviewerId: user.id,
+      reason: parsed.data.modificationReason,
     })
 
     return NextResponse.json({ revision }, { status: 201 })

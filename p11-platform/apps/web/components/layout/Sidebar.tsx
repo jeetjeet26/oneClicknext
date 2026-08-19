@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, MessageSquare, BarChart3, Settings, Building2, Users, Sparkles, Activity, Bot, Zap, Flame, TrendingUp, Star, Wand2, Home, Globe, Search } from 'lucide-react';
+import { LayoutDashboard, MessageSquare, BarChart3, Settings, Building2, Users, Sparkles, Activity, Bot, Flame, TrendingUp, Star, Wand2, Globe, Search, BedDouble } from 'lucide-react';
 
 type NavItem = {
   href: string;
@@ -50,6 +50,7 @@ export function Sidebar() {
           <nav className="space-y-1">
             <NavLink href="/dashboard" label="Overview" icon={<LayoutDashboard size={18} />} />
             <NavLink href="/dashboard/community" label="Property" icon={<Building2 size={18} />} />
+            <NavLink href="/dashboard/floor-plans" label="Floorplans" icon={<BedDouble size={18} />} />
             <NavLink href="/dashboard/team" label="Team" icon={<Users size={18} />} />
           </nav>
         </div>

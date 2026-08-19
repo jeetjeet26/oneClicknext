@@ -27,15 +27,21 @@ export interface WordPressInstallerInput {
   runtimePluginIdentity?: VerifiedRuntimeV3PackageIdentity
   acfProArchivePath?: string
   acfProLicenseKey: string
+  reuseInstalledAcfPro?: boolean
   onProgress?: (step: string) => void | Promise<void>
 }
 
 export interface PreparedWordPressInstallerArchives {
   themeArchive: Buffer
-  acfProArchive: Buffer
+  acfProArchive: Buffer | null
   runtimePluginArchive: Buffer
   themeArchiveSha256: string
   runtimePluginArchiveSha256: string
+}
+
+export interface WordPressActiveTheme {
+  stylesheet: string
+  template: string
 }
 
 function sha256(value: Uint8Array): string {
@@ -83,13 +89,15 @@ export async function prepareWordPressInstallerArchives(
       input.themeArchive
         ? Promise.resolve(Buffer.from(input.themeArchive))
         : readFile(themeArchivePath),
-      readFile(acfProArchivePath),
+      input.reuseInstalledAcfPro
+        ? Promise.resolve(null)
+        : readFile(acfProArchivePath),
       input.runtimePluginArchive
         ? Promise.resolve(Buffer.from(input.runtimePluginArchive))
         : readFile(runtimePluginArchivePath),
     ])
   assertZipArchive(themeArchive, 'SiteForge theme')
-  assertZipArchive(acfProArchive, 'ACF Pro')
+  if (acfProArchive) assertZipArchive(acfProArchive, 'ACF Pro')
   assertZipArchive(runtimePluginArchive, 'SiteForge runtime plugin')
 
   if (input.runtimePluginIdentity) {
@@ -365,6 +373,72 @@ wp_cache_flush();
 }
 
 export class SshWordPressInstaller {
+  async getActiveTheme(input: {
+    ssh: WordPressSshCredentials
+    rememberForRollback?: boolean
+    requireStylesheetCss?: boolean
+  }): Promise<WordPressActiveTheme> {
+    const applicationRoot = input.ssh.applicationRoot || 'public_html'
+    const remember = input.rememberForRollback !== false
+      ? "update_option('oneclick_siteforge_runtime_pending_theme_v3', $theme, false);"
+      : ''
+    const verifyCss = input.requireStylesheetCss
+      ? "$loaded = false; do_action('wp_enqueue_scripts'); foreach (wp_styles()->queue as $handle) { $registered = wp_styles()->registered[$handle] ?? null; $src = $registered ? (string) $registered->src : ''; if (false !== strpos($src, '/themes/' . $theme['stylesheet'] . '/') && false !== strpos($src, '.css')) { $loaded = true; break; } } if (!$loaded) { throw new Exception('Active child-theme CSS readback failed'); }"
+      : ''
+    const client = await connect(input.ssh)
+    try {
+      const output = await exec(
+        client,
+        `cd ${shellQuote(applicationRoot)} && wp eval ${shellQuote(
+          `$theme = array('stylesheet' => get_stylesheet(), 'template' => get_template()); ${remember} ${verifyCss} echo wp_json_encode($theme);`
+        )}`
+      )
+      const theme = JSON.parse(output.trim()) as Partial<WordPressActiveTheme>
+      if (
+        !theme.stylesheet ||
+        !theme.template ||
+        !/^[a-z0-9][a-z0-9_-]*$/.test(theme.stylesheet) ||
+        !/^[a-z0-9][a-z0-9_-]*$/.test(theme.template)
+      ) {
+        throw new Error('WordPress returned an invalid active theme identity')
+      }
+      return {
+        stylesheet: theme.stylesheet,
+        template: theme.template,
+      }
+    } finally {
+      client.end()
+    }
+  }
+
+  async restoreActiveTheme(input: {
+    ssh: WordPressSshCredentials
+    theme: WordPressActiveTheme
+  }): Promise<void> {
+    const { stylesheet, template } = input.theme
+    if (
+      !/^[a-z0-9][a-z0-9_-]*$/.test(stylesheet) ||
+      !/^[a-z0-9][a-z0-9_-]*$/.test(template)
+    ) {
+      throw new Error('Prior WordPress theme identity is invalid')
+    }
+    const applicationRoot = input.ssh.applicationRoot || 'public_html'
+    const verify = `$stylesheet = ${JSON.stringify(stylesheet)}; $template = ${JSON.stringify(template)}; if (get_stylesheet() !== $stylesheet || get_template() !== $template) { throw new Exception('Prior active theme readback mismatch'); } delete_option('oneclick_siteforge_runtime_pending_theme_v3');`
+    const client = await connect(input.ssh)
+    try {
+      await exec(
+        client,
+        [
+          `cd ${shellQuote(applicationRoot)}`,
+          `wp theme activate ${shellQuote(stylesheet)}`,
+          `wp eval ${shellQuote(verify)}`,
+        ].join(' && ')
+      )
+    } finally {
+      client.end()
+    }
+  }
+
   async installBaseTheme(input: {
     ssh: WordPressSshCredentials
     archive: Buffer
@@ -434,6 +508,7 @@ export class SshWordPressInstaller {
       await mkdirRecursive(sftp, remoteThemeRoot)
       await removeFileIfExists(sftp, remoteArchive)
       await writeFile(sftp, remoteArchive, input.archive)
+      const verify = `$stylesheet = ${JSON.stringify(overlaySlug)}; if (get_stylesheet() !== $stylesheet || get_template() !== 'oneclick-siteforge') { throw new Exception('Overlay active theme readback mismatch'); } do_action('wp_enqueue_scripts'); $loaded = false; foreach (wp_styles()->queue as $handle) { $registered = wp_styles()->registered[$handle] ?? null; $src = $registered ? (string) $registered->src : ''; if (false !== strpos($src, '/themes/' . $stylesheet . '/') && false !== strpos($src, '.css')) { $loaded = true; break; } } if (!$loaded) { throw new Exception('Overlay CSS was not loaded from the active child theme'); }`
       await exec(
         client,
         [
@@ -442,6 +517,7 @@ export class SshWordPressInstaller {
           `mkdir -p ${shellQuote(`wp-content/themes/${overlaySlug}`)}`,
           `unzip -oq ${shellQuote(`${overlaySlug}.zip`)} -d ${shellQuote(`wp-content/themes/${overlaySlug}`)}`,
           `wp theme activate ${shellQuote(overlaySlug)}`,
+          `wp eval ${shellQuote(verify)}`,
           `rm -f ${shellQuote(`${overlaySlug}.zip`)}`,
         ].join(' && ')
       )
@@ -549,12 +625,16 @@ add_action( 'plugins_loaded', function () {
       await mkdir(sftp, sftpApplicationRoot)
       await Promise.all([
         removeFileIfExists(sftp, remoteThemeArchivePath),
-        removeFileIfExists(sftp, remoteAcfArchivePath),
+        ...(acfProArchive
+          ? [removeFileIfExists(sftp, remoteAcfArchivePath)]
+          : []),
         removeFileIfExists(sftp, remoteRuntimePluginArchivePath),
       ])
       await Promise.all([
         writeFile(sftp, remoteThemeArchivePath, themeArchive),
-        writeFile(sftp, remoteAcfArchivePath, acfProArchive),
+        ...(acfProArchive
+          ? [writeFile(sftp, remoteAcfArchivePath, acfProArchive)]
+          : []),
         writeFile(sftp, remoteRuntimePluginArchivePath, runtimePluginArchive),
       ])
 
@@ -573,7 +653,9 @@ add_action( 'plugins_loaded', function () {
           'wp core is-installed',
           `printf '%s  %s\\n' ${shellQuote(themeArchiveSha256)} ${themeArchiveName} | sha256sum -c -`,
           `printf '%s  %s\\n' ${shellQuote(runtimePluginArchiveSha256)} ${runtimePluginArchiveName} | sha256sum -c -`,
-          `wp plugin install ${acfArchive} --force`,
+          ...(acfProArchive
+            ? [`wp plugin install ${acfArchive} --force`]
+            : []),
           'wp plugin activate advanced-custom-fields-pro',
           `wp plugin install ${runtimePluginArchiveName} --force`,
           'wp plugin activate oneclick-siteforge-runtime',
@@ -583,7 +665,9 @@ add_action( 'plugins_loaded', function () {
           'wp theme activate oneclick-siteforge',
           'wp rewrite structure /%postname%/ --hard',
           'wp rewrite flush --hard',
-          `rm -f ${themeArchiveName} ${acfArchive} ${runtimePluginArchiveName}`,
+          `rm -f ${themeArchiveName} ${
+            acfProArchive ? acfArchive : ''
+          } ${runtimePluginArchiveName}`,
         ].join(' && ')
       )
     } finally {

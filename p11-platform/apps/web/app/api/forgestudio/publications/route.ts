@@ -9,8 +9,11 @@ const scheduleSchema = z.object({
   revisionId: z.string().uuid(),
   destinations: z.array(z.object({
     connectionId: z.string().uuid(),
+    variantId: z.string().uuid().optional(),
     scheduledFor: z.string().datetime({ offset: true }),
     timezone: z.string().max(100).optional(),
+    experimentKey: z.string().min(1).max(200).optional(),
+    experimentGroup: z.enum(['control', 'treatment']).optional(),
   })).min(1).max(20),
 })
 
@@ -41,7 +44,7 @@ export async function GET(request: NextRequest) {
       .from('social_publications')
       .select(`
         *,
-        social_content_variants ( id, platform, caption, content_format, media_urls ),
+        social_content_variants ( id, variant_key, sequence_index, platform, caption, content_format, media_urls, overlay_text, storyboard, subtitle_text, thumbnail_asset_id ),
         social_connections ( id, platform, account_name, account_username )
       `)
       .eq('property_id', propertyId)

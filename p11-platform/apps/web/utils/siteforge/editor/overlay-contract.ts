@@ -37,6 +37,238 @@ export const themeOverlayProposalSchema = z
 
 export type ThemeOverlayProposal = z.infer<typeof themeOverlayProposalSchema>
 
+const overlayComputedStyleExpectationSchema = z
+  .object({
+    property: z.string().min(1).max(160),
+    value: z.string().min(1).max(500),
+  })
+  .strict()
+
+export const overlayRenderedEffectContractSchema = z
+  .object({
+    contractVersion: z.literal('siteforge-overlay-rendered-effect-v1'),
+    contractHash: z.string().regex(/^[a-f0-9]{64}$/),
+    selectors: z
+      .array(
+        z
+          .object({
+            sourcePath: z.string().min(1).max(240),
+            selector: z.string().min(1).max(500),
+            computedStyles: z.array(overlayComputedStyleExpectationSchema).min(1),
+          })
+          .strict()
+      )
+      .min(1)
+      .max(200),
+    requiredViewports: z
+      .array(z.enum(['desktop', 'tablet', 'mobile']))
+      .length(3),
+  })
+  .strict()
+  .superRefine((contract, context) => {
+    const hashable: Partial<typeof contract> = { ...contract }
+    delete hashable.contractHash
+    if (hashSiteForgeContent(hashable) !== contract.contractHash) {
+      context.addIssue({
+        code: 'custom',
+        path: ['contractHash'],
+        message: 'Overlay rendered-effect contract hash does not match',
+      })
+    }
+  })
+
+export type OverlayRenderedEffectContract = z.infer<
+  typeof overlayRenderedEffectContractSchema
+>
+
+export const overlayRenderedEffectEvidenceSchema = z
+  .object({
+    evidenceVersion: z.literal('siteforge-overlay-rendered-effect-v1'),
+    contractHash: z.string().regex(/^[a-f0-9]{64}$/),
+    parentArtifact: z
+      .object({
+        artifactId: z.string().uuid(),
+        contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+      })
+      .strict(),
+    editedArtifact: z
+      .object({
+        artifactId: z.string().uuid(),
+        contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+      })
+      .strict(),
+    viewportResults: z.array(
+      z
+        .object({
+          viewport: z.enum(['desktop', 'tablet', 'mobile']),
+          selectors: z.array(
+            z
+              .object({
+                selector: z.string().min(1).max(500),
+                parentMatched: z.number().int().min(0),
+                editedMatched: z.number().int().min(0),
+                computedStyles: z.array(
+                  overlayComputedStyleExpectationSchema.extend({
+                    parentValue: z.string().max(500),
+                    editedValue: z.string().max(500),
+                    changed: z.boolean(),
+                  })
+                ),
+              })
+              .strict()
+          ),
+        })
+        .strict()
+    ),
+    unchangedRegionsPassed: z.boolean(),
+    interactionChecksPassed: z.boolean(),
+    passed: z.boolean(),
+    failures: z.array(
+      z
+        .object({
+          code: z.enum([
+            'required_viewport_missing',
+            'selector_unmatched',
+            'computed_style_mismatch',
+            'ineffective_style_change',
+            'interaction_mismatch',
+            'unchanged_region_drift',
+          ]),
+          selector: z.string().min(1).max(500),
+          viewport: z.enum(['desktop', 'tablet', 'mobile']),
+          expected: z.string().max(2_000),
+          actual: z.string().max(2_000),
+          repairHint: z.string().min(1).max(2_000),
+        })
+        .strict()
+    ),
+  })
+  .strict()
+
+export type OverlayRenderedEffectEvidence = z.infer<
+  typeof overlayRenderedEffectEvidenceSchema
+>
+
+function cssRules(content: string): Array<{
+  selector: string
+  computedStyles: Array<{ property: string; value: string }>
+}> {
+  const withoutComments = content.replace(/\/\*[\s\S]*?\*\//g, '')
+  return [...withoutComments.matchAll(/([^{}]+)\{([^{}]+)\}/g)].flatMap(
+    match => {
+      const rawSelector = match[1].trim()
+      if (!rawSelector || rawSelector.startsWith('@')) return []
+      const computedStyles = match[2]
+        .split(';')
+        .flatMap(declaration => {
+          const separator = declaration.indexOf(':')
+          if (separator <= 0) return []
+          const property = declaration.slice(0, separator).trim()
+          const value = declaration.slice(separator + 1).trim()
+          return property && value ? [{ property, value }] : []
+        })
+      return rawSelector
+        .split(',')
+        .map(selector => selector.trim())
+        .filter(Boolean)
+        .map(selector => ({ selector, computedStyles }))
+        .filter(rule => rule.computedStyles.length > 0)
+    }
+  )
+}
+
+export function deriveOverlayRenderedEffectContract(
+  proposalValue: ThemeOverlayProposal
+): OverlayRenderedEffectContract {
+  const proposal = themeOverlayProposalSchema.parse(proposalValue)
+  const selectors = proposal.files.flatMap(file =>
+    file.path.endsWith('.css')
+      ? cssRules(file.content).map(rule => ({
+          sourcePath: file.path,
+          ...rule,
+        }))
+      : []
+  )
+  if (selectors.length === 0) {
+    throw new Error(
+      'Runtime extension requires at least one CSS selector with a rendered computed-style expectation'
+    )
+  }
+  const hashable = {
+    contractVersion: 'siteforge-overlay-rendered-effect-v1' as const,
+    selectors,
+    requiredViewports: ['desktop', 'tablet', 'mobile'] as const,
+  }
+  return overlayRenderedEffectContractSchema.parse({
+    ...hashable,
+    contractHash: hashSiteForgeContent(hashable),
+  })
+}
+
+export function assertPassingOverlayRenderedEffectEvidence(input: {
+  contract: OverlayRenderedEffectContract
+  evidence: unknown
+  parentArtifactId: string
+  parentContentHash: string
+}): OverlayRenderedEffectEvidence {
+  const contract = overlayRenderedEffectContractSchema.parse(input.contract)
+  const evidence = overlayRenderedEffectEvidenceSchema.parse(input.evidence)
+  const observedViewports = new Set(
+    evidence.viewportResults.map(result => result.viewport)
+  )
+  const observedSelectors = new Map(
+    evidence.viewportResults.flatMap(result =>
+      result.selectors.map(selector => [
+        `${result.viewport}|${selector.selector}`,
+        selector,
+      ] as const)
+    )
+  )
+  const complete =
+    evidence.contractHash === contract.contractHash &&
+    evidence.parentArtifact.artifactId === input.parentArtifactId &&
+    evidence.parentArtifact.contentHash === input.parentContentHash &&
+    contract.requiredViewports.every(viewport => observedViewports.has(viewport)) &&
+    contract.requiredViewports.every(viewport =>
+      contract.selectors.every(expectation => {
+        const observation = observedSelectors.get(
+          `${viewport}|${expectation.selector}`
+        )
+        return (
+          observation &&
+          observation.editedMatched > 0 &&
+          expectation.computedStyles.every(style =>
+            observation.computedStyles.some(
+              actual =>
+                actual.property === style.property &&
+                actual.editedValue === style.value &&
+                actual.changed
+            )
+          )
+        )
+      })
+    )
+  if (
+    !complete ||
+    !evidence.passed ||
+    evidence.failures.length > 0 ||
+    !evidence.unchangedRegionsPassed ||
+    !evidence.interactionChecksPassed
+  ) {
+    const details = evidence.failures
+      .slice(0, 5)
+      .map(
+        failure =>
+          `${failure.code}:${failure.viewport}:${failure.selector} (${failure.repairHint})`
+      )
+      .join('; ')
+    throw new Error(
+      `[extension_rendered_effect_unproven] Parent-versus-edited rendered evidence is incomplete or failed${details ? `: ${details}` : ''}`
+    )
+  }
+  return evidence
+}
+
 const overlayManifestFileSchema = z
   .object({
     path: z.string().min(1).max(240),
@@ -130,6 +362,7 @@ export const overlayRuntimeCompatibilitySchema = z
         reportSha256: z.string().regex(/^[a-f0-9]{64}$/),
       })
       .strict(),
+    renderedEffectContract: overlayRenderedEffectContractSchema.optional(),
   })
   .strict()
 

@@ -36,6 +36,7 @@ const snapshot = {
     contentHash: 'a'.repeat(64),
     report: {},
   },
+  visualAttachments: [],
 } as SiteForgeEditorSnapshot
 
 afterEach(() => {

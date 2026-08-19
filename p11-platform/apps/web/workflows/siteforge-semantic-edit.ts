@@ -1,11 +1,14 @@
 import {
   assembleSemanticEditContext,
   assertSemanticEditActive,
+  buildSemanticEditCorrectionIntent,
   completeSemanticEdit,
   failSemanticEdit,
   proposeSemanticEdit,
   updateSemanticEditStage,
   validateAndPublishSemanticEdit,
+  verifyRenderedSemanticEdit,
+  type SemanticEditRenderVerification,
   type SiteForgeSemanticEditWorkflowInput,
 } from '@/utils/siteforge/editor/workflow-steps'
 
@@ -43,7 +46,7 @@ export async function siteForgeSemanticEditWorkflow(
       input,
       'planning_edit',
       30,
-      'Planning a holistic semantic edit with Fable 5'
+      'Routing and planning the authorized semantic edit'
     )
     const proposal = await proposeSemanticEdit(input, snapshot)
 
@@ -64,11 +67,84 @@ export async function siteForgeSemanticEditWorkflow(
       70,
       'Validating semantic operations and deterministic quality gates'
     )
-    const output = await validateAndPublishSemanticEdit(
-      input,
-      snapshot,
-      proposal
-    )
+    let output = await validateAndPublishSemanticEdit(input, snapshot, proposal)
+    let finalProposal = proposal
+
+    // Rendered self-verification: after the revision publishes, re-render the
+    // affected pages on the canonical WordPress target and verify the visual
+    // outcome against the accepted edit before replying "done". Mismatches get
+    // at most two bounded correction passes, then the result is reported
+    // honestly. Verification never blocks or unpublishes the revision.
+    let verification: SemanticEditRenderVerification | undefined
+    if (
+      output.artifactId &&
+      output.contentHash &&
+      !output.awaitingClarification &&
+      !output.awaitingExtensionApproval
+    ) {
+      await updateSemanticEditStage(
+        input,
+        'verifying_render',
+        90,
+        'Re-rendering the published revision to verify the visual outcome'
+      )
+      let published = {
+        artifactId: output.artifactId,
+        contentHash: output.contentHash,
+      }
+      verification = await verifyRenderedSemanticEdit(input, published)
+      let correctionPasses = 0
+      while (verification.status === 'failed' && correctionPasses < 2) {
+        correctionPasses++
+        await assertSemanticEditActive(input)
+        await updateSemanticEditStage(
+          input,
+          'correcting_render',
+          92,
+          `Rendered outcome mismatch — bounded correction pass ${correctionPasses} of 2`
+        )
+        const correctionInput: SiteForgeSemanticEditWorkflowInput = {
+          ...input,
+          userIntent: buildSemanticEditCorrectionIntent(
+            input.userIntent,
+            verification
+          ),
+          pageManagerAction: undefined,
+          attachmentIds: [],
+          expectedArtifactId: published.artifactId,
+          expectedContentHash: published.contentHash,
+        }
+        const correctionSnapshot =
+          await assembleSemanticEditContext(correctionInput)
+        const correctionProposal = await proposeSemanticEdit(
+          correctionInput,
+          correctionSnapshot
+        )
+        if (
+          correctionProposal.clarification ||
+          correctionProposal.extensionRequest ||
+          correctionProposal.operations.length === 0
+        ) {
+          break
+        }
+        const correctionOutput = await validateAndPublishSemanticEdit(
+          correctionInput,
+          correctionSnapshot,
+          correctionProposal
+        )
+        if (!correctionOutput.artifactId || !correctionOutput.contentHash) {
+          break
+        }
+        output = correctionOutput
+        finalProposal = correctionProposal
+        published = {
+          artifactId: correctionOutput.artifactId,
+          contentHash: correctionOutput.contentHash,
+        }
+        verification = await verifyRenderedSemanticEdit(input, published)
+      }
+      verification = { ...verification, correctionPasses }
+    }
 
     await updateSemanticEditStage(
       input,
@@ -84,7 +160,7 @@ export async function siteForgeSemanticEditWorkflow(
           ? 'Creating a controlled runtime extension request'
           : 'Publishing exactly one immutable revision'
     )
-    await completeSemanticEdit(input, proposal, output)
+    await completeSemanticEdit(input, finalProposal, output, verification)
     return output
   } catch (error) {
     await failSemanticEdit(input, errorMessage(error))

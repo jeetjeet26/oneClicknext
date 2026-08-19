@@ -88,11 +88,22 @@ const FUNNEL_STEPS = [
   'tour_booked',
 ] as const
 
+export const SITEFORGE_CONVERSION_OUTCOME_EVENTS = [
+  'registration_completed',
+  'sales_lead_created',
+  'appointment_scheduled',
+  'brochure_downloaded',
+  'plan_saved',
+  'home_saved',
+  'broker_handoff_requested',
+] as const
+
 export const SITEFORGE_OUTCOME_KPIS = [
   'siteforge.sessions',
   'siteforge.cta_conversion_rate',
   'siteforge.lead_conversion_rate',
   'siteforge.tour_conversion_rate',
+  'siteforge.conversion_outcome_rate',
 ] as const
 
 export function aggregateArtifactFunnels(events: readonly FunnelEvent[]) {
@@ -109,6 +120,25 @@ export function aggregateArtifactFunnels(events: readonly FunnelEvent[]) {
         new Set(rows.filter((row) => row.event_type === step).map((row) => row.session_id)).size,
       ])
     ) as Record<(typeof FUNNEL_STEPS)[number], number>
+    const conversionSessions = new Set(
+      rows
+        .filter(row =>
+          SITEFORGE_CONVERSION_OUTCOME_EVENTS.includes(
+            row.event_type as (typeof SITEFORGE_CONVERSION_OUTCOME_EVENTS)[number]
+          )
+        )
+        .map(row => row.session_id)
+    )
+    const conversionOutcomes = Object.fromEntries(
+      SITEFORGE_CONVERSION_OUTCOME_EVENTS.map(eventName => [
+        eventName,
+        new Set(
+          rows
+            .filter(row => row.event_type === eventName)
+            .map(row => row.session_id)
+        ).size,
+      ])
+    ) as Record<(typeof SITEFORGE_CONVERSION_OUTCOME_EVENTS)[number], number>
     return {
       artifactId: artifactKey === 'unattributed' ? null : artifactKey,
       metrics: {
@@ -118,6 +148,8 @@ export function aggregateArtifactFunnels(events: readonly FunnelEvent[]) {
         ctaConversionRate: sessions.size ? counts.cta_click / sessions.size : 0,
         leadConversionRate: sessions.size ? counts.lead_submit / sessions.size : 0,
         tourConversionRate: sessions.size ? counts.tour_booked / sessions.size : 0,
+        conversionRate: sessions.size ? conversionSessions.size / sessions.size : 0,
+        conversionOutcomes,
       },
     }
   })
@@ -125,7 +157,11 @@ export function aggregateArtifactFunnels(events: readonly FunnelEvent[]) {
 
 export interface AnomalyRule {
   id: string
-  metric: 'leadConversionRate' | 'tourConversionRate' | 'sessions'
+  metric:
+    | 'leadConversionRate'
+    | 'tourConversionRate'
+    | 'conversionRate'
+    | 'sessions'
   operator: 'lt' | 'gt'
   threshold: number
   minimumSessions?: number
@@ -359,6 +395,11 @@ async function recordArtifactOutcomes(
       baseline: baseline.tourConversionRate,
       observed: input.metrics.tourConversionRate,
     },
+    {
+      kpiName: SITEFORGE_OUTCOME_KPIS[4],
+      baseline: baseline.conversionRate,
+      observed: input.metrics.conversionRate,
+    },
   ] as const
   let recorded = 0
   for (const measurement of measurements) {
@@ -576,6 +617,17 @@ export async function buildSiteForgeOwnershipReport(
     cta: rows.some(row => row.event_type === 'cta_click'),
     lead: rows.some(row => row.event_type === 'lead_submit'),
     tour: rows.some(row => row.event_type === 'tour_booked'),
+    conversionOutcomes: [
+      ...new Set(
+        rows
+          .map(row => row.event_type)
+          .filter(eventType =>
+            SITEFORGE_CONVERSION_OUTCOME_EVENTS.includes(
+              eventType as (typeof SITEFORGE_CONVERSION_OUTCOME_EVENTS)[number]
+            )
+          )
+      ),
+    ],
     consentStates: [...new Set(rows.map(row => row.consent_state || 'unknown'))],
   }))
   const attributionMap = new Map<
@@ -635,6 +687,9 @@ export async function buildSiteForgeOwnershipReport(
         tourConversionRate:
           (currentMetrics.tourConversionRate || 0) -
           (baselineMetrics.tourConversionRate || 0),
+        conversionRate:
+          (currentMetrics.conversionRate || 0) -
+          (baselineMetrics.conversionRate || 0),
       },
     }
   })
@@ -710,13 +765,21 @@ export function siteForgeReportCsv(
 ) {
   const quote = (value: unknown) => `"${String(value ?? '').replaceAll('"', '""')}"`
   const lines = [
-    ['artifact_id', 'sessions', 'cta_rate', 'lead_rate', 'tour_rate'],
+    [
+      'artifact_id',
+      'sessions',
+      'cta_rate',
+      'lead_rate',
+      'tour_rate',
+      'conversion_outcome_rate',
+    ],
     ...report.funnels.map(funnel => [
       funnel.artifactId || '',
       funnel.metrics.sessions,
       funnel.metrics.ctaConversionRate,
       funnel.metrics.leadConversionRate,
       funnel.metrics.tourConversionRate,
+      funnel.metrics.conversionRate,
     ]),
   ]
   return lines.map(line => line.map(quote).join(',')).join('\n')

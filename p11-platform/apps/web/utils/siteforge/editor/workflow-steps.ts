@@ -17,11 +17,15 @@ import {
 import {
   assertSiteForgeEditorAgentOutcome,
   runSiteForgeEditorAgent,
+  validateSiteForgeEditorOperations,
   type SiteForgeEditorAgentResult,
 } from '@/utils/siteforge/editor/agent'
 import { isSiteForgeRuntimeExtensionsEnabled } from '@/utils/siteforge/editor/feature'
 import { validateAndStoreThemeOverlay } from '@/utils/siteforge/editor/overlay'
-import { overlayRuntimeCompatibilitySchema } from '@/utils/siteforge/editor/overlay-contract'
+import {
+  deriveOverlayRenderedEffectContract,
+  overlayRuntimeCompatibilitySchema,
+} from '@/utils/siteforge/editor/overlay-contract'
 import { immutableSnapshotChanged } from '@/utils/siteforge/editor/immutable-snapshot'
 import { assertFactualSemanticEditGrounding } from '@/utils/siteforge/editor/factual-guard'
 import {
@@ -35,6 +39,7 @@ import {
   siteForgeLegalConfigSchema,
 } from '@/utils/siteforge/quality/deterministic-gates'
 import { verifyKnowledgeBaseEvidenceIds } from '@/utils/siteforge/quality/knowledge-evidence'
+import { evaluateSiteForgePremiumCreative } from '@/utils/siteforge/quality/premium-creative'
 import type { PhotoManifest } from '@/utils/siteforge/agents/photo-agent'
 import {
   rebuildWordPressThemeArtifactFromDesignSystem,
@@ -42,7 +47,23 @@ import {
   validateWordPressThemeArtifact,
 } from '@/utils/siteforge/wordpress/theme-artifact'
 import type { DesignSystem } from '@/utils/siteforge/agents/design-agent'
+import { compileBrandPublicationPackage } from '@/utils/siteforge/brand-design-compiler'
 import { siteForgePlanSchema } from '@/utils/siteforge/contracts'
+import {
+  assertSiteForgeEditorDiffInScope,
+  assertSiteForgeEditorOperationsInScope,
+  deriveSiteForgeEditorScopeForOperations,
+  siteForgeEditorAffectedPaths,
+  siteForgeOperationsTouchThemeConfiguration,
+  type SiteForgeEditorScope,
+} from '@/utils/siteforge/editor/scope'
+import { deriveSiteForgeEditAcceptanceContract } from '@/utils/siteforge/editor/edit-acceptance'
+import {
+  pageManagerActionEvidenceId,
+  planSiteForgePageManagerAction,
+  type SiteForgePageManagerAction,
+} from '@/utils/siteforge/editor/page-manager'
+import { queueCanonicalPreviewAfterPublication } from '@/utils/siteforge/workflows/canonical-preview-queue'
 
 export interface SiteForgeSemanticEditWorkflowInput {
   sharedJobId: string
@@ -54,13 +75,30 @@ export interface SiteForgeSemanticEditWorkflowInput {
   orgId: string
   userId: string
   userIntent: string
+  attachmentIds: string[]
   elementContext?: {
     pageSlug: string
     sectionId: string
     blockType?: string
   }
+  editScope?: SiteForgeEditorScope
+  pageManagerAction?: SiteForgePageManagerAction
   expectedArtifactId: string
   expectedContentHash: string
+}
+
+function persistedPageManagerEvidenceIds(blueprint: SiteBlueprint): string[] {
+  return Array.from(
+    new Set(
+      blueprint.pages.flatMap(page =>
+        page.sections.flatMap(section =>
+          (section.evidenceIds || []).filter(evidenceId =>
+            /^operator-page-intent:[a-f0-9]{64}$/.test(evidenceId)
+          )
+        )
+      )
+    )
+  )
 }
 
 export async function assertSemanticEditActive(
@@ -131,6 +169,8 @@ export async function assembleSemanticEditContext(
       {
         websiteId: input.websiteId,
         sessionId: input.sessionId,
+        userMessageId: input.userMessageId,
+        attachmentIds: input.attachmentIds,
         expectedArtifactId: input.expectedArtifactId,
         expectedContentHash: input.expectedContentHash,
       },
@@ -149,6 +189,24 @@ export async function proposeSemanticEdit(
   snapshot: SiteForgeEditorSnapshot
 ): Promise<SiteForgeEditorAgentResult> {
   'use step'
+  if (input.pageManagerAction) {
+    const sourceBlueprint =
+      snapshot.artifact.blueprint as unknown as SiteBlueprint
+    const proposal = planSiteForgePageManagerAction({
+      blueprint: sourceBlueprint,
+      action: input.pageManagerAction,
+    })
+    validateSiteForgeEditorOperations({
+      blueprint: snapshot.artifact.blueprint as unknown as SiteBlueprint,
+      operations: proposal.operations,
+      verifiedEvidenceIds: [
+        ...persistedPageManagerEvidenceIds(sourceBlueprint),
+        pageManagerActionEvidenceId(input.pageManagerAction),
+      ],
+      scope: { kind: 'site' },
+    })
+    return proposal
+  }
   return runSiteForgeEditorAgent({
     snapshot,
     userIntent: input.elementContext
@@ -164,6 +222,8 @@ export async function proposeSemanticEdit(
           'Treat this identity as targeting context; inspect it before applying operations.',
         ].join('\n')
       : input.userIntent,
+    scope: input.editScope,
+    elementContext: input.elementContext,
   })
 }
 
@@ -182,7 +242,6 @@ export async function validateAndPublishSemanticEdit(
   'use step'
   const client = createServiceClient()
   assertSiteForgeEditorAgentOutcome(proposal)
-
   if (proposal.clarification) {
     return {
       artifactId: null,
@@ -230,6 +289,9 @@ export async function validateAndPublishSemanticEdit(
         validator: 'siteforge-static-sandbox-v1',
         reportSha256: overlay.validationReportSha256,
       },
+      renderedEffectContract: deriveOverlayRenderedEffectContract(
+        proposal.extensionRequest.overlay
+      ),
     })
     const { data: extension, error: extensionError } = await client
       .from('siteforge_runtime_extension_requests')
@@ -263,12 +325,27 @@ export async function validateAndPublishSemanticEdit(
       extensionRequestId: extension.id,
     }
   }
+  const editScope = deriveSiteForgeEditorScopeForOperations({
+    blueprint: snapshot.artifact.blueprint as unknown as SiteBlueprint,
+    operations: proposal.operations,
+    elementContext: input.elementContext,
+  })
+  assertSiteForgeEditorOperationsInScope({
+    blueprint: snapshot.artifact.blueprint as unknown as SiteBlueprint,
+    operations: proposal.operations,
+    scope: editScope,
+  })
   const updatedBlueprint = proposal.operations.length
     ? applyBlueprintPatch(
         snapshot.artifact.blueprint as unknown as SiteBlueprint,
         proposal.operations
       )
     : structuredClone(snapshot.artifact.blueprint as unknown as SiteBlueprint)
+  assertSiteForgeEditorDiffInScope({
+    before: snapshot.artifact.blueprint as unknown as SiteBlueprint,
+    after: updatedBlueprint,
+    scope: editScope,
+  })
   const blueprintRecord = updatedBlueprint as unknown as Record<string, unknown>
   const originalBlueprint = snapshot.artifact.blueprint as unknown as Record<
     string,
@@ -290,7 +367,10 @@ export async function validateAndPublishSemanticEdit(
       'Brand and onboarding snapshots are locked; create and approve a BrandForge revision before changing brand tokens or assets'
     )
   }
+  const touchesThemeConfiguration =
+    siteForgeOperationsTouchThemeConfiguration(proposal.operations)
   if (
+    touchesThemeConfiguration &&
     blueprintRecord.wordpressThemeArtifact &&
     blueprintRecord.designSystem &&
     typeof blueprintRecord.designSystem === 'object' &&
@@ -304,6 +384,7 @@ export async function validateAndPublishSemanticEdit(
       )
   }
   if (
+    touchesThemeConfiguration &&
     updatedBlueprint.siteConfiguration &&
     blueprintRecord.wordpressThemeArtifact
   ) {
@@ -328,19 +409,46 @@ export async function validateAndPublishSemanticEdit(
     throw new FatalError('Edited artifact is missing a valid photo manifest')
   }
 
-  const themeArtifact = validateWordPressThemeArtifact(
-    blueprintRecord.wordpressThemeArtifact
-  )
   const confirmedPlan = blueprintRecord.confirmedPlan
     ? siteForgePlanSchema.parse(blueprintRecord.confirmedPlan)
     : undefined
+  if (
+    confirmedPlan?.brandSnapshot?.contract &&
+    blueprintRecord.wordpressThemeArtifact &&
+    typeof blueprintRecord.wordpressThemeArtifact === 'object' &&
+    !Array.isArray(blueprintRecord.wordpressThemeArtifact)
+  ) {
+    const themeRecord =
+      blueprintRecord.wordpressThemeArtifact as Record<string, unknown>
+    themeRecord.brandPublication = compileBrandPublicationPackage(
+      confirmedPlan.brandSnapshot.contract
+    )
+    const themeCore = { ...themeRecord }
+    delete themeCore.contentHash
+    themeRecord.contentHash = hashSiteForgeContent(themeCore)
+  }
+  const themeArtifact = validateWordPressThemeArtifact(
+    blueprintRecord.wordpressThemeArtifact
+  )
   const verifiedKnowledgeBaseEvidenceIds =
     await verifyKnowledgeBaseEvidenceIds(client, input.propertyId, pages)
+  const pageManagerEvidenceIds = input.pageManagerAction
+    ? [
+        ...persistedPageManagerEvidenceIds(
+          snapshot.artifact.blueprint as unknown as SiteBlueprint
+        ),
+        pageManagerActionEvidenceId(input.pageManagerAction),
+      ]
+    : []
+  const verifiedEvidenceIds = [
+    ...verifiedKnowledgeBaseEvidenceIds,
+    ...pageManagerEvidenceIds,
+  ]
   assertFactualSemanticEditGrounding({
     originalBlueprint: snapshot.artifact.blueprint as unknown as SiteBlueprint,
     updatedBlueprint,
     confirmedPlan,
-    verifiedEvidenceIds: verifiedKnowledgeBaseEvidenceIds,
+    verifiedEvidenceIds,
   })
   const legacyPhotoManifest =
     originalBlueprint.photoManifest &&
@@ -360,7 +468,7 @@ export async function validateAndPublishSemanticEdit(
     themeArtifact,
     legal: siteForgeLegalConfigSchema.parse(blueprintRecord.legal),
     analytics: siteForgeAnalyticsConfigSchema.parse(blueprintRecord.analytics),
-    additionalTrustedEvidenceIds: verifiedKnowledgeBaseEvidenceIds,
+    additionalTrustedEvidenceIds: verifiedEvidenceIds,
   })
   if (!deterministic.passed) {
     const failures = deterministic.checks
@@ -380,11 +488,43 @@ export async function validateAndPublishSemanticEdit(
   blueprintRecord.deterministicQualityReport = deterministic
   blueprintRecord.updatedAt = new Date().toISOString()
   const contentHash = hashSiteForgeContent(blueprintRecord)
+  const operationSetHash = hashSiteForgeContent(proposal.operations)
+  const acceptanceContract = deriveSiteForgeEditAcceptanceContract({
+    before: snapshot.artifact.blueprint as unknown as SiteBlueprint,
+    after: blueprintRecord as unknown as SiteBlueprint,
+    operations: proposal.operations,
+    parentArtifact: {
+      artifactId: snapshot.artifact.id,
+      contentHash: snapshot.artifact.contentHash,
+    },
+    editedArtifact: {
+      artifactId: null,
+      contentHash,
+    },
+  })
+  // Advisory premium-creative score for the edited artifact (informational
+  // only; scoring failures never fail the edit).
+  let premiumCreative = null
+  try {
+    premiumCreative = evaluateSiteForgePremiumCreative({
+      pages: pages as unknown as GeneratedPage[],
+      brandContext: blueprintRecord.brandContext,
+    })
+  } catch (scoreError) {
+    console.warn('[siteforge_editor] advisory premium creative scoring failed', {
+      sharedJobId: input.sharedJobId,
+      error: scoreError instanceof Error ? scoreError.message : String(scoreError),
+    })
+  }
   const qualityReport = {
     deterministic,
+    premiumCreative,
     semanticEditor: {
       model: proposal.model,
       toolSummary: proposal.toolSummary,
+      scope: editScope,
+      affectedPaths: siteForgeEditorAffectedPaths(proposal.operations),
+      acceptanceContract,
     },
   }
   assertApprovedAssetReferenceClosure({
@@ -396,7 +536,49 @@ export async function validateAndPublishSemanticEdit(
     snapshot.approvedAssets,
     blueprintRecord as unknown as Json
   )
-  const operationSetHash = hashSiteForgeContent(proposal.operations)
+  const { data: websiteTarget, error: websiteTargetError } = await client
+    .from('property_websites')
+    .select('canonical_preview_target_id')
+    .eq('id', input.websiteId)
+    .eq('property_id', input.propertyId)
+    .single()
+  if (websiteTargetError) {
+    throw new Error(
+      `Failed to resolve semantic edit runtime target: ${websiteTargetError.message}`
+    )
+  }
+  const runtimeRollout = websiteTarget?.canonical_preview_target_id
+    ? await client
+        .from('siteforge_runtime_target_rollouts')
+        .select(
+          'requested_contract_version, runtime_package_sha256, status'
+        )
+        .eq('target_id', websiteTarget.canonical_preview_target_id)
+        .eq('website_id', input.websiteId)
+        .eq('status', 'enabled')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+    : { data: null, error: null }
+  if (runtimeRollout.error) {
+    throw new Error(
+      `Failed to resolve semantic edit runtime rollout: ${runtimeRollout.error.message}`
+    )
+  }
+  const latestBaseTheme = await client
+    .from('siteforge_runtime_packages')
+    .select('id, package_sha256')
+    .eq('package_type', 'base_theme')
+    .eq('publication_status', 'published')
+    .is('revoked_at', null)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (latestBaseTheme.error) {
+    throw new Error(
+      `Failed to resolve current base theme package: ${latestBaseTheme.error.message}`
+    )
+  }
 
   const { data: publicationClaim, error: publicationClaimError } = await client
     .from('shared_jobs')
@@ -441,18 +623,33 @@ export async function validateAndPublishSemanticEdit(
       p_quality_report: qualityReport as unknown as Json,
       p_quality_score: 100,
       p_created_by: input.userId,
-      ...(snapshot.artifact.baseThemePackageId &&
-      snapshot.artifact.baseThemePackageSha256
+      ...((latestBaseTheme.data?.id &&
+      latestBaseTheme.data.package_sha256)
         ? {
-            p_base_theme_package_id: snapshot.artifact.baseThemePackageId,
+            p_base_theme_package_id: latestBaseTheme.data.id,
             p_base_theme_package_sha256:
-              snapshot.artifact.baseThemePackageSha256,
+              latestBaseTheme.data.package_sha256,
           }
-        : {}),
+        : snapshot.artifact.baseThemePackageId &&
+            snapshot.artifact.baseThemePackageSha256
+          ? {
+              p_base_theme_package_id: snapshot.artifact.baseThemePackageId,
+              p_base_theme_package_sha256:
+                snapshot.artifact.baseThemePackageSha256,
+            }
+          : {}),
       p_asset_manifest: assetManifest,
       p_asset_manifest_hash: assetManifestHash,
       p_operation_set: proposal.operations as unknown as Json,
       p_operation_set_hash: operationSetHash,
+      ...(runtimeRollout.data?.requested_contract_version === 3 &&
+      runtimeRollout.data.runtime_package_sha256
+        ? {
+            p_runtime_contract_version: 3,
+            p_runtime_package_sha256:
+              runtimeRollout.data.runtime_package_sha256,
+          }
+        : {}),
     }
   )
   if (error || !revision) {
@@ -474,6 +671,227 @@ export async function validateAndPublishSemanticEdit(
   }
 }
 
+export type SemanticEditRenderVerification = {
+  status: 'verified' | 'failed' | 'skipped'
+  reason: string
+  previewUrl: string | null
+  correctionPasses: number
+  failures: Array<{
+    code: string
+    pageSlug: string
+    selector: string
+    viewport: string
+    expected: string
+    actual: string
+    repairHint: string
+  }>
+}
+
+// Failure codes the edited render alone can prove or disprove. Parent-phase
+// codes are excluded because the canonical preview target hosts only the
+// edited artifact; full parent-versus-edited certification still runs in the
+// launch pipeline.
+const EDITED_PHASE_FAILURE_CODES = new Set([
+  'required_viewport_missing',
+  'selector_unmatched',
+  'expected_text_missing',
+  'expected_text_still_present',
+  'attribute_mismatch',
+  'removed_selector_still_present',
+  'computed_style_mismatch',
+  'interaction_mismatch',
+])
+
+function extractEditedPhaseFailures(
+  report: unknown
+): SemanticEditRenderVerification['failures'] | null {
+  if (!report || typeof report !== 'object' || Array.isArray(report)) {
+    return null
+  }
+  const browser = (report as Record<string, unknown>).browser
+  if (!browser || typeof browser !== 'object' || Array.isArray(browser)) {
+    return null
+  }
+  const checks = (browser as Record<string, unknown>).checks
+  if (!Array.isArray(checks)) return null
+  const acceptance = checks.find(
+    check =>
+      check &&
+      typeof check === 'object' &&
+      !Array.isArray(check) &&
+      (check as Record<string, unknown>).code === 'edit.rendered_effect'
+  ) as Record<string, unknown> | undefined
+  if (!acceptance) return null
+  const evidence = acceptance.evidence
+  const rawFailures =
+    evidence && typeof evidence === 'object' && !Array.isArray(evidence)
+      ? (evidence as Record<string, unknown>).failures
+      : null
+  if (!Array.isArray(rawFailures)) return []
+  return rawFailures.flatMap(failure => {
+    if (!failure || typeof failure !== 'object' || Array.isArray(failure)) {
+      return []
+    }
+    const record = failure as Record<string, unknown>
+    if (
+      typeof record.code !== 'string' ||
+      !EDITED_PHASE_FAILURE_CODES.has(record.code)
+    ) {
+      return []
+    }
+    return [
+      {
+        code: record.code,
+        pageSlug: typeof record.pageSlug === 'string' ? record.pageSlug : '',
+        selector: typeof record.selector === 'string' ? record.selector : '',
+        viewport: typeof record.viewport === 'string' ? record.viewport : '',
+        expected: typeof record.expected === 'string' ? record.expected : '',
+        actual: typeof record.actual === 'string' ? record.actual : '',
+        repairHint:
+          typeof record.repairHint === 'string' ? record.repairHint : '',
+      },
+    ]
+  })
+}
+
+export function buildSemanticEditCorrectionIntent(
+  originalIntent: string,
+  verification: SemanticEditRenderVerification
+): string {
+  const failureLines = verification.failures.slice(0, 12).map(failure =>
+    [
+      `- [${failure.code}] page "${failure.pageSlug}" selector "${failure.selector}" at ${failure.viewport}:`,
+      `  expected ${failure.expected || '(none)'}, rendered ${failure.actual || '(nothing)'}.`,
+      `  Repair hint: ${failure.repairHint}`,
+    ].join('\n')
+  )
+  return [
+    'Rendered verification of your previous edit found visual mismatches on the published WordPress render.',
+    'The original operator request was:',
+    `"${originalIntent}"`,
+    '',
+    'The rendered page did not match the accepted edit in these exact places:',
+    ...failureLines,
+    '',
+    'Correct ONLY these mismatches so the rendered outcome matches the original request. Do not touch anything else.',
+  ].join('\n')
+}
+
+export async function verifyRenderedSemanticEdit(
+  input: SiteForgeSemanticEditWorkflowInput,
+  published: { artifactId: string; contentHash: string }
+): Promise<SemanticEditRenderVerification> {
+  'use step'
+  const skipped = (reason: string): SemanticEditRenderVerification => ({
+    status: 'skipped',
+    reason,
+    previewUrl: null,
+    correctionPasses: 0,
+    failures: [],
+  })
+  if (process.env.SITEFORGE_EDIT_RENDER_VERIFICATION === 'false') {
+    return skipped('Rendered verification is disabled by environment kill switch')
+  }
+  const client = createServiceClient()
+  const queued = await queueCanonicalPreviewAfterPublication({
+    service: client,
+    orgId: input.orgId,
+    propertyId: input.propertyId,
+    websiteId: input.websiteId,
+    artifactId: published.artifactId,
+    contentHash: published.contentHash,
+    runBrowserQa: true,
+  })
+  if (!queued.jobId || ['pending', 'failed'].includes(queued.status)) {
+    return skipped(
+      queued.reason || 'Canonical preview target is not ready for verification'
+    )
+  }
+  const deadline = Date.now() + 10 * 60_000
+  let lifecycle = queued.status as string
+  while (
+    !['succeeded', 'failed', 'cancelled'].includes(lifecycle) &&
+    Date.now() < deadline
+  ) {
+    await new Promise(resolve => setTimeout(resolve, 10_000))
+    const { data: job } = await client
+      .from('shared_jobs')
+      .select('lifecycle_status')
+      .eq('id', queued.jobId)
+      .maybeSingle()
+    lifecycle = job?.lifecycle_status || lifecycle
+  }
+  if (lifecycle !== 'succeeded') {
+    return skipped(
+      lifecycle === 'failed' || lifecycle === 'cancelled'
+        ? `Canonical preview render ${lifecycle}; the revision is published but visually unverified`
+        : 'Canonical preview render timed out; the revision is published but visually unverified'
+    )
+  }
+  const { data: website } = await client
+    .from('property_websites')
+    .select('canonical_preview_url')
+    .eq('id', input.websiteId)
+    .maybeSingle()
+  const previewUrl = website?.canonical_preview_url || null
+  const { data: evidence } = await client
+    .from('siteforge_certification_evidence')
+    .select('report, created_at')
+    .eq('website_id', input.websiteId)
+    .eq('artifact_id', published.artifactId)
+    .eq('environment', 'preview')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  const failures = extractEditedPhaseFailures(evidence?.report)
+  if (failures === null) {
+    return {
+      ...skipped(
+        'The rendered preview completed but produced no edit-acceptance evidence'
+      ),
+      previewUrl,
+    }
+  }
+  if (failures.length === 0) {
+    return {
+      status: 'verified',
+      reason:
+        'The published revision was re-rendered and the edited pages match the accepted edit at every named viewport',
+      previewUrl,
+      correctionPasses: 0,
+      failures: [],
+    }
+  }
+  return {
+    status: 'failed',
+    reason: `The rendered pages do not match the accepted edit in ${failures.length} place(s)`,
+    previewUrl,
+    correctionPasses: 0,
+    failures,
+  }
+}
+
+function verificationSummary(
+  verification: SemanticEditRenderVerification
+): string {
+  if (verification.status === 'verified') {
+    return verification.correctionPasses > 0
+      ? `\n\nRendered verification: passed after ${verification.correctionPasses} bounded correction pass(es); the published render now matches the request.`
+      : '\n\nRendered verification: the published WordPress render matches the accepted edit.'
+  }
+  if (verification.status === 'failed') {
+    const detail = verification.failures
+      .slice(0, 4)
+      .map(
+        failure =>
+          `${failure.pageSlug} (${failure.viewport}): expected ${failure.expected || 'the accepted change'}, rendered ${failure.actual || 'something else'}`
+      )
+      .join('; ')
+    return `\n\nRendered verification: the render still does not fully match after ${verification.correctionPasses} bounded correction pass(es). Unresolved: ${detail}. The revision is published; undo is available if this is not acceptable.`
+  }
+  return `\n\nRendered verification: skipped (${verification.reason}).`
+}
+
 export async function completeSemanticEdit(
   input: SiteForgeSemanticEditWorkflowInput,
   proposal: SiteForgeEditorAgentResult,
@@ -484,7 +902,8 @@ export async function completeSemanticEdit(
     awaitingClarification: boolean
     awaitingExtensionApproval: boolean
     extensionRequestId: string | null
-  }
+  },
+  verification?: SemanticEditRenderVerification
 ): Promise<void> {
   'use step'
   const client = createServiceClient()
@@ -493,7 +912,11 @@ export async function completeSemanticEdit(
     input.assistantMessageId,
     {
       status: 'complete',
-      content: proposal.clarification || proposal.response,
+      content:
+        (proposal.clarification || proposal.response) +
+        (verification && !proposal.clarification
+          ? verificationSummary(verification)
+          : ''),
       resultingArtifactId: output.artifactId,
       toolSummary: proposal.toolSummary as unknown as Json,
       progress: [
@@ -531,7 +954,7 @@ export async function completeSemanticEdit(
         : output.awaitingExtensionApproval
           ? 'Runtime extension requires manager approval'
           : 'Immutable edit revision published',
-      output: output as unknown as Json,
+      output: { ...output, verification: verification || null } as unknown as Json,
       finished_at: now,
       updated_at: now,
     })

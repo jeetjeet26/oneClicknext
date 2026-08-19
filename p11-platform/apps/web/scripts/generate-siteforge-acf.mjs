@@ -10,6 +10,13 @@ export const siteForgeAcfOutputDir = path.resolve(
 
 const text = (name, label = name) => ({ name, label, type: 'text' })
 const url = (name, label = name) => ({ name, label, type: 'url' })
+const textarea = (name, label = name) => ({ name, label, type: 'textarea' })
+const trueFalse = (name, defaultValue = 0) => ({
+  name,
+  label: name,
+  type: 'true_false',
+  default_value: defaultValue,
+})
 const image = (name, label = name) => ({
   name,
   label,
@@ -32,10 +39,17 @@ const repeater = (name, subFields) => ({
   button_label: `Add ${name.replaceAll('_', ' ')}`,
   sub_fields: subFields,
 })
+const group = (name, subFields) => ({
+  name,
+  label: name,
+  type: 'group',
+  sub_fields: subFields,
+})
 
 export const siteForgeAcfDefinitions = {
   'top-slides': [
     repeater('slides', [
+      text('target_id'),
       image('image'),
       text('headline'),
       text('subheadline'),
@@ -79,6 +93,7 @@ export const siteForgeAcfDefinitions = {
   ],
   links: [
     repeater('links', [
+      text('target_id'),
       text('text'),
       url('url'),
       select('style', ['primary', 'secondary'], 'primary'),
@@ -87,6 +102,7 @@ export const siteForgeAcfDefinitions = {
   ],
   'content-grid': [
     repeater('items', [
+      text('target_id'),
       image('image'),
       text('icon'),
       text('headline'),
@@ -114,7 +130,7 @@ export const siteForgeAcfDefinitions = {
     { name: 'longitude', label: 'longitude', type: 'number' },
     { name: 'zoom_level', label: 'zoom_level', type: 'number', default_value: 15 },
     { name: 'show_directions', label: 'show_directions', type: 'true_false', default_value: 1 },
-    select('variant', ['standard', 'immersive'], 'standard'),
+    select('variant', ['standard', 'immersive', 'centered'], 'standard'),
   ],
   'html-section': [
     { name: 'html_content', label: 'html_content', type: 'wysiwyg' },
@@ -131,6 +147,7 @@ export const siteForgeAcfDefinitions = {
   ],
   'accordion-section': [
     repeater('items', [
+      text('target_id'),
       text('title'),
       { name: 'content', label: 'content', type: 'wysiwyg' },
     ]),
@@ -190,9 +207,118 @@ export const siteForgeAcfDefinitions = {
     select('source', ['reviewflow'], 'reviewflow'),
     select('variant', ['cards', 'spotlight', 'carousel'], 'cards'),
   ],
+  'offering-browser': [
+    text('heading'),
+    textarea('intro'),
+    text('offering_kind'),
+    repeater('offerings', [
+      text('id'),
+      text('kind'),
+      text('name'),
+      textarea('description'),
+      text('status'),
+      text('price_label'),
+      text('availability_label'),
+      image('image'),
+      url('detail_url'),
+      textarea('attributes'),
+    ]),
+    group('catalog_snapshot', [
+      text('captured_at'),
+      text('content_hash'),
+      text('fresh_until'),
+    ]),
+    trueFalse('show_pricing'),
+    trueFalse('show_availability'),
+    text('conversion_intent'),
+    select('variant', ['cards', 'list', 'availability'], 'cards'),
+  ],
+  'entity-directory': [
+    text('heading'),
+    textarea('intro'),
+    repeater('entities', [
+      text('id'),
+      text('name'),
+      text('type'),
+      textarea('description'),
+      text('location'),
+      image('image'),
+      url('url'),
+    ]),
+    group('catalog_snapshot', [
+      text('captured_at'),
+      text('content_hash'),
+      text('fresh_until'),
+    ]),
+    text('group_by'),
+    select('variant', ['cards', 'map', 'grouped'], 'cards'),
+  ],
+  'comparison-table': [
+    text('heading'),
+    textarea('intro'),
+    repeater('columns', [text('key'), text('label')]),
+    repeater('rows', [text('id'), text('label'), textarea('values')]),
+    select('variant', ['table', 'cards', 'compact'], 'table'),
+  ],
+  timeline: [
+    text('heading'),
+    textarea('intro'),
+    repeater('milestones', [
+      text('id'),
+      text('date_label'),
+      text('title'),
+      textarea('description'),
+      text('status'),
+    ]),
+    select('variant', ['vertical', 'horizontal', 'milestones'], 'vertical'),
+  ],
+  'document-library': [
+    text('heading'),
+    textarea('intro'),
+    repeater('documents', [
+      text('id'),
+      text('title'),
+      text('category'),
+      textarea('description'),
+      url('url'),
+      text('file_type'),
+      text('updated_at'),
+    ]),
+    select('variant', ['list', 'cards', 'grouped'], 'list'),
+  ],
+  'events-directory': [
+    text('heading'),
+    textarea('intro'),
+    repeater('events', [
+      text('id'),
+      text('name'),
+      text('starts_at'),
+      text('ends_at'),
+      text('location'),
+      textarea('description'),
+      url('url'),
+    ]),
+    group('catalog_snapshot', [
+      text('captured_at'),
+      text('content_hash'),
+      text('fresh_until'),
+    ]),
+    text('conversion_intent'),
+    select('variant', ['cards', 'calendar', 'list'], 'cards'),
+  ],
   menu: [
-    repeater('menu_items', [text('label'), url('link')]),
+    repeater('menu_items', [text('target_id'), text('label'), url('link')]),
     select('variant', ['standard', 'sticky-cta'], 'standard'),
+  ],
+  'governed-component': [
+    text('component_key'),
+    text('descriptor_hash'),
+    textarea('render_plan'),
+    textarea('responsive_rules'),
+    textarea('selection_map'),
+    textarea('accessibility_contract'),
+    textarea('certification_scenarios'),
+    select('variant', ['governed'], 'governed'),
   ],
 }
 

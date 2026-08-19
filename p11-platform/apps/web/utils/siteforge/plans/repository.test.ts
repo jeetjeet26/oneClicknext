@@ -648,6 +648,10 @@ describe('loadApprovedSiteForgeGenerationContext', () => {
       required: false,
       assets: [],
     })
+    expect(context.evidenceSnapshot.schemaVersion).toBe(1)
+    if (context.evidenceSnapshot.schemaVersion !== 1) {
+      throw new Error('Expected legacy generation evidence')
+    }
     expect(context.evidenceSnapshot.inventory).toMatchObject({
       required: false,
       rowCount: 0,
@@ -681,7 +685,7 @@ describe('SiteForge plan integrity helpers', () => {
           sections: [{ block: 'acf/text-section' }],
         }],
       })
-    ).toEqual({ assets: false, inventory: false })
+    ).toEqual({ assets: false, inventory: false, catalog: false })
     expect(
       siteForgePlanRequirements({
         pages: [{
@@ -691,7 +695,7 @@ describe('SiteForge plan integrity helpers', () => {
           ],
         }],
       })
-    ).toEqual({ assets: true, inventory: true })
+    ).toEqual({ assets: true, inventory: true, catalog: false })
     expect(
       siteForgePlanRequirements({
         pages: [{
@@ -701,7 +705,7 @@ describe('SiteForge plan integrity helpers', () => {
           ],
         }],
       })
-    ).toEqual({ assets: false, inventory: false })
+    ).toEqual({ assets: false, inventory: false, catalog: false })
   })
 
   it('preserves every pinned onboarding and brand source on modification', () => {

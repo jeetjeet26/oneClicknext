@@ -72,7 +72,7 @@ $field_id_prefix = 'form-' . sanitize_html_class( $block_identity );
 						$field_id = $field_id_prefix . '-' . $field_name;
 						$required = ! empty( $field['required'] );
 						?>
-						<div class="form-group form-<?php echo esc_attr( $field_name ); ?>">
+						<div class="form-group form-<?php echo esc_attr( $field_name ); ?>"<?php echo oneclick_siteforge_target_attributes( $block, 'form_control', (string) ( $field['fieldId'] ?? '' ), $field['label'] ?? '' ); ?>>
 							<?php if ( 'hidden' !== $field_type ) { ?>
 								<label for="<?php echo esc_attr( $field_id ); ?>"><?php echo esc_html( $field['label'] ?? '' ); ?><?php if ( $required ) { ?><span class="required">*</span><?php } ?></label>
 							<?php } ?>
@@ -92,13 +92,13 @@ $field_id_prefix = 'form-' . sanitize_html_class( $block_identity );
 					}
 				} else {
 					?>
-					<div class="form-group form-name"><label for="<?php echo esc_attr( $field_id_prefix . '-name' ); ?>"><?php esc_html_e( 'Name', 'oneclick-siteforge' ); ?><span class="required">*</span></label><input type="text" id="<?php echo esc_attr( $field_id_prefix . '-name' ); ?>" name="name" autocomplete="name" required aria-required="true"></div>
-					<div class="form-group form-email"><label for="<?php echo esc_attr( $field_id_prefix . '-email' ); ?>"><?php esc_html_e( 'Email', 'oneclick-siteforge' ); ?><span class="required">*</span></label><input type="email" id="<?php echo esc_attr( $field_id_prefix . '-email' ); ?>" name="email" required aria-required="true"></div>
+					<div class="form-group form-name"<?php echo oneclick_siteforge_target_attributes( $block, 'form_control', 'field:name', 'Name' ); ?>><label for="<?php echo esc_attr( $field_id_prefix . '-name' ); ?>"><?php esc_html_e( 'Name', 'oneclick-siteforge' ); ?><span class="required">*</span></label><input type="text" id="<?php echo esc_attr( $field_id_prefix . '-name' ); ?>" name="name" autocomplete="name" required aria-required="true"></div>
+					<div class="form-group form-email"<?php echo oneclick_siteforge_target_attributes( $block, 'form_control', 'field:email', 'Email' ); ?>><label for="<?php echo esc_attr( $field_id_prefix . '-email' ); ?>"><?php esc_html_e( 'Email', 'oneclick-siteforge' ); ?><span class="required">*</span></label><input type="email" id="<?php echo esc_attr( $field_id_prefix . '-email' ); ?>" name="email" required aria-required="true"></div>
 					<?php
 				}
 				?>
 
-				<div class="form-group form-checkbox">
+				<div class="form-group form-checkbox"<?php echo oneclick_siteforge_target_attributes( $block, 'form_control', 'field:consent', $consent_text ); ?>>
 					<label for="<?php echo esc_attr( $field_id_prefix . '-consent' ); ?>">
 						<input type="checkbox" id="<?php echo esc_attr( $field_id_prefix . '-consent' ); ?>" name="consent" required aria-required="true">
 						<?php echo esc_html( $consent_text ); ?>
@@ -112,7 +112,7 @@ $field_id_prefix = 'form-' . sanitize_html_class( $block_identity );
 
 				<div class="form-message form-error" style="display: none;"></div>
 
-				<button type="submit" class="btn btn-primary">
+				<button type="submit" class="btn btn-primary"<?php echo oneclick_siteforge_target_attributes( $block, 'cta', 'submit', $submit_label ); ?>>
 					<?php echo esc_html( $submit_label ); ?>
 				</button>
 

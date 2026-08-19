@@ -20,7 +20,10 @@ function makeQueryBuilder<T>(result: T) {
 }
 
 function makeSupabaseClient(options: {
-  profileResult?: { data: { org_id?: string | null } | null; error: unknown }
+  profileResult?: {
+    data: { org_id?: string | null; role?: string | null } | null
+    error: unknown
+  }
   propertyResult?: { data: { org_id?: string | null } | null; error: unknown }
   authUserResult?: {
     data: { user: { id: string; email?: string } | null }
@@ -122,6 +125,52 @@ describe('auth guard', () => {
     ).resolves.toEqual({
       authorized: false,
       error: 'Forbidden',
+    })
+  })
+
+  it('derives the canonical SiteForge owner/operator capability from tenant and role', async () => {
+    createServiceClientMock.mockReturnValue(
+      makeSupabaseClient({
+        profileResult: {
+          data: { org_id: 'org-1', role: 'manager' },
+          error: null,
+        },
+        propertyResult: { data: { org_id: 'org-1' }, error: null },
+      })
+    )
+    const { validateSiteForgeOwnerOperatorAccess } =
+      await import('./auth-guard')
+
+    await expect(
+      validateSiteForgeOwnerOperatorAccess('user-1', 'property-1')
+    ).resolves.toEqual({
+      authorized: true,
+      orgId: 'org-1',
+      role: 'manager',
+      capability: 'siteforge.owner_operator',
+    })
+  })
+
+  it('denies same-tenant viewers the SiteForge owner/operator capability', async () => {
+    createServiceClientMock.mockReturnValue(
+      makeSupabaseClient({
+        profileResult: {
+          data: { org_id: 'org-1', role: 'viewer' },
+          error: null,
+        },
+        propertyResult: { data: { org_id: 'org-1' }, error: null },
+      })
+    )
+    const { validateSiteForgeOwnerOperatorAccess } =
+      await import('./auth-guard')
+
+    await expect(
+      validateSiteForgeOwnerOperatorAccess('user-1', 'property-1')
+    ).resolves.toMatchObject({
+      authorized: false,
+      role: 'viewer',
+      capability: 'siteforge.owner_operator',
+      error: 'Requires SiteForge owner/operator capability',
     })
   })
 

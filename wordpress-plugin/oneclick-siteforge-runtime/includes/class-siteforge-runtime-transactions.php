@@ -362,11 +362,13 @@ class SiteForge_Runtime_Transactions {
 				);
 			}
 			$data = $this->bind_asset_references( $block['data'] );
+			$data['_siteforge_section_id'] = $block['sectionId'];
 			$attrs = array(
-				'id'   => 'block_' . preg_replace( '/[^A-Za-z0-9_-]/', '_', $block['sectionId'] ),
-				'name' => $block['name'],
-				'data' => $data,
-				'mode' => 'preview',
+				'id'                 => 'block_' . preg_replace( '/[^A-Za-z0-9_-]/', '_', $block['sectionId'] ),
+				'name'               => $block['name'],
+				'data'               => $data,
+				'mode'               => 'preview',
+				'siteforgeSectionId' => $block['sectionId'],
 			);
 			if ( ! empty( $block['anchor'] ) ) {
 				$attrs['anchor'] = $block['anchor'];

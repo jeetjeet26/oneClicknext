@@ -15,27 +15,31 @@ if ( empty( $items ) ) {
 	return;
 }
 
-$unique_id = 'accordion-' . uniqid();
+$section_resource_id = (string) ( $block['siteforgeSectionId'] ?? ( $block['data']['_siteforge_section_id'] ?? '' ) );
+$unique_id = 'accordion-' . sanitize_html_class( $section_resource_id );
+$rendered_item = 0;
 ?>
 
 <section <?php echo oneclick_get_block_wrapper_attributes( $block, array( 'class' => 'block-accordion' ) ); ?>>
 	<div class="site-container">
 		<div class="accordion" id="<?php echo esc_attr( $unique_id ); ?>" role="region" aria-label="<?php esc_attr_e( 'Expandable content', 'oneclick-siteforge' ); ?>">
 			<?php
-			foreach ( $items as $index => $item ) {
+			foreach ( $items as $item ) {
 				$title = $item['title'] ?? '';
 				$content = $item['content'] ?? '';
+				$stable_item_id = oneclick_siteforge_repeater_item_id( $item );
 
-				if ( empty( $title ) ) {
+				if ( empty( $title ) || empty( $stable_item_id ) || empty( $section_resource_id ) ) {
 					continue;
 				}
 
-				$item_id = $unique_id . '-item-' . $index;
+				$item_id = $unique_id . '-item-' . sanitize_html_class( $stable_item_id );
 				$button_id = $item_id . '-btn';
 				$panel_id = $item_id . '-panel';
-				$is_first = 0 === $index;
+				$is_first = 0 === $rendered_item;
+				$rendered_item++;
 				?>
-				<div class="accordion-item">
+				<div class="accordion-item"<?php echo oneclick_siteforge_target_attributes( $block, 'repeater_item', $stable_item_id, $title ); ?>>
 					<h3 class="accordion-header">
 						<button
 							id="<?php echo esc_attr( $button_id ); ?>"
@@ -43,6 +47,7 @@ $unique_id = 'accordion-' . uniqid();
 							type="button"
 							aria-expanded="<?php echo $is_first ? 'true' : 'false'; ?>"
 							aria-controls="<?php echo esc_attr( $panel_id ); ?>"
+							<?php echo oneclick_siteforge_target_attributes( $block, 'headline', 'title', $title, 'repeater_item', $stable_item_id ); ?>
 						>
 							<?php echo wp_kses_post( $title ); ?>
 							<span class="accordion-icon" aria-hidden="true"></span>

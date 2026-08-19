@@ -5,11 +5,13 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Textarea } from '@/components/ui/textarea'
-import {
-  ACFBlockRenderer,
-  type DesignSystem,
-} from './ACFBlockRenderer'
-import type { GeneratedPage, WebsiteStatusResponse } from '@/types/siteforge'
+import type {
+  SiteBlueprint,
+  WebsiteStatusResponse,
+} from '@/types/siteforge'
+import { siteForgeEditorPostMessageSchema } from '@/utils/siteforge/element-targeting'
+import type { SiteForgePageManagerAction } from '@/utils/siteforge/editor/page-manager'
+import { SiteForgePageManager } from './SiteForgePageManager'
 import {
   classifyWebsiteStatus,
   isExactArtifactPreview,
@@ -22,6 +24,32 @@ function formatEditorModelLabel(model?: string): string {
   return model.split('/').at(-1)?.replaceAll('-', ' ') || model
 }
 
+function messageModelLabel(summary: unknown): string | null {
+  if (!Array.isArray(summary)) return null
+  const selected = summary.find(
+    item =>
+      item &&
+      typeof item === 'object' &&
+      'tool' in item &&
+      item.tool === 'routeEditorModel' &&
+      'detail' in item &&
+      typeof item.detail === 'string' &&
+      item.detail.startsWith('Selected ')
+  ) as { detail?: string } | undefined
+  return selected?.detail
+    ? formatEditorModelLabel(selected.detail.slice('Selected '.length))
+    : null
+}
+
+function wordpressPageUrl(baseUrl: string | null | undefined, slug: string): string {
+  if (!baseUrl) return ''
+  const url = new URL(baseUrl)
+  url.pathname = slug === 'home' ? '/' : `/${slug}/`
+  url.search = ''
+  url.hash = ''
+  return url.toString()
+}
+
 type EditorMessage = {
   id: string
   role: 'user' | 'assistant' | 'system' | 'tool'
@@ -29,6 +57,7 @@ type EditorMessage = {
   content: string
   resulting_artifact_id: string | null
   progress: unknown
+  tool_summary?: unknown
   created_at: string
 }
 
@@ -45,9 +74,12 @@ type EditorSessionPayload = {
     content_hash: string
     deployment_decision?: string | null
   }
-  previewBlueprint?: {
-    pages?: GeneratedPage[]
-    designSystem?: DesignSystem
+  previewBlueprint?: SiteBlueprint
+  revisions?: EditorRevision[]
+  attachments?: EditorAttachment[]
+  activeJobs?: {
+    semanticEdit: DurableEditorJob | null
+    preview: DurableEditorJob | null
   }
   editorModel?: string
   previews?: {
@@ -64,6 +96,13 @@ type EditorSessionPayload = {
       current_step: string
       status_reason: string | null
       error_message: string | null
+      heartbeat_at?: string | null
+      attempt_count?: number
+      max_attempts?: number
+      queued_at?: string
+      started_at?: string | null
+      finished_at?: string | null
+      updated_at?: string
     } | null
     staging: string | null
     stagingAdmin: string | null
@@ -72,6 +111,16 @@ type EditorSessionPayload = {
     cloudwaysDashboard: string | null
   }
   runtimeExtensionsEnabled?: boolean
+  brand?: {
+    pinnedContractHash: string | null
+    pinnedContractVersion: string | null
+    liveContractHash: string | null
+    liveContractVersion: string | null
+    staleSincePinned: boolean
+  }
+  capabilities?: {
+    'siteforge.owner_operator'?: boolean
+  }
   extensionRequests?: Array<{
     id: string
     capability: string
@@ -114,13 +163,56 @@ type EditorSessionPayload = {
   }>
 }
 
-type ExtensionDecision = 'approved' | 'rejected'
-
 type EditJobFailure = {
   jobId: string
   status: 'failed' | 'cancelled'
   statusReason: string | null
   errorMessage: string | null
+}
+
+type DurableEditorJob = {
+  id: string
+  lifecycle_status: string
+  status_reason: string | null
+  stage: string
+  progress: number
+  current_step: string
+  error_message: string | null
+  heartbeat_at: string | null
+  attempt_count: number
+  max_attempts: number
+  queued_at: string
+  started_at: string | null
+  finished_at: string | null
+  updated_at: string
+  elapsed_ms?: number
+}
+
+type EditorAttachment = {
+  id: string
+  user_message_id: string | null
+  artifact_id: string
+  artifact_content_hash: string
+  page_slug: string
+  viewport: string
+  mime_type: string
+  file_size_bytes: number
+  original_filename: string
+  width: number | null
+  height: number | null
+  created_at: string
+  signedUrl: string
+}
+
+type EditorRevision = {
+  id: string
+  version: number
+  content_hash: string
+  parent_version_id: string | null
+  change_type: string
+  changes_summary: string | null
+  edit_intent: string | null
+  created_at: string
 }
 
 type PropertyAsset = {
@@ -131,7 +223,6 @@ type PropertyAsset = {
   altText?: string
 }
 
-type PreviewSource = 'p11' | 'wordpress'
 type Viewport = 'mobile' | 'tablet' | 'desktop'
 type SelectedElement = {
   pageSlug: string
@@ -140,10 +231,46 @@ type SelectedElement = {
   label: string
 }
 
-const VIEWPORT_WIDTH: Record<Viewport, number | '100%'> = {
+const VIEWPORT_WIDTH: Record<Viewport, number> = {
   mobile: 390,
   tablet: 768,
-  desktop: '100%',
+  desktop: 1440,
+}
+
+const ACTIVE_JOB_STATUSES = ['queued', 'running', 'retrying']
+
+function isActiveJob(job: DurableEditorJob | null | undefined): boolean {
+  return Boolean(job && ACTIVE_JOB_STATUSES.includes(job.lifecycle_status))
+}
+
+function jobElapsed(job: DurableEditorJob, now: number): string {
+  const start = Date.parse(job.started_at || job.queued_at)
+  const end = job.finished_at ? Date.parse(job.finished_at) : now
+  const seconds = Math.max(0, Math.floor((end - start) / 1_000))
+  const minutes = Math.floor(seconds / 60)
+  return minutes ? `${minutes}m ${seconds % 60}s` : `${seconds}s`
+}
+
+function jobHeartbeat(job: DurableEditorJob): string {
+  if (!job.heartbeat_at) return 'waiting for first heartbeat'
+  return `heartbeat ${new Date(job.heartbeat_at).toLocaleTimeString()}`
+}
+
+async function imageDimensions(
+  file: File
+): Promise<{ width: number; height: number } | null> {
+  const url = URL.createObjectURL(file)
+  try {
+    return await new Promise((resolve) => {
+      const image = new Image()
+      image.onload = () =>
+        resolve({ width: image.naturalWidth, height: image.naturalHeight })
+      image.onerror = () => resolve(null)
+      image.src = url
+    })
+  } finally {
+    URL.revokeObjectURL(url)
+  }
 }
 
 export function SiteForgeEditorWorkspace({
@@ -159,9 +286,19 @@ export function SiteForgeEditorWorkspace({
   const [selectedElement, setSelectedElement] = useState<SelectedElement | null>(
     null
   )
+  const [wholeSiteEdit, setWholeSiteEdit] = useState(false)
   const [activeJobId, setActiveJobId] = useState<string | null>(null)
-  const [previewSource, setPreviewSource] = useState<PreviewSource>('p11')
+  const [activeJob, setActiveJob] = useState<DurableEditorJob | null>(null)
+  const [activeJobStep, setActiveJobStep] = useState<string | null>(null)
+  const [previewJobId, setPreviewJobId] = useState<string | null>(null)
+  const [previewJob, setPreviewJob] = useState<DurableEditorJob | null>(null)
+  const [pendingAttachments, setPendingAttachments] = useState<
+    EditorAttachment[]
+  >([])
+  const [uploadingAttachment, setUploadingAttachment] = useState(false)
+  const [jobClock, setJobClock] = useState(() => Date.now())
   const [viewport, setViewport] = useState<Viewport>('desktop')
+  const [wordpressSelectionMode, setWordpressSelectionMode] = useState(true)
   const [selectedPreviewPage, setSelectedPreviewPage] = useState('')
   const [assets, setAssets] = useState<PropertyAsset[]>([])
   const [assetPickerOpen, setAssetPickerOpen] = useState(false)
@@ -172,23 +309,17 @@ export function SiteForgeEditorWorkspace({
   const [previewingWordPress, setPreviewingWordPress] = useState(false)
   const [previewStep, setPreviewStep] = useState<string | null>(null)
   const [deployingStaging, setDeployingStaging] = useState(false)
-  const [approvingArtifact, setApprovingArtifact] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [editJobFailure, setEditJobFailure] = useState<EditJobFailure | null>(
     null
   )
-  const [extensionDecisionReasons, setExtensionDecisionReasons] = useState<
-    Record<string, string>
-  >({})
-  const [pendingExtensionDecision, setPendingExtensionDecision] = useState<{
-    requestId: string
-    decision: ExtensionDecision
-  } | null>(null)
-  const [extensionDecisionErrors, setExtensionDecisionErrors] = useState<
-    Record<string, string>
-  >({})
+  const [pendingExtensionDecision, setPendingExtensionDecision] = useState<
+    string | null
+  >(null)
   const [previewRevision, setPreviewRevision] = useState(0)
   const chatEndRef = useRef<HTMLDivElement>(null)
+  const wordpressFrameRef = useRef<HTMLIFrameElement>(null)
+  const attachmentInputRef = useRef<HTMLInputElement>(null)
   const previewingWordPressRef = useRef(false)
 
   const openSession = useCallback(async () => {
@@ -203,8 +334,44 @@ export function SiteForgeEditorWorkspace({
     if (data.session?.property_id !== propertyId) {
       throw new Error('Editor session does not match the selected property')
     }
-    setPayload(data as EditorSessionPayload)
-    return data as EditorSessionPayload
+    const next = data as EditorSessionPayload
+    const recoveredEdit = next.activeJobs?.semanticEdit
+    const recoveredPreview = next.activeJobs?.preview
+    setPayload(next)
+    setPendingAttachments(
+      (next.attachments || []).filter(
+        attachment =>
+          !attachment.user_message_id &&
+          attachment.artifact_id === next.currentArtifact?.id &&
+          attachment.artifact_content_hash ===
+            next.currentArtifact?.content_hash
+      )
+    )
+    if (isActiveJob(recoveredEdit)) {
+      setActiveJobId(recoveredEdit!.id)
+      setActiveJob(recoveredEdit!)
+      setActiveJobStep(recoveredEdit!.current_step)
+      setSubmitting(true)
+    } else {
+      setActiveJobId(null)
+      setActiveJob(null)
+      setActiveJobStep(null)
+      setSubmitting(false)
+    }
+    if (isActiveJob(recoveredPreview)) {
+      setPreviewJobId(recoveredPreview!.id)
+      setPreviewJob(recoveredPreview!)
+      setPreviewStep(recoveredPreview!.current_step)
+      previewingWordPressRef.current = true
+      setPreviewingWordPress(true)
+    } else {
+      setPreviewJobId(null)
+      setPreviewJob(null)
+      previewingWordPressRef.current = false
+      setPreviewingWordPress(false)
+      setPreviewStep(null)
+    }
+    return next
   }, [propertyId, websiteId])
 
   useEffect(() => {
@@ -261,6 +428,12 @@ export function SiteForgeEditorWorkspace({
   }, [payload?.messages])
 
   useEffect(() => {
+    if (!activeJobId && !previewJobId) return
+    const interval = window.setInterval(() => setJobClock(Date.now()), 1_000)
+    return () => window.clearInterval(interval)
+  }, [activeJobId, previewJobId])
+
+  useEffect(() => {
     const pages = payload?.previewBlueprint?.pages || []
     if (
       pages.length > 0 &&
@@ -270,10 +443,129 @@ export function SiteForgeEditorWorkspace({
     }
   }, [payload?.previewBlueprint?.pages, selectedPreviewPage])
 
+  const postWordPressSelectionMode = useCallback(() => {
+    const frame = wordpressFrameRef.current
+    const previewUrl = payload?.previews?.wordpress
+    if (!frame?.contentWindow || !previewUrl) return
+    frame.contentWindow.postMessage(
+      {
+        type: 'siteforge-editor:set-selection-mode',
+        enabled: wordpressSelectionMode,
+      },
+      new URL(previewUrl).origin
+    )
+  }, [payload?.previews?.wordpress, wordpressSelectionMode])
+
+  useEffect(() => {
+    const previewUrl = payload?.previews?.wordpress
+    if (!previewUrl) return
+    const previewOrigin = new URL(previewUrl).origin
+    const onMessage = (event: MessageEvent) => {
+      if (
+        event.origin !== previewOrigin ||
+        event.source !== wordpressFrameRef.current?.contentWindow ||
+        !event.data ||
+        typeof event.data !== 'object'
+      ) {
+        return
+      }
+      const typedMessage = siteForgeEditorPostMessageSchema.safeParse(event.data)
+      if (
+        typedMessage.success &&
+        typedMessage.data.type === 'siteforge-editor:ready'
+      ) {
+        setSelectedPreviewPage(typedMessage.data.pageSlug)
+        postWordPressSelectionMode()
+        return
+      }
+      if (
+        typedMessage.success &&
+        typedMessage.data.type === 'siteforge-editor:target-selected'
+      ) {
+        const message = typedMessage.data
+        const sectionPath = [...message.target.resourcePath]
+          .reverse()
+          .find(segment => segment.kind === 'section')
+        if (!sectionPath) return
+        const sectionId = sectionPath.id.replace(/^section:[^:]+:/, '')
+        const page = payload.previewBlueprint?.pages?.find(
+          candidate => candidate.slug === message.pageSlug
+        )
+        const sourceSection = page?.sections.find(
+          section =>
+            section.id === sectionPath.id || section.id === sectionId
+        )
+        if (!sourceSection?.id) return
+        const selected = {
+          pageSlug: message.pageSlug,
+          sectionId: sourceSection.id,
+          blockType: sourceSection.acfBlock,
+          label:
+            message.target.displayValue.trim() ||
+            sourceSection.label ||
+            sourceSection.type ||
+            sourceSection.acfBlock,
+        }
+        setSelectedPreviewPage(selected.pageSlug)
+        setWholeSiteEdit(false)
+        setSelectedElement(selected)
+        setElementContext(
+          `Selected ${message.target.kind} from exact WordPress: ${selected.label} (${message.target.selector})`
+        )
+        return
+      }
+      if (
+        event.data.type !== 'siteforge-editor:section-selected' ||
+        typeof event.data.pageSlug !== 'string' ||
+        typeof event.data.sectionId !== 'string'
+      ) {
+        return
+      }
+      const page = payload.previewBlueprint?.pages?.find(
+        candidate => candidate.slug === event.data.pageSlug
+      )
+      const sourceSection = page?.sections.find(
+        section => section.id === event.data.sectionId
+      )
+      if (!sourceSection?.id) return
+      const selected = {
+        pageSlug: event.data.pageSlug,
+        sectionId: sourceSection.id,
+        blockType:
+          typeof event.data.blockType === 'string'
+            ? event.data.blockType
+            : sourceSection.acfBlock,
+        label:
+          typeof event.data.label === 'string' && event.data.label.trim()
+            ? event.data.label.trim()
+            : sourceSection.label ||
+              sourceSection.type ||
+              sourceSection.acfBlock,
+      }
+      setSelectedPreviewPage(selected.pageSlug)
+      setWholeSiteEdit(false)
+      setSelectedElement(selected)
+      setElementContext(
+        `Selected from exact WordPress: ${selected.label} on /${selected.pageSlug}`
+      )
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+  }, [
+    payload?.previewBlueprint?.pages,
+    payload?.previews?.wordpress,
+    postWordPressSelectionMode,
+  ])
+
+  useEffect(() => {
+    postWordPressSelectionMode()
+  }, [postWordPressSelectionMode, previewRevision])
+
   const renderWordPressPreview = useCallback(
     async (current: EditorSessionPayload, runBrowserQa = false) => {
       const artifact = current?.currentArtifact
       if (!artifact || previewingWordPressRef.current) return
+      let startedJob = false
       previewingWordPressRef.current = true
       setPreviewingWordPress(true)
       setPreviewStep(
@@ -305,41 +597,107 @@ export function SiteForgeEditorWorkspace({
         if (!startData.jobId) {
           throw new Error('WordPress preview did not return a job identity')
         }
-        const maxAttempts = runBrowserQa ? 360 : 80
-        for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-          const response = await fetch(
-            `/api/siteforge/canonical-preview/${websiteId}?jobId=${encodeURIComponent(startData.jobId)}`,
-            { cache: 'no-store' }
-          )
-          const data = await response.json()
-          if (!response.ok) {
-            throw new Error(data.error || 'Checking WordPress preview failed')
-          }
-          setPreviewStep(
-            data.currentStep || data.stage || 'Applying WordPress transaction'
-          )
-          if (data.status === 'succeeded') {
-            await openSession()
-            return
-          }
-          if (['failed', 'cancelled'].includes(data.status)) {
-            throw new Error(data.error || 'WordPress preview failed')
-          }
-          await new Promise((resolve) => setTimeout(resolve, 2_000))
-        }
-        throw new Error('WordPress preview timed out')
+        startedJob = true
+        setPreviewJobId(startData.jobId)
+        setPreviewJob({
+          id: startData.jobId,
+          lifecycle_status: startData.status || 'queued',
+          status_reason: null,
+          stage: 'queued',
+          progress: 0,
+          current_step: 'Canonical WordPress preview queued',
+          error_message: null,
+          heartbeat_at: null,
+          attempt_count: 1,
+          max_attempts: 2,
+          queued_at: new Date().toISOString(),
+          started_at: null,
+          finished_at: null,
+          updated_at: new Date().toISOString(),
+        })
       } catch (cause) {
         setError(
           cause instanceof Error ? cause.message : 'WordPress preview failed'
         )
       } finally {
-        previewingWordPressRef.current = false
-        setPreviewingWordPress(false)
-        setPreviewStep(null)
+        if (!startedJob) {
+          previewingWordPressRef.current = false
+          setPreviewingWordPress(false)
+          setPreviewStep(null)
+        }
       }
     },
     [openSession, websiteId]
   )
+
+  useEffect(() => {
+    if (!previewJobId) return
+    let cancelled = false
+    let timeout: ReturnType<typeof setTimeout> | undefined
+    const poll = async () => {
+      try {
+        const response = await fetch(
+          `/api/siteforge/canonical-preview/${websiteId}?jobId=${encodeURIComponent(previewJobId)}`,
+          { cache: 'no-store' }
+        )
+        const data = await response.json().catch(() => ({}))
+        if (!response.ok) {
+          throw new Error(data.error || 'Checking WordPress preview failed')
+        }
+        if (cancelled) return
+        const nextJob: DurableEditorJob = {
+          id: data.jobId,
+          lifecycle_status: data.status,
+          status_reason: data.statusReason || null,
+          stage: data.stage || 'running',
+          progress: data.progress || 0,
+          current_step:
+            data.currentStep || data.stage || 'Applying WordPress transaction',
+          error_message: data.error || null,
+          heartbeat_at: data.heartbeatAt || null,
+          attempt_count: data.attemptCount || 0,
+          max_attempts: data.maxAttempts || 0,
+          queued_at: data.queuedAt || data.createdAt,
+          started_at: data.startedAt || null,
+          finished_at: data.finishedAt || null,
+          updated_at: data.updatedAt,
+          elapsed_ms: data.elapsedMs,
+        }
+        setPreviewJob(nextJob)
+        setPreviewStep(nextJob.current_step)
+        if (['succeeded', 'failed', 'cancelled'].includes(nextJob.lifecycle_status)) {
+          if (nextJob.lifecycle_status !== 'succeeded') {
+            setError(nextJob.error_message || 'WordPress preview failed')
+          }
+          setPreviewJobId(null)
+          setPreviewJob(null)
+          previewingWordPressRef.current = false
+          setPreviewingWordPress(false)
+          setPreviewStep(null)
+          await openSession()
+          setPreviewRevision(value => value + 1)
+          return
+        }
+        timeout = setTimeout(poll, 2_000)
+      } catch (cause) {
+        if (!cancelled) {
+          setError(
+            cause instanceof Error ? cause.message : 'WordPress preview failed'
+          )
+          setPreviewJobId(null)
+          setPreviewJob(null)
+          previewingWordPressRef.current = false
+          setPreviewingWordPress(false)
+          setPreviewStep(null)
+        }
+      }
+    }
+    void poll()
+    return () => {
+      cancelled = true
+      if (timeout) clearTimeout(timeout)
+    }
+  }, [openSession, previewJobId, websiteId])
 
   useEffect(() => {
     if (!activeJobId) return
@@ -365,6 +723,10 @@ export function SiteForgeEditorWorkspace({
           )
         }
         if (cancelled) return
+        setActiveJobStep(
+          data.job.current_step || data.job.stage || 'Applying semantic edit'
+        )
+        setActiveJob(data.job as DurableEditorJob)
         setPayload((current) =>
           current
             ? {
@@ -392,6 +754,8 @@ export function SiteForgeEditorWorkspace({
             setEditJobFailure(null)
           }
           setActiveJobId(null)
+          setActiveJob(null)
+          setActiveJobStep(null)
           setSubmitting(false)
           const refreshed = await openSession()
           setPreviewRevision((value) => value + 1)
@@ -399,6 +763,8 @@ export function SiteForgeEditorWorkspace({
             data.job.lifecycle_status === 'succeeded' &&
             data.message?.resulting_artifact_id
           ) {
+            setSelectedElement(null)
+            setElementContext('')
             setPayload(refreshed)
             // Every published edit creates a new immutable artifact, which makes
             // the previous WordPress render stale. Refresh it regardless of the
@@ -416,6 +782,8 @@ export function SiteForgeEditorWorkspace({
           )
           setSubmitting(false)
           setActiveJobId(null)
+          setActiveJob(null)
+          setActiveJobStep(null)
         }
       }
     }
@@ -425,6 +793,79 @@ export function SiteForgeEditorWorkspace({
       if (timeout) clearTimeout(timeout)
     }
   }, [activeJobId, openSession, renderWordPressPreview])
+
+  async function uploadScreenshots(files: File[]) {
+    if (submitting || uploadingAttachment) return
+    const artifact = payload?.currentArtifact
+    const pages = payload?.previewBlueprint?.pages || []
+    const pageSlug =
+      pages.find(page => page.slug === selectedPreviewPage)?.slug ||
+      pages[0]?.slug
+    const accepted = files.filter(file =>
+      ['image/jpeg', 'image/png', 'image/webp'].includes(file.type)
+    )
+    if (!payload || !artifact || !pageSlug || accepted.length === 0) {
+      setError('Attach a PNG, JPEG, or WebP screenshot to a selected page')
+      return
+    }
+    if (pendingAttachments.length + accepted.length > 6) {
+      setError('A semantic edit can include at most 6 screenshots')
+      return
+    }
+    setUploadingAttachment(true)
+    setError(null)
+    const uploaded: EditorAttachment[] = []
+    try {
+      for (const file of accepted) {
+        const dimensions = await imageDimensions(file)
+        const formData = new FormData()
+        formData.set('file', file)
+        formData.set('expectedArtifactId', artifact.id)
+        formData.set('expectedContentHash', artifact.content_hash)
+        formData.set('pageSlug', pageSlug)
+        formData.set('viewport', viewport)
+        if (dimensions) {
+          formData.set('width', String(dimensions.width))
+          formData.set('height', String(dimensions.height))
+        }
+        const response = await fetch(
+          `/api/siteforge/editor/sessions/${payload.session.id}/attachments`,
+          { method: 'POST', body: formData }
+        )
+        const data = await response.json().catch(() => ({}))
+        if (!response.ok) {
+          throw new Error(data.error || `Failed to attach ${file.name}`)
+        }
+        uploaded.push(data.attachment as EditorAttachment)
+      }
+    } catch (cause) {
+      setError(
+        cause instanceof Error ? cause.message : 'Failed to attach screenshot'
+      )
+    } finally {
+      if (uploaded.length) {
+        setPendingAttachments(current => [...current, ...uploaded])
+      }
+      setUploadingAttachment(false)
+      if (attachmentInputRef.current) attachmentInputRef.current.value = ''
+    }
+  }
+
+  async function removePendingAttachment(attachmentId: string) {
+    if (!payload || submitting) return
+    const response = await fetch(
+      `/api/siteforge/editor/sessions/${payload.session.id}/attachments/${attachmentId}`,
+      { method: 'DELETE' }
+    )
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      setError(data.error || 'Failed to remove screenshot')
+      return
+    }
+    setPendingAttachments(current =>
+      current.filter(attachment => attachment.id !== attachmentId)
+    )
+  }
 
   async function submitTurn() {
     const userIntent = intent.trim()
@@ -447,6 +888,7 @@ export function SiteForgeEditorWorkspace({
             expectedArtifactId: artifact.id,
             expectedContentHash: artifact.content_hash,
             clientRequestId: crypto.randomUUID(),
+            attachmentIds: pendingAttachments.map(attachment => attachment.id),
             elementContext: selectedElement
               ? {
                   pageSlug: selectedElement.pageSlug,
@@ -454,6 +896,18 @@ export function SiteForgeEditorWorkspace({
                   blockType: selectedElement.blockType,
                 }
               : undefined,
+            editScope: selectedElement
+              ? {
+                  kind: 'section',
+                  pageSlug: selectedElement.pageSlug,
+                  sectionId: selectedElement.sectionId,
+                  blockType: selectedElement.blockType,
+                }
+              : wholeSiteEdit
+                ? { kind: 'site' }
+                : currentPreviewPage
+                  ? { kind: 'page', pageSlug: currentPreviewPage.slug }
+                  : { kind: 'site' },
           }),
         }
       )
@@ -462,18 +916,23 @@ export function SiteForgeEditorWorkspace({
       if (data.duplicate) {
         await openSession()
         setIntent('')
-        setElementContext('')
-        setSelectedElement(null)
+        setPendingAttachments([])
         if (['succeeded', 'failed', 'cancelled'].includes(data.status)) {
           setSubmitting(false)
+          setActiveJobId(null)
+          setActiveJobStep(null)
         } else {
           setActiveJobId(data.jobId)
+          setActiveJobStep('Queued for semantic planning')
         }
         return
       }
       setIntent('')
-      setElementContext('')
-      setSelectedElement(null)
+      const submittedAttachments = pendingAttachments.map(attachment => ({
+        ...attachment,
+        user_message_id: data.userMessageId,
+      }))
+      setPendingAttachments([])
       setPayload((current) =>
         current
           ? {
@@ -499,18 +958,74 @@ export function SiteForgeEditorWorkspace({
                   created_at: new Date().toISOString(),
                 },
               ],
+              attachments: [
+                ...(current.attachments || []),
+                ...submittedAttachments,
+              ],
             }
           : current
       )
       setActiveJobId(data.jobId)
+      setActiveJobStep('Queued for semantic planning')
     } catch (cause) {
       setSubmitting(false)
+      setActiveJobStep(null)
       setError(cause instanceof Error ? cause.message : 'Failed to submit edit')
+    }
+  }
+
+  async function submitPageManagerAction(action: SiteForgePageManagerAction) {
+    const artifact = payload?.currentArtifact
+    if (!payload || !artifact) {
+      throw new Error('The editor session is not ready yet')
+    }
+    if (submitting || activeJobId) {
+      throw new Error('Wait for the current edit to finish, then retry')
+    }
+    setSubmitting(true)
+    setError(null)
+    setEditJobFailure(null)
+    try {
+      const response = await fetch(
+        `/api/siteforge/editor/sessions/${payload.session.id}/turns`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userIntent: `Structured page ${action.type} operation`,
+            expectedArtifactId: artifact.id,
+            expectedContentHash: artifact.content_hash,
+            clientRequestId: crypto.randomUUID(),
+            pageManagerAction: action,
+          }),
+        }
+      )
+      const data = await response.json()
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to submit the page operation')
+      }
+      await openSession()
+      if (
+        data.duplicate &&
+        ['succeeded', 'failed', 'cancelled'].includes(data.status)
+      ) {
+        setSubmitting(false)
+        setActiveJobId(null)
+        setActiveJobStep(null)
+        return
+      }
+      setActiveJobId(data.jobId)
+      setActiveJobStep('Queued structured page operation')
+    } catch (cause) {
+      setSubmitting(false)
+      setActiveJobStep(null)
+      throw cause
     }
   }
 
   async function cancelTurn() {
     if (!activeJobId) return
+    setActiveJobStep('Cancelling edit…')
     const response = await fetch(`/api/siteforge/jobs/${activeJobId}/cancel`, {
       method: 'POST',
     })
@@ -518,7 +1033,17 @@ export function SiteForgeEditorWorkspace({
     if (!response.ok) setError(data.error || 'Failed to cancel edit')
   }
 
-  async function undoLastRevision() {
+  async function cancelPreview() {
+    if (!previewJobId) return
+    setPreviewStep('Cancelling preview…')
+    const response = await fetch(`/api/siteforge/jobs/${previewJobId}/cancel`, {
+      method: 'POST',
+    })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) setError(data.error || 'Failed to cancel preview')
+  }
+
+  async function restoreRevision(targetArtifactId?: string) {
     if (!payload?.currentArtifact || submitting) return
     setSubmitting(true)
     setError(null)
@@ -530,55 +1055,32 @@ export function SiteForgeEditorWorkspace({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             expectedArtifactId: payload.currentArtifact.id,
+            targetArtifactId,
             idempotencyKey: crypto.randomUUID(),
           }),
         }
       )
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || 'Failed to undo revision')
-      await openSession()
+      const next = await openSession()
       setPreviewRevision((value) => value + 1)
+      // The canonical WordPress target still serves the pre-undo revision;
+      // re-render it for the restored artifact so the exact preview cannot go
+      // stale after an undo.
+      if (next?.previews?.wordpress) {
+        void renderWordPressPreview(next)
+      }
     } catch (cause) {
       setError(
-        cause instanceof Error ? cause.message : 'Failed to undo revision'
+        cause instanceof Error ? cause.message : 'Failed to restore revision'
       )
     } finally {
       setSubmitting(false)
     }
   }
 
-  async function approveArtifactForStaging() {
-    const artifact = payload?.currentArtifact
-    const propertyId = payload?.session.property_id
-    if (!artifact || !propertyId || approvingArtifact) return
-    setApprovingArtifact(true)
-    setError(null)
-    try {
-      const response = await fetch(
-        `/api/siteforge/artifacts/${artifact.id}/decision`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            propertyId,
-            contentHash: artifact.content_hash,
-            decisionStatus: 'approved',
-          }),
-        }
-      )
-      const data = await response.json().catch(() => ({}))
-      if (!response.ok)
-        throw new Error(data.error || 'Failed to approve the WordPress preview')
-      await openSession()
-    } catch (cause) {
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : 'Failed to approve the WordPress preview'
-      )
-    } finally {
-      setApprovingArtifact(false)
-    }
+  async function undoLastRevision() {
+    await restoreRevision()
   }
 
   async function deployToStaging() {
@@ -633,65 +1135,54 @@ export function SiteForgeEditorWorkspace({
     }
   }
 
-  async function decideExtension(
-    requestId: string,
-    decision: ExtensionDecision
-  ) {
+  const applyValidatedExtension = useCallback(async (requestId: string) => {
     if (pendingExtensionDecision) return
-    const reason = extensionDecisionReasons[requestId]?.trim() || ''
-    if (!reason) {
-      setExtensionDecisionErrors((current) => ({
-        ...current,
-        [requestId]: 'Enter a decision reason before approving or rejecting.',
-      }))
-      return
-    }
-
-    setPendingExtensionDecision({ requestId, decision })
-    setExtensionDecisionErrors((current) => {
-      const next = { ...current }
-      delete next[requestId]
-      return next
-    })
-    let decisionSaved = false
+    setPendingExtensionDecision(requestId)
     try {
       const response = await fetch(
         `/api/siteforge/extensions/${requestId}/decision`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ decision, reason }),
+          body: JSON.stringify({
+            decision: 'approved',
+            reason: 'siteforge.policy:validated_bounded_extension:v1',
+          }),
         }
       )
       const data = await response.json().catch(() => ({}))
       if (!response.ok) {
         throw new Error(
-          data.error ||
-            `Failed to ${
-              decision === 'approved' ? 'approve' : 'reject'
-            } extension`
+          data.error || 'Failed to apply validated runtime extension'
         )
       }
-      decisionSaved = true
       await openSession()
-      setExtensionDecisionReasons((current) => {
-        const next = { ...current }
-        delete next[requestId]
-        return next
-      })
     } catch (cause) {
-      setExtensionDecisionErrors((current) => ({
-        ...current,
-        [requestId]: decisionSaved
-          ? 'Decision saved, but the editor could not refresh. Reload to see the updated request status.'
-          : cause instanceof Error
-            ? cause.message
-            : 'Failed to review runtime extension request',
-      }))
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : 'Failed to apply validated runtime extension'
+      )
     } finally {
       setPendingExtensionDecision(null)
     }
-  }
+  }, [openSession, pendingExtensionDecision])
+
+  useEffect(() => {
+    const ready = payload?.extensionRequests?.find(
+      request =>
+        request.status === 'proposed' &&
+        request.review.reviewComplete &&
+        request.review.sourceIsCurrent
+    )
+    if (ready && !pendingExtensionDecision) {
+      void applyValidatedExtension(ready.id)
+    }
+  }, [
+    applyValidatedExtension,
+    payload?.extensionRequests,
+    pendingExtensionDecision,
+  ])
 
   function referenceAsset(asset: PropertyAsset) {
     setElementContext(
@@ -725,24 +1216,38 @@ export function SiteForgeEditorWorkspace({
   })
   const stagingMatches =
     payload.previews?.stagingArtifactId === payload.currentArtifact?.id
-  const artifactApproved =
-    payload.currentArtifact?.deployment_decision === 'approved'
   const previewPages = payload.previewBlueprint?.pages || []
   const currentPreviewPage =
     previewPages.find(page => page.slug === selectedPreviewPage) ||
     previewPages[0]
+  const exactWordPressUrl = wordpressPageUrl(
+    payload.previews?.wordpress,
+    currentPreviewPage?.slug || 'home'
+  )
 
   return (
     <div className="space-y-4">
-      <div className="grid min-h-[calc(100vh-8rem)] items-start gap-4 xl:grid-cols-[minmax(320px,380px)_1fr]">
-      <Card className="flex h-[calc(100dvh-14rem)] min-h-[420px] max-h-[760px] flex-col self-start overflow-hidden xl:sticky xl:top-4 xl:h-[calc(100dvh-6rem)] xl:min-h-[480px]">
-        <CardHeader className="border-b">
-          <div className="flex items-center justify-between gap-3">
-            <CardTitle className="text-base">SiteForge editor</CardTitle>
-            <Badge variant="outline" className="capitalize">
-              {formatEditorModelLabel(payload?.editorModel)}
-            </Badge>
-          </div>
+      {payload.brand?.staleSincePinned ? (
+        <div
+          role="status"
+          className="rounded border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+        >
+          <span className="font-medium">Brand updated since this run.</span>{' '}
+          This site is pinned to brand contract{' '}
+          {payload.brand.pinnedContractVersion
+            ? `v${payload.brand.pinnedContractVersion}`
+            : payload.brand.pinnedContractHash?.slice(0, 12) || 'unknown'}
+          , but the live brand book has moved to{' '}
+          {payload.brand.liveContractVersion
+            ? `v${payload.brand.liveContractVersion}`
+            : payload.brand.liveContractHash?.slice(0, 12) || 'a newer version'}
+          . The preview intentionally renders the pinned contract; regenerate
+          the site to adopt the latest brand.
+        </div>
+      ) : null}
+      <Card>
+        <CardHeader className="space-y-3">
+          <CardTitle className="text-base">Preview and edit controls</CardTitle>
           <div className="flex flex-wrap gap-2 text-xs">
             <Badge variant="secondary">
               v{payload.currentArtifact?.version || '—'}
@@ -753,11 +1258,7 @@ export function SiteForgeEditorWorkspace({
                 : 'WordPress preview stale'}
             </Badge>
             {previewMatches ? (
-              <Badge variant={artifactApproved ? 'success' : 'outline'}>
-                {artifactApproved
-                  ? 'Preview approved'
-                  : 'Preview approval required'}
-              </Badge>
+              <Badge variant="success">Preview ready for staging</Badge>
             ) : null}
             {payload.previews?.certificationStatus === 'failed' ? (
               <Badge variant="outline">Browser QA warning · non-blocking</Badge>
@@ -776,23 +1277,24 @@ export function SiteForgeEditorWorkspace({
                 {payload.previews.renderJob.current_step}
               </Badge>
             ) : null}
+            {activeJob ? (
+              <Badge variant="outline">
+                Edit · {activeJob.stage} · {activeJob.progress}%
+              </Badge>
+            ) : null}
+            {previewJob ? (
+              <Badge variant="outline">
+                Preview · {previewJob.stage} · {previewJob.progress}%
+              </Badge>
+            ) : null}
             <Badge variant={stagingMatches ? 'success' : 'outline'}>
               {stagingMatches ? 'Staging fresh' : 'Staging not current'}
             </Badge>
           </div>
           <div className="flex flex-wrap gap-2">
-            {previewMatches && !artifactApproved ? (
-              <Button
-                size="sm"
-                disabled={approvingArtifact}
-                onClick={() => void approveArtifactForStaging()}
-              >
-                Use this preview for staging
-              </Button>
-            ) : null}
             <Button
               size="sm"
-              disabled={!previewMatches || !artifactApproved || deployingStaging}
+              disabled={!previewMatches || deployingStaging}
               onClick={() => void deployToStaging()}
             >
               {deployingStaging ? 'Deploying staging…' : 'Deploy to staging'}
@@ -843,10 +1345,52 @@ export function SiteForgeEditorWorkspace({
             ) : null}
           </div>
           <p className="text-xs text-muted-foreground">
-            Production promotion requires a separate, expiring manager launch
-            approval. Cloudways dashboard confirmation is used only when
-            provider automation is unavailable.
+            Staging uses the exact certified preview. Production changes only
+            through the owner Launch action.
           </p>
+          {!selectedElement ? (
+            <div className="flex items-center justify-between gap-3 rounded border bg-muted/30 p-2 text-xs">
+              <span>
+                Edit scope:{' '}
+                <strong>
+                  {wholeSiteEdit
+                    ? 'Whole site'
+                    : currentPreviewPage
+                      ? `/${currentPreviewPage.slug}`
+                      : 'Whole site'}
+                </strong>
+              </span>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => setWholeSiteEdit(current => !current)}
+                disabled={submitting}
+              >
+                {wholeSiteEdit ? 'Limit to this page' : 'Edit whole site'}
+              </Button>
+            </div>
+          ) : (
+            <p className="rounded border border-primary/40 bg-accent p-2 text-xs text-accent-foreground">
+              Edit scope: {selectedElement.label} on /{selectedElement.pageSlug}
+            </p>
+          )}
+        </CardHeader>
+      </Card>
+      <div className="grid min-h-[calc(100vh-8rem)] items-start gap-4 xl:grid-cols-[minmax(320px,380px)_1fr]">
+      <Card className="flex h-[calc(100dvh-14rem)] min-h-[420px] max-h-[760px] flex-col self-start overflow-hidden xl:sticky xl:top-4 xl:h-[calc(100dvh-6rem)] xl:min-h-[480px]">
+        <CardHeader className="border-b">
+          <div className="flex items-center justify-between gap-3">
+            <CardTitle className="text-base">SiteForge editor</CardTitle>
+            <div className="flex items-center gap-2">
+              <Badge variant="secondary">
+                v{payload.currentArtifact?.version || '—'}
+              </Badge>
+              <Badge variant="outline" className="capitalize">
+                {formatEditorModelLabel(payload?.editorModel)}
+              </Badge>
+            </div>
+          </div>
         </CardHeader>
         <CardContent className="flex min-h-0 flex-1 flex-col gap-3 p-0">
           <div
@@ -855,235 +1399,44 @@ export function SiteForgeEditorWorkspace({
           >
             {payload.messages.length === 0 ? (
               <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-                Ask for any site-wide change. Selecting a field or ACF block is
-                never required.
+                Ask for any change—including adding, removing, renaming, or
+                reordering pages. Selecting a field or ACF block is never
+                required.
               </div>
             ) : null}
             {payload.extensionRequests?.length ? (
               <section
-                aria-labelledby="runtime-extension-review-heading"
-                className="space-y-3 rounded-lg border border-warning/50 bg-warning/10 p-3 text-foreground"
+                aria-labelledby="runtime-extension-status-heading"
+                className="space-y-2 rounded-lg border bg-muted/30 p-3 text-xs"
               >
-                <div>
-                  <h2
-                    id="runtime-extension-review-heading"
-                    className="text-sm font-semibold"
+                <h2
+                  id="runtime-extension-status-heading"
+                  className="font-semibold"
+                >
+                  Validated runtime changes
+                </h2>
+                {payload.extensionRequests.map(request => (
+                  <div
+                    key={request.id}
+                    className="flex items-start justify-between gap-3"
                   >
-                    Runtime extension review
-                  </h2>
-                  <p className="mt-1 text-xs">
-                    Exact WordPress preview and certification are required
-                    before custom behavior can release.
-                  </p>
-                </div>
-                {payload.extensionRequests.map((request) => {
-                  const reasonId = `extension-decision-reason-${request.id}`
-                  const errorId = `extension-decision-error-${request.id}`
-                  const isPending =
-                    pendingExtensionDecision?.requestId === request.id
-                  const isProposed = request.status === 'proposed'
-                  const canApprove = isProposed && request.review.reviewComplete
-
-                  return (
-                    <article
-                      key={request.id}
-                      aria-busy={isPending}
-                      className="space-y-2 rounded border border-amber-300 bg-background/80 p-3 text-xs"
-                    >
-                      <div className="flex flex-wrap items-start justify-between gap-2">
-                        <div>
-                          <p className="font-semibold">
-                            Capability: {request.capability}
-                          </p>
-                          <p className="mt-1 text-muted-foreground">
-                            Source request{' '}
-                            <span className="break-all font-mono">
-                              {request.id}
-                            </span>
-                          </p>
-                          <p className="text-muted-foreground">
-                            Submitted{' '}
-                            {new Date(request.created_at).toLocaleString()}
-                          </p>
-                        </div>
-                        <Badge variant="outline">{request.status}</Badge>
-                      </div>
-                      <div>
-                        <p className="font-medium">Proposed change</p>
-                        <p className="mt-1 whitespace-pre-wrap">
-                          {request.requested_behavior}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="font-medium">Request rationale</p>
-                        <p className="mt-1 whitespace-pre-wrap">
-                          {request.reason}
-                        </p>
-                      </div>
-                      <div className="space-y-1 rounded border bg-muted/30 p-2">
-                        <p className="font-medium">Exact source revision</p>
-                        {request.review.sourceArtifact ? (
-                          <>
-                            <p>
-                              Version {request.review.sourceArtifact.version}{' '}
-                              {request.review.sourceIsCurrent
-                                ? '· current'
-                                : '· stale'}
-                            </p>
-                            <p className="break-all font-mono">
-                              {request.review.sourceArtifact.id}
-                            </p>
-                            <p className="break-all font-mono">
-                              Content{' '}
-                              {request.review.sourceArtifact.content_hash}
-                            </p>
-                          </>
-                        ) : (
-                          <p>Source identity unavailable</p>
-                        )}
-                        <p className="break-all font-mono">
-                          Package {request.review.packageSha256 || 'unverified'}
-                        </p>
-                        <p className="break-all font-mono">
-                          Manifest{' '}
-                          {request.review.manifest?.contentHash || 'unverified'}
-                        </p>
-                      </div>
-                      {request.review.files.length ? (
-                        <div className="space-y-2">
-                          <p className="font-medium">Generated file review</p>
-                          {request.review.files.map((file) => (
-                            <details
-                              key={file.path}
-                              className="rounded border bg-background p-2"
-                            >
-                              <summary className="cursor-pointer font-mono">
-                                New file · {file.path} · {file.bytes} bytes
-                              </summary>
-                              <p className="mt-2 break-all font-mono text-[10px]">
-                                SHA-256 {file.contentHash}{' '}
-                                {file.contentDigestVerified
-                                  ? '· verified'
-                                  : '· mismatch'}
-                              </p>
-                              <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded bg-muted p-2 text-[11px]">
-                                {file.content}
-                              </pre>
-                            </details>
-                          ))}
-                        </div>
-                      ) : null}
-                      <details className="rounded border bg-background p-2">
-                        <summary className="cursor-pointer font-medium">
-                          Sandbox validation checks
-                        </summary>
-                        <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words text-[11px]">
-                          {JSON.stringify(
-                            request.review.validationReport,
-                            null,
-                            2
-                          )}
-                        </pre>
-                      </details>
-                      <details className="rounded border bg-background p-2">
-                        <summary className="cursor-pointer font-medium">
-                          Screenshot certification report
-                        </summary>
-                        <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words text-[11px]">
-                          {JSON.stringify(
-                            request.review.screenshotReport,
-                            null,
-                            2
-                          )}
-                        </pre>
-                      </details>
-                      {!request.review.reviewComplete ? (
-                        <p role="alert" className="font-medium text-destructive">
-                          Approval blocked:{' '}
-                          {request.review.reviewError ||
-                            'package or validation data is incomplete'}
-                        </p>
-                      ) : null}
-                      {isProposed ? (
-                        <>
-                          <div>
-                            <label htmlFor={reasonId} className="font-medium">
-                              Decision reason
-                            </label>
-                            <Textarea
-                              id={reasonId}
-                              className="mt-1 min-h-20 bg-background"
-                              value={extensionDecisionReasons[request.id] || ''}
-                              onChange={(event) => {
-                                const value = event.target.value
-                                setExtensionDecisionReasons((current) => ({
-                                  ...current,
-                                  [request.id]: value,
-                                }))
-                                if (extensionDecisionErrors[request.id]) {
-                                  setExtensionDecisionErrors((current) => {
-                                    const next = { ...current }
-                                    delete next[request.id]
-                                    return next
-                                  })
-                                }
-                              }}
-                              disabled={isPending}
-                              aria-describedby={
-                                extensionDecisionErrors[request.id]
-                                  ? errorId
-                                  : undefined
-                              }
-                              placeholder="Explain why this custom behavior should or should not proceed…"
-                            />
-                          </div>
-                          <div className="flex flex-wrap gap-2">
-                            <Button
-                              type="button"
-                              size="sm"
-                              onClick={() =>
-                                void decideExtension(request.id, 'approved')
-                              }
-                              disabled={
-                                Boolean(pendingExtensionDecision) || !canApprove
-                              }
-                              aria-label={`Approve ${request.capability} extension request`}
-                            >
-                              {isPending &&
-                              pendingExtensionDecision?.decision === 'approved'
-                                ? 'Approving…'
-                                : 'Approve'}
-                            </Button>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="destructive"
-                              onClick={() =>
-                                void decideExtension(request.id, 'rejected')
-                              }
-                              disabled={Boolean(pendingExtensionDecision)}
-                              aria-label={`Reject ${request.capability} extension request`}
-                            >
-                              {isPending &&
-                              pendingExtensionDecision?.decision === 'rejected'
-                                ? 'Rejecting…'
-                                : 'Reject'}
-                            </Button>
-                          </div>
-                        </>
-                      ) : (
-                        <p className="font-medium">
-                          This request has already been {request.status}.
-                        </p>
-                      )}
-                      {extensionDecisionErrors[request.id] ? (
-                        <p id={errorId} role="alert" className="text-destructive">
-                          {extensionDecisionErrors[request.id]}
-                        </p>
-                      ) : null}
-                    </article>
-                  )
-                })}
+                    <div>
+                      <p className="font-medium">{request.capability}</p>
+                      <p className="text-muted-foreground">
+                        {request.status === 'proposed' &&
+                        request.review.reviewComplete
+                          ? 'Applying automatically after sandbox validation.'
+                          : request.review.reviewError ||
+                            request.requested_behavior}
+                      </p>
+                    </div>
+                    <Badge variant="outline">
+                      {pendingExtensionDecision === request.id
+                        ? 'applying'
+                        : request.status}
+                    </Badge>
+                  </div>
+                ))}
               </section>
             ) : null}
             {payload.messages.map((message, messageIndex) => (
@@ -1096,8 +1449,48 @@ export function SiteForgeEditorWorkspace({
                 }`}
               >
                 <p className="whitespace-pre-wrap">{message.content}</p>
+                {(payload.attachments || []).some(
+                  attachment => attachment.user_message_id === message.id
+                ) ? (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {(payload.attachments || [])
+                      .filter(
+                        attachment =>
+                          attachment.user_message_id === message.id
+                      )
+                      .map(attachment => (
+                        <div
+                          key={attachment.id}
+                          className="w-24 rounded border bg-background/70 p-1"
+                        >
+                          <div
+                            role="img"
+                            aria-label={`${attachment.original_filename}, ${attachment.viewport} screenshot of /${attachment.page_slug}`}
+                            className="h-16 rounded bg-cover bg-center"
+                            style={{
+                              backgroundImage: `url("${attachment.signedUrl}")`,
+                            }}
+                          />
+                          <p className="mt-1 truncate text-[10px] opacity-70">
+                            /{attachment.page_slug} · {attachment.viewport}
+                          </p>
+                        </div>
+                      ))}
+                  </div>
+                ) : null}
+                {message.role === 'assistant' &&
+                messageModelLabel(message.tool_summary) ? (
+                  <p className="mt-2 text-xs opacity-70">
+                    Model: {messageModelLabel(message.tool_summary)}
+                  </p>
+                ) : null}
                 {message.status !== 'complete' ? (
-                  <p className="mt-2 text-xs opacity-70">{message.status}</p>
+                  <p className="mt-2 text-xs opacity-70">
+                    {messageIndex === payload.messages.length - 1 &&
+                    activeJobStep
+                      ? activeJobStep
+                      : message.status}
+                  </p>
                 ) : null}
                 {message.resulting_artifact_id ? (
                   <p className="mt-2 truncate text-xs opacity-70">
@@ -1149,7 +1542,50 @@ export function SiteForgeEditorWorkspace({
             <div ref={chatEndRef} />
           </div>
 
-          <div className="space-y-2 border-t p-4">
+          <div
+            className="space-y-2 border-t p-4"
+            onPaste={event => {
+              const files = Array.from(event.clipboardData.files).filter(file =>
+                file.type.startsWith('image/')
+              )
+              if (files.length) {
+                event.preventDefault()
+                void uploadScreenshots(files)
+              }
+            }}
+            onDragOver={event => {
+              if (
+                Array.from(event.dataTransfer.items).some(
+                  item => item.kind === 'file'
+                )
+              ) {
+                event.preventDefault()
+                event.dataTransfer.dropEffect = 'copy'
+              }
+            }}
+            onDrop={event => {
+              const files = Array.from(event.dataTransfer.files).filter(file =>
+                file.type.startsWith('image/')
+              )
+              if (files.length) {
+                event.preventDefault()
+                void uploadScreenshots(files)
+              }
+            }}
+          >
+            {activeJob ? (
+              <div className="rounded border bg-muted/30 p-2 text-xs">
+                <p className="font-medium">
+                  {activeJob.current_step} · {activeJob.progress}%
+                </p>
+                <p className="text-muted-foreground">
+                  Stage {activeJob.stage} · attempt{' '}
+                  {Math.max(1, activeJob.attempt_count)}/
+                  {activeJob.max_attempts} · {jobElapsed(activeJob, jobClock)} ·{' '}
+                  {jobHeartbeat(activeJob)}
+                </p>
+              </div>
+            ) : null}
             {selectedElement ? (
               <div className="flex items-start justify-between gap-2 rounded border border-primary/50 bg-accent p-2 text-xs text-accent-foreground">
                 <span>
@@ -1199,6 +1635,39 @@ export function SiteForgeEditorWorkspace({
                 )}
               </div>
             ) : null}
+            {pendingAttachments.length ? (
+              <div className="flex flex-wrap gap-2 rounded border p-2">
+                {pendingAttachments.map(attachment => (
+                  <div
+                    key={attachment.id}
+                    className="relative w-24 rounded border bg-muted/20 p-1"
+                  >
+                    <div
+                      role="img"
+                      aria-label={`${attachment.original_filename}, pending screenshot`}
+                      className="h-16 rounded bg-cover bg-center"
+                      style={{
+                        backgroundImage: `url("${attachment.signedUrl}")`,
+                      }}
+                    />
+                    <button
+                      type="button"
+                      aria-label={`Remove ${attachment.original_filename}`}
+                      className="absolute right-0 top-0 rounded-bl bg-background/90 px-1 text-sm"
+                      disabled={submitting}
+                      onClick={() =>
+                        void removePendingAttachment(attachment.id)
+                      }
+                    >
+                      ×
+                    </button>
+                    <p className="mt-1 truncate text-[10px] text-muted-foreground">
+                      /{attachment.page_slug} · {attachment.viewport}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            ) : null}
             <Textarea
               value={intent}
               onChange={(event) => setIntent(event.target.value)}
@@ -1208,11 +1677,40 @@ export function SiteForgeEditorWorkspace({
                   void submitTurn()
                 }
               }}
-              placeholder="Describe any site-wide change…"
+              placeholder={
+                selectedElement
+                  ? 'Describe the change to this selected section…'
+                  : wholeSiteEdit
+                    ? 'Describe the site-wide change…'
+                    : 'Describe the change to this page…'
+              }
               disabled={submitting}
               aria-label="Site edit request"
             />
             <div className="flex flex-wrap items-center gap-2">
+              <input
+                ref={attachmentInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                multiple
+                className="sr-only"
+                onChange={event =>
+                  void uploadScreenshots(Array.from(event.target.files || []))
+                }
+              />
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={
+                  uploadingAttachment ||
+                  submitting ||
+                  pendingAttachments.length >= 6
+                }
+                onClick={() => attachmentInputRef.current?.click()}
+              >
+                {uploadingAttachment ? 'Attaching…' : 'Attach screenshots'}
+              </Button>
               <Button
                 type="button"
                 size="sm"
@@ -1252,6 +1750,11 @@ export function SiteForgeEditorWorkspace({
                 {submitting ? 'Working…' : 'Send'}
               </Button>
             </div>
+            <p className="text-[11px] text-muted-foreground">
+              Paste, drop, or upload up to 6 screenshots. Each is privately
+              bound to this exact revision, /{currentPreviewPage?.slug || '—'},
+              and the {viewport} viewport.
+            </p>
             {error ? (
               <p role="alert" className="text-xs text-destructive">
                 {error}
@@ -1264,74 +1767,57 @@ export function SiteForgeEditorWorkspace({
       <Card className="min-w-0 overflow-hidden">
         <CardHeader className="border-b">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div
-              className="flex gap-2"
-              role="tablist"
-              aria-label="Preview source"
-              onKeyDown={(event) => {
-                if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return
-                event.preventDefault()
-                setPreviewSource((current) =>
-                  current === 'p11' ? 'wordpress' : 'p11'
-                )
-                const nextId =
-                  previewSource === 'p11'
-                    ? 'siteforge-preview-tab-wordpress'
-                    : 'siteforge-preview-tab-p11'
-                requestAnimationFrame(() => document.getElementById(nextId)?.focus())
-              }}
-            >
+            <div className="flex flex-wrap items-center gap-2">
+              <CardTitle className="mr-2 text-base">
+                Exact WordPress preview
+              </CardTitle>
               <Button
-                id="siteforge-preview-tab-p11"
-                role="tab"
-                aria-selected={previewSource === 'p11'}
-                aria-controls="siteforge-preview-panel-p11"
-                tabIndex={previewSource === 'p11' ? 0 : -1}
                 size="sm"
-                variant={previewSource === 'p11' ? 'default' : 'outline'}
-                onClick={() => setPreviewSource('p11')}
+                variant={
+                  wordpressSelectionMode ? 'default' : 'outline'
+                }
+                onClick={() =>
+                  setWordpressSelectionMode(current => !current)
+                }
+                aria-pressed={wordpressSelectionMode}
+                disabled={!previewMatches}
               >
-                P11 preview
+                {wordpressSelectionMode
+                  ? 'Selecting sections'
+                  : 'Browse interactions'}
               </Button>
               <Button
-                id="siteforge-preview-tab-wordpress"
-                role="tab"
-                aria-selected={previewSource === 'wordpress'}
-                aria-controls="siteforge-preview-panel-wordpress"
-                tabIndex={previewSource === 'wordpress' ? 0 : -1}
                 size="sm"
-                variant={previewSource === 'wordpress' ? 'default' : 'outline'}
-                onClick={() => setPreviewSource('wordpress')}
+                variant="outline"
+                disabled={previewingWordPress}
+                onClick={() =>
+                  payload && void renderWordPressPreview(payload)
+                }
               >
-                WordPress preview
+                {previewingWordPress
+                  ? previewStep || 'Rendering…'
+                  : 'Render exact revision'}
               </Button>
-              {previewSource === 'wordpress' ? (
-                <>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={previewingWordPress}
-                    onClick={() =>
-                      payload && void renderWordPressPreview(payload)
-                    }
-                  >
-                    {previewingWordPress
-                      ? previewStep || 'Rendering…'
-                      : 'Render exact revision'}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={!previewMatches || previewingWordPress}
-                    onClick={() =>
-                      payload && void renderWordPressPreview(payload, true)
-                    }
-                  >
-                    {previewingWordPress
-                      ? previewStep || 'Running QA…'
-                      : 'Run full browser QA'}
-                  </Button>
-                </>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!previewMatches || previewingWordPress}
+                onClick={() =>
+                  payload && void renderWordPressPreview(payload, true)
+                }
+              >
+                {previewingWordPress
+                  ? previewStep || 'Running QA…'
+                  : 'Run full browser QA'}
+              </Button>
+              {previewJobId ? (
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  onClick={() => void cancelPreview()}
+                >
+                  Cancel preview
+                </Button>
               ) : null}
             </div>
             <div className="flex gap-2" role="group" aria-label="Preview viewport">
@@ -1348,156 +1834,118 @@ export function SiteForgeEditorWorkspace({
               ))}
             </div>
           </div>
+          <p className="text-xs text-muted-foreground">
+            {wordpressSelectionMode
+              ? 'Click a section inside WordPress to target the next edit.'
+              : 'Interaction mode leaves links, forms, menus, and widgets usable.'}
+          </p>
+          {previewJob ? (
+            <p className="text-xs text-muted-foreground">
+              {previewJob.current_step} · stage {previewJob.stage} ·{' '}
+              {previewJob.progress}% · attempt{' '}
+              {Math.max(1, previewJob.attempt_count)}/{previewJob.max_attempts} ·{' '}
+              {jobElapsed(previewJob, jobClock)} · {jobHeartbeat(previewJob)}
+            </p>
+          ) : null}
         </CardHeader>
         <CardContent className="overflow-auto bg-muted/40 p-3">
           <div
-            className="mx-auto min-h-[720px] overflow-auto bg-background transition-[width]"
+            className="mx-auto min-h-[720px] overflow-auto bg-background"
             style={{ width: VIEWPORT_WIDTH[viewport] }}
           >
-            {previewSource === 'wordpress' ? (
-              <div
-                id="siteforge-preview-panel-wordpress"
-                role="tabpanel"
-                aria-labelledby="siteforge-preview-tab-wordpress"
-              >
-              {payload.previews?.wordpress && previewMatches ? (
-                <iframe
-                  title="Exact WordPress preview"
-                  src={payload.previews.wordpress}
-                  sandbox="allow-scripts allow-same-origin"
-                  className="h-[780px] w-full border-0 bg-white"
-                />
-              ) : (
-                <div className="p-8 text-center text-sm text-muted-foreground">
-                  <p>
-                    {payload.previews?.wordpress
-                      ? 'The available WordPress render belongs to an older artifact. Render this exact revision before reviewing it.'
-                      : 'Render an exact WordPress preview for this revision.'}
-                  </p>
-                  <Button
-                    className="mt-3"
-                    size="sm"
-                    disabled={previewingWordPress}
-                    onClick={() =>
-                      payload && void renderWordPressPreview(payload)
-                    }
-                  >
-                    {previewingWordPress
-                      ? previewStep || 'Rendering…'
-                      : 'Render WordPress preview'}
-                  </Button>
-                </div>
-              )}
-              </div>
+            {payload.previews?.wordpress && previewMatches ? (
+              <iframe
+                ref={wordpressFrameRef}
+                key={`${payload.currentArtifact?.id}-${currentPreviewPage?.slug}-${viewport}-${previewRevision}`}
+                title={`Exact WordPress preview at ${VIEWPORT_WIDTH[viewport]} pixels`}
+                src={exactWordPressUrl}
+                sandbox="allow-scripts allow-same-origin"
+                onLoad={postWordPressSelectionMode}
+                className="h-[900px] border-0 bg-white"
+                style={{ width: VIEWPORT_WIDTH[viewport] }}
+              />
             ) : (
-              <div
-                id="siteforge-preview-panel-p11"
-                role="tabpanel"
-                aria-labelledby="siteforge-preview-tab-p11"
-                key={`${previewRevision}-${viewport}`}
-                className="siteforge-preview-light bg-white text-gray-900"
-              >
-                <div className="sticky top-0 z-20 border-b border-gray-200 bg-white/95 p-3 text-gray-900 backdrop-blur">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex flex-wrap gap-2" role="navigation" aria-label="Preview pages">
-                      {previewPages.map(page => (
-                        <Button
-                          key={page.slug}
-                          size="sm"
-                          variant={
-                            currentPreviewPage?.slug === page.slug
-                              ? 'default'
-                              : 'outline'
-                          }
-                          onClick={() => setSelectedPreviewPage(page.slug)}
-                          aria-current={
-                            currentPreviewPage?.slug === page.slug
-                              ? 'page'
-                              : undefined
-                          }
-                        >
-                          {page.title}
-                        </Button>
-                      ))}
-                    </div>
-                    <span className="text-xs text-gray-600">
-                      Instant approximation — WordPress remains release truth
-                    </span>
-                  </div>
-                </div>
-                {currentPreviewPage ? (
-                  <div
-                    data-preview-page={currentPreviewPage.slug}
-                    style={{
-                      background:
-                        payload.previewBlueprint?.designSystem?.colors
-                          ?.background ||
-                        payload.previewBlueprint?.designSystem?.colorSystem
-                          ?.background ||
-                        '#fff',
-                    }}
-                  >
-                    {currentPreviewPage.sections.map((section, index) => {
-                      const sectionId =
-                        section.id ||
-                        `${currentPreviewPage.slug}-section-${index + 1}`
-                      const selected =
-                        selectedElement?.pageSlug === currentPreviewPage.slug &&
-                        selectedElement.sectionId === sectionId
-                      return (
-                        <div
-                          key={sectionId}
-                          data-preview-section-id={sectionId}
-                          data-preview-block-type={section.acfBlock}
-                          className={`group relative ${
-                            selected
-                              ? 'ring-4 ring-inset ring-indigo-500'
-                              : 'hover:ring-2 hover:ring-inset hover:ring-indigo-300'
-                          }`}
-                        >
-                          <button
-                            type="button"
-                            className="absolute right-3 top-3 z-10 rounded-md border border-indigo-300 bg-white/95 px-3 py-1.5 text-xs font-medium text-indigo-800 opacity-0 shadow-sm transition-opacity group-hover:opacity-100 focus:opacity-100"
-                            aria-pressed={selected}
-                            onClick={() =>
-                              setSelectedElement({
-                                pageSlug: currentPreviewPage.slug,
-                                sectionId,
-                                blockType: section.acfBlock,
-                                label:
-                                  section.label ||
-                                  section.type ||
-                                  section.acfBlock,
-                              })
-                            }
-                          >
-                            {selected ? 'Selected' : 'Edit this section'}
-                          </button>
-                          <ACFBlockRenderer
-                            blockType={section.acfBlock}
-                            blockIdentity={`${currentPreviewPage.slug}:${sectionId}`}
-                            content={section.content}
-                            className={(section.cssClasses || []).join(' ')}
-                            variant={section.variant}
-                            designSystem={
-                              payload.previewBlueprint?.designSystem
-                            }
-                          />
-                        </div>
-                      )
-                    })}
-                  </div>
-                ) : (
-                  <div className="p-8 text-center text-sm text-muted-foreground">
-                    This artifact has no previewable pages.
-                  </div>
-                )}
+              <div className="p-8 text-center text-sm text-muted-foreground">
+                <p>
+                  {payload.previews?.wordpress
+                    ? 'The available WordPress render belongs to an older artifact. Render this exact revision before reviewing it.'
+                    : 'Render an exact WordPress preview for this revision.'}
+                </p>
+                <Button
+                  className="mt-3"
+                  size="sm"
+                  disabled={previewingWordPress}
+                  onClick={() =>
+                    payload && void renderWordPressPreview(payload)
+                  }
+                >
+                  {previewingWordPress
+                    ? previewStep || 'Rendering…'
+                    : 'Render WordPress preview'}
+                </Button>
               </div>
             )}
           </div>
         </CardContent>
       </Card>
       </div>
+      {payload.previewBlueprint ? (
+        <SiteForgePageManager
+          blueprint={payload.previewBlueprint}
+          disabled={submitting || Boolean(activeJobId)}
+          authorized={payload.capabilities?.['siteforge.owner_operator'] ?? true}
+          onApply={submitPageManagerAction}
+          onSelectPage={setSelectedPreviewPage}
+        />
+      ) : null}
+      <Card>
+        <CardContent className="p-0">
+          <details>
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-medium">
+              <span>Revision history</span>
+              <span className="text-xs font-normal text-muted-foreground">
+                {payload.revisions?.length || 0} revisions · current v
+                {payload.currentArtifact?.version || '—'}
+              </span>
+            </summary>
+            <div className="flex flex-wrap gap-2 border-t p-4">
+              {(payload.revisions || []).map(revision => {
+                const current = revision.id === payload.currentArtifact?.id
+                return (
+                  <div
+                    key={revision.id}
+                    className="min-w-40 rounded border bg-muted/20 p-2 text-xs"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <strong>v{revision.version}</strong>
+                      <Badge variant={current ? 'success' : 'outline'}>
+                        {current ? 'current' : revision.change_type}
+                      </Badge>
+                    </div>
+                    <p className="mt-1 line-clamp-2 text-muted-foreground">
+                      {revision.changes_summary ||
+                        revision.edit_intent ||
+                        'Immutable revision'}
+                    </p>
+                    {!current ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="mt-2"
+                        disabled={submitting || Boolean(activeJobId)}
+                        onClick={() => void restoreRevision(revision.id)}
+                      >
+                        Restore v{revision.version}
+                      </Button>
+                    ) : null}
+                  </div>
+                )
+              })}
+            </div>
+          </details>
+        </CardContent>
+      </Card>
     </div>
   )
 }

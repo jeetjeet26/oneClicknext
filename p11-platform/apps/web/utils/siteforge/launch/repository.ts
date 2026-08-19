@@ -404,14 +404,12 @@ export async function prepareLaunchRelease(
   if (
     !artifact ||
     artifact.content_hash !== input.contentHash ||
-    artifact.deployment_decision !== 'approved' ||
-    !artifact.confirmed_approval_id ||
     !artifact.asset_manifest_hash ||
     !artifact.base_theme_package_sha256 ||
     rolloutClassification !== 'deployable'
   ) {
     throw new SiteForgeLaunchError(
-      'The exact artifact is not approved and deployable',
+      'The exact certified artifact is not deployable',
       409
     )
   }

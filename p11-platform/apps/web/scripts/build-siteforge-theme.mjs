@@ -51,8 +51,17 @@ const blockNames = [
   'plans-availability',
   'poi',
   'testimonials',
+  'offering-browser',
+  'entity-directory',
+  'comparison-table',
+  'timeline',
+  'document-library',
+  'events-directory',
+  'governed-component',
 ]
-const variantCatalog = {
+// Exported so tests can pin the TypeScript variant catalog
+// (SITEFORGE_BLOCK_CAPABILITIES in types/siteforge.ts) to this build catalog.
+export const variantCatalog = {
   'top-slides': [
     'cinematic',
     'editorial',
@@ -81,7 +90,7 @@ const variantCatalog = {
     'carousel',
   ],
   form: ['card', 'split', 'minimal'],
-  map: ['standard', 'immersive'],
+  map: ['standard', 'immersive', 'centered'],
   'html-section': ['contained', 'full-width'],
   gallery: [
     'categorized',
@@ -96,6 +105,13 @@ const variantCatalog = {
   poi: ['narrative', 'map-list', 'editorial'],
   testimonials: ['cards', 'spotlight', 'carousel'],
   menu: ['standard', 'sticky-cta'],
+  'offering-browser': ['cards', 'list', 'availability'],
+  'entity-directory': ['cards', 'map', 'grouped'],
+  'comparison-table': ['table', 'cards', 'compact'],
+  timeline: ['vertical', 'horizontal', 'milestones'],
+  'document-library': ['list', 'cards', 'grouped'],
+  'events-directory': ['cards', 'calendar', 'list'],
+  'governed-component': ['governed'],
 }
 
 function sha256(bytes) {

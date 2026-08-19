@@ -29,7 +29,7 @@ $layout_class = 'image-right' === $layout ? 'layout-image-right' : 'layout-image
 			<?php
 			if ( ! empty( $image ) ) {
 				?>
-				<div class="feature-image<?php echo oneclick_is_placeholder_image( $image ) ? ' is-placeholder-image' : ''; ?>">
+				<div class="feature-image<?php echo oneclick_is_placeholder_image( $image ) ? ' is-placeholder-image' : ''; ?>"<?php echo oneclick_siteforge_target_attributes( $block, 'image', 'image', $headline ); ?>>
 					<?php
 					echo oneclick_get_image_html(
 						$image,
@@ -49,7 +49,7 @@ $layout_class = 'image-right' === $layout ? 'layout-image-right' : 'layout-image
 				<?php
 				if ( ! empty( $headline ) ) {
 					?>
-					<h2><?php echo wp_kses_post( $headline ); ?></h2>
+					<h2<?php echo oneclick_siteforge_target_attributes( $block, 'headline', 'headline', $headline ); ?>><?php echo wp_kses_post( $headline ); ?></h2>
 					<?php
 				}
 
@@ -64,7 +64,7 @@ $layout_class = 'image-right' === $layout ? 'layout-image-right' : 'layout-image
 				if ( ! empty( $cta_text ) && ! empty( $cta_link ) ) {
 					?>
 					<div class="feature-cta">
-						<a href="<?php echo esc_url( $cta_link ); ?>" class="btn btn-primary">
+						<a href="<?php echo esc_url( $cta_link ); ?>" class="btn btn-primary"<?php echo oneclick_siteforge_target_attributes( $block, 'cta', 'primary', $cta_text ); ?>>
 							<?php echo esc_html( $cta_text ); ?>
 						</a>
 					</div>

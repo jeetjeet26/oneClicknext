@@ -63,35 +63,6 @@ export function getExternalInventoryAdapter(
     : new RentCafeInventoryAdapter()
 }
 
-function unitFreshness(unit: InventoryUnit, now: Date, maxAgeHours: number) {
-  const sourceDate = unit.sourceUpdatedAt || unit.effectiveAt
-  const sourceTimestamp = sourceDate ? new Date(sourceDate).getTime() : Number.NaN
-  const sourceStale =
-    !sourceDate ||
-    !Number.isFinite(sourceTimestamp) ||
-    now.getTime() - sourceTimestamp > maxAgeHours * 3_600_000
-  const expiryTimestamp = unit.expiresAt
-    ? new Date(unit.expiresAt).getTime()
-    : Number.NaN
-  const expired = Boolean(
-    unit.expiresAt &&
-      (!Number.isFinite(expiryTimestamp) || expiryTimestamp <= now.getTime())
-  )
-  return { stale: sourceStale || expired, sourceDate, expired }
-}
-
-const STALE_INVENTORY_FIELDS = new Set([
-  'rent',
-  'rentMin',
-  'rentMax',
-  'monthlyRent',
-  'price',
-  'availableCount',
-  'availability',
-  'special',
-  'specials',
-])
-
 export function enforceInventoryFreshness(
   units: readonly InventoryUnit[],
   options: {
@@ -102,37 +73,23 @@ export function enforceInventoryFreshness(
   }
 ) {
   const now = options.now || new Date()
-  const staleUnitIds: string[] = []
-  const safeUnits = units.map((unit) => {
-    const freshness = unitFreshness(unit, now, options.maxAgeHours)
-    if (!freshness.stale) return Object.freeze({ ...unit })
-    staleUnitIds.push(unit.id)
-    const withoutVolatilePricing = Object.fromEntries(
-      Object.entries(unit).filter(
-        ([key]) => !STALE_INVENTORY_FIELDS.has(key)
-      )
-    )
-    return Object.freeze({
-      ...withoutVolatilePricing,
-      pricingHiddenReason: 'stale_inventory',
-    })
-  })
+  const publishedUnits = units.map(unit => Object.freeze({ ...unit }))
   const proposalBody = {
     kind: 'siteforge_inventory_revision',
     propertyId: options.propertyId,
     provider: options.provider,
     detectedAt: now.toISOString(),
     maxAgeHours: options.maxAgeHours,
-    staleUnitIds: [...staleUnitIds].sort(),
-    action: 'hide_stale_pricing_and_request_inventory_refresh',
+    staleUnitIds: [] as string[],
+    action: 'keep_published_inventory_until_replaced',
   }
   const revisionProposal = Object.freeze({
     ...proposalBody,
     proposalHash: hashSiteForgeContent(proposalBody),
   })
   return Object.freeze({
-    units: Object.freeze(safeUnits),
-    stale: staleUnitIds.length > 0,
+    units: Object.freeze(publishedUnits),
+    stale: false,
     revisionProposal,
   })
 }
@@ -197,30 +154,9 @@ export function enforceInventorySnapshotFreshness(
     maxAgeHours,
     now,
   })
-  const snapshotExpired =
-    parseTimestamp(snapshot.expiresAt, 'expiresAt') <= now.getTime()
-  if (!snapshotExpired) {
-    return Object.freeze({
-      snapshot,
-      ...result,
-      snapshotStale: result.stale,
-    })
-  }
-  const allHidden = enforceInventoryFreshness(
-    snapshot.units.map(unit => ({
-      ...unit,
-      expiresAt: snapshot.expiresAt,
-    })),
-    {
-      propertyId: snapshot.propertyId,
-      provider: snapshot.provider,
-      maxAgeHours,
-      now,
-    }
-  )
   return Object.freeze({
     snapshot,
-    ...allHidden,
-    snapshotStale: true,
+    ...result,
+    snapshotStale: false,
   })
 }

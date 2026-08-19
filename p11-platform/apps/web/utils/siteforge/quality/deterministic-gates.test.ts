@@ -19,6 +19,7 @@ import {
   hashBrandForgeContract,
   normalizeBrandForgeContract,
 } from '@/utils/brandforge/normalize'
+import { compileBrandPublicationPackage } from '@/utils/siteforge/brand-design-compiler'
 
 const logoAssetId = '22222222-2222-4222-8222-222222222222'
 
@@ -130,6 +131,7 @@ const brandContract = normalizeBrandForgeContract({
       { role: 'primary', name: 'Primary', hex: '#112233', usage: 'Primary' },
       { role: 'secondary', name: 'Secondary', hex: '#445566', usage: 'Secondary' },
       { role: 'accent', name: 'Accent', hex: '#778899', usage: 'Accent' },
+      { role: 'background', name: 'Background', hex: '#ffffff', usage: 'Background' },
     ],
   },
   typography: {
@@ -242,6 +244,7 @@ const themeArtifact = {
       primary: '#112233',
       secondary: '#445566',
       accent: '#778899',
+      background: '#ffffff',
     },
     typography: {
       headingFont: 'Example Sans',
@@ -252,6 +255,7 @@ const themeArtifact = {
     { role: 'headline', family: 'Example Sans', weights: [700], source: 'fallback', fallback: 'Arial, sans-serif', preload: false },
     { role: 'body', family: 'Example Serif', weights: [400], source: 'fallback', fallback: 'Georgia, serif', preload: false },
   ],
+  brandPublication: compileBrandPublicationPackage(brandContract),
 } as unknown as WordPressThemeArtifact
 const planPropertyId = '66666666-6666-4666-8666-666666666666'
 const confirmedPlan = {
@@ -411,6 +415,8 @@ describe('deterministic SiteForge quality gates', () => {
       evidenceIds: [],
       factsRequired: [],
       required: false,
+      sourcePackKey: 'siteforge.vertical.core.real_estate',
+      conversionIntent: null,
     })
 
     const report = evaluate(pages, {
@@ -596,13 +602,23 @@ describe('deterministic SiteForge quality gates', () => {
       .toEqual(expect.objectContaining({ passed: false }))
   })
 
-  it('blocks assets without approval and cleared rights', () => {
+  it('blocks a changed locked asset in the publication package', () => {
+    const changedTheme = structuredClone(themeArtifact)
+    changedTheme.brandPublication!.logos[0].url =
+      'https://cdn.example.com/substitute-logo.svg'
+    const report = evaluate(pages, { themeArtifact: changedTheme })
+    expect(
+      report.checks.find(check => check.id === 'brand_publication_package'),
+    ).toEqual(expect.objectContaining({ passed: false, severity: 'blocker' }))
+  })
+
+  it('flags assets without approval metadata as advisory without blocking', () => {
     const changedManifest = structuredClone(photoManifest)
     changedManifest.photos[0].approvalStatus = 'pending'
     changedManifest.photos[0].rightsStatus = 'unknown'
     const report = evaluate(pages, { photoManifest: changedManifest })
     expect(report.checks.find(check => check.id === 'asset_rights_and_approval'))
-      .toEqual(expect.objectContaining({ passed: false }))
+      .toEqual(expect.objectContaining({ passed: false, severity: 'warning' }))
   })
 
   it('allows an unchanged legacy asset while enforcing metadata on replacements', () => {

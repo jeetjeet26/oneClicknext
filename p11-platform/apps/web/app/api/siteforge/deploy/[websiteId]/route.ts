@@ -5,7 +5,10 @@ import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { createRequestContext } from '@/utils/services/request-context'
-import { getWordPressCredentialReference } from '@/utils/siteforge/wordpress/credential-vault'
+import {
+  getWordPressCredentialReference,
+  storeWordPressCredentialReference,
+} from '@/utils/siteforge/wordpress/credential-vault'
 import {
   CloudwaysProviderClient,
   getCloudwaysProviderCredentials,
@@ -13,11 +16,13 @@ import {
 import { readCloudwaysProvisioningCheckpoint } from '@/utils/siteforge/workflows/staging-steps'
 import { siteForgeStagingDeploymentWorkflow } from '@/workflows/siteforge-staging-deployment'
 import type { Json } from '@/types/supabase'
+import { normalizeSiteForgePreviewCredential } from '@/utils/siteforge/workflows/preview-steps'
 import {
   assertActiveAuroraLifecycleLease,
   auroraOwnedMetadata,
   AuroraLifecycleControlError,
 } from '@/utils/siteforge/testing/aurora-lifecycle-control'
+import { decideSiteForgeArtifactDeployment } from '@/utils/siteforge/artifacts/approval'
 
 export async function POST(
   request: NextRequest,
@@ -48,7 +53,7 @@ export async function POST(
     const { data: website, error: websiteError } = await client
       .from('property_websites')
       .select(
-        'id, org_id, property_id, current_artifact_version_id, canonical_preview_artifact_id, canonical_preview_content_hash, wordpress_credential_ref, staging_artifact_id, staging_content_hash, staging_url, staging_admin_url'
+        'id, org_id, property_id, current_artifact_version_id, canonical_preview_artifact_id, canonical_preview_content_hash, canonical_preview_url, wordpress_credential_ref, staging_artifact_id, staging_content_hash, staging_url, staging_admin_url'
       )
       .eq('id', websiteId)
       .single()
@@ -80,7 +85,7 @@ export async function POST(
       )
     }
 
-    const { data: artifact, error: artifactError } = await client
+    const artifactResult = await client
       .from('siteforge_blueprint_versions')
       .select(
         'id, content_hash, asset_manifest_hash, base_theme_package_sha256, overlay_package_sha256, deployment_decision, deployment_approved_at, confirmed_approval_id'
@@ -88,24 +93,60 @@ export async function POST(
       .eq('id', website.current_artifact_version_id)
       .eq('website_id', website.id)
       .single()
+    let artifact = artifactResult.data
     if (
-      artifactError ||
+      artifactResult.error ||
       !artifact ||
       !artifact.asset_manifest_hash ||
       !artifact.base_theme_package_sha256 ||
-      artifact.deployment_decision !== 'approved' ||
-      !artifact.deployment_approved_at ||
-      !artifact.confirmed_approval_id ||
       website.canonical_preview_artifact_id !== artifact.id ||
       website.canonical_preview_content_hash !== artifact.content_hash
     ) {
       return NextResponse.json(
         {
           error:
-            'Approve an exact, fully snapshotted WordPress preview before deploying to staging',
+            'An exact, fully snapshotted WordPress preview is required before deploying to staging',
         },
         { status: 409, headers: ctx.responseHeaders }
       )
+    }
+    if (
+      artifact.deployment_decision !== 'approved' ||
+      !artifact.deployment_approved_at ||
+      !artifact.confirmed_approval_id
+    ) {
+      await decideSiteForgeArtifactDeployment(
+        {
+          propertyId: website.property_id,
+          artifactId: artifact.id,
+          reviewerProfileId: user.id,
+          contentHash: artifact.content_hash,
+          decisionStatus: 'approved',
+          decisionReason: 'siteforge.policy:canonical_preview_certified:v1',
+        },
+        client
+      )
+      const refreshed = await client
+        .from('siteforge_blueprint_versions')
+        .select(
+          'id, content_hash, asset_manifest_hash, base_theme_package_sha256, overlay_package_sha256, deployment_decision, deployment_approved_at, confirmed_approval_id'
+        )
+        .eq('id', artifact.id)
+        .eq('website_id', website.id)
+        .single()
+      artifact = refreshed.data
+      if (
+        refreshed.error ||
+        !artifact ||
+        artifact.deployment_decision !== 'approved' ||
+        !artifact.deployment_approved_at ||
+        !artifact.confirmed_approval_id
+      ) {
+        return NextResponse.json(
+          { error: 'Machine policy could not authorize staging deployment' },
+          { status: 409, headers: ctx.responseHeaders }
+        )
+      }
     }
     if (
       website.staging_artifact_id === artifact.id &&
@@ -137,8 +178,62 @@ export async function POST(
         }
       | null = null
     if (!localSimulation) {
+      let parentCredentialRef = website.wordpress_credential_ref
+      const previewUrl = normalizeSiteForgePreviewCredential(
+        process.env.SITEFORGE_PREVIEW_WP_URL
+      )
+      const previewUsername = normalizeSiteForgePreviewCredential(
+        process.env.SITEFORGE_PREVIEW_WP_USERNAME
+      )
+      const previewPassword = normalizeSiteForgePreviewCredential(
+        process.env.SITEFORGE_PREVIEW_WP_APP_PASSWORD
+      )
+      const previewIdentity = previewUrl?.match(
+        /^https?:\/\/wordpress-(\d+)-(\d+)\.cloudwaysapps\.com\/?$/i
+      )
+      const canonicalPreviewMatchesEnvironment =
+        Boolean(previewUrl && website.canonical_preview_url) &&
+        new URL(previewUrl!).hostname ===
+          new URL(website.canonical_preview_url!).hostname
       if (
-        !website.wordpress_credential_ref ||
+        cloudwaysCredentials &&
+        previewIdentity &&
+        previewUsername &&
+        previewPassword &&
+        canonicalPreviewMatchesEnvironment
+      ) {
+        const [, serverId, applicationId] = previewIdentity
+        const cloudways = new CloudwaysProviderClient(cloudwaysCredentials)
+        const application = await cloudways.getApplication({
+          serverId,
+          applicationId,
+        })
+        if (!application.public_ip) {
+          throw new Error(
+            'Cloudways canonical preview parent is missing a public IP'
+          )
+        }
+        parentCredentialRef = await storeWordPressCredentialReference({
+          websiteId: website.id,
+          secretName: `${website.id}:canonical-preview-parent:${applicationId}`,
+          description:
+            'SiteForge Cloudways parent derived from the certified canonical preview',
+          credentials: {
+            provider: 'cloudways',
+            url: previewUrl!,
+            username: previewUsername,
+            password: previewPassword,
+            providerMetadata: {
+              provider: 'cloudways',
+              serverId,
+              applicationId,
+              publicIp: application.public_ip,
+            },
+          },
+        })
+      }
+      if (
+        !parentCredentialRef ||
         !cloudwaysCredentials
       ) {
         return NextResponse.json(
@@ -151,7 +246,7 @@ export async function POST(
         )
       }
       const parent = await getWordPressCredentialReference(
-        website.wordpress_credential_ref
+        parentCredentialRef
       )
       if (parent.provider !== 'cloudways' || !parent.providerMetadata) {
         return NextResponse.json(
@@ -162,14 +257,63 @@ export async function POST(
       parentMetadata = parent.providerMetadata
     }
 
-    const { data: existingTarget, error: targetLookupError } = await client
+    const existingTargetResult = await client
       .from('siteforge_wordpress_targets')
-      .select('id, metadata')
+      .select(
+        'id, metadata, provider_application_id, provider_server_id, provider_parent_application_id'
+      )
       .eq('website_id', website.id)
       .eq('target_type', 'staging')
       .eq('is_active', true)
       .maybeSingle()
+    let existingTarget = existingTargetResult.data
+    const targetLookupError = existingTargetResult.error
     if (targetLookupError) throw new Error(targetLookupError.message)
+    if (
+      existingTarget &&
+      parentMetadata &&
+      cloudwaysCredentials &&
+      existingTarget.provider_parent_application_id &&
+      existingTarget.provider_parent_application_id !==
+        parentMetadata.applicationId
+    ) {
+      if (
+        existingTarget.provider_server_id &&
+        existingTarget.provider_application_id
+      ) {
+        const cloudways = new CloudwaysProviderClient(cloudwaysCredentials)
+        const removed = await cloudways.deleteApplication({
+          serverId: existingTarget.provider_server_id,
+          applicationId: existingTarget.provider_application_id,
+        })
+        if (removed.operationId) {
+          await cloudways.waitForOperation(removed.operationId)
+        }
+      }
+      const { error: staleTargetDeleteError } = await client
+        .from('siteforge_wordpress_targets')
+        .update({
+          is_active: false,
+          status: 'failed',
+          metadata: {
+            ...(existingTarget.metadata &&
+            typeof existingTarget.metadata === 'object' &&
+            !Array.isArray(existingTarget.metadata)
+              ? existingTarget.metadata
+              : {}),
+            retiredReason: 'canonical_preview_parent_changed',
+            retiredAt: new Date().toISOString(),
+          } as Json,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', existingTarget.id)
+      if (staleTargetDeleteError) {
+        throw new Error(
+          `Failed to replace stale Cloudways staging lineage: ${staleTargetDeleteError.message}`
+        )
+      }
+      existingTarget = null
+    }
     const existingMetadata =
       existingTarget?.metadata &&
       typeof existingTarget.metadata === 'object' &&
@@ -374,12 +518,27 @@ export async function POST(
       )
     }
 
-    const { data: existingDeployment } = await client
+    const { data: targetDeployment } = await client
       .from('siteforge_artifact_deployments')
       .select('id')
       .eq('target_id', targetId)
       .eq('artifact_id', artifact.id)
       .maybeSingle()
+    let existingDeployment = targetDeployment
+    if (!existingDeployment && existingJob) {
+      const byJob = await client
+        .from('siteforge_artifact_deployments')
+        .select('id')
+        .eq('shared_job_id', existingJob.id)
+        .eq('artifact_id', artifact.id)
+        .maybeSingle()
+      if (byJob.error) {
+        throw new Error(
+          `Failed to reconcile failed staging release: ${byJob.error.message}`
+        )
+      }
+      existingDeployment = byJob.data
+    }
     const deploymentValues = {
       org_id: website.org_id,
       property_id: website.property_id,
@@ -387,10 +546,11 @@ export async function POST(
       target_id: targetId,
       artifact_id: artifact.id,
       artifact_content_hash: artifact.content_hash,
-      asset_manifest_hash: artifact.asset_manifest_hash,
-      base_theme_package_sha256: artifact.base_theme_package_sha256,
+      asset_manifest_hash: artifact.asset_manifest_hash as string,
+      base_theme_package_sha256:
+        artifact.base_theme_package_sha256 as string,
       overlay_package_sha256: artifact.overlay_package_sha256,
-      approval_id: artifact.confirmed_approval_id,
+      approval_id: artifact.confirmed_approval_id as string,
       shared_job_id: existingJob?.id || null,
       status: 'queued' as const,
       certification_report: {

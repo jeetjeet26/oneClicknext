@@ -5,6 +5,7 @@ import {
   type ACFBlockType,
   type GeneratedPage,
 } from '@/types/siteforge'
+import { governedNodeSchema } from '@/utils/siteforge/components/governed-component'
 
 const safeLinkSchema = z
   .string()
@@ -30,6 +31,41 @@ export const siteForgeAssetReferenceSchema = z
     mimeType: z.string().regex(/^(image|video)\//).optional(),
     contentHash: z.string().min(32).max(128).optional(),
     wpMediaId: z.number().int().positive().optional(),
+  })
+  .strict()
+
+const catalogSnapshotIdentitySchema = z
+  .object({
+    captured_at: z.string().datetime(),
+    content_hash: z.string().regex(/^[a-f0-9]{64}$/),
+    fresh_until: z.string().datetime().nullable().optional(),
+  })
+  .strict()
+
+const offeringItemSchema = z
+  .object({
+    id: z.string().trim().min(1).max(240),
+    kind: z.string().trim().min(1).max(120),
+    name: z.string().trim().min(1).max(240),
+    description: z.string().trim().max(4_000).optional(),
+    status: z.string().trim().max(120).optional(),
+    price_label: z.string().trim().max(240).optional(),
+    availability_label: z.string().trim().max(240).optional(),
+    image: siteForgeAssetReferenceSchema.optional(),
+    detail_url: safeLinkSchema.optional(),
+    attributes: z.record(z.string(), z.string().max(1_000)).default({}),
+  })
+  .strict()
+
+const directoryEntitySchema = z
+  .object({
+    id: z.string().trim().min(1).max(240),
+    name: z.string().trim().min(1).max(240),
+    type: z.string().trim().min(1).max(120),
+    description: z.string().trim().max(4_000).optional(),
+    location: z.string().trim().max(500).optional(),
+    image: siteForgeAssetReferenceSchema.optional(),
+    url: safeLinkSchema.optional(),
   })
   .strict()
 
@@ -120,6 +156,10 @@ export const siteForgeBlockContentSchemas = {
               icon: z.string().trim().max(120).optional(),
               headline: z.string().trim().min(1).max(140),
               description: z.string().trim().min(1).max(1_200),
+              eyebrow: z.string().trim().max(120).optional(),
+              link_text: z.string().trim().max(80).optional(),
+              link_url: safeLinkSchema.optional(),
+              metadata: z.record(z.string(), z.string().max(500)).default({}),
             })
             .strict()
         )
@@ -134,8 +174,11 @@ export const siteForgeBlockContentSchemas = {
       subheading: z.string().trim().max(300).optional(),
       form_type: z.enum(['contact', 'tour', 'register']),
       redirect_url: safeLinkSchema.optional(),
-      provider: z.literal('p11_lumaleasing'),
+      provider: z.enum(['p11_lumaleasing', 'unconfigured']),
       consent_text: z.string().trim().min(1).max(1_000),
+      conversion_intent: z.string().trim().min(1).max(120).optional(),
+      offering_id: z.string().trim().min(1).max(240).optional(),
+      success_outcome: z.string().trim().min(1).max(120).optional(),
     })
     .strict(),
   'acf/map': z
@@ -292,6 +335,130 @@ export const siteForgeBlockContentSchemas = {
       source: z.literal('reviewflow'),
     })
     .strict(),
+  'acf/offering-browser': z
+    .object({
+      heading: z.string().trim().min(1).max(160),
+      intro: z.string().trim().max(2_000).optional(),
+      offering_kind: z.string().trim().min(1).max(120),
+      offerings: z.array(offeringItemSchema).max(500),
+      catalog_snapshot: catalogSnapshotIdentitySchema,
+      show_pricing: z.boolean(),
+      show_availability: z.boolean(),
+      conversion_intent: z.string().trim().min(1).max(120).nullable(),
+    })
+    .strict(),
+  'acf/entity-directory': z
+    .object({
+      heading: z.string().trim().min(1).max(160),
+      intro: z.string().trim().max(2_000).optional(),
+      entities: z.array(directoryEntitySchema).max(500),
+      catalog_snapshot: catalogSnapshotIdentitySchema,
+      group_by: z.string().trim().max(120).nullable(),
+    })
+    .strict(),
+  'acf/comparison-table': z
+    .object({
+      heading: z.string().trim().min(1).max(160),
+      intro: z.string().trim().max(2_000).optional(),
+      columns: z
+        .array(
+          z
+            .object({
+              key: z.string().trim().min(1).max(120),
+              label: z.string().trim().min(1).max(160),
+            })
+            .strict()
+        )
+        .min(1)
+        .max(20),
+      rows: z
+        .array(
+          z
+            .object({
+              id: z.string().trim().min(1).max(240),
+              label: z.string().trim().min(1).max(240),
+              values: z.record(z.string(), z.string().max(2_000)),
+            })
+            .strict()
+        )
+        .max(200),
+    })
+    .strict(),
+  'acf/timeline': z
+    .object({
+      heading: z.string().trim().min(1).max(160),
+      intro: z.string().trim().max(2_000).optional(),
+      milestones: z
+        .array(
+          z
+            .object({
+              id: z.string().trim().min(1).max(240),
+              date_label: z.string().trim().min(1).max(160),
+              title: z.string().trim().min(1).max(240),
+              description: z.string().trim().max(4_000).optional(),
+              status: z.string().trim().max(120).optional(),
+            })
+            .strict()
+        )
+        .max(100),
+    })
+    .strict(),
+  'acf/document-library': z
+    .object({
+      heading: z.string().trim().min(1).max(160),
+      intro: z.string().trim().max(2_000).optional(),
+      documents: z
+        .array(
+          z
+            .object({
+              id: z.string().trim().min(1).max(240),
+              title: z.string().trim().min(1).max(240),
+              category: z.string().trim().max(120).optional(),
+              description: z.string().trim().max(2_000).optional(),
+              url: safeLinkSchema,
+              file_type: z.string().trim().max(80).optional(),
+              updated_at: z.string().datetime().optional(),
+            })
+            .strict()
+        )
+        .max(500),
+    })
+    .strict(),
+  'acf/events-directory': z
+    .object({
+      heading: z.string().trim().min(1).max(160),
+      intro: z.string().trim().max(2_000).optional(),
+      events: z
+        .array(
+          z
+            .object({
+              id: z.string().trim().min(1).max(240),
+              name: z.string().trim().min(1).max(240),
+              starts_at: z.string().datetime(),
+              ends_at: z.string().datetime().nullable().optional(),
+              location: z.string().trim().max(500).optional(),
+              description: z.string().trim().max(4_000).optional(),
+              url: safeLinkSchema.optional(),
+            })
+            .strict()
+        )
+        .max(500),
+      catalog_snapshot: catalogSnapshotIdentitySchema,
+      conversion_intent: z.string().trim().min(1).max(120).nullable(),
+    })
+    .strict(),
+  'acf/governed-component': z
+    .object({
+      component_key: z
+        .string()
+        .regex(
+          /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*@[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/
+        ),
+      descriptor_hash: z.string().regex(/^[a-f0-9]{64}$/),
+      render_plan: governedNodeSchema,
+      component_values: z.record(z.string(), z.unknown()),
+    })
+    .strict(),
 } as const
 
 const sectionBaseSchema = z.object({
@@ -357,7 +524,10 @@ export const strictGeneratedPageSchema = z
         canonicalPath: safeLinkSchema,
         noIndex: z.boolean(),
         structuredData: z.array(
-          z.enum(['WebPage', 'ApartmentComplex', 'BreadcrumbList', 'FAQPage'])
+          z.union([
+            z.enum(['WebPage', 'ApartmentComplex', 'BreadcrumbList', 'FAQPage']),
+            z.record(z.string(), z.unknown()),
+          ])
         ),
       })
       .strict(),

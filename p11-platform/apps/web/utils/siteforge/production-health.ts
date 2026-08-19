@@ -33,6 +33,7 @@ export type SiteForgeHealthTrigger = 'scheduled' | 'launch' | 'manual' | 'repair
 
 export type SiteForgeProbeResult = {
   passed: boolean
+  state?: 'healthy' | 'failed' | 'not_configured' | 'unobservable'
   summary: string
   severity?: 'low' | 'medium' | 'high' | 'critical'
   evidence?: Record<string, Json | undefined>
@@ -145,12 +146,41 @@ const contains = (body: string, pattern: RegExp) => pattern.test(body)
 const pass = (
   summary: string,
   evidence?: SiteForgeProbeResult['evidence']
-): SiteForgeProbeResult => ({ passed: true, summary, evidence })
+): SiteForgeProbeResult => ({
+  passed: true,
+  state: 'healthy',
+  summary,
+  evidence,
+})
+const notConfigured = (
+  summary: string,
+  evidence?: SiteForgeProbeResult['evidence']
+): SiteForgeProbeResult => ({
+  passed: true,
+  state: 'not_configured',
+  summary,
+  evidence: { applicable: false, ...evidence },
+})
+const unobservable = (
+  summary: string,
+  evidence?: SiteForgeProbeResult['evidence']
+): SiteForgeProbeResult => ({
+  passed: true,
+  state: 'unobservable',
+  summary,
+  evidence: { applicable: false, ...evidence },
+})
 const fail = (
   summary: string,
   severity: NonNullable<SiteForgeProbeResult['severity']>,
   evidence?: SiteForgeProbeResult['evidence']
-): SiteForgeProbeResult => ({ passed: false, summary, severity, evidence })
+): SiteForgeProbeResult => ({
+  passed: false,
+  state: 'failed',
+  summary,
+  severity,
+  evidence,
+})
 
 export function declaredSiteForgePagePaths(value: unknown): string[] {
   if (!Array.isArray(value)) return []
@@ -265,7 +295,7 @@ export function createDefaultSiteForgeHealthProbes(): SiteForgeHealthProbes {
           markup: match[0],
         }))
       )
-      if (!forms.length) return pass('No production forms are configured', { applicable: false })
+      if (!forms.length) return notConfigured('No production forms are configured')
       const invalid = forms.filter(form => {
         const action =
           form.markup.match(/\baction=["']([^"']+)["']/i)?.[1] ||
@@ -291,32 +321,33 @@ export function createDefaultSiteForgeHealthProbes(): SiteForgeHealthProbes {
     widget: async context => {
       const { body } = await context.document()
       const configured = contains(body, /lumaleasing|p11[-_ ]?widget/i)
-      return pass(
-        configured ? 'Leasing widget marker is present' : 'Leasing widget is not configured',
-        { applicable: configured }
-      )
+      return configured
+        ? pass('Leasing widget marker is present', { applicable: true })
+        : notConfigured('Leasing widget is not configured')
     },
     tours: async context => {
       const { body } = await context.document()
       const configured = contains(body, /schedule[^<]{0,20}tour|tour[-_/ ]?request/i)
-      return pass(configured ? 'Tour conversion path is present' : 'Tour path is not configured', {
-        applicable: configured,
-      })
+      return configured
+        ? pass('Tour conversion path is present', { applicable: true })
+        : notConfigured('Tour path is not configured')
     },
     inventory: async context => {
       const { body } = await context.document()
-      const configured = contains(body, /availability|floor[- ]?plans?|unit[-_ ]?inventory/i)
-      return pass(
-        configured ? 'Inventory or floor-plan surface is present' : 'Inventory is not configured',
-        { applicable: configured }
+      const configured = contains(
+        body,
+        /availability|floor[- ]?plans?|home[- ]?plans?|quick[- ]?move[- ]?in|homesites?|unit[-_ ]?inventory|home[-_ ]?inventory/i
       )
+      return configured
+        ? pass('Inventory or offering surface is present', { applicable: true })
+        : notConfigured('Inventory is not configured')
     },
     connector_freshness: async context => {
       const connectors = context.connectors || []
       if (!connectors.length) {
-        return pass('No production connector freshness contracts are configured', {
-          applicable: false,
-        })
+        return notConfigured(
+          'No production connector freshness contracts are configured'
+        )
       }
       const now = Date.now()
       const stale = connectors.filter(connector => {
@@ -446,7 +477,7 @@ export function createDefaultSiteForgeHealthProbes(): SiteForgeHealthProbes {
     },
     identity: async context => {
       if (!context.artifactId) {
-        return pass('No promoted artifact identifier is recorded', { applicable: false })
+        return unobservable('No promoted artifact identifier is recorded')
       }
       const { body, headers } = await context.document()
       const remoteArtifactId =
@@ -475,12 +506,12 @@ export function createDefaultSiteForgeHealthProbes(): SiteForgeHealthProbes {
         ? fail('Production runtime reports a degraded state', 'critical', {
             runtimeStatus,
           })
-        : pass(
-            runtimeStatus
-              ? 'Production runtime reports healthy'
-              : 'Runtime health contract is not exposed',
-            { applicable: Boolean(runtimeStatus), runtimeStatus }
-          )
+        : runtimeStatus
+          ? pass('Production runtime reports healthy', {
+              applicable: true,
+              runtimeStatus,
+            })
+          : unobservable('Runtime health contract is not exposed')
     },
     plugin_vulnerabilities: async context => {
       const { body, headers } = await context.document()
@@ -491,12 +522,12 @@ export function createDefaultSiteForgeHealthProbes(): SiteForgeHealthProbes {
       const count = raw === null ? null : Number(raw)
       return count !== null && Number.isFinite(count) && count > 0
         ? fail('Production reports vulnerable runtime plugins', 'critical', { count })
-        : pass(
-            count === null
-              ? 'Plugin vulnerability contract is not exposed'
-              : 'No plugin vulnerabilities are reported',
-            { applicable: count !== null, count }
-          )
+        : count === null
+          ? unobservable('Plugin vulnerability contract is not exposed')
+          : pass('No plugin vulnerabilities are reported', {
+              applicable: true,
+              count,
+            })
     },
     expiring_specials: async context => {
       const documents = await context.documents()
@@ -518,7 +549,7 @@ export function createDefaultSiteForgeHealthProbes(): SiteForgeHealthProbes {
     },
     content_drift: async context => {
       if (!context.contentHash) {
-        return pass('No promoted content hash is recorded', { applicable: false })
+        return unobservable('No promoted content hash is recorded')
       }
       const { body, headers } = await context.document()
       const remoteHash =

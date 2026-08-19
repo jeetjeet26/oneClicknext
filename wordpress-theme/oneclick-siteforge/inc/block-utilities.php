@@ -19,10 +19,52 @@ function oneclick_get_block_wrapper_attributes( $block, $extra_attrs = array() )
 	);
 
 	$block_name = isset( $block['name'] ) ? $block['name'] : '';
+	if ( $block_name ) {
+		$attrs['data-siteforge-block'] = $block_name;
+	}
+	$siteforge_section_id = $block['siteforgeSectionId'] ?? ( $block['data']['_siteforge_section_id'] ?? '' );
+	if ( $siteforge_section_id ) {
+		$resource_id = (string) $siteforge_section_id;
+		$section_id  = preg_replace( '/^section:[^:]+:/', '', $resource_id );
+		$attrs['data-siteforge-resource'] = $resource_id;
+		$attrs['data-siteforge-section-id'] = $section_id;
+	}
 	$variant    = oneclick_get_block_field( 'variant', $block, '' );
 	$catalog    = oneclick_siteforge_variant_catalog();
 	if ( isset( $catalog[ $block_name ] ) && in_array( $variant, $catalog[ $block_name ], true ) ) {
 		$attrs['class'] .= ' variant-' . sanitize_html_class( $variant );
+	}
+	$presentation = oneclick_get_block_field( '_siteforge_presentation', $block, array() );
+	if ( is_array( $presentation ) ) {
+		$presentation_values = array(
+			'containerMode' => array( 'contained', 'full-width', 'full-bleed' ),
+			'alignment' => array( 'left', 'center', 'right', 'stretch' ),
+			'widthPreset' => array( 'narrow', 'content', 'wide', 'full' ),
+			'spacingPreset' => array( 'none', 'compact', 'standard', 'spacious' ),
+			'typographyPreset' => array( 'default', 'editorial', 'display', 'compact' ),
+			'motionPreset' => array( 'none', 'subtle', 'expressive' ),
+		);
+		$safe_presentation = array();
+		foreach ( $presentation_values as $field => $allowed ) {
+			if ( isset( $presentation[ $field ] ) && in_array( $presentation[ $field ], $allowed, true ) ) {
+				$safe_presentation[ $field ] = $presentation[ $field ];
+				$attrs['class'] .= ' presentation-' . sanitize_html_class( $field ) . '-' . sanitize_html_class( $presentation[ $field ] );
+			}
+		}
+		foreach ( array( 'mobile', 'tablet', 'desktop', 'wide' ) as $breakpoint ) {
+			$override = $presentation['breakpointOverrides'][ $breakpoint ] ?? null;
+			if ( ! is_array( $override ) ) {
+				continue;
+			}
+			foreach ( $presentation_values as $field => $allowed ) {
+				if ( isset( $override[ $field ] ) && in_array( $override[ $field ], $allowed, true ) ) {
+					$safe_presentation['breakpointOverrides'][ $breakpoint ][ $field ] = $override[ $field ];
+				}
+			}
+		}
+		if ( ! empty( $safe_presentation ) ) {
+			$attrs['data-siteforge-presentation'] = wp_json_encode( $safe_presentation, JSON_UNESCAPED_SLASHES );
+		}
 	}
 	if ( ! empty( $block['className'] ) ) {
 		foreach ( preg_split( '/\s+/', (string) $block['className'] ) as $class_name ) {
@@ -37,6 +79,9 @@ function oneclick_get_block_wrapper_attributes( $block, $extra_attrs = array() )
 	}
 	if ( ! empty( $block['anchor'] ) ) {
 		$attrs['id'] = $block['anchor'];
+		if ( empty( $attrs['data-siteforge-section-id'] ) && 0 === strpos( $block['anchor'], 'anchor:' ) ) {
+			$attrs['data-siteforge-section-id'] = substr( $block['anchor'], 7 );
+		}
 	} elseif ( ! empty( $block['id'] ) ) {
 		$attrs['id'] = $block['id'];
 	}
@@ -68,6 +113,12 @@ function oneclick_get_block_wrapper_attributes( $block, $extra_attrs = array() )
 		unset( $extra_attrs['class'] );
 	}
 	$attrs = array_merge( $attrs, $extra_attrs );
+	if ( $siteforge_section_id ) {
+		$attrs = array_merge(
+			$attrs,
+			oneclick_siteforge_target_attribute_map( $block, 'section', (string) $siteforge_section_id, '' )
+		);
+	}
 	$attrs['class'] = implode( ' ', array_unique( preg_split( '/\s+/', trim( $attrs['class'] ) ) ) );
 
 	$output = '';
@@ -80,6 +131,82 @@ function oneclick_get_block_wrapper_attributes( $block, $extra_attrs = array() )
 	}
 
 	return $output;
+}
+
+/**
+ * Build one exact nested target identity. Missing identities fail closed and
+ * produce no target attributes; positional/index identities are forbidden.
+ */
+function oneclick_siteforge_target_attribute_map( $block, $kind, $local_id, $display_value = '', $parent_kind = '', $parent_id = '' ) {
+	$allowed = array( 'section', 'headline', 'image', 'cta', 'repeater_item', 'form_control' );
+	if (
+		! in_array( $kind, $allowed, true ) ||
+		! is_string( $local_id ) ||
+		! preg_match( '/^[A-Za-z0-9][A-Za-z0-9._:-]*$/', $local_id )
+	) {
+		return array();
+	}
+	$page_id = (string) get_post_meta( get_the_ID(), '_siteforge_v3_resource_id', true );
+	$section_id = is_array( $block )
+		? (string) ( $block['siteforgeSectionId'] ?? ( $block['data']['_siteforge_section_id'] ?? '' ) )
+		: '';
+	if ( ! preg_match( '/^page:[A-Za-z0-9._:-]+$/', $page_id ) || ! preg_match( '/^section:[A-Za-z0-9._:-]+$/', $section_id ) ) {
+		return array();
+	}
+	$path = array(
+		array( 'kind' => 'page', 'id' => $page_id ),
+		array( 'kind' => 'section', 'id' => $section_id ),
+	);
+	if (
+		'repeater_item' === $parent_kind &&
+		is_string( $parent_id ) &&
+		preg_match( '/^[A-Za-z0-9][A-Za-z0-9._:-]*$/', $parent_id )
+	) {
+		$path[] = array( 'kind' => 'repeater_item', 'id' => $parent_id );
+	}
+	if ( 'section' !== $kind ) {
+		$path[] = array( 'kind' => $kind, 'id' => $local_id );
+	}
+	$target_id = implode(
+		'/',
+		array_map(
+			static function ( $segment ) {
+				return $segment['kind'] . ':' . $segment['id'];
+			},
+			$path
+		)
+	);
+	return array(
+		'data-siteforge-target-id'    => $target_id,
+		'data-siteforge-target-kind'  => $kind,
+		'data-siteforge-resource-path'=> wp_json_encode( $path, JSON_UNESCAPED_SLASHES ),
+		'data-siteforge-display-value'=> wp_strip_all_tags( (string) $display_value ),
+	);
+}
+
+function oneclick_siteforge_target_attributes( $block, $kind, $local_id, $display_value = '', $parent_kind = '', $parent_id = '' ) {
+	$output = '';
+	foreach ( oneclick_siteforge_target_attribute_map( $block, $kind, $local_id, $display_value, $parent_kind, $parent_id ) as $key => $value ) {
+		$output .= ' ' . esc_attr( $key ) . '="' . esc_attr( $value ) . '"';
+	}
+	return $output;
+}
+
+/**
+ * Repeater identities must be explicit and persist with the data. Never use a
+ * rendered position as identity.
+ */
+function oneclick_siteforge_repeater_item_id( $item ) {
+	if ( ! is_array( $item ) ) {
+		return '';
+	}
+	foreach ( array( 'target_id', 'itemId', 'item_id', 'id', 'fieldId' ) as $key ) {
+		$value = $item[ $key ] ?? '';
+		if ( is_string( $value ) && preg_match( '/^[A-Za-z0-9][A-Za-z0-9._:-]*$/', $value ) ) {
+			return $value;
+		}
+	}
+	return '';
 }
 
 /**
@@ -138,6 +265,13 @@ function oneclick_siteforge_variant_catalog() {
 		'acf/poi'                => array( 'narrative', 'map-list', 'editorial' ),
 		'acf/testimonials'       => array( 'cards', 'spotlight', 'carousel' ),
 		'acf/menu'               => array( 'standard', 'sticky-cta' ),
+		'acf/offering-browser'   => array( 'cards', 'list', 'availability' ),
+		'acf/entity-directory'   => array( 'cards', 'map', 'grouped' ),
+		'acf/comparison-table'   => array( 'table', 'cards', 'compact' ),
+		'acf/timeline'           => array( 'vertical', 'horizontal', 'milestones' ),
+		'acf/document-library'   => array( 'list', 'cards', 'grouped' ),
+		'acf/events-directory'   => array( 'cards', 'calendar', 'list' ),
+		'acf/governed-component' => array( 'governed' ),
 	);
 }
 

@@ -5,6 +5,10 @@ import { createServiceClient } from '@/utils/supabase/admin'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { createRequestContext } from '@/utils/services/request-context'
 import { confirmFloorPlanImport } from '@/utils/siteforge/providers/floor-plan-repository'
+import {
+  archiveMissingPropertyConsoleFloorPlans,
+  PROPERTY_CONSOLE_SOURCE_IDENTITY,
+} from '@/utils/siteforge/providers/manual-floor-plan-workflow'
 
 const requestSchema = z.object({
   propertyId: z.guid(),
@@ -38,7 +42,7 @@ export async function POST(request: NextRequest) {
       )
     }
     const access = await validatePropertyAccess(user.id, parsed.data.propertyId)
-    if (!access.authorized) {
+    if (!access.authorized || !access.orgId) {
       return NextResponse.json(
         { error: 'Forbidden' },
         { status: 403, headers: ctx.responseHeaders }
@@ -48,9 +52,10 @@ export async function POST(request: NextRequest) {
     const service = createServiceClient()
     const { data: importRecord, error: importError } = await service
       .from('property_unit_imports')
-      .select('id, property_id, status, error_count')
+      .select('id, org_id, property_id, status, error_count, source_type, source_identity')
       .eq('id', parsed.data.importId)
       .eq('property_id', parsed.data.propertyId)
+      .eq('org_id', access.orgId)
       .single()
     if (importError || !importRecord) {
       return NextResponse.json(
@@ -72,6 +77,19 @@ export async function POST(request: NextRequest) {
     }
 
     const result = await confirmFloorPlanImport(importRecord.id, user.id, service)
+    if (
+      importRecord.source_type === 'manual' &&
+      importRecord.source_identity === PROPERTY_CONSOLE_SOURCE_IDENTITY
+    ) {
+      await archiveMissingPropertyConsoleFloorPlans(
+        {
+          propertyId: parsed.data.propertyId,
+          importId: importRecord.id,
+          orgId: access.orgId,
+        },
+        service
+      )
+    }
     ctx.logSuccess(200, {
       importId: importRecord.id,
       applied: result.applied,

@@ -732,24 +732,38 @@ export function PropertyAssetsStep({
                     }
                     className="sm:col-span-3"
                   />
-                  <AssetInput
-                    label="Availability URL"
-                    type="url"
-                    value={row.availabilityUrl}
-                    onChange={(value) =>
-                      updateFloorPlan(row.id, 'availabilityUrl', value)
-                    }
-                    className="sm:col-span-2"
-                  />
-                  <AssetInput
-                    label="Apply URL"
-                    type="url"
-                    value={row.applyUrl}
-                    onChange={(value) =>
-                      updateFloorPlan(row.id, 'applyUrl', value)
-                    }
-                    className="sm:col-span-2"
-                  />
+                  <details className="rounded-md border bg-muted/10 sm:col-span-4">
+                    <summary className="cursor-pointer px-3 py-2 text-xs font-semibold">
+                      External provider links (optional)
+                    </summary>
+                    <div className="border-t p-3">
+                      <p className="mb-3 text-xs leading-5 text-muted-foreground">
+                        Only add these when a PMS, CRM, or existing leasing
+                        provider already hosts the destination. SiteForge does
+                        not expect a new website URL before the site is built.
+                      </p>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <AssetInput
+                          label="External availability URL"
+                          type="url"
+                          value={row.availabilityUrl}
+                          onChange={(value) =>
+                            updateFloorPlan(row.id, 'availabilityUrl', value)
+                          }
+                          placeholder="https://provider.example.com/availability"
+                        />
+                        <AssetInput
+                          label="External application URL"
+                          type="url"
+                          value={row.applyUrl}
+                          onChange={(value) =>
+                            updateFloorPlan(row.id, 'applyUrl', value)
+                          }
+                          placeholder="https://provider.example.com/apply"
+                        />
+                      </div>
+                    </div>
+                  </details>
                 </div>
                 <div className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
                   <AssetInput

@@ -22,21 +22,26 @@ if ( empty( $slides ) ) {
 	<div class="swiper-wrapper">
 		<?php
 		foreach ( $slides as $slide ) {
+			$slide_id = oneclick_siteforge_repeater_item_id( $slide );
 			$headline = $slide['headline'] ?? '';
 			$subheadline = $slide['subheadline'] ?? '';
 			$cta_text = $slide['cta_text'] ?? '';
 			$cta_link = $slide['cta_link'] ?? '';
 			$image = $slide['image'] ?? '';
+			$image_target_attrs = oneclick_siteforge_target_attribute_map( $block, 'image', 'image', $headline, 'repeater_item', $slide_id );
 			?>
-			<div class="swiper-slide<?php echo empty( $image ) ? ' is-placeholder' : ''; ?>">
+			<div class="swiper-slide<?php echo empty( $image ) ? ' is-placeholder' : ''; ?>"<?php echo oneclick_siteforge_target_attributes( $block, 'repeater_item', $slide_id, $headline ); ?>>
 				<?php
 				if ( ! empty( $image ) ) {
 					echo oneclick_get_image_html(
 						$image,
 						'full',
-						array(
-							'class' => oneclick_is_placeholder_image( $image ) ? 'slide-image is-placeholder-image' : 'slide-image',
-							'alt'   => $headline,
+						array_merge(
+							array(
+								'class' => oneclick_is_placeholder_image( $image ) ? 'slide-image is-placeholder-image' : 'slide-image',
+								'alt'   => $headline,
+							),
+							$image_target_attrs
 						)
 					);
 				} else {
@@ -53,7 +58,7 @@ if ( empty( $slides ) ) {
 						<?php
 						if ( ! empty( $headline ) ) {
 							?>
-							<h2 class="slide-headline"><?php echo wp_kses_post( $headline ); ?></h2>
+							<h2 class="slide-headline"<?php echo oneclick_siteforge_target_attributes( $block, 'headline', 'headline', $headline, 'repeater_item', $slide_id ); ?>><?php echo wp_kses_post( $headline ); ?></h2>
 							<?php
 						}
 
@@ -66,7 +71,7 @@ if ( empty( $slides ) ) {
 						if ( ! empty( $cta_text ) && ! empty( $cta_link ) ) {
 							?>
 							<div class="slide-cta">
-								<a href="<?php echo esc_url( $cta_link ); ?>" class="btn btn-primary">
+								<a href="<?php echo esc_url( $cta_link ); ?>" class="btn btn-primary"<?php echo oneclick_siteforge_target_attributes( $block, 'cta', 'primary', $cta_text, 'repeater_item', $slide_id ); ?>>
 									<?php echo esc_html( $cta_text ); ?>
 								</a>
 							</div>

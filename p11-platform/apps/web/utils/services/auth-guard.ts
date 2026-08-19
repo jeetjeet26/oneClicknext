@@ -15,7 +15,25 @@ import { createClient } from '@/utils/supabase/server'
 export interface AccessResult {
   authorized: boolean
   orgId?: string
+  role?: string | null
+  capability?: string
   error?: string
+}
+
+export const SITEFORGE_OWNER_OPERATOR_CAPABILITY =
+  'siteforge.owner_operator' as const
+export const SITEFORGE_OWNER_OPERATOR_ROLES = ['admin', 'manager'] as const
+
+export function hasSiteForgeOwnerOperatorCapability(input: {
+  tenantAuthorized: boolean
+  role: string | null | undefined
+}): boolean {
+  return (
+    input.tenantAuthorized &&
+    SITEFORGE_OWNER_OPERATOR_ROLES.includes(
+      input.role as (typeof SITEFORGE_OWNER_OPERATOR_ROLES)[number]
+    )
+  )
 }
 
 /**
@@ -123,6 +141,85 @@ export async function validatePropertyManagerAccess(
   }
 
   return { authorized: true, orgId: profile.org_id }
+}
+
+/**
+ * Canonical SiteForge owner/operator capability.
+ *
+ * The live schema has organization-scoped profiles and properties, not a
+ * separate mutable website-owner column. Authority therefore derives from the
+ * exact tenant ownership chain plus the existing admin/manager operator role.
+ */
+export async function validateSiteForgeOwnerOperatorAccess(
+  userId: string,
+  propertyId: string
+): Promise<AccessResult> {
+  if (!userId || !propertyId) {
+    return {
+      authorized: false,
+      capability: SITEFORGE_OWNER_OPERATOR_CAPABILITY,
+      error: 'Missing userId or propertyId',
+    }
+  }
+
+  let supabase:
+    | ReturnType<typeof createServiceClient>
+    | Awaited<ReturnType<typeof createClient>>
+  try {
+    supabase = createServiceClient()
+  } catch {
+    supabase = await createClient()
+  }
+  const [{ data: profile, error: profileError }, { data: property, error: propertyError }] =
+    await Promise.all([
+      supabase
+        .from('profiles')
+        .select('org_id, role')
+        .eq('id', userId)
+        .single(),
+      supabase
+        .from('properties')
+        .select('org_id')
+        .eq('id', propertyId)
+        .single(),
+    ])
+  if (profileError || !profile?.org_id) {
+    return {
+      authorized: false,
+      capability: SITEFORGE_OWNER_OPERATOR_CAPABILITY,
+      error: 'User profile not found or missing org',
+    }
+  }
+  if (propertyError || !property?.org_id) {
+    return {
+      authorized: false,
+      capability: SITEFORGE_OWNER_OPERATOR_CAPABILITY,
+      error: 'Property not found',
+    }
+  }
+  const tenantAuthorized = profile.org_id === property.org_id
+  if (
+    !hasSiteForgeOwnerOperatorCapability({
+      tenantAuthorized,
+      role: profile.role,
+    })
+  ) {
+    return {
+      authorized: false,
+      orgId: tenantAuthorized ? profile.org_id : undefined,
+      role: profile.role,
+      capability: SITEFORGE_OWNER_OPERATOR_CAPABILITY,
+      error: tenantAuthorized
+        ? 'Requires SiteForge owner/operator capability'
+        : 'Forbidden',
+    }
+  }
+  return {
+    authorized: true,
+    orgId: profile.org_id,
+    role: profile.role,
+    capability: SITEFORGE_OWNER_OPERATOR_CAPABILITY,
+  }
 }
 
 /**

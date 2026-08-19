@@ -25,7 +25,7 @@ $has_social_links = (bool) array_filter( $social_links );
 
 		</div>
 
-		<footer id="colophon" class="site-footer" data-layout="<?php echo esc_attr( $siteforge_footer['layout'] ?? 'columns' ); ?>">
+		<footer id="colophon" class="site-footer" data-layout="<?php echo esc_attr( $siteforge_footer['layout'] ?? 'columns' ); ?>" data-siteforge-resource="component:footer" data-siteforge-target-id="footer:component:footer" data-siteforge-target-kind="footer" data-siteforge-resource-path="<?php echo esc_attr( wp_json_encode( array( array( 'kind' => 'footer', 'id' => 'component:footer' ) ), JSON_UNESCAPED_SLASHES ) ); ?>" data-siteforge-display-value="Site footer">
 			<div class="site-footer-content site-container">
 				<div class="footer-grid">
 					<div class="footer-section footer-about">
@@ -134,9 +134,11 @@ $has_social_links = (bool) array_filter( $social_links );
 					<?php if ( is_array( $siteforge_v3_legal ) && ! empty( $siteforge_v3_legal ) ) { ?>
 						<div class="footer-legal-surfaces">
 							<?php foreach ( $siteforge_v3_legal as $policy ) { ?>
-								<?php if ( ! in_array( $policy['policyType'] ?? '', array( 'privacy', 'terms', 'accessibility', 'fair_housing', 'pricing_disclaimer' ), true ) ) { continue; } ?>
 								<details data-siteforge-legal-resource="<?php echo esc_attr( $policy['resourceId'] ?? '' ); ?>">
 									<summary><?php echo esc_html( ucwords( str_replace( '_', ' ', $policy['policyType'] ) ) ); ?></summary>
+									<?php if ( ! empty( $policy['effectiveAt'] ) ) { ?>
+										<p><small><?php esc_html_e( 'Effective', 'oneclick-siteforge' ); ?> <time datetime="<?php echo esc_attr( $policy['effectiveAt'] ); ?>"><?php echo esc_html( substr( $policy['effectiveAt'], 0, 10 ) ); ?></time></small></p>
+									<?php } ?>
 									<div><?php echo wp_kses_post( wpautop( $policy['body'] ?? '' ) ); ?></div>
 								</details>
 							<?php } ?>

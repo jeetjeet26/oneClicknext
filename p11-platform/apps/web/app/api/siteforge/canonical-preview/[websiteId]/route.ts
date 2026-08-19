@@ -12,6 +12,7 @@ import {
   auroraOwnedMetadata,
   AuroraLifecycleControlError,
 } from '@/utils/siteforge/testing/aurora-lifecycle-control'
+import { canonicalPreviewDedupeKey } from '@/utils/siteforge/workflows/canonical-preview-queue'
 
 const requestSchema = z.object({
   artifactId: z.string().uuid(),
@@ -77,7 +78,7 @@ export async function GET(
     const { data: job, error: jobError } = await service
       .from('shared_jobs')
       .select(
-        'id, lifecycle_status, status_reason, stage, progress, current_step, output, error_message, error_details, created_at, updated_at, finished_at'
+        'id, lifecycle_status, status_reason, stage, progress, current_step, output, error_message, error_details, attempt_count, max_attempts, queued_at, started_at, heartbeat_at, created_at, updated_at, finished_at'
       )
       .eq('id', parsed.data.jobId)
       .eq('domain', 'siteforge.preview')
@@ -101,9 +102,19 @@ export async function GET(
         output: job.output,
         error: job.error_message,
         errorDetails: job.error_details,
+        attemptCount: job.attempt_count,
+        maxAttempts: job.max_attempts,
+        queuedAt: job.queued_at,
+        startedAt: job.started_at,
+        heartbeatAt: job.heartbeat_at,
         createdAt: job.created_at,
         updatedAt: job.updated_at,
         finishedAt: job.finished_at,
+        elapsedMs: Math.max(
+          0,
+          Date.parse(job.finished_at || new Date().toISOString()) -
+            Date.parse(job.started_at || job.queued_at)
+        ),
       },
       {
         headers: {
@@ -349,7 +360,10 @@ export async function POST(
       )
     }
 
-    const dedupeKey = `siteforge-preview:${artifact.id}:${artifact.content_hash}`
+    const dedupeKey = canonicalPreviewDedupeKey(
+      artifact.id,
+      artifact.content_hash
+    )
     const { data: existing } = await service
       .from('shared_jobs')
       .select(

@@ -1,0 +1,48 @@
+name: SiteForge Vertical V2
+
+on:
+  pull_request:
+    paths:
+      - "p11-platform/apps/web/**"
+      - "p11-platform/supabase/**"
+      - "wordpress-theme/oneclick-siteforge/**"
+      - ".github/workflows/siteforge-vertical-v2.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: p11-platform/apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: p11-platform/apps/web/package-lock.json
+      - run: npm ci
+      - name: Reset local Supabase and run pgTAP
+        working-directory: p11-platform
+        run: |
+          npm run supabase:start
+          npm run supabase:reset
+          npm run test:db:vertical
+      - run: npm run siteforge:verticals:qualify
+      - run: npm run check:schema-types-sync
+      - run: npm run check:schema-truth
+      - run: npm run check:foundation
+      - run: npm run siteforge:artifacts:drift-check
+      - run: npm run build
+      - name: Validate Vertical V2 PHP blocks
+        working-directory: .
+        run: |
+          php -l wordpress-theme/oneclick-siteforge/functions.php
+          php -l wordpress-theme/oneclick-siteforge/inc/rest-api.php
+          php -l wordpress-theme/oneclick-siteforge/inc/block-utilities.php
+          for file in wordpress-theme/oneclick-siteforge/blocks/*.php; do php -l "$file"; done

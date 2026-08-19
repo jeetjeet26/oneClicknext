@@ -179,6 +179,13 @@ export const ACF_BLOCK_TYPES = [
   'acf/plans-availability',
   'acf/poi',
   'acf/testimonials',
+  'acf/offering-browser',
+  'acf/entity-directory',
+  'acf/comparison-table',
+  'acf/timeline',
+  'acf/document-library',
+  'acf/events-directory',
+  'acf/governed-component',
 ] as const
 
 export const acfBlockTypeSchema = z.enum(ACF_BLOCK_TYPES)
@@ -220,7 +227,7 @@ export const SITEFORGE_BLOCK_CAPABILITIES = {
     ],
   },
   'acf/form': { variants: ['card', 'split', 'minimal'] },
-  'acf/map': { variants: ['standard', 'immersive'] },
+  'acf/map': { variants: ['standard', 'immersive', 'centered'] },
   'acf/html-section': { variants: ['contained', 'full-width'] },
   'acf/gallery': {
     variants: [
@@ -236,6 +243,13 @@ export const SITEFORGE_BLOCK_CAPABILITIES = {
   'acf/plans-availability': { variants: ['cards', 'details', 'preleasing'] },
   'acf/poi': { variants: ['narrative', 'map-list', 'editorial'] },
   'acf/testimonials': { variants: ['cards', 'spotlight', 'carousel'] },
+  'acf/offering-browser': { variants: ['cards', 'list', 'availability'] },
+  'acf/entity-directory': { variants: ['cards', 'map', 'grouped'] },
+  'acf/comparison-table': { variants: ['table', 'cards', 'compact'] },
+  'acf/timeline': { variants: ['vertical', 'horizontal', 'milestones'] },
+  'acf/document-library': { variants: ['list', 'cards', 'grouped'] },
+  'acf/events-directory': { variants: ['cards', 'calendar', 'list'] },
+  'acf/governed-component': { variants: ['governed'] },
 } as const satisfies Record<
   ACFBlockType,
   { readonly variants: readonly string[] }
@@ -260,6 +274,44 @@ export const siteForgeCssClassSchema = z
     'CSS classes must be plain class identifiers'
   )
 
+const sectionPresentationBaseShape = {
+  containerMode: z.enum(['contained', 'full-width', 'full-bleed']),
+  alignment: z.enum(['left', 'center', 'right', 'stretch']),
+  widthPreset: z.enum(['narrow', 'content', 'wide', 'full']),
+  spacingPreset: z.enum(['none', 'compact', 'standard', 'spacious']),
+  typographyPreset: z.enum(['default', 'editorial', 'display', 'compact']),
+  motionPreset: z.enum(['none', 'subtle', 'expressive']),
+}
+
+export const sectionPresentationBreakpointOverrideSchema = z
+  .object(sectionPresentationBaseShape)
+  .partial()
+  .strict()
+  .refine(value => Object.keys(value).length > 0, {
+    message: 'A breakpoint override requires at least one presentation field',
+  })
+
+export const sectionPresentationSchema = z
+  .object({
+    ...sectionPresentationBaseShape,
+    breakpointOverrides: z
+      .object({
+        mobile: sectionPresentationBreakpointOverrideSchema.optional(),
+        tablet: sectionPresentationBreakpointOverrideSchema.optional(),
+        desktop: sectionPresentationBreakpointOverrideSchema.optional(),
+        wide: sectionPresentationBreakpointOverrideSchema.optional(),
+      })
+      .partial()
+      .strict()
+      .optional(),
+  })
+  .partial()
+  .strict()
+  .refine(value => Object.keys(value).length > 0, {
+    message: 'Section presentation requires at least one field',
+  })
+export type SectionPresentation = z.infer<typeof sectionPresentationSchema>
+
 // Section in a page (canonical: generation, preview, edit, and deploy all
 // consume this shape; `acfBlock` is the single source of block identity)
 const pageSectionObjectSchema = z.object({
@@ -276,6 +328,7 @@ const pageSectionObjectSchema = z.object({
   fields: z.record(z.string(), z.unknown()).optional(), // structured ACF field hints
   photoRequirement: z.unknown().optional(), // photo needs from architecture planning
   evidenceIds: z.array(z.string()).optional(), // trusted source records supporting factual copy
+  presentation: sectionPresentationSchema.optional(),
 })
 
 function addSectionCapabilityIssues(
@@ -318,6 +371,12 @@ export const generatedPageSchema = z.object({
 })
 export type GeneratedPage = z.infer<typeof generatedPageSchema>
 
+// V3 keeps the deployable page shape compatible with the existing semantic
+// editor/runtime. Full JSON-LD objects remain pinned in the confirmed Plan V2
+// and are compiled into runtime resources separately.
+export const generatedPageV3Schema = generatedPageSchema
+export type GeneratedPageV3 = z.infer<typeof generatedPageV3Schema>
+
 const urlOrPathSchema = z.string().min(1).refine(
   value =>
     (value.startsWith('/') && !value.startsWith('//')) ||
@@ -332,6 +391,23 @@ export const navigationItemSchema = z.object({
   parentId: z.string().min(1).optional(),
   external: z.boolean().optional(),
 }).strict()
+
+export const siteForgeRedirectPlanSchema = z
+  .object({
+    sourcePath: z
+      .string()
+      .regex(/^\/(?:[a-z0-9]+(?:-[a-z0-9]+)*\/?)?$/),
+    destination: z
+      .string()
+      .regex(/^\/(?:[a-z0-9]+(?:-[a-z0-9]+)*\/?)?$/),
+    statusCode: z.union([z.literal(301), z.literal(302), z.literal(307), z.literal(308)]),
+    preserveQuery: z.boolean(),
+  })
+  .strict()
+  .refine(redirect => redirect.sourcePath !== redirect.destination, {
+    message: 'Redirect source and destination must differ',
+  })
+export type SiteForgeRedirectPlan = z.infer<typeof siteForgeRedirectPlanSchema>
 
 export const siteConfigurationSchema = z.object({
   design: z.object({
@@ -507,9 +583,10 @@ export interface PropertyWebsite {
 // Canonical blueprint: the single deployable artifact for preview/edit/deploy.
 // The agentic metadata fields are optional and loosely typed here; the
 // orchestrator narrows them (see OrchestratorBlueprint in agents/orchestrator.ts).
-export const siteBlueprintSchema = z.object({
+export const siteBlueprintV1Schema = z.object({
   version: z.number(),
   pages: z.array(generatedPageSchema),
+  runtimeRedirects: z.array(siteForgeRedirectPlanSchema).max(2_000).optional(),
   updatedAt: z.string().optional(),
   propertyId: z.string().optional(),
   propertySnapshot: z.unknown().optional(),
@@ -525,6 +602,62 @@ export const siteBlueprintSchema = z.object({
     .array(z.object({ agent: z.string(), action: z.string(), timestamp: z.string() }))
     .optional(),
 })
+
+const blueprintSha256Schema = z.string().regex(/^[a-f0-9]{64}$/)
+export const siteBlueprintV3Schema = z
+  .object({
+    schemaVersion: z.literal(3),
+    version: z.number().int().positive(),
+    pages: z.array(generatedPageV3Schema).min(1),
+    runtimeRedirects: z.array(siteForgeRedirectPlanSchema).max(2_000).optional(),
+    updatedAt: z.string().datetime(),
+    propertyId: z.string(),
+    manifestPins: z
+      .object({
+        planContentHash: blueprintSha256Schema,
+        verticalProfileContentHash: blueprintSha256Schema,
+        verticalPackContentHash: blueprintSha256Schema,
+        subjectHierarchyContentHash: blueprintSha256Schema,
+        offeringCatalogContentHash: blueprintSha256Schema,
+        policySetContentHash: blueprintSha256Schema,
+        discoveryContentHash: blueprintSha256Schema,
+      })
+      .strict(),
+    propertySnapshot: z.unknown().optional(),
+    confirmedPlan: z.unknown(),
+    generationEvidence: z.unknown(),
+    brandContext: z.unknown().optional(),
+    architecture: z.unknown().optional(),
+    designSystem: z.unknown().optional(),
+    photoManifest: z.unknown().optional(),
+    qualityReport: z.unknown().optional(),
+    siteConfiguration: siteConfigurationSchema.optional(),
+    generationTime: z.number().optional(),
+    legal: z.unknown().optional(),
+    analytics: z.unknown().optional(),
+    wordpressThemeArtifact: z.unknown().optional(),
+    topologyDiff: z.unknown().optional(),
+    approvedBrief: z.unknown().optional(),
+    approvedCreativeDirection: z.unknown().optional(),
+    brandSnapshot: z.unknown().optional(),
+    onboardingSnapshot: z.unknown().optional(),
+    deterministicQualityReport: z.unknown().optional(),
+    agentLogs: z
+      .array(
+        z.object({
+          agent: z.string(),
+          action: z.string(),
+          timestamp: z.string(),
+        })
+      )
+      .optional(),
+  })
+  .strict()
+
+export const siteBlueprintSchema = z.union([
+  siteBlueprintV3Schema,
+  siteBlueprintV1Schema,
+])
 export type SiteBlueprint = z.infer<typeof siteBlueprintSchema>
 
 // LLM-driven editing API
@@ -674,6 +807,34 @@ const headerUpdateSchema = z.object({
 }).strict().refine(value => Object.keys(value).length > 0, {
   message: 'header.update requires at least one field',
 })
+const pageUpdateSchema = z.object({
+  title: generatedPageSchema.shape.title.optional(),
+  purpose: generatedPageSchema.shape.purpose.optional(),
+  priority: generatedPageSchema.shape.priority,
+  seo: generatedPageSchema.shape.seo.unwrap().partial().optional(),
+}).strict().refine(value => Object.keys(value).length > 0, {
+  message: 'page.update requires at least one field',
+})
+const sectionPresentationUpdateSchema = z
+  .object({
+    containerMode: sectionPresentationBaseShape.containerMode.optional(),
+    alignment: sectionPresentationBaseShape.alignment.optional(),
+    widthPreset: sectionPresentationBaseShape.widthPreset.optional(),
+    spacingPreset: sectionPresentationBaseShape.spacingPreset.optional(),
+    typographyPreset: sectionPresentationBaseShape.typographyPreset.optional(),
+    motionPreset: sectionPresentationBaseShape.motionPreset.optional(),
+    breakpointOverrides: z
+      .object({
+        mobile: sectionPresentationBreakpointOverrideSchema.optional(),
+        tablet: sectionPresentationBreakpointOverrideSchema.optional(),
+        desktop: sectionPresentationBreakpointOverrideSchema.optional(),
+        wide: sectionPresentationBreakpointOverrideSchema.optional(),
+      })
+      .partial()
+      .strict()
+      .optional(),
+  })
+  .strict()
 const sectionUpdateSchema = z.object({
   type: z.string().optional(),
   acfBlock: acfBlockTypeSchema.optional(),
@@ -684,6 +845,7 @@ const sectionUpdateSchema = z.object({
   purpose: z.string().optional(),
   fields: z.record(z.string(), z.unknown()).optional(),
   evidenceIds: z.array(z.string()).optional(),
+  presentation: sectionPresentationUpdateSchema.optional(),
 }).strict().refine(value => Object.keys(value).length > 0, {
   message: 'section.update requires at least one field',
 })
@@ -707,6 +869,23 @@ export const semanticBlueprintPatchOperationSchema = z.discriminatedUnion('op', 
     ...semanticOperationBase,
     op: z.literal('page.remove'),
     pageSlug: z.string().min(1),
+  }).strict(),
+  z.object({
+    ...semanticOperationBase,
+    op: z.literal('page.update'),
+    pageSlug: z.string().min(1),
+    value: pageUpdateSchema,
+  }).strict(),
+  z.object({
+    ...semanticOperationBase,
+    op: z.literal('page.move'),
+    pageSlug: z.string().min(1),
+    toOrder: z.number().int().min(1),
+  }).strict(),
+  z.object({
+    ...semanticOperationBase,
+    op: z.literal('redirect.upsert'),
+    redirect: siteForgeRedirectPlanSchema,
   }).strict(),
   z.object({
     ...semanticOperationBase,

@@ -41,7 +41,8 @@
       "type": "select",
       "choices": {
         "standard": "standard",
-        "immersive": "immersive"
+        "immersive": "immersive",
+        "centered": "centered"
       },
       "default_value": "standard"
     }

@@ -180,7 +180,7 @@ export const guidedPreparationCheckpointSchema = z.object({
   updatedAt: z.string().datetime(),
 });
 
-export const guidedJourneyStateSchema = z.object({
+export const guidedJourneyStateV1Schema = z.object({
   schemaVersion: z.literal(1),
   websiteId: z.string().min(1),
   propertyId: z.string().min(1),
@@ -214,11 +214,399 @@ export const guidedJourneyStateSchema = z.object({
   updatedAt: z.string().datetime(),
 });
 
+export const guidedDecisionControlSchema = z.enum([
+  "enum",
+  "multiselect",
+  "ranking",
+  "date",
+  "text",
+]);
+
+export const guidedDecisionAnswerSchemaSchema = z
+  .object({
+    type: z.enum(["string", "array", "date"]),
+    enum: z.array(text.max(240)).max(50).default([]),
+    minItems: z.number().int().nonnegative().optional(),
+    maxItems: z.number().int().positive().optional(),
+  })
+  .strict();
+
+export const guidedDecisionConditionSchema = z
+  .object({
+    path: z.string().trim().min(1).max(240),
+    operator: z.enum(["equals", "includes", "exists", "missing"]),
+    value: z.unknown().optional(),
+  })
+  .strict();
+
+export const guidedDecisionDefinitionSchema = z
+  .object({
+    id: z.string().trim().regex(/^[a-z][a-z0-9_.-]{2,239}$/),
+    packKey: z.string().trim().min(1).max(240),
+    label: text.max(240),
+    prompt: text,
+    hypothesis: text.max(3_000),
+    provenanceLabel: text.max(500),
+    control: guidedDecisionControlSchema,
+    answerSchema: guidedDecisionAnswerSchemaSchema,
+    options: z
+      .array(
+        z
+          .object({
+            value: text.max(240),
+            label: text.max(240),
+          })
+          .strict(),
+      )
+      .max(50)
+      .default([]),
+    when: z.array(guidedDecisionConditionSchema).max(20).default([]),
+    requiredWhen: z.array(guidedDecisionConditionSchema).max(20).default([]),
+    required: z.boolean(),
+    inference: z
+      .object({
+        strategy: z.enum([
+          "vertical_profile",
+          "pack_recipe",
+          "evidence",
+          "legacy_adapter",
+          "operator",
+        ]),
+        sourcePath: z.string().trim().min(1).max(240),
+      })
+      .strict(),
+    confidenceThreshold: z.number().min(0).max(1),
+    evidenceIds: z.array(z.string().trim().min(1).max(240)).max(50),
+    sensitivity: z.enum(["low", "personal", "regulated"]),
+    affectedPlanFields: z
+      .array(z.string().trim().min(1).max(240))
+      .max(30),
+    validation: z
+      .object({
+        code: z.string().trim().min(1).max(120),
+        message: text.max(500),
+        remediation: text.max(500),
+      })
+      .strict(),
+  })
+  .strict();
+
+export const guidedDecisionAnswerRecordSchema = z
+  .object({
+    decisionId: z.string().trim().min(1).max(240),
+    value: z.unknown(),
+    origin: z.enum(["inferred", "operator", "imported", "legacy_adapter"]),
+    confidence: z.number().min(0).max(1),
+    evidenceIds: z.array(z.string().trim().min(1).max(240)).max(50),
+    actor: z
+      .object({
+        type: z.enum(["system", "user", "import"]),
+        id: z.string().trim().min(1).max(240),
+      })
+      .strict(),
+    confirmedAt: z.string().datetime().nullable(),
+  })
+  .strict();
+
+export const guidedEvidenceEntrySchema = z
+  .object({
+    id: z.string().trim().min(1).max(240),
+    kind: z.string().trim().min(1).max(120),
+    label: text.max(500),
+    sourceType: z.string().trim().min(1).max(120),
+    sourceId: z.string().trim().min(1).max(240),
+    url: z.string().trim().url().max(2_048).nullable().default(null),
+    observedAt: z.string().datetime({ offset: true }).nullable().default(null),
+    freshUntil: z.string().datetime({ offset: true }).nullable().default(null),
+    content: z.unknown().optional(),
+  })
+  .strict();
+
+const siteStorySourceSchema = z
+  .object({
+    type: z.enum([
+      "vertical_profile",
+      "vertical_pack",
+      "evidence",
+      "operator",
+      "locked_default",
+    ]),
+    id: z.string().trim().min(1).max(240),
+    path: z.string().trim().min(1).max(500),
+  })
+  .strict();
+
+export const siteStoryMaterialitySchema = z.enum([
+  "low",
+  "material",
+  "critical",
+]);
+
+export const siteStoryDecisionSchema = z
+  .object({
+    id: z.string().trim().regex(/^story\.[a-z0-9_.-]+$/),
+    topic: z.enum([
+      "narrative",
+      "audience_need",
+      "proof_priority",
+      "journey_emphasis",
+      "page_intent",
+    ]),
+    prompt: text.max(2_000),
+    proposedValue: z.unknown(),
+    source: siteStorySourceSchema,
+    evidenceIds: z.array(z.string().trim().min(1).max(240)).max(50),
+    confidence: z.number().min(0).max(1),
+    materiality: siteStoryMaterialitySchema,
+    affectedPaths: z.array(z.string().trim().min(1).max(500)).min(1).max(30),
+  })
+  .strict();
+
+export const siteStoryResolutionSchema = z
+  .object({
+    decisionId: z.string().trim().regex(/^story\.[a-z0-9_.-]+$/),
+    status: z.enum([
+      "locked_default",
+      "inferred",
+      "operator_confirmed",
+      "needs_confirmation",
+    ]),
+    value: z.unknown(),
+    source: siteStorySourceSchema,
+    evidenceIds: z.array(z.string().trim().min(1).max(240)).max(50),
+    confidence: z.number().min(0).max(1),
+    materiality: siteStoryMaterialitySchema,
+    affectedPaths: z.array(z.string().trim().min(1).max(500)).min(1).max(30),
+  })
+  .strict();
+
+export const SITE_STORY_LOCKED_DEFAULT_KEYS = [
+  "goals",
+  "cta",
+  "pages",
+  "legal",
+  "accessibility",
+  "analytics",
+  "seo",
+] as const;
+
+export const siteStoryLockedDefaultSchema = z
+  .object({
+    key: z.enum(SITE_STORY_LOCKED_DEFAULT_KEYS),
+    locked: z.literal(true),
+    value: z.unknown(),
+    source: siteStorySourceSchema,
+    evidenceIds: z.array(z.string().trim().min(1).max(240)).max(50),
+    confidence: z.number().min(0).max(1),
+    affectedPaths: z.array(z.string().trim().min(1).max(500)).min(1).max(30),
+  })
+  .strict();
+
+export const siteStoryPageIntentSchema = z
+  .object({
+    id: z.string().trim().regex(/^story\.page-intent\.[a-z0-9_.-]+$/),
+    role: z.enum([
+      "orient",
+      "evaluate_residences",
+      "evaluate_homes",
+      "evaluate_amenities",
+      "evaluate_location",
+      "establish_trust",
+      "convert",
+    ]),
+    visitorJob: text.max(1_000),
+    narrativeJob: text.max(1_000),
+    desiredAction: text.max(500),
+    required: z.boolean(),
+    evidenceIds: z.array(z.string().trim().min(1).max(240)).max(50),
+    affectedPaths: z.array(z.string().trim().min(1).max(500)).min(1).max(30),
+  })
+  .strict();
+
+const laneRequiredPageIntents = {
+  multifamily: [
+    "orient",
+    "evaluate_residences",
+    "evaluate_amenities",
+    "evaluate_location",
+    "convert",
+  ],
+  for_sale: [
+    "orient",
+    "evaluate_homes",
+    "evaluate_location",
+    "establish_trust",
+    "convert",
+  ],
+} as const;
+
+export const siteStoryContractSchema = z
+  .object({
+    contractVersion: z.literal("3.0"),
+    id: z.string().trim().regex(/^site-story\.[a-z0-9_.-]+$/),
+    lane: z.enum(["multifamily", "for_sale"]),
+    premise: text.max(2_000),
+    audience: z
+      .object({
+        label: text.max(240),
+        practicalNeeds: textList.min(1),
+      })
+      .strict(),
+    promise: text.max(2_000),
+    narrativeArc: z.array(text.max(1_000)).min(3).max(8),
+    pageIntents: z.array(siteStoryPageIntentSchema).min(5).max(20),
+    lockedDefaults: z.array(siteStoryLockedDefaultSchema).length(7),
+    decisions: z.array(siteStoryDecisionSchema).max(30),
+    resolutions: z.array(siteStoryResolutionSchema).max(30),
+  })
+  .strict()
+  .superRefine((story, ctx) => {
+    const lockedKeys = new Set(story.lockedDefaults.map((item) => item.key));
+    for (const key of SITE_STORY_LOCKED_DEFAULT_KEYS) {
+      if (!lockedKeys.has(key)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["lockedDefaults"],
+          message: `Missing locked default: ${key}`,
+        });
+      }
+    }
+    const roles = new Set(story.pageIntents.map((intent) => intent.role));
+    for (const role of laneRequiredPageIntents[story.lane]) {
+      if (!roles.has(role)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["pageIntents"],
+          message: `${story.lane} requires the ${role} page intent`,
+        });
+      }
+    }
+    const decisionIds = new Set(story.decisions.map((item) => item.id));
+    for (const resolution of story.resolutions) {
+      if (!decisionIds.has(resolution.decisionId)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["resolutions"],
+          message: `Resolution has no decision: ${resolution.decisionId}`,
+        });
+      }
+    }
+  });
+
+export const siteStoryIdentitySchema = z
+  .object({
+    id: z.string().trim().regex(/^site-story\.[a-z0-9_.-]+$/),
+    contractVersion: z.literal("3.0"),
+    contentHash: z.string().length(64),
+  })
+  .strict();
+
+export const guidedSourcesV2Schema = guidedSourcesSchema.extend({
+  verticalProfile: z
+    .object({
+      id: z.string().min(1),
+      version: z.number().int().positive(),
+      contentHash: z.string().length(64),
+    })
+    .strict(),
+  verticalPack: z
+    .object({
+      registryVersion: z.number().int().positive(),
+      contentHash: z.string().length(64),
+      packs: z
+        .array(
+          z
+            .object({
+              key: z.string().min(1).max(240),
+              version: z.number().int().positive(),
+              contentHash: z.string().length(64),
+            })
+            .strict(),
+        )
+        .min(5),
+    })
+    .strict(),
+  evidence: z
+    .object({
+      contextHash: z.string().length(64),
+      entries: z.array(guidedEvidenceEntrySchema).max(500),
+    })
+    .strict(),
+});
+
+export const guidedTurnV2Schema = z.object({
+  id: z.string().min(1),
+  clientRequestId: z.string().trim().min(1).max(160),
+  role: z.enum(["user", "assistant"]),
+  field: z.string().trim().min(1).max(240).nullable(),
+  content: text.max(5_000),
+  createdAt: z.string().datetime(),
+});
+
+export const guidedJourneyStateV2Schema = z.object({
+  schemaVersion: z.literal(2),
+  websiteId: z.string().min(1),
+  propertyId: z.string().min(1),
+  orgId: z.string().min(1),
+  propertyName: text.max(240),
+  revision: z.number().int().nonnegative(),
+  status: z.enum([
+    "discovering",
+    "ready_to_prepare",
+    "preparing",
+    "ready_to_build",
+    "building",
+    "needs_attention",
+  ]),
+  answers: guidedAnswersSchema,
+  decisions: z.array(guidedDecisionDefinitionSchema).max(100),
+  decisionAnswers: z.record(
+    z.string().trim().min(1).max(240),
+    guidedDecisionAnswerRecordSchema,
+  ),
+  decisionSetHash: z.string().length(64),
+  answerHash: z.string().length(64),
+  discoveryHash: z.string().length(64),
+  turns: z.array(guidedTurnV2Schema).max(200),
+  attachments: z.array(guidedAttachmentSchema).max(50),
+  sources: guidedSourcesV2Schema,
+  preparation: guidedPreparationCheckpointSchema.nullable().default(null),
+  prepared: guidedPreparedPackageSchema
+    .extend({
+      verticalProfileContentHash: z.string().length(64),
+      verticalPackContentHash: z.string().length(64),
+      decisionSetHash: z.string().length(64),
+      answerHash: z.string().length(64),
+      discoveryHash: z.string().length(64),
+    })
+    .nullable()
+    .default(null),
+  generation: guidedGenerationSchema.nullable().default(null),
+  lastError: z
+    .object({
+      kind: z.enum(["temporary", "source_changed", "needs_attention"]),
+      message: text,
+      retryable: z.boolean(),
+    })
+    .nullable()
+    .default(null),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+
+// Kept as the exact V1 parser for durable historical snapshots.
+export const guidedJourneyStateSchema = guidedJourneyStateV1Schema;
+
 export const guidedConversationRequestSchema = z
   .object({
     clientRequestId: z.string().trim().min(1).max(160),
     expectedRevision: z.number().int().nonnegative(),
-    field: guidedDiscoveryFieldSchema.optional(),
+    decisionId: z
+      .string()
+      .trim()
+      .regex(/^[a-z][a-z0-9_.-]{2,239}$/)
+      .optional(),
+    field: z.string().trim().min(1).max(240).optional(),
     answer: z.unknown(),
     attachments: z.array(guidedAttachmentSchema).max(20).default([]),
   })
@@ -257,18 +645,37 @@ export const guidedDirectionEditRequestSchema = z.object({
   },
 );
 
-export const guidedQuestionSchema = z.object({
+export const guidedQuestionV1Schema = z.object({
   field: guidedDiscoveryFieldSchema,
   question: text,
   why: text,
   optional: z.boolean(),
 });
 
+export const guidedQuestionSchema = guidedDecisionDefinitionSchema.extend({
+  field: z.string().trim().min(1).max(240),
+  question: text,
+  why: text,
+  optional: z.boolean(),
+  currentAnswer: guidedDecisionAnswerRecordSchema.nullable(),
+});
+
 export type GuidedAnswers = z.infer<typeof guidedAnswersSchema>;
 export type GuidedAttachment = z.infer<typeof guidedAttachmentSchema>;
 export type GuidedDiscoveryField = z.infer<typeof guidedDiscoveryFieldSchema>;
-export type GuidedJourneyState = z.infer<typeof guidedJourneyStateSchema>;
+export type GuidedJourneyStateV1 = z.infer<typeof guidedJourneyStateV1Schema>;
+export type GuidedJourneyState = z.infer<typeof guidedJourneyStateV2Schema>;
+export type GuidedDecisionDefinition = z.infer<
+  typeof guidedDecisionDefinitionSchema
+>;
+export type GuidedDecisionAnswerRecord = z.infer<
+  typeof guidedDecisionAnswerRecordSchema
+>;
+export type GuidedQuestionV1 = z.infer<typeof guidedQuestionV1Schema>;
 export type GuidedQuestion = z.infer<typeof guidedQuestionSchema>;
 export type GuidedCreativeDirectionOverview = z.infer<
   typeof guidedCreativeDirectionOverviewSchema
 >;
+export type SiteStoryContract = z.infer<typeof siteStoryContractSchema>;
+export type SiteStoryDecision = z.infer<typeof siteStoryDecisionSchema>;
+export type SiteStoryIdentity = z.infer<typeof siteStoryIdentitySchema>;

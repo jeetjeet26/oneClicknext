@@ -9,6 +9,7 @@ import {
   deriveRuntimeV3OperationSetHash,
   deriveRuntimeV3PackageManifestHash,
   deriveRuntimeV3ResourceGraphHash,
+  hashRuntimeV3WireContent,
   immutableSiteForgeRuntimeV3ReleaseSchema,
   runtimeV3AssetPreparationRequestSchema,
   runtimeV3CapabilitiesSchema,
@@ -97,6 +98,21 @@ describe('SiteForge runtime v3 contract', () => {
         packageIdentity
       )
     }
+  })
+
+  it('hashes empty objects exactly as WordPress REST decodes them', async () => {
+    const release = await releaseFixture()
+    const graph = structuredClone(release.resourceGraph)
+    graph.sections[0].data = { items: [{ metadata: {} }] }
+    const wordpressDecodedGraph = structuredClone(graph)
+    wordpressDecodedGraph.sections[0].data = { items: [{ metadata: [] }] }
+
+    expect(deriveRuntimeV3ResourceGraphHash(graph)).toBe(
+      hashSiteForgeContent(wordpressDecodedGraph)
+    )
+    expect(hashRuntimeV3WireContent({ metadata: {}, values: [] })).toBe(
+      hashSiteForgeContent({ metadata: [], values: [] })
+    )
   })
 
   it('rejects unknown fields and never interprets v3 through v2 schemas', async () => {

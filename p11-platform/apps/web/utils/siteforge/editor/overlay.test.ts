@@ -13,6 +13,8 @@ import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
 import {
   computeOverlayContentHash,
   computeOverlaySignature,
+  assertPassingOverlayRenderedEffectEvidence,
+  deriveOverlayRenderedEffectContract,
   verifyOverlaySignature,
 } from '@/utils/siteforge/editor/overlay-contract'
 
@@ -93,6 +95,80 @@ describe('validateOverlayProposalStatic', () => {
         ],
       })
     ).toThrow()
+  })
+
+  it('rejects guessed ACF editor selectors that cannot match the front end', () => {
+    expect(() =>
+      validateOverlayProposalStatic({
+        reason: 'invalid selector',
+        files: [
+          {
+            path: 'assets/css/hero.css',
+            content:
+              '.wp-block-acf-top-slides .slide-headline { line-height: 1.2; }',
+          },
+        ],
+      })
+    ).toThrow(/rendered SiteForge DOM/)
+  })
+
+  it('derives selector/style contracts and rejects unmatched rendered evidence', () => {
+    const contract = deriveOverlayRenderedEffectContract({
+      reason: 'Change the rendered hero treatment',
+      files: [
+        {
+          path: 'assets/css/hero.css',
+          content: '.block-top-slides .slide-headline { opacity: 0.9; }',
+        },
+      ],
+    })
+    expect(contract.selectors).toEqual([
+      expect.objectContaining({
+        selector: '.block-top-slides .slide-headline',
+        computedStyles: [{ property: 'opacity', value: '0.9' }],
+      }),
+    ])
+    expect(() =>
+      assertPassingOverlayRenderedEffectEvidence({
+        contract,
+        parentArtifactId: '11111111-1111-4111-8111-111111111111',
+        parentContentHash: 'a'.repeat(64),
+        evidence: {
+          evidenceVersion: 'siteforge-overlay-rendered-effect-v1',
+          contractHash: contract.contractHash,
+          parentArtifact: {
+            artifactId: '11111111-1111-4111-8111-111111111111',
+            contentHash: 'a'.repeat(64),
+          },
+          editedArtifact: {
+            artifactId: '22222222-2222-4222-8222-222222222222',
+            contentHash: 'b'.repeat(64),
+          },
+          viewportResults: contract.requiredViewports.map(viewport => ({
+            viewport,
+            selectors: contract.selectors.map(selector => ({
+              selector: selector.selector,
+              parentMatched: 0,
+              editedMatched: 0,
+              computedStyles: [],
+            })),
+          })),
+          unchangedRegionsPassed: true,
+          interactionChecksPassed: true,
+          passed: false,
+          failures: [
+            {
+              code: 'selector_unmatched',
+              selector: '.block-top-slides .slide-headline',
+              viewport: 'desktop',
+              expected: 'at least one element',
+              actual: '0',
+              repairHint: 'Use a selector present in the rendered parent DOM.',
+            },
+          ],
+        },
+      })
+    ).toThrow(/selector_unmatched/)
   })
 
   it('preserves parent theme token precedence in child overlays', () => {

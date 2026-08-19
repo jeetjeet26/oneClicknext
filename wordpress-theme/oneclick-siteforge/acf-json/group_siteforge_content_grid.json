@@ -11,7 +11,13 @@
       "button_label": "Add items",
       "sub_fields": [
         {
-          "key": "field_siteforge_content_grid_items_image_0",
+          "key": "field_siteforge_content_grid_items_target_id_0",
+          "name": "target_id",
+          "label": "target_id",
+          "type": "text"
+        },
+        {
+          "key": "field_siteforge_content_grid_items_image_1",
           "name": "image",
           "label": "image",
           "type": "image",
@@ -19,19 +25,19 @@
           "preview_size": "medium"
         },
         {
-          "key": "field_siteforge_content_grid_items_icon_1",
+          "key": "field_siteforge_content_grid_items_icon_2",
           "name": "icon",
           "label": "icon",
           "type": "text"
         },
         {
-          "key": "field_siteforge_content_grid_items_headline_2",
+          "key": "field_siteforge_content_grid_items_headline_3",
           "name": "headline",
           "label": "headline",
           "type": "text"
         },
         {
-          "key": "field_siteforge_content_grid_items_description_3",
+          "key": "field_siteforge_content_grid_items_description_4",
           "name": "description",
           "label": "description",
           "type": "textarea"

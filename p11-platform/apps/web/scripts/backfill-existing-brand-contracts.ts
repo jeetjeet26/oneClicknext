@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { createServiceClient } from '../utils/supabase/admin'
 import {
+  brandContractToStorageSections,
   hashBrandForgeContract,
   normalizeBrandAssetRow,
 } from '../utils/brandforge/normalize'
@@ -15,10 +16,13 @@ const roleMap = {
 
 async function main() {
   const client = createServiceClient()
-  const { data: rows, error } = await client
+  const requestedBrandAssetId = process.argv[2]?.trim()
+  let query = client
     .from('property_brand_assets')
     .select('*, properties!inner(org_id)')
     .or('generation_status.eq.complete,approval_status.eq.approved')
+  if (requestedBrandAssetId) query = query.eq('id', requestedBrandAssetId)
+  const { data: rows, error } = await query
   if (error) throw new Error(`Failed to load BrandForge rows: ${error.message}`)
 
   let updated = 0
@@ -35,6 +39,7 @@ async function main() {
     const { error: updateError } = await client
       .from('property_brand_assets')
       .update({
+        ...brandContractToStorageSections(contract),
         contract_version: contract.contractVersion,
         brand_origin: row.brand_origin || 'generated',
         approval_status: 'approved',

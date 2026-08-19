@@ -301,7 +301,6 @@ describe('SiteForge job retry', () => {
     expect(startWorkflowMock).toHaveBeenCalledWith(generationWorkflowMock, [
       expect.objectContaining({
         sharedJobId: jobId,
-        legacyJobId,
         websiteId,
         propertyId,
         orgId,
@@ -312,6 +311,11 @@ describe('SiteForge job retry', () => {
         evidenceSnapshot,
       }),
     ])
+    // The retired siteforge_jobs id is tolerated in historic payloads but is
+    // never forwarded into new workflow runs.
+    expect(startWorkflowMock.mock.calls[0][1][0]).not.toHaveProperty(
+      'legacyJobId'
+    )
   })
 
   it('refuses a deterministic nonretryable failure', async () => {

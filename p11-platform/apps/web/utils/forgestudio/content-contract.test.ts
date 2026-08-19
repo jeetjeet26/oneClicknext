@@ -68,6 +68,36 @@ describe('validateVariant', () => {
     })
     expect(validateVariant(variant).map((issue) => issue.code)).toContain('insecure_media_url')
   })
+
+  it('blocks deterministic Fair Housing risk language', () => {
+    const issues = validateVariant(makeVariant({
+      caption: 'A safe neighborhood perfect for young professionals.',
+    }))
+    expect(issues.map((issue) => issue.code)).toContain(
+      'fair_housing_audience_suitability'
+    )
+    expect(issues.map((issue) => issue.code)).toContain(
+      'fair_housing_neighborhood_safety'
+    )
+  })
+
+  it('requires carousel depth and video accessibility plans', () => {
+    const carousel = validateVariant(makeVariant({
+      contentFormat: 'carousel',
+      mediaUrls: ['https://cdn.example.com/one.jpg'],
+      altText: 'One carousel image',
+    }))
+    expect(carousel.map((issue) => issue.code)).toContain(
+      'carousel_requires_multiple_assets'
+    )
+
+    const reel = validateVariant(makeVariant({
+      contentFormat: 'reel',
+      mediaUrls: ['https://cdn.example.com/reel.mp4'],
+    }))
+    expect(reel.map((issue) => issue.code)).toContain('video_storyboard_required')
+    expect(reel.map((issue) => issue.code)).toContain('video_subtitles_required')
+  })
 })
 
 describe('findUnsupportedClaims', () => {

@@ -786,6 +786,8 @@ export async function certifySiteForgeProduction(
       artifactId: input.artifactId,
       contentHash: input.contentHash,
       artifactBinding: buildReleaseCertificationBinding(release),
+      editAcceptanceContract:
+        release.artifact.editAcceptanceContract || undefined,
       targetUrl: input.productionUrl,
       credentials: {
         username: credentials.username,
@@ -960,6 +962,8 @@ export async function certifySiteForgeProduction(
     artifactId: input.artifactId,
     contentHash: input.contentHash,
     artifactBinding: buildReleaseCertificationBinding(release),
+    editAcceptanceContract:
+      release.artifact.editAcceptanceContract || undefined,
     targetUrl: input.productionUrl,
     credentials: {
       username: credentials.username,
@@ -1058,6 +1062,8 @@ export async function certifySiteForgeProduction(
       artifactId: input.artifactId,
       contentHash: input.contentHash,
       artifactBinding: buildReleaseCertificationBinding(release),
+      editAcceptanceContract:
+        release.artifact.editAcceptanceContract || undefined,
       targetUrl: input.productionUrl,
       credentials: {
         username: credentials.username,

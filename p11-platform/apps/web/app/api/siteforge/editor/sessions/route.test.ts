@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NextRequest } from 'next/server'
 import { strToU8, zipSync } from 'fflate'
@@ -5,6 +6,7 @@ import { buildOverlayPackageManifest } from '@/utils/siteforge/editor/overlay'
 import {
   computeOverlayContentHash,
   computeOverlaySignature,
+  deriveOverlayRenderedEffectContract,
   sha256OverlayValue,
 } from '@/utils/siteforge/editor/overlay-contract'
 import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
@@ -27,6 +29,42 @@ function request() {
   }) as NextRequest
 }
 
+function renderedEffectEvidence(
+  contract: ReturnType<typeof deriveOverlayRenderedEffectContract>,
+  parentArtifactId: string
+) {
+  return {
+    evidenceVersion: 'siteforge-overlay-rendered-effect-v1',
+    contractHash: contract.contractHash,
+    parentArtifact: {
+      artifactId: parentArtifactId,
+      contentHash: 'a'.repeat(64),
+    },
+    editedArtifact: {
+      artifactId: '77777777-7777-4777-8777-777777777777',
+      contentHash: 'b'.repeat(64),
+    },
+    viewportResults: contract.requiredViewports.map(viewport => ({
+      viewport,
+      selectors: contract.selectors.map(selector => ({
+        selector: selector.selector,
+        parentMatched: 1,
+        editedMatched: 1,
+        computedStyles: selector.computedStyles.map(style => ({
+          ...style,
+          parentValue: 'rgb(0, 0, 0)',
+          editedValue: style.value,
+          changed: true,
+        })),
+      })),
+    })),
+    unchangedRegionsPassed: true,
+    interactionChecksPassed: true,
+    passed: true,
+    failures: [],
+  }
+}
+
 describe('semantic editor session route', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -45,6 +83,23 @@ describe('semantic editor session route', () => {
     const { POST } = await import('./route')
     expect((await POST(request())).status).toBe(401)
     expect(createServiceClient).not.toHaveBeenCalled()
+  })
+
+  it('returns reload recovery, visual context, and immutable revisions', async () => {
+    const source = await readFile(new URL('./route.ts', import.meta.url), 'utf8')
+    expect(source).toContain('activeSemanticEditJob')
+    expect(source).toContain('activePreviewJob')
+    expect(source).toContain('listEditorAttachmentPreviews')
+    expect(source).toContain('revisions: revisions || []')
+  })
+
+  it('surfaces a brand staleness signal without breaking pinning', async () => {
+    const source = await readFile(new URL('./route.ts', import.meta.url), 'utf8')
+    // Sessions stay pinned to the generated brand contract; the payload only
+    // reports when the live brand book has moved past the pinned hash.
+    expect(source).toContain('property_brand_assets')
+    expect(source).toContain('staleSincePinned')
+    expect(source).toContain('pinnedContractHash')
   })
 
   it('exposes only a strictly verified private overlay review package', async () => {
@@ -112,6 +167,8 @@ describe('semantic editor session route', () => {
           validator: 'siteforge-static-sandbox-v1',
           reportSha256: hashSiteForgeContent(validationReport),
         },
+        renderedEffectContract:
+          deriveOverlayRenderedEffectContract(proposal),
       }),
     }
     const service = {
@@ -136,9 +193,10 @@ describe('semantic editor session route', () => {
                     package_sha256: packageSha256,
                     signature,
                     validation_report: validationReport,
-                    screenshot_manifest: {
-                      browserReport: { passed: true },
-                    },
+                    screenshot_manifest: renderedEffectEvidence(
+                      deriveOverlayRenderedEffectContract(proposal),
+                      website.current_artifact_version_id
+                    ),
                   },
             error: null,
           }),
@@ -180,8 +238,6 @@ describe('semantic editor session route', () => {
       ])
     )
     expect(review.validationReport).toEqual(validationReport)
-    expect(review.screenshotReport).toEqual({
-      browserReport: { passed: true },
-    })
+    expect(review.screenshotReport).toMatchObject({ passed: true })
   })
 })

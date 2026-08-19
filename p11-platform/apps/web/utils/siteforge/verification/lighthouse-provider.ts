@@ -92,29 +92,44 @@ export class HttpLighthouseEvidenceProvider
   async provision(
     input: LighthouseProvisioningInput
   ): Promise<ProvisionedLighthouseReport[]> {
-    const response = await fetch(this.endpoint, {
-      method: 'POST',
-      redirect: 'error',
-      signal: AbortSignal.timeout(
-        Number(process.env.SITEFORGE_LIGHTHOUSE_PROVIDER_TIMEOUT_MS || 180_000)
-      ),
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.secret}`,
-      },
-      body: JSON.stringify({
-        policyVersion: SITEFORGE_CERTIFICATION_POLICY_VERSION,
-        targetUrl: input.targetUrl,
-        expectedUrls: input.expectedUrls,
-        credentials: input.credentials,
-        environment: input.environment,
-        access: input.access,
-        requireIndexable: input.requireIndexable,
-        artifact: input.artifact,
-        bindingHash: input.bindingHash,
-        formFactors: ['mobile'],
-      }),
+    const requestBody = JSON.stringify({
+      policyVersion: SITEFORGE_CERTIFICATION_POLICY_VERSION,
+      targetUrl: input.targetUrl,
+      expectedUrls: input.expectedUrls,
+      credentials: input.credentials,
+      environment: input.environment,
+      access: input.access,
+      requireIndexable: input.requireIndexable,
+      artifact: input.artifact,
+      bindingHash: input.bindingHash,
+      formFactors: ['mobile'],
     })
+    let response: Response | null = null
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      response = await fetch(this.endpoint, {
+        method: 'POST',
+        redirect: 'error',
+        signal: AbortSignal.timeout(
+          Number(
+            process.env.SITEFORGE_LIGHTHOUSE_PROVIDER_TIMEOUT_MS || 180_000
+          )
+        ),
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.secret}`,
+        },
+        body: requestBody,
+      })
+      if (![429, 503].includes(response.status) || attempt === 2) break
+      const retryAfter = Number(response.headers.get('retry-after') || 0)
+      const delayMs = Number.isFinite(retryAfter) && retryAfter > 0
+        ? Math.min(retryAfter * 1_000, 60_000)
+        : 5_000 * 2 ** attempt
+      await new Promise(resolve => setTimeout(resolve, delayMs))
+    }
+    if (!response) {
+      throw new Error('External Lighthouse provider returned no response')
+    }
     if (!response.ok) {
       throw new Error(
         `External Lighthouse provider failed with HTTP ${response.status}`

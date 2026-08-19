@@ -11,19 +11,25 @@
       "button_label": "Add links",
       "sub_fields": [
         {
-          "key": "field_siteforge_links_links_text_0",
+          "key": "field_siteforge_links_links_target_id_0",
+          "name": "target_id",
+          "label": "target_id",
+          "type": "text"
+        },
+        {
+          "key": "field_siteforge_links_links_text_1",
           "name": "text",
           "label": "text",
           "type": "text"
         },
         {
-          "key": "field_siteforge_links_links_url_1",
+          "key": "field_siteforge_links_links_url_2",
           "name": "url",
           "label": "url",
           "type": "url"
         },
         {
-          "key": "field_siteforge_links_links_style_2",
+          "key": "field_siteforge_links_links_style_3",
           "name": "style",
           "label": "style",
           "type": "select",

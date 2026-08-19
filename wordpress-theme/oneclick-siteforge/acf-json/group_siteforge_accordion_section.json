@@ -11,13 +11,19 @@
       "button_label": "Add items",
       "sub_fields": [
         {
-          "key": "field_siteforge_accordion_section_items_title_0",
+          "key": "field_siteforge_accordion_section_items_target_id_0",
+          "name": "target_id",
+          "label": "target_id",
+          "type": "text"
+        },
+        {
+          "key": "field_siteforge_accordion_section_items_title_1",
           "name": "title",
           "label": "title",
           "type": "text"
         },
         {
-          "key": "field_siteforge_accordion_section_items_content_1",
+          "key": "field_siteforge_accordion_section_items_content_2",
           "name": "content",
           "label": "content",
           "type": "wysiwyg"

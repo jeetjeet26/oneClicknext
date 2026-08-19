@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
-import { validatePropertyAccess } from '@/utils/services/auth-guard'
+import { validateSiteForgeOwnerOperatorAccess } from '@/utils/services/auth-guard'
 import { createRequestContext } from '@/utils/services/request-context'
 import { isSiteForgeSemanticEditorEnabled } from '@/utils/siteforge/editor/feature'
 import type { Json } from '@/types/supabase'
@@ -62,10 +62,16 @@ export async function POST(
         { status: 404, headers: ctx.responseHeaders }
       )
     }
-    const access = await validatePropertyAccess(user.id, session.property_id)
+    const access = await validateSiteForgeOwnerOperatorAccess(
+      user.id,
+      session.property_id
+    )
     if (!access.authorized) {
       return NextResponse.json(
-        { error: 'Forbidden' },
+        {
+          error: 'SiteForge owner/operator capability required',
+          capability: access.capability,
+        },
         { status: 403, headers: ctx.responseHeaders }
       )
     }
@@ -77,10 +83,31 @@ export async function POST(
         { status: 409, headers: ctx.responseHeaders }
       )
     }
+    const { data: activeEdit } = await client
+      .from('shared_jobs')
+      .select('id, lifecycle_status, stage, current_step')
+      .eq('domain', 'siteforge.semantic_edit')
+      .eq('subject_id', session.website_id)
+      .in('lifecycle_status', ['queued', 'running', 'retrying'])
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (activeEdit) {
+      return NextResponse.json(
+        {
+          error:
+            'Another semantic edit or revision restore is already active for this website',
+          activeJob: activeEdit,
+        },
+        { status: 409, headers: ctx.responseHeaders }
+      )
+    }
 
     const { data: current, error: currentError } = await client
       .from('siteforge_blueprint_versions')
-      .select('id, parent_version_id')
+      .select(
+        'id, parent_version_id, runtime_contract_version, runtime_package_sha256'
+      )
       .eq('id', parsed.data.expectedArtifactId)
       .eq('website_id', session.website_id)
       .single()
@@ -103,6 +130,22 @@ export async function POST(
         { status: 404, headers: ctx.responseHeaders }
       )
     }
+    const { data: runtimeRollout, error: runtimeRolloutError } = await client
+      .from('siteforge_runtime_target_rollouts')
+      .select('requested_contract_version, runtime_package_sha256')
+      .eq('website_id', session.website_id)
+      .eq('status', 'enabled')
+      .is('rolled_back_at', null)
+      .limit(1)
+      .maybeSingle()
+    if (runtimeRolloutError) {
+      throw new Error('Failed to load active runtime rollout for revision restore')
+    }
+    const restoredRuntimeContractVersion =
+      runtimeRollout?.requested_contract_version ??
+      current.runtime_contract_version
+    const restoredRuntimePackageSha256 =
+      runtimeRollout?.runtime_package_sha256 ?? current.runtime_package_sha256
 
     const now = new Date().toISOString()
     const { data: job, error: jobError } = await client
@@ -132,7 +175,10 @@ export async function POST(
     if (jobError || !job) {
       if (jobError?.code === '23505') {
         return NextResponse.json(
-          { error: 'This undo request was already processed' },
+          {
+            error:
+              'Another semantic edit or revision restore became active for this website',
+          },
           { status: 409, headers: ctx.responseHeaders }
         )
       }
@@ -160,6 +206,16 @@ export async function POST(
         p_created_by: user.id,
         p_operation_set: [rollbackOperation] as unknown as Json,
         p_operation_set_hash: hashSiteForgeContent([rollbackOperation]),
+        ...(restoredRuntimeContractVersion !== null
+          ? {
+              p_runtime_contract_version: restoredRuntimeContractVersion,
+            }
+          : {}),
+        ...(restoredRuntimePackageSha256 !== null
+          ? {
+              p_runtime_package_sha256: restoredRuntimePackageSha256,
+            }
+          : {}),
       }
     )
     if (revisionError || !revision) {

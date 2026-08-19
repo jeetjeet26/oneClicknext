@@ -28,28 +28,38 @@ import {
   decideSiteForgePlan,
   getCurrentPlanRevision,
 } from "@/utils/siteforge/plans/repository";
-import { normalizeBrandAssetRow } from "@/utils/brandforge/normalize";
-import { brandContextFromContract } from "@/utils/siteforge/brand-contract-adapter";
 import { hashSiteForgeContent } from "@/utils/siteforge/content-hash";
 import { classifySiteForgeGenerationFailure } from "@/utils/siteforge/workflows/generation-failure";
+import { loadAdaptiveVerticalContext } from "@/utils/real-estate/repository";
 import {
-  guidedJourneyStateSchema,
+  guidedJourneyStateV1Schema,
+  guidedJourneyStateV2Schema,
   type GuidedAttachment,
   type GuidedCreativeDirectionOverview,
   type GuidedJourneyState,
 } from "./contracts";
-import type { BrandForgeContractV1 } from "@/utils/brandforge/contracts";
 import {
-  buildGuidedBrief,
+  buildAdaptiveGuidedBrief,
   classifyGuidedError,
-  guidedDiscoveryProgress,
-  inferGuidedAnswersFromTruth,
-  nextGuidedQuestion,
   projectGuidedJourney,
   scoreGuidedDirections,
   updateGuidedAnswers,
   GuidedJourneyError,
 } from "./journey";
+import {
+  adaptGuidedJourneyV1,
+  adaptiveDiscoveryProgress,
+  applyAdaptiveAnswersToCompatibility,
+  hashGuidedDecisionAnswers,
+  nextAdaptiveQuestion,
+  resolveAdaptiveDiscovery,
+  synthesizeSiteStory,
+  validateAdaptiveDecisionAnswer,
+  type AdaptiveVerticalContext,
+} from "./adaptive-discovery";
+import { resolveVerticalActivation } from "@/utils/siteforge/verticals/activation";
+import type { BrandForgeContractV1 } from "@/utils/brandforge/contracts";
+import { normalizeBrandAssetRow } from "@/utils/brandforge/normalize";
 
 type ServiceClient = ReturnType<typeof createServiceClient>;
 
@@ -62,7 +72,6 @@ async function loadGuidedBrandPresentation(
     .select("*")
     .eq("id", state.sources.brandAssetId)
     .eq("property_id", state.propertyId)
-    .eq("org_id", state.orgId)
     .maybeSingle();
   if (brandError || !brandRow) return null;
 
@@ -74,7 +83,6 @@ async function loadGuidedBrandPresentation(
   } catch {
     return null;
   }
-
   const preferredLogo =
     contract.logos.variants.find(logo => logo.role === "primary") ||
     contract.logos.variants.find(logo => logo.role === "secondary") ||
@@ -99,7 +107,11 @@ async function loadGuidedBrandPresentation(
     name: contract.identity.name,
     logo:
       preferredLogo && logoUrl
-        ? { url: logoUrl, alt: logoAlt, role: preferredLogo.role }
+        ? {
+            url: logoUrl,
+            alt: logoAlt,
+            role: preferredLogo.role,
+          }
         : null,
     palette: contract.colors.roles.map(color => ({
       role: color.role,
@@ -143,6 +155,7 @@ type GuidedDependencies = {
   decidePlan: typeof decideSiteForgePlan;
   editDirection: typeof editSiteForgeCreativeDirection;
   selectDirectionAlternative: typeof selectSiteForgeCreativeDirectionAlternative;
+  loadAdaptiveContext: typeof loadAdaptiveVerticalContext;
   loadBrandPresentation: typeof loadGuidedBrandPresentation;
 };
 
@@ -165,6 +178,7 @@ const defaultDependencies = (): GuidedDependencies => ({
   decidePlan: decideSiteForgePlan,
   editDirection: editSiteForgeCreativeDirection,
   selectDirectionAlternative: selectSiteForgeCreativeDirectionAlternative,
+  loadAdaptiveContext: loadAdaptiveVerticalContext,
   loadBrandPresentation: loadGuidedBrandPresentation,
 });
 
@@ -191,8 +205,115 @@ function sameSources(
     left.onboardingSnapshotId === right.onboardingSnapshotId &&
     left.onboardingSnapshotHash === right.onboardingSnapshotHash &&
     left.brandAssetId === right.brandAssetId &&
-    left.brandContractHash === right.brandContractHash
+    left.brandContractHash === right.brandContractHash &&
+    left.verticalProfile.contentHash === right.verticalProfile.contentHash &&
+    left.verticalPack.contentHash === right.verticalPack.contentHash &&
+    left.evidence.contextHash === right.evidence.contextHash
   );
+}
+
+function adaptiveSources(
+  base: Pick<
+    GuidedJourneyState["sources"],
+    | "onboardingSnapshotId"
+    | "onboardingSnapshotHash"
+    | "brandAssetId"
+    | "brandContractHash"
+  >,
+  context: AdaptiveVerticalContext,
+): GuidedJourneyState["sources"] {
+  return {
+    ...base,
+    verticalProfile: {
+      id: context.profile.id,
+      version: context.profile.version,
+      contentHash: context.profile.contentHash,
+    },
+    verticalPack: {
+      registryVersion: context.manifest.registryVersion,
+      contentHash: context.manifest.contentHash,
+      packs: context.manifest.packs.map((pack) => ({
+        key: pack.key,
+        version: pack.version,
+        contentHash: pack.contentHash,
+      })),
+    },
+    evidence: context.evidence,
+  };
+}
+
+function reconcileAdaptiveState(
+  state: GuidedJourneyState,
+  context: AdaptiveVerticalContext,
+  baseSources = state.sources,
+): GuidedJourneyState {
+  const resolved = resolveAdaptiveDiscovery(context);
+  const retained = Object.fromEntries(
+    Object.entries(state.decisionAnswers).filter(([id, answer]) => {
+      if (!["operator", "legacy_adapter"].includes(answer.origin)) return false;
+      return (
+        id.startsWith("legacy.v1.") ||
+        resolved.decisions.some((decision) => decision.id === id)
+      );
+    }),
+  );
+  const decisions = [
+    ...state.decisions.filter((decision) =>
+      decision.id.startsWith("legacy.v1."),
+    ),
+    ...resolved.decisions,
+  ];
+  const decisionAnswers = {
+    ...resolved.decisionAnswers,
+    ...retained,
+  };
+  const decisionSetHash = hashSiteForgeContent(decisions);
+  const answerHash = hashGuidedDecisionAnswers(decisionAnswers);
+  const sources = adaptiveSources(baseSources, context);
+  const discoveryHash = hashSiteForgeContent({
+    profile: context.profile.contentHash,
+    pack: context.manifest.contentHash,
+    evidence: context.evidence.contextHash,
+    decisionSetHash,
+    answerHash,
+  });
+  const sourceChanged = !sameSources(state.sources, sources);
+  const identityChanged =
+    state.decisionSetHash !== decisionSetHash ||
+    state.answerHash !== answerHash ||
+    state.discoveryHash !== discoveryHash;
+  const answers = applyAdaptiveAnswersToCompatibility(
+    state.answers,
+    decisions,
+    decisionAnswers,
+  );
+  const provisional = guidedJourneyStateV2Schema.parse({
+    ...state,
+    answers,
+    decisions,
+    decisionAnswers,
+    decisionSetHash,
+    answerHash,
+    discoveryHash,
+    sources,
+    ...(state.generation || (!sourceChanged && !identityChanged)
+      ? {}
+      : {
+          preparation: null,
+          prepared: null,
+          status: "discovering",
+        }),
+  });
+  return {
+    ...provisional,
+    status: provisional.generation
+      ? provisional.status
+      : provisional.prepared
+        ? "ready_to_build"
+        : adaptiveDiscoveryProgress(provisional).complete
+          ? "ready_to_prepare"
+          : "discovering",
+  };
 }
 
 function attachmentReference(attachment: GuidedAttachment) {
@@ -299,14 +420,28 @@ export function createSiteForgeGuidedService(
       );
     }
     if (!data) return null;
-    const parsed = guidedJourneyStateSchema.safeParse(data.context_payload);
-    if (!parsed.success) {
+    const parsedV2 = guidedJourneyStateV2Schema.safeParse(data.context_payload);
+    if (parsedV2.success) return parsedV2.data;
+    const parsedV1 = guidedJourneyStateV1Schema.safeParse(data.context_payload);
+    if (!parsedV1.success) {
       throw new GuidedJourneyError(
         "The saved guided session needs attention before it can resume.",
         "needs_attention",
       );
     }
-    return parsed.data;
+    const context = await deps.loadAdaptiveContext(
+      {
+        orgId: parsedV1.data.orgId,
+        propertyId: parsedV1.data.propertyId,
+      },
+      deps.client,
+    );
+    const adapted = adaptGuidedJourneyV1(parsedV1.data, context);
+    return persistState({
+      ...adapted,
+      revision: parsedV1.data.revision + 1,
+      updatedAt: deps.now().toISOString(),
+    });
   }
 
   async function loadLatestGenerationJob(input: {
@@ -343,7 +478,7 @@ export function createSiteForgeGuidedService(
   async function persistState(
     state: GuidedJourneyState,
   ): Promise<GuidedJourneyState> {
-    const parsed = guidedJourneyStateSchema.parse(state);
+    const parsed = guidedJourneyStateV2Schema.parse(state);
     const contextHash = hashSiteForgeContent(parsed);
     const { data: duplicate } = await deps.client
       .from("shared_context_snapshots")
@@ -401,7 +536,12 @@ export function createSiteForgeGuidedService(
       { orgId: website.org_id, propertyId: website.property_id },
       deps.client,
     );
-    const [{ data: onboarding }, { data: brandRow }, { data: property }] =
+    const [
+      { data: onboarding },
+      { data: brandRow },
+      { data: property },
+      context,
+    ] =
       await Promise.all([
         deps.client
           .from("property_onboarding_snapshots")
@@ -422,6 +562,10 @@ export function createSiteForgeGuidedService(
           .eq("id", website.property_id)
           .eq("org_id", website.org_id)
           .single(),
+        deps.loadAdaptiveContext(
+          { orgId: website.org_id, propertyId: website.property_id },
+          deps.client,
+        ),
       ]);
     if (!onboarding || !brandRow || !property?.name) {
       throw new SiteForgeGuidedError(
@@ -431,25 +575,37 @@ export function createSiteForgeGuidedService(
         false,
       );
     }
-    const brandContract = normalizeBrandAssetRow(
-      brandRow as unknown as Record<string, unknown>,
-    );
-    const brandContext = brandContextFromContract(brandContract);
-    const answers = inferGuidedAnswersFromTruth({
-      brandDifferentiators: brandContext.positioning.differentiators,
-      renterPriorities: brandContext.targetAudience.priorities,
-    });
+    const discovery = resolveAdaptiveDiscovery(context);
     const now = deps.now().toISOString();
-    const firstQuestion = nextGuidedQuestion(answers);
-    const state = guidedJourneyStateSchema.parse({
-      schemaVersion: 1,
+    const baseState = {
+      schemaVersion: 2 as const,
       websiteId,
       propertyId: website.property_id,
       orgId: website.org_id,
       propertyName: property.name,
       revision: 0,
-      status: "discovering",
-      answers,
+      status: discovery.unresolvedRequiredDecisionIds.length
+        ? ("discovering" as const)
+        : ("ready_to_prepare" as const),
+      answers: discovery.answers,
+      decisions: discovery.decisions,
+      decisionAnswers: discovery.decisionAnswers,
+      decisionSetHash: discovery.decisionSetHash,
+      answerHash: discovery.answerHash,
+      discoveryHash: discovery.discoveryHash,
+      turns: [],
+      attachments: [],
+      sources: adaptiveSources(sources, context),
+      preparation: null,
+      prepared: null,
+      generation: null,
+      lastError: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const firstQuestion = nextAdaptiveQuestion(baseState);
+    const state = guidedJourneyStateV2Schema.parse({
+      ...baseState,
       turns: firstQuestion
         ? [
             {
@@ -461,15 +617,17 @@ export function createSiteForgeGuidedService(
               createdAt: now,
             },
           ]
-        : [],
-      attachments: [],
-      sources,
-      preparation: null,
-      prepared: null,
-      generation: null,
-      lastError: null,
-      createdAt: now,
-      updatedAt: now,
+        : [
+            {
+              id: "welcome:assistant",
+              clientRequestId: "welcome",
+              role: "assistant",
+              field: null,
+              content:
+                "I found enough sourced vertical, offering, policy, brand, and lifecycle evidence to prepare a recommendation. You can still revise any proposed decision.",
+              createdAt: now,
+            },
+          ],
     });
     return persistState(state);
   }
@@ -483,10 +641,29 @@ export function createSiteForgeGuidedService(
   }
 
   async function snapshot(websiteId: string) {
-    const [state, website] = await Promise.all([
+    const [loadedState, website] = await Promise.all([
       loadOrCreate(websiteId),
       loadWebsite(websiteId),
     ]);
+    let state = loadedState;
+    const currentContext = await deps.loadAdaptiveContext(
+      { orgId: state.orgId, propertyId: state.propertyId },
+      deps.client,
+    );
+    const reconciled = reconcileAdaptiveState(state, currentContext);
+    if (
+      reconciled.discoveryHash !== state.discoveryHash ||
+      !sameSources(reconciled.sources, state.sources) ||
+      reconciled.schemaVersion !== state.schemaVersion
+    ) {
+      state = await persistState({
+        ...reconciled,
+        revision: state.revision + 1,
+        updatedAt: deps.now().toISOString(),
+      });
+    } else {
+      state = reconciled;
+    }
     const latestGeneration = await loadLatestGenerationJob({
       websiteId,
       propertyId: website.property_id,
@@ -506,7 +683,7 @@ export function createSiteForgeGuidedService(
             "Generation failed",
           )
         : null;
-    const question = nextGuidedQuestion(state.answers);
+    const question = nextAdaptiveQuestion(state);
     const [preparedDirections, brandPresentation] = state.prepared
       ? await Promise.all([
           deps.getDirections(
@@ -564,12 +741,26 @@ export function createSiteForgeGuidedService(
     input: {
       clientRequestId: string;
       expectedRevision: number;
-      field?: Parameters<typeof updateGuidedAnswers>[1];
+      decisionId?: string;
+      field?: string;
       answer: unknown;
       attachments: GuidedAttachment[];
     },
+    userId = "unknown-user",
   ) {
-    const state = await loadOrCreate(websiteId);
+    let state = await loadOrCreate(websiteId);
+    const currentContext = await deps.loadAdaptiveContext(
+      { orgId: state.orgId, propertyId: state.propertyId },
+      deps.client,
+    );
+    const reconciled = reconcileAdaptiveState(state, currentContext);
+    if (reconciled.discoveryHash !== state.discoveryHash) {
+      state = await persistState({
+        ...reconciled,
+        revision: state.revision + 1,
+        updatedAt: deps.now().toISOString(),
+      });
+    }
     if (
       state.turns.some(
         (turn) =>
@@ -583,9 +774,9 @@ export function createSiteForgeGuidedService(
         routedAttachments: [],
       };
     }
-    if (state.prepared || state.generation) {
+    if (state.generation) {
       throw new SiteForgeGuidedError(
-        "This recommendation is already prepared. Start a new guided session to change discovery answers.",
+        "Discovery decisions cannot change after the build has started.",
         409,
         "needs_attention",
         false,
@@ -623,25 +814,42 @@ export function createSiteForgeGuidedService(
         );
       }
     }
-    const currentQuestion = nextGuidedQuestion(state.answers);
-    if (!currentQuestion) {
+    const currentQuestion = nextAdaptiveQuestion(state);
+    const requestedId = input.decisionId || input.field;
+    const legacyRequestedId = requestedId
+      ? state.decisions.find(
+          (item) =>
+            item.id.startsWith("legacy.v1.") &&
+            item.inference.sourcePath === `answers.${requestedId}`,
+        )?.id || null
+      : null;
+    const decisionId =
+      (requestedId &&
+      state.decisions.some((item) => item.id === requestedId)
+        ? requestedId
+        : legacyRequestedId) || currentQuestion?.field;
+    const decision = state.decisions.find((item) => item.id === decisionId);
+    if (!decision) {
       throw new SiteForgeGuidedError(
-        "Discovery is complete. Prepare the recommendation next.",
-        409,
+        "That discovery decision is not part of the current vertical pack.",
+        400,
         "needs_attention",
         false,
       );
     }
-    const field = input.field || currentQuestion.field;
-    if (field !== currentQuestion.field) {
+    let value: unknown;
+    try {
+      value = validateAdaptiveDecisionAnswer(decision, input.answer);
+    } catch (error) {
       throw new SiteForgeGuidedError(
-        "Answer the current question before moving to another discovery topic.",
-        409,
+        error instanceof Error
+          ? error.message
+          : decision.validation.message,
+        400,
         "needs_attention",
         false,
       );
     }
-    const answers = updateGuidedAnswers(state.answers, field, input.answer);
     const routedAttachments = input.attachments
       .filter((attachment) => ["image", "floor_plan"].includes(attachment.kind))
       .map(visualRoute);
@@ -649,14 +857,61 @@ export function createSiteForgeGuidedService(
       ["reference", "document"].includes(attachment.kind),
     );
     const now = deps.now().toISOString();
-    const nextQuestion = nextGuidedQuestion(answers);
-    const next = guidedJourneyStateSchema.parse({
+    const decisionAnswers = {
+      ...state.decisionAnswers,
+      [decision.id]: {
+        decisionId: decision.id,
+        value,
+        origin: "operator" as const,
+        confidence: 1,
+        evidenceIds: decision.evidenceIds,
+        actor: { type: "user" as const, id: userId },
+        confirmedAt: now,
+      },
+    };
+    const answerHash = hashGuidedDecisionAnswers(decisionAnswers);
+    const discoveryHash = hashSiteForgeContent({
+      profile: state.sources.verticalProfile.contentHash,
+      pack: state.sources.verticalPack.contentHash,
+      evidence: state.sources.evidence.contextHash,
+      decisionSetHash: state.decisionSetHash,
+      answerHash,
+    });
+    const adaptiveAnswers = applyAdaptiveAnswersToCompatibility(
+      state.answers,
+      state.decisions,
+      decisionAnswers,
+    );
+    const answers = decision.id.startsWith("legacy.v1.")
+      ? updateGuidedAnswers(
+          adaptiveAnswers,
+          decision.inference.sourcePath.replace(
+            "answers.",
+            "",
+          ) as Parameters<typeof updateGuidedAnswers>[1],
+          input.answer,
+        )
+      : adaptiveAnswers;
+    const progress = adaptiveDiscoveryProgress({
+      ...state,
+      decisionAnswers,
+    });
+    const nextQuestion = nextAdaptiveQuestion({
+      ...state,
+      decisionAnswers,
+    });
+    const next = guidedJourneyStateV2Schema.parse({
       ...state,
       revision: state.revision + 1,
-      status: guidedDiscoveryProgress(answers).complete
+      status: progress.complete
         ? "ready_to_prepare"
         : "discovering",
       answers,
+      decisionAnswers,
+      answerHash,
+      discoveryHash,
+      preparation: null,
+      prepared: null,
       attachments: [...state.attachments, ...persistedAttachments],
       turns: [
         ...state.turns,
@@ -664,7 +919,7 @@ export function createSiteForgeGuidedService(
           id: `${input.clientRequestId}:user`,
           clientRequestId: input.clientRequestId,
           role: "user",
-          field,
+          field: decision.id,
           content:
             typeof input.answer === "string"
               ? input.answer
@@ -697,6 +952,13 @@ export function createSiteForgeGuidedService(
     state: GuidedJourneyState,
     error: unknown,
   ): Promise<never> {
+    console.error("[siteforge.guided] operation failed", {
+      websiteId: state.websiteId,
+      propertyId: state.propertyId,
+      revision: state.revision,
+      errorName: error instanceof Error ? error.name : "UnknownError",
+      errorMessage: error instanceof Error ? error.message : String(error),
+    });
     const classified = toSiteForgeGuidedError(error);
     try {
       await persistState({
@@ -722,6 +984,18 @@ export function createSiteForgeGuidedService(
     userId: string,
   ) {
     let state = await loadOrCreate(websiteId);
+    const initialContext = await deps.loadAdaptiveContext(
+      { orgId: state.orgId, propertyId: state.propertyId },
+      deps.client,
+    );
+    const initiallyReconciled = reconcileAdaptiveState(state, initialContext);
+    if (initiallyReconciled.discoveryHash !== state.discoveryHash) {
+      state = await persistState({
+        ...initiallyReconciled,
+        revision: state.revision + 1,
+        updatedAt: deps.now().toISOString(),
+      });
+    }
     if (
       state.prepared &&
       state.prepared.idempotencyKey === input.idempotencyKey
@@ -736,7 +1010,7 @@ export function createSiteForgeGuidedService(
         false,
       );
     }
-    if (!guidedDiscoveryProgress(state.answers).complete) {
+    if (!adaptiveDiscoveryProgress(state).complete) {
       throw new SiteForgeGuidedError(
         "Finish the remaining discovery questions before preparing a recommendation.",
         409,
@@ -781,15 +1055,27 @@ export function createSiteForgeGuidedService(
           "needs_attention",
         );
       }
-      const currentSources = await deps.loadSources(
+      const currentBriefSources = await deps.loadSources(
         { orgId: state.orgId, propertyId: state.propertyId },
         deps.client,
       );
+      const currentAdaptiveContext = await deps.loadAdaptiveContext(
+        { orgId: state.orgId, propertyId: state.propertyId },
+        deps.client,
+      );
+      const currentSources = adaptiveSources(
+        currentBriefSources,
+        currentAdaptiveContext,
+      );
       if (!sameSources(state.sources, currentSources)) {
+        const refreshed = reconcileAdaptiveState(
+          state,
+          currentAdaptiveContext,
+          currentSources,
+        );
         state = await persistState({
-          ...state,
+          ...refreshed,
           revision: state.revision + 1,
-          sources: currentSources,
           preparation: null,
           prepared: null,
           lastError: null,
@@ -813,15 +1099,18 @@ export function createSiteForgeGuidedService(
         updatedAt: deps.now().toISOString(),
       });
 
-      const briefPayload = buildGuidedBrief({
+      const siteStory = synthesizeSiteStory(currentAdaptiveContext);
+      const briefPayload = buildAdaptiveGuidedBrief({
         propertyName: state.propertyName,
         answers: state.answers,
+        context: currentAdaptiveContext,
+        story: siteStory.story,
         attachmentReferences: state.attachments.map(attachmentReference),
       });
       const expectedBriefHash = hashSiteForgeBrief({
         brief: briefPayload,
         unresolvedContradictions: [],
-        sources: currentSources,
+        sources: currentBriefSources,
       });
       let brief = state.preparation?.briefVersionId
         ? await deps.getBrief(
@@ -934,6 +1223,15 @@ export function createSiteForgeGuidedService(
       const referenceUrl = state.answers.references?.find(
         (item) => item.url,
       )?.url;
+      const verticalActivation = await resolveVerticalActivation(
+        {
+          websiteId: state.websiteId,
+          propertyId: state.propertyId,
+          orgId: state.orgId,
+        },
+        currentAdaptiveContext,
+        deps.client,
+      );
       const plan = state.preparation?.planId
         ? await deps.getPlan(
             {
@@ -950,19 +1248,22 @@ export function createSiteForgeGuidedService(
               propertyId: state.propertyId,
               userId,
               preferences: {
-                ctaPriority: state.answers.primaryAction!,
+                ...(state.answers.primaryAction
+                  ? { ctaPriority: state.answers.primaryAction }
+                  : {}),
                 referenceSiteUrl: referenceUrl,
                 contentDensity: "balanced",
                 motion: "subtle",
                 enabledCapabilities,
               },
-              siteType: "standard",
               operatorDirection: [
                 state.answers.objective,
-                `Success: ${state.answers.successSignal}`,
-                `Pages: ${state.answers.pageScope!.included.join(", ")}`,
-                state.answers.offers!.length
-                  ? `Verified offers: ${state.answers.offers!.join(", ")}`
+                state.answers.successSignal
+                  ? `Success: ${state.answers.successSignal}`
+                  : null,
+                `Vertical manifest: ${currentAdaptiveContext.manifest.contentHash}`,
+                state.answers.offers?.length
+                  ? `Verified offers: ${state.answers.offers.join(", ")}`
                   : null,
               ]
                 .filter(Boolean)
@@ -972,6 +1273,24 @@ export function createSiteForgeGuidedService(
                 content: turn.content,
                 timestamp: turn.createdAt,
               })),
+              ...(verticalActivation.useV2
+                ? {
+                    verticalContext: currentAdaptiveContext,
+                    discovery: {
+                      decisionSetHash: state.decisionSetHash,
+                      answerHash: state.answerHash,
+                      discoveryHash: state.discoveryHash,
+                    },
+                    siteStory: {
+                      contract: siteStory.story,
+                      identity: siteStory.identity,
+                    },
+                    selectedCreativeDirection: {
+                      ...recommendedCandidate,
+                      id: recommendedCandidate.id,
+                    },
+                  }
+                : {}),
             },
             deps.client,
           );
@@ -1002,6 +1321,12 @@ export function createSiteForgeGuidedService(
         planVersionId: plan.planVersionId,
         planRevision: plan.revision,
         planContentHash: plan.contentHash,
+        verticalProfileContentHash:
+          state.sources.verticalProfile.contentHash,
+        verticalPackContentHash: state.sources.verticalPack.contentHash,
+        decisionSetHash: state.decisionSetHash,
+        answerHash: state.answerHash,
+        discoveryHash: state.discoveryHash,
         preparedAt: now,
       };
       await persistState({
@@ -1067,13 +1392,37 @@ export function createSiteForgeGuidedService(
     }
 
     try {
-      const currentSources = await deps.loadSources(
-        { orgId: state.orgId, propertyId: state.propertyId },
-        deps.client,
+      const [currentBriefSources, currentAdaptiveContext] = await Promise.all([
+        deps.loadSources(
+          { orgId: state.orgId, propertyId: state.propertyId },
+          deps.client,
+        ),
+        deps.loadAdaptiveContext(
+          { orgId: state.orgId, propertyId: state.propertyId },
+          deps.client,
+        ),
+      ]);
+      const currentSources = adaptiveSources(
+        currentBriefSources,
+        currentAdaptiveContext,
       );
       if (!sameSources(state.sources, currentSources)) {
         throw new GuidedJourneyError(
-          "Property or brand information changed after the recommendation was prepared.",
+          "The vertical profile, pack, property evidence, or brand information changed after the recommendation was prepared.",
+          "source_changed",
+        );
+      }
+      if (
+        prepared.verticalProfileContentHash !==
+          state.sources.verticalProfile.contentHash ||
+        prepared.verticalPackContentHash !==
+          state.sources.verticalPack.contentHash ||
+        prepared.decisionSetHash !== state.decisionSetHash ||
+        prepared.answerHash !== state.answerHash ||
+        prepared.discoveryHash !== state.discoveryHash
+      ) {
+        throw new GuidedJourneyError(
+          "Discovery decisions changed after the recommendation was prepared.",
           "source_changed",
         );
       }
@@ -1204,7 +1553,7 @@ export function createSiteForgeGuidedService(
     } catch (error) {
       const classified = toSiteForgeGuidedError(error);
       if (classified.kind === "source_changed") {
-        state = guidedJourneyStateSchema.parse({
+        state = guidedJourneyStateV2Schema.parse({
           ...state,
           preparation: null,
           prepared: null,

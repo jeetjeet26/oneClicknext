@@ -48,6 +48,22 @@ describe('provider-neutral floor-plan adapters', () => {
     )
   })
 
+  it('rejects a confirmed-through date before the effective date', () => {
+    const preview = createFloorPlanPreview(new ManualFloorPlanAdapter(), [
+      {
+        name: 'A1',
+        bedrooms: 1,
+        effectiveAt: '2026-08-18T00:00:00.000Z',
+        expiresAt: '2026-08-17T00:00:00.000Z',
+      },
+    ])
+
+    expect(preview.rows).toEqual([])
+    expect(preview.errors).toEqual([
+      expect.objectContaining({ field: 'expiresAt' }),
+    ])
+  })
+
   it('carries a trusted floor-plan image asset identity through preview', () => {
     const preview = createFloorPlanPreview(new ManualFloorPlanAdapter(), [
       {

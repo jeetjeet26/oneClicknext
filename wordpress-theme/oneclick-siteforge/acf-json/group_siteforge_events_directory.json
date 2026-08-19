@@ -1,0 +1,132 @@
+{
+  "key": "group_siteforge_events_directory",
+  "title": "SiteForge events directory",
+  "fields": [
+    {
+      "key": "field_siteforge_events_directory_heading_0",
+      "name": "heading",
+      "label": "heading",
+      "type": "text"
+    },
+    {
+      "key": "field_siteforge_events_directory_intro_1",
+      "name": "intro",
+      "label": "intro",
+      "type": "textarea"
+    },
+    {
+      "key": "field_siteforge_events_directory_events_2",
+      "name": "events",
+      "label": "events",
+      "type": "repeater",
+      "layout": "block",
+      "button_label": "Add events",
+      "sub_fields": [
+        {
+          "key": "field_siteforge_events_directory_events_id_0",
+          "name": "id",
+          "label": "id",
+          "type": "text"
+        },
+        {
+          "key": "field_siteforge_events_directory_events_name_1",
+          "name": "name",
+          "label": "name",
+          "type": "text"
+        },
+        {
+          "key": "field_siteforge_events_directory_events_starts_at_2",
+          "name": "starts_at",
+          "label": "starts_at",
+          "type": "text"
+        },
+        {
+          "key": "field_siteforge_events_directory_events_ends_at_3",
+          "name": "ends_at",
+          "label": "ends_at",
+          "type": "text"
+        },
+        {
+          "key": "field_siteforge_events_directory_events_location_4",
+          "name": "location",
+          "label": "location",
+          "type": "text"
+        },
+        {
+          "key": "field_siteforge_events_directory_events_description_5",
+          "name": "description",
+          "label": "description",
+          "type": "textarea"
+        },
+        {
+          "key": "field_siteforge_events_directory_events_url_6",
+          "name": "url",
+          "label": "url",
+          "type": "url"
+        }
+      ]
+    },
+    {
+      "key": "field_siteforge_events_directory_catalog_snapshot_3",
+      "name": "catalog_snapshot",
+      "label": "catalog_snapshot",
+      "type": "group",
+      "sub_fields": [
+        {
+          "key": "field_siteforge_events_directory_catalog_snapshot_captured_at_0",
+          "name": "captured_at",
+          "label": "captured_at",
+          "type": "text"
+        },
+        {
+          "key": "field_siteforge_events_directory_catalog_snapshot_content_hash_1",
+          "name": "content_hash",
+          "label": "content_hash",
+          "type": "text"
+        },
+        {
+          "key": "field_siteforge_events_directory_catalog_snapshot_fresh_until_2",
+          "name": "fresh_until",
+          "label": "fresh_until",
+          "type": "text"
+        }
+      ]
+    },
+    {
+      "key": "field_siteforge_events_directory_conversion_intent_4",
+      "name": "conversion_intent",
+      "label": "conversion_intent",
+      "type": "text"
+    },
+    {
+      "key": "field_siteforge_events_directory_variant_5",
+      "name": "variant",
+      "label": "variant",
+      "type": "select",
+      "choices": {
+        "cards": "cards",
+        "calendar": "calendar",
+        "list": "list"
+      },
+      "default_value": "cards"
+    }
+  ],
+  "location": [
+    [
+      {
+        "param": "block",
+        "operator": "==",
+        "value": "acf/events-directory"
+      }
+    ]
+  ],
+  "menu_order": 0,
+  "position": "normal",
+  "style": "default",
+  "label_placement": "top",
+  "instruction_placement": "label",
+  "active": true,
+  "description": "Versioned SiteForge block contract.",
+  "show_in_rest": 1,
+  "modified": 1785441600
+}

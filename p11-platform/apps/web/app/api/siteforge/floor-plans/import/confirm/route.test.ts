@@ -6,11 +6,13 @@ const {
   validatePropertyAccessMock,
   importSingleMock,
   confirmImportMock,
+  archiveMissingMock,
 } = vi.hoisted(() => ({
   getUserMock: vi.fn(),
   validatePropertyAccessMock: vi.fn(),
   importSingleMock: vi.fn(),
   confirmImportMock: vi.fn(),
+  archiveMissingMock: vi.fn(),
 }))
 
 vi.mock('@/utils/supabase/server', () => ({
@@ -30,6 +32,10 @@ vi.mock('@/utils/services/auth-guard', () => ({
 }))
 vi.mock('@/utils/siteforge/providers/floor-plan-repository', () => ({
   confirmFloorPlanImport: confirmImportMock,
+}))
+vi.mock('@/utils/siteforge/providers/manual-floor-plan-workflow', () => ({
+  PROPERTY_CONSOLE_SOURCE_IDENTITY: 'property-console',
+  archiveMissingPropertyConsoleFloorPlans: archiveMissingMock,
 }))
 
 function request(): NextRequest {
@@ -53,7 +59,10 @@ describe('floor-plan import confirmation route', () => {
       data: { user: { id: '33333333-3333-4333-8333-333333333333' } },
       error: null,
     })
-    validatePropertyAccessMock.mockResolvedValue({ authorized: true })
+    validatePropertyAccessMock.mockResolvedValue({
+      authorized: true,
+      orgId: '44444444-4444-4444-8444-444444444444',
+    })
     importSingleMock.mockResolvedValue({
       data: {
         id: '22222222-2222-4222-8222-222222222222',
@@ -64,6 +73,7 @@ describe('floor-plan import confirmation route', () => {
       error: null,
     })
     confirmImportMock.mockResolvedValue({ applied: 2 })
+    archiveMissingMock.mockResolvedValue(undefined)
   })
 
   it('blocks confirmation when preview errors remain', async () => {
@@ -92,5 +102,31 @@ describe('floor-plan import confirmation route', () => {
     })
     expect(response.status).toBe(200)
     expect(confirmImportMock).toHaveBeenCalledOnce()
+  })
+
+  it('archives omitted property-console rows after applying the preview', async () => {
+    importSingleMock.mockResolvedValue({
+      data: {
+        id: '22222222-2222-4222-8222-222222222222',
+        property_id: '11111111-1111-4111-8111-111111111111',
+        status: 'preview',
+        error_count: 0,
+        source_type: 'manual',
+        source_identity: 'property-console',
+      },
+      error: null,
+    })
+    const { POST } = await import('./route')
+    const response = await POST(request())
+
+    expect(response.status).toBe(200)
+    expect(archiveMissingMock).toHaveBeenCalledWith(
+      {
+        propertyId: '11111111-1111-4111-8111-111111111111',
+        importId: '22222222-2222-4222-8222-222222222222',
+        orgId: '44444444-4444-4444-8444-444444444444',
+      },
+      expect.anything()
+    )
   })
 })

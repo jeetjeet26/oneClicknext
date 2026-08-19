@@ -1,9 +1,9 @@
 import type { BrandContext } from '@/utils/siteforge/agents/brand-agent'
 import {
   generationPreferencesSchema,
-  siteForgePlanSchema,
+  siteForgePlanV1Schema,
   siteForgeSiteTypeSchema,
-  type SiteForgePlan,
+  type SiteForgePlanV1,
 } from '@/utils/siteforge/contracts'
 import type { BrandForgeContractV1 } from '@/utils/brandforge/contracts'
 
@@ -29,10 +29,10 @@ type BuildSiteForgePlanInput = {
 type SiteForgeSiteType = ReturnType<typeof siteForgeSiteTypeSchema.parse>
 
 function applySiteTypeTemplate(
-  standardPages: SiteForgePlan['pages'],
+  standardPages: SiteForgePlanV1['pages'],
   siteType: SiteForgeSiteType,
   sourceId: string
-): SiteForgePlan['pages'] {
+): SiteForgePlanV1['pages'] {
   if (siteType === 'standard') return standardPages
 
   if (siteType === 'lease-up') {
@@ -172,7 +172,9 @@ function primaryActionLabel(
   }
 }
 
-export function buildSiteForgePlan(input: BuildSiteForgePlanInput): SiteForgePlan {
+export function buildSiteForgePlan(
+  input: BuildSiteForgePlanInput
+): SiteForgePlanV1 {
   const capturedAt = input.capturedAt || new Date().toISOString()
   const preferences = generationPreferencesSchema.parse(input.preferences || {})
   const primaryAction = preferences.ctaPriority || 'contact'
@@ -185,7 +187,7 @@ export function buildSiteForgePlan(input: BuildSiteForgePlanInput): SiteForgePla
   const differentiators = input.brandContext.positioning.differentiators.slice(0, 4)
   const priorities = input.brandContext.targetAudience.priorities.slice(0, 4)
 
-  return siteForgePlanSchema.parse({
+  return siteForgePlanV1Schema.parse({
     schemaVersion: 1,
     siteType,
     propertyId: input.propertyId,

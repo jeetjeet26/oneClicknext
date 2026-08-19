@@ -9,6 +9,7 @@ import {
   validateWordPressThemeArtifact,
 } from './theme-artifact'
 import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
+import { ACF_BLOCK_TYPES } from '@/types/siteforge'
 
 const designSystem: DesignSystem = {
   colorSystem: {
@@ -73,7 +74,7 @@ describe('WordPress theme artifact', () => {
     expect(first.themeOverlay.contentHash).toMatch(/^[a-f0-9]{64}$/)
     expect(first.themeOverlay.files).toHaveLength(2)
     expect(first.siteConfiguration.motion).toEqual(first.motion)
-    expect(Object.keys(first.acfSchemas)).toHaveLength(15)
+    expect(Object.keys(first.acfSchemas)).toHaveLength(ACF_BLOCK_TYPES.length)
     expect(validateWordPressThemeArtifact(first)).toEqual(first)
   })
 
@@ -191,7 +192,9 @@ describe('WordPress theme artifact', () => {
       designSystem
     )
 
-    expect(Object.keys(rebuilt.acfSchemas)).toHaveLength(14)
+    expect(Object.keys(rebuilt.acfSchemas)).toHaveLength(
+      ACF_BLOCK_TYPES.length - 1
+    )
     expect(rebuilt.acfSchemas).not.toHaveProperty(['acf/testimonials'])
     expect(validateWordPressThemeArtifact(rebuilt)).toEqual(rebuilt)
   })

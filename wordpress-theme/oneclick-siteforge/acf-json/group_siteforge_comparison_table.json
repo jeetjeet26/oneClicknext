@@ -1,0 +1,98 @@
+{
+  "key": "group_siteforge_comparison_table",
+  "title": "SiteForge comparison table",
+  "fields": [
+    {
+      "key": "field_siteforge_comparison_table_heading_0",
+      "name": "heading",
+      "label": "heading",
+      "type": "text"
+    },
+    {
+      "key": "field_siteforge_comparison_table_intro_1",
+      "name": "intro",
+      "label": "intro",
+      "type": "textarea"
+    },
+    {
+      "key": "field_siteforge_comparison_table_columns_2",
+      "name": "columns",
+      "label": "columns",
+      "type": "repeater",
+      "layout": "block",
+      "button_label": "Add columns",
+      "sub_fields": [
+        {
+          "key": "field_siteforge_comparison_table_columns_key_0",
+          "name": "key",
+          "label": "key",
+          "type": "text"
+        },
+        {
+          "key": "field_siteforge_comparison_table_columns_label_1",
+          "name": "label",
+          "label": "label",
+          "type": "text"
+        }
+      ]
+    },
+    {
+      "key": "field_siteforge_comparison_table_rows_3",
+      "name": "rows",
+      "label": "rows",
+      "type": "repeater",
+      "layout": "block",
+      "button_label": "Add rows",
+      "sub_fields": [
+        {
+          "key": "field_siteforge_comparison_table_rows_id_0",
+          "name": "id",
+          "label": "id",
+          "type": "text"
+        },
+        {
+          "key": "field_siteforge_comparison_table_rows_label_1",
+          "name": "label",
+          "label": "label",
+          "type": "text"
+        },
+        {
+          "key": "field_siteforge_comparison_table_rows_values_2",
+          "name": "values",
+          "label": "values",
+          "type": "textarea"
+        }
+      ]
+    },
+    {
+      "key": "field_siteforge_comparison_table_variant_4",
+      "name": "variant",
+      "label": "variant",
+      "type": "select",
+      "choices": {
+        "table": "table",
+        "cards": "cards",
+        "compact": "compact"
+      },
+      "default_value": "table"
+    }
+  ],
+  "location": [
+    [
+      {
+        "param": "block",
+        "operator": "==",
+        "value": "acf/comparison-table"
+      }
+    ]
+  ],
+  "menu_order": 0,
+  "position": "normal",
+  "style": "default",
+  "label_placement": "top",
+  "instruction_placement": "label",
+  "active": true,
+  "description": "Versioned SiteForge block contract.",
+  "show_in_rest": 1,
+  "modified": 1785441600
+}

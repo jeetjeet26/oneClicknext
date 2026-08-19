@@ -23,20 +23,7 @@ export function classifySiteForgeGenerationFailure(
 ): SiteForgeGenerationFailure {
   const message = workflowErrorMessage(error)
   if (
-    /outside the approved rights-cleared asset manifest/i.test(message) &&
-    /logo-(?:primary|variation)-\d+/i.test(message)
-  ) {
-    return {
-      code: 'legacy_logo_identity_failure',
-      retryable: true,
-      failedCheckpoint,
-      message,
-      safeMessage:
-        'The previous build used outdated logo references. SiteForge has repaired that path and the build can now be restarted.',
-    }
-  }
-  if (
-    /approved floor-plan inventory changed, became stale, or is no longer publishable/i.test(
+    /approved floor-plan inventory changed or is no longer publishable/i.test(
       message
     )
   ) {
@@ -89,7 +76,7 @@ export function classifySiteForgeGenerationFailure(
     }
   }
   const deterministicAssetMismatch =
-    /outside the approved rights-cleared asset manifest|approved evidence snapshot|pinned .* (?:hash|context)|does not match the confirmed plan/i.test(
+    /approved evidence snapshot|pinned .* (?:hash|context)|does not match the confirmed plan/i.test(
       message
     )
   if (deterministicAssetMismatch) {

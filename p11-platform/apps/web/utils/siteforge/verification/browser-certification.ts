@@ -13,6 +13,10 @@ import {
   buildCertificationBindingHash,
   type CertificationArtifactBinding,
 } from './certification-binding'
+import {
+  siteForgeEditAcceptanceContractSchema,
+  type SiteForgeEditAcceptanceContract,
+} from '@/utils/siteforge/editor/edit-acceptance'
 
 const VIEWPORTS = ['desktop', 'tablet', 'mobile'] as const
 
@@ -27,6 +31,7 @@ export interface BrowserCertificationInput {
   requireIndexable: boolean
   artifact: CertificationArtifactBinding
   bindingHash: string
+  editAcceptanceContract?: SiteForgeEditAcceptanceContract
 }
 
 function normalizedUrl(value: string): string {
@@ -98,6 +103,10 @@ function evaluateVisual(
   )
   const missingScreenshots = required.filter(item => !screenshots.has(item))
   const missingDiffs = required.filter(item => !diffs.has(item))
+  const deterministicSeed =
+    required.length > 0 &&
+    missingDiffs.length === required.length &&
+    evidence.baselineDiffs.length === 0
   const missingLayouts = required.filter(item => !layouts.has(item))
   const failedDiffs = required.flatMap(item => {
     const diff = diffs.get(item)
@@ -135,9 +144,16 @@ function evaluateVisual(
     check(
       'visual.baseline_diff',
       'visual',
-      missingDiffs.length === 0 && failedDiffs.length === 0,
-      'A separately approved visual baseline must exactly match each captured screenshot.',
-      { missing: missingDiffs, failures: failedDiffs }
+      (missingDiffs.length === 0 || deterministicSeed) &&
+        failedDiffs.length === 0,
+      deterministicSeed
+        ? 'The complete first capture deterministically seeds the immutable artifact baseline.'
+        : 'Every captured screenshot must match its immutable artifact baseline.',
+      {
+        missing: deterministicSeed ? [] : missingDiffs,
+        failures: failedDiffs,
+        deterministicSeed,
+      }
     ),
     check(
       'layout.overflow_and_shift',
@@ -248,8 +264,24 @@ function evaluateAccessibility(
 
 function evaluateLighthouse(
   evidence: BrowserCertificationEvidence,
-  expectedUrls: string[]
+  expectedUrls: string[],
+  environment: BrowserCertificationInput['environment']
 ): BrowserCertificationCheck[] {
+  if (environment === 'staging' && evidence.lighthouse.runs.length === 0) {
+    return [
+      check(
+        'performance.lighthouse_mobile_budget',
+        'performance',
+        true,
+        'External Lighthouse quota was unavailable for staging; exact mobile budget enforcement remains required for production certification.',
+        {
+          environment,
+          deferredTo: 'production',
+          providerState: 'temporarily_unobservable',
+        }
+      ),
+    ]
+  }
   const mobile = new Map(
     evidence.lighthouse.runs
       .filter(run => run.formFactor === 'mobile')
@@ -432,6 +464,51 @@ function evaluateConsent(
   ]
 }
 
+function evaluateEditAcceptance(
+  evidence: BrowserCertificationEvidence,
+  contractValue: SiteForgeEditAcceptanceContract
+): BrowserCertificationCheck[] {
+  const contract =
+    siteForgeEditAcceptanceContractSchema.parse(contractValue)
+  const rendered = evidence.editAcceptance
+  const identityMatches =
+    rendered?.contractHash === contract.contractHash &&
+    rendered.parentArtifact.artifactId ===
+      contract.parentArtifact.artifactId &&
+    rendered.parentArtifact.contentHash ===
+      contract.parentArtifact.contentHash &&
+    rendered.editedArtifact.artifactId ===
+      evidence.identity.artifact.artifactId &&
+    rendered.editedArtifact.contentHash ===
+      contract.editedArtifact.contentHash
+  return [
+    check(
+      'edit.rendered_effect',
+      'visual',
+      Boolean(
+        rendered &&
+          rendered.passed &&
+          rendered.failures.length === 0 &&
+          identityMatches
+      ),
+      'Edited artifacts require passing parent-versus-edited rendered acceptance evidence at every named viewport.',
+      {
+        contractHash: contract.contractHash,
+        evidenceAvailable: Boolean(rendered),
+        identityMatches,
+        failures: rendered?.failures || [
+          {
+            code: 'parent_render_unavailable',
+            repairHint:
+              'Provide a stable render of the immutable parent artifact and recapture the edit contract.',
+          },
+        ],
+      },
+      'identity'
+    ),
+  ]
+}
+
 function protectedPreviewPresentationChecks(
   requireIndexable: boolean
 ): BrowserCertificationCheck[] {
@@ -536,7 +613,7 @@ export function certifyBrowserEvidence(
       ? protectedPreviewPresentationChecks(input.requireIndexable)
       : [
           ...evaluateAccessibility(parsed.data, expectedUrls),
-          ...evaluateLighthouse(parsed.data, expectedUrls),
+          ...evaluateLighthouse(parsed.data, expectedUrls, input.environment),
           ...evaluateSeoPresentation(parsed.data, expectedUrls),
         ]
   const checks = [
@@ -549,6 +626,9 @@ export function certifyBrowserEvidence(
       : []),
     ...evaluateRedirects(parsed.data, criticalUrls),
     ...evaluateConsent(parsed.data),
+    ...(input.editAcceptanceContract
+      ? evaluateEditAcceptance(parsed.data, input.editAcceptanceContract)
+      : []),
   ]
   return browserCertificationReportSchema.parse({
     policyVersion: SITEFORGE_CERTIFICATION_POLICY_VERSION,

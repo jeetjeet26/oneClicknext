@@ -22,6 +22,24 @@ const CHANNELS = [
 ] as const
 
 type ChannelId = (typeof CHANNELS)[number]['id']
+type ContentFormat = 'text' | 'image' | 'video' | 'reel' | 'carousel' | 'story'
+
+const FORMATS: Array<{ id: ContentFormat; label: string }> = [
+  { id: 'text', label: 'Text' },
+  { id: 'image', label: 'Feed image' },
+  { id: 'carousel', label: 'Carousel' },
+  { id: 'story', label: 'Story' },
+  { id: 'reel', label: 'Reel' },
+  { id: 'video', label: 'Video' },
+]
+
+const DEFAULT_FORMATS: Record<ChannelId, ContentFormat[]> = {
+  instagram: ['image', 'carousel', 'story', 'reel'],
+  facebook: ['image', 'video'],
+  linkedin: ['text', 'image'],
+  tiktok: ['reel'],
+  x: ['text', 'image'],
+}
 
 interface Connection {
   id: string
@@ -59,6 +77,9 @@ export function BriefBuilder({ propertyId, onGenerated }: BriefBuilderProps) {
   const [mustAvoid, setMustAvoid] = useState('')
   const [selectedConnections, setSelectedConnections] = useState<string[]>([])
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([])
+  const [formatSelections, setFormatSelections] = useState<Record<ChannelId, ContentFormat[]>>(
+    () => structuredClone(DEFAULT_FORMATS)
+  )
   const [showAssetPicker, setShowAssetPicker] = useState(false)
 
   const [connections, setConnections] = useState<Connection[]>([])
@@ -95,6 +116,13 @@ export function BriefBuilder({ propertyId, onGenerated }: BriefBuilderProps) {
         .filter((channel): channel is ChannelId => Boolean(channel))
     ),
   ]
+  const formatPlan = selectedChannels.flatMap((platform) =>
+    formatSelections[platform].map((contentFormat) => ({
+      platform,
+      contentFormat,
+      quantity: 1,
+    }))
+  )
 
   const addFact = () => {
     const text = factDraft.trim()
@@ -107,6 +135,7 @@ export function BriefBuilder({ propertyId, onGenerated }: BriefBuilderProps) {
     title.trim().length > 0 &&
     objective.trim().length > 0 &&
     selectedConnections.length > 0 &&
+    formatPlan.length > 0 &&
     !generating
 
   const handleGenerate = async () => {
@@ -133,6 +162,7 @@ export function BriefBuilder({ propertyId, onGenerated }: BriefBuilderProps) {
           channels: selectedChannels,
           connectionIds: selectedConnections,
           assetIds: selectedAssetIds,
+          formatPlan,
         }),
       })
       const briefData = await briefRes.json()
@@ -226,7 +256,7 @@ export function BriefBuilder({ propertyId, onGenerated }: BriefBuilderProps) {
         <textarea
           value={objective}
           onChange={(event) => setObjective(event.target.value)}
-          placeholder="Drive tour bookings from young professionals moving this fall"
+            placeholder="Drive tour bookings from renters seeking pet-friendly homes this fall"
           rows={2}
           className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-sm"
         />
@@ -240,7 +270,7 @@ export function BriefBuilder({ propertyId, onGenerated }: BriefBuilderProps) {
           <input
             value={audience}
             onChange={(event) => setAudience(event.target.value)}
-            placeholder="Young professionals, pet owners"
+            placeholder="Pet owners seeking flexible work-from-home space"
             className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-sm"
           />
         </div>
@@ -263,8 +293,8 @@ export function BriefBuilder({ propertyId, onGenerated }: BriefBuilderProps) {
           Approved facts the AI may use
         </label>
         <p className="text-xs text-slate-500 mb-2">
-          Pricing, specials, availability, or testimonials will only be mentioned if you list them
-          here or they exist in your knowledge base.
+          Use this for editorial guidance. Sensitive facts such as pricing, specials, availability,
+          or testimonials require an approved structured source before they can become claims.
         </p>
         <div className="flex gap-2">
           <input
@@ -348,6 +378,57 @@ export function BriefBuilder({ propertyId, onGenerated }: BriefBuilderProps) {
           </div>
         )}
       </div>
+
+      {/* Coordinated format plan */}
+      {selectedChannels.length > 0 && (
+        <div>
+          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+            Channel format plan *
+          </label>
+          <p className="text-xs text-slate-500 mb-3">
+            Generate a coordinated package with genuinely format-specific copy, overlays, safe areas,
+            storyboards, subtitles, and thumbnail guidance.
+          </p>
+          <div className="space-y-3">
+            {selectedChannels.map((channel) => (
+              <div
+                key={channel}
+                className="rounded-lg border border-slate-200 dark:border-slate-700 p-3"
+              >
+                <p className="text-sm font-medium capitalize text-slate-800 dark:text-slate-200 mb-2">
+                  {channel}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {FORMATS.map((format) => {
+                    const selected = formatSelections[channel].includes(format.id)
+                    return (
+                      <button
+                        key={format.id}
+                        type="button"
+                        onClick={() =>
+                          setFormatSelections((current) => ({
+                            ...current,
+                            [channel]: selected
+                              ? current[channel].filter((value) => value !== format.id)
+                              : [...current[channel], format.id],
+                          }))
+                        }
+                        className={`px-3 py-1.5 rounded-full border text-xs font-medium ${
+                          selected
+                            ? 'bg-violet-600 text-white border-violet-600'
+                            : 'border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300'
+                        }`}
+                      >
+                        {format.label}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Assets */}
       <div>

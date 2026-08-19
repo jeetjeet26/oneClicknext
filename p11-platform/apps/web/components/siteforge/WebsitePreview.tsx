@@ -108,8 +108,6 @@ type PendingAction =
   | 'delete'
   | 'regenerate'
   | 'deploy'
-  | 'approve_artifact'
-  | 'deny_artifact'
 
 export type PreviewNavigationNode = SiteConfiguration['navigation']['items'][number] & {
   children: PreviewNavigationNode[]
@@ -148,6 +146,32 @@ function humanizeLinkLabel(value: string): string {
 
 function isExternalLink(href: string): boolean {
   return /^https?:\/\//i.test(href)
+}
+
+function normalizedNavigationPath(pathname: string): string {
+  const normalized = pathname.replace(/\/{2,}/g, '/').replace(/\/+$/, '')
+  return normalized || '/'
+}
+
+export function isPreviewNavigationCurrent(
+  href: string,
+  currentUrl?: string
+): boolean {
+  if (!currentUrl || href.startsWith('#')) return false
+
+  try {
+    const fallbackOrigin = 'https://siteforge-preview.local'
+    const current = new URL(currentUrl, fallbackOrigin)
+    const target = new URL(href, current.origin)
+
+    return (
+      target.origin === current.origin &&
+      normalizedNavigationPath(target.pathname) ===
+        normalizedNavigationPath(current.pathname)
+    )
+  } catch {
+    return false
+  }
 }
 
 function normalizePreviewLinks(value: unknown): PreviewLink[] {
@@ -319,36 +343,60 @@ function previewAnchorProps(
 function PreviewNavigationList({
   nodes,
   externalLinksNewTab,
+  currentUrl,
+  activeTextColor,
+  activeIndicatorColor,
   className,
 }: {
   nodes: PreviewNavigationNode[]
   externalLinksNewTab: boolean
+  currentUrl?: string
+  activeTextColor?: string
+  activeIndicatorColor?: string
   className?: string
 }) {
   return (
     <ul className={className}>
-      {nodes.map(node => (
-        <li key={node.id}>
-          <a
-            href={node.href}
-            {...previewAnchorProps(
-              node.href,
-              node.external ?? isExternalLink(node.href),
-              externalLinksNewTab
-            )}
-            className="underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
-          >
-            {node.label}
-          </a>
-          {node.children.length > 0 ? (
-            <PreviewNavigationList
-              nodes={node.children}
-              externalLinksNewTab={externalLinksNewTab}
-              className="mt-2 space-y-2 border-l border-current/25 pl-3"
-            />
-          ) : null}
-        </li>
-      ))}
+      {nodes.map(node => {
+        const isCurrent = isPreviewNavigationCurrent(node.href, currentUrl)
+        return (
+          <li key={node.id}>
+            <a
+              href={node.href}
+              aria-current={isCurrent ? 'page' : undefined}
+              {...previewAnchorProps(
+                node.href,
+                node.external ?? isExternalLink(node.href),
+                externalLinksNewTab
+              )}
+              className={`bg-transparent underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ${
+                isCurrent ? 'border-b-[3px] font-semibold' : ''
+              }`}
+              style={{
+                ...(isCurrent && activeTextColor
+                  ? { color: activeTextColor }
+                  : {}),
+                ...(isCurrent && activeIndicatorColor
+                  ? { borderBottomColor: activeIndicatorColor }
+                  : {}),
+                outlineColor: activeIndicatorColor || activeTextColor,
+              }}
+            >
+              {node.label}
+            </a>
+            {node.children.length > 0 ? (
+              <PreviewNavigationList
+                nodes={node.children}
+                externalLinksNewTab={externalLinksNewTab}
+                currentUrl={currentUrl}
+                activeTextColor={activeTextColor}
+                activeIndicatorColor={activeIndicatorColor}
+                className="mt-2 space-y-2 border-l border-current/25 pl-3"
+              />
+            ) : null}
+          </li>
+        )
+      })}
     </ul>
   )
 }
@@ -356,9 +404,11 @@ function PreviewNavigationList({
 export function SitePreviewHeader({
   configuration,
   chrome,
+  currentUrl,
 }: {
   configuration: SiteConfiguration
   chrome: SiteChromeModel
+  currentUrl?: string
 }) {
   const navigation = buildPreviewNavigation(configuration.navigation.items)
   const announcement = configuration.header.announcement
@@ -424,6 +474,9 @@ export function SitePreviewHeader({
             <PreviewNavigationList
               nodes={navigation}
               externalLinksNewTab={openExternal}
+              currentUrl={currentUrl}
+              activeTextColor={configuration.design.colors.text}
+              activeIndicatorColor={configuration.design.colors.primary}
               className="flex flex-wrap items-start gap-x-4 gap-y-2 text-sm"
             />
           </nav>
@@ -609,6 +662,55 @@ function getDeterministicQualityChecks(value: unknown): Array<{
   )
 }
 
+function getPremiumCreativeReport(value: unknown): {
+  normalizedScore: number
+  passThreshold: number
+  passed: boolean
+  pageSlug: string
+  findings: Array<{ id: string; message: string; severity: string }>
+} | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const report = (value as Record<string, unknown>).premiumCreative
+  if (!report || typeof report !== 'object' || Array.isArray(report)) {
+    return null
+  }
+  const record = report as Record<string, unknown>
+  if (
+    typeof record.normalizedScore !== 'number' ||
+    typeof record.passThreshold !== 'number' ||
+    typeof record.passed !== 'boolean'
+  ) {
+    return null
+  }
+  const findings = Array.isArray(record.findings)
+    ? record.findings.flatMap((finding) =>
+        finding &&
+        typeof finding === 'object' &&
+        !Array.isArray(finding) &&
+        typeof finding.id === 'string' &&
+        typeof finding.message === 'string'
+          ? [
+              {
+                id: finding.id,
+                message: finding.message,
+                severity:
+                  typeof finding.severity === 'string'
+                    ? finding.severity
+                    : 'warning',
+              },
+            ]
+          : []
+      )
+    : []
+  return {
+    normalizedScore: record.normalizedScore,
+    passThreshold: record.passThreshold,
+    passed: record.passed,
+    pageSlug: typeof record.pageSlug === 'string' ? record.pageSlug : 'home',
+    findings,
+  }
+}
+
 function getDeploymentRemediationTips(
   diagnostics: WebsiteStatusResponse['deploymentDiagnostics']
 ): string[] {
@@ -668,7 +770,6 @@ export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewPr
     WebsiteStatusResponse['deploymentDiagnostics']
   >()
   const [previewingCanonical, setPreviewingCanonical] = useState(false)
-  const [approvingArtifact, setApprovingArtifact] = useState(false)
   const [artifactActionError, setArtifactActionError] = useState<string | null>(
     null
   )
@@ -676,7 +777,6 @@ export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewPr
     'mobile' | 'tablet' | 'desktop'
   >('desktop')
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null)
-  const [actionReason, setActionReason] = useState('')
   const [actionNotice, setActionNotice] = useState<string | null>(null)
   const [rollbackReason, setRollbackReason] = useState('')
 
@@ -809,49 +909,6 @@ export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewPr
       )
     } finally {
       setPreviewingCanonical(false)
-    }
-  }
-
-  const handleArtifactApproval = async (
-    decisionStatus: 'approved' | 'denied',
-    decisionReason: string
-  ) => {
-    const currentArtifact = website?.artifact?.history.find(
-      (artifact) => artifact.id === website.artifact?.currentId
-    )
-    const propertyId =
-      website?.property && typeof website.property.id === 'string'
-        ? website.property.id
-        : null
-    if (!currentArtifact || !propertyId) return
-
-    setApprovingArtifact(true)
-    setArtifactActionError(null)
-    try {
-      const response = await fetch(
-        `/api/siteforge/artifacts/${currentArtifact.id}/decision`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            propertyId,
-            contentHash: currentArtifact.content_hash,
-            decisionStatus,
-            decisionReason,
-          }),
-        }
-      )
-      const result = await response.json()
-      if (!response.ok) {
-        throw new Error(result.error || 'Artifact decision failed')
-      }
-      await loadWebsite()
-    } catch (error) {
-      setArtifactActionError(
-        error instanceof Error ? error.message : 'Artifact decision failed'
-      )
-    } finally {
-      setApprovingArtifact(false)
     }
   }
 
@@ -990,29 +1047,16 @@ export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewPr
   }
 
   const openActionDialog = (action: PendingAction) => {
-    setActionReason('')
     setPendingAction(action)
   }
 
   const handleConfirmAction = async () => {
     const action = pendingAction
     if (!action) return
-    if (
-      (action === 'approve_artifact' || action === 'deny_artifact') &&
-      actionReason.trim().length < 3
-    ) {
-      return
-    }
     setPendingAction(null)
     if (action === 'delete') await handleDelete()
     if (action === 'regenerate') handleRegenerate()
     if (action === 'deploy') await handleDeploy()
-    if (action === 'approve_artifact') {
-      await handleArtifactApproval('approved', actionReason.trim())
-    }
-    if (action === 'deny_artifact') {
-      await handleArtifactApproval('denied', actionReason.trim())
-    }
   }
 
   if (loading) {
@@ -1051,14 +1095,14 @@ export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewPr
     previewArtifactId: website.artifact?.canonicalPreviewArtifactId,
     previewContentHash: website.artifact?.canonicalPreviewContentHash,
   })
-  const deploymentApproved =
-    currentArtifact?.deployment_decision === 'approved' &&
-    canonicalPreviewMatches
   const liveArtifactMatches =
     Boolean(currentArtifact) &&
     website.artifact?.deployedArtifactId === currentArtifact?.id &&
     website.artifact?.deployedContentHash === currentArtifact?.content_hash
   const deterministicQualityChecks = getDeterministicQualityChecks(
+    currentArtifact?.quality_report
+  )
+  const premiumCreativeReport = getPremiumCreativeReport(
     currentArtifact?.quality_report
   )
   
@@ -1141,6 +1185,49 @@ export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewPr
         </Card>
       </div>
 
+      {premiumCreativeReport ? (
+        <Card>
+          <CardHeader>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <CardTitle>Premium creative score</CardTitle>
+                <CardDescription>
+                  Advisory quality signal for the {premiumCreativeReport.pageSlug || 'home'}{' '}
+                  page against the $50k agency rubric. Never blocks launch.
+                </CardDescription>
+              </div>
+              <p
+                className={`text-3xl font-bold ${
+                  premiumCreativeReport.normalizedScore >=
+                  premiumCreativeReport.passThreshold
+                    ? 'text-green-700'
+                    : 'text-amber-700'
+                }`}
+              >
+                {Math.round(premiumCreativeReport.normalizedScore * 100)}
+                <span className="text-base font-medium text-muted-foreground">
+                  /100
+                </span>
+              </p>
+            </div>
+          </CardHeader>
+          {premiumCreativeReport.findings.length > 0 ? (
+            <CardContent>
+              <ul className="grid gap-2 text-sm md:grid-cols-2">
+                {premiumCreativeReport.findings.slice(0, 6).map((finding) => (
+                  <li
+                    key={finding.id}
+                    className="rounded border border-amber-200 bg-amber-50 p-2 text-amber-900"
+                  >
+                    {finding.message}
+                  </li>
+                ))}
+              </ul>
+            </CardContent>
+          ) : null}
+        </Card>
+      ) : null}
+
       <Card>
         <CardHeader>
           <CardTitle>Immutable Artifact & WordPress Preview</CardTitle>
@@ -1170,7 +1257,7 @@ export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewPr
                 <Button
                   variant="outline"
                   onClick={handleCanonicalPreview}
-                  disabled={previewingCanonical || approvingArtifact}
+                  disabled={previewingCanonical}
                 >
                   {previewingCanonical
                     ? 'Rendering WordPress Preview…'
@@ -1190,28 +1277,13 @@ export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewPr
                     </a>
                   </Button>
                 ) : null}
-                <Button
-                  onClick={() => openActionDialog('approve_artifact')}
-                  disabled={
-                    !canonicalPreviewMatches ||
-                    approvingArtifact ||
-                    deploymentApproved
-                  }
-                >
-                  {approvingArtifact
-                    ? 'Recording Decision…'
-                    : deploymentApproved
-                      ? 'Approved for Deployment'
-                      : 'Approve Exact Artifact'}
-                </Button>
-                <Button
-                  variant="destructive"
-                  onClick={() => openActionDialog('deny_artifact')}
-                  disabled={!canonicalPreviewMatches || approvingArtifact}
-                >
-                  Deny
-                </Button>
               </div>
+              {canonicalPreviewMatches ? (
+                <p className="text-sm text-muted-foreground">
+                  Exact WordPress preview is current. Machine policy will
+                  authorize this artifact when staging starts.
+                </p>
+              ) : null}
               {artifactActionError ? (
                 <p role="alert" className="text-sm text-red-600">
                   {artifactActionError}
@@ -1622,10 +1694,10 @@ export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewPr
                   : 'Deploying...'}
             </Button>
           ) : (
-            <Button onClick={() => openActionDialog('deploy')} disabled={!deploymentApproved}>
-              {deploymentApproved
+            <Button onClick={() => openActionDialog('deploy')} disabled={!canonicalPreviewMatches}>
+              {canonicalPreviewMatches
                 ? 'Deploy to Cloudways Staging'
-                : 'Approve Exact Preview for Staging'}
+                : 'Render Exact WordPress Preview First'}
             </Button>
           )}
         </div>
@@ -1710,54 +1782,24 @@ export function WebsitePreview({ websiteId, readOnly = false }: WebsitePreviewPr
               {pendingAction === 'delete'
                 ? 'Delete website'
                 : pendingAction === 'regenerate'
-                  ? 'Start a new reviewed plan'
-                  : pendingAction === 'deploy'
-                    ? 'Deploy exact artifact to staging'
-                    : pendingAction === 'approve_artifact'
-                      ? 'Approve exact artifact'
-                      : 'Deny exact artifact'}
+                  ? 'Start a new autonomous plan'
+                  : 'Deploy exact artifact to staging'}
             </DialogTitle>
             <DialogDescription>
               {pendingAction === 'delete'
                 ? 'This permanently deletes the website record and cannot be undone.'
                 : pendingAction === 'regenerate'
-                  ? 'Regeneration returns to planning so a new plan can be reviewed before generation.'
-                  : pendingAction === 'deploy'
-                    ? 'This deploys the approved artifact to linked Cloudways staging. Production promotion remains separately governed.'
-                    : pendingAction === 'approve_artifact'
-                      ? 'Record why the exact WordPress preview is approved for staging.'
-                      : 'Record why this exact artifact must not be deployed.'}
+                  ? 'Regeneration returns to autonomous planning and produces a new immutable revision.'
+                  : 'This deploys the exact canonical WordPress artifact to linked Cloudways staging after machine policy checks pass.'}
             </DialogDescription>
           </DialogHeader>
-          {pendingAction === 'approve_artifact' ||
-          pendingAction === 'deny_artifact' ? (
-            <label className="space-y-2">
-              <span className="text-sm font-medium">Decision reason</span>
-              <textarea
-                value={actionReason}
-                onChange={(event) => setActionReason(event.target.value)}
-                className="min-h-24 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-100"
-                placeholder="Record the evidence and rationale for this decision."
-              />
-            </label>
-          ) : null}
           <DialogFooter>
             <Button variant="outline" onClick={() => setPendingAction(null)}>
               Cancel
             </Button>
             <Button
-              variant={
-                pendingAction === 'delete' ||
-                pendingAction === 'deny_artifact'
-                  ? 'destructive'
-                  : 'default'
-              }
+              variant={pendingAction === 'delete' ? 'destructive' : 'default'}
               onClick={handleConfirmAction}
-              disabled={
-                (pendingAction === 'approve_artifact' ||
-                  pendingAction === 'deny_artifact') &&
-                actionReason.trim().length < 3
-              }
             >
               Confirm
             </Button>

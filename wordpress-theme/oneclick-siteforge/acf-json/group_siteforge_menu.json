@@ -11,13 +11,19 @@
       "button_label": "Add menu items",
       "sub_fields": [
         {
-          "key": "field_siteforge_menu_menu_items_label_0",
+          "key": "field_siteforge_menu_menu_items_target_id_0",
+          "name": "target_id",
+          "label": "target_id",
+          "type": "text"
+        },
+        {
+          "key": "field_siteforge_menu_menu_items_label_1",
           "name": "label",
           "label": "label",
           "type": "text"
         },
         {
-          "key": "field_siteforge_menu_menu_items_link_1",
+          "key": "field_siteforge_menu_menu_items_link_2",
           "name": "link",
           "label": "link",
           "type": "url"

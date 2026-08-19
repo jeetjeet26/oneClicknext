@@ -42,6 +42,10 @@ const validBody = {
   title: 'Pool season kickoff',
   objective: 'Drive tour bookings for summer',
   channels: ['facebook', 'instagram'],
+  formatPlan: [
+    { platform: 'facebook', contentFormat: 'image', quantity: 1 },
+    { platform: 'instagram', contentFormat: 'carousel', quantity: 1 },
+  ],
 }
 
 describe('forgestudio briefs route', () => {

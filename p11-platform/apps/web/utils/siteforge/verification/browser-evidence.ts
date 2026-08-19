@@ -3,6 +3,7 @@ import {
   certificationArtifactBindingSchema,
   SITEFORGE_CERTIFICATION_BINDING_POLICY_VERSION,
 } from './certification-binding'
+import { siteForgeRenderedEditEvidenceSchema } from '@/utils/siteforge/editor/edit-acceptance'
 
 export const SITEFORGE_CERTIFICATION_POLICY_VERSION =
   SITEFORGE_CERTIFICATION_BINDING_POLICY_VERSION
@@ -299,6 +300,7 @@ export const browserCertificationEvidenceSchema = z.object({
       })
     ),
   }),
+  editAcceptance: siteForgeRenderedEditEvidenceSchema.optional(),
 }).superRefine((evidence, context) => {
   if (
     evidence.identity.artifact.artifactId !==

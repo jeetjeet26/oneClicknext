@@ -7,7 +7,7 @@ import { ContentStoreError, setRevisionApproval } from '@/utils/forgestudio/cont
 
 const approvalSchema = z.object({
   decision: z.enum(['approved', 'denied']),
-  note: z.string().max(2000).nullish(),
+  note: z.string().min(3).max(2000),
 })
 
 // POST - Approve or deny a pending revision (manager/admin only).

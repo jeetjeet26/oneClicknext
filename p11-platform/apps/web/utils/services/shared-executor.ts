@@ -1,6 +1,10 @@
 import { createServiceClient } from '@/utils/supabase/admin'
 import type { Json, TablesInsert, TablesUpdate } from '@/types/supabase'
 import { buildBusinessContextBridge } from '@/utils/substrate/business-context-bridge'
+import {
+  createExecutionBudget,
+  type ExecutionBudgetLimits,
+} from '@/utils/services/execution-budget'
 
 type SharedExecutorPayload = Record<string, unknown>
 type ProposalDecisionStatus = 'proposed' | 'approved' | 'denied' | 'modified'
@@ -12,6 +16,16 @@ type SharedActionLedgerInput = {
   proposalDecisionStatus?: ProposalDecisionStatus
   policyReason?: string | null
   confidenceScore?: number | null
+  modelMetadata?: SharedExecutorPayload
+  deadlineAt?: string | null
+}
+
+type SharedExecutionBudgetInput = {
+  websiteId?: string | null
+  policyVersion: string
+  limits?: ExecutionBudgetLimits
+  modelPolicy?: SharedExecutorPayload
+  metadata?: SharedExecutorPayload
 }
 
 export class SharedExecutorApprovalRequiredError extends Error {
@@ -74,6 +88,7 @@ export type SharedExecutorInput<T> = {
   action?: SharedActionLedgerInput
   requestedBy?: string | null
   capturedBy?: string | null
+  executionBudget?: SharedExecutionBudgetInput
   execute: () => Promise<T>
 }
 
@@ -190,6 +205,7 @@ async function startSharedExecutorJob(
 ): Promise<{
   sharedJobId: string | null
   sharedActionAttemptId: string | null
+  executionBudgetId: string | null
   requiresApproval: boolean
 }> {
   const startedAt = new Date().toISOString()
@@ -223,6 +239,7 @@ async function startSharedExecutorJob(
 
   let sharedJobId: string | null = null
   let sharedActionAttemptId: string | null = null
+  let executionBudgetId: string | null = null
   {
     const supabase = createServiceClient()
     const { data, error } = await supabase.from('shared_jobs').insert(insert).select('id').single()
@@ -272,6 +289,8 @@ async function startSharedExecutorJob(
           confidence_score: input.action.confidenceScore ?? null,
           policy_reason: input.action.policyReason ?? null,
           requested_by: input.requestedBy ?? null,
+          model_metadata: toJson(input.action.modelMetadata),
+          deadline_at: input.action.deadlineAt ?? null,
           proposed_at: startedAt,
           updated_at: startedAt,
         }
@@ -293,10 +312,43 @@ async function startSharedExecutorJob(
         }
         sharedActionAttemptId = actionData.id
       }
+      if (input.executionBudget) {
+        try {
+          const budget = await createExecutionBudget({
+            orgId: input.orgId,
+            propertyId: input.propertyId ?? null,
+            websiteId: input.executionBudget.websiteId ?? null,
+            jobId: sharedJobId,
+            policyVersion: input.executionBudget.policyVersion,
+            limits: input.executionBudget.limits,
+            modelPolicy: input.executionBudget.modelPolicy,
+            metadata: input.executionBudget.metadata,
+            startedAt,
+          })
+          executionBudgetId = budget.id
+        } catch (error) {
+          await finalizeSharedJob(sharedJobId, {
+            lifecycle_status: 'failed',
+            status_reason: 'execution_budget_failed',
+            error_message:
+              error instanceof Error
+                ? error.message
+                : 'Execution budget creation failed',
+            finished_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          throw error
+        }
+      }
     }
   }
 
-  return { sharedJobId, sharedActionAttemptId, requiresApproval }
+  return {
+    sharedJobId,
+    sharedActionAttemptId,
+    executionBudgetId,
+    requiresApproval,
+  }
 }
 
 async function beginSharedExecution(input: ExistingSharedExecutionInput<unknown>): Promise<void> {

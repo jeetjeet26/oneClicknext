@@ -88,24 +88,24 @@ describe('SiteForgeCreativeDirectionOverview', () => {
         palette: [
           {
             role: 'primary',
-            name: 'Mountain Sage',
-            hex: '#7D8B74',
-            usage: 'Primary brand color',
+            name: 'Midnight',
+            hex: '#112233',
+            usage: 'Primary brand field',
           },
           {
-            role: 'accent',
-            name: 'Aurora Gold',
+            role: 'secondary',
+            name: 'Gold',
             hex: '#C9A962',
-            usage: 'Accents and calls to action',
+            usage: 'Brand highlights',
           },
           {
-            role: 'background',
-            name: 'Alpine Cream',
-            hex: '#F5F1E8',
-            usage: 'Warm backgrounds',
+            role: 'surface',
+            name: 'Ivory',
+            hex: '#FFF1E8',
+            usage: 'Warm surfaces',
           },
         ],
-        usageGuidelines: 'Use sage as the primary field and gold sparingly.',
+        usageGuidelines: 'Use gold sparingly against midnight and ivory.',
       },
     })
     const markup = renderToStaticMarkup(
@@ -117,8 +117,8 @@ describe('SiteForgeCreativeDirectionOverview', () => {
       }),
     )
 
-    expect(markup).toContain('Latest approved Brand Book')
-    expect(markup).toContain('Mountain Sage')
+    expect(markup).toContain('Approved brand')
+    expect(markup).toContain('Full approved palette')
     expect(markup).toContain('aurora-logo.svg')
     expect(markup).toContain('Proposed website color roles')
     expect(markup).toContain('Fraunces')

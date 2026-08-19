@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   createGenerationRequestSchema,
-  siteForgeGenerationEvidenceSnapshotSchema,
+  siteForgeGenerationEvidenceSnapshotV1Schema,
   siteForgePlanSchema,
 } from './contracts'
 import {
@@ -111,7 +111,7 @@ describe('SiteForge contracts', () => {
 
   it('accepts PostgreSQL GUID identities in generation evidence', () => {
     expect(
-      siteForgeGenerationEvidenceSnapshotSchema.shape.brand.shape.assetId.parse(
+      siteForgeGenerationEvidenceSnapshotV1Schema.shape.brand.shape.assetId.parse(
         'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
       )
     ).toBe('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb')

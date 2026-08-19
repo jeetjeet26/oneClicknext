@@ -14,6 +14,7 @@ const durableEvidence = {
   rollbackVerified: true,
   restoreEvidenceRuns: 1,
   providerEvidenceRuns: 2,
+  renderedEvidenceRuns: 5,
   outcomeMeasurements: 4,
   negativeOutcomeRate: 0,
   derivedAt: '2026-08-10T00:00:00.000Z',
@@ -76,5 +77,18 @@ describe('SiteForge autonomy policy', () => {
         },
       })
     ).toThrow('repeated provider evidence')
+  })
+
+  it('requires rendered effect evidence before extension bounded-auto policy', () => {
+    expect(() =>
+      validateAutonomyPromotion({
+        actionScope: 'runtime.extension.publish',
+        currentMode: 'supervised',
+        requestedMode: 'bounded_auto',
+        holdoutPercent: 10,
+        limits: { maxActionsPerDay: 1 },
+        evidence: { ...durableEvidence, renderedEvidenceRuns: 4 },
+      })
+    ).toThrow('parent-versus-edited rendered evidence')
   })
 })

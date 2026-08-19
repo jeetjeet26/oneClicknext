@@ -27,13 +27,13 @@ Make the platform locally reliable and product-complete before expanding autonom
 
 ## Strategic Thesis
 
-The project is not a generic AI application. It is a vertically integrated operating system for multifamily marketing and leasing.
+The project is not a generic AI application. It is a vertically integrated operating system for property marketing and operations. Autonomous SiteForge serves two equal website lanes—multifamily rental and for-sale real estate—while the broader platform retains domain-specific controls for leasing and other products.
 
 That means the implementation order matters:
 
 1. trustworthy property and business context
 2. trustworthy product execution surfaces
-3. a shared substrate for jobs, actions, approvals, policy, and outcomes
+3. a shared substrate for jobs, actions, product-specific human decisions, deterministic policy, and outcomes
 4. only then recommendation-first autonomy and later cross-product orchestration
 
 The long-term opportunity is strong precisely because the platform can unify:
@@ -51,7 +51,22 @@ The near-term risk is also clear: if breadth outruns trust or the autonomy narra
 
 No new autonomous write-path should advance until the underlying product surface is stable, observable, test-gated, reversible, and locally reproducible.
 
-When human supervision is required, it must be real supervision: reviewers need to be able to approve, deny, or modify proposed actions and leave preserved textual reasoning that becomes part of the durable decision history.
+When a product contract requires human supervision, it must be real supervision: reviewers need to be able to approve, deny, or modify proposed actions and leave preserved textual reasoning that becomes part of the durable decision history. SiteForge has a narrower product contract defined below: owner-only preview followed by one note-free Launch action, with deterministic machine policy replacing external review and internal approval ceremony.
+
+## Autonomous SiteForge Web Team Operating Spec
+
+This operating spec governs SiteForge and its BrandForge handoff. It is a product-specific profile within the broader autonomy roadmap and takes precedence over generic recommendation/approval patterns for the website creation and launch journey.
+
+- **Two equal lanes:** multifamily rental and for-sale are first-class peers. They share infrastructure and quality standards but use deterministic lane-specific truth schemas, conversion intents, content requirements, and policy packs. Neither is implemented as a fallback or cosmetic variant of the other.
+- **One immutable brand contract:** a newly generated BrandForge identity and a supplied brand system must normalize into the same versioned, content-hashed contract. Every website artifact binds to one exact contract version. Identity-critical rules cannot mutate during a run; a brand change creates a new version and run boundary.
+- **AI-owned workflow:** the autonomous web team owns synthesis, architecture, creative direction, copy, asset commissioning, implementation, QA, preview preparation, launch preparation, and verification. The owner supplies truth, constraints, credentials, source assets, and the final launch decision rather than managing intermediate work.
+- **Creative commissioning:** intake captures intent, references, non-negotiables, supplied assets, and business truth. The AI turns that brief into creative commissions. It must not expose implementation trivia or disguise a low-level website-builder questionnaire as discovery.
+- **Owner-only preview and launch:** the sole human review surface is the authenticated property owner/operator preview. The finished preview offers one `Launch` button, with no required note, rationale, approve-then-publish sequence, external client-review portal, stakeholder comments, or internal approval ceremony.
+- **Deterministic internal policy:** versioned machine rules evaluate brand fidelity, lane constraints, fair-housing and other applicable compliance, accessibility, content truth, quality, artifact integrity, deployment readiness, and rollback readiness. Results remain auditable without becoming human approval gates.
+- **Immutable identity and fail-closed truth:** the system cannot silently alter canonical identity or invent property facts, inventory, pricing, availability, claims, credentials, provider evidence, or launch readiness. Missing, stale, conflicting, or unverifiable required truth blocks affected work or launch and returns a precise owner-facing request.
+- **Premium release bar:** every launch candidate must meet the standard of a bespoke **$50,000-$100,000 agency website** across strategy, composition, typography, imagery, motion, responsive execution, accessibility, specificity, performance, and conversion design. Merely valid, complete, or template-polished output is not launch-ready.
+
+This does not weaken platform controls. The single Launch action must bind to the exact owner-previewed artifact and can execute only when all internal policy and provider-evidence gates pass. Rollback remains deterministic and auditable.
 
 ## Local-First Rule
 
@@ -89,11 +104,11 @@ Completed now:
 - Local smoke/e2e coverage now exists via [`p11-platform/apps/web/playwright.config.ts`](p11-platform/apps/web/playwright.config.ts), [`p11-platform/apps/web/e2e/local-smoke.spec.ts`](p11-platform/apps/web/e2e/local-smoke.spec.ts), and [`p11-platform/package.json`](p11-platform/package.json).
 - Cron/job visibility now exists via [`p11-platform/supabase/migrations/20260313011500_add_cron_job_runs.sql`](p11-platform/supabase/migrations/20260313011500_add_cron_job_runs.sql), [`p11-platform/apps/web/utils/services/cron-job-runs.ts`](p11-platform/apps/web/utils/services/cron-job-runs.ts), and [`p11-platform/apps/web/app/api/cron/runs/route.ts`](p11-platform/apps/web/app/api/cron/runs/route.ts).
 - Critical public-route validation and rate limiting now cover the main anonymous LumaLeasing surfaces for local and single-instance operation via [`p11-platform/apps/web/utils/services/validation.ts`](p11-platform/apps/web/utils/services/validation.ts), [`p11-platform/apps/web/utils/services/rate-limiter.ts`](p11-platform/apps/web/utils/services/rate-limiter.ts), and the hardened widget routes in `app/api/lumaleasing/*`; a hosted/serverless-safe replacement is still deferred.
-- `SiteForge` now persists immutable, content-hashed blueprint revisions and binds canonical preview, artifact approval, staging deployment, launch preparation, promotion, and rollback to exact artifact identities.
+- `SiteForge` now persists immutable, content-hashed blueprint revisions and binds canonical preview, deterministic artifact qualification, staging deployment, launch preparation, promotion, and rollback to exact artifact identities.
 - `SiteForge` Cloudways/WordPress staging, runtime-v3 transaction, audited launch, health certification, and rollback/restore implementations are materially present, but implementation depth is not provider acceptance evidence.
 - First-party SiteForge artifacts now have an explicit clean-checkout contract in [`p11-platform/apps/web/package.json`](p11-platform/apps/web/package.json): generate tracked ACF JSON, build the signed theme plus runtime-v3 package from explicit inputs, then drift-check deterministic rebuilds.
 - ACF Pro remains a licensed external deployment input. The repository verifies its supplied archive against the checked digest but does not claim to reproduce the vendor binary.
-- The default SiteForge lane in [`p11-platform/apps/web/e2e/local-smoke.spec.ts`](p11-platform/apps/web/e2e/local-smoke.spec.ts) deterministically proves approved plan -> simulated immutable generation -> persisted local preview architecture, then verifies that exact artifact approval, simulated staging, launch preparation, and rollback revision fail closed without deterministic-quality/canonical WordPress/staging/verified rollback evidence. It does not record fake provider success.
+- The default SiteForge lane in [`p11-platform/apps/web/e2e/local-smoke.spec.ts`](p11-platform/apps/web/e2e/local-smoke.spec.ts) deterministically proves qualified plan -> simulated immutable generation -> persisted local preview architecture, then verifies that exact-artifact qualification, simulated staging, launch preparation, and rollback revision fail closed without deterministic-quality/canonical WordPress/staging/verified rollback evidence. It does not record fake provider success.
 - The destructive provider lane is the opt-in `Aurora same-website runtime-v3 lifecycle`. Its current preflight requires `AURORA_LIFECYCLE_E2E=1` plus exact `true` values for `SITEFORGE_AURORA_LIFECYCLE_CONTROL_ENABLED`, `SITEFORGE_RUNTIME_V3_ENABLED`, `SITEFORGE_SEMANTIC_EDITOR_ENABLED`, and `SITEFORGE_RUNTIME_EXTENSIONS_ENABLED`, along with all required identities, digests, credentials, signing material, lease data, and cleanup confirmation.
 - No complete Aurora runtime-v3 provider run is recorded as passing. Real canonical preview, Cloudways staging/promotion, production certification, restore verification, and cleanup remain external blockers and the real test must not be described as green until one owned disposable run satisfies every runbook condition.
 - `LumaLeasing` now prevents duplicate bookings and duplicate Gmail outbound sends across retries in [`p11-platform/apps/web/app/api/lumaleasing/tours/route.ts`](p11-platform/apps/web/app/api/lumaleasing/tours/route.ts) and [`p11-platform/apps/web/app/api/lumaleasing/email/send/route.ts`](p11-platform/apps/web/app/api/lumaleasing/email/send/route.ts), with route coverage in [`p11-platform/apps/web/app/api/lumaleasing/tours/route.test.ts`](p11-platform/apps/web/app/api/lumaleasing/tours/route.test.ts) and [`p11-platform/apps/web/app/api/lumaleasing/email/send/route.test.ts`](p11-platform/apps/web/app/api/lumaleasing/email/send/route.test.ts).
@@ -188,11 +203,15 @@ Deferred hosted-only P0 items:
 
 ### P1: Product Completion
 
-- [x] `SiteForge`: preserve immutable plan/artifact identities through generation, canonical preview, approval, staging, audited launch, and rollback APIs.
+- [x] `SiteForge`: preserve immutable plan/artifact identities through generation, canonical preview, deterministic qualification, staging, audited launch, and rollback APIs.
 - [x] `SiteForge`: fail closed on missing WordPress/Cloudways evidence instead of persisting fake-ready or fake-complete provider state.
 - [x] `SiteForge`: make tracked ACF JSON, the signed base theme, and runtime-v3 first-party packages reproducible from explicit source/Git SHA/signing/contract inputs, with deterministic drift checks.
-- [~] `SiteForge`: keep a deterministic default local lifecycle for approved plan -> simulated immutable generation -> persisted local preview architecture and exercise quality/approval/staging/launch/rollback boundaries. The current simulation does not produce the full deterministic quality report or canonical WordPress certification required for exact artifact approval; therefore default local smoke is not a successful deploy/rollback proof.
-- [ ] `SiteForge`: complete one owned disposable Aurora runtime-v3 run through canonical preview, independent exact-artifact approval, Cloudways staging, launch preparation/promotion, production certification, immutable rollback revision, restore verification, and cleanup. No passing provider evidence is currently recorded.
+- [~] `SiteForge`: keep a deterministic default local lifecycle for qualified plan -> simulated immutable generation -> persisted local preview architecture and exercise quality/qualification/staging/launch/rollback boundaries. The current simulation does not produce the full deterministic quality report or canonical WordPress certification required for exact-artifact qualification; therefore default local smoke is not a successful deploy/rollback proof.
+- [ ] `SiteForge`: implement and verify equal multifamily-rental and for-sale operating lanes against versioned lane schemas, conversion intents, and deterministic policy packs.
+- [ ] `SiteForge`/`BrandForge`: converge generated and supplied identity into one immutable, content-hashed brand contract bound exactly to every website run and artifact.
+- [ ] `SiteForge`: replace low-level discovery with owner briefing and AI-owned creative commissioning; make owner-only preview plus one note-free Launch button the complete human journey, without external client review or internal approval ceremony.
+- [ ] `SiteForge`: codify and test deterministic launch policy for immutable identity, fail-closed truth, and the $50,000-$100,000 bespoke-agency quality bar.
+- [ ] `SiteForge`: complete one owned disposable Aurora runtime-v3 run through canonical owner preview, exact-artifact deterministic qualification, one-action launch, Cloudways staging/promotion, production certification, immutable rollback revision, restore verification, and cleanup. No passing provider evidence is currently recorded.
 - [x] `LumaLeasing`: finish Gmail thread ingestion and reply lifecycle. Inbound message persistence, lead activity logging, webhook stale-history dedupe, deterministic reply-state transitions, pending-thread operator visibility, manual thread completion controls, send-path completion intent, cron-driven stale `awaiting_lead_reply` auto-resolution, deterministic reopen-on-inbound behavior for resolved threads, operator-visible overdue `awaiting_internal_reply` signals, and retry-safe overdue escalation activity logging are in place.
 - [~] `LumaLeasing`: finish two-way calendar connection, booking lifecycle, and failure handling. Operator config now syncs into connected calendars, `tour_bookings` lifecycle updates/cancels are supported with calendar resync/cancel attempts, calendar sync health is visible to operators, manual repair exists for active booking event drift, an automatic cron reconciliation path covers healthy calendar configs, external Google Calendar mutations are ingested into local sync state and can deterministically reschedule/cancel local `tour_bookings` truth, Google Calendar watch/webhook handling now triggers targeted mutation ingestion when a public callback URL is configured, webhook deliveries are deduped with persisted `x-goog-message-number` tracking for retry-safe processing, and an automatic watch-renew cron path keeps push subscriptions from silently expiring; remaining work is validating the provider-delivered watch flow in a real operator environment.
 - [x] `LumaLeasing`: eliminate duplicate sends/bookings across retries. Tour booking duplicate prevention, Gmail outbound send dedupe, webhook stale-history retry guards, retry-safe lead capture reuse/activity suppression, and chat/extraction-side lead reuse are in place; phone-only widget/chat retries now reuse existing leads and extracted conversation summaries no longer append duplicate notes on repeat processing.
@@ -200,7 +219,7 @@ Deferred hosted-only P0 items:
 - [x] `CRM/TourSpark/LeadPulse`: add retry and dead-letter behavior for external side effects. Workflow sends already retry through the claimed workflow processor without duplicate step sends, and CRM lead sync now has durable retry/dead-letter state on `leads`, exponential retry scheduling, a cron-safe retry processor, and operator-visible `retrying` / `dead_lettered` statuses. Local schema truth for the CRM sync fields is also restored.
 - [x] `ReviewFlow/ForgeStudio`: finish safe publish controls and provider failure handling. ForgeStudio publish now only allows approved/scheduled drafts, rejects invalid/inactive connection sets, suppresses duplicate re-publishes per connection, and distinguishes retryable provider failures from permanent ones so scheduled publish keeps retryable drafts queued instead of falsely terminalizing them. ReviewFlow’s response “post” action is now an explicit manual confirmation after approval rather than a fake provider publish, keeping operator intent and product state aligned.
 - [x] `Ads/BI`: validate recurring sync reliability under retries and provider failure scenarios. Google Ads and Meta Ads sync now classify retryable vs permanent provider failures, persist connection health (`error_count`, `last_error`) on failures, reset health on successful syncs including zero-row syncs, update `last_imported_at` only on successful imports, and the recurring ad-sync cron retries transient failures once before reporting separate retryable/permanent failure counts.
-- [~] `BrandForge`: verify a full local brand-book flow (`analyze -> generate/edit -> asset export/embed`) and improve long-running generation visibility plus graceful provider-failure guidance. BrandForge schema-truth drift for progress state is now fixed (`current_step`, `current_step_name`, `draft_section` exist in live Supabase and synced types), the status API now exposes current step/draft metadata plus operator warnings, review/generation surfaces show actionable failure guidance instead of console-only failures, and the completion flow now keeps operators in-app with real export retry and knowledge-base embed actions instead of redirect/reload placeholders; remaining work is a true local happy-path validation of the full `analyze -> generate/edit -> export/embed` flow and any final provider-polish issues surfaced by that run.
+- [~] `BrandForge`: verify full local generated-brand and supplied-brand flows through one immutable contract, asset export, and embedding; improve long-running generation visibility plus graceful provider-failure guidance. BrandForge schema-truth drift for progress state is now fixed (`current_step`, `current_step_name`, `draft_section` exist in live Supabase and synced types), the status API now exposes current step/draft metadata plus operator warnings, review/generation surfaces show actionable failure guidance instead of console-only failures, and the completion flow now keeps operators in-app with real export retry and knowledge-base embed actions instead of redirect/reload placeholders; remaining work includes true local happy-path validation and replacing section-approval semantics with owner correction plus deterministic contract qualification.
 - [x] `PropertyAudit`: validate deterministic run-state handling, data-engine-first execution, and retry-safe report generation. `/api/propertyaudit/process` atomically claims queued runs so overlapping triggers and retries cannot double-start the same run, claimed runs update progress fields during local processing, and unexpected post-claim failures deterministically mark the run failed instead of leaving it stuck in `running`. Data-engine dispatch remains the primary execution path, dispatch failures fail runs clearly by default unless an explicit local TypeScript fallback flag is enabled, `geo_runs.execution_count` schema truth is restored in Supabase and synced types, the Python data-engine now exposes the real PropertyAudit job endpoints, local env precedence keeps web/data-engine pointed at the same local Supabase stack, missing `geo_property_config` rows bootstrap instead of crashing the run, and the job dispatch returns immediately instead of timing out the caller. Local operator validation now reached a real data-engine-backed run through `queued -> running -> completed`, and both `/api/propertyaudit/generate-report` and `/api/propertyaudit/export` returned `200` against that completed run snapshot.
 - [ ] `MarketVision/MultiChannel BI`: verify competitor-intel and channel-import happy paths, plus recoverable partial-import behavior under retries, quotas, and provider failures.
 - [ ] `Knowledge Base/Documents`: verify ingest -> refresh -> retrieval happy path across scrape, paste-text, and upload flows without corrupting prior knowledge state on failure.
@@ -216,7 +235,7 @@ Deferred hosted-only P0 items:
 - [ ] Add a shared proposal model that can represent recommendation, approval-required action, execution attempt, reversal, and terminal outcome.
 - [ ] Build a shared executor reused by cron jobs and future autonomy loops.
 - [ ] Add an action ledger for every outbound mutation.
-- [ ] Add approval and policy-decision recording with reviewer identity, decision status (`approved`, `denied`, `modified`), and preserved free-text rationale.
+- [ ] Add human-decision and policy-decision recording appropriate to each product contract. Approval-driven products preserve reviewer identity, decision status (`approved`, `denied`, `modified`), and free-text rationale; SiteForge records the owner's exact-artifact Launch action without requiring a note.
 - [ ] Add confidence metadata and rollback metadata to decisions/actions.
 - [ ] Add shared context snapshots so each decision can cite the property, business, and integration context that informed it.
 - [ ] Add delayed-outcome capture so executed actions can later be evaluated against tours, conversions, CPL, occupancy, or other business results.
@@ -238,7 +257,7 @@ Deferred hosted-only P0 items:
 - [ ] Creative rotation recommendations.
 - [ ] Lead workflow cadence optimization.
 - [ ] Review-response auto-posting for low-risk classes only.
-- [ ] Site/content variant testing with promotion thresholds.
+- [ ] Site/content variant testing with deterministic promotion thresholds; owner Launch remains the only human ceremony for a new SiteForge production artifact.
 
 ### P4: Scaled Autonomy
 
@@ -347,11 +366,11 @@ Suggested owners:
 Scope:
 
 - Add a unified job and action model for autonomous execution.
-- Build a policy engine that controls when agents may act automatically versus require approval.
+- Build a policy engine that enforces each product's action contract: automatic action, explicit approval, or—only for SiteForge launch—an exact-artifact owner Launch decision after deterministic qualification.
 - Create an action ledger for every outbound mutation: send, publish, sync, budget change, website deploy, review response.
 - Define core business reward metrics and decision thresholds.
 - Add evaluation, confidence, and rollback controls for model-driven actions.
-- Make human review first-class with durable approve/deny/modify outcomes and textual reasoning feedback.
+- Make human decisions first-class where the product requires them, while preserving SiteForge's owner-only, note-free Launch contract and excluding external review or internal approval ceremony.
 - Add read-first business-context assembly so the system can use P11 business data as cited decision context without creating hidden write coupling.
 
 Recommended implementation targets:
@@ -360,7 +379,7 @@ Recommended implementation targets:
 - Shared executor utilities reused by cron jobs and future agents.
 - Explicit state model aligned with [`outdateddocs/CANONICAL_AUTONOMY_OPERATING_SPEC.md`](outdateddocs/CANONICAL_AUTONOMY_OPERATING_SPEC.md): `queued`, `running`, `succeeded`, `failed`, `retrying`, `cancelled`.
 - Standard policy checks for fair-housing-sensitive messaging, campaign targeting changes, and irreversible website/publish actions.
-- Approval records that preserve reviewer identity, timestamps, free-text rationale, and modified payloads when humans do not simply accept or reject the proposal.
+- Human-decision records that preserve the fields required by each product: full reviewer rationale and modified payloads for approval-driven flows, or owner identity, timestamp, and exact artifact for SiteForge Launch without a required note.
 - Context snapshot records that preserve the exact property, business, product, and integration state available at decision time.
 - Outcome records that distinguish execution success from delayed business effect.
 
@@ -374,8 +393,8 @@ Near-term P2 anti-goals:
 Local acceptance criteria:
 
 - Every autonomous or scheduled action writes an auditable record before and after execution.
-- High-risk actions support approval mode, rollback path, and preserved reviewer rationale.
-- The substrate supports approve, deny, and modify review outcomes end to end.
+- High-risk actions follow deterministic product policy, retain a rollback path, and capture the applicable human decision; SiteForge launch uses its exact-artifact owner action rather than approval mode.
+- The substrate supports approve, deny, and modify outcomes for approval-driven products and the distinct note-free Launch outcome for SiteForge.
 - Shared context can be assembled read-only and cited in decisions.
 - Jobs are resumable, retry-safe, and visible in local ops views.
 - KPI framework is finalized for qualified leads, tours, show rate, lease conversion, CAC, and occupancy impact.
@@ -396,7 +415,7 @@ Initial loops to launch:
 - Creative rotation recommendations tied to explicit experiments.
 - Lead workflow cadence optimization within guardrails.
 - Review-response auto-posting only for low-risk classes.
-- Site/content variant testing with promotion thresholds.
+- Site/content variant testing with deterministic promotion thresholds; owner Launch remains the only human ceremony for a new SiteForge production artifact.
 
 Dependencies:
 

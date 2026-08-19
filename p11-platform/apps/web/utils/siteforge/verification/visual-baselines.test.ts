@@ -1,15 +1,13 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   loadExactApprovedVisualBaselines,
   persistVisualBaselineCandidates,
 } from './visual-baselines'
 
-const { proposeSharedActionMock } = vi.hoisted(() => ({
-  proposeSharedActionMock: vi.fn(),
-}))
-
-vi.mock('@/utils/services/shared-executor', () => ({
-  proposeSharedAction: proposeSharedActionMock,
+vi.mock('@/utils/services/system-policy-decisions', () => ({
+  recordSystemPolicyDecision: vi.fn().mockResolvedValue({
+    id: '22222222-2222-4222-8222-222222222222',
+  }),
 }))
 
 const artifact = {
@@ -23,14 +21,6 @@ const artifact = {
 }
 
 describe('policy-v16 visual baseline repository', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    proposeSharedActionMock.mockResolvedValue({
-      sharedJobId: '22222222-2222-4222-8222-222222222222',
-      sharedActionAttemptId: '33333333-3333-4333-8333-333333333333',
-    })
-  })
-
   it('loads only an exact, immutable approved identity', async () => {
     const filters: Array<[string, unknown]> = []
     const row = {
@@ -98,7 +88,7 @@ describe('policy-v16 visual baseline repository', () => {
     ])
   })
 
-  it('persists first captures as candidates with manager approval proposals', async () => {
+  it('persists first captures as immutable candidates without approval work', async () => {
     let inserted: Record<string, unknown> | null = null
     let call = 0
     const client = {
@@ -195,19 +185,12 @@ describe('policy-v16 visual baseline repository', () => {
     )
 
     expect(candidateIds).toHaveLength(1)
-    expect(proposeSharedActionMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        requestedBy: null,
-        action: expect.objectContaining({
-          actionType: 'siteforge.certification:approve_visual_baseline',
-        }),
-      })
-    )
     expect(inserted).toEqual(
       expect.objectContaining({
         status: 'candidate',
-        approval_action_attempt_id:
-          '33333333-3333-4333-8333-333333333333',
+        approval_action_attempt_id: null,
+        system_policy_decision_id:
+          '22222222-2222-4222-8222-222222222222',
       })
     )
   })

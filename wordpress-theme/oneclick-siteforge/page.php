@@ -19,7 +19,7 @@ get_header();
 		$siteforge_resource_id = (string) get_post_meta( get_the_ID(), '_siteforge_v3_resource_id', true );
 		$siteforge_resource_class = $siteforge_resource_id ? 'siteforge-resource-' . sanitize_html_class( $siteforge_resource_id ) : '';
 		?>
-		<article id="post-<?php the_ID(); ?>" <?php post_class( trim( 'siteforge-page ' . $siteforge_resource_class ) ); ?><?php if ( $siteforge_resource_id ) { ?> data-siteforge-resource="<?php echo esc_attr( $siteforge_resource_id ); ?>"<?php } ?>>
+		<article id="post-<?php the_ID(); ?>" <?php post_class( trim( 'siteforge-page ' . $siteforge_resource_class ) ); ?><?php if ( $siteforge_resource_id ) { ?> data-siteforge-resource="<?php echo esc_attr( $siteforge_resource_id ); ?>" data-siteforge-target-id="<?php echo esc_attr( 'page:' . $siteforge_resource_id ); ?>" data-siteforge-target-kind="page" data-siteforge-resource-path="<?php echo esc_attr( wp_json_encode( array( array( 'kind' => 'page', 'id' => $siteforge_resource_id ) ), JSON_UNESCAPED_SLASHES ) ); ?>" data-siteforge-display-value="<?php echo esc_attr( get_the_title() ); ?>"<?php } ?>>
 			<h1 class="screen-reader-text"><?php the_title(); ?></h1>
 			<div class="page-content siteforge-page-content">
 				<?php the_content(); ?>

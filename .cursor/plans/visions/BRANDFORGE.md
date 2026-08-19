@@ -1,11 +1,11 @@
 # Vision: BrandForge
 
-Last Updated: March 17, 2026
+Last Updated: August 17, 2026
 Document Type: Vision grounded in current implementation
 
 ## Mission
 
-BrandForge establishes the strategic brand system for a property: positioning, audience, visual direction, messaging principles, and reusable brand artifacts that other products can consume. It must support two primary use cases: creating a net-new brand when one does not exist, and digesting an existing client brand from website scraping, uploaded documents, and knowledge-base inputs so the platform can operate from that truth.
+BrandForge establishes the strategic brand system for a property: positioning, audience, visual identity, messaging principles, and reusable brand artifacts that other products can consume. It serves multifamily rental and for-sale real estate as two equal lanes. It must support creating a net-new brand and digesting a supplied brand, with both paths converging on one immutable brand contract.
 
 ## Role In The Platform
 
@@ -19,9 +19,31 @@ BrandForge should be the platform layer that normalizes brand truth for:
 That brand truth may originate in two ways:
 
 - BrandForge generates a new brand system for the property
-- BrandForge ingests and structures an existing client brand from website scraping and knowledge-base uploads
+- BrandForge ingests and structures a supplied brand from identity files, website scraping, documents, assets, and knowledge-base uploads
 
-It is the layer that turns raw property and client brand context into a coherent brand operating system.
+Origin does not change the downstream interface. Both paths produce the same normalized, versioned brand contract so SiteForge and every other consumer operate from one source of truth.
+
+## Immutable Brand Contract
+
+The brand contract is the handoff boundary between brand formation and autonomous execution. It must:
+
+- identify the property lane as multifamily rental or for-sale without treating either as secondary
+- preserve provenance for generated decisions and supplied source material
+- define canonical name, marks, typography, palette, voice, positioning, audience, visual principles, required usage, and prohibited mutations
+- distinguish verified source truth from generated strategic interpretation
+- carry a content hash and version identity that downstream artifacts bind to exactly
+- remain immutable for a SiteForge run; a brand change creates a new contract version and a new run boundary rather than mutating identity underneath generated work
+- fail closed when identity-critical sources conflict or required truth is missing
+
+BrandForge may fill strategic whitespace when commissioned to generate a brand, but it must never fabricate supplied logos, legal names, property facts, claims, inventory, pricing, or other externally verifiable truth.
+
+## Autonomous Commissioning Model
+
+BrandForge is not a low-level questionnaire or an approval workflow. It collects an owner brief: business intent, audience, references, supplied assets, source truth, and non-negotiables. The AI owns synthesis and commissions the strategy, voice, identity system, and downstream creative requirements at the level expected from a premium agency team.
+
+The owner may inspect the resulting brand truth and correct factual or source errors, but normal production does not require external client review, section-by-section approvals, internal creative committee sign-off, or preserved rationale before SiteForge can consume the contract. Deterministic internal policy resolves schema validity, provenance, accessibility constraints, lane rules, identity consistency, and prohibited content.
+
+The quality target is a brand foundation capable of supporting a bespoke **$50,000-$100,000 agency website**. Generic templates, interchangeable positioning, and ungrounded visual direction do not satisfy the contract.
 
 ## Current Implementation Baseline
 
@@ -43,10 +65,12 @@ Current reality:
 BrandForge should deliver a brand operating system, not just a generated document:
 
 - structured brand truth that downstream products can read programmatically
-- operator-reviewable sections with version history
+- one immutable downstream contract regardless of whether the brand was generated or supplied
+- first-class support for multifamily rental and for-sale lanes
+- owner-visible output with version history and factual correction paths
 - exportable artifacts for human use
 - knowledge-base-ready content for cross-product retrieval
-- a living brand system that can evolve without losing auditability
+- a brand system that evolves by explicit new versions without mutating prior identity
 
 The finished product should let a property reach a usable strategic system through either path:
 
@@ -67,10 +91,12 @@ Before autonomy can act from BrandForge outputs, the product must provide:
 
 - machine-readable brand truth with stable semantics
 - auditable version history
-- clear distinction between draft, approved, exported, and embedded state
+- immutable contract identity and exact downstream bindings
+- clear distinction between draft, contract, exported, and embedded state
 - citation/provenance linking brand decisions back to source context where possible
-- confidence and approval boundaries for regenerated or auto-applied brand changes
-- human reviewers who can approve, deny, or modify proposed brand changes with preserved textual reasoning before anything is promoted into downstream product truth
+- deterministic policy and confidence boundaries for generated content and contract creation
+- fail-closed handling for missing or conflicting identity truth
+- no section-by-section approval ceremony or external client-review dependency
 
 ## Success Metrics
 

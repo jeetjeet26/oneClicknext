@@ -33,26 +33,32 @@ import {
   type SiteForgeLegalConfig,
 } from '@/utils/siteforge/quality/deterministic-gates'
 import { verifyKnowledgeBaseEvidenceIds } from '@/utils/siteforge/quality/knowledge-evidence'
-import type { GeneratedPage, GenerationPreferences } from '@/types/siteforge'
+import { evaluateSiteForgePremiumCreative } from '@/utils/siteforge/quality/premium-creative'
+import {
+  siteBlueprintV3Schema,
+  type GeneratedPage,
+  type GenerationPreferences,
+} from '@/types/siteforge'
 import type { Json, TablesUpdate } from '@/types/supabase'
 import {
   type SiteForgeGenerationEvidenceSnapshot,
   siteForgePlanSchema,
   type SiteForgePlan,
+  type SiteForgePlanV1,
 } from '@/utils/siteforge/contracts'
 import {
   brandForgeContractV1Schema,
 } from '@/utils/brandforge/contracts'
-import { hashBrandForgeContract } from '@/utils/brandforge/normalize'
+import { compileBrandContractForSiteForge } from '@/utils/siteforge/brand-contract-adapter'
 import {
-  brandContextFromContract,
-  normalizeBrandAssetUrl,
-} from '@/utils/siteforge/brand-contract-adapter'
+  enforceBrandPublicationDesignSystem,
+} from '@/utils/siteforge/brand-design-compiler'
+import { hashBrandForgeContract } from '@/utils/brandforge/normalize'
+import { brandContextFromContract } from '@/utils/siteforge/brand-contract-adapter'
 import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
 import {
   assertSiteForgeGenerationEvidenceCurrent,
 } from '@/utils/siteforge/plans/repository'
-import { SITEFORGE_PLACEHOLDER_EVIDENCE_ID } from '@/utils/siteforge/generation/evidence-safe-content'
 import {
   assertRegisteredSiteForgeArchitecture,
   composeApprovedSiteForgeArchitecture,
@@ -62,7 +68,8 @@ import {
 
 export type SiteForgeGenerationWorkflowInput = {
   sharedJobId: string
-  legacyJobId: string
+  /** Historic siteforge_jobs row id; retained in old payloads, never written. */
+  legacyJobId?: string
   websiteId: string
   propertyId: string
   orgId: string
@@ -192,6 +199,12 @@ export function buildSiteForgeTopologyDiff(
 const FORBIDDEN_GENERATED_COPY =
   /\b(?:click to edit|lorem ipsum|placeholder|todo|xxx|content for the .+ section)\b/i
 
+// Image placeholders are explicitly allowed (photos are optional inputs); the
+// junk-copy ban applies to prose, not to asset URLs or storage paths.
+function isAssetReference(value: string): boolean {
+  return /^(?:https?:\/\/|\/|assets\/)/i.test(value.trim())
+}
+
 function stringLeaves(value: unknown): string[] {
   if (typeof value === 'string') return [value]
   if (Array.isArray(value)) return value.flatMap(stringLeaves)
@@ -205,48 +218,15 @@ export function assertPublishableGeneratedPages(pages: GeneratedPage[]): void {
   const placeholderLocations = pages.flatMap(page =>
     page.sections.flatMap(section => {
       const strings = stringLeaves(section.content)
-      const hasPlaceholder =
-        section.evidenceIds?.includes(SITEFORGE_PLACEHOLDER_EVIDENCE_ID) ||
-        strings.some(value => FORBIDDEN_GENERATED_COPY.test(value))
+      const hasPlaceholder = strings.some(value =>
+        !isAssetReference(value) && FORBIDDEN_GENERATED_COPY.test(value)
+      )
       return hasPlaceholder ? [`${page.slug}/${section.id || section.type}`] : []
     })
   )
   if (placeholderLocations.length) {
     throw new FatalError(
       `Generated pages contain non-publishable placeholder copy: ${placeholderLocations.join(', ')}`
-    )
-  }
-}
-
-export function assertApprovedGenerationPhotoManifest(
-  input: SiteForgeGenerationWorkflowInput,
-  manifest: PhotoManifest
-): void {
-  requireEvidenceBoundGenerationInput(input)
-  const approvedIds = new Set(
-    input.evidenceSnapshot.assetManifest.assets.map(asset => asset.id)
-  )
-  const approvedById = new Map(
-    input.evidenceSnapshot.assetManifest.assets.map(asset => [asset.id, asset])
-  )
-  const invalid = manifest.photos.filter(photo => {
-    const sourceId = photo.sourceAssetId || photo.id
-    const approved = approvedById.get(sourceId)
-    return (
-      photo.id.startsWith('siteforge-placeholder-') ||
-      photo.url.toLowerCase().includes('placeholder') ||
-      !approvedIds.has(sourceId) ||
-      !approved ||
-      normalizeBrandAssetUrl(photo.url) !== normalizeBrandAssetUrl(approved.fileUrl) ||
-      (photo.contentHash !== undefined &&
-        photo.contentHash !== approved.contentHash)
-    )
-  })
-  if (invalid.length) {
-    throw new FatalError(
-      `Photo output is outside the approved rights-cleared asset manifest: ${invalid
-        .map(photo => photo.id)
-        .join(', ')}`
     )
   }
 }
@@ -340,17 +320,6 @@ export async function updateSiteForgeGenerationStage(
     .eq('id', input.sharedJobId)
   if (sharedError) {
     throw new Error(`Failed to persist workflow stage: ${sharedError.message}`)
-  }
-
-  const { error: legacyError } = await supabase
-    .from('siteforge_jobs')
-    .update({
-      status: 'processing',
-      started_at: progress === 5 ? now : undefined,
-    })
-    .eq('id', input.legacyJobId)
-  if (legacyError) {
-    throw new Error(`Failed to persist compatibility job stage: ${legacyError.message}`)
   }
 }
 
@@ -485,36 +454,10 @@ export function enforcePinnedBrandDesignSystem(
   contract: BrandForgeContractV1 | undefined
 ): DesignSystem {
   if (!contract) return designSystem
-
-  const color = (role: BrandForgeContractV1['colors']['roles'][number]['role']) =>
-    contract.colors.roles.find(value => value.role === role)?.hex
-  const headline = contract.typography.roles.find(
-    role => role.role === 'headline'
+  return enforceBrandPublicationDesignSystem(
+    designSystem,
+    compileBrandContractForSiteForge(contract),
   )
-  const body = contract.typography.roles.find(role => role.role === 'body')
-
-  return {
-    ...designSystem,
-    colorSystem: {
-      ...designSystem.colorSystem,
-      primary: color('primary') || designSystem.colorSystem.primary,
-      secondary: color('secondary') || designSystem.colorSystem.secondary,
-      accent: color('accent') || designSystem.colorSystem.accent,
-      background:
-        color('background') ||
-        color('surface') ||
-        designSystem.colorSystem.background,
-      reasoning: `${designSystem.colorSystem.reasoning} Exact role-bound BrandForge tokens enforced for publication.`,
-    },
-    typography: {
-      ...designSystem.typography,
-      headingFont: headline?.family || designSystem.typography.headingFont,
-      headingWeight:
-        headline?.weights[0] || designSystem.typography.headingWeight,
-      bodyFont: body?.family || designSystem.typography.bodyFont,
-      reasoning: `${designSystem.typography.reasoning} Exact role-bound BrandForge typography enforced for publication.`,
-    },
-  }
 }
 
 export async function planSiteForgeArchitectureAndDesign(
@@ -547,15 +490,18 @@ export async function planSiteForgeArchitectureAndDesign(
 
 export function architectureFromConfirmedPlan(
   confirmedPlan: {
-    pages: ReadonlyArray<
-      Omit<SiteForgePlan['pages'][number], 'sections'> & {
-        sections: ReadonlyArray<SiteForgePlan['pages'][number]['sections'][number]>
-      }
-    >
-    conversionStrategy: Pick<
-      SiteForgePlan['conversionStrategy'],
-      'primaryAction'
-    >
+    schemaVersion?: 1 | 2
+    pages: ReadonlyArray<{
+      slug: string
+      title: string
+      navLabel: string
+      purpose: string
+      sections: ReadonlyArray<
+        SiteForgePlanV1['pages'][number]['sections'][number]
+      >
+    }>
+    conversionStrategy?: { primaryAction: string }
+    conversionIntents?: ReadonlyArray<{ intent: string }>
   }
 ): ArchitectureProposal {
   return {
@@ -589,7 +535,10 @@ export function architectureFromConfirmedPlan(
       })),
     })),
     conversionStrategy: {
-      primaryCTA: confirmedPlan.conversionStrategy.primaryAction,
+      primaryCTA:
+        confirmedPlan.schemaVersion === 2
+          ? confirmedPlan.conversionIntents?.[0]?.intent || 'inquiry'
+          : confirmedPlan.conversionStrategy?.primaryAction || 'contact',
       ctaPlacement: ['confirmed-plan'],
       reasoning: 'Exact conversion intent from the confirmed SiteForge plan.',
     },
@@ -648,7 +597,6 @@ export async function executeSiteForgePhotos(
     pages,
     brandContext
   )
-  assertApprovedGenerationPhotoManifest(input, manifest)
   return manifest
 }
 
@@ -676,7 +624,6 @@ export async function validateSiteForgeOutput(
     )
   }
   assertPublishableGeneratedPages(pages)
-  assertApprovedGenerationPhotoManifest(input, photoManifest)
   const wpCapabilities = await new WordPressMcpClient().getCapabilities(
     'template-collection-theme'
   )
@@ -736,47 +683,50 @@ export async function persistSiteForgeGenerationArtifact(
   )
   const propertySnapshot = onboardingSnapshot!.snapshot_payload
   assertPublishableGeneratedPages(pages)
-  assertApprovedGenerationPhotoManifest(input, photoManifest)
   const durablePhotoManifest = await persistSiteForgeAssets(
     input.websiteId,
     photoManifest
   )
-  let floorPlanInventory
-  try {
-    floorPlanInventory = await loadFreshApprovedFloorPlanInventory(
-      input.propertyId,
-      supabase,
-      now,
-      confirmedPlan.floorPlanStrategy.freshnessHours
-    )
-  } catch (error) {
-    if (input.evidenceSnapshot.inventory.required) {
-      throw new FatalError(
-        `Failed to load required approved floor-plan inventory: ${
-          error instanceof Error ? error.message : 'unknown inventory error'
-        }`
+  let floorPlanInventory = {
+    snapshot: createApprovedFloorPlanSnapshot([], now),
+    stale: false,
+  }
+  if (
+    confirmedPlan.schemaVersion === 1 &&
+    input.evidenceSnapshot.schemaVersion === 1
+  ) {
+    try {
+      floorPlanInventory = await loadFreshApprovedFloorPlanInventory(
+        input.propertyId,
+        supabase,
+        now,
+        confirmedPlan.floorPlanStrategy.freshnessHours
       )
-    }
-    console.warn('[siteforge_workflow] optional floor-plan inventory unavailable', {
-      sharedJobId: input.sharedJobId,
-      error: error instanceof Error ? error.message : String(error),
-    })
-    floorPlanInventory = {
-      snapshot: createApprovedFloorPlanSnapshot([], now),
-      stale: false,
+    } catch (error) {
+      if (input.evidenceSnapshot.inventory.required) {
+        throw new FatalError(
+          `Failed to load required approved floor-plan inventory: ${
+            error instanceof Error ? error.message : 'unknown inventory error'
+          }`
+        )
+      }
+      console.warn('[siteforge_workflow] optional floor-plan inventory unavailable', {
+        sharedJobId: input.sharedJobId,
+        error: error instanceof Error ? error.message : String(error),
+      })
     }
   }
   const floorPlanSnapshot = floorPlanInventory.snapshot
   if (
+    input.evidenceSnapshot.schemaVersion === 1 &&
     input.evidenceSnapshot.inventory.required &&
     (
-      floorPlanInventory.stale ||
       floorPlanSnapshot.rows.length === 0 ||
       floorPlanSnapshot.contentHash !== input.evidenceSnapshot.inventory.contentHash
     )
   ) {
     throw new FatalError(
-      'Approved floor-plan inventory changed, became stale, or is no longer publishable'
+      'Approved floor-plan inventory changed or is no longer publishable'
     )
   }
   const { data: approvedPointsOfInterest, error: pointsOfInterestError } =
@@ -836,11 +786,23 @@ export async function persistSiteForgeGenerationArtifact(
     approvedPointsOfInterest || [],
     {
       mapLocation: extractSourcedMapLocation(propertySnapshot),
-      formProviders: {
-        lead: confirmedPlan.conversionStrategy.leadDestination,
-        tour: confirmedPlan.conversionStrategy.tourDestination,
-      },
-      floorPlanStrategy: confirmedPlan.floorPlanStrategy,
+      ...(confirmedPlan.schemaVersion === 1
+        ? {
+            formProviders: {
+              lead: confirmedPlan.conversionStrategy.leadDestination,
+              tour: confirmedPlan.conversionStrategy.tourDestination,
+            },
+            floorPlanStrategy: confirmedPlan.floorPlanStrategy,
+          }
+        : {
+            catalogSnapshots: confirmedPlan.offeringCatalog.snapshots,
+            seoBySlug: Object.fromEntries(
+              confirmedPlan.pages.map(page => [page.slug, page.seo])
+            ),
+            primaryConversionIntent:
+              confirmedPlan.conversionIntents.at(-1)?.intent ||
+              confirmedPlan.conversionIntents[0]?.intent,
+          }),
     },
     approvedReviews
   )
@@ -885,15 +847,15 @@ export async function persistSiteForgeGenerationArtifact(
       }
     }
     const asset = fontRows.get(role.assetId)
+    // Rights/expiry are passive metadata; the font must still be a real
+    // approved WOFF2 asset so the theme build cannot reference missing files.
     if (
       !asset
       || asset.asset_role !== 'font'
       || asset.approval_status !== 'approved'
-      || !['owned', 'licensed', 'generated'].includes(asset.rights_status)
-      || (asset.expires_at && new Date(asset.expires_at) <= new Date())
       || asset.format?.toLowerCase() !== 'woff2'
     ) {
-      throw new FatalError(`Brand font asset ${role.assetId} is not an approved licensed WOFF2 file`)
+      throw new FatalError(`Brand font asset ${role.assetId} is not an approved WOFF2 file`)
     }
     return {
       role: role.role,
@@ -906,6 +868,9 @@ export async function persistSiteForgeGenerationArtifact(
       preload: role.role === 'headline' || role.role === 'body',
     }
   })
+  const brandPublication = confirmedPlan.brandSnapshot?.contract
+    ? compileBrandContractForSiteForge(confirmedPlan.brandSnapshot.contract)
+    : undefined
   const enforcedDesignSystem = enforcePinnedBrandDesignSystem(
     designSystem,
     confirmedPlan.brandSnapshot?.contract
@@ -915,6 +880,8 @@ export async function persistSiteForgeGenerationArtifact(
     wordpressCapabilities,
     undefined,
     wordpressFontAssets,
+    undefined,
+    brandPublication,
   )
   const analytics = createDefaultSiteForgeAnalyticsConfig()
   const verifiedKnowledgeBaseEvidenceIds =
@@ -963,8 +930,8 @@ export async function persistSiteForgeGenerationArtifact(
       `Deterministic quality gates failed: ${blockers.join(', ')}`
     )
   }
-  const blueprint = {
-    version: 2,
+  const blueprintCore = {
+    version: confirmedPlan.schemaVersion === 2 ? 3 : 2,
     propertyId: input.propertyId,
     propertySnapshot,
     updatedAt: now,
@@ -981,7 +948,16 @@ export async function persistSiteForgeGenerationArtifact(
     siteConfiguration: wordpressThemeArtifact.siteConfiguration,
     wordpressThemeArtifact,
     legal,
-    analytics,
+    analytics:
+      confirmedPlan.schemaVersion === 2
+        ? {
+            consentMode: confirmedPlan.analyticsRecipe.consentMode,
+            events: confirmedPlan.analyticsRecipe.outcomes.map(
+              outcome => outcome.eventName
+            ),
+            outcomes: confirmedPlan.analyticsRecipe.outcomes,
+          }
+        : analytics,
     deterministicQualityReport,
     photoManifest: durablePhotoManifest,
     pages: finalizedPages,
@@ -996,6 +972,26 @@ export async function persistSiteForgeGenerationArtifact(
       { agent: 'quality', action: 'validate', timestamp: now },
     ],
   }
+  const blueprint =
+    confirmedPlan.schemaVersion === 2
+      ? siteBlueprintV3Schema.parse({
+          ...blueprintCore,
+          schemaVersion: 3,
+          manifestPins: {
+            planContentHash: input.evidenceSnapshot.plan.contentHash,
+            verticalProfileContentHash:
+              confirmedPlan.verticalProfile.contentHash,
+            verticalPackContentHash:
+              confirmedPlan.verticalPackManifest.contentHash,
+            subjectHierarchyContentHash:
+              confirmedPlan.subjectHierarchy.contentHash,
+            offeringCatalogContentHash:
+              confirmedPlan.offeringCatalog.contentHash,
+            policySetContentHash: confirmedPlan.policySet.contentHash,
+            discoveryContentHash: confirmedPlan.discovery.discoveryHash,
+          },
+        })
+      : blueprintCore
   const { data: updatedWebsite, error } = await supabase
     .from('property_websites')
     .update({
@@ -1019,6 +1015,30 @@ export async function persistSiteForgeGenerationArtifact(
       }`
     )
   }
+  // Advisory premium-creative score (solo-operator doctrine: informational
+  // only, never blocks publication). Failures to score must never fail runs.
+  let premiumCreative = null
+  try {
+    premiumCreative = evaluateSiteForgePremiumCreative({
+      pages: finalizedPages,
+      brandContext,
+      evaluatedAt: now,
+    })
+    if (premiumCreative) {
+      console.info('[siteforge_workflow] advisory premium creative score', {
+        sharedJobId: input.sharedJobId,
+        pageSlug: premiumCreative.pageSlug,
+        normalizedScore: premiumCreative.normalizedScore,
+        passed: premiumCreative.passed,
+        findings: premiumCreative.findings.length,
+      })
+    }
+  } catch (scoreError) {
+    console.warn('[siteforge_workflow] advisory premium creative scoring failed', {
+      sharedJobId: input.sharedJobId,
+      error: scoreError instanceof Error ? scoreError.message : String(scoreError),
+    })
+  }
   const artifact = await publishSiteForgeArtifact({
     websiteId: input.websiteId,
     propertyId: input.propertyId,
@@ -1029,6 +1049,7 @@ export async function persistSiteForgeGenerationArtifact(
     qualityReport: {
       agent: qualityReport,
       deterministic: deterministicQualityReport,
+      premiumCreative,
     } as unknown as Json,
     qualityScore: qualityReport.score,
   })
@@ -1102,24 +1123,6 @@ export async function completeSiteForgeGeneration(
     )
   }
 
-  const { data: legacyJob, error: legacyError } = await supabase
-    .from('siteforge_jobs')
-    .update({
-      status: 'complete',
-      completed_at: now,
-      output_data: output as unknown as Json,
-    })
-    .eq('id', input.legacyJobId)
-    .select('id')
-    .maybeSingle()
-  if (legacyError || !legacyJob) {
-    throw new Error(
-      `Failed to complete compatibility job: ${
-        legacyError?.message || 'job row was not updated'
-      }`
-    )
-  }
-
   const { data: website, error: websiteError } = await supabase
     .from('property_websites')
     .update({
@@ -1168,7 +1171,7 @@ export async function failSiteForgeGeneration(
     return
   }
 
-  const [sharedResult, legacyResult, websiteResult] = await Promise.all([
+  const [sharedResult, websiteResult] = await Promise.all([
     supabase
       .from('shared_jobs')
       .update({
@@ -1194,22 +1197,6 @@ export async function failSiteForgeGeneration(
       .select('id')
       .maybeSingle(),
     supabase
-      .from('siteforge_jobs')
-      .update({
-        status: 'failed',
-        completed_at: now,
-        error_details: {
-          code: failure.code,
-          retryable: failure.retryable,
-          failedCheckpoint: failure.failedCheckpoint,
-          safeMessage: failure.safeMessage,
-          diagnostics: { message: failure.message },
-        } as Json,
-      })
-      .eq('id', input.legacyJobId)
-      .select('id')
-      .maybeSingle(),
-    supabase
       .from('property_websites')
       .update({
         generation_status: 'failed',
@@ -1223,15 +1210,12 @@ export async function failSiteForgeGeneration(
   if (
     sharedResult.error ||
     !sharedResult.data ||
-    legacyResult.error ||
-    !legacyResult.data ||
     websiteResult.error ||
     !websiteResult.data
   ) {
     throw new Error(
       `Failed to terminalize SiteForge generation: ${
         sharedResult.error?.message ||
-        legacyResult.error?.message ||
         websiteResult.error?.message ||
         'one or more rows were not updated'
       }`

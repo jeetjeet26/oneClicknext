@@ -1,0 +1,172 @@
+{
+  "key": "group_siteforge_offering_browser",
+  "title": "SiteForge offering browser",
+  "fields": [
+    {
+      "key": "field_siteforge_offering_browser_heading_0",
+      "name": "heading",
+      "label": "heading",
+      "type": "text"
+    },
+    {
+      "key": "field_siteforge_offering_browser_intro_1",
+      "name": "intro",
+      "label": "intro",
+      "type": "textarea"
+    },
+    {
+      "key": "field_siteforge_offering_browser_offering_kind_2",
+      "name": "offering_kind",
+      "label": "offering_kind",
+      "type": "text"
+    },
+    {
+      "key": "field_siteforge_offering_browser_offerings_3",
+      "name": "offerings",
+      "label": "offerings",
+      "type": "repeater",
+      "layout": "block",
+      "button_label": "Add offerings",
+      "sub_fields": [
+        {
+          "key": "field_siteforge_offering_browser_offerings_id_0",
+          "name": "id",
+          "label": "id",
+          "type": "text"
+        },
+        {
+          "key": "field_siteforge_offering_browser_offerings_kind_1",
+          "name": "kind",
+          "label": "kind",
+          "type": "text"
+        },
+        {
+          "key": "field_siteforge_offering_browser_offerings_name_2",
+          "name": "name",
+          "label": "name",
+          "type": "text"
+        },
+        {
+          "key": "field_siteforge_offering_browser_offerings_description_3",
+          "name": "description",
+          "label": "description",
+          "type": "textarea"
+        },
+        {
+          "key": "field_siteforge_offering_browser_offerings_status_4",
+          "name": "status",
+          "label": "status",
+          "type": "text"
+        },
+        {
+          "key": "field_siteforge_offering_browser_offerings_price_label_5",
+          "name": "price_label",
+          "label": "price_label",
+          "type": "text"
+        },
+        {
+          "key": "field_siteforge_offering_browser_offerings_availability_label_6",
+          "name": "availability_label",
+          "label": "availability_label",
+          "type": "text"
+        },
+        {
+          "key": "field_siteforge_offering_browser_offerings_image_7",
+          "name": "image",
+          "label": "image",
+          "type": "image",
+          "return_format": "id",
+          "preview_size": "medium"
+        },
+        {
+          "key": "field_siteforge_offering_browser_offerings_detail_url_8",
+          "name": "detail_url",
+          "label": "detail_url",
+          "type": "url"
+        },
+        {
+          "key": "field_siteforge_offering_browser_offerings_attributes_9",
+          "name": "attributes",
+          "label": "attributes",
+          "type": "textarea"
+        }
+      ]
+    },
+    {
+      "key": "field_siteforge_offering_browser_catalog_snapshot_4",
+      "name": "catalog_snapshot",
+      "label": "catalog_snapshot",
+      "type": "group",
+      "sub_fields": [
+        {
+          "key": "field_siteforge_offering_browser_catalog_snapshot_captured_at_0",
+          "name": "captured_at",
+          "label": "captured_at",
+          "type": "text"
+        },
+        {
+          "key": "field_siteforge_offering_browser_catalog_snapshot_content_hash_1",
+          "name": "content_hash",
+          "label": "content_hash",
+          "type": "text"
+        },
+        {
+          "key": "field_siteforge_offering_browser_catalog_snapshot_fresh_until_2",
+          "name": "fresh_until",
+          "label": "fresh_until",
+          "type": "text"
+        }
+      ]
+    },
+    {
+      "key": "field_siteforge_offering_browser_show_pricing_5",
+      "name": "show_pricing",
+      "label": "show_pricing",
+      "type": "true_false",
+      "default_value": 0
+    },
+    {
+      "key": "field_siteforge_offering_browser_show_availability_6",
+      "name": "show_availability",
+      "label": "show_availability",
+      "type": "true_false",
+      "default_value": 0
+    },
+    {
+      "key": "field_siteforge_offering_browser_conversion_intent_7",
+      "name": "conversion_intent",
+      "label": "conversion_intent",
+      "type": "text"
+    },
+    {
+      "key": "field_siteforge_offering_browser_variant_8",
+      "name": "variant",
+      "label": "variant",
+      "type": "select",
+      "choices": {
+        "cards": "cards",
+        "list": "list",
+        "availability": "availability"
+      },
+      "default_value": "cards"
+    }
+  ],
+  "location": [
+    [
+      {
+        "param": "block",
+        "operator": "==",
+        "value": "acf/offering-browser"
+      }
+    ]
+  ],
+  "menu_order": 0,
+  "position": "normal",
+  "style": "default",
+  "label_placement": "top",
+  "instruction_placement": "label",
+  "active": true,
+  "description": "Versioned SiteForge block contract.",
+  "show_in_rest": 1,
+  "modified": 1785441600
+}

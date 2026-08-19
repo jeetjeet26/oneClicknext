@@ -13,6 +13,7 @@ import {
   storeWordPressCredentialReference,
 } from '@/utils/siteforge/wordpress/credential-vault'
 import {
+  createWordPressApplicationPassword,
   SshWordPressInstaller,
   type WordPressSshCredentials,
 } from '@/utils/siteforge/wordpress/wordpress-installer'
@@ -334,8 +335,7 @@ export async function runSiteForgeStagingDeployment(
   )
   if (
     parentCredentials.provider !== 'cloudways' ||
-    !parentCredentials.providerMetadata ||
-    !parentCredentials.ssh
+    !parentCredentials.providerMetadata
   ) {
     throw new FatalError(
       'The linked WordPress target is not a Cloudways parent application'
@@ -364,10 +364,10 @@ export async function runSiteForgeStagingDeployment(
   const sharesPreviewLineage =
     Boolean(previewRestUsername && previewRestPassword && previewRestUrl) &&
     hostOf(previewRestUrl!) === hostOf(parentCredentials.url)
-  const restUsername = sharesPreviewLineage
+  let restUsername = sharesPreviewLineage
     ? previewRestUsername!
     : parentCredentials.username
-  const restPassword = sharesPreviewLineage
+  let restPassword = sharesPreviewLineage
     ? previewRestPassword!
     : parentCredentials.password
 
@@ -552,6 +552,52 @@ export async function runSiteForgeStagingDeployment(
     }
   }
 
+  if (!targetMetadata.restCredentialProvisionedAt && stagingApplicationId) {
+    const freshRestCredential = await createWordPressApplicationPassword({
+      ssh: deploymentSsh,
+      label: `siteforge-staging-${input.websiteId.slice(0, 8)}`,
+    })
+    restUsername = freshRestCredential.username
+    restPassword = freshRestCredential.applicationPassword
+    const refreshedCredentialRef = await storeWordPressCredentialReference({
+      websiteId: input.websiteId,
+      secretName: `${input.websiteId}:staging:${stagingApplicationId}:rest`,
+      description:
+        'SiteForge staging WordPress REST application password created after clone',
+      linkWebsite: false,
+      credentials: {
+        provider: 'cloudways',
+        url: stagingUrl,
+        username: restUsername,
+        password: restPassword,
+        ssh: stagingCredentials.ssh,
+        providerMetadata: {
+          provider: 'cloudways',
+          serverId: parentCredentials.providerMetadata.serverId,
+          applicationId: stagingApplicationId,
+          publicIp: deploymentSsh.host,
+        },
+      },
+    })
+    const { error: restCredentialError } = await client
+      .from('siteforge_wordpress_targets')
+      .update({
+        credential_ref: refreshedCredentialRef,
+        metadata: {
+          ...targetMetadata,
+          restCredentialProvisionedAt: new Date().toISOString(),
+          restCredentialSource: 'wp_cli_after_clone',
+        } as Json,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', target.id)
+    if (restCredentialError) {
+      throw new FatalError(
+        `Failed to persist cloned staging REST credential: ${restCredentialError.message}`
+      )
+    }
+  }
+
   await updateStage(
     input,
     'deploying_staging',
@@ -587,6 +633,7 @@ export async function runSiteForgeStagingDeployment(
       applicationPassword: restPassword,
       ssh: deploymentSsh,
       acfProLicenseKey,
+      reuseInstalledAcfPro: true,
       publicRuntime,
       protection: { mode: 'noindex' },
       client,
@@ -606,47 +653,63 @@ export async function runSiteForgeStagingDeployment(
       },
     }
   } else {
-    if (!themeArtifact || !legal || !analytics) {
+    if (sharesPreviewLineage) {
+      // A canonical-preview child is already the exact certified WordPress
+      // release. Cloudways cloned its database, theme, runtime, settings, and
+      // content together, so redeploying local package files would introduce
+      // a second transformation path and fail on ephemeral hosts that do not
+      // carry ignored build archives.
+      instance = {
+        url: stagingUrl,
+        adminUrl: stagingAdminUrl,
+        credentials: {
+          username: restUsername,
+          password: restPassword,
+        },
+      }
+    } else {
+      if (!themeArtifact || !legal || !analytics) {
       throw new FatalError('Legacy staging release configuration is incomplete')
-    }
-    const installer = new SshWordPressInstaller()
-    await installer.ensureInstalled({
-      ssh: deploymentSsh,
-      acfProLicenseKey,
-    })
-    if (release.overlayPackage && release.overlayContentHash) {
-      await installer.installThemeOverlay({
+      }
+      const installer = new SshWordPressInstaller()
+      await installer.ensureInstalled({
         ssh: deploymentSsh,
-        archive: release.overlayPackage,
-        contentHash: release.overlayContentHash,
+        acfProLicenseKey,
+      })
+      if (release.overlayPackage && release.overlayContentHash) {
+        await installer.installThemeOverlay({
+          ssh: deploymentSsh,
+          archive: release.overlayPackage,
+          contentHash: release.overlayContentHash,
+        })
+      }
+      await assertStagingNotCancelled(input, client)
+      instance = await deployToExistingWordPress({
+        wpUrl: stagingUrl,
+        credentials: {
+          username: restUsername,
+          password: restPassword,
+        },
+        pages,
+        propertyContext,
+        assets: release.assets,
+        contentHash: input.contentHash,
+        siteConfiguration: themeArtifact.siteConfiguration,
+        requireContentManifest: true,
+      })
+      await assertStagingNotCancelled(input, client)
+      await new WordPressAPIClient(
+        instance.url,
+        instance.credentials
+      ).applySiteForgeSettings({
+        themeArtifact,
+        legal,
+        analytics,
+        propertyProfile: runtimePropertyProfile(propertyContext),
+        publicRuntime,
+        targetMode: 'staging',
       })
     }
-    await assertStagingNotCancelled(input, client)
-    instance = await deployToExistingWordPress({
-      wpUrl: stagingUrl,
-      credentials: {
-        username: restUsername,
-        password: restPassword,
-      },
-      pages,
-      propertyContext,
-      assets: release.assets,
-      contentHash: input.contentHash,
-      siteConfiguration: themeArtifact.siteConfiguration,
-      requireContentManifest: true,
-    })
-    await assertStagingNotCancelled(input, client)
-    await new WordPressAPIClient(
-      instance.url,
-      instance.credentials
-    ).applySiteForgeSettings({
-      themeArtifact,
-      legal,
-      analytics,
-      propertyProfile: runtimePropertyProfile(propertyContext),
-      publicRuntime,
-      targetMode: 'staging',
-    })
   }
 
   await updateStage(
@@ -685,6 +748,8 @@ export async function runSiteForgeStagingDeployment(
     artifactId: input.artifactId,
     contentHash: input.contentHash,
     artifactBinding: buildReleaseCertificationBinding(release),
+    editAcceptanceContract:
+      release.artifact.editAcceptanceContract || undefined,
     targetUrl: instance.url,
     credentials: instance.credentials,
     pages,

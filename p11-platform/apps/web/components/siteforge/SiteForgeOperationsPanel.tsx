@@ -27,6 +27,9 @@ type Incident = {
 type Operations = {
   website: {
     property_id: string
+    canonical_preview_url: string | null
+    canonical_preview_artifact_id: string | null
+    canonical_preview_content_hash: string | null
     staging_artifact_id: string | null
     staging_content_hash: string | null
     staging_certified_at: string | null
@@ -84,7 +87,7 @@ type Operations = {
     workflow_run_id: string | null
     updated_at: string
   } | null
-  automaticProductionLaunch: false
+  automaticProductionLaunch: boolean
   browserCertifierConfigured: boolean
 }
 
@@ -105,8 +108,6 @@ type IncidentPayload = {
 }
 
 type PendingConfirmation =
-  | 'prepare-first-launch'
-  | 'approve-first-launch'
   | 'provision-production'
   | null
 
@@ -116,10 +117,6 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
   const [rationale, setRationale] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
-  const [legalConfirmed, setLegalConfirmed] = useState(false)
-  const [promotionToken, setPromotionToken] = useState('')
-  const [manualOperationId, setManualOperationId] = useState('')
-  const [manualBackupId, setManualBackupId] = useState('')
   const [targetDomain, setTargetDomain] = useState('')
   const [apexWwwPolicy, setApexWwwPolicy] = useState<
     'apex' | 'www' | 'custom'
@@ -203,6 +200,30 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
     return null
   }
 
+  async function launchCertifiedRelease() {
+    if (!operations) return
+    const release = operations.releases[0]
+    const result = await postAction(
+      'owner-launch',
+      '/api/siteforge/launch/solo/execute',
+      {
+        propertyId: operations.website.property_id,
+        websiteId,
+        ...(release &&
+        !['live', 'failed', 'rolled_back'].includes(release.state)
+          ? { releaseId: release.id }
+          : {}),
+      }
+    )
+    if (result) {
+      setMessage(
+        result.certificationQueued
+          ? 'Launch started. Production certification will complete automatically; failed certification triggers recovery.'
+          : 'Launch is already in progress.'
+      )
+    }
+  }
+
   async function createRollbackRevision() {
     if (rationale.trim().length < 10) {
       setMessage('Enter at least 10 characters of operator rationale.')
@@ -231,208 +252,6 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
     }
   }
 
-  async function submitLaunchPreparation(
-    rollback:
-      | { artifactId: string; contentHash: string }
-      | null
-  ) {
-    if (
-      !operations?.website.staging_artifact_id ||
-      !operations.website.staging_content_hash
-    ) {
-      return
-    }
-    await postAction('prepare-launch', '/api/siteforge/launch/prepare', {
-      propertyId: operations.website.property_id,
-      websiteId,
-      artifactId: operations.website.staging_artifact_id,
-      contentHash: operations.website.staging_content_hash,
-      ...(rollback
-        ? {
-            rollbackArtifactId: rollback.artifactId,
-            rollbackContentHash: rollback.contentHash,
-          }
-        : {}),
-    })
-  }
-
-  async function prepareLaunch() {
-    if (
-      !operations?.website.staging_artifact_id ||
-      !operations.website.staging_content_hash
-    ) {
-      return
-    }
-    // Production launch rollback must be the certified production artifact
-    // itself; the editor's blueprint rollback preview points at staging
-    // revisions and is rejected by the launch service.
-    const isFirstLaunch =
-      !operations.website.production_artifact_id &&
-      !operations.website.production_certified_at
-    if (isFirstLaunch) {
-      setPendingConfirmation('prepare-first-launch')
-      return
-    }
-    if (
-      !operations.website.production_artifact_id ||
-      !operations.website.production_content_hash
-    ) {
-      setMessage(
-        'A certified production rollback artifact is required before launch preparation.'
-      )
-      return
-    }
-    await submitLaunchPreparation({
-      artifactId: operations.website.production_artifact_id,
-      contentHash: operations.website.production_content_hash,
-    })
-  }
-
-  async function submitLaunchApproval(firstLaunchAcknowledged: boolean) {
-    const release = operations?.releases[0]
-    if (!release || !legalConfirmed || rationale.trim().length < 10)
-      return
-    const result = await postAction(
-      'approve-launch',
-      '/api/siteforge/launch/approve',
-      {
-        propertyId: operations!.website.property_id,
-        releaseId: release.id,
-        artifactId: release.artifact_id,
-        contentHash: release.artifact_content_hash,
-        rollbackArtifactId: release.rollback_artifact_id,
-        rollbackContentHash: release.rollback_content_hash,
-        ...(firstLaunchAcknowledged ? { firstLaunchAcknowledged: true } : {}),
-        rationale: rationale.trim(),
-        legalSnapshot: {
-          confirmed: true,
-          confirmedAt: new Date().toISOString(),
-          source: 'siteforge-operator-console',
-        },
-        expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-      }
-    )
-    if (typeof result?.promotionToken === 'string') {
-      setPromotionToken(result.promotionToken)
-      setMessage(
-        'Launch approved. Copy or use the one-time promotion token now.'
-      )
-    }
-  }
-
-  async function approveLaunch() {
-    const release = operations?.releases[0]
-    if (!release || !legalConfirmed || rationale.trim().length < 10)
-      return
-    if (!release.rollback_artifact_id) {
-      setPendingConfirmation('approve-first-launch')
-      return
-    }
-    await submitLaunchApproval(false)
-  }
-
-  async function postPromotion(body: Record<string, unknown>) {
-    const response = await fetch('/api/siteforge/launch/promote', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    })
-    const data = await response.json()
-    // The promote service intentionally answers 409 with operator
-    // instructions when a Cloudways confirmation is still required.
-    if (!response.ok && data?.manualRequired !== true) {
-      throw new Error(data.error || 'Action failed')
-    }
-    return data as Record<string, unknown>
-  }
-
-  async function runProviderMutation(
-    releaseId: string,
-    mutation: 'backup' | 'promotion'
-  ) {
-    const response = await fetch('/api/siteforge/launch/provider-mutations', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        propertyId: operations!.website.property_id,
-        releaseId,
-        mutation,
-      }),
-    })
-    const data = await response.json()
-    if (!response.ok) throw new Error(data.error || 'Action failed')
-    return data as { operationId: string; backupId?: string }
-  }
-
-  async function promoteLaunch() {
-    const release = operations?.releases[0]
-    if (!release || !promotionToken || busy) return
-    const base = {
-      propertyId: operations!.website.property_id,
-      releaseId: release.id,
-      promotionToken,
-    }
-    setBusy('promote-launch')
-    setMessage(null)
-    try {
-      // Explicit operator-entered confirmations take precedence over the
-      // automated Cloudways mutations (dashboard fallback path).
-      if (
-        release.state === 'launch_approved' &&
-        manualOperationId.trim() &&
-        manualBackupId.trim()
-      ) {
-        await postPromotion({
-          ...base,
-          backupConfirmation: {
-            operationId: manualOperationId.trim(),
-            backupId: manualBackupId.trim(),
-          },
-        })
-      } else if (manualOperationId.trim()) {
-        await postPromotion({
-          ...base,
-          manualConfirmation: { operationId: manualOperationId.trim() },
-        })
-      } else {
-        let state = release.state
-        if (state === 'launch_approved') {
-          setMessage('Creating the pre-promotion Cloudways backup…')
-          const backup = await runProviderMutation(release.id, 'backup')
-          if (!backup.backupId) {
-            throw new Error('Cloudways backup identity is incomplete')
-          }
-          await postPromotion({
-            ...base,
-            backupConfirmation: {
-              operationId: backup.operationId,
-              backupId: backup.backupId,
-            },
-          })
-          state = 'backed_up'
-        }
-        if (state === 'backed_up') {
-          setMessage('Pushing the staged application to production…')
-          const promotion = await runProviderMutation(release.id, 'promotion')
-          await postPromotion({
-            ...base,
-            manualConfirmation: { operationId: promotion.operationId },
-          })
-        }
-      }
-      setManualOperationId('')
-      setManualBackupId('')
-      setPromotionToken('')
-      setMessage('Action recorded successfully.')
-      await refresh()
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Action failed')
-      await refresh()
-    } finally {
-      setBusy(null)
-    }
-  }
-
   async function submitProductionProvisioning() {
     const result = await postAction(
       'provision-production',
@@ -454,13 +273,7 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
     const action = pendingConfirmation
     if (!action || busy) return
     setPendingConfirmation(null)
-    if (action === 'prepare-first-launch') {
-      await submitLaunchPreparation(null)
-    } else if (action === 'approve-first-launch') {
-      await submitLaunchApproval(true)
-    } else {
-      await submitProductionProvisioning()
-    }
+    await submitProductionProvisioning()
   }
 
   async function saveTargetDomain() {
@@ -485,32 +298,12 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
   const latestProductionQa = operations?.certifications.find(
     (certification) => certification.environment === 'production'
   )
-  const activeRelease =
-    latestRelease &&
-    !['live', 'failed', 'rolled_back'].includes(latestRelease.state)
-      ? latestRelease
-      : null
-  const confirmationCopy =
-    pendingConfirmation === 'prepare-first-launch'
-      ? {
-          title: 'Prepare first production launch?',
-          description:
-            'No certified production rollback artifact exists yet. Recovery will rely on the pre-promotion Cloudways backup.',
-          confirmLabel: 'Prepare release',
-        }
-      : pendingConfirmation === 'approve-first-launch'
-        ? {
-            title: 'Approve first production launch?',
-            description:
-              'This release has no certified production rollback artifact. If launch fails, recovery will rely on the pre-promotion Cloudways backup.',
-            confirmLabel: 'Approve release',
-          }
-        : {
-            title: 'Provision production WordPress?',
-            description:
-              'This creates a billable Cloudways application and cannot be safely duplicated.',
-            confirmLabel: 'Provision application',
-          }
+  const confirmationCopy = {
+    title: 'Provision production WordPress?',
+    description:
+      'This creates a billable Cloudways application and cannot be safely duplicated.',
+    confirmLabel: 'Provision application',
+  }
 
   return (
     <>
@@ -518,7 +311,7 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
       <CardHeader>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <CardTitle className="text-base">Production operations</CardTitle>
-          <Badge variant="outline">Human launch gate enforced</Badge>
+          <Badge variant="outline">Owner launch · exact release</Badge>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -691,109 +484,69 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
           </p>
         </section>
 
+        <section className="rounded border p-4" aria-labelledby="owner-launch-heading">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p id="owner-launch-heading" className="font-medium">
+                Release ready to launch
+              </p>
+              <p className="text-sm text-muted-foreground">
+                Exact canonical WordPress preview and staging certification are
+                preserved. Launch binds the staged artifact, brand and plan
+                policy, production domain, and rollback identity.
+              </p>
+            </div>
+            <Button
+              disabled={
+                !canCertify ||
+                !operations?.browserCertifierConfigured ||
+                Boolean(busy) ||
+                latestRelease?.state === 'live'
+              }
+              onClick={() => void launchCertifiedRelease()}
+            >
+              {busy === 'owner-launch' ? 'Launching…' : 'Launch'}
+            </Button>
+          </div>
+          {operations?.website.staging_artifact_id ? (
+            <div className="mt-3 grid gap-1 text-xs text-muted-foreground sm:grid-cols-2">
+              <p>
+                Release:{' '}
+                {latestRelease
+                  ? `v${latestRelease.release_version}`
+                  : 'new certified release'}
+              </p>
+              <p>
+                Artifact:{' '}
+                <span className="font-mono">
+                  {operations.website.staging_artifact_id}
+                </span>
+              </p>
+              <p>
+                Staging certified:{' '}
+                {operations.website.staging_certified_at
+                  ? new Date(
+                      operations.website.staging_certified_at
+                    ).toLocaleString()
+                  : 'not yet'}
+              </p>
+              <p>
+                Rollback:{' '}
+                {operations.website.production_artifact_id
+                  ? 'certified production revision'
+                  : 'pre-promotion provider backup'}
+              </p>
+            </div>
+          ) : null}
+        </section>
+
         <Textarea
           value={rationale}
           onChange={(event) => setRationale(event.target.value)}
-          placeholder="Operator rationale for acknowledgement, repair, restore, or rollback…"
-          aria-label="Production operation rationale"
+          placeholder="Rationale for recovery, incident repair, or rollback…"
+          aria-label="Recovery operation rationale"
         />
-        <label className="flex items-start gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={legalConfirmed}
-            onChange={(event) => setLegalConfirmed(event.target.checked)}
-            className="mt-1"
-          />
-          <span>
-            I confirm the pinned legal text for this exact release.
-          </span>
-        </label>
-        {promotionToken ||
-        latestRelease?.state === 'launch_approved' ||
-        latestRelease?.state === 'backed_up' ? (
-          <div className="grid gap-2 md:grid-cols-2">
-            <label className="text-sm">
-              One-time promotion token
-              <input
-                value={promotionToken}
-                onChange={(event) => setPromotionToken(event.target.value)}
-                className="mt-1 w-full rounded border bg-background px-3 py-2 font-mono text-xs"
-                autoComplete="off"
-              />
-            </label>
-            <label className="text-sm">
-              Cloudways operation ID (manual fallback only)
-              <input
-                value={manualOperationId}
-                onChange={(event) => setManualOperationId(event.target.value)}
-                className="mt-1 w-full rounded border bg-background px-3 py-2 text-sm"
-              />
-            </label>
-            {latestRelease?.state === 'launch_approved' ? (
-              <label className="text-sm">
-                Cloudways backup restore point (backup confirmation)
-                <input
-                  value={manualBackupId}
-                  onChange={(event) => setManualBackupId(event.target.value)}
-                  className="mt-1 w-full rounded border bg-background px-3 py-2 text-sm"
-                  placeholder="e.g. 7/8/2026 7:45 AM restore point timestamp"
-                />
-              </label>
-            ) : null}
-          </div>
-        ) : null}
         <div className="flex flex-wrap gap-2">
-          <Button
-            size="sm"
-            disabled={!canCertify || Boolean(activeRelease) || Boolean(busy)}
-            onClick={() => void prepareLaunch()}
-          >
-            Prepare launch release
-          </Button>
-          {latestRelease?.state === 'certified' ? (
-            <Button
-              size="sm"
-              disabled={
-                !legalConfirmed ||
-                rationale.trim().length < 10 ||
-                Boolean(busy)
-              }
-              onClick={() => void approveLaunch()}
-            >
-              Approve exact production launch
-            </Button>
-          ) : null}
-          {latestRelease &&
-          ['launch_approved', 'backed_up'].includes(latestRelease.state) ? (
-            <Button
-              size="sm"
-              disabled={!promotionToken || Boolean(busy)}
-              onClick={() => void promoteLaunch()}
-            >
-              Backup & promote approved release
-            </Button>
-          ) : null}
-          {latestRelease?.state === 'promoted' ? (
-            <Button
-              size="sm"
-              disabled={
-                !operations?.browserCertifierConfigured || Boolean(busy)
-              }
-              onClick={() =>
-                void postAction(
-                  'certify',
-                  `/api/siteforge/production/${websiteId}/certify`,
-                  {
-                    releaseId: latestRelease.id,
-                    promotedArtifactId: latestRelease.artifact_id,
-                    promotedContentHash: latestRelease.artifact_content_hash,
-                  }
-                )
-              }
-            >
-              Certify public production
-            </Button>
-          ) : null}
           <Button
             size="sm"
             variant="outline"

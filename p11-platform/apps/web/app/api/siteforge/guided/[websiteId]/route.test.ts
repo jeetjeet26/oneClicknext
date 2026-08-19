@@ -203,6 +203,7 @@ describe("SiteForge guided routes", () => {
     expect(conversationMock).toHaveBeenCalledWith(
       websiteId,
       expect.objectContaining({ expectedRevision: 3 }),
+      userId,
     );
   });
 

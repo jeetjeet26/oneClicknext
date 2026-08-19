@@ -181,6 +181,7 @@ async function recordAttempt(input: {
       publication_id: input.publication.id,
       org_id: input.publication.org_id,
       property_id: input.publication.property_id,
+      shared_action_attempt_id: input.publication.shared_action_attempt_id,
       attempt_number: input.attemptNumber,
       idempotency_key: input.idempotencyKey,
       status: 'running',
@@ -193,6 +194,30 @@ async function recordAttempt(input: {
     .select('id')
     .single()
   return data?.id ?? null
+}
+
+async function updatePublicationAction(
+  publication: Tables<'social_publications'>,
+  update: {
+    lifecycleStatus: 'queued' | 'running' | 'succeeded' | 'failed' | 'retrying' | 'cancelled'
+    executionStatus: 'approved_pending_execution' | 'executing' | 'executed' | 'failed' | 'cancelled'
+    result?: Record<string, unknown>
+    errorMessage?: string | null
+  }
+): Promise<void> {
+  if (!publication.shared_action_attempt_id) return
+  const now = nowIso()
+  await createServiceClient()
+    .from('shared_action_attempts')
+    .update({
+      lifecycle_status: update.lifecycleStatus,
+      execution_status: update.executionStatus,
+      execution_result: (update.result ?? {}) as Json,
+      error_message: update.errorMessage ?? null,
+      executed_at: update.executionStatus === 'executed' ? now : null,
+      updated_at: now,
+    })
+    .eq('id', publication.shared_action_attempt_id)
 }
 
 async function closeAttempt(
@@ -277,6 +302,11 @@ async function processJob(
 
   // Cancelled or already-published publications are terminal.
   if (['cancelled', 'published'].includes(publication.status)) {
+    await updatePublicationAction(publication, {
+      lifecycleStatus: publication.status === 'published' ? 'succeeded' : 'cancelled',
+      executionStatus: publication.status === 'published' ? 'executed' : 'cancelled',
+      result: { publicationStatus: publication.status },
+    })
     await finishJob(job.id, {
       lifecycle: publication.status === 'published' ? 'succeeded' : 'cancelled',
       reason: `publication_${publication.status}`,
@@ -297,6 +327,11 @@ async function processJob(
       })
       .eq('id', publication.id)
     await finishJob(job.id, { lifecycle: 'failed', reason: 'channel_disabled', errorMessage: message })
+    await updatePublicationAction(publication, {
+      lifecycleStatus: 'failed',
+      executionStatus: 'failed',
+      errorMessage: message,
+    })
     return { jobId: job.id, publicationId: publication.id, outcome: 'failed', error: message }
   }
 
@@ -327,14 +362,22 @@ async function processJob(
       .update({ status: 'failed', last_error: message, error_classification: 'permanent', updated_at: nowIso() })
       .eq('id', publication.id)
     await finishJob(job.id, { lifecycle: 'failed', reason: 'token_decrypt_failed', errorMessage: message })
+    await updatePublicationAction(publication, {
+      lifecycleStatus: 'failed',
+      executionStatus: 'failed',
+      errorMessage: message,
+    })
     return { jobId: job.id, publicationId: publication.id, outcome: 'failed', error: message }
   }
 
+  const trackingBaseUrl = (process.env.NEXT_PUBLIC_SITE_URL || '').replace(/\/$/, '')
   const adapterVariant: AdapterVariant = {
     caption: variant.caption,
     hashtags: variant.hashtags,
     callToAction: variant.call_to_action,
-    linkUrl: variant.link_url,
+    linkUrl: variant.link_url && trackingBaseUrl
+      ? `${trackingBaseUrl}/api/forgestudio/track/${publication.tracking_token}`
+      : variant.link_url,
     mediaUrls: variant.media_urls,
     altText: variant.alt_text,
     contentFormat: variant.content_format,
@@ -349,6 +392,11 @@ async function processJob(
       if (existing) {
         await markPublished(publication, existing)
         await finishJob(job.id, { lifecycle: 'succeeded', reason: 'reconciled_existing_post' })
+        await updatePublicationAction(publication, {
+          lifecycleStatus: 'succeeded',
+          executionStatus: 'executed',
+          result: existing as unknown as Record<string, unknown>,
+        })
         return { jobId: job.id, publicationId: publication.id, outcome: 'reconciled' }
       }
     } catch {
@@ -360,6 +408,10 @@ async function processJob(
     .from('social_publications')
     .update({ status: 'publishing', attempt_count: attemptNumber, updated_at: nowIso() })
     .eq('id', publication.id)
+  await updatePublicationAction(publication, {
+    lifecycleStatus: 'running',
+    executionStatus: 'executing',
+  })
 
   const attemptId = await recordAttempt({ publication, attemptNumber, idempotencyKey })
 
@@ -373,6 +425,11 @@ async function processJob(
     await closeAttempt(attemptId, { status: 'succeeded', outcome })
     await markPublished(publication, outcome)
     await finishJob(job.id, { lifecycle: 'succeeded', reason: 'published' })
+    await updatePublicationAction(publication, {
+      lifecycleStatus: 'succeeded',
+      executionStatus: 'executed',
+      result: outcome as unknown as Record<string, unknown>,
+    })
     return { jobId: job.id, publicationId: publication.id, outcome: 'published' }
   } catch (rawError) {
     const error =
@@ -410,6 +467,11 @@ async function processJob(
         errorMessage: error.message,
         availableAt: new Date(Date.now() + RETRY_BACKOFF_BASE_MS * attemptNumber).toISOString(),
       })
+      await updatePublicationAction(publication, {
+        lifecycleStatus: 'retrying',
+        executionStatus: 'approved_pending_execution',
+        errorMessage: error.message,
+      })
       return {
         jobId: job.id,
         publicationId: publication.id,
@@ -439,6 +501,11 @@ async function processJob(
         errorMessage: error.message,
         availableAt: new Date(Date.now() + RETRY_BACKOFF_BASE_MS * attemptNumber).toISOString(),
       })
+      await updatePublicationAction(publication, {
+        lifecycleStatus: 'retrying',
+        executionStatus: 'approved_pending_execution',
+        errorMessage: error.message,
+      })
       return {
         jobId: job.id,
         publicationId: publication.id,
@@ -465,6 +532,11 @@ async function processJob(
     await finishJob(job.id, {
       lifecycle: 'failed',
       reason: attemptsExhausted ? 'attempts_exhausted' : 'permanent_failure',
+      errorMessage: error.message,
+    })
+    await updatePublicationAction(publication, {
+      lifecycleStatus: 'failed',
+      executionStatus: 'failed',
       errorMessage: error.message,
     })
     return { jobId: job.id, publicationId: publication.id, outcome: 'failed', error: error.message }

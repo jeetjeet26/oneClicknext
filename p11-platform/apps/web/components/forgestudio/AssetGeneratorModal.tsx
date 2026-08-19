@@ -1,13 +1,12 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   X,
   Image as ImageIcon,
   Video,
   Wand2,
   Loader2,
-  Upload,
   Sparkles,
   Check
 } from 'lucide-react'
@@ -36,10 +35,21 @@ const STYLES = [
 
 const ASPECT_RATIOS = [
   { id: '1:1', label: 'Square (1:1)' },
-  { id: '4:5', label: 'Portrait (4:5)' },
+  { id: '3:4', label: 'Portrait (3:4)' },
   { id: '16:9', label: 'Landscape (16:9)' },
   { id: '9:16', label: 'Stories (9:16)' },
 ]
+
+interface SourceAsset {
+  id: string
+  name: string
+  file_url: string
+  thumbnail_url: string | null
+  asset_type: string
+  approval_status: string
+  curation_status: string
+  rights_status: string
+}
 
 export function AssetGeneratorModal({ propertyId, onClose, onGenerated }: AssetGeneratorModalProps) {
   const [generationType, setGenerationType] = useState('text-to-image')
@@ -48,20 +58,69 @@ export function AssetGeneratorModal({ propertyId, onClose, onGenerated }: AssetG
   const [style, setStyle] = useState('natural')
   const [aspectRatio, setAspectRatio] = useState('1:1')
   const [quality, setQuality] = useState<'standard' | 'high'>('high')
-  const [sourceImageUrl, setSourceImageUrl] = useState('')
+  const [sourceAssetId, setSourceAssetId] = useState('')
+  const [sourceAssets, setSourceAssets] = useState<SourceAsset[]>([])
   const [saveName, setSaveName] = useState('')
-  const [tags, setTags] = useState('')
   
   // Video-specific settings (Veo 3)
-  const [videoDuration, setVideoDuration] = useState<4 | 6 | 8>(8)
+  const [videoDuration, setVideoDuration] = useState<4 | 8>(8)
   const [includeAudio, setIncludeAudio] = useState(true)
   
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [generatedUrl, setGeneratedUrl] = useState<string | null>(null)
+  const [jobId, setJobId] = useState<string | null>(null)
 
   const needsSourceImage = generationType === 'image-to-image' || generationType === 'image-to-video'
   const isVideoGeneration = generationType === 'text-to-video' || generationType === 'image-to-video'
+
+  useEffect(() => {
+    if (!needsSourceImage) return
+    let cancelled = false
+    fetch(`/api/forgestudio/assets?propertyId=${propertyId}`)
+      .then((response) => response.json())
+      .then((data) => {
+        if (cancelled) return
+        setSourceAssets((data.assets ?? []).filter((asset: SourceAsset) =>
+          asset.asset_type === 'image' &&
+          asset.approval_status === 'approved' &&
+          ['approved', 'selected', 'in_use'].includes(asset.curation_status) &&
+          ['owned', 'licensed', 'generated'].includes(asset.rights_status)
+        ))
+      })
+      .catch(() => setSourceAssets([]))
+    return () => {
+      cancelled = true
+    }
+  }, [needsSourceImage, propertyId])
+
+  useEffect(() => {
+    if (!jobId) return
+    let cancelled = false
+    const poll = async () => {
+      const response = await fetch(`/api/forgestudio/media-jobs?propertyId=${propertyId}`)
+      const data = await response.json()
+      if (!response.ok || cancelled) return
+      const job = (data.jobs ?? []).find((candidate: { id: string }) => candidate.id === jobId)
+      if (!job) return
+      if (job.lifecycle_status === 'succeeded' && job.output?.publicUrl) {
+        setGeneratedUrl(job.output.publicUrl)
+        setGenerating(false)
+        setJobId(null)
+        onGenerated()
+      } else if (['failed', 'cancelled'].includes(job.lifecycle_status)) {
+        setError(job.error_message || `Generation ${job.lifecycle_status}`)
+        setGenerating(false)
+        setJobId(null)
+      }
+    }
+    poll()
+    const interval = window.setInterval(poll, 3000)
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+    }
+  }, [jobId, onGenerated, propertyId])
 
   const handleGenerate = async () => {
     if (!prompt) {
@@ -69,8 +128,8 @@ export function AssetGeneratorModal({ propertyId, onClose, onGenerated }: AssetG
       return
     }
 
-    if (needsSourceImage && !sourceImageUrl) {
-      setError('Please provide a source image URL')
+    if (needsSourceImage && !sourceAssetId) {
+      setError('Please select an approved, rights-cleared source image')
       return
     }
 
@@ -79,23 +138,30 @@ export function AssetGeneratorModal({ propertyId, onClose, onGenerated }: AssetG
     setGeneratedUrl(null)
 
     try {
-      const res = await fetch('/api/forgestudio/assets/generate', {
+      const promptWithDirection = [
+        prompt,
+        `Visual direction: ${style}.`,
+        negativePrompt ? `Avoid: ${negativePrompt}.` : '',
+        'Do not invent property features, finishes, views, people, pricing, or availability.',
+      ].filter(Boolean).join(' ')
+      const res = await fetch('/api/forgestudio/media-jobs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           propertyId,
-          generationType,
-          prompt,
-          negativePrompt: negativePrompt || undefined,
-          sourceImageUrl: needsSourceImage ? sourceImageUrl : undefined,
-          style,
-          quality,
+          modality: isVideoGeneration ? 'video' : 'image',
+          prompt: promptWithDirection,
+          tier: isVideoGeneration
+            ? quality === 'high' ? 'social' : 'preview'
+            : needsSourceImage ? 'iterative' : quality === 'high' ? 'final' : 'draft',
+          sourceAssetId: needsSourceImage ? sourceAssetId : undefined,
           aspectRatio,
-          saveName: saveName || undefined,
-          tags: tags ? tags.split(',').map(t => t.trim()) : ['ai-generated'],
-          // Video-specific settings
-          videoDuration: isVideoGeneration ? videoDuration : undefined,
-          includeAudio: isVideoGeneration ? includeAudio : undefined
+          name: saveName || `ForgeStudio ${isVideoGeneration ? 'video' : 'image'}`,
+          altText: prompt.slice(0, 1000),
+          maxCostUsd: isVideoGeneration ? 5 : 0.25,
+          ...(isVideoGeneration
+            ? { durationSeconds: videoDuration, generateAudio: includeAudio }
+            : {}),
         })
       })
 
@@ -105,17 +171,9 @@ export function AssetGeneratorModal({ propertyId, onClose, onGenerated }: AssetG
         throw new Error(data.error || 'Generation failed')
       }
 
-      setGeneratedUrl(data.url)
-      
-      if (data.saved) {
-        // Show success briefly then close
-        setTimeout(() => {
-          onGenerated()
-        }, 2000)
-      }
+      setJobId(data.job.id)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Generation failed')
-    } finally {
       setGenerating(false)
     }
   }
@@ -133,7 +191,7 @@ export function AssetGeneratorModal({ propertyId, onClose, onGenerated }: AssetG
               <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
                 AI Asset Generator
               </h2>
-              <p className="text-sm text-slate-500">Powered by Google Gemini</p>
+              <p className="text-sm text-slate-500">Governed by Vercel AI Gateway model policy</p>
             </div>
           </div>
           <button
@@ -179,22 +237,32 @@ export function AssetGeneratorModal({ propertyId, onClose, onGenerated }: AssetG
             </div>
           </div>
 
-          {/* Source Image (for image-to-* types) */}
+          {/* Rights-cleared source image (for image-to-* types) */}
           {needsSourceImage && (
             <div>
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                Source Image URL <span className="text-red-500">*</span>
+                Approved source image <span className="text-red-500">*</span>
               </label>
-              <input
-                type="url"
-                value={sourceImageUrl}
-                onChange={(e) => setSourceImageUrl(e.target.value)}
+              <select
+                value={sourceAssetId}
+                onChange={(e) => setSourceAssetId(e.target.value)}
                 className="w-full px-4 py-2 border border-slate-200 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white"
-                placeholder="https://example.com/image.jpg"
-              />
-              {sourceImageUrl && (
+              >
+                <option value="">Select an approved asset</option>
+                {sourceAssets.map((asset) => (
+                  <option key={asset.id} value={asset.id}>{asset.name}</option>
+                ))}
+              </select>
+              {sourceAssetId && (
                 <div className="mt-2 rounded-lg overflow-hidden w-32 h-32">
-                  <img src={sourceImageUrl} alt="Source" className="w-full h-full object-cover" />
+                  <img
+                    src={
+                      sourceAssets.find((asset) => asset.id === sourceAssetId)?.thumbnail_url ||
+                      sourceAssets.find((asset) => asset.id === sourceAssetId)?.file_url
+                    }
+                    alt="Selected approved source"
+                    className="w-full h-full object-cover"
+                  />
                 </div>
               )}
             </div>
@@ -233,13 +301,15 @@ export function AssetGeneratorModal({ propertyId, onClose, onGenerated }: AssetG
             <div>
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-3">
                 Video Duration
-                <span className="ml-2 text-xs text-slate-500">($0.75/second)</span>
+                <span className="ml-2 text-xs text-slate-500">
+                  (estimated from the selected Gateway tier)
+                </span>
               </label>
               <div className="grid grid-cols-3 gap-3">
-                {[4, 6, 8].map((duration) => (
+                {[4, 8].map((duration) => (
                   <button
                     key={duration}
-                    onClick={() => setVideoDuration(duration as 4 | 6 | 8)}
+                    onClick={() => setVideoDuration(duration as 4 | 8)}
                     className={`py-3 rounded-lg border-2 transition-all ${
                       videoDuration === duration
                         ? 'border-amber-500 bg-amber-50 dark:bg-amber-500/10'
@@ -249,7 +319,9 @@ export function AssetGeneratorModal({ propertyId, onClose, onGenerated }: AssetG
                     <div className={`font-semibold ${videoDuration === duration ? 'text-amber-700 dark:text-amber-400' : 'text-slate-700 dark:text-slate-300'}`}>
                       {duration}s
                     </div>
-                    <div className="text-xs text-slate-500">${(duration * 0.75).toFixed(2)}</div>
+                    <div className="text-xs text-slate-500">
+                      up to ${(duration * (quality === 'high' ? (includeAudio ? 0.15 : 0.1) : (includeAudio ? 0.05 : 0.03))).toFixed(2)}
+                    </div>
                   </button>
                 ))}
               </div>
@@ -279,7 +351,7 @@ export function AssetGeneratorModal({ propertyId, onClose, onGenerated }: AssetG
           )}
 
           {/* Style & Options Row */}
-          <div className="grid grid-cols-2 gap-4">
+          <div>
             {/* Style */}
             <div>
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
@@ -356,24 +428,18 @@ export function AssetGeneratorModal({ propertyId, onClose, onGenerated }: AssetG
                 placeholder="Asset name"
               />
             </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                Tags (Optional)
-              </label>
-              <input
-                type="text"
-                value={tags}
-                onChange={(e) => setTags(e.target.value)}
-                className="w-full px-4 py-2 border border-slate-200 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white"
-                placeholder="tag1, tag2, tag3"
-              />
-            </div>
           </div>
 
           {/* Error */}
           {error && (
             <div className="p-4 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 rounded-xl text-red-600 dark:text-red-400 text-sm">
               {error}
+            </div>
+          )}
+          {jobId && (
+            <div className="p-4 bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 rounded-xl text-amber-700 dark:text-amber-300 text-sm flex items-center gap-2">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Generation is running as a durable job. You may close this window and return later.
             </div>
           )}
 

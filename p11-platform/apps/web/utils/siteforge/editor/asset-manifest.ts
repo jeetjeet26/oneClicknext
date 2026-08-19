@@ -113,19 +113,20 @@ export function assertApprovedAssetReferenceClosure(input: {
   originalBlueprint: Json
 }): void {
   const assets = z.array(approvedAssetRowSchema).parse(input.approvedAssets)
-  const originalByPath = new Map(
-    collectMediaReferences(input.originalBlueprint).map(reference => [
-      reference.path,
-      reference,
-    ])
-  )
+  const originalReferenceCounts = new Map<string, number>()
+  for (const reference of collectMediaReferences(input.originalBlueprint)) {
+    const key = `${reference.assetId || ''}\u0000${reference.url}`
+    originalReferenceCounts.set(
+      key,
+      (originalReferenceCounts.get(key) || 0) + 1
+    )
+  }
 
   for (const reference of collectMediaReferences(input.updatedBlueprint)) {
-    const original = originalByPath.get(reference.path)
-    if (
-      original?.assetId === reference.assetId &&
-      original.url === reference.url
-    ) {
+    const key = `${reference.assetId || ''}\u0000${reference.url}`
+    const originalCount = originalReferenceCounts.get(key) || 0
+    if (originalCount > 0) {
+      originalReferenceCounts.set(key, originalCount - 1)
       continue
     }
     if (!reference.assetId) {
@@ -134,15 +135,16 @@ export function assertApprovedAssetReferenceClosure(input: {
       )
     }
     const asset = assets.find(candidate => candidate.id === reference.assetId)
+    // Rights/approval metadata is advisory (solo-operator doctrine); the
+    // reference must still resolve to a real immutable asset so the editor
+    // can never invent media URLs.
     if (
       !asset ||
       ![asset.file_url, asset.original_url].includes(reference.url) ||
-      asset.approval_status !== 'approved' ||
-      !['owned', 'licensed', 'generated'].includes(asset.rights_status || '') ||
       !(asset.byte_sha256 || asset.content_hash)
     ) {
       throw new Error(
-        `Changed SiteForge media reference is not closed over an approved immutable asset: ${reference.path}`
+        `Changed SiteForge media reference is not closed over a known immutable asset: ${reference.path}`
       )
     }
   }
@@ -202,14 +204,8 @@ export function buildApprovedAssetManifest(
     }))
     .sort((left, right) => left.id.localeCompare(right.id))
   for (const asset of assetManifest) {
-    if (
-      asset.approvalStatus !== 'approved' ||
-      !['owned', 'licensed', 'generated'].includes(asset.rightsStatus || '')
-    ) {
-      throw new Error(
-        `SiteForge asset ${asset.id} is not approved and rights-cleared`
-      )
-    }
+    // Approval/rights are advisory metadata (solo-operator doctrine); only the
+    // immutable byte identity is structurally required.
     if (!asset.byteSha256) {
       throw new Error(
         `SiteForge asset ${asset.id} has no immutable byte digest`

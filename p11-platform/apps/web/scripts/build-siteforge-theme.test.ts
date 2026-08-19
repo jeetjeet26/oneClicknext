@@ -10,9 +10,11 @@ import {
   checkSiteForgeThemeArtifact,
   validateSiteForgeDeploymentAssets,
   validateSiteForgeTheme,
+  variantCatalog,
   verifyRuntimeArtifact,
 } from './build-siteforge-theme.mjs'
 import { validateSiteForgeBuildInputs } from './validate-siteforge-build-inputs.mjs'
+import { SITEFORGE_BLOCK_CAPABILITIES } from '@/types/siteforge'
 
 describe('SiteForge theme package', () => {
   it('skips monorepo-only source validation only inside a Vercel deploy root', async () => {
@@ -38,6 +40,21 @@ describe('SiteForge theme package', () => {
     ).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
+  it('pins the TypeScript variant catalog to the theme build catalog', () => {
+    // A variant allowed in TypeScript but absent from the theme build catalog
+    // would validate blueprints the WordPress theme cannot render. The two
+    // catalogs must stay byte-identical.
+    const typescriptCatalog = Object.fromEntries(
+      Object.entries(SITEFORGE_BLOCK_CAPABILITIES).map(
+        ([blockType, capabilities]) => [
+          blockType.replace(/^acf\//, ''),
+          [...capabilities.variants],
+        ]
+      )
+    )
+    expect(typescriptCatalog).toEqual(variantCatalog)
+  })
+
   it('contains every ACF schema, render template, variant contract, and metadata file', async () => {
     const result = await validateSiteForgeTheme()
     const functionsPhp = await readFile(
@@ -58,19 +75,72 @@ describe('SiteForge theme package', () => {
     expect(result.files.length).toBeGreaterThan(40)
   })
 
-  it('keeps the responsive menu icon and label aligned', async () => {
-    const layoutCss = await readFile(
-      path.resolve(
-        process.cwd(),
-        '../../../wordpress-theme/oneclick-siteforge/assets/css/layout.css'
-      ),
-      'utf8'
+  it('keeps responsive navigation and minimal hero presentation semantic', async () => {
+    const themeRoot = path.resolve(
+      process.cwd(),
+      '../../../wordpress-theme/oneclick-siteforge'
     )
+    const [layoutCss, blocksCss, heroTemplate] = await Promise.all([
+      readFile(path.join(themeRoot, 'assets/css/layout.css'), 'utf8'),
+      readFile(path.join(themeRoot, 'assets/css/blocks.css'), 'utf8'),
+      readFile(path.join(themeRoot, 'blocks/top-slides.php'), 'utf8'),
+    ])
 
     expect(layoutCss).toContain('display: inline-flex;')
     expect(layoutCss).toMatch(
       /@media \(max-width: 640px\)[\s\S]*?\.menu-label \{\s*display: none;/
     )
+    expect(layoutCss).toContain('.primary-menu-container a[aria-current="page"]')
+    expect(layoutCss).toContain('background: var(--color-primary);')
+    expect(layoutCss).toContain('color: var(--color-text);')
+    expect(layoutCss).toContain('.primary-menu-container a:focus-visible')
+
+    expect(blocksCss).toContain(
+      '.variant-minimal.block-top-slides { height: clamp(380px, 52vh, 540px); min-height: 0; }'
+    )
+    expect(blocksCss).toContain('height: clamp(350px, 56svh, 460px);')
+    expect(blocksCss).toContain(
+      '.variant-minimal.block-top-slides .slide-headline'
+    )
+
+    expect(heroTemplate).toContain('aria-label="<?php esc_attr_e( \'Previous slide\'')
+    expect(heroTemplate).toContain('aria-label="<?php esc_attr_e( \'Next slide\'')
+    expect(heroTemplate).toContain('class="swiper-autoplay-toggle" aria-pressed="false"')
+  })
+
+  it('emits stable nested editor targets and no positional fallback', async () => {
+    const themeRoot = path.resolve(
+      process.cwd(),
+      '../../../wordpress-theme/oneclick-siteforge'
+    )
+    const [behavior, utilities, header, footer, page, accordion, governed] =
+      await Promise.all([
+        readFile(path.join(themeRoot, 'assets/js/site-behavior.js'), 'utf8'),
+        readFile(path.join(themeRoot, 'inc/block-utilities.php'), 'utf8'),
+        readFile(path.join(themeRoot, 'header.php'), 'utf8'),
+        readFile(path.join(themeRoot, 'footer.php'), 'utf8'),
+        readFile(path.join(themeRoot, 'page.php'), 'utf8'),
+        readFile(path.join(themeRoot, 'blocks/accordion-section.php'), 'utf8'),
+        readFile(path.join(themeRoot, 'blocks/governed-component.php'), 'utf8'),
+      ])
+
+    expect(behavior).toContain("type: 'siteforge-editor:target-selected'")
+    expect(behavior).toContain('resourcePath: resourcePath')
+    expect(behavior).toContain('boundingBox: boundingBox(target)')
+    expect(behavior).toContain("['before', 'after']")
+    expect(behavior).not.toContain('sectionIndex:')
+    expect(utilities).toContain('data-siteforge-target-id')
+    expect(utilities).toContain('oneclick_siteforge_repeater_item_id')
+    expect(utilities).toContain('data-siteforge-presentation')
+    expect(behavior).toContain('presentation-effective-')
+    expect(header).toContain('data-siteforge-target-kind="header"')
+    expect(header).toContain('data-siteforge-target-kind="menu"')
+    expect(footer).toContain('data-siteforge-target-kind="footer"')
+    expect(page).toContain('data-siteforge-target-kind="page"')
+    expect(accordion).not.toContain('uniqid(')
+    expect(accordion).not.toContain("'-item-' . $index")
+    expect(governed).toContain('oneclick_render_governed_component_node')
+    expect(governed).not.toMatch(/\beval\s*\(|\binclude\s*\(/)
   })
 
   it('builds byte-identical archives for identical explicit inputs', async () => {

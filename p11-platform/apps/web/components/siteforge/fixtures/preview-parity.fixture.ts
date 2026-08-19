@@ -265,6 +265,95 @@ export const registeredBlockPreviewFixtures = {
     ],
     source: 'reviewflow',
   },
+  'acf/offering-browser': {
+    heading: 'Available residences',
+    offering_kind: 'rental_unit',
+    offerings: [
+      {
+        id: 'offering-a1',
+        kind: 'rental_unit',
+        name: 'A1',
+        attributes: { bedrooms: '1', bathrooms: '1' },
+      },
+    ],
+    catalog_snapshot: {
+      captured_at: '2026-08-13T12:00:00.000Z',
+      content_hash: 'a'.repeat(64),
+      fresh_until: null,
+    },
+    show_pricing: false,
+    show_availability: false,
+    conversion_intent: 'tour',
+  },
+  'acf/entity-directory': {
+    heading: 'Our communities',
+    entities: [
+      { id: 'community-1', name: 'The Aurora', type: 'community' },
+    ],
+    catalog_snapshot: {
+      captured_at: '2026-08-13T12:00:00.000Z',
+      content_hash: 'b'.repeat(64),
+      fresh_until: null,
+    },
+    group_by: null,
+  },
+  'acf/comparison-table': {
+    heading: 'Compare options',
+    columns: [{ key: 'bedrooms', label: 'Bedrooms' }],
+    rows: [
+      { id: 'row-a1', label: 'A1', values: { bedrooms: '1' } },
+    ],
+  },
+  'acf/timeline': {
+    heading: 'Development timeline',
+    milestones: [
+      { id: 'opening', date_label: 'Fall 2026', title: 'Opening' },
+    ],
+  },
+  'acf/document-library': {
+    heading: 'Resources',
+    documents: [
+      { id: 'brochure', title: 'Community brochure', url: '/brochure.pdf' },
+    ],
+  },
+  'acf/events-directory': {
+    heading: 'Upcoming events',
+    events: [
+      {
+        id: 'event-1',
+        name: 'Open house',
+        starts_at: '2026-08-20T18:00:00.000Z',
+      },
+    ],
+    catalog_snapshot: {
+      captured_at: '2026-08-13T12:00:00.000Z',
+      content_hash: 'c'.repeat(64),
+      fresh_until: null,
+    },
+    conversion_intent: 'visit',
+  },
+  'acf/governed-component': {
+    component_key: 'property-highlight@1.0.0',
+    descriptor_hash: 'd'.repeat(64),
+    render_plan: {
+      nodeId: 'root',
+      primitive: 'section',
+      classes: ['property-highlight'],
+      properties: {},
+      accessibility: {
+        role: 'region',
+        name: { field: 'headline' },
+        description: null,
+        keyboard: [],
+        focusPolicy: 'none',
+        liveRegion: 'off',
+      },
+      children: [],
+    },
+    component_values: {
+      headline: 'Property highlight',
+    },
+  },
 } satisfies Record<ACFBlockType, Record<string, unknown>>
 
 export const maliciousHtmlPreviewFixtures = {

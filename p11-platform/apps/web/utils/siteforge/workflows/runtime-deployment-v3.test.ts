@@ -156,6 +156,7 @@ describe('artifact-bound runtime v3 deployment', () => {
         },
       }),
     }
+    const restoreActiveTheme = vi.fn().mockResolvedValue(undefined)
 
     await expect(
       deployArtifactBoundRuntimeV3({
@@ -174,12 +175,23 @@ describe('artifact-bound runtime v3 deployment', () => {
         client: client as never,
         runtimeClient: runtimeClient as never,
         installer: {
+          getActiveTheme: vi.fn().mockResolvedValue({
+            stylesheet: 'prior-child',
+            template: 'prior-parent',
+          }),
           ensureInstalled: vi.fn().mockResolvedValue(undefined),
-          installThemeOverlay: vi.fn().mockResolvedValue('overlay'),
+          installThemeOverlay: vi
+            .fn()
+            .mockResolvedValue('oneclick-siteforge-overlay-141414141414'),
+          restoreActiveTheme,
         },
         sleep: vi.fn().mockResolvedValue(undefined),
       })
     ).rejects.toThrow(/exact readback does not match/)
+    expect(restoreActiveTheme).toHaveBeenCalledWith({
+      ssh: { host: '192.0.2.1', username: 'app', password: 'secret' },
+      theme: { stylesheet: 'prior-child', template: 'prior-parent' },
+    })
 
     expect(updates).toEqual(
       expect.arrayContaining([

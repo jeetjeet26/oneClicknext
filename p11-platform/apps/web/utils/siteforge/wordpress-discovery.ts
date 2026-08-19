@@ -366,5 +366,80 @@ function getBuiltinBlockSchemas(): Record<string, ACFBlockSchema> {
         html_content: { type: 'textarea' },
       },
     },
+    'acf/offering-browser': {
+      label: 'Offering Browser',
+      description: 'Source-governed generic offering catalog',
+      fields: {
+        heading: { type: 'text' },
+        intro: { type: 'textarea' },
+        offering_kind: { type: 'text' },
+        offerings: { type: 'repeater' },
+        catalog_snapshot: { type: 'group' },
+        show_pricing: { type: 'true_false' },
+        show_availability: { type: 'true_false' },
+        conversion_intent: { type: 'text' },
+      },
+    },
+    'acf/entity-directory': {
+      label: 'Entity Directory',
+      description: 'Portfolio, corporate, or destination entity directory',
+      fields: {
+        heading: { type: 'text' },
+        intro: { type: 'textarea' },
+        entities: { type: 'repeater' },
+        catalog_snapshot: { type: 'group' },
+        group_by: { type: 'text' },
+      },
+    },
+    'acf/comparison-table': {
+      label: 'Offering Comparison',
+      description: 'Accessible comparison of approved offering attributes',
+      fields: {
+        heading: { type: 'text' },
+        intro: { type: 'textarea' },
+        columns: { type: 'repeater' },
+        rows: { type: 'repeater' },
+      },
+    },
+    'acf/timeline': {
+      label: 'Development Timeline',
+      description: 'Source-governed development and launch milestones',
+      fields: {
+        heading: { type: 'text' },
+        intro: { type: 'textarea' },
+        milestones: { type: 'repeater' },
+      },
+    },
+    'acf/document-library': {
+      label: 'Document Library',
+      description: 'Approved downloadable documents',
+      fields: {
+        heading: { type: 'text' },
+        intro: { type: 'textarea' },
+        documents: { type: 'repeater' },
+      },
+    },
+    'acf/events-directory': {
+      label: 'Events Directory',
+      description: 'Source-governed event and destination programming',
+      fields: {
+        heading: { type: 'text' },
+        intro: { type: 'textarea' },
+        events: { type: 'repeater' },
+        catalog_snapshot: { type: 'group' },
+        conversion_intent: { type: 'text' },
+      },
+    },
+    'acf/governed-component': {
+      label: 'Governed Component',
+      description:
+        'Signed data-only reusable component compiled from the SiteForge component DSL',
+      fields: {
+        component_key: { type: 'text' },
+        descriptor_hash: { type: 'text' },
+        render_plan: { type: 'group' },
+        component_values: { type: 'group' },
+      },
+    },
   }
 }

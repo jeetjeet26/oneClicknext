@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
-import { validatePropertyManagerAccess } from '@/utils/services/auth-guard'
+import { validateSiteForgeOwnerOperatorAccess } from '@/utils/services/auth-guard'
 import {
   assertActiveAuroraLifecycleLease,
   AuroraLifecycleControlError,
@@ -21,12 +21,15 @@ export async function requireLaunchManager(
       response: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }),
     }
   }
-  const access = await validatePropertyManagerAccess(user.id, propertyId)
+  const access = await validateSiteForgeOwnerOperatorAccess(user.id, propertyId)
   if (!access.authorized) {
     return {
       user: null,
       response: NextResponse.json(
-        { error: 'SiteForge launch manager permission required' },
+        {
+          error: 'SiteForge owner/operator capability required',
+          capability: access.capability,
+        },
         { status: 403 }
       ),
     }

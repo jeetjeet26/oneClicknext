@@ -7,6 +7,7 @@ import {
   cancelPublication,
   ContentStoreError,
   reschedulePublication,
+  retryPublication,
 } from '@/utils/forgestudio/content-store'
 
 const patchSchema = z.union([
@@ -16,6 +17,9 @@ const patchSchema = z.union([
   }),
   z.object({
     action: z.literal('cancel'),
+  }),
+  z.object({
+    action: z.literal('retry'),
   }),
 ])
 
@@ -56,7 +60,7 @@ export async function GET(
     if ('response' in authorized) return authorized.response
 
     const supabase = createServiceClient()
-    const [publicationResult, attemptsResult] = await Promise.all([
+    const [publicationResult, attemptsResult, metricsResult, attributionResult] = await Promise.all([
       supabase
         .from('social_publications')
         .select(`
@@ -71,6 +75,18 @@ export async function GET(
         .select('*')
         .eq('publication_id', publicationId)
         .order('attempt_number', { ascending: false }),
+      supabase
+        .from('social_publication_metrics')
+        .select('*')
+        .eq('publication_id', publicationId)
+        .order('metric_date', { ascending: false })
+        .limit(30),
+      supabase
+        .from('social_attribution_events')
+        .select('id, event_type, occurred_at, attribution_window_days, metadata')
+        .eq('publication_id', publicationId)
+        .order('occurred_at', { ascending: false })
+        .limit(100),
     ])
 
     if (publicationResult.error || !publicationResult.data) {
@@ -80,6 +96,8 @@ export async function GET(
     return NextResponse.json({
       publication: publicationResult.data,
       attempts: attemptsResult.data ?? [],
+      metrics: metricsResult.data ?? [],
+      attributionEvents: attributionResult.data ?? [],
     })
   } catch (error) {
     console.error('Publication GET error:', error)
@@ -114,7 +132,9 @@ export async function PATCH(
 
     const publication = parsed.data.action === 'cancel'
       ? await cancelPublication(publicationId)
-      : await reschedulePublication(publicationId, parsed.data.scheduledFor)
+      : parsed.data.action === 'retry'
+        ? await retryPublication(publicationId)
+        : await reschedulePublication(publicationId, parsed.data.scheduledFor)
 
     return NextResponse.json({ publication })
   } catch (error) {

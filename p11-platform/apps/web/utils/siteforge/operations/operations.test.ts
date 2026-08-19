@@ -47,7 +47,7 @@ describe('SiteForge operations contracts', () => {
     )
   })
 
-  it('fails closed for unconfigured real-time providers and strips stale pricing', async () => {
+  it('fails closed for unconfigured providers and retains published inventory until replacement', async () => {
     await expect(new YardiInventoryAdapter().fetch('property-1')).rejects.toBeInstanceOf(
       InventoryProviderNotConfiguredError
     )
@@ -69,16 +69,21 @@ describe('SiteForge operations contracts', () => {
         now: new Date('2026-07-31T00:00:00.000Z'),
       }
     )
-    expect(result.units[0]).not.toHaveProperty('rentMin')
-    expect(result.units[0]).not.toHaveProperty('availableCount')
+    expect(result.units[0]).toMatchObject({
+      rentMin: 1800,
+      rentMax: 2100,
+      availableCount: 2,
+    })
+    expect(result.stale).toBe(false)
     expect(result.revisionProposal).toEqual(expect.objectContaining({
-      action: 'hide_stale_pricing_and_request_inventory_refresh',
+      action: 'keep_published_inventory_until_replaced',
+      staleUnitIds: [],
       proposalHash: expect.stringMatching(/^[a-f0-9]{64}$/),
     }))
     expect(Object.isFrozen(result.revisionProposal)).toBe(true)
   })
 
-  it('persists hash-addressed snapshots and hides every stale pricing field', () => {
+  it('persists hash-addressed snapshots without expiring published pricing', () => {
     const snapshot = createDurableInventorySnapshot({
       propertyId: 'property-1',
       provider: 'yardi',
@@ -108,16 +113,22 @@ describe('SiteForge operations contracts', () => {
     expect(snapshot.snapshotId).toBe(`inventory:property-1:${snapshot.contentHash}`)
     expect(snapshot.contentHash).toMatch(/^[a-f0-9]{64}$/)
     expect(Object.isFrozen(snapshot.units)).toBe(true)
-    expect(result.snapshotStale).toBe(true)
+    expect(result.snapshotStale).toBe(false)
     expect(result.units[0]).toEqual({
       id: 'unit-1',
+      rent: 1_900,
+      rentMin: 1_800,
+      rentMax: 2_000,
+      monthlyRent: 1_900,
+      price: 1_900,
+      availableCount: 2,
+      availability: 'now',
+      specials: 'One month free',
       sourceUpdatedAt: '2026-07-31T00:00:00.000Z',
-      expiresAt: '2026-07-31T01:00:00.000Z',
-      pricingHiddenReason: 'stale_inventory',
     })
   })
 
-  it('treats malformed source timestamps as stale instead of showing prices', () => {
+  it('does not expire inventory because a source timestamp is malformed', () => {
     const result = enforceInventoryFreshness(
       [{ id: 'bad-time', rentMin: 1_800, sourceUpdatedAt: 'not-a-date' }],
       {
@@ -127,11 +138,8 @@ describe('SiteForge operations contracts', () => {
         now: new Date('2026-07-31T00:00:00.000Z'),
       }
     )
-    expect(result.units[0]).not.toHaveProperty('rentMin')
-    expect(result.units[0]).toHaveProperty(
-      'pricingHiddenReason',
-      'stale_inventory'
-    )
+    expect(result.units[0]).toHaveProperty('rentMin', 1_800)
+    expect(result.stale).toBe(false)
   })
 
   it('validates destinations and evaluates artifact-aware funnel anomalies', () => {

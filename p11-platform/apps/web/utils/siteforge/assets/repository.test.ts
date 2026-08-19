@@ -102,7 +102,7 @@ describe('persistSiteForgeAssets', () => {
     )
   })
 
-  it('refuses an approved asset that has not passed curation', async () => {
+  it('refuses an unapproved source asset', async () => {
     const photo = {
       id: 'source-photo-1',
       sourceAssetId: '33333333-3333-4333-8333-333333333333',
@@ -133,8 +133,8 @@ describe('persistSiteForgeAssets', () => {
       persistSiteForgeAssets(
         '11111111-1111-4111-8111-111111111111',
         manifest,
-        existingAssetClient({ curation_status: 'needs_review' }) as never
+        existingAssetClient({ approval_status: 'pending' }) as never
       )
-    ).rejects.toThrow('not approved and rights-cleared')
+    ).rejects.toThrow('not usable')
   })
 })

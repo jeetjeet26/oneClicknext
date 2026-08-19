@@ -65,7 +65,8 @@ export async function POST(
     }
     const result = await siteForgeGuidedService().conversation(
       websiteId,
-      parsed.data
+      parsed.data,
+      user.id
     )
     ctx.logSuccess(200, {
       websiteId,

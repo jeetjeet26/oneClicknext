@@ -70,6 +70,7 @@ describe('SiteForge conversion to existing Lasso outbox path', () => {
           return { id: `event-${enqueued.length}` } as OutboxEvent
         }),
         recordTelemetry: vi.fn().mockResolvedValue(undefined),
+        recordSubmission: vi.fn().mockResolvedValue(undefined),
       }
     )
 

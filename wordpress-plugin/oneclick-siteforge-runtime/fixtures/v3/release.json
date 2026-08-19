@@ -53,6 +53,7 @@
       {
         "overlayId": "overlay:aurora",
         "contentHash": "1414141414141414141414141414141414141414141414141414141414141414",
+        "themeSlug": "oneclick-siteforge-overlay-141414141414",
         "appliesToBaseThemeArchiveSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         "package": {
           "packageId": "overlay:aurora-package",
@@ -417,6 +418,7 @@
       "websiteId": "11111111-1111-4111-8111-111111111111",
       "keyReference": "secret:public-runtime",
       "conversionEndpoint": "https://app.example.com/api/conversions",
+      "conversionKey": "siteforge-public-test-key",
       "telemetryEndpoint": "https://app.example.com/api/telemetry",
       "allowedOrigins": [
         "https://aurora-preview.example.com"

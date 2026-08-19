@@ -75,7 +75,7 @@ describe('SiteForge artifact repository contracts', () => {
     )
   })
 
-  it('refuses to snapshot assets without approval and cleared rights', async () => {
+  it('refuses to snapshot assets without an immutable byte digest', async () => {
     const query: Record<string, unknown> = {}
     query.select = () => query
     query.eq = () => query
@@ -88,8 +88,8 @@ describe('SiteForge artifact repository contracts', () => {
             source: 'generated',
             file_url: 'https://example.com/hero.jpg',
             storage_path: 'assets/hero.jpg',
-            byte_sha256: 'a'.repeat(64),
-            content_hash: 'a'.repeat(64),
+            byte_sha256: null,
+            content_hash: null,
             approval_status: 'pending',
             rights_status: 'generated',
           },
@@ -120,7 +120,7 @@ describe('SiteForge artifact repository contracts', () => {
         },
         client as never
       )
-    ).rejects.toThrow('not approved and rights-cleared')
+    ).rejects.toThrow('has no immutable byte digest')
   })
 
   it('keeps atomic publication, target preview leasing, and rollback package identity in the migration contract', async () => {

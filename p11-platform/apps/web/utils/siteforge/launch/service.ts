@@ -5,7 +5,7 @@ import {
   timingSafeEqual,
 } from 'node:crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { Database, Json } from '@/types/supabase'
+import type { Database, Json, Tables } from '@/types/supabase'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { recordSharedApprovalDecision } from '@/utils/services/shared-approvals'
 import {
@@ -29,6 +29,26 @@ import {
 import { restoreDnsCutover } from './dns-cutover'
 
 type ServiceClient = SupabaseClient<Database>
+type LaunchReleaseRow = Tables<'siteforge_launch_releases'>
+type LaunchRestoreResult = {
+  release: LaunchReleaseRow
+  manualRequired: false
+}
+type LaunchRestoreRequestResult =
+  | (LaunchRestoreResult & {
+      automatic: true
+      protectionApplied: boolean
+      protectionError: string | null
+    })
+  | {
+      release: LaunchReleaseRow
+      manualRequired: true
+      requiredConfirmation: 'restore'
+      dashboardAction: string
+      protectionApplied: boolean
+      protectionError: string | null
+    }
+type LaunchRestoreOutcome = LaunchRestoreResult | LaunchRestoreRequestResult
 
 interface PromotionTokenPayload {
   releaseId: string
@@ -135,6 +155,12 @@ export type LaunchApprovalBinding = {
   certificationReportHash: string
   rollbackArtifactId: string | null
   rollbackContentHash: string | null
+  websiteDomain: string
+  verticalProfileContentHash: string
+  verticalPackContentHash: string
+  policySetContentHash: string
+  discoveryContentHash: string
+  launchPolicyContentHash: string
 }
 
 export function launchApprovalBindingHash(
@@ -172,16 +198,50 @@ export function assertDistinctLaunchActors(input: {
   }
 }
 
-async function loadLaunchApprovalBinding(
+function hasOwnerOneButtonAuthority(
+  release: Awaited<ReturnType<typeof getLaunchRelease>>,
+  actorId: string
+): boolean {
+  return (
+    release.approved_by === actorId &&
+    asRecord(release.legal_rights_snapshot).mode === 'owner_one_button'
+  )
+}
+
+async function assertOwnerLaunchAuthority(
+  release: Awaited<ReturnType<typeof getLaunchRelease>>,
+  input: { actorId: string; bindingHash: string },
+  client: ServiceClient
+): Promise<void> {
+  const current = await loadLaunchApprovalBinding(release, client)
+  if (
+    release.approved_by !== input.actorId ||
+    asRecord(release.legal_rights_snapshot).mode !== 'owner_one_button' ||
+    asRecord(release.legal_rights_snapshot).launchBindingHash !==
+      input.bindingHash ||
+    current.bindingHash !== input.bindingHash
+  ) {
+    throw new SiteForgeLaunchError(
+      'Owner launch authority does not match the exact certified release',
+      403
+    )
+  }
+}
+
+export async function loadLaunchApprovalBinding(
   release: Awaited<ReturnType<typeof getLaunchRelease>>,
   client: ServiceClient
 ): Promise<{ binding: LaunchApprovalBinding; bindingHash: string }> {
-  const [{ data: artifact, error: artifactError }, { data: deployment, error: deploymentError }] =
+  const [
+    { data: artifact, error: artifactError },
+    { data: deployment, error: deploymentError },
+    { data: website, error: websiteError },
+  ] =
     await Promise.all([
       client
         .from('siteforge_blueprint_versions')
         .select(
-          'id, content_hash, asset_manifest_hash, base_theme_package_sha256, overlay_package_sha256, runtime_contract_version, runtime_package_sha256'
+          'id, content_hash, asset_manifest_hash, base_theme_package_sha256, overlay_package_sha256, runtime_contract_version, runtime_package_sha256, blueprint'
         )
         .eq('id', release.artifact_id)
         .eq('website_id', release.website_id)
@@ -194,12 +254,38 @@ async function loadLaunchApprovalBinding(
         .eq('id', release.staging_deployment_id || '')
         .eq('artifact_id', release.artifact_id)
         .single(),
+      client
+        .from('property_websites')
+        .select('target_domain, production_url, wp_url')
+        .eq('id', release.website_id)
+        .eq('property_id', release.property_id)
+        .single(),
     ])
+  const blueprint = asRecord(artifact?.blueprint)
+  const manifestPins = asRecord(blueprint.manifestPins)
+  const legacyIdentityHash = artifact?.content_hash || ''
+  const websiteDomain =
+    website?.target_domain || website?.production_url || website?.wp_url || ''
+  const verticalProfileContentHash = String(
+    manifestPins.verticalProfileContentHash || legacyIdentityHash
+  )
+  const verticalPackContentHash = String(
+    manifestPins.verticalPackContentHash || legacyIdentityHash
+  )
+  const policySetContentHash = String(
+    manifestPins.policySetContentHash || legacyIdentityHash
+  )
+  const discoveryContentHash = String(
+    manifestPins.discoveryContentHash || legacyIdentityHash
+  )
   if (
     artifactError ||
     deploymentError ||
+    websiteError ||
     !artifact ||
     !deployment ||
+    !websiteDomain ||
+    !release.launch_policy_content_hash ||
     !deployment.certified_at ||
     artifact.content_hash !== release.artifact_content_hash ||
     deployment.artifact_content_hash !== release.artifact_content_hash ||
@@ -210,7 +296,11 @@ async function loadLaunchApprovalBinding(
     deployment.base_theme_package_sha256 !== artifact.base_theme_package_sha256 ||
     deployment.overlay_package_sha256 !== artifact.overlay_package_sha256 ||
     deployment.runtime_contract_version !== artifact.runtime_contract_version ||
-    deployment.runtime_package_sha256 !== artifact.runtime_package_sha256
+    deployment.runtime_package_sha256 !== artifact.runtime_package_sha256 ||
+    !/^[a-f0-9]{64}$/.test(verticalProfileContentHash) ||
+    !/^[a-f0-9]{64}$/.test(verticalPackContentHash) ||
+    !/^[a-f0-9]{64}$/.test(policySetContentHash) ||
+    !/^[a-f0-9]{64}$/.test(discoveryContentHash)
   ) {
     throw new SiteForgeLaunchError(
       'The launch approval is not bound to the exact certified artifact, asset, and runtime identity',
@@ -230,6 +320,12 @@ async function loadLaunchApprovalBinding(
     certificationReportHash: hashSiteForgeContent(deployment.certification_report),
     rollbackArtifactId: release.rollback_artifact_id,
     rollbackContentHash: release.rollback_content_hash,
+    websiteDomain,
+    verticalProfileContentHash,
+    verticalPackContentHash,
+    policySetContentHash,
+    discoveryContentHash,
+    launchPolicyContentHash: release.launch_policy_content_hash,
   }
   return { binding, bindingHash: launchApprovalBindingHash(binding) }
 }
@@ -950,6 +1046,7 @@ export async function promoteLaunchRelease(
     actorId: string
     backupConfirmation?: { operationId: string; backupId: string }
     manualConfirmation?: { operationId: string }
+    ownerLaunchBindingHash?: string
     requestId?: string
   },
   client: ServiceClient = createServiceClient()
@@ -959,11 +1056,22 @@ export async function promoteLaunchRelease(
     input.propertyId,
     client
   )
-  assertDistinctLaunchActors({
-    operatorId: release.created_by,
-    reviewerId: release.approved_by,
-    actingOperatorId: input.actorId,
-  })
+  if (input.ownerLaunchBindingHash) {
+    await assertOwnerLaunchAuthority(
+      release,
+      {
+        actorId: input.actorId,
+        bindingHash: input.ownerLaunchBindingHash,
+      },
+      client
+    )
+  } else {
+    assertDistinctLaunchActors({
+      operatorId: release.created_by,
+      reviewerId: release.approved_by,
+      actingOperatorId: input.actorId,
+    })
+  }
   const approvalBinding = await loadLaunchApprovalBinding(release, client)
   const legalSnapshot = asRecord(release.legal_rights_snapshot)
   if (legalSnapshot.launchBindingHash !== approvalBinding.bindingHash) {
@@ -1311,6 +1419,7 @@ export async function executeLaunchProviderMutation(
     propertyId: string
     mutation: 'backup' | 'promotion' | 'restore'
     actorId: string
+    ownerLaunchBindingHash?: string
     requestId?: string
   },
   client: ServiceClient = createServiceClient()
@@ -1320,11 +1429,22 @@ export async function executeLaunchProviderMutation(
     input.propertyId,
     client
   )
-  assertDistinctLaunchActors({
-    operatorId: release.created_by,
-    reviewerId: release.approved_by,
-    actingOperatorId: input.actorId,
-  })
+  if (input.ownerLaunchBindingHash) {
+    await assertOwnerLaunchAuthority(
+      release,
+      {
+        actorId: input.actorId,
+        bindingHash: input.ownerLaunchBindingHash,
+      },
+      client
+    )
+  } else {
+    assertDistinctLaunchActors({
+      operatorId: release.created_by,
+      reviewerId: release.approved_by,
+      actingOperatorId: input.actorId,
+    })
+  }
   if (input.mutation === 'backup') {
     if (release.backup_operation_id && release.backup_id) {
       return {
@@ -1712,17 +1832,19 @@ export async function restoreLaunchRelease(
     requestId?: string
   },
   client: ServiceClient = createServiceClient()
-) {
+): Promise<LaunchRestoreOutcome> {
   let release = await getLaunchRelease(
     input.releaseId,
     input.propertyId,
     client
   )
-  assertDistinctLaunchActors({
-    operatorId: release.created_by,
-    reviewerId: release.approved_by,
-    actingOperatorId: input.actorId,
-  })
+  if (!hasOwnerOneButtonAuthority(release, input.actorId)) {
+    assertDistinctLaunchActors({
+      operatorId: release.created_by,
+      reviewerId: release.approved_by,
+      actingOperatorId: input.actorId,
+    })
+  }
   if (
     ![
       'promoted',
@@ -2121,17 +2243,19 @@ export async function requestLaunchRestore(
       | 'stale_job'
   },
   client: ServiceClient = createServiceClient()
-) {
+): Promise<LaunchRestoreRequestResult> {
   const release = await getLaunchRelease(
     input.releaseId,
     input.propertyId,
     client
   )
-  assertDistinctLaunchActors({
-    operatorId: release.created_by,
-    reviewerId: release.approved_by,
-    actingOperatorId: input.actorId,
-  })
+  if (!hasOwnerOneButtonAuthority(release, input.actorId)) {
+    assertDistinctLaunchActors({
+      operatorId: release.created_by,
+      reviewerId: release.approved_by,
+      actingOperatorId: input.actorId,
+    })
+  }
   if (
     !['promoted', 'production_certified', 'live', 'failed'].includes(
       release.state
@@ -2425,6 +2549,53 @@ export async function requestLaunchRestore(
         })
         .eq('id', job.id)
         .eq('lifecycle_status', 'running')
+    }
+  }
+
+  if (hasOwnerOneButtonAuthority(release, input.actorId)) {
+    const bindingHash = String(
+      asRecord(release.legal_rights_snapshot).launchBindingHash || ''
+    )
+    const providerRestore = await executeLaunchProviderMutation(
+      {
+        releaseId: release.id,
+        propertyId: release.property_id,
+        mutation: 'restore',
+        actorId: input.actorId,
+        ownerLaunchBindingHash: bindingHash,
+        requestId: input.requestId,
+      },
+      client
+    )
+    if (providerRestore.mutation !== 'restore') {
+      throw new SiteForgeLaunchError(
+        'Unexpected provider response during automatic owner rollback',
+        500
+      )
+    }
+    const restored = await restoreLaunchRelease(
+      {
+        releaseId: release.id,
+        propertyId: release.property_id,
+        rationale: input.rationale,
+        actorId: input.actorId,
+        manualConfirmation: { operationId: providerRestore.operationId },
+        requestId: input.requestId,
+      },
+      client
+    )
+    if (restored.manualRequired) {
+      throw new SiteForgeLaunchError(
+        'Automatic owner rollback unexpectedly requires manual confirmation',
+        500
+      )
+    }
+    return {
+      release: restored.release,
+      manualRequired: false as const,
+      automatic: true as const,
+      protectionApplied,
+      protectionError,
     }
   }
 

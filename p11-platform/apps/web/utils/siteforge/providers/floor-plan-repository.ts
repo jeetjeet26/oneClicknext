@@ -7,6 +7,7 @@ import {
 } from './floor-plans'
 import { enforceInventoryFreshness } from '@/utils/siteforge/operations/inventory'
 import { isSyntheticInventorySource } from './inventory-policy'
+import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
 
 export async function loadFreshApprovedFloorPlanInventory(
   propertyId: string,
@@ -49,19 +50,10 @@ export async function loadFreshApprovedFloorPlanInventory(
       now: new Date(capturedAt),
     }
   )
-  const staleIds = new Set(freshness.revisionProposal.staleUnitIds)
-  const safeRows = inventory.map((unit) =>
-    staleIds.has(unit.canonical_key)
-      ? {
-          ...unit,
-          rent_min: null,
-          rent_max: null,
-          available_count: null,
-        }
-      : unit
-  )
+  // Published inventory never expires (solo-operator doctrine): pricing and
+  // availability stay live until the operator replaces them.
   return {
-    snapshot: createApprovedFloorPlanSnapshot(safeRows, capturedAt),
+    snapshot: createApprovedFloorPlanSnapshot(inventory, capturedAt),
     revisionProposal: freshness.revisionProposal,
     stale: freshness.stale,
   }
@@ -87,11 +79,16 @@ export async function createFloorPlanImportPreview(
   },
   client: SupabaseClient<Database> = createServiceClient()
 ) {
+  const importIdentity = hashSiteForgeContent({
+    sourceType: input.sourceType,
+    sourceIdentity: input.sourceIdentity,
+    rows: input.preview.rows,
+  })
   const { data: existing, error: existingError } = await client
     .from('property_unit_imports')
     .select('*')
     .eq('property_id', input.propertyId)
-    .eq('idempotency_key', input.preview.idempotencyKey)
+    .eq('idempotency_key', importIdentity)
     .maybeSingle()
   if (existingError) {
     throw new Error(`Failed to check floor-plan import identity: ${existingError.message}`)
@@ -105,7 +102,7 @@ export async function createFloorPlanImportPreview(
       property_id: input.propertyId,
       source_type: input.sourceType,
       source_identity: input.sourceIdentity,
-      idempotency_key: input.preview.idempotencyKey,
+      idempotency_key: importIdentity,
       status: 'preview',
       original_filename: input.originalFilename || null,
       row_count: input.preview.rows.length,

@@ -139,6 +139,15 @@ class SiteForge_Runtime_V3_Transactions {
 			if ( ! $verification['verified'] ) {
 				throw new SiteForge_Runtime_Exception( 'siteforge_v3_verification_failed', 'V3 resource readback did not match the exact release.', 500, array( 'checks' => $verification['checks'] ) );
 			}
+			update_option(
+				'oneclick_siteforge_content_manifest',
+				array(
+					'content_hash' => $input['artifactContentHash'],
+					'page_ids'     => array_values( array_map( 'absint', $materialization['pageIds'] ) ),
+					'updated_at'   => $updated_at,
+				),
+				false
+			);
 
 			$status['status']             = 'succeeded';
 			$status['phase']              = 'complete';

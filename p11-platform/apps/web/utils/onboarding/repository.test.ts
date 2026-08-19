@@ -26,7 +26,7 @@ function asset(
 }
 
 describe('onboarding asset readiness', () => {
-  it('requires a rights-cleared primary logo but keeps photography optional', () => {
+  it('requires an approved primary logo but keeps photography optional', () => {
     const result = evaluateRequiredAssetReadiness([
       asset('photo-1', 'hero'),
       asset('photo-2', 'interior'),
@@ -34,7 +34,7 @@ describe('onboarding asset readiness', () => {
 
     expect(result.ready).toBe(false)
     expect(result.reasons).toEqual([
-      'An approved, curated, rights-cleared primary logo is required',
+      'An approved primary logo is required',
     ])
   })
 
@@ -47,7 +47,7 @@ describe('onboarding asset readiness', () => {
     expect(result.propertyPhotography).toEqual([])
   })
 
-  it('counts only approved, unexpired, rights-cleared optional photography', () => {
+  it('counts approved photography regardless of rights or expiry metadata', () => {
     const result = evaluateRequiredAssetReadiness(
       [
         asset('logo', 'primary_logo'),
@@ -64,12 +64,14 @@ describe('onboarding asset readiness', () => {
     expect(result.ready).toBe(true)
     expect(result.propertyPhotography.map(photo => photo.id)).toEqual([
       'photo-1',
+      'photo-3',
+      'photo-4',
       'photo-5',
       'photo-6',
     ])
   })
 
-  it('rejects uncurated and duplicate assets before readiness approval', () => {
+  it('rejects only duplicate assets; uncurated approved logos are usable', () => {
     const result = evaluateRequiredAssetReadiness([
       asset('logo', 'primary_logo', { curation_status: 'needs_review' }),
       asset('photo-1', 'hero'),
@@ -78,8 +80,8 @@ describe('onboarding asset readiness', () => {
       asset('photo-4', 'amenity'),
     ])
 
-    expect(result.ready).toBe(false)
-    expect(result.primaryLogo).toBeUndefined()
+    expect(result.ready).toBe(true)
+    expect(result.primaryLogo?.id).toBe('logo')
     expect(result.propertyPhotography.map(photo => photo.id)).toEqual([
       'photo-1',
       'photo-2',

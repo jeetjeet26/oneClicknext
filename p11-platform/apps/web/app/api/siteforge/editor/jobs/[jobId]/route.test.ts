@@ -30,6 +30,9 @@ const job = {
   subject_id: '44444444-4444-4444-8444-444444444444',
   lifecycle_status: 'running',
   progress: 50,
+  queued_at: '2026-08-18T12:00:00.000Z',
+  started_at: '2026-08-18T12:00:01.000Z',
+  finished_at: '2026-08-18T12:00:06.000Z',
 }
 const message = {
   id: '55555555-5555-4555-8555-555555555555',
@@ -104,6 +107,9 @@ describe('SiteForge semantic editor job route', () => {
 
     expect(response.status).toBe(200)
     expect(response.headers.get('Cache-Control')).toBe('no-store')
-    await expect(response.json()).resolves.toEqual({ job, message })
+    await expect(response.json()).resolves.toEqual({
+      job: { ...job, elapsed_ms: 5_000 },
+      message,
+    })
   })
 })

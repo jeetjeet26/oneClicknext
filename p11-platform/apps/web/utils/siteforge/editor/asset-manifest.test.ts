@@ -125,7 +125,7 @@ describe('assertApprovedAssetReferenceClosure', () => {
     },
   ]
 
-  it('accepts changed media only when ID, URL, rights, and digest close over an approved asset', () => {
+  it('accepts changed media when ID, URL, and digest close over a known asset', () => {
     expect(() =>
       assertApprovedAssetReferenceClosure({
         approvedAssets,
@@ -175,7 +175,7 @@ describe('assertApprovedAssetReferenceClosure', () => {
           },
         },
       })
-    ).toThrow('not closed over an approved immutable asset')
+    ).toThrow('not closed over a known immutable asset')
   })
 
   it('allows unchanged legacy media while blocking unsafe new edits', () => {
@@ -189,5 +189,38 @@ describe('assertApprovedAssetReferenceClosure', () => {
         updatedBlueprint: legacy,
       })
     ).not.toThrow()
+  })
+
+  it('treats page reordering as unchanged legacy media', () => {
+    const home = {
+      slug: 'home',
+      sections: [
+        {
+          content: {
+            floor_plans: [
+              {
+                image_url: 'https://legacy.example/floor-plan.png',
+              },
+            ],
+          },
+        },
+      ],
+    }
+    const amenities = { slug: 'amenities', sections: [] }
+    expect(() =>
+      assertApprovedAssetReferenceClosure({
+        approvedAssets,
+        originalBlueprint: { pages: [home, amenities] },
+        updatedBlueprint: { pages: [amenities, home] },
+      })
+    ).not.toThrow()
+
+    expect(() =>
+      assertApprovedAssetReferenceClosure({
+        approvedAssets,
+        originalBlueprint: { pages: [home] },
+        updatedBlueprint: { pages: [home, structuredClone(home)] },
+      })
+    ).toThrow('requires an approved asset ID')
   })
 })

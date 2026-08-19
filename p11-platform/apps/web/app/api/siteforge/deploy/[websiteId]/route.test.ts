@@ -8,6 +8,7 @@ const {
   validatePropertyAccess,
   from,
   start,
+  decideArtifact,
 } = vi.hoisted(() => ({
   authGetUser: vi.fn(),
   createClient: vi.fn(),
@@ -15,12 +16,16 @@ const {
   validatePropertyAccess: vi.fn(),
   from: vi.fn(),
   start: vi.fn(),
+  decideArtifact: vi.fn(),
 }))
 
 vi.mock('@/utils/supabase/server', () => ({ createClient }))
 vi.mock('@/utils/supabase/admin', () => ({ createServiceClient }))
 vi.mock('@/utils/services/auth-guard', () => ({ validatePropertyAccess }))
 vi.mock('workflow/api', () => ({ start }))
+vi.mock('@/utils/siteforge/artifacts/approval', () => ({
+  decideSiteForgeArtifactDeployment: decideArtifact,
+}))
 const { getWordPressCredentialReference, createStagingApplication } = vi.hoisted(
   () => ({
     getWordPressCredentialReference: vi.fn(),
@@ -74,6 +79,7 @@ function builder(result: unknown) {
 describe('Cloudways staging deployment route', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    decideArtifact.mockResolvedValue({ decisionStatus: 'approved' })
     vi.stubEnv('NODE_ENV', 'test')
     createClient.mockResolvedValue({ auth: { getUser: authGetUser } })
     createServiceClient.mockReturnValue({ from })

@@ -245,10 +245,14 @@ const bundle: TrustedContextBundle = {
   assembledAt: new Date().toISOString(),
   sources: [
     {
-      id: 'operator_input:0',
-      kind: 'operator_input',
-      label: 'Operator fact',
+      id: 'structured_inventory:unit-1',
+      kind: 'structured_inventory',
+      label: 'Approved inventory',
       content: 'One month free on 12-month leases signed in August',
+      authority: 'authoritative',
+      approvalStatus: 'approved',
+      sensitivity: 'sensitive',
+      allowedUses: ['claim', 'topic'],
     },
   ],
   assets: [
@@ -262,10 +266,20 @@ const bundle: TrustedContextBundle = {
       width: 1080,
       height: 1080,
       durationSeconds: null,
+      altText: 'Pool at sunset',
+      rightsStatus: 'owned',
+      approvalStatus: 'approved',
+      curationStatus: 'selected',
     },
   ],
   brandVoice: 'Warm and neighborly',
-  targetAudience: 'Young professionals',
+  targetAudience: null,
+  warnings: [],
+  policy: {
+    legalConfigId: 'legal-1',
+    fairHousingRequired: true,
+    sensitiveClaimsRequireApproval: true,
+  },
   contextHash: 'smoke-hash',
 }
 
@@ -273,6 +287,8 @@ const generatedOutput: GenerationOutput = {
   conceptSummary: 'Golden-hour pool moments with the August special.',
   variants: [
     {
+      variantKey: 'facebook:image:1',
+      sequenceIndex: 0,
       platform: 'facebook',
       caption: 'Summer evenings by the pool. Sign in August, get one month free.',
       hashtags: ['poollife'],
@@ -280,13 +296,19 @@ const generatedOutput: GenerationOutput = {
       altText: 'Pool at sunset',
       contentFormat: 'image',
       selectedAssetId: ASSET_ID,
+      selectedAssetIds: [ASSET_ID],
+      storyboard: [],
+      overlayText: [],
+      safeArea: { topPercent: 10, rightPercent: 8, bottomPercent: 18, leftPercent: 8 },
+      subtitleText: null,
+      thumbnailAssetId: null,
     },
   ],
   claims: [
     {
       text: 'One month free on 12-month leases signed in August',
       type: 'concession',
-      sourceIds: ['operator_input:0'],
+      sourceIds: ['structured_inventory:unit-1'],
     },
   ],
 }
@@ -369,6 +391,7 @@ describe('forgestudio pipeline smoke', () => {
       bundle,
       objective: brief.objective,
       channels: ['facebook'],
+      formatPlan: [{ platform: 'facebook', contentFormat: 'image', quantity: 1 }],
       model: makeModel(generatedOutput),
     })
     expect(generation.content.claims[0].citations).toHaveLength(1)
@@ -477,6 +500,7 @@ describe('forgestudio pipeline smoke', () => {
       bundle,
       objective: 'Drive tours',
       channels: ['facebook'],
+      formatPlan: [{ platform: 'facebook', contentFormat: 'image', quantity: 1 }],
       model: makeModel(generatedOutput),
     })
     const { revision } = await createPackageWithRevision({
@@ -535,6 +559,7 @@ describe('forgestudio pipeline smoke', () => {
       bundle,
       objective: 'Drive tours',
       channels: ['facebook'],
+      formatPlan: [{ platform: 'facebook', contentFormat: 'image', quantity: 1 }],
       model: makeModel(generatedOutput),
     })
     const { revision } = await createPackageWithRevision({

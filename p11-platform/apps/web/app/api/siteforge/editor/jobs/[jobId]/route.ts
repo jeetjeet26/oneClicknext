@@ -41,7 +41,7 @@ export async function GET(
   const { data: job, error } = await serviceClient
     .from('shared_jobs')
     .select(
-      'id, property_id, subject_id, lifecycle_status, status_reason, stage, progress, current_step, cancel_requested, output, error_message, error_details, workflow_run_id, queued_at, started_at, finished_at, updated_at'
+      'id, property_id, subject_id, lifecycle_status, status_reason, stage, progress, current_step, cancel_requested, output, error_message, error_details, workflow_run_id, attempt_count, max_attempts, queued_at, started_at, heartbeat_at, finished_at, updated_at'
     )
     .eq('id', jobId)
     .eq('domain', 'siteforge.semantic_edit')
@@ -69,8 +69,14 @@ export async function GET(
     .eq('shared_job_id', job.id)
     .maybeSingle()
 
+  const elapsedStart = job.started_at || job.queued_at
+  const elapsedEnd = job.finished_at || new Date().toISOString()
+  const elapsedMs = Math.max(
+    0,
+    Date.parse(elapsedEnd) - Date.parse(elapsedStart)
+  )
   return NextResponse.json(
-    { job, message },
+    { job: { ...job, elapsed_ms: elapsedMs }, message },
     {
       headers: {
         ...ctx.responseHeaders,

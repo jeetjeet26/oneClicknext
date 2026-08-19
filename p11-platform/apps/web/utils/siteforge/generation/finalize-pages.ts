@@ -14,6 +14,7 @@ import {
 import type { ApprovedFloorPlanSnapshot } from '@/utils/siteforge/providers/floor-plans'
 import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
 import type { Tables } from '@/types/supabase'
+import type { SiteForgePlanV2 } from '@/utils/siteforge/contracts'
 import {
   legalEvidenceId,
   type SiteForgeLegalConfig,
@@ -56,6 +57,9 @@ export type SiteForgeFinalizationIntegrityContext = {
     lead: 'p11_lumaleasing' | 'csv_export' | 'unconfigured'
     tour: 'p11_lumaleasing' | 'external_url' | 'unconfigured'
   }
+  catalogSnapshots?: SiteForgePlanV2['offeringCatalog']['snapshots']
+  seoBySlug?: Record<string, SiteForgePlanV2['pages'][number]['seo']>
+  primaryConversionIntent?: string
 }
 
 const EMPTY_FLOOR_PLAN_SNAPSHOT: ApprovedFloorPlanSnapshot = {
@@ -208,6 +212,8 @@ function normalizeContent(
   const photo = photoForSection(section, manifest)
 
   switch (section.acfBlock as ACFBlockType) {
+    case 'acf/governed-component':
+      return raw
     case 'acf/menu': {
       const menuItems = records(raw.menu_items)
       return {
@@ -229,7 +235,14 @@ function normalizeContent(
             image: assetReference(photo),
             headline,
             subheadline: stringValue(raw.subheadline, body).slice(0, 300) || undefined,
-            cta_text: stringValue(raw.cta_text, 'Schedule a tour'),
+            cta_text: stringValue(
+              raw.cta_text,
+              integrityContext.primaryConversionIntent
+                ? integrityContext.primaryConversionIntent
+                    .replaceAll('_', ' ')
+                    .replace(/^\w/, value => value.toUpperCase())
+                : 'Schedule a tour'
+            ),
             cta_link: stringValue(raw.cta_link, '/contact'),
           },
         ],
@@ -339,9 +352,21 @@ function normalizeContent(
         subheading: stringValue(raw.subheading, body).slice(0, 300) || undefined,
         form_type: formType,
         redirect_url: stringValue(raw.redirect_url) || undefined,
-        provider: provider || 'p11_lumaleasing',
+        provider: provider || (
+          integrityContext.primaryConversionIntent
+            ? 'unconfigured'
+            : 'p11_lumaleasing'
+        ),
         consent_text:
-          'By submitting, you agree that the property may contact you about leasing. Message and data rates may apply.',
+          integrityContext.primaryConversionIntent
+            ? 'By submitting, you agree that this organization may contact you about your request. Message and data rates may apply.'
+            : 'By submitting, you agree that the property may contact you about leasing. Message and data rates may apply.',
+        conversion_intent:
+          stringValue(
+            raw.conversion_intent,
+            integrityContext.primaryConversionIntent
+          ) || undefined,
+        success_outcome: stringValue(raw.success_outcome) || undefined,
       }
     }
     case 'acf/map': {
@@ -493,6 +518,80 @@ function normalizeContent(
         })),
         source: 'reviewflow',
       }
+    case 'acf/offering-browser': {
+      const snapshot = integrityContext.catalogSnapshots?.[0]
+      return {
+        heading: headline,
+        intro: body || undefined,
+        offering_kind: snapshot?.offeringKind || 'offering',
+        offerings: records(raw.offerings),
+        catalog_snapshot: {
+          captured_at: snapshot?.capturedAt || new Date(0).toISOString(),
+          content_hash: snapshot?.catalogContentHash || hashSiteForgeContent([]),
+          fresh_until: snapshot?.freshUntil || null,
+        },
+        show_pricing: raw.show_pricing === true,
+        show_availability: raw.show_availability === true,
+        conversion_intent:
+          stringValue(
+            raw.conversion_intent,
+            integrityContext.primaryConversionIntent
+          ) || null,
+      }
+    }
+    case 'acf/entity-directory': {
+      const snapshot = integrityContext.catalogSnapshots?.[0]
+      return {
+        heading: headline,
+        intro: body || undefined,
+        entities: records(raw.entities),
+        catalog_snapshot: {
+          captured_at: snapshot?.capturedAt || new Date(0).toISOString(),
+          content_hash: snapshot?.catalogContentHash || hashSiteForgeContent([]),
+          fresh_until: snapshot?.freshUntil || null,
+        },
+        group_by: stringValue(raw.group_by) || null,
+      }
+    }
+    case 'acf/comparison-table':
+      return {
+        heading: headline,
+        intro: body || undefined,
+        columns: records(raw.columns).length
+          ? records(raw.columns)
+          : [{ key: 'offering', label: 'Offering' }],
+        rows: records(raw.rows),
+      }
+    case 'acf/timeline':
+      return {
+        heading: headline,
+        intro: body || undefined,
+        milestones: records(raw.milestones),
+      }
+    case 'acf/document-library':
+      return {
+        heading: headline,
+        intro: body || undefined,
+        documents: records(raw.documents),
+      }
+    case 'acf/events-directory': {
+      const snapshot = integrityContext.catalogSnapshots?.[0]
+      return {
+        heading: headline,
+        intro: body || undefined,
+        events: records(raw.events),
+        catalog_snapshot: {
+          captured_at: snapshot?.capturedAt || new Date(0).toISOString(),
+          content_hash: snapshot?.catalogContentHash || hashSiteForgeContent([]),
+          fresh_until: snapshot?.freshUntil || null,
+        },
+        conversion_intent:
+          stringValue(
+            raw.conversion_intent,
+            integrityContext.primaryConversionIntent
+          ) || null,
+      }
+    }
   }
 }
 
@@ -554,26 +653,37 @@ export function finalizeSiteForgePages(
   }))
 
   return [...contentPages, ...legalPages].map((page) => {
-    const seoDescription = `${page.purpose.trim()} Explore floor plans, amenities, neighborhood details, and ways to contact the leasing team.`
-      .slice(0, 160)
+    const pinnedSeo = integrityContext.seoBySlug?.[page.slug]
+    const seoDescription = (
+      pinnedSeo?.description ||
+      `${page.purpose.trim()} Explore floor plans, amenities, neighborhood details, and ways to contact the leasing team.`
+    )
+      .slice(0, pinnedSeo ? 500 : 160)
       .trim()
     const normalized = {
       ...page,
       seo: {
-        title: page.title.slice(0, 60),
+        title: (pinnedSeo?.title || page.title).slice(0, pinnedSeo ? 160 : 60),
         description:
           seoDescription.length >= 50
             ? seoDescription
-            : `${seoDescription} Learn more about this apartment community.`.slice(
+            : `${seoDescription} ${
+                pinnedSeo
+                  ? 'Learn more about this verified offering and the available next steps.'
+                  : 'Learn more about this apartment community.'
+              }`.slice(
                 0,
-                160
+                pinnedSeo ? 500 : 160
               ),
-        canonicalPath: page.slug === 'home' ? '/' : `/${page.slug}`,
-        noIndex: false,
+        canonicalPath:
+          pinnedSeo?.canonicalPath ||
+          (page.slug === 'home' ? '/' : `/${page.slug}`),
+        noIndex: pinnedSeo?.noIndex || false,
         structuredData:
-          page.slug === 'home'
+          pinnedSeo?.structuredData ||
+          (page.slug === 'home'
             ? ['WebPage', 'ApartmentComplex', 'BreadcrumbList']
-            : ['WebPage', 'BreadcrumbList'],
+            : ['WebPage', 'BreadcrumbList']),
       },
       sections: page.sections
         .filter(
@@ -581,24 +691,31 @@ export function finalizeSiteForgePages(
             section.acfBlock !== 'acf/testimonials' ||
             approvedReviews.length > 0
         )
-        .map((section, index) => ({
-          ...section,
-          id: section.id || `${page.slug}-${index + 1}`,
-          order: index,
-          evidenceIds:
-            section.acfBlock === 'acf/testimonials'
-              ? approvedReviews.map(review => review.id)
-              : section.evidenceIds || [],
-          content: normalizeContent(
-            section,
-            page,
-            manifest,
-            floorPlanSnapshot,
-            pointsOfInterest,
-            integrityContext,
-            approvedReviews
-          ),
-        })),
+        .map((section, index) => {
+          if (!section.id) {
+            throw new Error(
+              `Generated section ${page.slug}.${section.type} is missing its immutable identity`
+            )
+          }
+          return {
+            ...section,
+            id: section.id,
+            order: index,
+            evidenceIds:
+              section.acfBlock === 'acf/testimonials'
+                ? approvedReviews.map(review => review.id)
+                : section.evidenceIds || [],
+            content: normalizeContent(
+              section,
+              page,
+              manifest,
+              floorPlanSnapshot,
+              pointsOfInterest,
+              integrityContext,
+              approvedReviews
+            ),
+          }
+        }),
     }
     return strictGeneratedPageSchema.parse(
       normalized

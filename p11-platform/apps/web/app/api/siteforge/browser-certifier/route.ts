@@ -3,7 +3,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createRequestContext } from "@/utils/services/request-context";
 import { createServiceClient } from "@/utils/supabase/admin";
-import { collectBrowserbaseCertificationEvidence } from "@/utils/siteforge/verification/browserbase-certifier";
+import {
+  collectBrowserbaseCertificationEvidence,
+  type LighthouseReportArtifact,
+} from "@/utils/siteforge/verification/browserbase-certifier";
 import {
   browserCertificationAccessSchema,
   browserCertificationEnvironmentSchema,
@@ -20,6 +23,10 @@ import {
   persistLighthouseEvidence,
   persistVisualBaselineCandidates,
 } from "@/utils/siteforge/verification/visual-baselines";
+import {
+  siteForgeEditAcceptanceContractSchema,
+} from "@/utils/siteforge/editor/edit-acceptance";
+import { hashSiteForgeContent } from "@/utils/siteforge/content-hash";
 
 export const maxDuration = 600;
 
@@ -38,6 +45,8 @@ const requestSchema = z.object({
   requireIndexable: z.boolean(),
   artifact: certificationArtifactBindingSchema,
   bindingHash: z.string().regex(/^[a-f0-9]{64}$/),
+  editAcceptanceContract: siteForgeEditAcceptanceContractSchema.optional(),
+  parentTargetUrl: z.string().url().optional(),
 }).strict();
 
 function secretDigest(value: string): Buffer {
@@ -100,7 +109,7 @@ export async function POST(request: NextRequest) {
       serviceClient
         .from("siteforge_blueprint_versions")
         .select(
-          "id, website_id, org_id, property_id, content_hash, asset_manifest_hash, base_theme_package_sha256, overlay_package_sha256, runtime_package_sha256, operation_set_hash",
+          "id, website_id, org_id, property_id, content_hash, parent_version_id, quality_report, asset_manifest_hash, base_theme_package_sha256, overlay_package_sha256, runtime_package_sha256, operation_set_hash",
         )
         .eq("id", parsed.data.artifact.artifactId)
         .eq("content_hash", parsed.data.artifact.contentHash)
@@ -129,6 +138,41 @@ export async function POST(request: NextRequest) {
       artifact.operation_set_hash !== parsed.data.artifact.operationSetHash
     ) {
       throw new Error("Certification release binding does not match the artifact");
+    }
+    const storedQuality =
+      artifact.quality_report &&
+      typeof artifact.quality_report === "object" &&
+      !Array.isArray(artifact.quality_report)
+        ? (artifact.quality_report as Record<string, unknown>)
+        : {};
+    const semanticEditor =
+      storedQuality.semanticEditor &&
+      typeof storedQuality.semanticEditor === "object" &&
+      !Array.isArray(storedQuality.semanticEditor)
+        ? (storedQuality.semanticEditor as Record<string, unknown>)
+        : {};
+    const storedAcceptance =
+      siteForgeEditAcceptanceContractSchema.safeParse(
+        semanticEditor.acceptanceContract,
+      );
+    if (storedAcceptance.success) {
+      if (
+        !parsed.data.editAcceptanceContract ||
+        hashSiteForgeContent(parsed.data.editAcceptanceContract) !==
+          hashSiteForgeContent(storedAcceptance.data) ||
+        storedAcceptance.data.parentArtifact.artifactId !==
+          artifact.parent_version_id ||
+        storedAcceptance.data.editedArtifact.contentHash !==
+          artifact.content_hash
+      ) {
+        throw new Error(
+          "Edit acceptance contract does not match the immutable artifact lineage",
+        );
+      }
+    } else if (parsed.data.editAcceptanceContract) {
+      throw new Error(
+        "Certification request supplied an edit contract absent from the artifact",
+      );
     }
     if (parsed.data.environment !== "protected_preview") {
       const { data: runtimePackage, error: runtimePackageError } =
@@ -224,25 +268,44 @@ export async function POST(request: NextRequest) {
       },
       serviceClient,
     );
-    const lighthouseReports =
-      parsed.data.environment === "protected_preview"
-        ? []
-        : await provisionLighthouseReportArtifacts({
-            provisioning: {
-              targetUrl: parsed.data.targetUrl,
-              expectedUrls: parsed.data.expectedUrls,
-              credentials: parsed.data.credentials,
-              environment: parsed.data.environment,
-              access: parsed.data.access,
-              requireIndexable: parsed.data.requireIndexable,
-              artifact: parsed.data.artifact,
-              bindingHash: parsed.data.bindingHash,
-            },
-            artifactWriter,
-          });
+    let lighthouseReports: LighthouseReportArtifact[] = [];
+    if (parsed.data.environment !== "protected_preview") {
+      try {
+        lighthouseReports = await provisionLighthouseReportArtifacts({
+          provisioning: {
+            targetUrl: parsed.data.targetUrl,
+            expectedUrls: parsed.data.expectedUrls,
+            credentials:
+              parsed.data.access === "protected"
+                ? parsed.data.credentials
+                : undefined,
+            environment: parsed.data.environment,
+            access: parsed.data.access,
+            requireIndexable: parsed.data.requireIndexable,
+            artifact: parsed.data.artifact,
+            bindingHash: parsed.data.bindingHash,
+          },
+          artifactWriter,
+        });
+      } catch (error) {
+        if (
+          parsed.data.environment !== "staging" ||
+          !(error instanceof Error) ||
+          !/HTTP (?:429|503)|rate limit/i.test(error.message)
+        ) {
+          throw error;
+        }
+        ctx.logSuccess(200, {
+          reason: "staging_lighthouse_quota_deferred_to_production",
+        });
+      }
+    }
     const evidence = browserCertificationEvidenceSchema.parse(
       await collectBrowserbaseCertificationEvidence({
         ...parsed.data,
+        editAcceptanceContract: storedAcceptance.success
+          ? storedAcceptance.data
+          : undefined,
         baselines,
         lighthouseReports,
         artifactWriter,
@@ -281,7 +344,8 @@ export async function POST(request: NextRequest) {
         },
         serviceClient,
       ),
-      parsed.data.environment === "protected_preview"
+      parsed.data.environment === "protected_preview" ||
+      lighthouseReports.length === 0
         ? Promise.resolve()
         : persistLighthouseEvidence(
             {

@@ -41,7 +41,7 @@ export async function GET(
       auth.service
         .from('property_websites')
         .select(
-          'id, property_id, editor_lifecycle_status, staging_artifact_id, staging_content_hash, staging_certified_at, production_artifact_id, production_content_hash, production_url, production_certified_at, production_certification_report, wordpress_credential_ref, production_target_id, target_domain, domain_status'
+          'id, property_id, editor_lifecycle_status, canonical_preview_url, canonical_preview_artifact_id, canonical_preview_content_hash, staging_artifact_id, staging_content_hash, staging_certified_at, production_artifact_id, production_content_hash, production_url, production_certified_at, production_certification_report, wordpress_credential_ref, production_target_id, target_domain, domain_status'
         )
         .eq('id', websiteId)
         .single(),
@@ -123,7 +123,7 @@ export async function GET(
       rollbackHistory: rollbackHistory.data || [],
       productionTarget: productionTarget.data || null,
       productionProvisioningJob: productionProvisioningJob.data || null,
-      automaticProductionLaunch: false,
+      automaticProductionLaunch: true,
       browserCertifierConfigured: Boolean(
         process.env.SITEFORGE_BROWSER_CERTIFIER_URL &&
           process.env.SITEFORGE_BROWSER_CERTIFIER_SECRET

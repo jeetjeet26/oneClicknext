@@ -6,6 +6,7 @@ import type {
   GuidedAttachment,
   GuidedCreativeDirectionOverview,
   GuidedJourneyState,
+  GuidedJourneyStateV1,
   GuidedQuestion,
 } from "@/utils/siteforge/guided/contracts";
 import type {
@@ -175,7 +176,7 @@ export function buildGuidedJourney(
 }
 
 export function buildPreparedRecommendation(
-  state: GuidedJourneyState | null,
+  state: GuidedJourneyState | GuidedJourneyStateV1 | null,
   scoredDirections: ScoredDirection[] = [],
 ): SiteForgeGuidedRecommendation | null {
   if (!state?.prepared) return null;
@@ -231,11 +232,14 @@ export function buildPreparedRecommendation(
 }
 
 export function conversationAnswer(
-  field: GuidedQuestion["field"] | undefined,
-  draft: string,
+  question: GuidedQuestion | null | undefined,
+  draft: unknown,
   attachments: GuidedAttachment[],
 ): unknown {
-  if (field !== "references") return draft.trim();
+  if (!question) return draft;
+  if (question.control !== "text") return draft;
+  const text = typeof draft === "string" ? draft.trim() : "";
+  if (!question.id.includes("reference")) return text;
   const references = attachments
     .filter((attachment) => attachment.kind === "reference")
     .map((attachment) => ({
@@ -243,7 +247,7 @@ export function conversationAnswer(
       url: attachment.url,
       sourceId: attachment.sourceId,
     }));
-  return draft.trim() || references;
+  return text || references;
 }
 
 const TECHNICAL_ERROR_PATTERNS = [

@@ -19,6 +19,7 @@ export type AutonomyPromotionEvidence = {
   rollbackVerified: boolean
   restoreEvidenceRuns: number
   providerEvidenceRuns: number
+  renderedEvidenceRuns: number
   outcomeMeasurements: number
   negativeOutcomeRate: number
   derivedAt: string
@@ -29,6 +30,12 @@ const modeIndex = (mode: SiteForgeAutonomyMode) =>
 
 export function isProductionLaunchScope(actionScope: string) {
   return /(^|[.:/_-])(?:production[.:/_-]?)?launch($|[.:/_-])/i.test(
+    actionScope.trim()
+  )
+}
+
+export function isRenderedExtensionScope(actionScope: string) {
+  return /(^|[.:/_-])(?:runtime[.:/_-]?)?(?:extension|overlay|css)($|[.:/_-])/i.test(
     actionScope.trim()
   )
 }
@@ -79,6 +86,15 @@ export function validateAutonomyPromotion(input: {
     ) {
       throw new Error(
         'Bounded auto requires five supervised successes, repeated provider evidence, verified rollback, measured outcomes, and incident/negative-outcome rates at or below 10%'
+      )
+    }
+    if (
+      isRenderedExtensionScope(input.actionScope) &&
+      input.evidence.renderedEvidenceRuns <
+        input.evidence.supervisedSuccesses
+    ) {
+      throw new Error(
+        'Bounded auto for runtime extensions requires passing parent-versus-edited rendered evidence for every supervised success'
       )
     }
     if (
@@ -202,6 +218,7 @@ export async function deriveSiteForgeAutonomyEvidence(input: {
       )
   ).length
   const providerEvidence = new Set<string>()
+  const renderedEvidence = new Set<string>()
   for (const action of actionRows) {
     const result = record(action.execution_result)
     const rollback = record(action.rollback_metadata)
@@ -220,6 +237,14 @@ export async function deriveSiteForgeAutonomyEvidence(input: {
             ? rollback.providerOperationId
             : null
     if (provider && operationId) providerEvidence.add(`${provider}:${operationId}`)
+    const effect = record(result.renderedEffectEvidence as Json | null)
+    if (
+      effect.passed === true &&
+      typeof effect.contractHash === 'string' &&
+      /^[a-f0-9]{64}$/.test(effect.contractHash)
+    ) {
+      renderedEvidence.add(`${action.id}:${effect.contractHash}`)
+    }
   }
   const restores = restoresResult.data || []
   const verifiedRestores = restores.filter(restore => {
@@ -248,6 +273,7 @@ export async function deriveSiteForgeAutonomyEvidence(input: {
       actionRows.some(action => action.execution_status === 'reversed'),
     restoreEvidenceRuns: verifiedRestores.length,
     providerEvidenceRuns: providerEvidence.size,
+    renderedEvidenceRuns: renderedEvidence.size,
     outcomeMeasurements: outcomes.length,
     negativeOutcomeRate: outcomes.length ? negativeOutcomes / outcomes.length : 1,
     derivedAt: new Date().toISOString(),

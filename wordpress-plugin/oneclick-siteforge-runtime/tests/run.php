@@ -28,6 +28,8 @@ $siteforge_test_theme_mods    = array();
 $siteforge_test_menus         = array();
 $siteforge_test_next_post_id  = 1000;
 $siteforge_test_next_menu_id  = 2000;
+$siteforge_test_stylesheet     = 'oneclick-siteforge-overlay-141414141414';
+$siteforge_test_template       = 'oneclick-siteforge';
 
 function get_option( $name, $default = false ) {
 	global $siteforge_test_options;
@@ -39,6 +41,14 @@ function update_option( $name, $value, $autoload = null ) {
 	$changed = ! array_key_exists( $name, $siteforge_test_options ) || $siteforge_test_options[ $name ] !== $value;
 	$siteforge_test_options[ $name ] = $value;
 	return $changed;
+}
+
+function wp_cache_delete( $key, $group = '' ) {
+	return true;
+}
+
+function clean_post_cache( $post_id ) {
+	return null;
 }
 
 function add_option( $name, $value, $deprecated = '', $autoload = null ) {
@@ -102,6 +112,44 @@ function get_theme_mod( $name, $default = false ) {
 function set_theme_mod( $name, $value ) {
 	global $siteforge_test_theme_mods;
 	$siteforge_test_theme_mods[ $name ] = $value;
+}
+
+function remove_theme_mod( $name ) {
+	global $siteforge_test_theme_mods;
+	unset( $siteforge_test_theme_mods[ $name ] );
+}
+
+function get_stylesheet() {
+	global $siteforge_test_stylesheet;
+	return $siteforge_test_stylesheet;
+}
+
+function get_template() {
+	global $siteforge_test_template;
+	return $siteforge_test_template;
+}
+
+function switch_theme( $stylesheet ) {
+	global $siteforge_test_stylesheet, $siteforge_test_template;
+	$siteforge_test_stylesheet = $stylesheet;
+	$siteforge_test_template   = 0 === strpos( $stylesheet, 'oneclick-siteforge-overlay-' )
+		? 'oneclick-siteforge'
+		: $stylesheet;
+}
+
+function do_action( $hook ) {
+	return null;
+}
+
+function wp_styles() {
+	$styles = new stdClass();
+	$styles->queue = array( 'siteforge-overlay-theme' );
+	$styles->registered = array(
+		'siteforge-overlay-theme' => (object) array(
+			'src' => '/wp-content/themes/' . get_stylesheet() . '/style.css',
+		),
+	);
+	return $styles;
 }
 
 function get_post( $post_id, $output = OBJECT ) {
@@ -351,7 +399,8 @@ function siteforge_assert( $condition, $message ) {
 function siteforge_v3_reset_options() {
 	global $siteforge_test_options, $siteforge_test_fail_resource, $siteforge_test_posts,
 		$siteforge_test_post_meta, $siteforge_test_theme_mods, $siteforge_test_menus,
-		$siteforge_test_next_post_id, $siteforge_test_next_menu_id;
+		$siteforge_test_next_post_id, $siteforge_test_next_menu_id,
+		$siteforge_test_stylesheet, $siteforge_test_template;
 	$siteforge_test_options       = array();
 	$siteforge_test_fail_resource = null;
 	$siteforge_test_posts         = array();
@@ -360,6 +409,8 @@ function siteforge_v3_reset_options() {
 	$siteforge_test_menus         = array();
 	$siteforge_test_next_post_id  = 1000;
 	$siteforge_test_next_menu_id  = 2000;
+	$siteforge_test_stylesheet     = 'oneclick-siteforge-overlay-141414141414';
+	$siteforge_test_template       = 'oneclick-siteforge';
 }
 
 function siteforge_v3_transactions() {
@@ -815,6 +866,53 @@ siteforge_test(
 );
 
 siteforge_test(
+	'v3 projects complete site presentation motion and behavior options',
+	static function () {
+		siteforge_v3_reset_options();
+		$release = siteforge_v3_fixture( 'release' );
+		$configuration = array(
+			'design' => array(
+				'colors' => array( 'primary' => '#112233', 'secondary' => '#445566', 'accent' => '#778899', 'background' => '#ffffff', 'text' => '#111111' ),
+				'typography' => array( 'headingFont' => 'Inter', 'bodyFont' => 'Inter', 'headingWeight' => 700 ),
+				'spacing' => array( 'containerMaxWidth' => '1280px', 'sectionPadding' => '5rem' ),
+			),
+			'header' => array( 'layout' => 'logo-left', 'position' => 'sticky', 'announcement' => array( 'enabled' => false, 'text' => '' ), 'cta' => array( 'enabled' => true, 'label' => 'Visit', 'href' => '/visit/' ) ),
+			'navigation' => array( 'style' => 'horizontal', 'items' => array() ),
+			'footer' => array( 'layout' => 'columns', 'showNavigation' => true, 'showContact' => true, 'showSocial' => false ),
+			'media' => array( 'imageTreatment' => 'editorial' ),
+			'motion' => array( 'level' => 'subtle', 'reducedMotion' => 'respect', 'reveal' => 'fade', 'durationMs' => 240, 'easing' => 'ease-out' ),
+			'behavior' => array( 'smoothScroll' => true, 'externalLinksNewTab' => false, 'backToTop' => true, 'cookieConsent' => 'required' ),
+		);
+		$configuration_resource = array(
+			'resourceId' => 'component:site-configuration',
+			'componentType' => 'utility',
+			'data' => $configuration,
+			'assetIds' => array(),
+			'integrationIds' => array(),
+		);
+		$configuration_resource['contentHash'] = SiteForge_Runtime_Validation::hash( $configuration_resource );
+		$release['resourceGraph']['globalComponents'][] = $configuration_resource;
+		$release['resourceGraph']['chrome']['componentIds'][] = $configuration_resource['resourceId'];
+		$chrome_without_hash = $release['resourceGraph']['chrome'];
+		unset( $chrome_without_hash['contentHash'] );
+		$release['resourceGraph']['chrome']['contentHash'] = SiteForge_Runtime_Validation::hash( $chrome_without_hash );
+		$release['identity']['resourceGraphHash'] = SiteForge_Runtime_Validation::hash( $release['resourceGraph'] );
+		$release['operations'][0]['resourceHash'] = $release['resourceGraph']['chrome']['contentHash'];
+		$release['operations'][0]['payloadHash'] = $release['identity']['resourceGraphHash'];
+		$release['identity']['operationSetHash'] = SiteForge_Runtime_Validation::hash( $release['operations'] );
+
+		siteforge_v3_store_preparation( $release, 'preparation:configuration-v3' );
+		list( , $transactions ) = siteforge_v3_transactions();
+		$status = $transactions->apply( siteforge_v3_deployment_request( $release, 'preparation:configuration-v3', null ) );
+
+		siteforge_assert( 'succeeded' === $status['status'], 'V3 configuration projection did not complete.' );
+		siteforge_assert( $configuration['behavior'] === get_option( 'oneclick_siteforge_configuration' )['behavior'], 'Behavior projection changed.' );
+		siteforge_assert( $configuration['motion'] === get_option( 'oneclick_siteforge_motion' ), 'Motion projection changed.' );
+		siteforge_assert( $configuration['design']['colors'] === get_option( 'oneclick_siteforge_design_tokens' )['colors'], 'Design token projection changed.' );
+	}
+);
+
+siteforge_test(
 	'v3 failed apply performs compensating rollback to verified state',
 	static function () {
 		global $siteforge_test_fail_resource;
@@ -827,9 +925,20 @@ siteforge_test(
 		$second = siteforge_v3_fixture( 'release' );
 		$second['identity']['artifactId']          = '99999999-9999-4999-8999-999999999999';
 		$second['identity']['artifactContentHash'] = str_repeat( 'e', 64 );
+		$second['identity']['overlays'][0]['contentHash'] = str_repeat( '2', 64 );
+		$second['identity']['overlays'][0]['themeSlug'] = 'oneclick-siteforge-overlay-222222222222';
 		$second['resourceGraph']['pages'][0]['title'] = 'Candidate title';
 		$second['identity']['resourceGraphHash'] = SiteForge_Runtime_Validation::hash( $second['resourceGraph'] );
 		siteforge_v3_store_preparation( $second, 'preparation:second-v3' );
+		update_option(
+			SiteForge_Runtime_V3_Materializer::PENDING_THEME_OPTION,
+			array(
+				'stylesheet' => $first['identity']['overlays'][0]['themeSlug'],
+				'template'   => 'oneclick-siteforge',
+			),
+			false
+		);
+		switch_theme( $second['identity']['overlays'][0]['themeSlug'] );
 		$siteforge_test_fail_resource = 'sections';
 		try {
 			$transactions->apply(
@@ -847,6 +956,7 @@ siteforge_test(
 		$siteforge_test_fail_resource = null;
 		$readback = $state->read( $first['identity']['siteId'] );
 		siteforge_assert( $first['identity']['artifactContentHash'] === $readback['identity']['artifactContentHash'], 'Failed v3 candidate replaced active state.' );
+		siteforge_assert( $first['identity']['overlays'][0]['themeSlug'] === get_stylesheet(), 'Failed v3 candidate did not restore the prior active child theme.' );
 		siteforge_assert( true === $state->verify()['verified'], 'Compensated v3 state failed readback verification.' );
 	}
 );

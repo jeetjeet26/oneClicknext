@@ -1,5 +1,9 @@
 import type { BrandForgeContractV1 } from '@/utils/brandforge/contracts'
 import type { BrandContext } from '@/utils/siteforge/agents/brand-agent'
+import {
+  compileBrandPublicationPackage,
+  type BrandPublicationPackage,
+} from '@/utils/siteforge/brand-design-compiler'
 
 export type ApprovedBrandAssetEvidence = {
   id: string
@@ -30,6 +34,16 @@ export function normalizeBrandAssetUrl(value: string): string {
   }
   url.searchParams.sort()
   return url.toString()
+}
+
+/**
+ * Source-neutral BrandForge → SiteForge publication adapter. Generated and
+ * imported contracts intentionally share this exact compilation boundary.
+ */
+export function compileBrandContractForSiteForge(
+  contract: BrandForgeContractV1,
+): BrandPublicationPackage {
+  return compileBrandPublicationPackage(contract)
 }
 
 export function bindApprovedBrandLogos(

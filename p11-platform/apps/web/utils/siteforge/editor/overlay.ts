@@ -45,6 +45,7 @@ export function buildOverlayFunctionsPhp(
   return `<?php
 defined( 'ABSPATH' ) || exit;
 add_action( 'wp_enqueue_scripts', function () {
+\twp_enqueue_style( 'siteforge-overlay-theme', get_stylesheet_uri(), array( 'oneclick-siteforge-style' ), null );
 ${cssFiles
   .map(
     (file, index) =>
@@ -181,6 +182,11 @@ function assertBalancedCss(content: string, path: string): void {
   if (depth !== 0) throw new Error(`Overlay CSS has unmatched braces: ${path}`)
   if (/@import\b/i.test(withoutComments) || /url\s*\(\s*['"]?https?:/i.test(withoutComments)) {
     throw new Error(`Overlay CSS cannot load remote resources: ${path}`)
+  }
+  if (/(^|[\s,{>+~])\.(?:wp-block-acf-|acf-)[a-z0-9_-]+/im.test(withoutComments)) {
+    throw new Error(
+      `Overlay CSS targets an editor-only ACF selector instead of the rendered SiteForge DOM: ${path}`
+    )
   }
 }
 

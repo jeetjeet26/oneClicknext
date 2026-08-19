@@ -310,14 +310,13 @@ async function readLimitedStream(
   return Buffer.concat(chunks).toString("utf8");
 }
 
-function pageSpeedRequestUrl(targetUrl: string): URL {
+function pageSpeedRequestUrl(targetUrl: string, apiKey?: string): URL {
   const url = new URL(PAGESPEED_ENDPOINT);
   url.searchParams.set("url", targetUrl);
   url.searchParams.set("strategy", "mobile");
   for (const category of PAGESPEED_CATEGORIES) {
     url.searchParams.append("category", category);
   }
-  const apiKey = process.env.PAGESPEED_INSIGHTS_API_KEY;
   if (apiKey) url.searchParams.set("key", apiKey);
   return url;
 }
@@ -437,23 +436,38 @@ async function runPageSpeed(
   expectedUrl: string,
   fetcher: typeof fetch = fetch,
 ) {
-  let response: Response;
-  try {
-    response = await fetcher(pageSpeedRequestUrl(expectedUrl), {
-      method: "GET",
-      redirect: "error",
-      signal: AbortSignal.timeout(PAGESPEED_TIMEOUT_MS),
-      headers: { Accept: "application/json" },
-    });
-  } catch (cause) {
-    const name = cause instanceof Error ? cause.name : "";
-    if (name === "AbortError" || name === "TimeoutError") {
-      throw new UpstreamProviderError(
-        "PageSpeed request timed out",
-        504,
-        "SITEFORGE_LIGHTHOUSE_UPSTREAM_TIMEOUT",
-      );
+  const apiKeys = [
+    process.env.PAGESPEED_INSIGHTS_API_KEY,
+    process.env.GOOGLE_MAPS_API_KEY,
+    process.env.GOOGLE_GEMINI_API_KEY,
+    undefined,
+  ].filter(
+    (value, index, values) =>
+      value === undefined || values.indexOf(value) === index,
+  );
+  let response: Response | null = null;
+  for (const apiKey of apiKeys) {
+    try {
+      response = await fetcher(pageSpeedRequestUrl(expectedUrl, apiKey), {
+        method: "GET",
+        redirect: "error",
+        signal: AbortSignal.timeout(PAGESPEED_TIMEOUT_MS),
+        headers: { Accept: "application/json" },
+      });
+    } catch (cause) {
+      const name = cause instanceof Error ? cause.name : "";
+      if (name === "AbortError" || name === "TimeoutError") {
+        throw new UpstreamProviderError(
+          "PageSpeed request timed out",
+          504,
+          "SITEFORGE_LIGHTHOUSE_UPSTREAM_TIMEOUT",
+        );
+      }
+      throw new UpstreamProviderError("PageSpeed request failed");
     }
+    if (response.status !== 403) break;
+  }
+  if (!response) {
     throw new UpstreamProviderError("PageSpeed request failed");
   }
   if (!response.ok) {

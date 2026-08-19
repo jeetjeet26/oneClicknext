@@ -169,33 +169,20 @@ export async function POST(
             source: 'production_cancel',
           },
           serviceSupabase
-        ).catch(error =>
+        ).catch((error: unknown) =>
           console.error('Post-cancellation restore request failed:', error)
         )
       }
     } else if (job.subject_id && !isPreview) {
-      await Promise.all([
-        serviceSupabase
-          .from('property_websites')
-          .update({
-            generation_status: isDeployment ? 'deploy_failed' : 'failed',
-            current_step: isDeployment ? 'Deployment cancelled' : 'Generation cancelled',
-            error_message: `${operationLabel} cancelled by user`,
-            updated_at: now,
-          })
-          .eq('id', job.subject_id),
-        serviceSupabase
-          .from('siteforge_jobs')
-          .update({
-            status: 'failed',
-            completed_at: now,
-            error_details: {
-              category: 'cancellation',
-              requestedBy: user.id,
-            } as Json,
-          })
-          .eq('shared_job_id', job.id),
-      ])
+      await serviceSupabase
+        .from('property_websites')
+        .update({
+          generation_status: isDeployment ? 'deploy_failed' : 'failed',
+          current_step: isDeployment ? 'Deployment cancelled' : 'Generation cancelled',
+          error_message: `${operationLabel} cancelled by user`,
+          updated_at: now,
+        })
+        .eq('id', job.subject_id)
     }
 
     return NextResponse.json({

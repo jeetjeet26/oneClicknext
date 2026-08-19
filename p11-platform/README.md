@@ -207,7 +207,8 @@ Notes:
 - Keep persistent secrets in `.env`; treat `.env.local` as generated local overlay.
 
 Provider-backed work now depends on a few env groups that were easy to miss before:
-- App/runtime: `NEXT_PUBLIC_SITE_URL` (preferred), `NEXT_PUBLIC_APP_URL`, `NEXT_PUBLIC_BASE_URL`, `INTERNAL_API_KEY`, `CRON_SECRET`
+- App/runtime: `NEXT_PUBLIC_SITE_URL` (preferred), `NEXT_PUBLIC_APP_URL`, `NEXT_PUBLIC_BASE_URL`, `INTERNAL_API_KEY`, `CRON_SECRET`, `ATTRIBUTION_HASH_SECRET`
+- ForgeStudio AI Gateway: `VERCEL_OIDC_TOKEN` from `vercel env pull` (preferred) or `AI_GATEWAY_API_KEY`; model overrides are accepted only when present in the verified ForgeStudio model policy.
 - Data engine: `DATA_ENGINE_URL`, `DATA_ENGINE_API_KEY`
 - Google/LumaLeasing: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_CALENDAR_WEBHOOK_URL`, `GMAIL_WATCH_TOPIC`
 - SiteForge deploy: either `CLOUDWAYS_API_KEY` + `CLOUDWAYS_EMAIL` or `SITEFORGE_WP_URL` + `SITEFORGE_WP_USERNAME` + `SITEFORGE_WP_APP_PASSWORD`

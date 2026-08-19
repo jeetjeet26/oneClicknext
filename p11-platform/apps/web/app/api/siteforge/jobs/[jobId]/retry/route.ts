@@ -17,7 +17,8 @@ import { classifySiteForgeGenerationFailure } from '@/utils/siteforge/workflows/
 const sharedPayloadSchema = z.object({
   planVersionId: z.guid(),
   websiteId: z.guid(),
-  legacyJobId: z.guid(),
+  // Historic payloads carry the retired siteforge_jobs row id; never written.
+  legacyJobId: z.guid().optional(),
 })
 
 const deploymentPayloadSchema = z.object({
@@ -280,7 +281,6 @@ export async function POST(
         run = await start(siteForgeGenerationWorkflow, [
           {
             sharedJobId: job.id,
-            legacyJobId: generationPayload.data.legacyJobId,
             websiteId: generationPayload.data.websiteId,
             propertyId: generationContext.propertyId,
             orgId: generationContext.orgId,

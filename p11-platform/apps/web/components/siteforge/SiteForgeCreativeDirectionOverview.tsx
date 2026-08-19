@@ -48,7 +48,7 @@ export function SiteForgeCreativeDirectionOverview({
         <CardContent className="space-y-6 p-5">
           <section aria-labelledby="approved-brand">
             <h3 id="approved-brand" className="text-sm font-semibold">
-              Latest approved Brand Book
+              Approved brand
             </h3>
             {overview.brandPresentation ? (
               <div className="mt-3 grid gap-4 lg:grid-cols-[minmax(220px,0.7fr)_minmax(0,2fr)]">
@@ -62,9 +62,14 @@ export function SiteForgeCreativeDirectionOverview({
                       className="max-h-28 max-w-full object-contain"
                     />
                   ) : (
-                    <p className="font-semibold">
-                      {overview.brandPresentation.name}
-                    </p>
+                    <div className="text-center">
+                      <p className="font-semibold">
+                        {overview.brandPresentation.name}
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        No approved logo URL is available.
+                      </p>
+                    </div>
                   )}
                 </div>
                 <div>
@@ -102,8 +107,9 @@ export function SiteForgeCreativeDirectionOverview({
                 </div>
               </div>
             ) : (
-              <p className="mt-2 text-sm text-muted-foreground">
-                The latest Brand Book presentation is unavailable.
+              <p className="mt-2 rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm">
+                The pinned BrandForge presentation could not be loaded. Rebuild
+                readiness before approving this direction.
               </p>
             )}
           </section>
@@ -113,8 +119,9 @@ export function SiteForgeCreativeDirectionOverview({
               Proposed website color roles
             </h3>
             <p className="mt-1 text-xs text-muted-foreground">
-              These roles map approved colors into this direction. The Brand
-              Book above remains the source of truth.
+              These five roles map the approved brand colors into the website
+              system. Repeated swatches indicate one approved color serving
+              more than one role.
             </p>
             <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
               {Object.entries(direction.palette).map(([role, color]) => (

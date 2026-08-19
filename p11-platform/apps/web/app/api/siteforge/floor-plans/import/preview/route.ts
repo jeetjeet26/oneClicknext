@@ -16,7 +16,7 @@ const requestSchema = z.discriminatedUnion('sourceType', [
     propertyId: z.guid(),
     sourceType: z.literal('manual'),
     sourceIdentity: z.string().trim().min(1).max(200).default('manual'),
-    rows: z.array(z.unknown()).min(1).max(2_000),
+    rows: z.array(z.unknown()).max(2_000),
   }),
   z.object({
     propertyId: z.guid(),
@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
       )
     }
     const access = await validatePropertyAccess(user.id, parsed.data.propertyId)
-    if (!access.authorized) {
+    if (!access.authorized || !access.orgId) {
       ctx.logSuccess(403, { reason: 'forbidden' })
       return NextResponse.json(
         { error: 'Forbidden' },
@@ -69,6 +69,7 @@ export async function POST(request: NextRequest) {
       .from('properties')
       .select('id, org_id')
       .eq('id', parsed.data.propertyId)
+      .eq('org_id', access.orgId)
       .single()
     if (propertyError || !property?.org_id) {
       return NextResponse.json(
@@ -106,7 +107,11 @@ export async function POST(request: NextRequest) {
         status: record.status,
         rows: preview.rows,
         errors: preview.errors,
-        canConfirm: preview.errors.length === 0 && preview.rows.length > 0,
+        canConfirm:
+          preview.errors.length === 0 &&
+          (preview.rows.length > 0 ||
+            (parsed.data.sourceType === 'manual' &&
+              parsed.data.sourceIdentity === 'property-console')),
       },
       { headers: ctx.responseHeaders }
     )

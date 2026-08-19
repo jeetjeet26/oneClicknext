@@ -177,7 +177,7 @@ export function evaluateRequiredAssetReadiness<
   )
   const reasons = [
     ...(!primaryLogo
-      ? ['An approved, curated, rights-cleared primary logo is required']
+      ? ['An approved primary logo is required']
       : []),
   ]
 

@@ -13,6 +13,10 @@ import {
   verifyOverlaySignature,
 } from '@/utils/siteforge/editor/overlay-contract'
 import {
+  siteForgeEditAcceptanceContractSchema,
+  type SiteForgeEditAcceptanceContract,
+} from '@/utils/siteforge/editor/edit-acceptance'
+import {
   canonicalizeSiteForgeContent,
   hashSiteForgeContent,
 } from '@/utils/siteforge/content-hash'
@@ -367,6 +371,8 @@ export interface VerifiedSiteForgeRelease {
     runtimeContractVersion: number
     runtimePackageSha256: string | null
     operationSetHash: string | null
+    parentArtifactId?: string | null
+    editAcceptanceContract?: SiteForgeEditAcceptanceContract | null
   }
   assetManifest?: z.infer<typeof assetManifestSchema>
   assets: WebsiteAsset[]
@@ -475,7 +481,7 @@ export async function loadVerifiedSiteForgeRelease(
   const { data: artifact, error } = await client
     .from('siteforge_blueprint_versions')
     .select(
-      'id, website_id, property_id, org_id, blueprint, content_hash, asset_manifest, asset_manifest_hash, base_theme_package_sha256, theme_overlay_id, overlay_package_sha256, runtime_contract_version, runtime_package_sha256, operation_set_hash'
+      'id, website_id, property_id, org_id, blueprint, content_hash, parent_version_id, quality_report, asset_manifest, asset_manifest_hash, base_theme_package_sha256, theme_overlay_id, overlay_package_sha256, runtime_contract_version, runtime_package_sha256, operation_set_hash'
     )
     .eq('id', input.artifactId)
     .eq('website_id', input.websiteId)
@@ -573,6 +579,32 @@ export async function loadVerifiedSiteForgeRelease(
   )
   const runtimeAssets = preparedAssets.map((asset) => asset.runtimeAsset)
   const blueprintRecord = artifact.blueprint as Record<string, unknown>
+  const qualityReport =
+    artifact.quality_report &&
+    typeof artifact.quality_report === 'object' &&
+    !Array.isArray(artifact.quality_report)
+      ? (artifact.quality_report as Record<string, unknown>)
+      : {}
+  const semanticEditor =
+    qualityReport.semanticEditor &&
+    typeof qualityReport.semanticEditor === 'object' &&
+    !Array.isArray(qualityReport.semanticEditor)
+      ? (qualityReport.semanticEditor as Record<string, unknown>)
+      : {}
+  const parsedEditAcceptance = siteForgeEditAcceptanceContractSchema.safeParse(
+    semanticEditor.acceptanceContract
+  )
+  if (
+    parsedEditAcceptance.success &&
+    (parsedEditAcceptance.data.parentArtifact.artifactId !==
+      artifact.parent_version_id ||
+      parsedEditAcceptance.data.editedArtifact.contentHash !==
+        artifact.content_hash)
+  ) {
+    throw new Error(
+      'SiteForge edit acceptance contract does not match artifact lineage'
+    )
+  }
   const siteConfiguration =
     blueprintRecord.siteConfiguration &&
     typeof blueprintRecord.siteConfiguration === 'object' &&
@@ -613,7 +645,7 @@ export async function loadVerifiedSiteForgeRelease(
     const byId = directId
       ? manifest.find((asset) => asset.id === directId && asset.type === type)
       : undefined
-    if (directId) return byId?.id || null
+    if (byId) return byId.id
     if (typeof configuredUrl !== 'string') return null
     return (
       manifest.find(
@@ -625,7 +657,13 @@ export async function loadVerifiedSiteForgeRelease(
     )
   }
   const runtimeSelectedAssets = {
-    logoAssetId: findSelectedAsset('logo', directLogoId, media.logoUrl),
+    logoAssetId: findSelectedAsset(
+      'logo',
+      directLogoId,
+      typeof media.logoUrl === 'string'
+        ? media.logoUrl
+        : logoAssets.primaryUrl
+    ),
     faviconAssetId: findSelectedAsset(
       'favicon',
       directFaviconId,
@@ -761,6 +799,10 @@ export async function loadVerifiedSiteForgeRelease(
       runtimeContractVersion,
       runtimePackageSha256: artifact.runtime_package_sha256,
       operationSetHash: artifact.operation_set_hash,
+      parentArtifactId: artifact.parent_version_id,
+      editAcceptanceContract: parsedEditAcceptance.success
+        ? parsedEditAcceptance.data
+        : null,
     },
     assetManifest: manifest,
     assets,

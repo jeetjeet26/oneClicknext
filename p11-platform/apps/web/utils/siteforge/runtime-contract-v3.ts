@@ -4,6 +4,10 @@ import {
   canonicalizeSiteForgeContent,
   hashSiteForgeContent,
 } from '@/utils/siteforge/content-hash'
+import {
+  acfBlockTypeSchema,
+  isSiteForgeBlockVariant,
+} from '@/types/siteforge'
 
 export const SITEFORGE_RUNTIME_V3_CONTRACT_VERSION = 3 as const
 export const SITEFORGE_RUNTIME_V3_NAMESPACE = 'siteforge/v3' as const
@@ -18,6 +22,10 @@ export const runtimeV3IdSchema = z
   .max(240)
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/)
 export const runtimeV3ArtifactIdSchema = z.string().uuid()
+export const runtimeV3BlockNameSchema = z.union([
+  acfBlockTypeSchema,
+  z.literal('acf/governed-component'),
+])
 export const runtimeV3ResourceKindSchema = z.enum([
   'page',
   'section',
@@ -160,7 +168,7 @@ export const runtimeV3SectionSchema = z
     ...runtimeV3ResourceIdentityFields,
     pageId: runtimeV3IdSchema,
     sectionType: runtimeV3IdSchema,
-    blockName: z.string().min(1).max(240),
+    blockName: runtimeV3BlockNameSchema,
     order: z.number().int().nonnegative(),
     variant: z.string().min(1).max(100).nullable(),
     anchor: runtimeV3IdSchema.nullable(),
@@ -171,6 +179,23 @@ export const runtimeV3SectionSchema = z
     integrationIds: z.array(runtimeV3IdSchema).max(50),
   })
   .strict()
+  .superRefine((section, context) => {
+    if (
+      section.variant !== null &&
+      !(
+        (section.blockName === 'acf/governed-component' &&
+          section.variant === 'governed') ||
+        (section.blockName !== 'acf/governed-component' &&
+          isSiteForgeBlockVariant(section.blockName, section.variant))
+      )
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['variant'],
+        message: `Unsupported ${section.blockName} variant ${section.variant}`,
+      })
+    }
+  })
 
 export const runtimeV3PageSchema = z
   .object({
@@ -463,6 +488,9 @@ export const runtimeV3OverlayIdentitySchema = z
   .object({
     overlayId: runtimeV3IdSchema,
     contentHash: runtimeV3HashSchema,
+    themeSlug: z
+      .string()
+      .regex(/^oneclick-siteforge-overlay-[a-f0-9]{12}$/),
     appliesToBaseThemeArchiveSha256: runtimeV3HashSchema,
     package: runtimeV3PackageIdentitySchema,
   })
@@ -564,6 +592,7 @@ export const runtimeV3PublicRuntimeSchema = z
     websiteId: z.string().uuid(),
     keyReference: runtimeV3IdSchema.nullable(),
     conversionEndpoint: httpsUrlSchema,
+    conversionKey: z.string().min(1).max(512).optional(),
     telemetryEndpoint: httpsUrlSchema,
     allowedOrigins: z.array(httpsUrlSchema).max(100),
   })
@@ -1006,6 +1035,27 @@ export type RuntimeV3DeploymentStatus = z.infer<
   typeof runtimeV3DeploymentStatusSchema
 >
 
+function normalizeRuntimeV3WireHashValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(normalizeRuntimeV3WireHashValue)
+  }
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value)
+    // WordPress REST decodes both `{}` and `[]` to an empty PHP array. Runtime
+    // hashes therefore use that wire representation so the sender and receiver
+    // cannot disagree after JSON decoding.
+    if (!entries.length) return []
+    return Object.fromEntries(
+      entries.map(([key, item]) => [key, normalizeRuntimeV3WireHashValue(item)])
+    )
+  }
+  return value
+}
+
+export function hashRuntimeV3WireContent(value: unknown): string {
+  return hashSiteForgeContent(normalizeRuntimeV3WireHashValue(value))
+}
+
 export function deriveRuntimeV3PackageManifestHash(
   manifest: z.input<typeof runtimeV3PackageManifestSchema>
 ): string {
@@ -1015,7 +1065,7 @@ export function deriveRuntimeV3PackageManifestHash(
 export function deriveRuntimeV3ResourceGraphHash(
   graph: z.input<typeof runtimeV3ResourceGraphSchema>
 ): string {
-  return hashSiteForgeContent(runtimeV3ResourceGraphSchema.parse(graph))
+  return hashRuntimeV3WireContent(runtimeV3ResourceGraphSchema.parse(graph))
 }
 
 export function deriveRuntimeV3AssetManifestHash(
@@ -1092,7 +1142,9 @@ function addReleaseIssues(
   context: z.RefinementCtx
 ): void {
   const identity = release.identity
-  if (hashSiteForgeContent(release.resourceGraph) !== identity.resourceGraphHash) {
+  if (
+    hashRuntimeV3WireContent(release.resourceGraph) !== identity.resourceGraphHash
+  ) {
     addHashIssue(context, ['identity', 'resourceGraphHash'], 'resource graph')
   }
   if (

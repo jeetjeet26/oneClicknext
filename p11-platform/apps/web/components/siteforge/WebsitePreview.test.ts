@@ -5,6 +5,7 @@ import type { SiteConfiguration } from '@/types/siteforge'
 import {
   buildPreviewNavigation,
   buildSiteChromeModel,
+  isPreviewNavigationCurrent,
   SitePreviewFooter,
   SitePreviewHeader,
 } from './WebsitePreview'
@@ -27,6 +28,24 @@ describe('WebsitePreview shared site chrome', () => {
         href: '/amenities/',
       }),
     ])
+  })
+
+  it('derives current navigation from the rendered URL without contract state', () => {
+    expect(isPreviewNavigationCurrent('/amenities/', '/amenities?view=all#features')).toBe(
+      true
+    )
+    expect(
+      isPreviewNavigationCurrent(
+        'https://resident.example.com/',
+        'https://resident.example.com/account'
+      )
+    ).toBe(false)
+    expect(isPreviewNavigationCurrent('/living/', '/amenities/')).toBe(false)
+    expect(
+      previewParitySiteConfiguration.navigation.items.some(item =>
+        Object.hasOwn(item, 'active')
+      )
+    ).toBe(false)
   })
 
   it('extracts configured brand, contact, social, legal, and footer content', () => {
@@ -91,6 +110,7 @@ describe('WebsitePreview shared site chrome', () => {
         React.createElement(SitePreviewHeader, {
           configuration: previewParitySiteConfiguration,
           chrome,
+          currentUrl: '/amenities/?view=all',
         }),
         React.createElement(SitePreviewFooter, {
           configuration: previewParitySiteConfiguration,
@@ -102,6 +122,12 @@ describe('WebsitePreview shared site chrome', () => {
     expect(markup).toContain('Juniper House')
     expect(markup).toContain('src="https://assets.example.com/juniper-house.svg"')
     expect(markup).toContain('href="/amenities/"')
+    expect(markup).toContain('href="/amenities/" aria-current="page"')
+    expect(markup).toContain('border-b-[3px] font-semibold')
+    expect(markup).toContain('color:#17211f')
+    expect(markup).toContain('border-bottom-color:#153f37')
+    expect(markup).toContain('outline-color:#153f37')
+    expect(markup).not.toContain('href="/living/" aria-current="page"')
     expect(markup).toContain('href="tel:5550102020"')
     expect(markup).toContain('href="mailto:hello@juniper.example"')
     expect(markup).toContain('120 Juniper Street, Portland, OR, 97205')

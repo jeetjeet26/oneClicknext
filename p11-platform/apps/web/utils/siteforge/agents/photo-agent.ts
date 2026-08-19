@@ -365,8 +365,9 @@ export class PhotoAgent extends BaseAgent {
   }
   
   /**
-   * Get approved, rights-cleared property assets. The content asset library is
-   * authoritative; legacy document images are intentionally not promoted.
+   * Get approved property assets. The content asset library is authoritative;
+   * legacy document images are intentionally not promoted. Rights and expiry
+   * are passive metadata (solo-operator doctrine) and do not filter usage.
    */
   private async getUploadedPhotos(): Promise<UploadedPropertyPhoto[]> {
     const { data } = await this.supabase
@@ -374,8 +375,6 @@ export class PhotoAgent extends BaseAgent {
       .select('id, file_url, name, asset_role, alt_text')
       .eq('property_id', this.propertyId)
       .eq('approval_status', 'approved')
-      .in('rights_status', ['owned', 'licensed', 'generated'])
-      .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
       .in('asset_role', [
         'hero',
         'amenity',

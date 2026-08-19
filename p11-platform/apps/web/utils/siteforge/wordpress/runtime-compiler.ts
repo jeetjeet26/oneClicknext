@@ -335,6 +335,12 @@ function compileSection(
     )
   }
   const align = runtimeBlockAlignment(section.content.align)
+  const content = section.presentation
+    ? {
+        ...section.content,
+        _siteforge_presentation: section.presentation,
+      }
+    : { ...section.content }
   return {
     sectionId: section.id,
     blockName: section.acfBlock,
@@ -349,8 +355,11 @@ function compileSection(
       applyBlockFieldAliases(
         section.acfBlock,
         section.variant
-          ? { ...section.content, variant: section.variant }
-          : { ...section.content }
+          ? {
+              ...content,
+              variant: section.variant,
+            }
+          : content
       )
     ),
   }

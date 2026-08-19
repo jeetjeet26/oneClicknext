@@ -455,7 +455,12 @@ class SiteForge_Runtime_V3_REST_Controller {
 	private function installed_runtime_identity() {
 		$active = get_option( SiteForge_Runtime_V3_State::ACTIVE_OPTION, array() );
 		if ( is_array( $active ) && isset( $active['identity']['runtimePackage'] ) ) {
-			return $active['identity']['runtimePackage'];
+			$installed = $active['identity']['runtimePackage'];
+			if ( isset( $installed['manifest'] ) && is_array( $installed['manifest'] ) ) {
+				$installed['manifest']['packageVersion'] = ONECLICK_SITEFORGE_RUNTIME_V3_VERSION;
+				$installed['manifestSha256'] = SiteForge_Runtime_Validation::hash( $installed['manifest'] );
+			}
+			return $installed;
 		}
 		$manifest = array(
 			'schemaVersion'   => 1,

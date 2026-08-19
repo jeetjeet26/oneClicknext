@@ -105,17 +105,11 @@ The test has a two-hour default timeout. It acquires an ownership lease before
 mutation and performs cleanup in `finally`, including when the primary flow
 fails.
 
-The staging workflow requires a persisted Cloudways clone checkpoint. If the
-target does not yet have one, call:
-
-```text
-POST /api/siteforge/staging/provision/{websiteId}
-{}
-```
-
-Poll the returned Cloudways operation, then retry deployment. The staging
-workflow consumes the persisted `provisioningCheckpoint` and verifies parent
-lineage before installing or deploying anything.
+The staging workflow requires a persisted Cloudways clone checkpoint. The
+deploy route (`POST /api/siteforge/deploy/{websiteId}`) is the single clone
+initiator: it creates the staging target, starts the Cloudways clone exactly
+once, and persists the `provisioningCheckpoint` that the workflow waits on
+and verifies parent lineage against before installing or deploying anything.
 
 ## Failure handling
 

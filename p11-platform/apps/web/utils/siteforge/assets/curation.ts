@@ -29,31 +29,35 @@ export type AssetGateInput = {
 export type AssetUsability = {
   usable: boolean
   blockers: string[]
+  advisories: string[]
 }
 
+// Solo-operator doctrine: rights, curation, and expiry are recorded as passive
+// advisory data and never block usage. Only approval and duplicate identity gate.
 export function getAssetUsability(
   asset: AssetGateInput,
   now = new Date()
 ): AssetUsability {
   const blockers: string[] = []
+  const advisories: string[] = []
   if (asset.approval_status !== 'approved') blockers.push('approval_required')
   if (
     !usableCurationStatuses.has(
       asset.curation_status as SiteForgeCurationStatus
     )
   ) {
-    blockers.push('curation_required')
+    advisories.push('curation_pending')
   }
   if (
     !clearedRightsStatuses.has(asset.rights_status as SiteForgeRightsStatus)
   ) {
-    blockers.push('rights_not_cleared')
+    advisories.push('rights_unrecorded')
   }
   if (asset.expires_at && new Date(asset.expires_at) <= now) {
-    blockers.push('rights_expired')
+    advisories.push('rights_expired')
   }
   if (asset.duplicate_of) blockers.push('duplicate')
-  return { usable: blockers.length === 0, blockers }
+  return { usable: blockers.length === 0, blockers, advisories }
 }
 
 export function assertAssetCanBeUsed(
@@ -63,7 +67,7 @@ export function assertAssetCanBeUsed(
   const result = getAssetUsability(asset, now)
   if (!result.usable) {
     throw new Error(
-      `Asset is not rights-cleared and approved/selected: ${result.blockers.join(', ')}`
+      `Asset is not usable: ${result.blockers.join(', ')}`
     )
   }
 }
@@ -127,27 +131,14 @@ export function buildValidatedAssetUpdate(input: {
         : input.patch.duplicateOf,
   }
 
-  const requestsUsableState =
-    next.approval_status === 'approved' ||
-    usableCurationStatuses.has(
-      next.curation_status as SiteForgeCurationStatus
-    )
-  if (requestsUsableState) {
-    if (
-      !clearedRightsStatuses.has(next.rights_status as SiteForgeRightsStatus)
-    ) {
-      throw new Error('Rights must be cleared before approval or selection')
-    }
-    if (next.expires_at && new Date(next.expires_at) <= now) {
-      throw new Error('Expired rights cannot be approved or selected')
-    }
-    if (
-      next.curation_status === 'selected' ||
-      next.curation_status === 'in_use'
-    ) {
-      if (next.approval_status !== 'approved') {
-        throw new Error('Selected assets must be approved')
-      }
+  // Rights and expiry are passive metadata (solo-operator doctrine); they no
+  // longer gate approval or selection. Only structural integrity is enforced.
+  if (
+    next.curation_status === 'selected' ||
+    next.curation_status === 'in_use'
+  ) {
+    if (next.approval_status !== 'approved') {
+      throw new Error('Selected assets must be approved')
     }
   }
 

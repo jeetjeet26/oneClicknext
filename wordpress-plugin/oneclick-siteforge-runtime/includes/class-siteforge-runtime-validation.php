@@ -74,13 +74,14 @@ class SiteForge_Runtime_Validation {
 		'acf/links'              => array( 'inline', 'banner', 'sticky' ),
 		'acf/content-grid'       => array( 'amenity-grid', 'tabs', 'editorial', 'bento', 'icon-list', 'carousel' ),
 		'acf/form'               => array( 'card', 'split', 'minimal' ),
-		'acf/map'                => array( 'standard', 'immersive' ),
+		'acf/map'                => array( 'standard', 'immersive', 'centered' ),
 		'acf/html-section'       => array( 'contained', 'full-width' ),
 		'acf/gallery'            => array( 'categorized', 'masonry', 'lightbox', 'filmstrip', 'mosaic', 'full-bleed' ),
 		'acf/accordion-section'  => array( 'bordered', 'minimal' ),
 		'acf/plans-availability' => array( 'cards', 'details', 'preleasing' ),
 		'acf/poi'                => array( 'narrative', 'map-list', 'editorial' ),
 		'acf/testimonials'       => array( 'cards', 'spotlight', 'carousel' ),
+		'acf/governed-component' => array( 'governed' ),
 	);
 
 	/**

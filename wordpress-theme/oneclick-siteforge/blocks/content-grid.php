@@ -24,12 +24,13 @@ $col_class = oneclick_get_column_class( $columns );
 		<div class="grid-layout <?php echo esc_attr( $col_class ); ?>">
 			<?php
 			foreach ( $items as $item ) {
+				$item_id = oneclick_siteforge_repeater_item_id( $item );
 				$icon = $item['icon'] ?? '';
 				$headline = $item['headline'] ?? '';
 				$description = $item['description'] ?? '';
 				$image = $item['image'] ?? '';
 				?>
-				<div class="grid-item">
+				<div class="grid-item"<?php echo oneclick_siteforge_target_attributes( $block, 'repeater_item', $item_id, $headline ); ?>>
 					<div class="item-inner">
 						<?php
 						if ( ! empty( $image ) ) {
@@ -39,9 +40,12 @@ $col_class = oneclick_get_column_class( $columns );
 								echo oneclick_get_image_html(
 									$image,
 									'large',
-									array(
-										'class' => 'card-image',
-										'alt'   => $headline,
+									array_merge(
+										array(
+											'class' => 'card-image',
+											'alt'   => $headline,
+										),
+										oneclick_siteforge_target_attribute_map( $block, 'image', 'image', $headline, 'repeater_item', $item_id )
 									)
 								);
 								?>
@@ -57,7 +61,7 @@ $col_class = oneclick_get_column_class( $columns );
 
 						if ( ! empty( $headline ) ) {
 							?>
-							<h3 class="item-headline"><?php echo wp_kses_post( $headline ); ?></h3>
+							<h3 class="item-headline"<?php echo oneclick_siteforge_target_attributes( $block, 'headline', 'headline', $headline, 'repeater_item', $item_id ); ?>><?php echo wp_kses_post( $headline ); ?></h3>
 							<?php
 						}
 

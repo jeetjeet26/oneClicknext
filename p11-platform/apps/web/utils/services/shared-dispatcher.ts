@@ -111,6 +111,12 @@ async function dispatchMarketVisionMessagingBrief(input: {
   const citations = Array.isArray(input.executionPayload.citations)
     ? input.executionPayload.citations
     : []
+  const sourceFacts = [
+    {
+      text: rationale || title,
+      source: `marketvision_proposal:${input.actionAttemptId}:${JSON.stringify(citations)}`,
+    },
+  ]
 
   const supabase = createServiceClient()
   const { data, error } = await supabase
@@ -122,11 +128,7 @@ async function dispatchMarketVisionMessagingBrief(input: {
       objective: rationale || title,
       topic: 'marketvision_competitive_response',
       status: 'draft',
-      source_facts: {
-        source: 'marketvision_proposal',
-        actionAttemptId: input.actionAttemptId,
-        citations,
-      },
+      source_facts: sourceFacts,
     })
     .select('id')
     .single()

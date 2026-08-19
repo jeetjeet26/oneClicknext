@@ -49,7 +49,6 @@ export const SITEFORGE_DIRECTOR_COMMAND_TYPES = [
   'retry_job',
   'cancel_job',
   'review_artifact',
-  'provision_staging',
   'deploy_staging',
   'prepare_launch',
   'approve_launch',

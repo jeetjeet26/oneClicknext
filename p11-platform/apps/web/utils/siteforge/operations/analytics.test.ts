@@ -12,7 +12,44 @@ describe('SiteForge ownership analytics', () => {
       'siteforge.cta_conversion_rate',
       'siteforge.lead_conversion_rate',
       'siteforge.tour_conversion_rate',
+      'siteforge.conversion_outcome_rate',
     ])
+  })
+
+  it('aggregates provider-neutral for-sale conversion outcomes by session', () => {
+    const [funnel] = aggregateArtifactFunnels([
+      {
+        artifact_id: 'artifact-sale',
+        event_type: 'page_view',
+        session_id: 'session-1',
+        lead_id: null,
+      },
+      {
+        artifact_id: 'artifact-sale',
+        event_type: 'plan_saved',
+        session_id: 'session-1',
+        lead_id: 'lead-1',
+      },
+      {
+        artifact_id: 'artifact-sale',
+        event_type: 'page_view',
+        session_id: 'session-2',
+        lead_id: null,
+      },
+      {
+        artifact_id: 'artifact-sale',
+        event_type: 'broker_handoff_requested',
+        session_id: 'session-2',
+        lead_id: 'lead-2',
+      },
+    ])
+
+    expect(funnel.metrics.conversionRate).toBe(1)
+    expect(funnel.metrics.conversionOutcomes).toMatchObject({
+      plan_saved: 1,
+      broker_handoff_requested: 1,
+    })
+    expect(funnel.metrics.tourConversionRate).toBe(0)
   })
 
   it('computes artifact-aware CTA, lead, and tour conversion by session', () => {

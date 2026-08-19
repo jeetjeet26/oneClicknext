@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import type { Json } from '@/types/supabase'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { proposeSharedAction } from '@/utils/services/shared-executor'
+import { recordSystemPolicyDecision } from '@/utils/services/system-policy-decisions'
 import {
   recordSharedApprovalDecision,
   SharedApprovalError,
@@ -145,15 +146,21 @@ export async function persistVisualBaselineCandidates(
     }
 
     const baselineId = randomUUID()
-    const proposal = await proposeSharedAction({
+    const policyDecision = await recordSystemPolicyDecision({
       orgId: input.orgId,
       propertyId: input.propertyId,
-      domain: 'siteforge.certification',
-      subjectType: 'siteforge_visual_baseline',
-      subjectId: baselineId,
-      dedupeKey: `siteforge-visual-baseline:${screenshot.identityDigest}`,
-      capturedBy: 'browser-certifier',
-      requestedBy: null,
+      policyName: 'siteforge.visual_baseline_seed',
+      policyVersion: SITEFORGE_CERTIFICATION_POLICY_VERSION,
+      verdict: 'approved',
+      reasonCode: 'complete_first_capture_seeds_immutable_artifact_baseline',
+      confidenceScore: 1,
+      source: {
+        baselineId,
+        artifactId: input.artifact.artifactId,
+        contentHash: input.artifact.contentHash,
+        screenshotSha256: screenshot.sha256,
+        bindingHash: input.bindingHash,
+      },
       payload: {
         baselineId,
         websiteId: input.websiteId,
@@ -161,25 +168,8 @@ export async function persistVisualBaselineCandidates(
         contentHash: input.artifact.contentHash,
         pageUrl,
         viewport: screenshot.viewport,
-        environment: input.environment,
-        access: input.access,
-        bindingHash: input.bindingHash,
         screenshotSha256: screenshot.sha256,
-        evidenceDigest: screenshot.identityDigest,
-      },
-      action: {
-        actionType: 'siteforge.certification:approve_visual_baseline',
-        requestPayload: {
-          baselineId,
-          screenshotStoragePath: screenshot.storagePath,
-          screenshotSha256: screenshot.sha256,
-          evidenceDigest: screenshot.identityDigest,
-          bindingHash: input.bindingHash,
-        },
-        executionPayload: { baselineId },
-        policyReason:
-          'An independent manager must approve this exact policy-v4 screenshot identity before it can be used as a visual baseline.',
-        confidenceScore: 1,
+        bindingHash: input.bindingHash,
       },
     })
     const { error: insertError } = await client
@@ -214,7 +204,8 @@ export async function persistVisualBaselineCandidates(
         captured_session_id: input.evidence.identity.sessionId,
         captured_at: input.evidence.capturedAt,
         status: 'candidate',
-        approval_action_attempt_id: proposal.sharedActionAttemptId,
+        approval_action_attempt_id: null,
+        system_policy_decision_id: policyDecision.id,
       })
     if (insertError) {
       if (insertError.code === '23505') {

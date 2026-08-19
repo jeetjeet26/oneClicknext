@@ -67,7 +67,10 @@ describe('forgestudio revision approval route', () => {
   it('returns 401 when unauthenticated', async () => {
     authGetUserMock.mockResolvedValue({ data: { user: null }, error: null })
     const { POST } = await import('./route')
-    const response = await POST(makeRequest({ decision: 'approved' }), routeParams)
+    const response = await POST(
+      makeRequest({ decision: 'approved', note: 'Reviewed and approved' }),
+      routeParams
+    )
     expect(response.status).toBe(401)
     expect(setRevisionApprovalMock).not.toHaveBeenCalled()
   })
@@ -89,7 +92,10 @@ describe('forgestudio revision approval route', () => {
     })
 
     const { POST } = await import('./route')
-    const response = await POST(makeRequest({ decision: 'approved' }), routeParams)
+    const response = await POST(
+      makeRequest({ decision: 'approved', note: 'Reviewed and approved' }),
+      routeParams
+    )
 
     expect(response.status).toBe(403)
     await expect(response.json()).resolves.toEqual({ error: 'Requires admin or manager role' })
@@ -131,7 +137,10 @@ describe('forgestudio revision approval route', () => {
     )
 
     const { POST } = await import('./route')
-    const response = await POST(makeRequest({ decision: 'approved' }), routeParams)
+    const response = await POST(
+      makeRequest({ decision: 'approved', note: 'Reviewed and approved' }),
+      routeParams
+    )
 
     expect(response.status).toBe(409)
     await expect(response.json()).resolves.toEqual({

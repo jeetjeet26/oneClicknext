@@ -103,6 +103,19 @@ export type TokenRefreshOutcome = {
   tokenExpiresAt?: string | null
 }
 
+export type EngagementMetrics = {
+  impressions?: number
+  reach?: number
+  clicks?: number
+  reactions?: number
+  comments?: number
+  shares?: number
+  saves?: number
+  videoViews?: number
+  videoCompletions?: number
+  providerPayload?: Record<string, unknown>
+}
+
 export interface SocialAdapter {
   platform: SocialPlatform
 
@@ -135,6 +148,12 @@ export interface SocialAdapter {
     connection: AdapterConnection,
     variant: AdapterVariant
   ): Promise<PublishOutcome | null>
+
+  /** Read aggregate post metrics. Never returns viewer identities or comments. */
+  fetchMetrics?(
+    connection: AdapterConnection,
+    providerPostId: string
+  ): Promise<EngagementMetrics>
 }
 
 export function composeCaption(variant: AdapterVariant): string {

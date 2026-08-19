@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { compileSiteForgeRuntimeV3Descriptor } from './runtime-release-compiler'
 import { hashSiteForgeContent } from './content-hash'
+import { DEFAULT_SITE_CONFIGURATION } from './blueprint'
 
 const legal = {
   sourceVersion: 1,
@@ -48,20 +49,29 @@ describe('SiteForge runtime v3 release compiler', () => {
                   layout: 'center',
                   background: 'white',
                 },
+                presentation: {
+                  containerMode: 'contained',
+                  spacingPreset: 'spacious',
+                  motionPreset: 'subtle',
+                  breakpointOverrides: {
+                    mobile: { spacingPreset: 'compact' },
+                  },
+                },
                 evidenceIds: [],
               },
             ],
           },
         ],
         siteConfiguration: {
-          header: { layout: 'logo-left', position: 'static' },
+          ...structuredClone(DEFAULT_SITE_CONFIGURATION),
+          header: {
+            ...structuredClone(DEFAULT_SITE_CONFIGURATION.header),
+            position: 'static',
+          },
           footer: {
-            layout: 'columns',
-            showNavigation: true,
-            showContact: true,
+            ...structuredClone(DEFAULT_SITE_CONFIGURATION.footer),
             showSocial: false,
           },
-          navigation: { style: 'simple', items: [] },
         },
         legal,
         analytics: { consentMode: 'required', events: ['page_view'] },
@@ -80,9 +90,18 @@ describe('SiteForge runtime v3 release compiler', () => {
         { resourceId: 'component:header' },
         { resourceId: 'component:footer' },
         { resourceId: 'component:navigation' },
+        { resourceId: 'component:site-configuration' },
       ],
     })
+    expect(
+      first.resourceGraph.globalComponents.find(
+        component => component.resourceId === 'component:site-configuration'
+      )?.data
+    ).toEqual(input.blueprint.siteConfiguration)
     expect(first.resourceGraph.legal).toHaveLength(7)
+    expect(first.resourceGraph.sections[0]?.data._siteforge_presentation).toEqual(
+      input.blueprint.pages[0].sections[0].presentation
+    )
     expect(first.operations).toHaveLength(1)
   })
 })

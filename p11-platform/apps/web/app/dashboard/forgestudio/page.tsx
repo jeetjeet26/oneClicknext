@@ -1,10 +1,9 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useEffect, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { usePropertyContext } from '@/components/layout/PropertyContext'
 import {
-  ContentGenerator,
-  DraftList,
   AssetGallery,
   ForgeStudioConfig,
   SocialConnections,
@@ -13,32 +12,34 @@ import {
 } from '@/components/forgestudio'
 import {
   Sparkles,
-  FileText,
   Image as ImageIcon,
   Calendar,
   Settings,
-  Wand2,
   RefreshCw,
   ShieldCheck,
   Link2,
   Megaphone
 } from 'lucide-react'
 
-type TabId = 'campaigns' | 'create' | 'drafts' | 'assets' | 'schedule' | 'connections' | 'settings'
+type TabId = 'campaigns' | 'assets' | 'schedule' | 'connections' | 'settings'
+
+const TAB_IDS: TabId[] = ['campaigns', 'assets', 'schedule', 'connections', 'settings']
 
 export default function ForgeStudioPage() {
   const { currentProperty } = usePropertyContext()
+  const searchParams = useSearchParams()
   const [activeTab, setActiveTab] = useState<TabId>('campaigns')
   const [refreshKey, setRefreshKey] = useState(0)
 
-  const handleContentGenerated = useCallback(() => {
-    setRefreshKey(prev => prev + 1)
-  }, [])
+  useEffect(() => {
+    const requestedTab = searchParams.get('tab')
+    if (requestedTab && TAB_IDS.includes(requestedTab as TabId)) {
+      setActiveTab(requestedTab as TabId)
+    }
+  }, [searchParams])
 
   const tabs = [
     { id: 'campaigns' as TabId, label: 'Campaigns', icon: Megaphone },
-    { id: 'create' as TabId, label: 'Quick Create', icon: Wand2 },
-    { id: 'drafts' as TabId, label: 'Drafts', icon: FileText },
     { id: 'assets' as TabId, label: 'Assets', icon: ImageIcon },
     { id: 'schedule' as TabId, label: 'Schedule', icon: Calendar },
     { id: 'connections' as TabId, label: 'Connections', icon: Link2 },
@@ -138,20 +139,6 @@ export default function ForgeStudioPage() {
       {/* Tab Content */}
       {activeTab === 'campaigns' && (
         <CampaignWorkspace propertyId={currentProperty.id} />
-      )}
-
-      {activeTab === 'create' && (
-        <ContentGenerator
-          propertyId={currentProperty.id}
-          onContentGenerated={handleContentGenerated}
-        />
-      )}
-
-      {activeTab === 'drafts' && (
-        <DraftList
-          propertyId={currentProperty.id}
-          refreshTrigger={refreshKey}
-        />
       )}
 
       {activeTab === 'assets' && (

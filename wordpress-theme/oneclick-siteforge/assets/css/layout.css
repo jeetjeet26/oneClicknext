@@ -9,7 +9,7 @@
   justify-content: center;
   gap: 1rem;
   padding: 0.45rem var(--container-padding);
-  color: var(--color-bg);
+  color: var(--color-on-primary);
   background: var(--color-primary);
   font-size: 0.68rem;
   font-weight: 600;
@@ -180,17 +180,37 @@
   transition: var(--transition);
 }
 
-.primary-menu-container a:hover,
-.primary-menu-container li.current-menu-item > a {
-  color: var(--color-accent);
+.primary-menu-container a:hover {
+  color: var(--color-text);
+}
+
+.primary-menu-container li.current-menu-item > a,
+.primary-menu-container a[aria-current="page"] {
+  color: var(--color-text);
   background: transparent;
+}
+
+.primary-menu-container li.current-menu-item > a::after,
+.primary-menu-container a[aria-current="page"]::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 0.35rem;
+  left: 0;
+  height: 3px;
+  background: var(--color-primary);
+}
+
+.primary-menu-container a:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 4px;
 }
 
 .header-cta {
   flex: 0 0 auto;
   padding: 0.9rem 1.35rem;
   border: 1px solid var(--color-primary);
-  color: var(--color-bg);
+  color: var(--color-on-primary);
   background: var(--color-primary);
   font-size: 0.68rem;
   font-weight: 700;
@@ -362,7 +382,7 @@
 
 .site-footer {
   background-color: var(--color-primary);
-  color: var(--color-white);
+  color: var(--color-on-primary);
   margin-top: auto;
 }
 
@@ -417,7 +437,7 @@
 
 .footer-section h3,
 .footer-section h4 {
-  color: var(--color-accent);
+  color: var(--color-on-primary);
   margin-bottom: var(--spacing-md);
 }
 
@@ -432,13 +452,13 @@
 }
 
 .footer-section a {
-  color: var(--color-white);
+  color: var(--color-on-primary);
   text-decoration: none;
   transition: var(--transition);
 }
 
 .footer-section a:hover {
-  color: var(--color-accent);
+  color: var(--color-on-primary);
   text-decoration: underline;
 }
 
@@ -486,6 +506,13 @@
   margin: 0;
   font-size: 0.9rem;
   opacity: 0.8;
+}
+
+.footer-credits a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-thickness: 0.1em;
+  text-underline-offset: 0.16em;
 }
 
 @media (max-width: 1024px) {
@@ -585,7 +612,7 @@
 .nav-previous a:hover,
 .nav-next a:hover {
   background-color: var(--color-primary);
-  color: var(--color-white);
+  color: var(--color-on-primary);
 }
 
 @media (max-width: 768px) {
@@ -607,7 +634,7 @@
   top: -40px;
   left: 0;
   background-color: var(--color-primary);
-  color: var(--color-white);
+  color: var(--color-on-primary);
   padding: var(--spacing-sm);
   text-decoration: none;
   z-index: 100;
