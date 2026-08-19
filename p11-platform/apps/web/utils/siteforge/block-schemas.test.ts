@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   normalizeLegacyBlockContent,
   siteForgeBlockContentSchemas,
+  strictGeneratedPageSchema,
   strictSiteForgePageSectionSchema,
 } from './block-schemas'
 
@@ -182,5 +183,25 @@ describe('SiteForge exact block schemas', () => {
       radius_miles: 1,
     })
     expect(() => strictSiteForgePageSectionSchema.parse(page.sections[0])).not.toThrow()
+  })
+
+  it('accepts every canonical vertical schema.org type in page SEO', () => {
+    const seo = {
+      title: 'Verified single-family homes',
+      description:
+        'Explore verified single-family homes with floor plans, availability, and neighborhood details for every prospective buyer.',
+      canonicalPath: '/homes',
+      noIndex: false,
+      structuredData: [
+        'WebPage',
+        'Residence',
+        'SingleFamilyResidence',
+        'Organization',
+        { '@context': 'https://schema.org', '@type': 'BreadcrumbList' },
+      ],
+    }
+    expect(() =>
+      strictGeneratedPageSchema.shape.seo.parse(seo)
+    ).not.toThrow()
   })
 })

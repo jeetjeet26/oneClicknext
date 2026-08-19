@@ -6,6 +6,7 @@ import {
   type GeneratedPage,
 } from '@/types/siteforge'
 import { governedNodeSchema } from '@/utils/siteforge/components/governed-component'
+import { VERTICAL_SEO_SCHEMA_TYPES } from '@/utils/siteforge/verticals/contracts'
 
 const safeLinkSchema = z
   .string()
@@ -525,7 +526,9 @@ export const strictGeneratedPageSchema = z
         noIndex: z.boolean(),
         structuredData: z.array(
           z.union([
-            z.enum(['WebPage', 'ApartmentComplex', 'BreadcrumbList', 'FAQPage']),
+            // The vertical registry pins any of the canonical schema.org
+            // types, so the persist contract must accept the full set.
+            z.enum(VERTICAL_SEO_SCHEMA_TYPES),
             z.record(z.string(), z.unknown()),
           ])
         ),
