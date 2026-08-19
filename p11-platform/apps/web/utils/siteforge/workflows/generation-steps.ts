@@ -715,6 +715,29 @@ export async function persistSiteForgeGenerationArtifact(
         error: error instanceof Error ? error.message : String(error),
       })
     }
+  } else if (confirmedPlan.schemaVersion === 2) {
+    // The V2 lane pins offering-catalog identity in the plan, but the
+    // publishable rows still live in property_units. Load them here so
+    // plans-availability sections render real inventory; missing rows omit
+    // those facts instead of blocking (solo-operator doctrine).
+    try {
+      floorPlanInventory = await loadFreshApprovedFloorPlanInventory(
+        input.propertyId,
+        supabase,
+        now,
+        confirmedPlan.offeringStrategies.find(strategy =>
+          Number.isFinite(strategy.freshnessHours)
+        )?.freshnessHours || 8_760
+      )
+    } catch (error) {
+      console.warn(
+        '[siteforge_workflow] V2 offering inventory unavailable; omitting inventory facts',
+        {
+          sharedJobId: input.sharedJobId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      )
+    }
   }
   const floorPlanSnapshot = floorPlanInventory.snapshot
   if (
