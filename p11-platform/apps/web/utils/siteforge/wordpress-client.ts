@@ -662,6 +662,28 @@ export class WordPressAPIClient {
     )
   }
 
+  /**
+   * The installed theme's settings endpoint accepts exactly one analytics
+   * contract: consentMode 'required' with the complete legacy event list
+   * (see wordpress-theme/oneclick-siteforge/inc/rest-api.php). V2 blueprints
+   * carry vertical analytics recipes with outcome-derived event names that
+   * the theme rejects, so normalize to the fixed wire contract here. The
+   * recipe itself stays authoritative in the blueprint for runtime v3.
+   */
+  private static readonly THEME_ANALYTICS_WIRE_CONTRACT = {
+    consentMode: 'required',
+    events: [
+      'page_view',
+      'cta_click',
+      'floorplan_view',
+      'availability_click',
+      'lead_start',
+      'lead_submit',
+      'tour_start',
+      'tour_booked',
+    ],
+  } as const
+
   async applySiteForgeSettings(input: {
     themeArtifact: {
       contentHash: string
@@ -708,7 +730,7 @@ export class WordPressAPIClient {
         motion: input.themeArtifact.motion,
         theme_overlay: input.themeArtifact.themeOverlay,
         legal: input.legal,
-        analytics: input.analytics,
+        analytics: WordPressAPIClient.THEME_ANALYTICS_WIRE_CONTRACT,
         property_profile: input.propertyProfile,
         lumaleasing: input.publicRuntime,
         target_mode: input.targetMode || 'staging',

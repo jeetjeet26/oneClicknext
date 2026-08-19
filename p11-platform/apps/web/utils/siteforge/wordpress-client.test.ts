@@ -55,6 +55,58 @@ describe('wordpress-client', () => {
     )
   })
 
+  it('always sends the fixed theme analytics wire contract to settings', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({}))
+    const client = new WordPressAPIClient('https://example.com', {
+      username: 'admin',
+      password: 'app-password',
+    })
+
+    await client.applySiteForgeSettings({
+      themeArtifact: {
+        contentHash: 'a'.repeat(64),
+        designTokens: {},
+        componentVariants: {},
+        siteConfiguration: {},
+        motion: {},
+        themeOverlay: {},
+      },
+      legal: {},
+      // V2 vertical recipe shape: the installed theme would reject this
+      // verbatim, so the client must send the legacy wire contract instead.
+      analytics: {
+        consentMode: 'optional',
+        events: ['siteforge.multifamily.lead_submitted'],
+        outcomes: [
+          {
+            id: 'analytics.multifamily.lead_submitted',
+            outcome: 'lead_submitted',
+            eventName: 'siteforge.multifamily.lead_submitted',
+            northStar: true,
+          },
+        ],
+      },
+      targetMode: 'canonical_preview',
+    })
+
+    const body = JSON.parse(
+      (fetchMock.mock.calls[0]?.[1]?.body as string) || '{}'
+    )
+    expect(body.analytics).toEqual({
+      consentMode: 'required',
+      events: [
+        'page_view',
+        'cta_click',
+        'floorplan_view',
+        'availability_click',
+        'lead_start',
+        'lead_submit',
+        'tour_start',
+        'tour_booked',
+      ],
+    })
+  })
+
   it('rejects a successful manifest response with a missing or malformed hash', async () => {
     const client = new WordPressAPIClient('https://example.com', {
       username: 'admin',
