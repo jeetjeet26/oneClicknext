@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { SITEFORGE_VERTICAL_MATRIX_V1 } from '@/fixtures/siteforge-vertical-matrix.v1'
+import {
+  hashBrandForgeContract,
+  normalizeBrandForgeContract,
+} from '@/utils/brandforge/normalize'
 import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
 import { composeVerticalPacks } from '@/utils/siteforge/verticals/composition'
 import { synthesizeSiteStory } from '@/utils/siteforge/guided/adaptive-discovery'
@@ -7,9 +11,15 @@ import {
   hashSiteForgeDirection,
   type SiteForgeDirectionCandidate,
 } from '@/utils/siteforge/directions/contracts'
-import { hashSiteForgePlanV2CausalInputs } from './builder-v2'
+import {
+  buildSiteForgePlanV2,
+  hashSiteForgePlanV2CausalInputs,
+} from './builder-v2'
 
-function story() {
+function verticalContext(overrides?: {
+  observedAt?: string | null
+  freshUntil?: string | null
+}) {
   const fixture = SITEFORGE_VERTICAL_MATRIX_V1[0]
   const manifest = composeVerticalPacks(fixture.request)
   const entries = manifest.requiredEvidence.map(requirement => ({
@@ -19,26 +29,29 @@ function story() {
     sourceType: 'test',
     sourceId: requirement.id,
     url: null,
-    observedAt: '2026-08-17T12:00:00.000Z',
-    freshUntil: null,
+    observedAt:
+      overrides?.observedAt === undefined
+        ? '2026-08-17T12:00:00.000Z'
+        : overrides.observedAt,
+    freshUntil: overrides?.freshUntil ?? null,
   }))
-  return synthesizeSiteStory({
+  return {
     profile: {
       id: 'profile-1',
       version: 1,
       contentHash: 'a'.repeat(64),
-      mappingStatus: 'confirmed',
+      mappingStatus: 'confirmed' as const,
       mappingReason: null,
       value: {
-        schemaVersion: 2,
-        subjectKind: 'real_estate_property',
-        verticalKey: 'multifamily',
+        schemaVersion: 2 as const,
+        subjectKind: 'real_estate_property' as const,
+        verticalKey: 'multifamily' as const,
         displayName: 'Multifamily',
-        operatingModel: 'rental',
+        operatingModel: 'rental' as const,
         attributes: {},
         audiences: ['Prospective residents'],
         complianceTags: [],
-        source: 'operator',
+        source: 'operator' as const,
       },
     },
     manifest,
@@ -46,7 +59,11 @@ function story() {
       contextHash: hashSiteForgeContent(entries),
       entries,
     },
-  })
+  }
+}
+
+function story(context = verticalContext()) {
+  return synthesizeSiteStory(context)
 }
 
 function direction(id = 'direction-1'): SiteForgeDirectionCandidate & { id: string } {
@@ -152,6 +169,86 @@ describe('SiteForge V2 causal story binding', () => {
 
     expect(storyCounterfactual).not.toBe(base)
     expect(directionCounterfactual).not.toBe(base)
+  })
+
+  it('normalizes Postgres offset timestamps into the canonical plan contract', () => {
+    const context = verticalContext({
+      observedAt: '2026-08-17T12:00:00+00:00',
+      freshUntil: '2026-08-20T12:00:00+00:00',
+    })
+    const value = story(context)
+    const brandContract = normalizeBrandForgeContract(
+      {
+        identity: { name: 'Evidence Apartments' },
+        colors: {
+          roles: [
+            { role: 'primary', name: 'Ink', hex: '#112233', usage: 'Primary' },
+          ],
+        },
+      },
+      { origin: 'imported', approvalStatus: 'approved' }
+    )
+    const plan = buildSiteForgePlanV2({
+      propertyId: '22222222-2222-4222-8222-222222222222',
+      propertyName: 'Evidence Apartments',
+      brandContext: {
+        source: 'brandforge',
+        confidence: 1,
+        brandPersonality: { primary: 'Warm', traits: ['clear'], avoid: [] },
+        visualIdentity: {
+          moodKeywords: ['warm'],
+          colorMood: 'Warm',
+          photoStyle: {
+            lighting: 'Natural',
+            composition: 'Editorial',
+            subjects: 'Architecture',
+            mood: 'Calm',
+          },
+          designStyle: 'Editorial',
+        },
+        targetAudience: {
+          demographics: 'Prospective residents',
+          psychographics: 'Value clarity',
+          priorities: [],
+          painPoints: [],
+        },
+        positioning: {
+          category: 'Multifamily',
+          differentiators: ['Verified inventory'],
+          competitiveAdvantage: 'Verified facts',
+          messagingPillars: [],
+        },
+        contentStrategy: {
+          voiceTone: 'Warm',
+          vocabularyUse: [],
+          vocabularyAvoid: [],
+          headlineStyle: 'Direct',
+          storytellingFocus: 'Proof',
+        },
+        designPrinciples: [],
+      },
+      brandAssetId: '77777777-7777-4777-8777-777777777777',
+      brandContract,
+      brandContractHash: hashBrandForgeContract(brandContract),
+      onboardingSnapshot: {
+        id: '66666666-6666-4666-8666-666666666666',
+        contentHash: 'c'.repeat(64),
+        enabledCapabilities: [],
+      },
+      verticalContext: context,
+      discovery,
+      siteStory: { contract: value.story, identity: value.identity },
+      selectedCreativeDirection: direction(),
+      capturedAt: '2026-08-17T13:00:00.000Z',
+    })
+
+    for (const entry of plan.evidence) {
+      expect(entry.capturedAt).toBe('2026-08-17T12:00:00.000Z')
+      expect(entry.sourceUpdatedAt).toBe('2026-08-17T12:00:00.000Z')
+    }
+    for (const snapshot of plan.offeringCatalog.snapshots) {
+      expect(snapshot.freshUntil).toBe('2026-08-20T12:00:00.000Z')
+    }
   })
 
   it('rejects stale story identities', () => {

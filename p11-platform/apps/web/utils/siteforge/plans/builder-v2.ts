@@ -110,6 +110,18 @@ export function hashSiteForgePlanV2CausalInputs(input: Pick<
   })
 }
 
+/**
+ * Guided evidence timestamps arrive in Postgres offset form
+ * (`2026-08-19T19:04:50+00:00`), while the plan contract requires the
+ * canonical UTC `Z` form. Normalize at this boundary so plan content stays
+ * deterministic and schema-valid.
+ */
+function canonicalIso(value: string | null | undefined): string | null {
+  if (!value) return null
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString()
+}
+
 export function buildSiteForgePlanV2(
   input: BuildSiteForgePlanV2Input
 ): SiteForgePlanV2 {
@@ -162,7 +174,10 @@ export function buildSiteForgePlanV2(
 
   const catalogSnapshots = manifest.offeringKinds.map(offeringKind => {
     const freshUntil = [...offeringEntries, ...availabilityEntries]
-      .flatMap(entry => (entry.freshUntil ? [entry.freshUntil] : []))
+      .flatMap(entry => {
+        const normalized = canonicalIso(entry.freshUntil)
+        return normalized ? [normalized] : []
+      })
       .sort()
       .at(0) || null
     const freshness = manifest.freshnessRules.find(rule =>
@@ -366,8 +381,8 @@ export function buildSiteForgePlanV2(
       sourceType: 'operator',
       sourceId: entry.sourceId,
       label: entry.label,
-      capturedAt: entry.observedAt || capturedAt,
-      sourceUpdatedAt: entry.observedAt || undefined,
+      capturedAt: canonicalIso(entry.observedAt) || capturedAt,
+      sourceUpdatedAt: canonicalIso(entry.observedAt) || undefined,
       confidence: 1,
       retrievalStatus: 'available',
     })),
