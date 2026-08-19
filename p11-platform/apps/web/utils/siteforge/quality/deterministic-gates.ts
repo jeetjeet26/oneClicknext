@@ -49,10 +49,26 @@ export const siteForgeLegalConfigSchema = z
     }
   })
 
+// V2 blueprints pin the vertical analytics recipe: consent mode comes from
+// the plan (which allows optional/disabled lanes) and each event carries its
+// originating outcome. Legacy V1 blueprints only ever produce
+// consentMode 'required' with bare event names, so this schema accepts both.
 export const siteForgeAnalyticsConfigSchema = z
   .object({
-    consentMode: z.literal('required'),
+    consentMode: z.enum(['required', 'optional', 'disabled']),
     events: z.array(z.string()).min(1),
+    outcomes: z
+      .array(
+        z
+          .object({
+            id: z.string().min(1),
+            outcome: z.string().min(1),
+            eventName: z.string().min(1),
+            northStar: z.boolean(),
+          })
+          .strict()
+      )
+      .optional(),
   })
   .strict()
 
@@ -706,9 +722,15 @@ export function evaluateDeterministicSiteForgeQuality(input: {
   })
 
   const analytics = siteForgeAnalyticsConfigSchema.safeParse(input.analytics)
-  const missingEvents = requiredAnalyticsEvents.filter(
-    (event) => !input.analytics.events.includes(event)
-  )
+  // V2 vertical recipes pin their own outcome-derived event names
+  // (siteforge.<selector>.<outcome>), so the legacy required-event list only
+  // applies to V1 configs without pinned outcomes.
+  const missingEvents =
+    analytics.success && analytics.data.outcomes?.length
+      ? []
+      : requiredAnalyticsEvents.filter(
+          (event) => !input.analytics.events.includes(event)
+        )
   checks.push({
     id: 'analytics_contract',
     category: 'analytics',

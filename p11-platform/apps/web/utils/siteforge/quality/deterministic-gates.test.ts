@@ -311,6 +311,37 @@ describe('deterministic SiteForge quality gates', () => {
     expect(report.checks.every((check) => check.passed)).toBe(true)
   })
 
+  it('accepts a V2 vertical analytics recipe with outcome-derived events', () => {
+    const report = evaluate(pages, {
+      analytics: {
+        consentMode: 'optional',
+        events: ['siteforge.multifamily.lead_submitted'],
+        outcomes: [
+          {
+            id: 'analytics.multifamily.lead_submitted',
+            outcome: 'lead_submitted',
+            eventName: 'siteforge.multifamily.lead_submitted',
+            northStar: true,
+          },
+        ],
+      },
+    })
+
+    expect(
+      report.checks.find(check => check.id === 'analytics_contract')
+    ).toEqual(expect.objectContaining({ passed: true }))
+  })
+
+  it('still requires the legacy event list for V1 analytics configs', () => {
+    const report = evaluate(pages, {
+      analytics: { consentMode: 'required', events: ['page_view'] },
+    })
+
+    expect(
+      report.checks.find(check => check.id === 'analytics_contract')
+    ).toEqual(expect.objectContaining({ passed: false }))
+  })
+
   it('blocks legal data without approved provenance', () => {
     const report = evaluate(pages, {
       legal: {
