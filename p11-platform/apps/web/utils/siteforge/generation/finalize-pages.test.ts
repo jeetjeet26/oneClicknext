@@ -105,6 +105,74 @@ describe('finalizeSiteForgePages', () => {
     )
   })
 
+  it('normalizes V2 pinned plan SEO to the publishing contract', () => {
+    const pages: GeneratedPage[] = [
+      {
+        title: 'Evidence Apartments | Luxury Apartment Homes In Example City',
+        slug: 'home',
+        purpose: 'Introduce the community',
+        sections: [
+          {
+            id: 'intro',
+            type: 'text',
+            acfBlock: 'acf/text-section',
+            order: 0,
+            reasoning: 'Lead with the community identity',
+            content: {
+              headline: 'Welcome home',
+              content: 'Explore available apartment homes.',
+            },
+            evidenceIds: ['brand-1'],
+          },
+        ],
+      },
+    ]
+    const manifest: PhotoManifest = {
+      photos: [],
+      byCategory: {
+        hero: [],
+        amenities: [],
+        lifestyle: [],
+        gallery: [],
+        logos: [],
+      },
+      assignments: {},
+      stats: { uploaded: 0, generated: 0, fromBrandForge: 0, total: 0 },
+    }
+
+    const finalized = finalizeSiteForgePages(
+      pages,
+      manifest,
+      approvedLegal,
+      undefined,
+      [],
+      {
+        seoBySlug: {
+          home: {
+            title:
+              'Evidence Apartments | Verified Luxury Apartment Homes In Example City With Resort Amenities',
+            description:
+              'Anchor the story with verified positioning. Present verified floor plans and availability. Show the neighborhood with sourced points of interest. Offer a direct conversion path with tour scheduling and contact options for every prospective resident.',
+            canonicalPath: '/',
+            noIndex: false,
+            structuredData: [
+              { '@context': 'https://schema.org', '@type': 'ApartmentComplex' },
+              { '@context': 'https://schema.org', '@type': 'WebPage' },
+            ],
+          },
+        },
+      }
+    )
+
+    const seo = finalized.find(page => page.slug === 'home')?.seo
+    expect(seo?.title.length).toBeLessThanOrEqual(60)
+    expect(seo?.description.length).toBeGreaterThanOrEqual(50)
+    expect(seo?.description.length).toBeLessThanOrEqual(160)
+    expect(seo?.structuredData).toContain('WebPage')
+    expect(seo?.structuredData).toContain('ApartmentComplex')
+    expect(seo?.canonicalPath).toBe('/')
+  })
+
   it('replaces testimonial copy with approved ReviewFlow records and evidence ids', () => {
     const manifest: PhotoManifest = {
       photos: [],

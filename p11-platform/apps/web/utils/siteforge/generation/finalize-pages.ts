@@ -654,16 +654,34 @@ export function finalizeSiteForgePages(
 
   return [...contentPages, ...legalPages].map((page) => {
     const pinnedSeo = integrityContext.seoBySlug?.[page.slug]
+    // Pinned plan SEO carries intent, but the generated-page publishing
+    // contract is authoritative: the deterministic seo_metadata gate requires
+    // title <= 60, description 50-160, and structured data expressed as
+    // schema.org type names including WebPage. V2 plans store structured data
+    // as JSON-LD objects, so extract the @type names and enforce the bounds
+    // uniformly; otherwise every V2 generation fails the gate at persist time.
+    const pinnedStructuredTypes = pinnedSeo
+      ? [
+          ...new Set([
+            'WebPage',
+            ...pinnedSeo.structuredData.flatMap(entry => {
+              if (typeof entry === 'string') return [entry]
+              const type = (entry as Record<string, unknown>)['@type']
+              return typeof type === 'string' && type ? [type] : []
+            }),
+          ]),
+        ]
+      : null
     const seoDescription = (
       pinnedSeo?.description ||
       `${page.purpose.trim()} Explore floor plans, amenities, neighborhood details, and ways to contact the leasing team.`
     )
-      .slice(0, pinnedSeo ? 500 : 160)
+      .slice(0, 160)
       .trim()
     const normalized = {
       ...page,
       seo: {
-        title: (pinnedSeo?.title || page.title).slice(0, pinnedSeo ? 160 : 60),
+        title: (pinnedSeo?.title || page.title).slice(0, 60),
         description:
           seoDescription.length >= 50
             ? seoDescription
@@ -671,16 +689,13 @@ export function finalizeSiteForgePages(
                 pinnedSeo
                   ? 'Learn more about this verified offering and the available next steps.'
                   : 'Learn more about this apartment community.'
-              }`.slice(
-                0,
-                pinnedSeo ? 500 : 160
-              ),
+              }`.slice(0, 160),
         canonicalPath:
           pinnedSeo?.canonicalPath ||
           (page.slug === 'home' ? '/' : `/${page.slug}`),
         noIndex: pinnedSeo?.noIndex || false,
         structuredData:
-          pinnedSeo?.structuredData ||
+          pinnedStructuredTypes ||
           (page.slug === 'home'
             ? ['WebPage', 'ApartmentComplex', 'BreadcrumbList']
             : ['WebPage', 'BreadcrumbList']),
