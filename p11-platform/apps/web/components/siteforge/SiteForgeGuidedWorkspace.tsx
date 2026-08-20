@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -213,14 +213,24 @@ export function SiteForgeGuidedWorkspace({
     [applyPayload, websiteId],
   );
 
+  const quietRefreshFailures = useRef(0);
+
   const refreshAll = useCallback(
     async (quiet = false) => {
       if (!quiet) setRefreshing(true);
       try {
         await Promise.all([loadDirector(), loadGuided(quiet)]);
+        quietRefreshFailures.current = 0;
         setError("");
         setRetryAction(null);
       } catch (cause) {
+        // Background polling runs every 8 seconds; a single dropped request
+        // ("Failed to fetch") is routine network noise and the next tick
+        // retries automatically. Only surface persistent failures.
+        if (quiet) {
+          quietRefreshFailures.current += 1;
+          if (quietRefreshFailures.current < 3) return;
+        }
         setError(
           friendlySiteForgeError(
             cause instanceof Error ? cause.message : cause,

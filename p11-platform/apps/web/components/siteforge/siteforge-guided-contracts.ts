@@ -255,6 +255,8 @@ const TECHNICAL_ERROR_PATTERNS = [
   /\b[0-9a-f]{40,}\b/gi,
   /zod(?:error)?/gi,
   /invalid (?:uuid|input syntax)[^.,;]*/gi,
+  // Raw browser network failures (fetch TypeError messages vary by browser).
+  /failed to fetch|networkerror|load failed|fetch failed/gi,
 ];
 
 export function friendlySiteForgeError(
