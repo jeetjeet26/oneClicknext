@@ -160,6 +160,40 @@ describe('SiteForge vertical pack registry', () => {
     expect(multifamily.offeringKinds).toEqual(['rental_unit'])
     expect(multifamily.conversionIntentRecipes).toHaveLength(1)
   })
+
+  it('ships a full agency-grade page set for residential lanes', () => {
+    const matrix = SITEFORGE_VERTICAL_MATRIX_V1.find(
+      fixture => fixture.request.archetype === 'rental_multifamily'
+    )
+    expect(matrix).toBeDefined()
+    if (!matrix) return
+
+    const manifest = composeVerticalPacks(matrix.request)
+    const slugs = manifest.pages.map(page => page.slug)
+    expect(slugs).toEqual(
+      expect.arrayContaining([
+        '/',
+        '/contact',
+        '/floor-plans',
+        '/amenities',
+        '/gallery',
+        '/neighborhood',
+      ])
+    )
+
+    const home = manifest.pages.find(page => page.slug === '/')
+    expect(home).toBeDefined()
+    expect(home?.sections.length).toBeGreaterThanOrEqual(5)
+    expect(home?.sections[0]?.blockKey).toBe('acf/top-slides')
+
+    const neighborhood = manifest.pages.find(
+      page => page.slug === '/neighborhood'
+    )
+    expect(neighborhood?.sections.map(section => section.blockKey)).toEqual([
+      'acf/text-section',
+      'acf/poi',
+    ])
+  })
 })
 
 describe('SiteForge vertical pack composition', () => {

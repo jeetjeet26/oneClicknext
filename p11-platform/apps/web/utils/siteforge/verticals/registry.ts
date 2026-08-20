@@ -68,6 +68,16 @@ const allApplicability = {
   lifecycles: [...VERTICAL_LIFECYCLES],
 }
 
+// Section ids are sorted lexicographically during pack normalization, so
+// section keys must sort in the intended visual order (primary first, then
+// s2-*, s3-*, ...).
+type PackSectionOption = {
+  key: string
+  blockKey: ACFBlockType
+  purpose: string
+  required?: boolean
+}
+
 type PackOptions = {
   layer: VerticalPackLayer
   selector: string
@@ -85,7 +95,16 @@ type PackOptions = {
     title: string
     blockKey: ACFBlockType
     purpose: string
+    additionalSections?: PackSectionOption[]
   }
+  additionalPages?: Array<{
+    key: string
+    slug: string
+    title: string
+    order?: number
+    required?: boolean
+    sections: PackSectionOption[]
+  }>
   offeringKinds?: VerticalOfferingKind[]
   intent?: VerticalConversionIntent
   fallbackIntent?: VerticalConversionIntent | null
@@ -133,6 +152,52 @@ function makePack(options: PackOptions): VerticalPack {
   const intent = options.intent || 'inquiry'
   const outcome = options.outcome || 'qualified_inquiry'
 
+  const toSection = (parentPageId: string) => (section: PackSectionOption) => ({
+    id: `${parentPageId}.section.${section.key}`,
+    blockKey: section.blockKey,
+    purpose: section.purpose,
+    required: section.required ?? true,
+    conversionIntent: section.blockKey === 'acf/form' ? intent : null,
+  })
+
+  const pages = [
+    ...(options.page
+      ? [
+          {
+            id: pageId,
+            slug: options.page.slug,
+            title: options.page.title,
+            order: 100,
+            required: true,
+            sections: [
+              {
+                id: `${pageId}.section.primary`,
+                blockKey: options.page.blockKey,
+                purpose: options.page.purpose,
+                required: true,
+                conversionIntent:
+                  options.page.blockKey === 'acf/form' ? intent : null,
+              },
+              ...(options.page.additionalSections || []).map(
+                toSection(pageId)
+              ),
+            ],
+          },
+        ]
+      : []),
+    ...(options.additionalPages || []).map((page, index) => {
+      const extraPageId = `${prefix}.page.${page.key}`
+      return {
+        id: extraPageId,
+        slug: page.slug,
+        title: page.title,
+        order: page.order ?? 120 + index * 10,
+        required: page.required ?? true,
+        sections: page.sections.map(toSection(extraPageId)),
+      }
+    }),
+  ]
+
   return verticalPackSchema.parse({
     schemaVersion: 1,
     key: `siteforge.vertical.${options.layer}.${options.selector}`,
@@ -171,27 +236,7 @@ function makePack(options: PackOptions): VerticalPack {
     questionIds: [
       options.question || `${prefix}.question.confirm_applicability`,
     ],
-    pages: options.page
-      ? [
-          {
-            id: pageId,
-            slug: options.page.slug,
-            title: options.page.title,
-            order: 100,
-            required: true,
-            sections: [
-              {
-                id: `${pageId}.section.primary`,
-                blockKey: options.page.blockKey,
-                purpose: options.page.purpose,
-                required: true,
-                conversionIntent:
-                  options.page.blockKey === 'acf/form' ? intent : null,
-              },
-            ],
-          },
-        ]
-      : [],
+    pages,
     offeringKinds: options.offeringKinds || [],
     conversionIntentRecipes: [
       {
@@ -259,7 +304,7 @@ function makePack(options: PackOptions): VerticalPack {
           {
             id: `${prefix}.lifecycle.${options.lifecycleOverride.lifecycle}`,
             lifecycle: options.lifecycleOverride.lifecycle,
-            activatePageIds: options.page ? [pageId] : [],
+            activatePageIds: pages.map(page => page.id),
             deactivatePageIds: [],
             requiredEvidenceIds: [evidenceId],
             preferredConversionIntent:
@@ -282,6 +327,32 @@ const CORE_PACKS = [
       title: 'Home',
       blockKey: 'acf/top-slides',
       purpose: 'Introduce the verified subject and its primary visitor outcome.',
+      additionalSections: [
+        {
+          key: 's2-positioning',
+          blockKey: 'acf/text-section',
+          purpose:
+            'Establish the approved brand positioning and welcome narrative for the verified subject.',
+        },
+        {
+          key: 's3-highlights',
+          blockKey: 'acf/content-grid',
+          purpose:
+            'Showcase signature amenities and community highlights sourced from approved property truth.',
+        },
+        {
+          key: 's4-lifestyle',
+          blockKey: 'acf/feature-section',
+          purpose:
+            'Pair approved lifestyle photography with grounded brand voice to convey the living experience.',
+        },
+        {
+          key: 's5-cta',
+          blockKey: 'acf/links',
+          purpose:
+            'Direct visitors to the primary conversion path and the most important interior pages.',
+        },
+      ],
     },
     seo: ['WebPage', 'BreadcrumbList'],
     policies: ['privacy_consent', 'wcag_2_2_aa'],
@@ -463,6 +534,62 @@ const ARCHETYPE_PACKS = [
       blockKey: 'acf/offering-browser',
       purpose: 'Present sourced rental offerings and current availability.',
     },
+    additionalPages: [
+      {
+        key: 'amenities',
+        slug: '/amenities',
+        title: 'Amenities',
+        order: 120,
+        sections: [
+          {
+            key: 'primary',
+            blockKey: 'acf/feature-section',
+            purpose:
+              'Introduce the community amenity experience with approved photography and brand voice.',
+          },
+          {
+            key: 's2-grid',
+            blockKey: 'acf/content-grid',
+            purpose:
+              'Present the full set of community and residence amenities sourced from approved property truth.',
+          },
+        ],
+      },
+      {
+        key: 'gallery',
+        slug: '/gallery',
+        title: 'Gallery',
+        order: 130,
+        sections: [
+          {
+            key: 'primary',
+            blockKey: 'acf/gallery',
+            purpose:
+              'Showcase approved property, amenity, and lifestyle photography in a curated gallery.',
+          },
+        ],
+      },
+      {
+        key: 'neighborhood',
+        slug: '/neighborhood',
+        title: 'Neighborhood',
+        order: 140,
+        sections: [
+          {
+            key: 'primary',
+            blockKey: 'acf/text-section',
+            purpose:
+              'Introduce the surrounding neighborhood using approved location facts and brand voice.',
+          },
+          {
+            key: 's2-poi',
+            blockKey: 'acf/poi',
+            purpose:
+              'Highlight verified nearby destinations, conveniences, and points of interest.',
+          },
+        ],
+      },
+    ],
     offeringKinds: ['rental_unit'],
     intent: 'tour',
     outcome: 'tour_scheduled',
@@ -493,6 +620,62 @@ const ARCHETYPE_PACKS = [
       blockKey: 'acf/offering-browser',
       purpose: 'Present sourced home plans, homesites, and available homes.',
     },
+    additionalPages: [
+      {
+        key: 'amenities',
+        slug: '/amenities',
+        title: 'Amenities',
+        order: 120,
+        sections: [
+          {
+            key: 'primary',
+            blockKey: 'acf/feature-section',
+            purpose:
+              'Introduce the community amenity experience with approved photography and brand voice.',
+          },
+          {
+            key: 's2-grid',
+            blockKey: 'acf/content-grid',
+            purpose:
+              'Present the full set of community amenities sourced from approved property truth.',
+          },
+        ],
+      },
+      {
+        key: 'gallery',
+        slug: '/gallery',
+        title: 'Gallery',
+        order: 130,
+        sections: [
+          {
+            key: 'primary',
+            blockKey: 'acf/gallery',
+            purpose:
+              'Showcase approved community, home, and lifestyle photography in a curated gallery.',
+          },
+        ],
+      },
+      {
+        key: 'neighborhood',
+        slug: '/neighborhood',
+        title: 'Neighborhood',
+        order: 140,
+        sections: [
+          {
+            key: 'primary',
+            blockKey: 'acf/text-section',
+            purpose:
+              'Introduce the surrounding area using approved location facts and brand voice.',
+          },
+          {
+            key: 's2-poi',
+            blockKey: 'acf/poi',
+            purpose:
+              'Highlight verified nearby destinations, schools, and points of interest.',
+          },
+        ],
+      },
+    ],
     offeringKinds: ['home_plan', 'quick_move_in_home', 'homesite'],
     intent: 'sales_inquiry',
     outcome: 'sales_lead_created',
