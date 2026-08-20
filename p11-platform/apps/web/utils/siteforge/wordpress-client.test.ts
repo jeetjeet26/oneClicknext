@@ -329,7 +329,9 @@ describe('wordpress-client', () => {
       .mockResolvedValueOnce(jsonResponse({ id: 9001 }))
       .mockResolvedValueOnce(jsonResponse({}))
       .mockResolvedValueOnce(jsonResponse({}))
+      .mockResolvedValueOnce(jsonResponse([]))
       .mockResolvedValueOnce(jsonResponse({ id: 44 }))
+      .mockResolvedValueOnce(jsonResponse([]))
       .mockResolvedValueOnce(jsonResponse({ id: 501 }))
       .mockResolvedValueOnce(jsonResponse({ namespaces: ['wp/v2'] }))
       .mockResolvedValueOnce(
@@ -402,15 +404,27 @@ describe('wordpress-client', () => {
       widthPreset: 'content',
     })
 
-    // Classic menu created and assigned to the primary location
-    const menuCall = fetchMock.mock.calls[10]
+    // Pages carry their plan position so menu_order-based listings (including
+    // the theme's no-menu fallback) match the approved navigation order.
+    expect(createPageBody.menu_order).toBe(1)
+
+    // Classic menu looked up, created, and assigned to the primary location
+    const menuLookupCall = fetchMock.mock.calls[10]
+    expect(menuLookupCall[0]).toBe(
+      'https://site.example.com/wp-json/wp/v2/menus?per_page=100&context=edit'
+    )
+    const menuCall = fetchMock.mock.calls[11]
     expect(menuCall[0]).toBe('https://site.example.com/wp-json/wp/v2/menus')
     expect(JSON.parse(String(menuCall[1]?.body))).toEqual({
       name: 'Primary Navigation',
       locations: ['primary'],
     })
 
-    const menuItemCall = fetchMock.mock.calls[11]
+    const menuItemsLookupCall = fetchMock.mock.calls[12]
+    expect(menuItemsLookupCall[0]).toBe(
+      'https://site.example.com/wp-json/wp/v2/menu-items?menus=44&per_page=100&context=edit'
+    )
+    const menuItemCall = fetchMock.mock.calls[13]
     expect(menuItemCall[0]).toBe('https://site.example.com/wp-json/wp/v2/menu-items')
     expect(JSON.parse(String(menuItemCall[1]?.body))).toEqual({
       title: 'Home',
@@ -421,6 +435,84 @@ describe('wordpress-client', () => {
       object: 'page',
       object_id: 9001,
     })
+  })
+
+  it('converges an existing Primary Navigation menu instead of colliding', async () => {
+    const client = new WordPressAPIClient('https://example.com', {
+      username: 'admin',
+      password: 'app-password',
+    })
+
+    fetchMock
+      // Lookup finds the menu left behind by a previous render.
+      .mockResolvedValueOnce(
+        jsonResponse([{ id: 44, name: 'Primary Navigation' }])
+      )
+      // Location is reasserted on the existing menu.
+      .mockResolvedValueOnce(jsonResponse({ id: 44 }))
+      // Stale items from the previous render are removed.
+      .mockResolvedValueOnce(jsonResponse([{ id: 7 }, { id: 8 }]))
+      .mockResolvedValueOnce(jsonResponse({ deleted: true }))
+      .mockResolvedValueOnce(jsonResponse({ deleted: true }))
+      // Fresh items are recreated in plan order.
+      .mockResolvedValueOnce(jsonResponse({ id: 501 }))
+      .mockResolvedValueOnce(jsonResponse({ id: 502 }))
+
+    await client.createNavigation(
+      {
+        navigation: {
+          structure: 'primary',
+          items: [
+            { label: 'Home', slug: 'home', priority: 'high' },
+            { label: 'Amenities', slug: 'amenities', priority: 'medium' },
+          ],
+          cta: { text: 'Tour', style: 'primary' },
+        },
+        pages: [
+          { slug: 'home', title: 'Home', purpose: 'Convert', sections: [] },
+          {
+            slug: 'amenities',
+            title: 'Amenities',
+            purpose: 'Showcase',
+            sections: [],
+          },
+        ],
+        designDecisions: {
+          colorStrategy: '',
+          imageStrategy: '',
+          contentDensity: 'balanced',
+          conversionOptimization: [],
+        },
+      },
+      new Map([
+        ['home', 9001],
+        ['amenities', 9002],
+      ])
+    )
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      'https://example.com/wp-json/wp/v2/menus?per_page=100&context=edit'
+    )
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      'https://example.com/wp-json/wp/v2/menus/44'
+    )
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toEqual({
+      locations: ['primary'],
+    })
+    expect(fetchMock.mock.calls[3][0]).toBe(
+      'https://example.com/wp-json/wp/v2/menu-items/7?force=true'
+    )
+    expect(fetchMock.mock.calls[3][1]?.method).toBe('DELETE')
+    expect(fetchMock.mock.calls[4][0]).toBe(
+      'https://example.com/wp-json/wp/v2/menu-items/8?force=true'
+    )
+
+    const firstItem = JSON.parse(String(fetchMock.mock.calls[5][1]?.body))
+    expect(firstItem.title).toBe('Home')
+    expect(firstItem.menu_order).toBe(1)
+    const secondItem = JSON.parse(String(fetchMock.mock.calls[6][1]?.body))
+    expect(secondItem.title).toBe('Amenities')
+    expect(secondItem.menu_order).toBe(2)
   })
 
   it('falls back to block-theme navigation when classic menus are unavailable', async () => {
@@ -453,7 +545,9 @@ describe('wordpress-client', () => {
       new Map([['home', 9001]])
     )
 
-    expect(fetchMock.mock.calls[0][0]).toBe('https://example.com/wp-json/wp/v2/menus')
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      'https://example.com/wp-json/wp/v2/menus?per_page=100&context=edit'
+    )
     expect(fetchMock.mock.calls[1][0]).toBe('https://example.com/wp-json/wp/v2/navigation')
   })
 

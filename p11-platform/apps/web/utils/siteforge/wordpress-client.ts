@@ -889,7 +889,11 @@ export class WordPressAPIClient {
   /**
    * Create WordPress page with ACF blocks
    */
-  async createPage(page: GeneratedPage, mediaIds: Map<string, number>): Promise<number> {
+  async createPage(
+    page: GeneratedPage,
+    mediaIds: Map<string, number>,
+    menuOrder?: number
+  ): Promise<number> {
     const blocks = page.sections.map(section => 
       convertToGutenbergBlock(section, mediaIds)
     )
@@ -908,6 +912,9 @@ export class WordPressAPIClient {
       slug: page.slug,
       status: 'publish',
       content,
+      // Plan order keeps any menu_order-based listing (including the theme's
+      // no-menu fallback) aligned with the approved navigation.
+      ...(typeof menuOrder === 'number' ? { menu_order: menuOrder } : {}),
       // ACF blocks carry their data inside block attrs; meta mapping is optional
     })
     
@@ -1132,14 +1139,42 @@ export class WordPressAPIClient {
     pageIdsBySlug?: Map<string, number>
   ): Promise<void> {
     const menuLocation = process.env.SITEFORGE_WP_MENU_LOCATION || 'primary'
+    const menuName = 'Primary Navigation'
 
-    const menuResponse = await this.post('/menus', {
-      name: 'Primary Navigation',
-      locations: [menuLocation],
-    })
+    // The shared canonical-preview WordPress keeps menus across renders, so a
+    // blind create collides with 400 menu_exists — which the block-theme
+    // fallback classifier used to swallow, silently dropping every navigation
+    // update after the first render. Converge instead: find-or-create the
+    // menu, reassert its location on every render, and rebuild its items to
+    // exactly match the approved navigation order.
+    const existingMenus = await this.get<Array<{ id?: number; name?: string }>>(
+      '/menus?per_page=100&context=edit'
+    )
+    const existingMenu = Array.isArray(existingMenus)
+      ? existingMenus.find(menu => menu?.name === menuName)
+      : undefined
+
+    const menuResponse =
+      existingMenu && typeof existingMenu.id === 'number'
+        ? await this.post(`/menus/${existingMenu.id}`, {
+            locations: [menuLocation],
+          })
+        : await this.post('/menus', {
+            name: menuName,
+            locations: [menuLocation],
+          })
     const menuId = typeof menuResponse.id === 'number' ? menuResponse.id : undefined
     if (!menuId) {
       throw new Error('WordPress API did not return a menu id')
+    }
+
+    const existingItems = await this.get<Array<{ id?: number }>>(
+      `/menu-items?menus=${menuId}&per_page=100&context=edit`
+    )
+    for (const item of Array.isArray(existingItems) ? existingItems : []) {
+      if (typeof item?.id === 'number') {
+        await this.delete(`/menu-items/${item.id}?force=true`)
+      }
     }
 
     for (let i = 0; i < items.length; i++) {
@@ -1271,6 +1306,19 @@ export class WordPressAPIClient {
         body: JSON.stringify(data),
       },
       `WordPress API POST ${endpoint} failed`
+    )
+  }
+
+  private async delete(endpoint: string): Promise<Record<string, unknown>> {
+    return this.request<Record<string, unknown>>(
+      endpoint,
+      {
+        method: 'DELETE',
+        headers: {
+          Authorization: this.getAuthHeader(),
+        },
+      },
+      `WordPress API DELETE ${endpoint} failed`
     )
   }
 
@@ -1521,8 +1569,8 @@ export async function deployToWordPress(
   await reportProgress(onProgress, 'Publishing generated pages to WordPress...')
   const createdPages: Array<{ id: number; title: string; purpose: string }> = []
   const pageIdsBySlug = new Map<string, number>()
-  for (const page of architecture.pages) {
-    const pageId = await wpClient.createPage(page, mediaIds)
+  for (const [pageIndex, page] of architecture.pages.entries()) {
+    const pageId = await wpClient.createPage(page, mediaIds, pageIndex + 1)
     createdPages.push({
       id: pageId,
       title: page.title,
@@ -1593,8 +1641,8 @@ export async function deployToExistingWordPress(args: {
   await reportProgress(onProgress, 'Publishing generated pages to existing WordPress...')
   const createdPages: Array<{ id: number; title: string; purpose: string }> = []
   const pageIdsBySlug = new Map<string, number>()
-  for (const page of pages) {
-    const pageId = await wpClient.createPage(page, mediaIds)
+  for (const [pageIndex, page] of pages.entries()) {
+    const pageId = await wpClient.createPage(page, mediaIds, pageIndex + 1)
     createdPages.push({
       id: pageId,
       title: page.title,
