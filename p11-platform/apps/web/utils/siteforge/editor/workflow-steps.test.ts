@@ -56,6 +56,28 @@ describe('semantic edit release identity', () => {
     )
     expect(source).toContain('sourceContentHash: snapshot.artifact.contentHash')
   })
+
+  it('applies validated extensions automatically inside the workflow with no approval ceremony', async () => {
+    const source = await readFile(
+      new URL('./workflow-steps.ts', import.meta.url),
+      'utf8'
+    )
+    const requestInsertIndex = source.indexOf(
+      ".from('siteforge_runtime_extension_requests')"
+    )
+    const autoApplyIndex = source.indexOf(
+      'await approveAndPublishRuntimeExtension'
+    )
+
+    // Solo-operator doctrine: the machine policy publishes the validated
+    // overlay revision inline. Nothing may reintroduce a state where an
+    // extension waits for a UI or a human decision.
+    expect(autoApplyIndex).toBeGreaterThan(requestInsertIndex)
+    expect(source).not.toContain('awaitingExtensionApproval: true')
+    expect(source).toContain(
+      "decisionReason: 'siteforge.policy:validated_bounded_extension:v1'"
+    )
+  })
 })
 
 describe('rendered self-verification', () => {

@@ -56,7 +56,7 @@ export async function siteForgeSemanticEditWorkflow(
       'validating_capabilities',
       55,
       proposal.extensionRequest
-        ? 'Recording an approval-required runtime extension'
+        ? 'Applying the validated runtime extension automatically'
         : 'Confirming semantic operations need no code fallback'
     )
 

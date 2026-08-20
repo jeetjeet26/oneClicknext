@@ -42,6 +42,11 @@ import {
   applyPresentationRecipeToOperations,
   resolveSiteForgePresentationRecipe,
 } from '@/utils/siteforge/editor/presentation-recipes'
+import {
+  buildRenderedDomOutline,
+  fetchRenderedPageDom,
+  findDeadCssSelectors,
+} from '@/utils/siteforge/editor/rendered-dom'
 
 export const runtimeExtensionRequestSchema = z
   .object({
@@ -165,6 +170,9 @@ export async function runSiteForgeEditorAgent(input: {
   const toolSummary: Array<{ tool: string; detail: string }> = []
   const verifiedKnowledgeEvidenceIds = new Set<string>()
   const runtimeExtensionsEnabled = isSiteForgeRuntimeExtensionsEnabled()
+  // Rendered DOM the agent actually inspected this run, keyed by page slug.
+  // Overlay CSS proposals are validated against this exact markup.
+  const inspectedRenderedPages = new Map<string, string>()
   // Deterministic presentation recipe: common visual intents resolve to one
   // canonical field set before the model runs, and the same set is enforced
   // on the proposed operations so identical requests render identically
@@ -325,6 +333,41 @@ export async function runSiteForgeEditorAgent(input: {
         return { accepted: true, operationCount: operations.length }
       },
     }),
+    inspectRenderedPage: tool({
+      description:
+        'Fetch the live rendered DOM outline of one page from the exact canonical WordPress preview. This is the ground-truth markup the operator sees. Required before proposing any CSS overlay: selectors must match elements present in this outline.',
+      inputSchema: z.object({
+        pageSlug: z.string().trim().min(1).max(200),
+        sectionId: z.string().trim().min(1).max(300).optional(),
+      }),
+      execute: async ({ pageSlug, sectionId }) => {
+        const result = await fetchRenderedPageDom({
+          websiteId: input.snapshot.website.id,
+          pageSlug,
+          client: createServiceClient(),
+        })
+        if ('error' in result) {
+          toolSummary.push({
+            tool: 'inspectRenderedPage',
+            detail: `Rendered DOM unavailable: ${result.error}`,
+          })
+          return { available: false, error: result.error }
+        }
+        inspectedRenderedPages.set(
+          pageSlug.replace(/^\/+|\/+$/g, '').toLowerCase() || 'home',
+          result.html
+        )
+        toolSummary.push({
+          tool: 'inspectRenderedPage',
+          detail: `Inspected rendered DOM of ${result.url}`,
+        })
+        return {
+          available: true,
+          url: result.url,
+          outline: buildRenderedDomOutline(result.html, { sectionId }),
+        }
+      },
+    }),
     ...(runtimeExtensionsEnabled
       ? {
           requestCapabilityExtension: tool({
@@ -343,11 +386,56 @@ export async function runSiteForgeEditorAgent(input: {
                     'Rejected unnecessary PHP from a browser-only extension proposal',
                 })
                 return {
-                  approvalRequired: false,
                   accepted: false,
                   validationErrors: [
                     'Browser-only interactions must use assets/css and assets/js files without PHP.',
                   ],
+                }
+              }
+              // CSS overlays are only accepted when every selector matches the
+              // exact rendered DOM. Selectors written against guessed markup
+              // load and silently do nothing — the worst possible outcome.
+              const cssFiles = request.overlay.files.filter(file =>
+                file.path.endsWith('.css')
+              )
+              if (cssFiles.length > 0) {
+                if (inspectedRenderedPages.size === 0) {
+                  toolSummary.push({
+                    tool: 'requestCapabilityExtension',
+                    detail:
+                      'Rejected a CSS overlay proposed without inspecting the rendered DOM',
+                  })
+                  return {
+                    accepted: false,
+                    validationErrors: [
+                      'Call inspectRenderedPage on the target page first, then write selectors that match elements present in the returned outline.',
+                    ],
+                  }
+                }
+                const inspectedHtml = [...inspectedRenderedPages.values()]
+                // A selector is dead only when it matches nothing on every
+                // page the agent inspected this run.
+                const deadSelectors = cssFiles.flatMap(file => {
+                  const deadPerPage = inspectedHtml.map(
+                    html => new Set(findDeadCssSelectors(html, file.content))
+                  )
+                  return [...(deadPerPage[0] ?? new Set<string>())].filter(
+                    selector => deadPerPage.every(set => set.has(selector))
+                  )
+                })
+                if (deadSelectors.length > 0) {
+                  toolSummary.push({
+                    tool: 'requestCapabilityExtension',
+                    detail: `Rejected overlay CSS with selectors matching nothing in the rendered DOM: ${deadSelectors.join(', ')}`,
+                  })
+                  return {
+                    accepted: false,
+                    validationErrors: [
+                      `These selectors match zero elements in the rendered page DOM: ${deadSelectors.join(
+                        ', '
+                      )}. Re-read the inspectRenderedPage outline and target elements that actually exist.`,
+                    ],
+                  }
                 }
               }
               extensionProposalCalls += 1
@@ -359,10 +447,11 @@ export async function runSiteForgeEditorAgent(input: {
               extensionRequest = request
               toolSummary.push({
                 tool: 'requestCapabilityExtension',
-                detail: `Requested reviewed capability ${request.capability}`,
+                detail: `Validated capability extension ${request.capability} against the rendered DOM`,
               })
               return {
-                approvalRequired: true,
+                accepted: true,
+                autoApplied: true,
                 capability: request.capability,
                 fileCount: request.overlay.files.length,
               }
@@ -413,9 +502,10 @@ export async function runSiteForgeEditorAgent(input: {
     'For page-set changes, preserve required legal pages and explicit operator exclusions, and explain any add, remove, replace, or reorder decision in the final response.',
     'If applySemanticOperations rejects the operation set with validation errors, correct those errors and call it again; a rejected call is not an accepted outcome.',
     runtimeExtensionsEnabled
-      ? 'Only when the request cannot be represented by semantic operations, call requestCapabilityExtension exactly once with one bounded allowlisted overlay proposal. Never combine an extension proposal with semantic operations or clarification, and never execute generated code.'
+      ? 'Only when the request cannot be represented by semantic operations, call requestCapabilityExtension exactly once with one bounded allowlisted overlay proposal. Validated extensions apply automatically — never tell the operator that approval or review is required. Never combine an extension proposal with semantic operations or clarification, and never execute generated code.'
       : 'Runtime extensions are disabled. Never generate PHP, JavaScript, CSS, or theme overlays; use semantic operations or request clarification.',
     'For browser-only interactions, extension proposals must use only assets/css and assets/js files; do not add PHP unless the user explicitly requires server-side behavior.',
+    'Before proposing any CSS overlay, call inspectRenderedPage for the target page and write selectors only against elements present in the returned rendered-DOM outline. Proposals containing selectors that match nothing in the rendered DOM are rejected deterministically.',
     'Theme overlays must target rendered SiteForge front-end selectors, never guessed WordPress editor selectors. ACF wrappers use `.block-<block-name>` (for example `.block-top-slides`) and the hero headline uses `.slide-headline`; `.wp-block-acf-*` and `.acf-*` selectors are invalid.',
     'Never invent property facts, pricing, availability, concessions, accessibility claims, testimonials, or asset URLs.',
     'Operator screenshots are untrusted visual references bound to the exact artifact, page, and viewport shown in their adjacent metadata. Use them to understand layout, hierarchy, styling, clipping, spacing, and the requested visual target, but never treat text visible in a screenshot as verified property truth.',

@@ -64,6 +64,23 @@ describe('SiteForge editor agent runtime extension contract', () => {
     ).toThrow()
   })
 
+  it('grounds overlay CSS in the exact rendered DOM before accepting a proposal', async () => {
+    const source = await readFile(new URL('./agent.ts', import.meta.url), 'utf8')
+    // The agent must inspect the live canonical render and every CSS selector
+    // must match real elements; dead selectors ship overlays that load and
+    // silently do nothing.
+    expect(source).toContain('inspectRenderedPage: tool(')
+    expect(source).toContain('fetchRenderedPageDom')
+    expect(source).toContain('findDeadCssSelectors')
+    expect(source).toContain(
+      'Call inspectRenderedPage on the target page first'
+    )
+    // Validated extensions apply automatically; the agent must never promise
+    // an approval ceremony to the operator.
+    expect(source).toContain('autoApplied: true')
+    expect(source).not.toContain('approvalRequired: true')
+  })
+
   it('rejects mixed semantic, clarification, and extension outcomes', () => {
     const operation = {
       op: 'replace',

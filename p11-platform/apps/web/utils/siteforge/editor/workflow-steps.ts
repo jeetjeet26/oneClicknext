@@ -23,6 +23,10 @@ import {
 import { isSiteForgeRuntimeExtensionsEnabled } from '@/utils/siteforge/editor/feature'
 import { validateAndStoreThemeOverlay } from '@/utils/siteforge/editor/overlay'
 import {
+  approveAndPublishRuntimeExtension,
+  ExtensionApprovalError,
+} from '@/utils/siteforge/editor/extension-approval'
+import {
   deriveOverlayRenderedEffectContract,
   overlayRuntimeCompatibilitySchema,
 } from '@/utils/siteforge/editor/overlay-contract'
@@ -307,7 +311,9 @@ export async function validateAndPublishSemanticEdit(
         immutable_package_sha256: overlay.packageSha256,
         runtime_compatibility: JSON.stringify(runtimeCompatibility),
       })
-      .select('id')
+      .select(
+        'id, org_id, property_id, website_id, artifact_id, capability, reason, requested_behavior, status, immutable_package_sha256, runtime_compatibility, decision_by, created_at'
+      )
       .single()
     if (extensionError || !extension) {
       throw new Error(
@@ -316,13 +322,31 @@ export async function validateAndPublishSemanticEdit(
         }`
       )
     }
-    return {
-      artifactId: null,
-      contentHash: null,
-      version: null,
-      awaitingClarification: false,
-      awaitingExtensionApproval: true,
-      extensionRequestId: extension.id,
+    // Solo-operator doctrine: validated extensions apply automatically. The
+    // deterministic machine policy publishes the overlay revision inline —
+    // there is no approval ceremony and no dependency on any UI being open.
+    // The workflow then re-renders and verifies the published revision like
+    // any other edit, with undo available.
+    try {
+      const { artifact: published } = await approveAndPublishRuntimeExtension({
+        extension,
+        decisionBy: input.userId,
+        decisionReason: 'siteforge.policy:validated_bounded_extension:v1',
+        client,
+      })
+      return {
+        artifactId: published.id,
+        contentHash: published.content_hash,
+        version: published.version,
+        awaitingClarification: false,
+        awaitingExtensionApproval: false,
+        extensionRequestId: extension.id,
+      }
+    } catch (error) {
+      if (error instanceof ExtensionApprovalError) {
+        throw new FatalError(error.message)
+      }
+      throw error
     }
   }
   const editScope = deriveSiteForgeEditorScopeForOperations({
