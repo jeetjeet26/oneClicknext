@@ -434,28 +434,28 @@ function generateReportHTML(
   <h2>Executive Snapshot</h2>
   <div class="metric-grid">
     <div class="metric-card">
-      <div class="metric-value">${latestScore ? Math.round(latestScore.overall_score) : 'N/A'}</div>
-      <div class="metric-label">GEO Score</div>
+      <div class="metric-value">${rankSummary.brandedRecognitionPct !== null ? `${rankSummary.brandedRecognitionPct}%` : 'N/A'}</div>
+      <div class="metric-label">Branded Recognition</div>
     </div>
     <div class="metric-card">
-      <div class="metric-value">${latestScore ? Math.round(latestScore.visibility_pct) : 'N/A'}%</div>
-      <div class="metric-label">Visibility</div>
+      <div class="metric-value">${rankSummary.nonBrandedVisibilityPct !== null ? `${rankSummary.nonBrandedVisibilityPct}%` : 'N/A'}</div>
+      <div class="metric-label">Discovery Mention</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-value">${latestScore ? Math.round(latestScore.overall_score) : 'N/A'}</div>
+      <div class="metric-label">Citation Quality</div>
     </div>
     <div class="metric-card">
       <div class="metric-value">${rankSummary.nonBrandedDiscoveryRank !== null ? rankSummary.nonBrandedDiscoveryRank.toFixed(1) : 'N/A'}</div>
       <div class="metric-label">Discovery Rank</div>
     </div>
-    <div class="metric-card">
-      <div class="metric-value">${queries?.length || 0}</div>
-      <div class="metric-label">Queries Tracked</div>
-    </div>
   </div>
 
   <h3>Client Readout</h3>
   <ul style="line-height: 1.8;">
-    <li><strong>Where you are:</strong> Overall AI visibility score is <strong>${latestScore ? Math.round(latestScore.overall_score) : 'N/A'}/100</strong> ${getScoreBucket(latestScore?.overall_score)} with <strong>${latestScore ? Math.round(latestScore.visibility_pct) : 0}%</strong> query visibility.</li>
-    <li><strong>Discovery rank:</strong> ${rankSummary.nonBrandedDiscoveryRank !== null ? `Average #${rankSummary.nonBrandedDiscoveryRank.toFixed(1)} across non-branded category, local, and comparison prompts.` : 'Not enough non-branded ranking data yet.'}</li>
-    <li><strong>Branded recognition:</strong> ${rankSummary.brandedRecognitionPct !== null ? `${rankSummary.brandedRecognitionPct}% entity recognition on branded prompts. This is tracked separately from discovery rank.` : 'No branded prompt data yet.'}</li>
+    <li><strong>Where you are:</strong> Branded recognition is <strong>${rankSummary.brandedRecognitionPct !== null ? `${rankSummary.brandedRecognitionPct}%` : 'N/A'}</strong> and discovery mention is <strong>${rankSummary.nonBrandedVisibilityPct !== null ? `${rankSummary.nonBrandedVisibilityPct}%` : 'N/A'}</strong>. Citation quality is <strong>${latestScore ? Math.round(latestScore.overall_score) : 'N/A'}/100</strong> ${getScoreBucket(latestScore?.overall_score)}.</li>
+    <li><strong>Discovery rank:</strong> ${rankSummary.nonBrandedDiscoveryRank !== null ? `Average #${rankSummary.nonBrandedDiscoveryRank.toFixed(1)} across category and local prompts.` : 'Not enough non-branded ranking data yet.'}</li>
+    <li><strong>Branded recognition:</strong> ${rankSummary.brandedRecognitionPct !== null ? `${rankSummary.brandedRecognitionPct}% entity recognition on branded prompts. This is tracked separately from discovery mention.` : 'No branded prompt data yet.'}</li>
     <li><strong>Best surface:</strong> ${bestSurface ? `${escapeHtml(bestSurface.label)} at ${Math.round(bestSurface.overallScore || 0)}/100` : 'More run data needed'}.</li>
     <li><strong>Largest surface gap:</strong> ${weakestSurface ? `${escapeHtml(weakestSurface.label)} at ${Math.round(weakestSurface.overallScore || 0)}/100` : 'More run data needed'}.</li>
     <li><strong>Weakest prompt cluster:</strong> ${weakestType ? `${escapeHtml(weakestType.type)} at ${weakestType.presencePct}% presence` : 'More query data needed'}.</li>
@@ -524,7 +524,7 @@ function generateReportHTML(
   
   <h3>Historical Performance</h3>
   <p style="color: #6b7280; margin-bottom: 1rem;">
-    Track your GEO Score and Query Presence rate across completed audit batches to identify trends and measure improvement.
+    Track branded recognition, discovery mention, and citation quality across completed audit batches to identify trends. Trend movement is shown in points, not blended visibility percent.
   </p>
   <div class="chart-grid">
     <div class="chart-card">${charts.scoreTrend}</div>
@@ -532,7 +532,7 @@ function generateReportHTML(
   </div>
   <h3>Surface Coverage</h3>
   <p style="color: #6b7280; margin-bottom: 1rem;">
-    The headline GEO Score averages the latest selected surface scores. Surface scores include position, citation link rank, share of voice, and accuracy; visibility is shown separately.
+    The client headline is branded recognition and discovery mention rate on completed ChatGPT, Gemini, Perplexity, and Google AI proxy runs. Citation quality is the secondary 45/25/20/10 composite after collapsing repeats.
   </p>
   <table class="query-table">
     <thead>

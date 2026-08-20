@@ -35,6 +35,8 @@ const LABELS = {
   accuracy: 'Accuracy'
 }
 
+const TITLE = 'Citation quality'
+
 export function ScoreBreakdown({ score, breakdown, compact = false }: ScoreBreakdownProps) {
   const [isExpanded, setIsExpanded] = useState(false)
 
@@ -78,7 +80,7 @@ export function ScoreBreakdown({ score, breakdown, compact = false }: ScoreBreak
         className="flex w-full items-center justify-between text-sm"
       >
         <span className="font-semibold text-gray-900 dark:text-white">
-          Score: {score.toFixed(1)}
+          {TITLE}: {score.toFixed(1)}
         </span>
         <span className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700">
           {isExpanded ? 'Hide' : 'Show'} breakdown

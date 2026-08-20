@@ -3,10 +3,46 @@ import Anthropic from '@anthropic-ai/sdk'
 import { generateRecommendations } from './recommendation-engine'
 import { auditPublicSiteForProperty, type PublicSiteAudit } from './public-site-audit'
 import { getGeoConfig, getSurfaceLabel, getSurfaceMeasurementNote } from './types'
+import { isClientHeadlineSurface, isDiscoveryQuery } from './client-headline'
 
-type SupabaseClient = {
-  from: (table: string) => any
-  rpc: (fn: string, args: Record<string, unknown>) => any
+type QueryResult<T = unknown> = Promise<{ data: T; error: unknown }>
+
+type QueryBuilder<T = unknown> = {
+  select: (columns: string) => QueryBuilder<T>
+  eq: (column: string, value: unknown) => QueryBuilder<T>
+  in: (column: string, values: readonly unknown[]) => QueryBuilder<T>
+  order: (column: string, options?: { ascending?: boolean }) => QueryBuilder<T>
+  limit: (count: number) => QueryBuilder<T>
+  single: () => QueryResult<T>
+  then: QueryResult<T>['then']
+}
+
+export type ReportingDbClient = {
+  from: (table: string) => unknown
+  rpc?: (fn: string, args: Record<string, unknown>) => unknown
+}
+
+function from(client: ReportingDbClient, table: string): QueryBuilder {
+  return client.from(table) as QueryBuilder
+}
+
+type ReportProperty = {
+  name?: string | null
+  address?: { city?: string | null; state?: string | null } | null
+  website_url?: string | null
+}
+
+type RunReportRow = {
+  id: string
+  property_id: string
+  surface: string
+  model_name?: string | null
+  status?: string | null
+  started_at?: string | null
+  finished_at?: string | null
+  geo_scores?: ReportRun['geo_scores']
+  geo_answers?: ReportAnswer[]
+  properties?: ReportProperty | null
 }
 
 export type ReportRun = {
@@ -60,6 +96,7 @@ export type ReportAnswer = {
     id: string
     text: string
     type: string
+    weight?: number | null
   }
   geo_citations?: Array<{
     url: string
@@ -75,6 +112,7 @@ export type ReportQuery = {
   text: string
   type: string
   geo?: string | null
+  weight?: number | null
   run_count?: number | null
 }
 
@@ -154,7 +192,7 @@ export type ReportLlmRecommendation = {
 }
 
 export type ReportData = {
-  property: { name?: string | null; address?: any; website_url?: string | null } | null
+  property: ReportProperty | null
   runs: ReportRun[]
   surfaceSummaries: Array<{
     surface: string
@@ -194,19 +232,17 @@ export type ReportData = {
  * crawl completes; the report falls back to legacy sections in that case.
  */
 async function fetchSiteAuditDeliverables(
-  supabase: SupabaseClient,
+  supabase: ReportingDbClient,
   propertyId: string
 ): Promise<{ siteFindings: ReportSiteFinding[]; llmRoadmap: ReportLlmRecommendation[] }> {
   try {
     const [{ data: findings }, { data: roadmap }] = await Promise.all([
-      supabase
-        .from('geo_site_findings')
+      from(supabase, 'geo_site_findings')
         .select('id, category, detector, severity, title, description, occurrences, affected_urls, affected_url_count, status, owner, notes, first_detected_at, fixed_at')
         .eq('property_id', propertyId)
         .order('category')
         .order('first_detected_at', { ascending: false }),
-      supabase
-        .from('geo_recommendations')
+      from(supabase, 'geo_recommendations')
         .select('id, type, priority, owner, title, narrative, proposed_changes, grounding, status, model_used, created_at')
         .eq('property_id', propertyId)
         .eq('is_current', true),
@@ -230,20 +266,18 @@ async function fetchSiteAuditDeliverables(
 const DEFAULT_RUN_WINDOW = 6
 
 export async function buildPropertyReportData(
-  supabase: SupabaseClient,
+  supabase: ReportingDbClient,
   propertyId: string,
   options: { batchId?: string | null } = {}
 ): Promise<ReportData> {
   const runWindow = Math.max(2, parseInt(process.env.PROPERTYAUDIT_REPORT_RUN_WINDOW || `${DEFAULT_RUN_WINDOW}`, 10))
 
-  const { data: property } = await supabase
-    .from('properties')
+  const { data: property } = await from(supabase, 'properties')
     .select('name, address, website_url')
     .eq('id', propertyId)
     .single()
 
-  let runsQuery = supabase
-    .from('geo_runs')
+  let runsQuery = from(supabase, 'geo_runs')
     .select('id, surface, batch_id, model_name, status, started_at, finished_at, geo_scores(*)')
     .eq('property_id', propertyId)
     .eq('status', 'completed')
@@ -257,20 +291,19 @@ export async function buildPropertyReportData(
 
   const { data: runs } = await runsQuery
 
-  const { data: queries } = await supabase
-    .from('geo_queries')
-    .select('id, text, type, geo, run_count')
+  const { data: queries } = await from(supabase, 'geo_queries')
+    .select('id, text, type, geo, weight, run_count')
     .eq('property_id', propertyId)
     .eq('is_active', true)
 
+  const reportProperty = (property || null) as ReportProperty | null
   const reportRuns = (runs || []) as ReportRun[]
   const reportQueries = (queries || []) as ReportQuery[]
   const runIds = reportRuns.map((r) => r.id)
   let rawAnswers: ReportAnswer[] = []
   if (runIds.length > 0) {
-    const { data } = await supabase
-      .from('geo_answers')
-      .select('*, geo_queries (id, text, type), geo_citations (url, domain, is_brand_domain)')
+    const { data } = await from(supabase, 'geo_answers')
+      .select('*, geo_queries (id, text, type, weight), geo_citations (url, domain, is_brand_domain)')
       .in('run_id', runIds)
     rawAnswers = (data || []) as ReportAnswer[]
   }
@@ -279,8 +312,8 @@ export async function buildPropertyReportData(
   const aggregatedAnswers = aggregateAnswersByQuery(rawAnswers, reportQueries, aiOverviewMap)
 
   const competitors = buildCompetitorsFromAnswers(rawAnswers, {
-    propertyName: property?.name || null,
-    websiteUrl: property?.website_url || null,
+    propertyName: reportProperty?.name || null,
+    websiteUrl: reportProperty?.website_url || null,
   })
 
   const scores = buildReportScores(reportRuns)
@@ -298,7 +331,7 @@ export async function buildPropertyReportData(
   const trends = buildTrends(reportRuns)
   const glossary = buildGlossary()
   const insightsBlock = buildInsights({
-    propertyName: property?.name || 'Property',
+    propertyName: reportProperty?.name || 'Property',
     scores,
     trends,
     queryTypeStats,
@@ -310,7 +343,7 @@ export async function buildPropertyReportData(
   })
 
   const narrative = await maybeGenerateNarrative({
-    propertyName: property?.name || 'Property',
+    propertyName: reportProperty?.name || 'Property',
     insights: insightsBlock,
     recommendationSummary,
     trends,
@@ -324,11 +357,15 @@ export async function buildPropertyReportData(
   const siteAuditDeliverables = await fetchSiteAuditDeliverables(supabase, propertyId)
 
   return {
-    property: property || null,
-    runs: runs || [],
-    surfaceSummaries: buildSurfaceSummaries(runs || []),
-    siteAudit: await auditPublicSiteForProperty(supabase, propertyId, property?.website_url || null),
-    queries: queries || [],
+    property: reportProperty,
+    runs: reportRuns,
+    surfaceSummaries: buildSurfaceSummaries(reportRuns),
+    siteAudit: await auditPublicSiteForProperty(
+      supabase as Parameters<typeof auditPublicSiteForProperty>[0],
+      propertyId,
+      reportProperty?.website_url || null
+    ),
+    queries: reportQueries,
     answers: aggregatedAnswers,
     competitors,
     scores,
@@ -348,18 +385,17 @@ export async function buildPropertyReportData(
 }
 
 export async function buildRunReportData(
-  supabase: SupabaseClient,
+  supabase: ReportingDbClient,
   runId: string
 ): Promise<ReportData | null> {
-  const { data: run, error: runError } = await supabase
-    .from('geo_runs')
+  const { data: run, error: runError } = await from(supabase, 'geo_runs')
     .select(`
       *,
       properties (name, address, website_url),
       geo_scores (*),
       geo_answers (
         *,
-        geo_queries (id, text, type),
+        geo_queries (id, text, type, weight),
         geo_citations (url, domain, is_brand_domain)
       )
     `)
@@ -368,35 +404,36 @@ export async function buildRunReportData(
 
   if (runError || !run) return null
 
-  const propertyId = run.property_id as string
+  const typedRun = run as RunReportRow
+  const propertyId = typedRun.property_id
   const recommendationsResult = await generateRecommendations(propertyId, runId)
   const recommendationSummary = buildRecommendationSummary(recommendationsResult.recommendations)
 
-  const rawAnswers = run.geo_answers || []
-  const queries = (run.geo_answers || [])
-    .map((a: any) => a.geo_queries)
-    .filter(Boolean)
+  const rawAnswers = typedRun.geo_answers || []
+  const queries = rawAnswers
+    .map((answer) => answer.geo_queries)
+    .filter((query): query is NonNullable<ReportAnswer['geo_queries']> => Boolean(query))
   const uniqueQueries = new Map<string, ReportQuery>()
-  queries.forEach((q: ReportQuery) => {
-    if (q?.id) uniqueQueries.set(q.id, q)
+  queries.forEach((query) => {
+    uniqueQueries.set(query.id, query)
   })
 
-  const scores = run.geo_scores ? [run.geo_scores[0]] : []
+  const scores = (typedRun.geo_scores || []).filter(Boolean)
   const runs = [{
-    id: run.id,
-    surface: run.surface,
-    model_name: run.model_name,
-    status: run.status,
-    started_at: run.started_at,
-    finished_at: run.finished_at,
-    geo_scores: run.geo_scores
+    id: typedRun.id,
+    surface: typedRun.surface,
+    model_name: typedRun.model_name,
+    status: typedRun.status,
+    started_at: typedRun.started_at,
+    finished_at: typedRun.finished_at,
+    geo_scores: typedRun.geo_scores
   }] as ReportRun[]
 
   const aiOverviewMap = await fetchAiOverviews(supabase, propertyId, Array.from(uniqueQueries.keys()))
   const aggregatedAnswers = aggregateAnswersByQuery(rawAnswers, Array.from(uniqueQueries.values()), aiOverviewMap)
   const competitors = buildCompetitorsFromAnswers(rawAnswers, {
-    propertyName: (run.properties as any)?.name || null,
-    websiteUrl: (run.properties as any)?.website_url || null,
+    propertyName: typedRun.properties?.name || null,
+    websiteUrl: typedRun.properties?.website_url || null,
   })
   const queryTypeStats = buildQueryTypeStats(aggregatedAnswers)
   const rankSummary = buildRankSummary(aggregatedAnswers)
@@ -406,7 +443,7 @@ export async function buildRunReportData(
   const glossary = buildGlossary()
 
   const insightsBlock = buildInsights({
-    propertyName: run.properties?.name || 'Property',
+    propertyName: typedRun.properties?.name || 'Property',
     scores,
     trends,
     queryTypeStats,
@@ -418,7 +455,7 @@ export async function buildRunReportData(
   })
 
   const narrative = await maybeGenerateNarrative({
-    propertyName: run.properties?.name || 'Property',
+    propertyName: typedRun.properties?.name || 'Property',
     insights: insightsBlock,
     recommendationSummary,
     trends,
@@ -432,10 +469,14 @@ export async function buildRunReportData(
   const siteAuditDeliverables = await fetchSiteAuditDeliverables(supabase, propertyId)
 
   return {
-    property: run.properties || null,
+    property: typedRun.properties || null,
     runs,
     surfaceSummaries: buildSurfaceSummaries(runs),
-    siteAudit: await auditPublicSiteForProperty(supabase, propertyId, (run.properties as any)?.website_url || null),
+    siteAudit: await auditPublicSiteForProperty(
+      supabase as Parameters<typeof auditPublicSiteForProperty>[0],
+      propertyId,
+      typedRun.properties?.website_url || null
+    ),
     queries: Array.from(uniqueQueries.values()),
     answers: aggregatedAnswers,
     competitors,
@@ -464,13 +505,13 @@ export function buildCharts(data: {
   const scoreTrend = renderLineChart(
     data.trends.map(t => t.score ?? null),
     data.trends.map(t => t.label),
-    'GEO Score Over Time (0-100)'
+    'Citation Quality Over Time (0-100)'
   )
 
   const visibilityTrend = renderLineChart(
     data.trends.map(t => t.visibility ?? null),
     data.trends.map(t => t.label),
-    'Query Presence Over Time (%)'
+    'Discovery Mention Over Time (%)'
   )
 
   const queryTypeBar = renderBarChart(
@@ -582,7 +623,8 @@ export function aggregateAnswersByQuery(
       geo_queries: {
         id: queryId,
         text: query?.text || latest?.geo_queries?.text || '',
-        type: query?.type || latest?.geo_queries?.type || 'unknown'
+        type: query?.type || latest?.geo_queries?.type || 'unknown',
+        weight: query?.weight ?? latest?.geo_queries?.weight ?? null,
       },
       geo_citations: latest?.geo_citations || [],
       ai_overview_visible: aiOverview?.visible || false,
@@ -623,6 +665,7 @@ function getLatestScoredRunsBySurface(runs: ReportRun[]): ReportRun[] {
 
 export function buildReportScores(runs: ReportRun[]): ReportScore[] {
   const surfaceScores = getLatestScoredRunsBySurface(runs)
+    .filter(run => isClientHeadlineSurface(run.surface))
     .map(run => run.geo_scores?.[0])
     .filter(Boolean) as ReportScore[]
 
@@ -651,23 +694,24 @@ export function buildReportScores(runs: ReportRun[]): ReportScore[] {
 }
 
 async function fetchAiOverviews(
-  supabase: SupabaseClient,
+  supabase: ReportingDbClient,
   propertyId: string,
   queryIds: string[]
 ): Promise<Map<string, { visible: boolean; source_url?: string | null }>> {
+  void queryIds
   const map = new Map<string, { visible: boolean; source_url?: string | null }>()
   
   // Fetch ALL AI Overview data for the property, not just for specific queryIds
   // This allows AI Overview visibility to work independently of historical runs
-  const { data } = await supabase
-    .from('geo_ai_overviews')
+  const { data } = await from(supabase, 'geo_ai_overviews')
     .select('query_id, visible, source_url, observed_at, geo_queries(id, text, type)')
     .eq('property_id', propertyId)
     .order('observed_at', { ascending: false })
 
   // Build map, keeping only the latest observation per query
   // Include all queries, even those that may have been deleted
-  ;(data || []).forEach((row: any) => {
+  const rows = (data || []) as Array<{ query_id?: string | null; visible?: boolean | null; source_url?: string | null }>
+  rows.forEach((row) => {
     const queryId = row.query_id
     if (!queryId) return
     
@@ -745,9 +789,11 @@ function buildQueryTypeStats(answers: ReportAnswer[]) {
 function buildRankSummary(answers: ReportAnswer[]): ReportData['rankSummary'] {
   const brandedAnswers = answers.filter(answer => answer.geo_queries?.type === 'branded')
   const discoveryAnswers = answers.filter(answer =>
-    answer.geo_queries?.type === 'category' ||
-    answer.geo_queries?.type === 'local' ||
-    answer.geo_queries?.type === 'comparison'
+    isDiscoveryQuery({
+      type: answer.geo_queries?.type,
+      text: answer.geo_queries?.text,
+      weight: answer.geo_queries?.weight,
+    })
   )
   const comparisonAnswers = answers.filter(answer => answer.geo_queries?.type === 'comparison')
 
@@ -1012,16 +1058,26 @@ function buildRecommendationSummary(recommendations: Awaited<ReturnType<typeof g
 function buildGlossary(): ReportGlossaryEntry[] {
   return [
     {
-      term: 'GEO Score',
-      definition: 'Weighted score of how well the property appears in LLM search responses.',
+      term: 'Citation Quality',
+      definition: 'Secondary composite of mention position, owned-citation rank, citation share of voice, and accuracy flags after collapsing repeated runs per query.',
       formula: '45% Position + 25% Link Rank + 20% SOV + 10% Accuracy',
-      interpretation: 'Higher is better. The report headline averages the latest selected surface scores; each surface row uses the same component formula. Scores above 75 are considered strong.'
+      interpretation: 'This is not a visibility score. The client headline is branded recognition and discovery mention rate. Citation quality explains how cleanly the property is named and cited when it appears.'
+    },
+    {
+      term: 'Branded Recognition',
+      definition: 'Share of branded prompts where the property is mentioned after collapsing repeats (median presence).',
+      interpretation: 'Answers whether AI systems know the property when the prompt includes its name.'
+    },
+    {
+      term: 'Discovery Mention',
+      definition: 'Share of category and local prompts where the property is mentioned after collapsing repeats. Comparison and generic city-wide “best in city” prompts are excluded from this headline.',
+      interpretation: 'Answers whether AI recommends the property when the prospect has not named it yet.'
     },
     {
       term: 'Visibility / Presence',
       definition: 'Percent of tracked queries where the property is mentioned in the AI response.',
       formula: '(queries_with_presence / total_queries) * 100',
-      interpretation: 'Measures whether your property appears at all. Different from SOV, which measures citation share among sources.'
+      interpretation: 'Blended presence across all prompt types. Prefer branded recognition and discovery mention for client reviews.'
     },
     {
       term: 'LLM Rank',
@@ -1059,7 +1115,6 @@ export function buildInsights(input: {
   aiOverviewSummary: ReportData['aiOverviewSummary']
 }): ReportInsights {
   const latestScore = input.scores[0]
-  const latestVisibility = latestScore?.visibility_pct ?? null
   const trendDelta = calculateTrendDelta(input.trends.map(t => t.score))
 
   const weakestType = [...input.queryTypeStats].sort((a, b) => a.presencePct - b.presencePct)[0]
@@ -1076,7 +1131,7 @@ export function buildInsights(input: {
     highlights.push(`Branded entity recognition is ${input.rankSummary.brandedRecognitionPct}%; treat this separately from discovery rank.`)
   }
   if (input.rankSummary.nonBrandedDiscoveryRank !== null) {
-    risks.push(`Non-branded discovery average rank is #${input.rankSummary.nonBrandedDiscoveryRank.toFixed(1)} across category, local, and comparison prompts.`)
+    risks.push(`Non-branded discovery average rank is #${input.rankSummary.nonBrandedDiscoveryRank.toFixed(1)} across category and local prompts.`)
   }
   if (trendDelta !== null) {
     highlights.push(`Score trend over recent runs is ${trendDelta > 0 ? 'up' : trendDelta < 0 ? 'down' : 'flat'} (${trendDelta > 0 ? '+' : ''}${trendDelta.toFixed(1)} pts).`)

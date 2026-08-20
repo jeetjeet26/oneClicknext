@@ -119,13 +119,13 @@ export function getSurfaceMeasurementNote(surface: Surface | string): string {
 export function getSurfaceModelName(surface: Surface): string {
   switch (surface) {
     case 'openai':
-      return process.env.GEO_OPENAI_MODEL || 'gpt-5.2'
+      return process.env.GEO_OPENAI_MODEL || 'gpt-5.6-sol'
     case 'claude':
       return process.env.GEO_CLAUDE_MODEL || 'claude-sonnet-5'
     case 'chatgpt':
-      return process.env.GEO_CHATGPT_MODEL || process.env.GEO_OPENAI_MODEL || 'gpt-5.2'
+      return process.env.GEO_CHATGPT_MODEL || process.env.GEO_OPENAI_MODEL || 'gpt-5.6-sol'
     case 'gemini':
-      return process.env.GEO_GEMINI_MODEL || 'gemini-2.5-pro'
+      return process.env.GEO_GEMINI_MODEL || 'gemini-3.1-pro-preview'
     case 'perplexity':
       return process.env.GEO_PERPLEXITY_MODEL || 'sonar-pro'
     case 'google_ai':
@@ -259,6 +259,7 @@ export interface NaturalAnalyzeContext {
   expectedState?: string
   brandDomains: string[]
   competitors: string[]
+  searchSources?: WebSearchSource[]
 }
 
 export interface NaturalAnalyzeResult {
@@ -320,6 +321,7 @@ export interface GeoConfig {
   geminiApiKey: string
   perplexityApiKey: string
   openaiModel: string
+  chatgptModel: string
   claudeModel: string
   geminiModel: string
   perplexityModel: string
@@ -336,9 +338,10 @@ export function getGeoConfig(): GeoConfig {
     anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
     geminiApiKey: process.env.GOOGLE_GEMINI_API_KEY || '',
     perplexityApiKey: process.env.PERPLEXITY_API_KEY || '',
-    openaiModel: process.env.GEO_OPENAI_MODEL || 'gpt-5.2',
+    openaiModel: process.env.GEO_OPENAI_MODEL || 'gpt-5.6-sol',
+    chatgptModel: process.env.GEO_CHATGPT_MODEL || process.env.GEO_OPENAI_MODEL || 'gpt-5.6-sol',
     claudeModel: process.env.GEO_CLAUDE_MODEL || 'claude-sonnet-5',
-    geminiModel: process.env.GEO_GEMINI_MODEL || 'gemini-2.5-pro',
+    geminiModel: process.env.GEO_GEMINI_MODEL || 'gemini-3.1-pro-preview',
     perplexityModel: process.env.GEO_PERPLEXITY_MODEL || 'sonar-pro',
     googleProxyModel: process.env.GEO_GOOGLE_PROXY_MODEL || process.env.GEO_GEMINI_MODEL || 'google-serp-proxy',
     temperature: parseFloat(process.env.GEO_TEMPERATURE || '0'),

@@ -19,12 +19,25 @@ export { GoogleProxyNaturalConnector } from './google-proxy-natural-connector'
 export {
   evaluateAnswer,
   scoreAnswer,
+  scoreCollapsedMetrics,
+  reconcileCitationFlags,
+  mergeSearchSourcesIntoAnswer,
   aggregateScores,
   getScoreBucket,
   getScoreColor,
   getScoreBgColor,
   type ScoreBucket
 } from './evaluator'
+
+export {
+  CLIENT_HEADLINE_SURFACES,
+  isClientHeadlineSurface,
+  isBrandedQuery,
+  isDiscoveryQuery,
+  isGenericCityCategoryQuery,
+  buildHeadlineRates,
+  buildClientHeadline,
+} from './client-headline'
 
 
 

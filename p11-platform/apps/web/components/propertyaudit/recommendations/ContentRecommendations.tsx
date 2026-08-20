@@ -365,43 +365,30 @@ export function ContentRecommendations({ propertyId, runId }: ContentRecommendat
             ) : rec.modelBreakdown && (
               <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/10 border border-blue-200 dark:border-blue-900 rounded-lg">
                 <div className="text-xs font-medium text-blue-900 dark:text-blue-100 mb-2">
-                  Model Performance:
+                  Surface Performance:
                 </div>
                 <div className="grid grid-cols-2 gap-3 text-sm">
-                  {rec.modelBreakdown.openai && (
-                    <div>
+                  {Object.entries(rec.modelBreakdown.surfaces || {}).map(([surface, perf]) => (
+                    perf ? (
+                    <div key={surface}>
                       <div className="font-medium text-blue-800 dark:text-blue-200 mb-1">
-                        OpenAI
+                        {surface}
                       </div>
                       <div className="text-xs space-y-1">
-                        <div className={rec.modelBreakdown.openai.presence ? 'text-green-600' : 'text-red-600'}>
-                          {rec.modelBreakdown.openai.presence ? '✓' : '✗'} {rec.modelBreakdown.openai.presence ? 'Present' : 'Absent'}
+                        <div className={perf.presence ? 'text-green-600' : 'text-red-600'}>
+                          {perf.presence ? '✓' : '✗'} {perf.presence ? 'Present' : 'Absent'}
                         </div>
-                        {rec.modelBreakdown.openai.rank && (
-                          <div>Rank: #{rec.modelBreakdown.openai.rank}</div>
+                        {perf.rank && (
+                          <div>Rank: #{perf.rank}</div>
                         )}
                       </div>
                     </div>
-                  )}
-                  {rec.modelBreakdown.claude && (
-                    <div>
-                      <div className="font-medium text-blue-800 dark:text-blue-200 mb-1">
-                        Claude
-                      </div>
-                      <div className="text-xs space-y-1">
-                        <div className={rec.modelBreakdown.claude.presence ? 'text-green-600' : 'text-red-600'}>
-                          {rec.modelBreakdown.claude.presence ? '✓' : '✗'} {rec.modelBreakdown.claude.presence ? 'Present' : 'Absent'}
-                        </div>
-                        {rec.modelBreakdown.claude.rank && (
-                          <div>Rank: #{rec.modelBreakdown.claude.rank}</div>
-                        )}
-                      </div>
-                    </div>
-                  )}
+                    ) : null
+                  ))}
                 </div>
                 {rec.modelBreakdown.affectedModels && rec.modelBreakdown.affectedModels.length > 0 && (
                   <div className="mt-2 text-xs text-blue-700 dark:text-blue-300">
-                    Affects: {rec.modelBreakdown.affectedModels.map(m => m.toUpperCase()).join(', ')}
+                    Affects: {rec.modelBreakdown.affectedModels.join(', ')}
                   </div>
                 )}
               </div>

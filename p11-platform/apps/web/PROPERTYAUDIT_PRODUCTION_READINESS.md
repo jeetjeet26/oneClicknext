@@ -28,14 +28,14 @@ Surface providers:
 - `SERPAPI_API_KEY`: required for Google AI proxy measurement.
 - `ANTHROPIC_API_KEY`: optional fallback analyzer / legacy Claude support.
 
-Optional model overrides:
+Optional model overrides (code defaults if unset):
 
-- `GEO_OPENAI_MODEL`
-- `GEO_CHATGPT_MODEL`
-- `GEO_GEMINI_MODEL`
-- `GEO_PERPLEXITY_MODEL`
-- `GEO_GOOGLE_PROXY_MODEL`
-- `GEO_CLAUDE_MODEL`
+- `GEO_CHATGPT_MODEL` / `GEO_OPENAI_MODEL`: `gpt-5.6-sol`
+- `GEO_GEMINI_MODEL`: `gemini-3.1-pro-preview`
+- `GEO_PERPLEXITY_MODEL`: `sonar-pro`
+- `GEO_GOOGLE_PROXY_MODEL`: `google-serp-proxy`
+- `GEO_CLAUDE_MODEL`: `claude-sonnet-5`
+- `GEO_GEMINI_THROTTLE_MS`: `5000` (Gemini continues after exhausted 429s if any answers exist)
 
 ## Preflight Expectations
 

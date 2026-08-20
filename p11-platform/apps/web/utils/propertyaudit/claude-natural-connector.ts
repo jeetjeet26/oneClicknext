@@ -101,6 +101,13 @@ function buildAnalyzerPrompt(ctx: NaturalAnalyzeContext): string {
     `Expected Location: ${expected}`,
     `Known brand domains (for inference only): ${ctx.brandDomains.join(', ') || '—'}`,
     `Known competitor domains (for inference only): ${ctx.competitors.join(', ') || '—'}`,
+    `Provider search sources (API metadata; may not appear as URLs in the prose):`,
+    !ctx.searchSources?.length
+      ? 'None provided.'
+      : ctx.searchSources
+        .filter(source => source.url)
+        .map((source, index) => `${index + 1}. ${source.title || source.domain || source.url} — ${source.url}`)
+        .join('\n'),
     ``,
     `LLM's Natural Response to Analyze:`,
     `"""`,
@@ -126,7 +133,8 @@ function buildAnalyzerPrompt(ctx: NaturalAnalyzeContext): string {
     `Rules:`,
     `- answer_block.ordered_entities MUST be ordered by prominence (best-effort).`,
     `- Put the first_mention_quote into answer_block.ordered_entities[].rationale (include it verbatim).`,
-    `- If no explicit URLs appear, citations can be empty; include "no_sources" in notes.flags when appropriate.`,
+    `- You may include provider search sources in citations even when the prose has no URLs.`,
+    `- Do not invent extra URLs. no_sources is set later from the final citation list; do not flag it when provider sources were supplied.`,
   ].join('\n')
 }
 

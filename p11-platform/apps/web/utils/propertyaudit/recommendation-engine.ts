@@ -39,17 +39,12 @@ export interface ContentRecommendation {
     avgRank: number
   }
   modelBreakdown?: {
-    openai: {
+    surfaces: Partial<Record<Surface, {
       presence: boolean
       rank: number | null
       sov: number | null
-    } | null
-    claude: {
-      presence: boolean
-      rank: number | null
-      sov: number | null
-    } | null
-    affectedModels: ('openai' | 'claude')[]
+    }>>
+    affectedModels: Surface[]
   }
   surfaceBreakdown?: Record<string, {
     label: string
@@ -844,16 +839,16 @@ function identifyMissingKeywords(context: AnalysisContext): ContentRecommendatio
 
       // Build per-model breakdown
       const modelBreakdown = buildModelBreakdown(answers, context.runsBySurface)
-      const affectedModels: ('openai' | 'claude')[] = []
-      if (modelBreakdown.openai && !modelBreakdown.openai.presence) affectedModels.push('openai')
-      if (modelBreakdown.claude && !modelBreakdown.claude.presence) affectedModels.push('claude')
+      const affectedModels = Object.entries(modelBreakdown)
+        .filter(([, perf]) => perf && !perf.presence)
+        .map(([surface]) => surface as Surface)
 
       // Enhance description with model-specific info
       let description = `Your property is not mentioned in LLM responses for this ${query.type} query.`
       if (affectedModels.length === 1) {
-        description += ` Issue affects ${affectedModels[0].toUpperCase()} only.`
-      } else if (affectedModels.length === 2) {
-        description += ` Issue affects both OpenAI and Claude.`
+        description += ` Issue affects ${getSurfaceLabel(affectedModels[0])} only.`
+      } else if (affectedModels.length > 1) {
+        description += ` Issue affects ${affectedModels.map(surface => getSurfaceLabel(surface)).join(', ')}.`
       }
       if (competitorList.length > 0) {
         description += ` Competitors appearing: ${competitorList.join(', ')}`
@@ -867,7 +862,7 @@ function identifyMissingKeywords(context: AnalysisContext): ContentRecommendatio
         description,
         keywords: [query.text],
         modelBreakdown: {
-          ...modelBreakdown,
+          surfaces: modelBreakdown,
           affectedModels,
         },
         impact: {
@@ -896,25 +891,18 @@ function identifyMissingKeywords(context: AnalysisContext): ContentRecommendatio
 function buildModelBreakdown(
   answers: AnalysisContext['answers'],
   runsBySurface: Map<string, Surface>
-) {
-  const openaiAnswer = answers.find(a => {
-    const surface = runsBySurface.get(a.runId)
-    return surface === 'openai' || surface === 'chatgpt'
+): NonNullable<ContentRecommendation['modelBreakdown']>['surfaces'] {
+  const surfaces: NonNullable<ContentRecommendation['modelBreakdown']>['surfaces'] = {}
+  answers.forEach(answer => {
+    const surface = runsBySurface.get(answer.runId)
+    if (!surface || surfaces[surface]) return
+    surfaces[surface] = {
+      presence: answer.presence,
+      rank: answer.llmRank,
+      sov: answer.sov,
+    }
   })
-  const claudeAnswer = answers.find(a => runsBySurface.get(a.runId) === 'claude')
-
-  return {
-    openai: openaiAnswer ? {
-      presence: openaiAnswer.presence,
-      rank: openaiAnswer.llmRank,
-      sov: openaiAnswer.sov,
-    } : null,
-    claude: claudeAnswer ? {
-      presence: claudeAnswer.presence,
-      rank: claudeAnswer.llmRank,
-      sov: claudeAnswer.sov,
-    } : null,
-  }
+  return surfaces
 }
 
 function buildSurfaceBreakdown(
@@ -967,13 +955,9 @@ function identifyContentGaps(context: AnalysisContext): ContentRecommendation[] 
           
           // Build model breakdown
           const modelBreakdown = buildModelBreakdown(answers, context.runsBySurface)
-          const affectedModels: ('openai' | 'claude')[] = []
-          if (modelBreakdown.openai && modelBreakdown.openai.rank && modelBreakdown.openai.rank > 3) {
-            affectedModels.push('openai')
-          }
-          if (modelBreakdown.claude && modelBreakdown.claude.rank && modelBreakdown.claude.rank > 3) {
-            affectedModels.push('claude')
-          }
+          const affectedModels = Object.entries(modelBreakdown)
+            .filter(([, perf]) => perf && typeof perf.rank === 'number' && perf.rank > 3)
+            .map(([surface]) => surface as Surface)
 
           let description = `You're mentioned but ${topComp.name} ranks higher (position #${topComp.position}). Reason: "${topComp.rationale}"`
           if (surface) {
@@ -993,7 +977,7 @@ function identifyContentGaps(context: AnalysisContext): ContentRecommendation[] 
               avgRank: topComp.position,
             },
             modelBreakdown: {
-              ...modelBreakdown,
+              surfaces: modelBreakdown,
               affectedModels,
             },
             impact: {
@@ -1113,13 +1097,9 @@ function identifyRankImprovements(context: AnalysisContext): ContentRecommendati
       if (query) {
         // Build model breakdown
         const modelBreakdown = buildModelBreakdown(data.answers, context.runsBySurface)
-        const affectedModels: ('openai' | 'claude')[] = []
-        if (modelBreakdown.openai && modelBreakdown.openai.rank && modelBreakdown.openai.rank > 3) {
-          affectedModels.push('openai')
-        }
-        if (modelBreakdown.claude && modelBreakdown.claude.rank && modelBreakdown.claude.rank > 3) {
-          affectedModels.push('claude')
-        }
+        const affectedModels = Object.entries(modelBreakdown)
+          .filter(([, perf]) => perf && typeof perf.rank === 'number' && perf.rank > 3)
+          .map(([surface]) => surface as Surface)
 
         let description = `Currently averaging position #${data.avgRank.toFixed(1)}. Small improvements could push you into top 3.`
         if (affectedModels.length === 1) {
@@ -1134,7 +1114,7 @@ function identifyRankImprovements(context: AnalysisContext): ContentRecommendati
           description,
           keywords: [query.text],
           modelBreakdown: {
-            ...modelBreakdown,
+            surfaces: modelBreakdown,
             affectedModels,
           },
           impact: {

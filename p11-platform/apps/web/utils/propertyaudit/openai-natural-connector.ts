@@ -168,6 +168,8 @@ function buildAnalyzerPrompt(ctx: NaturalAnalyzeContext): string {
     `Expected Location: ${expected}`,
     `Known brand domains (for inference only): ${ctx.brandDomains.join(', ') || '—'}`,
     `Known competitor domains (for inference only): ${ctx.competitors.join(', ') || '—'}`,
+    `Provider search sources (API metadata; may not appear as URLs in the prose):`,
+    formatProviderSources(ctx.searchSources),
     ``,
     `LLM's Natural Response to Analyze:`,
     `"""`,
@@ -179,7 +181,8 @@ function buildAnalyzerPrompt(ctx: NaturalAnalyzeContext): string {
     `Rules:`,
     `- ordered_entities in answer_block MUST be ordered by prominence (best-effort): frequency + early mention + emphasis.`,
     `- For answer_block.ordered_entities[].rationale: include a short reason + the first_mention_quote in-line.`,
-    `- If no explicit URLs appear, citations may be empty; set notes.flags to include "no_sources" when appropriate.`,
+    `- You may include provider search sources in citations even when the prose has no URLs.`,
+    `- Do not invent extra URLs. no_sources is set later from the final citation list; do not flag it when provider sources were supplied.`,
     `- brand_analysis.location_correct should be false if a different city/state is stated than Expected Location (when Expected Location is known).`,
   )
   return lines.join('\n')
@@ -188,6 +191,14 @@ function buildAnalyzerPrompt(ctx: NaturalAnalyzeContext): string {
 /**
  * Extract domain from URL
  */
+function formatProviderSources(sources?: WebSearchSource[]): string {
+  if (!sources || sources.length === 0) return 'None provided.'
+  return sources
+    .filter(source => source.url)
+    .map((source, index) => `${index + 1}. ${source.title || source.domain || source.url} — ${source.url}`)
+    .join('\n') || 'None provided.'
+}
+
 function extractDomain(url: string): string {
   try {
     const urlObj = new URL(url)
@@ -226,10 +237,20 @@ function extractSourcesFromAnnotations(annotations: any[]): WebSearchSource[] {
 }
 
 export class OpenAINaturalConnector implements NaturalConnector {
-  surface = 'openai' as const
+  surface: 'openai' | 'chatgpt'
+
+  constructor(surface: 'openai' | 'chatgpt' = 'openai') {
+    this.surface = surface
+  }
+
+  private modelName() {
+    const config = getGeoConfig()
+    return this.surface === 'chatgpt' ? config.chatgptModel : config.openaiModel
+  }
 
   async getNaturalResponse(query: string): Promise<NaturalResponse> {
     const config = getGeoConfig()
+    const model = this.modelName()
     const client = new OpenAI({ 
       apiKey: config.openaiApiKey,
       timeout: 600000, // 10 minutes timeout for slow API responses
@@ -249,7 +270,7 @@ export class OpenAINaturalConnector implements NaturalConnector {
         console.log('[openai-natural] Using Responses API with web search')
         
         const response = await client.responses.create({
-          model: config.openaiModel,
+          model,
           input: query,
           instructions: systemPrompt,
           tools: [{ type: 'web_search_preview' }],
@@ -278,7 +299,7 @@ export class OpenAINaturalConnector implements NaturalConnector {
 
         return {
           text,
-          model: config.openaiModel,
+          model,
           tokensUsed: response.usage?.total_tokens ?? 0,
           usedWebSearch: true,
           searchSources,
@@ -292,7 +313,7 @@ export class OpenAINaturalConnector implements NaturalConnector {
 
     // Fallback: Use Chat Completions API (no web search sources)
     const completion = await client.chat.completions.create({
-      model: config.openaiModel,
+      model,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: query },
@@ -303,7 +324,7 @@ export class OpenAINaturalConnector implements NaturalConnector {
 
     return {
       text,
-      model: config.openaiModel,
+      model,
       tokensUsed: completion.usage?.total_tokens ?? 0,
       usedWebSearch: false,
       searchSources: [],
@@ -322,7 +343,7 @@ export class OpenAINaturalConnector implements NaturalConnector {
     const prompt = buildAnalyzerPrompt(context)
 
     const completion = await client.chat.completions.create({
-      model: config.openaiModel,
+      model: this.modelName(),
       messages: [
         {
           role: 'system',

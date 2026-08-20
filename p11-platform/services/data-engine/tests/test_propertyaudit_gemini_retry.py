@@ -4,8 +4,8 @@ import httpx
 import pytest
 from datetime import datetime, timezone
 
-from connectors.v1_natural_connectors import post_gemini_with_retry
-from jobs.propertyaudit import is_stale_running_run
+from connectors.v1_natural_connectors import merge_sources_into_answer, post_gemini_with_retry
+from jobs.propertyaudit import is_stale_running_run, should_abort_run_on_provider_error
 
 
 class FakeGeminiClient:
@@ -123,3 +123,34 @@ async def test_post_gemini_with_retry_serializes_concurrent_calls(monkeypatch):
     await second
 
     assert max_active_calls == 1
+
+
+def test_should_not_abort_gemini_on_rate_limit():
+    assert should_abort_run_on_provider_error('gemini', 'rate_limited') is False
+    assert should_abort_run_on_provider_error('chatgpt', 'rate_limited') is True
+    assert should_abort_run_on_provider_error('gemini', 'missing_provider_key') is True
+
+
+def test_merge_sources_drops_no_sources_when_api_citations_exist():
+    merged = merge_sources_into_answer(
+        {
+            "citations": [],
+            "notes": {"flags": ["no_sources"]},
+            "answer_summary": "Epoca is a community with no URLs in the prose.",
+        },
+        [{"url": "https://epocalife.com", "domain": "epocalife.com"}],
+    )
+    assert "no_sources" not in merged["notes"]["flags"]
+    assert merged["citations"][0]["url"] == "https://epocalife.com"
+
+
+def test_merge_sources_sets_no_sources_when_empty():
+    merged = merge_sources_into_answer(
+        {
+            "citations": [],
+            "notes": {"flags": []},
+            "answer_summary": "No sources mentioned.",
+        },
+        [],
+    )
+    assert merged["notes"]["flags"] == ["no_sources"]

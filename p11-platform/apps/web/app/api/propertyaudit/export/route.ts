@@ -174,10 +174,10 @@ function generateMarkdown(data: Awaited<ReturnType<typeof buildRunReportData>>):
   if (score) {
     lines.push(`## Executive Snapshot`)
     lines.push(``)
-    lines.push(`- **Overall AI visibility score:** ${score.overall_score.toFixed(1)}/100`)
-    lines.push(`- **Visibility:** ${score.visibility_pct.toFixed(1)}%`)
-    lines.push(`- **Non-branded discovery rank:** ${rankSummary.nonBrandedDiscoveryRank !== null ? `#${rankSummary.nonBrandedDiscoveryRank.toFixed(1)}` : 'N/A'}`)
     lines.push(`- **Branded recognition:** ${rankSummary.brandedRecognitionPct !== null ? `${rankSummary.brandedRecognitionPct}%` : 'N/A'}`)
+    lines.push(`- **Discovery mention:** ${rankSummary.nonBrandedVisibilityPct !== null ? `${rankSummary.nonBrandedVisibilityPct}%` : 'N/A'}`)
+    lines.push(`- **Citation quality:** ${score.overall_score.toFixed(1)}/100`)
+    lines.push(`- **Non-branded discovery rank:** ${rankSummary.nonBrandedDiscoveryRank !== null ? `#${rankSummary.nonBrandedDiscoveryRank.toFixed(1)}` : 'N/A'}`)
     lines.push(`- **Avg LLM Rank (all prompts):** ${score.avg_llm_rank?.toFixed(1) ?? 'N/A'}`)
     lines.push(`- **Avg Link Rank:** ${score.avg_link_rank?.toFixed(1) ?? 'N/A'}`)
     lines.push(`- **Avg SOV:** ${score.avg_sov ? (score.avg_sov * 100).toFixed(1) + '%' : 'N/A'}`)
@@ -465,10 +465,10 @@ function generateHTML(data: Awaited<ReturnType<typeof buildRunReportData>>): str
   ` : ''}
   
   ${score ? `
-  <h2>Overall Score: ${score.overall_score.toFixed(1)}</h2>
+  <h2>Citation Quality: ${score.overall_score.toFixed(1)}</h2>
   <div class="metric">
-    <div class="metric-label">Visibility</div>
-    <div class="metric-value">${score.visibility_pct.toFixed(1)}%</div>
+    <div class="metric-label">Discovery Mention</div>
+    <div class="metric-value">${rankSummary.nonBrandedVisibilityPct !== null ? `${rankSummary.nonBrandedVisibilityPct}%` : 'N/A'}</div>
   </div>
   <div class="metric">
     <div class="metric-label">Discovery Rank</div>

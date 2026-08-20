@@ -33,7 +33,7 @@ function makeInsightsInput(overrides: Partial<Parameters<typeof buildInsights>[0
 }
 
 describe('PropertyAudit reporting insights', () => {
-  it('uses the latest score per surface for the headline report score', () => {
+  it('uses the latest score per client surface and ignores Claude', () => {
     const scores = buildReportScores([
       {
         id: 'claude-latest',
@@ -48,6 +48,12 @@ describe('PropertyAudit reporting insights', () => {
         geo_scores: [{ overall_score: 38, visibility_pct: 46, avg_llm_rank: 1.8, avg_link_rank: null, avg_sov: 0.06 }],
       },
       {
+        id: 'chatgpt-latest',
+        surface: 'chatgpt',
+        started_at: '2026-05-28T22:21:35.000Z',
+        geo_scores: [{ overall_score: 32, visibility_pct: 20, avg_llm_rank: 1.2, avg_link_rank: 2, avg_sov: 0.1 }],
+      },
+      {
         id: 'claude-older',
         surface: 'claude',
         started_at: '2026-05-27T22:21:35.000Z',
@@ -56,8 +62,8 @@ describe('PropertyAudit reporting insights', () => {
     ])
 
     expect(scores).toHaveLength(1)
-    expect(scores[0]?.overall_score).toBe(28.5)
-    expect(scores[0]?.visibility_pct).toBe(43.5)
+    expect(scores[0]?.overall_score).toBe(35)
+    expect(scores[0]?.visibility_pct).toBe(33)
   })
 
   it('flags same-name entity mentions before treating them as competitor pressure', () => {

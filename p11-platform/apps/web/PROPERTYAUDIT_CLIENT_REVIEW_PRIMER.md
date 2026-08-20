@@ -41,8 +41,8 @@ The strongest optimization opportunities usually come from specific long-tail pr
 
 The audit can measure multiple AI/search surfaces. The current client-facing interpretation is:
 
-- ChatGPT-style visibility: how the property appears in grounded ChatGPT-like answers.
-- Gemini-style visibility: how the property appears in grounded Gemini-like answers.
+- ChatGPT-style visibility: grounded API proxy using GPT-5.6 Sol (not the live ChatGPT UI).
+- Gemini-style visibility: grounded API proxy using Gemini 3.1 Pro (not the live Gemini UI).
 - Perplexity visibility: how the property performs in a citation-forward answer engine.
 - Google AI proxy visibility: a directional Google-grounded signal based on search results and answer synthesis.
 
@@ -50,22 +50,31 @@ The Google AI proxy should be described carefully. It is not a guaranteed pixel-
 
 ## Core Stats Explained
 
-### GEO Score
+### Client Headline: Branded Recognition and Discovery Mention
 
-The GEO Score is the headline 0-100 composite score for AI visibility. It combines four components:
+The client headline is two rates, computed after collapsing 5× repeats to one row per query (median presence):
+
+- **Branded recognition:** share of branded prompts where the property is mentioned.
+- **Discovery mention:** share of category and local prompts where the property is mentioned. Comparison prompts are excluded because they name the property. Generic city-wide category prompts (`Best {type} in {city}` or `weight <= 0.8`) stay as a benchmark row, not in this headline.
+
+Client averages use the latest completed run on ChatGPT, Gemini, Perplexity, and Google AI only. Claude and legacy OpenAI stay in history. A missing Gemini run is “not measured,” not zero.
+
+Trend movement is shown in **points**, not blended visibility percent.
+
+### Citation Quality (Secondary)
+
+Citation quality is the existing 0-100 composite, labeled honestly. It is **not** the visibility headline. After per-query collapse it averages:
 
 - Position, weighted 45%: where the property appears in the AI's ordered answer. Rank #1 receives the strongest score; lower positions receive less credit.
 - Link rank, weighted 25%: where the client's website or brand domain appears in the citation list.
 - Share of voice, weighted 20%: the share of citations that point to the client's brand/domain compared with all citations in the answer.
 - Accuracy, weighted 10%: whether the answer avoids warning flags such as no sources, possible hallucination, outdated information, conflicting details, or NAP inconsistencies.
 
-Plain-English interpretation: a high GEO Score means the property is being named, ranked prominently, supported by citations, and described with relatively clean information.
+Plain-English interpretation: high citation quality means that when the property appears, it is ranked cleanly and supported by citations.
 
 ### Visibility / Presence Rate
 
-Visibility shows how often the property appears in the measured answers. If the property appears in 18 out of 24 prompt results, the visibility rate is 75%.
-
-This is one of the clearest meeting metrics because it answers, "When a prospect asks these questions, does AI bring us into the conversation?"
+Blended presence across all prompt types is still available, but client reviews should lead with branded recognition and discovery mention.
 
 ### Average LLM Rank
 
@@ -101,9 +110,9 @@ Branded Recognition measures how often the property appears correctly when the p
 
 Weak branded recognition is a priority issue because it suggests the brand/entity footprint itself needs cleanup.
 
-### Non-Branded Discovery Rank
+### Discovery Mention and Rank
 
-Non-Branded Discovery Rank focuses on prompts where the user has not named the property. These include category, local, and comparison searches. This is usually the most commercially important view because it represents prospects who are still choosing between options.
+Discovery mention is the unprompted recommendation rate on category and local prompts. Discovery rank is the typical position when the property does appear there. Comparison prompts and generic city-wide “best in city” prompts are kept separate so they do not inflate or deflate the discovery headline.
 
 ### AI Overview Visibility
 
@@ -135,7 +144,7 @@ Important methodology points to explain:
 
 ## Suggested Client Review Flow
 
-Start with the executive snapshot: overall GEO Score, visibility rate, best and weakest surfaces, and the weakest prompt cluster.
+Start with the executive snapshot: branded recognition, discovery mention, citation quality, best and weakest surfaces, and the weakest prompt cluster.
 
 Then move into discovery performance. Show where the property appears for non-branded local/category prompts and where competitors or aggregators are winning.
 

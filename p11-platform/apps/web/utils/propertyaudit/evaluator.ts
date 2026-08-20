@@ -129,7 +129,7 @@ function computePresence(answer: AnswerBlock, context: EvaluationContext): boole
  * Higher rank = higher score
  * Rank 1 = 100%, Rank 10 = 10%
  */
-function computePositionComponent(rank: number | null): number {
+export function computePositionComponent(rank: number | null): number {
   if (!rank || rank <= 0) {
     return 0
   }
@@ -145,7 +145,7 @@ function computePositionComponent(rank: number | null): number {
  * Link Component (25% weight)
  * Higher citation rank = higher score
  */
-function computeLinkComponent(rank: number | null): number {
+export function computeLinkComponent(rank: number | null): number {
   if (!rank || rank <= 0) {
     return 0
   }
@@ -161,7 +161,7 @@ function computeLinkComponent(rank: number | null): number {
  * SOV Component (20% weight)
  * Share of voice = brand citations / total citations
  */
-function computeSovComponent(sov: number | null): number {
+export function computeSovComponent(sov: number | null): number {
   if (sov === null) {
     return 0
   }
@@ -172,7 +172,7 @@ function computeSovComponent(sov: number | null): number {
  * Accuracy Component (10% weight)
  * Penalizes based on warning flags
  */
-function computeAccuracyComponent(flags: string[]): number {
+export function computeAccuracyComponent(flags: string[]): number {
   if (flags.length === 0) {
     return 100
   }
@@ -237,6 +237,62 @@ export function scoreAnswer(answer: AnswerBlock, context: EvaluationContext): Sc
     ...evaluation,
     score,
     breakdown
+  }
+}
+
+export function scoreCollapsedMetrics(input: {
+  llmRank: number | null
+  linkRank: number | null
+  sov: number | null
+  flags?: string[]
+}): { score: number; breakdown: ScoreBreakdown } {
+  const breakdown: ScoreBreakdown = {
+    position: computePositionComponent(input.llmRank),
+    link: computeLinkComponent(input.linkRank),
+    sov: computeSovComponent(input.sov),
+    accuracy: computeAccuracyComponent(input.flags ?? []),
+  }
+  const score =
+    breakdown.position * 0.45 +
+    breakdown.link * 0.25 +
+    breakdown.sov * 0.2 +
+    breakdown.accuracy * 0.1
+  return { score, breakdown }
+}
+
+export function reconcileCitationFlags(flags: string[], citationCount: number): string[] {
+  const next = flags.filter(flag => flag !== 'no_sources')
+  if (citationCount <= 0) {
+    next.push('no_sources')
+  }
+  return next
+}
+
+export function mergeSearchSourcesIntoAnswer(
+  answer: AnswerBlock,
+  searchSources: Array<{ url?: string; domain?: string; entity_ref?: string | null }> = []
+): AnswerBlock {
+  const citations = [...(answer.citations || [])]
+  const existingUrls = new Set(citations.map(citation => citation.url).filter(Boolean))
+
+  for (const source of searchSources) {
+    const url = source.url
+    if (!url || existingUrls.has(url)) continue
+    citations.push({
+      url,
+      domain: source.domain || '',
+      entity_ref: source.entity_ref || '',
+    })
+    existingUrls.add(url)
+  }
+
+  return {
+    ...answer,
+    citations,
+    notes: {
+      ...answer.notes,
+      flags: reconcileCitationFlags(answer.notes?.flags || [], citations.length) as AnswerBlock['notes']['flags'],
+    },
   }
 }
 

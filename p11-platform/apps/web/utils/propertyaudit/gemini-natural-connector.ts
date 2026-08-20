@@ -43,7 +43,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 async function withGeminiThrottle<T>(operation: () => Promise<T>): Promise<T> {
-  const minIntervalMs = parsePositiveInt(process.env.GEO_GEMINI_THROTTLE_MS, 1000)
+  const minIntervalMs = parsePositiveInt(process.env.GEO_GEMINI_THROTTLE_MS, 5000)
   const queued = geminiThrottleQueue.then(async () => {
     const elapsed = Date.now() - lastGeminiRequestAt
     if (elapsed < minIntervalMs) {
@@ -166,6 +166,9 @@ export class GeminiNaturalConnector implements NaturalConnector {
       generationConfig: {
         temperature: config.temperature,
         topP: config.topP,
+        ...(/^gemini-3/i.test(config.geminiModel)
+          ? { thinkingConfig: { thinkingLevel: 'low' } }
+          : {}),
       },
     } as any))
 

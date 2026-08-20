@@ -26,6 +26,7 @@ import { GoogleProxyNaturalConnector } from '@/utils/propertyaudit/google-proxy-
 import {
   classifyProviderFailure,
   getDefaultAuditMode,
+  mergeSearchSourcesIntoAnswer,
   scoreAnswer,
   aggregateScores,
   supportsStructuredAudit,
@@ -166,8 +167,9 @@ function getStructuredConnector(surface: Surface): Connector {
 function getNaturalConnector(surface: Surface): NaturalConnector {
   switch (surface) {
     case 'openai':
+      return new OpenAINaturalConnector('openai')
     case 'chatgpt':
-      return new OpenAINaturalConnector()
+      return new OpenAINaturalConnector('chatgpt')
     case 'claude':
       return new ClaudeNaturalConnector()
     case 'gemini':
@@ -519,9 +521,10 @@ export async function POST(req: NextRequest) {
                 expectedState: context.propertyLocation?.state,
                 brandDomains: context.brandDomains,
                 competitors: context.competitors,
+                searchSources,
               })
 
-              answer = analyzed.envelope.answer_block
+              answer = mergeSearchSourcesIntoAnswer(analyzed.envelope.answer_block, searchSources)
               raw = {
                 audit_mode: auditMode,
                 phase1: natural.rawResponse,

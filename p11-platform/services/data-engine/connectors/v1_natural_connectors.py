@@ -20,6 +20,7 @@ import httpx
 
 from connectors.openai_natural_connector import OpenAINaturalConnector
 from connectors.claude_natural_connector import ClaudeNaturalConnector
+from connectors.evaluator import reconcile_citation_flags
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,7 @@ def is_gemini_rate_limit_error(error: Exception) -> bool:
 async def run_with_gemini_throttle(client: httpx.AsyncClient, url: str, payload: Dict[str, Any]) -> httpx.Response:
     global _last_gemini_request_at
 
-    min_interval_ms = parse_non_negative_int(os.environ.get("GEO_GEMINI_THROTTLE_MS"), 1000)
+    min_interval_ms = parse_non_negative_int(os.environ.get("GEO_GEMINI_THROTTLE_MS"), 5000)
     async with _gemini_throttle_lock:
         loop = asyncio.get_running_loop()
         elapsed_ms = int((loop.time() - _last_gemini_request_at) * 1000)
@@ -124,7 +125,20 @@ def choose_analyzer():
     return ClaudeNaturalConnector()
 
 
-async def analyze_with_delegate(context: Dict[str, Any], natural_text: str):
+def format_provider_sources(search_sources: Optional[List[Dict[str, Any]]]) -> str:
+    if not search_sources:
+        return "None provided."
+    lines = []
+    for index, source in enumerate(search_sources, start=1):
+        url = source.get("url")
+        if not url:
+            continue
+        title = source.get("title") or source.get("domain") or url
+        lines.append(f"{index}. {title} — {url}")
+    return "\n".join(lines) if lines else "None provided."
+
+
+async def analyze_with_delegate(context: Dict[str, Any], natural_text: str, search_sources: Optional[List[Dict[str, Any]]] = None):
     analyzer = choose_analyzer()
     analyzed = await analyzer.analyze_response({
         "naturalResponse": natural_text,
@@ -134,6 +148,7 @@ async def analyze_with_delegate(context: Dict[str, Any], natural_text: str):
         "competitors": context.get("competitors", []),
         "expectedCity": context.get("propertyLocation", {}).get("city"),
         "expectedState": context.get("propertyLocation", {}).get("state"),
+        "searchSources": search_sources or [],
     })
     return analyzed
 
@@ -152,7 +167,16 @@ def merge_sources_into_answer(answer_block: Dict[str, Any], search_sources: List
         })
         existing_urls.add(url)
     answer_block["citations"] = citations
+    notes = answer_block.get("notes") or {}
+    notes["flags"] = reconcile_citation_flags(notes.get("flags") or [], len(citations))
+    answer_block["notes"] = notes
     return answer_block
+
+
+def gemini_thinking_config(model: str) -> Dict[str, Any]:
+    if str(model).lower().startswith("gemini-3"):
+        return {"thinkingConfig": {"thinkingLevel": "low"}}
+    return {}
 
 
 class GeminiNaturalConnector:
@@ -160,7 +184,7 @@ class GeminiNaturalConnector:
         self.api_key = os.environ.get("GOOGLE_GEMINI_API_KEY")
         if not self.api_key:
             raise ValueError("GOOGLE_GEMINI_API_KEY not set")
-        self.model = os.environ.get("GEO_GEMINI_MODEL", "gemini-2.5-pro")
+        self.model = os.environ.get("GEO_GEMINI_MODEL", "gemini-3.1-pro-preview")
         self.enable_web_search = os.environ.get("GEO_ENABLE_WEB_SEARCH", "false").lower() == "true"
 
     async def get_natural_response(self, query_text: str) -> Tuple[str, List[Dict], Dict]:
@@ -175,7 +199,11 @@ class GeminiNaturalConnector:
                 }]
             },
             "contents": [{"role": "user", "parts": [{"text": query_text}]}],
-            "generationConfig": {"temperature": 0, "topP": 1},
+            "generationConfig": {
+                "temperature": 0,
+                "topP": 1,
+                **gemini_thinking_config(self.model),
+            },
         }
         if self.enable_web_search:
             payload["tools"] = [{"googleSearchRetrieval": {}}]
@@ -207,7 +235,7 @@ class GeminiNaturalConnector:
 
     async def invoke_natural_mode(self, context: Dict[str, Any]) -> Dict[str, Any]:
         natural_text, search_sources, phase1_raw = await self.get_natural_response(context["queryText"])
-        analyzed = await analyze_with_delegate(context, natural_text)
+        analyzed = await analyze_with_delegate(context, natural_text, search_sources)
         answer_block = merge_sources_into_answer(analyzed["envelope"]["answer_block"], search_sources)
         return {
             "answer": answer_block,
@@ -274,7 +302,7 @@ class PerplexityNaturalConnector:
 
     async def invoke_natural_mode(self, context: Dict[str, Any]) -> Dict[str, Any]:
         natural_text, search_sources, phase1_raw = await self.get_natural_response(context["queryText"])
-        analyzed = await analyze_with_delegate(context, natural_text)
+        analyzed = await analyze_with_delegate(context, natural_text, search_sources)
         answer_block = merge_sources_into_answer(analyzed["envelope"]["answer_block"], search_sources)
         return {
             "answer": answer_block,
@@ -338,7 +366,7 @@ class GoogleProxyNaturalConnector:
             f"Based on Google search results for \"{context['queryText']}\", "
             f"the most visible sources and claims are:\n{evidence}"
         )
-        analyzed = await analyze_with_delegate(context, natural_text)
+        analyzed = await analyze_with_delegate(context, natural_text, sources)
         answer_block = merge_sources_into_answer(analyzed["envelope"]["answer_block"], sources)
         return {
             "answer": answer_block,

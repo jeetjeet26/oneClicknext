@@ -203,6 +203,13 @@ def compute_accuracy_component(flags: List[str]) -> float:
     return 60.0
 
 
+def reconcile_citation_flags(flags: List[str], citation_count: int) -> List[str]:
+    next_flags = [flag for flag in (flags or []) if flag != 'no_sources']
+    if citation_count <= 0:
+        next_flags.append('no_sources')
+    return next_flags
+
+
 # ============================================================================
 # Main Scoring Functions
 # ============================================================================

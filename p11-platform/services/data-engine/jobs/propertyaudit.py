@@ -29,6 +29,15 @@ DEFAULT_HEARTBEAT_SECONDS = 60
 DEFAULT_STALE_RUN_SECONDS = 600
 
 
+def should_abort_run_on_provider_error(surface: Optional[str], failure_reason: Optional[str]) -> bool:
+    """Gemini rate limits continue the run; missing keys still fail closed."""
+    if failure_reason == 'missing_provider_key':
+        return True
+    if failure_reason == 'rate_limited':
+        return surface != 'gemini'
+    return False
+
+
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -286,7 +295,7 @@ class PropertyAuditExecutor:
                         logger.error(f"[PropertyAudit] Error processing query {query['id']}: {message}")
                         errors.append(f"Query {query['id']}: {message}")
                         failure_reason = self._classify_failure(message)
-                        if failure_reason in {'rate_limited', 'missing_provider_key'}:
+                        if should_abort_run_on_provider_error(run.get('surface'), failure_reason):
                             error_summary = '; '.join(errors)
                             self._update_run_status(
                                 run_id,
@@ -573,7 +582,7 @@ class PropertyAuditExecutor:
             
             surface = run.get('surface')
             if surface in ['openai', 'chatgpt']:
-                connector = OpenAINaturalConnector()
+                connector = OpenAINaturalConnector(surface)
             elif surface == 'claude':
                 connector = ClaudeNaturalConnector()
             elif surface == 'gemini':

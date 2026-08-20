@@ -53,6 +53,11 @@ interface GeoScoreSummary {
   propertyId: string
   overallScore: number
   visibilityPct: number
+  brandedRecognitionPct: number | null
+  discoveryMentionPct: number | null
+  citationQuality: number | null
+  ownedCitationPct: number | null
+  genericCityMentionPct: number | null
   scoreBucket: 'excellent' | 'good' | 'fair' | 'poor'
   surfaces: Partial<Record<Surface, SurfaceScore | null>>
   surfaceSummaries: Array<{
@@ -60,6 +65,11 @@ interface GeoScoreSummary {
     label: string
     score: number | null
     visibilityPct: number | null
+    brandedRecognitionPct: number | null
+    discoveryMentionPct: number | null
+    citationQuality: number | null
+    ownedCitationPct: number | null
+    measured: boolean
   }>
   breakdown: {
     position: number
@@ -71,12 +81,17 @@ interface GeoScoreSummary {
   trend: {
     direction: 'up' | 'down' | 'stable'
     changePercent: number
+    metric?: 'discoveryMentionPct' | 'citationQuality'
   } | null
 }
 
 interface SurfaceScore {
   overallScore: number
   visibilityPct: number
+  brandedRecognitionPct?: number | null
+  discoveryMentionPct?: number | null
+  citationQuality?: number | null
+  ownedCitationPct?: number | null
   avgLlmRank: number | null
   avgLinkRank: number | null
   avgSov: number | null
@@ -586,23 +601,64 @@ export default function PropertyAuditPage() {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-medium text-gray-500">GEO Score</span>
-            {score?.trend && <TrendIcon direction={score.trend.direction} />}
+            <span className="text-sm font-medium text-gray-500">Branded recognition</span>
+            {score?.trend?.metric === 'citationQuality' ? null : score?.trend && <TrendIcon direction={score.trend.direction} />}
+          </div>
+          {loading ? (
+            <div className="h-12 bg-gray-200 rounded animate-pulse" />
+          ) : score?.brandedRecognitionPct != null ? (
+            <div className="flex items-baseline gap-2">
+              <span className="text-3xl font-bold text-gray-900 dark:text-white">
+                {Math.round(score.brandedRecognitionPct)}%
+              </span>
+            </div>
+          ) : (
+            <p className="text-gray-400 text-sm">No data yet</p>
+          )}
+          <p className="mt-2 text-xs text-gray-500">Named-prompt presence after collapsing repeats</p>
+        </div>
+
+        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-medium text-gray-500">Discovery mention</span>
+            {score?.trend?.metric === 'discoveryMentionPct' && <TrendIcon direction={score.trend.direction} />}
+          </div>
+          {loading ? (
+            <div className="h-12 bg-gray-200 rounded animate-pulse" />
+          ) : score?.discoveryMentionPct != null ? (
+            <div>
+              <div className="flex items-baseline gap-2">
+                <span className="text-3xl font-bold text-gray-900 dark:text-white">
+                  {Math.round(score.discoveryMentionPct)}%
+                </span>
+                {score.trend && score.trend.metric === 'discoveryMentionPct' && score.trend.changePercent !== 0 && (
+                  <span className={`text-xs ${score.trend.direction === 'up' ? 'text-green-600' : 'text-red-600'}`}>
+                    {score.trend.direction === 'up' ? '+' : ''}{score.trend.changePercent.toFixed(1)} pts
+                  </span>
+                )}
+              </div>
+            </div>
+          ) : (
+            <p className="text-gray-400 text-sm">No data yet</p>
+          )}
+          <p className="mt-2 text-xs text-gray-500">Category and local prompts, excluding generic city-wide queries</p>
+        </div>
+
+        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-medium text-gray-500">Citation quality</span>
+            <Eye className="w-4 h-4 text-gray-400" />
           </div>
           {loading ? (
             <div className="h-12 bg-gray-200 rounded animate-pulse" />
           ) : score ? (
             <div className="flex items-center gap-3">
-              <ScoreRing score={score.overallScore} size={60} />
+              <ScoreRing score={score.citationQuality ?? score.overallScore} size={60} />
               <div>
                 <div className={`text-3xl font-bold ${getScoreColor(score.scoreBucket)}`}>
-                  {Math.round(score.overallScore)}
+                  {Math.round(score.citationQuality ?? score.overallScore)}
                 </div>
-                {score.trend && score.trend.changePercent !== 0 && (
-                  <span className={`text-xs ${score.trend.direction === 'up' ? 'text-green-600' : 'text-red-600'}`}>
-                    {score.trend.direction === 'up' ? '+' : ''}{score.trend.changePercent.toFixed(1)}%
-                  </span>
-                )}
+                <p className="text-xs text-gray-500">Not a visibility score</p>
               </div>
             </div>
           ) : (
@@ -612,63 +668,56 @@ export default function PropertyAuditPage() {
 
         <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-medium text-gray-500">Visibility</span>
-            <Eye className="w-4 h-4 text-gray-400" />
+            <span className="text-sm font-medium text-gray-500">Owned citations</span>
           </div>
           {loading ? (
             <div className="h-12 bg-gray-200 rounded animate-pulse" />
-          ) : score ? (
-            <div className="flex items-baseline gap-2">
-              <span className="text-3xl font-bold text-gray-900 dark:text-white">
-                {Math.round(score.visibilityPct)}%
-              </span>
-            </div>
+          ) : score?.ownedCitationPct != null ? (
+            <span className="text-3xl font-bold text-gray-900 dark:text-white">
+              {Math.round(score.ownedCitationPct)}%
+            </span>
           ) : (
             <p className="text-gray-400 text-sm">No data yet</p>
           )}
+          <p className="mt-2 text-xs text-gray-500">Queries with a brand-domain citation</p>
         </div>
+      </div>
 
-        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-medium text-gray-500">OpenAI</span>
-            <Sparkles className="w-4 h-4 text-green-500" />
-          </div>
-          {loading ? (
-            <div className="h-12 bg-gray-200 rounded animate-pulse" />
-          ) : score?.surfaces.openai ? (
-            <div className="flex items-baseline gap-2">
-              <span className="text-3xl font-bold text-gray-900 dark:text-white">
-                {Math.round(score.surfaces.openai.overallScore)}
-              </span>
-              <span className="text-sm text-gray-500">
-                {Math.round(score.surfaces.openai.visibilityPct)}%
-              </span>
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        {(score?.surfaceSummaries || []).map((surface) => (
+          <div
+            key={surface.surface}
+            className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6"
+          >
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm font-medium text-gray-500">{surface.label}</span>
+              {surface.surface === 'chatgpt' || surface.surface === 'perplexity' ? (
+                <Sparkles className="w-4 h-4 text-green-500" />
+              ) : (
+                <Globe className="w-4 h-4 text-purple-500" />
+              )}
             </div>
-          ) : (
-            <p className="text-gray-400 text-sm">No data yet</p>
-          )}
-        </div>
-
-        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-medium text-gray-500">Claude</span>
-            <Globe className="w-4 h-4 text-purple-500" />
+            {loading ? (
+              <div className="h-12 bg-gray-200 rounded animate-pulse" />
+            ) : surface.measured ? (
+              <div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-3xl font-bold text-gray-900 dark:text-white">
+                    {surface.discoveryMentionPct != null ? `${Math.round(surface.discoveryMentionPct)}%` : '—'}
+                  </span>
+                  <span className="text-sm text-gray-500">
+                    branded {surface.brandedRecognitionPct != null ? `${Math.round(surface.brandedRecognitionPct)}%` : '—'}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-gray-500">
+                  Citation quality {surface.citationQuality != null ? Math.round(surface.citationQuality) : '—'}
+                </p>
+              </div>
+            ) : (
+              <p className="text-gray-400 text-sm">Not measured</p>
+            )}
           </div>
-          {loading ? (
-            <div className="h-12 bg-gray-200 rounded animate-pulse" />
-          ) : score?.surfaces.claude ? (
-            <div className="flex items-baseline gap-2">
-              <span className="text-3xl font-bold text-gray-900 dark:text-white">
-                {Math.round(score.surfaces.claude.overallScore)}
-              </span>
-              <span className="text-sm text-gray-500">
-                {Math.round(score.surfaces.claude.visibilityPct)}%
-              </span>
-            </div>
-          ) : (
-            <p className="text-gray-400 text-sm">No data yet</p>
-          )}
-        </div>
+        ))}
       </div>
 
       {/* Tabs */}
@@ -731,8 +780,9 @@ export default function PropertyAuditPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                   {/* Model Comparison */}
                   {(() => {
-                    const primarySurface = score?.surfaceSummaries?.[0]
-                    const secondarySurface = score?.surfaceSummaries?.[1]
+                    const measured = (score?.surfaceSummaries || []).filter(surface => surface.measured)
+                    const primarySurface = measured[0]
+                    const secondarySurface = measured[1]
                     return (
                   <ModelComparisonCard
                     primary={primarySurface ? score?.surfaces[primarySurface.surface] || null : null}

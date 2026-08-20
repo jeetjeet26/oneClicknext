@@ -67,6 +67,19 @@ def extract_sources_from_annotations(annotations: List[Any]) -> List[Dict[str, s
     return sources
 
 
+def format_provider_sources(search_sources: Optional[List[Dict[str, Any]]]) -> str:
+    if not search_sources:
+        return "None provided."
+    lines = []
+    for index, source in enumerate(search_sources, start=1):
+        url = source.get("url")
+        if not url:
+            continue
+        title = source.get("title") or source.get("domain") or url
+        lines.append(f"{index}. {title} — {url}")
+    return "\n".join(lines) if lines else "None provided."
+
+
 def build_analyzer_prompt(ctx: Dict[str, Any]) -> str:
     """Build Phase 2 analysis prompt matching TypeScript exactly."""
     expected = f"{ctx.get('expectedCity', '')}, {ctx.get('expectedState', '')}" if ctx.get('expectedCity') else 'Unknown'
@@ -84,6 +97,8 @@ def build_analyzer_prompt(ctx: Dict[str, Any]) -> str:
         f'Expected Location: {expected}',
         f'Known brand domains (for inference only): {brand_domains}',
         f'Known competitor domains (for inference only): {competitors}',
+        "Provider search sources (API metadata; may not appear as URLs in the prose):",
+        format_provider_sources(ctx.get('searchSources') or ctx.get('search_sources')),
         "",
         "LLM's Natural Response to Analyze:",
         '"""',
@@ -95,7 +110,8 @@ def build_analyzer_prompt(ctx: Dict[str, Any]) -> str:
         "Rules:",
         "- ordered_entities in answer_block MUST be ordered by prominence (best-effort): frequency + early mention + emphasis.",
         "- For answer_block.ordered_entities[].rationale: include a short reason + the first_mention_quote in-line.",
-        '- If no explicit URLs appear, citations may be empty; set notes.flags to include "no_sources" when appropriate.',
+        "- You may include provider search sources in citations even when the prose has no URLs.",
+        "- Do not invent extra URLs. no_sources is set later from the final citation list; do not flag it when provider sources were supplied.",
         "- brand_analysis.location_correct should be false if a different city/state is stated than Expected Location (when Expected Location is known).",
         "- brand_analysis includes: mentioned (bool), position (int or null), location_stated (str or null), location_correct (bool or null), prominence (str or null)",
         "- analysis.ordered_entities should include: name, domain, position, prominence, mention_count, first_mention_quote",
@@ -108,7 +124,8 @@ def build_analyzer_prompt(ctx: Dict[str, Any]) -> str:
 class OpenAINaturalConnector:
     """Two-phase natural mode using OpenAI Responses API."""
     
-    def __init__(self):
+    def __init__(self, surface: str = 'openai'):
+        self.surface = surface
         self.api_key = os.environ.get('OPENAI_API_KEY')
         if not self.api_key:
             raise ValueError("OPENAI_API_KEY not set")
@@ -118,7 +135,10 @@ class OpenAINaturalConnector:
             timeout=600.0,
             max_retries=2
         )
-        self.model = os.environ.get('GEO_OPENAI_MODEL', 'gpt-4o')
+        if surface == 'chatgpt':
+            self.model = os.environ.get('GEO_CHATGPT_MODEL') or os.environ.get('GEO_OPENAI_MODEL', 'gpt-5.6-sol')
+        else:
+            self.model = os.environ.get('GEO_OPENAI_MODEL', 'gpt-5.6-sol')
         self.enable_web_search = os.environ.get('GEO_ENABLE_WEB_SEARCH', 'false').lower() == 'true'
         
         logger.info(f"[OpenAINatural] Model: {self.model}, Web search: {self.enable_web_search}")
@@ -338,10 +358,12 @@ class OpenAINaturalConnector:
             'brandDomains': context.get('brandDomains', []),
             'competitors': context.get('competitors', []),
             'expectedCity': context.get('propertyLocation', {}).get('city'),
-            'expectedState': context.get('propertyLocation', {}).get('state')
+            'expectedState': context.get('propertyLocation', {}).get('state'),
+            'searchSources': search_sources,
         })
         
         # Merge Phase 1 web sources into citations for SOV calculation
+        from connectors.evaluator import reconcile_citation_flags
         answer_block = analyzed['envelope']['answer_block']
         existing_citations = answer_block.get('citations', [])
         existing_urls = {c.get('url') for c in existing_citations if c.get('url')}
@@ -357,6 +379,9 @@ class OpenAINaturalConnector:
                 existing_urls.add(source['url'])
         
         answer_block['citations'] = existing_citations
+        notes = answer_block.get('notes') or {}
+        notes['flags'] = reconcile_citation_flags(notes.get('flags') or [], len(existing_citations))
+        answer_block['notes'] = notes
         
         logger.info(f"[OpenAINatural] Two-phase complete: {len(search_sources)} web sources, {len(existing_citations)} total citations")
         

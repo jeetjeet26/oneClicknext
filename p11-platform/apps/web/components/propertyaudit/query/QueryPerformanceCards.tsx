@@ -13,8 +13,7 @@ interface QueryCard {
   sov: number | null
   score: number
   modelBreakdown?: {
-    openai: { presence: boolean; rank: number | null }
-    claude: { presence: boolean; rank: number | null }
+    surfaces?: Partial<Record<string, { presence: boolean; rank: number | null }>>
   }
   trend?: 'up' | 'down' | 'stable'
 }
@@ -132,10 +131,11 @@ function QueryPerformanceCard({
   onAddSimilar?: (queryText: string) => void
 }) {
   const hasIssue = !query.presence || (query.llmRank && query.llmRank > 3)
-  const showModelBreakdown = query.modelBreakdown && (
-    query.modelBreakdown.openai?.presence !== query.modelBreakdown.claude?.presence ||
-    query.modelBreakdown.openai?.rank !== query.modelBreakdown.claude?.rank
-  )
+  const surfaceEntries = Object.entries(query.modelBreakdown?.surfaces || {}).filter(([, perf]) => perf)
+  const showModelBreakdown = surfaceEntries.length > 1 && surfaceEntries.some(([, perf], _index, all) => {
+    const first = all[0]?.[1]
+    return first && perf && (first.presence !== perf.presence || first.rank !== perf.rank)
+  })
 
   return (
     <div className={`bg-white dark:bg-gray-800 rounded-xl border p-4 transition-all hover:shadow-md ${
@@ -206,30 +206,18 @@ function QueryPerformanceCard({
           {showModelBreakdown && (
             <div className="mb-3 p-2 bg-blue-50 dark:bg-blue-900/10 rounded-lg border border-blue-200 dark:border-blue-900">
               <div className="grid grid-cols-2 gap-4 text-xs">
-                {query.modelBreakdown?.openai && (
-                  <div>
-                    <span className="font-medium text-blue-800 dark:text-blue-200">OpenAI:</span>{' '}
-                    {query.modelBreakdown.openai.presence ? (
+                {surfaceEntries.map(([surface, perf]) => (
+                  <div key={surface}>
+                    <span className="font-medium text-blue-800 dark:text-blue-200">{surface}:</span>{' '}
+                    {perf?.presence ? (
                       <span className="text-green-600">
-                        ✓ Rank #{query.modelBreakdown.openai.rank}
+                        ✓ Rank #{perf.rank}
                       </span>
                     ) : (
                       <span className="text-red-600">✗ Absent</span>
                     )}
                   </div>
-                )}
-                {query.modelBreakdown?.claude && (
-                  <div>
-                    <span className="font-medium text-blue-800 dark:text-blue-200">Claude:</span>{' '}
-                    {query.modelBreakdown.claude.presence ? (
-                      <span className="text-green-600">
-                        ✓ Rank #{query.modelBreakdown.claude.rank}
-                      </span>
-                    ) : (
-                      <span className="text-red-600">✗ Absent</span>
-                    )}
-                  </div>
-                )}
+                ))}
               </div>
             </div>
           )}

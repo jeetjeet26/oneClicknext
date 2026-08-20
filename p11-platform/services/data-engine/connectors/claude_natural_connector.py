@@ -118,6 +118,7 @@ Brand Information:
 - Brand Name: {brand_name}
 - Expected Location: {location_context}
 - Brand Domains: {', '.join(brand_domains) if brand_domains else 'unknown'}
+- Provider search sources: {', '.join(source.get('url') for source in context.get('searchSources') or [] if source.get('url')) or 'None provided.'}
 
 Task: Extract structured data from the LLM response above. Return ONLY a JSON object with:
 
@@ -140,6 +141,7 @@ CRITICAL:
 - Position numbers start at 1 (the first mentioned property)
 - Only include properties that were actually mentioned in the response
 - If location doesn't match {location_context}, add flag "nap_mismatch"
+- You may include provider search sources in citations even when the prose has no URLs.
 
 Output ONLY valid JSON, no markdown."""
 
@@ -224,10 +226,12 @@ Output ONLY valid JSON, no markdown."""
             'queryText': context['queryText'],
             'brandDomains': context.get('brandDomains', []),
             'expectedCity': context.get('propertyLocation', {}).get('city'),
-            'expectedState': context.get('propertyLocation', {}).get('state')
+            'expectedState': context.get('propertyLocation', {}).get('state'),
+            'searchSources': search_sources,
         })
         
         # Merge Phase 1 web sources into citations for SOV calculation
+        from connectors.evaluator import reconcile_citation_flags
         answer_block = analyzed['envelope']['answer_block']
         existing_citations = answer_block.get('citations', [])
         existing_urls = {c.get('url') for c in existing_citations if c.get('url')}
@@ -243,6 +247,9 @@ Output ONLY valid JSON, no markdown."""
                 existing_urls.add(source['url'])
         
         answer_block['citations'] = existing_citations
+        notes = answer_block.get('notes') or {}
+        notes['flags'] = reconcile_citation_flags(notes.get('flags') or [], len(existing_citations))
+        answer_block['notes'] = notes
         
         logger.info(f"[Claude-Natural] Two-phase complete: {len(search_sources)} web sources, {len(existing_citations)} total citations")
         
