@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import {
   isSiteForgeBlockVariant,
+  sectionPresentationSchema,
   siteForgeCssClassSchema,
   type ACFBlockType,
   type GeneratedPage,
@@ -472,6 +473,10 @@ const sectionBaseSchema = z.object({
   cssClasses: z.array(siteForgeCssClassSchema).max(20).optional(),
   purpose: z.string().min(1).max(1_000).optional(),
   evidenceIds: z.array(z.string().min(1)).default([]),
+  // Presentation carries editor-applied visual settings (alignment,
+  // container mode, width). Zod strips unknown keys on parse, so omitting
+  // this field here silently deleted accepted presentation edits at persist.
+  presentation: sectionPresentationSchema.optional(),
 })
 
 const strictSectionSchemas = Object.entries(siteForgeBlockContentSchemas).map(

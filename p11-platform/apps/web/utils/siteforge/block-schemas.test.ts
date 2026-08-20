@@ -45,6 +45,42 @@ describe('SiteForge exact block schemas', () => {
     )
   })
 
+  it('preserves editor presentation settings through strict persist parsing', () => {
+    const parsed = strictSiteForgePageSectionSchema.parse({
+      id: 'core.real_estate.page.primary.section.primary',
+      type: 'hero',
+      acfBlock: 'acf/top-slides',
+      order: 0,
+      reasoning: 'Establish the verified property promise.',
+      evidenceIds: ['brand-1'],
+      variant: 'split',
+      presentation: {
+        alignment: 'left',
+        containerMode: 'contained',
+        widthPreset: 'content',
+      },
+      content: {
+        slides: [
+          {
+            image,
+            headline: 'Life, thoughtfully connected',
+            cta_text: 'Schedule a tour',
+            cta_link: '/contact',
+          },
+        ],
+        autoplay: true,
+        overlay_style: 'gradient',
+      },
+    })
+    // Regression: Zod strips unknown keys, so a missing presentation field in
+    // the persist schema silently deleted accepted alignment edits.
+    expect(parsed.presentation).toEqual({
+      alignment: 'left',
+      containerMode: 'contained',
+      widthPreset: 'content',
+    })
+  })
+
   it('rejects generic content that does not match the selected ACF block', () => {
     expect(() =>
       strictSiteForgePageSectionSchema.parse({
