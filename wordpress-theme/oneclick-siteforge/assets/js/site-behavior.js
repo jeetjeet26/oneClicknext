@@ -265,12 +265,26 @@
       }, parentOrigin);
     }
 
-    var revealTargets = document.querySelectorAll('.site-content > *');
+    // Reveal individual sections, never one page-height wrapper: a wrapper
+    // taller than ~10x the viewport can never reach a fractional visibility
+    // threshold (embedded editor previews clip the viewport further), which
+    // left entire pages permanently at opacity 0.
+    var revealTargets = Array.prototype.slice.call(
+      document.querySelectorAll('.site-content [data-siteforge-section-id]')
+    );
+    if (!revealTargets.length) {
+      revealTargets = Array.prototype.slice.call(
+        document.querySelectorAll('.site-content > *')
+      );
+    }
     revealTargets.forEach(function (target) {
       target.setAttribute('data-siteforge-reveal', '');
     });
-    if (reducedMotion || motion.level === 'none' || motion.reveal === 'none' || !('IntersectionObserver' in window)) {
+    var revealAll = function () {
       revealTargets.forEach(function (target) { target.classList.add('is-visible'); });
+    };
+    if (reducedMotion || motion.level === 'none' || motion.reveal === 'none' || !('IntersectionObserver' in window)) {
+      revealAll();
       return;
     }
 
@@ -281,7 +295,10 @@
           observer.unobserve(entry.target);
         }
       });
-    }, { threshold: 0.1 });
+    }, { threshold: 0 });
     revealTargets.forEach(function (target) { observer.observe(target); });
+    // Failsafe: rendered content must never stay invisible. If the observer
+    // is starved (tiny embedded viewports, browser quirks), reveal everything.
+    window.setTimeout(revealAll, 4000);
   });
 }());
