@@ -155,7 +155,9 @@ export function getBuiltinThemeCapabilities(): WordPressCapabilities {
     designTokens: getBuiltinDesignTokens(),
     theme: {
       name: 'oneclick-siteforge',
-      version: '2.2.11',
+      // Must match wordpress-theme/oneclick-siteforge/style.css; guarded by
+      // a drift test in wordpress-discovery.test.ts.
+      version: '2.3.2',
       supports: { acf_blocks: true, classic_menus: true, block_templates: false },
     },
     plugins: ['advanced-custom-fields-pro'],

@@ -1,9 +1,24 @@
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   discoverWordPressCapabilities,
   getBuiltinThemeCapabilities,
 } from './wordpress-discovery'
 import { ACF_BLOCK_TYPES } from '@/types/siteforge'
+
+function currentThemeVersion(): string {
+  const styleCss = readFileSync(
+    path.resolve(
+      __dirname,
+      '../../../../../wordpress-theme/oneclick-siteforge/style.css'
+    ),
+    'utf8'
+  )
+  const match = styleCss.match(/^Version:\s*(\S+)/m)
+  if (!match) throw new Error('Theme style.css is missing a Version header')
+  return match[1]
+}
 
 function jsonResponse(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -35,7 +50,9 @@ describe('wordpress-discovery', () => {
     expect(fetchMock).not.toHaveBeenCalled()
     expect(capabilities.availableBlocks).toEqual([...ACF_BLOCK_TYPES])
     expect(capabilities.theme.name).toBe('oneclick-siteforge')
-    expect(capabilities.theme.version).toBe('2.2.11')
+    // Drift gate: the builtin capability version must track the real theme,
+    // otherwise blueprints pin a version that never matches installations.
+    expect(capabilities.theme.version).toBe(currentThemeVersion())
     expect(Object.keys(capabilities.blockSchemas)).toHaveLength(ACF_BLOCK_TYPES.length)
   })
 
