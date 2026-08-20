@@ -62,6 +62,7 @@ export async function loadExtensionReview(
     screenshotReport: null,
     files: [],
     sourceIsCurrent: false,
+    renderedEffectComplete: false,
     reviewComplete: false,
     reviewError: error,
   })
@@ -165,11 +166,15 @@ export async function loadExtensionReview(
         renderedEffectComplete = false
       }
     }
+    // Rendered-effect evidence is only captured after the overlay is
+    // installed by the canonical render, so it cannot gate machine approval
+    // (that would deadlock every extension in `proposed`). It is reported
+    // here informationally; the rendered outcome is proven post-publication
+    // by overlay render certification with undo available.
     const reviewComplete =
       sourceIsCurrent &&
       validation?.passed === true &&
-      validation.validator === compatibility.validation.validator &&
-      renderedEffectComplete
+      validation.validator === compatibility.validation.validator
     return {
       sourceArtifact,
       packageSha256: reviewedPackage.packageSha256,
@@ -186,10 +191,11 @@ export async function loadExtensionReview(
           sha256OverlayValue(file.content) === file.contentHash,
       })),
       sourceIsCurrent,
+      renderedEffectComplete,
       reviewComplete,
       reviewError: reviewComplete
         ? null
-        : 'Source revision, sandbox validation, or parent-versus-edited rendered evidence is incomplete',
+        : 'Source revision or sandbox validation is incomplete',
     }
   } catch (error) {
     return unavailable(

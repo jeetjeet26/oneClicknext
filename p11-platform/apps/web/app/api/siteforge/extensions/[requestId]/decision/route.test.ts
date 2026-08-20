@@ -492,6 +492,66 @@ describe('SiteForge runtime extension decisions', () => {
     )
   })
 
+  it('approves on sandbox validation even before rendered evidence exists', async () => {
+    // Rendered-effect evidence is captured only after the overlay is
+    // installed by the canonical render, so approval must not require it —
+    // otherwise every extension deadlocks in `proposed` forever.
+    getUserMock.mockResolvedValue({
+      data: { user: { id: 'manager-1' } },
+      error: null,
+    })
+    const data = fixture()
+    data.overlay.screenshot_manifest = {} as never
+    createServiceClientMock.mockReturnValue(serviceFor(data).service)
+    const { POST } = await import('./route')
+    const response = await POST(
+      request({
+        decision: 'approved',
+        reason: 'siteforge.policy:validated_bounded_extension:v1',
+      }),
+      { params: Promise.resolve({ requestId: REQUEST_ID }) }
+    )
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual(
+      expect.objectContaining({ status: 'approved' })
+    )
+  })
+
+  it('never copies a semantic-edit acceptance contract onto the extension revision', async () => {
+    getUserMock.mockResolvedValue({
+      data: { user: { id: 'manager-1' } },
+      error: null,
+    })
+    const data = fixture()
+    data.source.quality_report = {
+      overallScore: 90,
+      semanticEditor: {
+        scope: { kind: 'page', pageSlug: 'home' },
+        acceptanceContract: {
+          parentArtifact: { artifactId: 'stale', contentHash: 'e'.repeat(64) },
+        },
+      },
+    } as never
+    const mocked = serviceFor(data)
+    createServiceClientMock.mockReturnValue(mocked.service)
+    const { POST } = await import('./route')
+    const response = await POST(
+      request({ decision: 'approved', reason: 'Reviewed and approved' }),
+      { params: Promise.resolve({ requestId: REQUEST_ID }) }
+    )
+    expect(response.status).toBe(200)
+    const publishedReport = mocked.rpcCalls[0].p_quality_report as {
+      overallScore: number
+      semanticEditor: Record<string, unknown>
+    }
+    expect(publishedReport.overallScore).toBe(90)
+    expect(publishedReport.semanticEditor.scope).toEqual({
+      kind: 'page',
+      pageSlug: 'home',
+    })
+    expect(publishedReport.semanticEditor.acceptanceContract).toBeUndefined()
+  })
+
   it('keeps immutable approval successful when preview queueing fails', async () => {
     getUserMock.mockResolvedValue({
       data: { user: { id: 'manager-1' } },

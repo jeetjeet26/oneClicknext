@@ -102,7 +102,9 @@ describe('semantic editor session route', () => {
     expect(source).toContain('pinnedContractHash')
   })
 
-  it('exposes only a strictly verified private overlay review package', async () => {
+  async function overlayReviewFixture(options: {
+    screenshotManifest?: unknown
+  } = {}) {
     vi.stubEnv('SITEFORGE_OVERLAY_SIGNING_SECRET', 'session-test-secret')
     const website = {
       id: '11111111-1111-4111-8111-111111111111',
@@ -193,10 +195,13 @@ describe('semantic editor session route', () => {
                     package_sha256: packageSha256,
                     signature,
                     validation_report: validationReport,
-                    screenshot_manifest: renderedEffectEvidence(
-                      deriveOverlayRenderedEffectContract(proposal),
-                      website.current_artifact_version_id
-                    ),
+                    screenshot_manifest:
+                      options.screenshotManifest !== undefined
+                        ? options.screenshotManifest
+                        : renderedEffectEvidence(
+                            deriveOverlayRenderedEffectContract(proposal),
+                            website.current_artifact_version_id
+                          ),
                   },
             error: null,
           }),
@@ -218,6 +223,12 @@ describe('semantic editor session route', () => {
       website,
       service as never
     )
+    return { review, website, proposal, validationReport }
+  }
+
+  it('exposes only a strictly verified private overlay review package', async () => {
+    const { review, website, proposal, validationReport } =
+      await overlayReviewFixture()
 
     expect(review.reviewComplete).toBe(true)
     expect(review.sourceArtifact).toEqual(
@@ -239,5 +250,16 @@ describe('semantic editor session route', () => {
     )
     expect(review.validationReport).toEqual(validationReport)
     expect(review.screenshotReport).toMatchObject({ passed: true })
+  })
+
+  it('completes review before rendered evidence exists so machine approval can fire', async () => {
+    // Rendered-effect evidence is only captured after the overlay is
+    // installed by the canonical render; requiring it here would deadlock
+    // every extension in `proposed` and reintroduce an approval ceremony.
+    const { review } = await overlayReviewFixture({ screenshotManifest: {} })
+
+    expect(review.reviewComplete).toBe(true)
+    expect(review.renderedEffectComplete).toBe(false)
+    expect(review.reviewError).toBeNull()
   })
 })

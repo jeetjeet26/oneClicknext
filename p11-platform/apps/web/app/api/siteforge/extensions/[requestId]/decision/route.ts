@@ -8,7 +8,6 @@ import type { Json } from '@/types/supabase'
 import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
 import { isSiteForgeRuntimeExtensionsEnabled } from '@/utils/siteforge/editor/feature'
 import {
-  assertPassingOverlayRenderedEffectEvidence,
   inspectStoredOverlayPackage,
   overlayManifestSchema,
   overlayRuntimeCompatibilitySchema,
@@ -361,47 +360,17 @@ export async function POST(
       )
     }
     const identity = compatibility.data
+    // The rendered-effect contract must exist at approval time, but its
+    // evidence can only be captured after the overlay is installed by the
+    // canonical render. Rendered proof therefore happens post-publication
+    // (overlay render certification + bounded corrections, with undo), never
+    // as a pre-approval gate — otherwise every extension deadlocks in
+    // `proposed` because the evidence writer runs only after approval.
     if (!identity.renderedEffectContract) {
       return NextResponse.json(
         {
           error:
             '[extension_rendered_effect_contract_missing] Runtime extension has no immutable rendered-effect contract',
-        },
-        { status: 409, headers: ctx.responseHeaders }
-      )
-    }
-    const { data: renderedEffectOverlay, error: renderedEffectError } =
-      await service
-        .from('siteforge_theme_overlays')
-        .select('screenshot_manifest')
-        .eq('id', identity.overlayId)
-        .eq('website_id', extension.website_id)
-        .eq('property_id', extension.property_id)
-        .eq('org_id', extension.org_id)
-        .single()
-    if (renderedEffectError || !renderedEffectOverlay) {
-      return NextResponse.json(
-        {
-          error:
-            '[extension_rendered_effect_unavailable] Runtime extension rendered evidence is unavailable',
-        },
-        { status: 409, headers: ctx.responseHeaders }
-      )
-    }
-    try {
-      assertPassingOverlayRenderedEffectEvidence({
-        contract: identity.renderedEffectContract,
-        evidence: renderedEffectOverlay.screenshot_manifest,
-        parentArtifactId: extension.artifact_id,
-        parentContentHash: identity.sourceContentHash,
-      })
-    } catch (error) {
-      return NextResponse.json(
-        {
-          error:
-            error instanceof Error
-              ? error.message
-              : '[extension_rendered_effect_unproven] Runtime extension rendered evidence failed',
         },
         { status: 409, headers: ctx.responseHeaders }
       )
@@ -613,6 +582,23 @@ export async function POST(
     }
     blueprint.updatedAt = extension.created_at
     const contentHash = hashSiteForgeContent(blueprint)
+    // The source's quality report may carry a semantic-edit acceptance
+    // contract naming the source's own parent/content hash. Copying it onto
+    // the extension revision breaks the release lineage check, so strip it.
+    const qualityReport =
+      source.quality_report &&
+      typeof source.quality_report === 'object' &&
+      !Array.isArray(source.quality_report)
+        ? (structuredClone(source.quality_report) as Record<string, unknown>)
+        : {}
+    const semanticEditor = qualityReport.semanticEditor
+    if (
+      semanticEditor &&
+      typeof semanticEditor === 'object' &&
+      !Array.isArray(semanticEditor)
+    ) {
+      delete (semanticEditor as Record<string, unknown>).acceptanceContract
+    }
     const operation = {
       operation: 'runtime_extension_approval',
       requestId: extension.id,
@@ -657,7 +643,7 @@ export async function POST(
         ),
         p_edit_intent: extension.requested_behavior,
         p_patches_applied: operation as unknown as Json,
-        p_quality_report: source.quality_report || {},
+        p_quality_report: qualityReport as Json,
         p_quality_score: source.quality_score ?? 0,
         p_created_by: user.id,
         ...(source.base_theme_package_id
