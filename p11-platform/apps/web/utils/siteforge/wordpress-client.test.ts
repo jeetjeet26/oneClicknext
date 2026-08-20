@@ -437,6 +437,88 @@ describe('wordpress-client', () => {
     })
   })
 
+  it('republishes only in-scope pages while resolving untouched page ids', async () => {
+    const makePage = (slug: string, title: string): GeneratedPage => ({
+      slug,
+      title,
+      purpose: 'Inform',
+      sections: [
+        {
+          id: `section-${slug}`,
+          type: 'content',
+          acfBlock: 'acf/text-section',
+          content: { headline: title },
+          reasoning: 'Planned section',
+          order: 1,
+        },
+      ],
+    })
+    const pages = [makePage('home', 'Home'), makePage('contact', 'Contact')]
+
+    fetchMock
+      // Readiness: namespaces + auth probe.
+      .mockResolvedValueOnce(
+        jsonResponse({ namespaces: ['wp/v2', 'acf/v3', 'siteforge/v1'] })
+      )
+      .mockResolvedValueOnce(jsonResponse({ id: 1, name: 'Admin User' }))
+      // home is in scope: lookup misses, page is created.
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse({ id: 9001 }))
+      // contact is out of scope: id is resolved without re-publishing.
+      .mockResolvedValueOnce(jsonResponse([{ id: 9002 }]))
+      // Content manifest binds the hash to the complete page set.
+      .mockResolvedValueOnce(jsonResponse({}))
+      // Site settings.
+      .mockResolvedValueOnce(jsonResponse({}))
+      // Navigation: menu lookup, create, item lookup, two items.
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse({ id: 44 }))
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse({ id: 501 }))
+      .mockResolvedValueOnce(jsonResponse({ id: 502 }))
+      // Yoast namespace probe (absent → skipped).
+      .mockResolvedValueOnce(jsonResponse({ namespaces: ['wp/v2'] }))
+      // Deployment verification covers only the scoped page.
+      .mockResolvedValueOnce(
+        jsonResponse([{ id: 9001, slug: 'home', status: 'publish' }])
+      )
+      .mockResolvedValueOnce(jsonResponse({ title: 'Sunset Apartments' }))
+
+    await deployToExistingWordPress({
+      wpUrl: 'https://site.example.com',
+      credentials: { username: 'admin', password: 'app-password' },
+      pages,
+      propertyContext: { name: 'Sunset Apartments' },
+      assets: [],
+      contentHash: 'a'.repeat(64),
+      pageScope: ['home'],
+    })
+
+    const pagePosts = fetchMock.mock.calls.filter(
+      call =>
+        String(call[0]).includes('/wp-json/wp/v2/pages') &&
+        call[1]?.method === 'POST'
+    )
+    expect(pagePosts).toHaveLength(1)
+    expect(JSON.parse(String(pagePosts[0][1]?.body)).slug).toBe('home')
+
+    const manifestCall = fetchMock.mock.calls.find(call =>
+      String(call[0]).includes('/siteforge/v1/content-manifest')
+    )
+    expect(manifestCall).toBeDefined()
+    expect(JSON.parse(String(manifestCall![1]?.body))).toEqual({
+      content_hash: 'a'.repeat(64),
+      page_ids: [9001, 9002],
+    })
+
+    // Untouched pages are resolved (GET) exactly once and never re-created.
+    const contactLookups = fetchMock.mock.calls.filter(call =>
+      String(call[0]).includes('slug=contact')
+    )
+    expect(contactLookups).toHaveLength(1)
+    expect(contactLookups[0][1]?.method ?? 'GET').not.toBe('POST')
+  })
+
   it('converges an existing Primary Navigation menu instead of colliding', async () => {
     const client = new WordPressAPIClient('https://example.com', {
       username: 'admin',

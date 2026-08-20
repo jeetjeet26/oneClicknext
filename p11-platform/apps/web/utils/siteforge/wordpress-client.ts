@@ -889,6 +889,16 @@ export class WordPressAPIClient {
   /**
    * Create WordPress page with ACF blocks
    */
+  /** Resolve the published page id for a slug, or null when absent. */
+  async findPageIdBySlug(slug: string): Promise<number | null> {
+    const existing = await this.get<
+      Array<{ id?: number }>
+    >(`/pages?context=edit&per_page=1&slug=${encodeURIComponent(slug)}`)
+    return Array.isArray(existing) && typeof existing[0]?.id === 'number'
+      ? existing[0].id
+      : null
+  }
+
   async createPage(
     page: GeneratedPage,
     mediaIds: Map<string, number>,
@@ -900,13 +910,7 @@ export class WordPressAPIClient {
     
     const content = renderGutenbergBlocks(blocks)
     
-    const existing = await this.get<
-      Array<{ id?: number }>
-    >(`/pages?context=edit&per_page=1&slug=${encodeURIComponent(page.slug)}`)
-    const existingId =
-      Array.isArray(existing) && typeof existing[0]?.id === 'number'
-        ? existing[0].id
-        : null
+    const existingId = await this.findPageIdBySlug(page.slug)
     const response = await this.post(existingId ? `/pages/${existingId}` : '/pages', {
       title: page.title,
       slug: page.slug,
@@ -1624,6 +1628,10 @@ export async function deployToExistingWordPress(args: {
   contentHash: string
   siteConfiguration?: SiteConfiguration
   requireContentManifest?: boolean
+  // Slugs whose content changed since the revision already verified on this
+  // instance. When provided, unchanged pages are resolved (not re-published);
+  // any page missing on the instance is still deployed as a fail-safe.
+  pageScope?: readonly string[]
   onProgress?: DeploymentProgressReporter
 }): Promise<WordPressInstance> {
   const { wpUrl, credentials, pages, propertyContext, assets, onProgress } = args
@@ -1638,23 +1646,41 @@ export async function deployToExistingWordPress(args: {
   await reportProgress(onProgress, 'Uploading generated assets to existing WordPress...')
   const mediaIds = await wpClient.uploadAssets(assets)
 
-  await reportProgress(onProgress, 'Publishing generated pages to existing WordPress...')
+  const scopedSlugs = args.pageScope
+    ? new Set(args.pageScope.map(slug => normalizePageSlug(slug)))
+    : null
+  await reportProgress(
+    onProgress,
+    scopedSlugs
+      ? 'Publishing edited pages to existing WordPress...'
+      : 'Publishing generated pages to existing WordPress...'
+  )
   const createdPages: Array<{ id: number; title: string; purpose: string }> = []
+  const allPageIds: number[] = []
   const pageIdsBySlug = new Map<string, number>()
   for (const [pageIndex, page] of pages.entries()) {
+    const slug = normalizePageSlug(page.slug)
+    if (scopedSlugs && !scopedSlugs.has(slug)) {
+      const existingId = await wpClient.findPageIdBySlug(page.slug)
+      if (typeof existingId === 'number') {
+        allPageIds.push(existingId)
+        pageIdsBySlug.set(slug, existingId)
+        continue
+      }
+      // The instance is missing a page the parent revision should have
+      // deployed; publish it so the scoped render converges on full content.
+    }
     const pageId = await wpClient.createPage(page, mediaIds, pageIndex + 1)
     createdPages.push({
       id: pageId,
       title: page.title,
       purpose: page.purpose,
     })
-    pageIdsBySlug.set(normalizePageSlug(page.slug), pageId)
+    allPageIds.push(pageId)
+    pageIdsBySlug.set(slug, pageId)
   }
   try {
-    await wpClient.applyContentManifest(
-      args.contentHash,
-      createdPages.map((page) => page.id)
-    )
+    await wpClient.applyContentManifest(args.contentHash, allPageIds)
   } catch (error) {
     const canUseLegacyPreview =
       args.requireContentManifest === false &&
@@ -1711,7 +1737,15 @@ export async function deployToExistingWordPress(args: {
 
   await reportProgress(onProgress, 'Running deployment verification checks...')
   await wpClient.verifyDeployment({
-    expectedPages: pages,
+    expectedPages: scopedSlugs
+      ? pages.filter(page => {
+          const slug = normalizePageSlug(page.slug)
+          return (
+            scopedSlugs.has(slug) ||
+            createdPages.some(created => pageIdsBySlug.get(slug) === created.id)
+          )
+        })
+      : pages,
     mediaIds,
     siteName: propertyContext.name,
   })

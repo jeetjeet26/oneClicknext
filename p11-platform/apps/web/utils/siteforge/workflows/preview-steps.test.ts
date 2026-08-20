@@ -117,6 +117,102 @@ describe('canonical WordPress preview workflow steps', () => {
     })
   })
 
+  it('scopes edit renders to touched pages only when lineage is proven', async () => {
+    const { deriveScopedLegacyPreviewPages } = await import('./preview-steps')
+    const pages = [
+      { slug: 'home' },
+      { slug: 'contact' },
+      { slug: 'floor-plans' },
+      { slug: 'amenities' },
+    ] as unknown as import('@/types/siteforge').GeneratedPage[]
+    const parentHash = 'a'.repeat(64)
+    const editedHash = 'b'.repeat(64)
+    const contract = {
+      parentArtifact: { contentHash: parentHash },
+      editedArtifact: { contentHash: editedHash },
+      changedResources: [
+        { pageSlug: 'home' },
+        { pageSlug: '/home' },
+      ],
+    }
+
+    // Happy path: contract matches revision, instance holds the parent.
+    expect(
+      deriveScopedLegacyPreviewPages({
+        editAcceptanceContract: contract,
+        contentHash: editedHash,
+        lastVerifiedContentHash: parentHash,
+        pages,
+      })?.map(page => page.slug)
+    ).toEqual(['home'])
+
+    // No contract → full deploy.
+    expect(
+      deriveScopedLegacyPreviewPages({
+        editAcceptanceContract: null,
+        contentHash: editedHash,
+        lastVerifiedContentHash: parentHash,
+        pages,
+      })
+    ).toBeNull()
+
+    // Instance holds a different revision than the edit's parent → full deploy.
+    expect(
+      deriveScopedLegacyPreviewPages({
+        editAcceptanceContract: contract,
+        contentHash: editedHash,
+        lastVerifiedContentHash: 'c'.repeat(64),
+        pages,
+      })
+    ).toBeNull()
+
+    // Instance has never been verified → full deploy.
+    expect(
+      deriveScopedLegacyPreviewPages({
+        editAcceptanceContract: contract,
+        contentHash: editedHash,
+        lastVerifiedContentHash: null,
+        pages,
+      })
+    ).toBeNull()
+
+    // Contract is for a different edited revision → full deploy.
+    expect(
+      deriveScopedLegacyPreviewPages({
+        editAcceptanceContract: contract,
+        contentHash: 'd'.repeat(64),
+        lastVerifiedContentHash: parentHash,
+        pages,
+      })
+    ).toBeNull()
+
+    // Unknown page in the contract → full deploy.
+    expect(
+      deriveScopedLegacyPreviewPages({
+        editAcceptanceContract: {
+          ...contract,
+          changedResources: [{ pageSlug: 'gallery' }],
+        },
+        contentHash: editedHash,
+        lastVerifiedContentHash: parentHash,
+        pages,
+      })
+    ).toBeNull()
+
+    // Edit touches every page → nothing to scope.
+    expect(
+      deriveScopedLegacyPreviewPages({
+        editAcceptanceContract: {
+          ...contract,
+          changedResources: pages.map(page => ({ pageSlug: page.slug })),
+        },
+        contentHash: editedHash,
+        lastVerifiedContentHash: parentHash,
+        pages,
+      })
+    ).toBeNull()
+  })
+
   it('preserves workflow-serialized failure messages for the dashboard', async () => {
     const { canonicalPreviewErrorMessage } = await import(
       '@/workflows/siteforge-canonical-preview'

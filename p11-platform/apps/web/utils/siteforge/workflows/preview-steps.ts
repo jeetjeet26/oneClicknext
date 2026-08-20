@@ -75,6 +75,45 @@ export function buildRenderedPreviewCheckpoint(input: {
   };
 }
 
+/**
+ * Derive the page subset a legacy canonical render may safely redeploy.
+ *
+ * A semantic edit touches a known page set (recorded in its acceptance
+ * contract). When this exact instance already holds the verified render of
+ * the parent revision, unchanged pages are byte-identical between revisions,
+ * so only the touched pages need re-publishing and re-certifying. Any doubt —
+ * no contract, hash mismatch, unknown page, site-wide edit — falls back to a
+ * full deploy (returns null).
+ */
+export function deriveScopedLegacyPreviewPages(input: {
+  editAcceptanceContract:
+    | { parentArtifact: { contentHash: string }; editedArtifact: { contentHash: string }; changedResources: Array<{ pageSlug: string }> }
+    | null
+    | undefined;
+  contentHash: string;
+  lastVerifiedContentHash: string | null;
+  pages: GeneratedPage[];
+}): GeneratedPage[] | null {
+  const contract = input.editAcceptanceContract;
+  if (!contract) return null;
+  if (contract.editedArtifact.contentHash !== input.contentHash) return null;
+  if (!input.lastVerifiedContentHash) return null;
+  if (contract.parentArtifact.contentHash !== input.lastVerifiedContentHash) {
+    return null;
+  }
+  const normalize = (slug: string) =>
+    slug.replace(/^\/+|\/+$/g, "").toLowerCase() || "home";
+  const available = new Set(input.pages.map((page) => normalize(page.slug)));
+  const touched = new Set<string>();
+  for (const resource of contract.changedResources) {
+    const slug = normalize(resource.pageSlug);
+    if (!available.has(slug)) return null;
+    touched.add(slug);
+  }
+  if (!touched.size || touched.size >= available.size) return null;
+  return input.pages.filter((page) => touched.has(normalize(page.slug)));
+}
+
 export function isCanonicalPreviewInstallationCurrent(
   value: unknown,
   expectedThemeVersion: string,
@@ -324,6 +363,8 @@ export async function renderCanonicalWordPressPreview(
 
   let operationHash: string | null = null;
   let remoteTransactionId: string | null = null;
+  // Non-null only for legacy renders proven safe to redeploy a page subset.
+  let scopedPreviewPages: GeneratedPage[] | null = null;
   let runtimeVersion: string | null = target.runtime_version;
   let assetBindingHash = release.artifact.assetManifestHash;
   let instance = {
@@ -651,6 +692,12 @@ export async function renderCanonicalWordPressPreview(
         "Legacy WordPress preview configuration is incomplete",
       );
     }
+    scopedPreviewPages = deriveScopedLegacyPreviewPages({
+      editAcceptanceContract: release.artifact.editAcceptanceContract,
+      contentHash: input.contentHash,
+      lastVerifiedContentHash: target.last_verified_content_hash,
+      pages,
+    });
     instance = await deployToExistingWordPress({
       wpUrl: previewUrl,
       credentials: { username, password },
@@ -660,6 +707,7 @@ export async function renderCanonicalWordPressPreview(
       contentHash: input.contentHash,
       siteConfiguration: themeArtifact.siteConfiguration,
       requireContentManifest: true,
+      pageScope: scopedPreviewPages?.map((page) => page.slug),
       onProgress: async (currentStep) => {
         await supabase
           .from("shared_jobs")
@@ -782,7 +830,9 @@ export async function renderCanonicalWordPressPreview(
         release.artifact.editAcceptanceContract || undefined,
       targetUrl: instance.url,
       credentials: instance.credentials,
-      pages,
+      // Scoped edit renders certify only the touched pages; the rest of the
+      // site is byte-identical to the already-certified parent revision.
+      pages: scopedPreviewPages ?? pages,
       environment: "protected_preview",
       access: "protected",
       requireIndexable: false,
@@ -836,6 +886,11 @@ export async function renderCanonicalWordPressPreview(
       status: "ready",
       site_url: instance.url,
       admin_url: instance.adminUrl,
+      // Legacy renders record the verified hash so the next edit render can
+      // prove the instance holds this revision and scope to touched pages.
+      ...(!runtimeV2 && !runtimeV3
+        ? { last_verified_content_hash: input.contentHash }
+        : {}),
       updated_at: new Date().toISOString(),
     })
     .eq("id", target.id);
@@ -846,6 +901,7 @@ export async function renderCanonicalWordPressPreview(
     contentHash: artifact.content_hash,
     previewUrl: instance.url,
     pages: pages.length,
+    scopedPages: scopedPreviewPages?.length ?? null,
     runtimeVersion,
     remoteTransactionId,
     operationHash,
