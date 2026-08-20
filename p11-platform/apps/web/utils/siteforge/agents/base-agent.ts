@@ -431,10 +431,13 @@ function unwrapLegacyJson(response: string): string {
 
   if (value.startsWith('<json>') && value.endsWith('</json>')) {
     value = value.slice('<json>'.length, -'</json>'.length).trim()
-  } else if (value.startsWith('```json') && value.endsWith('```')) {
-    value = value.slice('```json'.length, -'```'.length).trim()
-  } else if (value.startsWith('```') && value.endsWith('```')) {
-    value = value.slice('```'.length, -'```'.length).trim()
+  } else if (value.startsWith('```')) {
+    // Models sometimes append prose after the closing fence, so extract the
+    // fenced block instead of requiring the response to end with the fence.
+    const fenced = value.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```/)
+    if (fenced) {
+      value = fenced[1].trim()
+    }
   }
 
   return escapeControlCharactersInJsonStrings(value).replace(

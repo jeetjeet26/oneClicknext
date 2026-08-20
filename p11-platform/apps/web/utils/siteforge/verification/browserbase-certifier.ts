@@ -710,7 +710,36 @@ function scriptCategory(
   return "essential";
 }
 
+function isDestroyedExecutionContextError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    /execution context was destroyed|cannot find context with specified id|frame was detached/i.test(
+      error.message,
+    )
+  );
+}
+
 async function waitForVisualStability(page: Page) {
+  // Late client-side or canonical redirects can destroy the evaluate context
+  // mid-run. Settle on the new document and retry instead of failing the
+  // whole certification.
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      await collectVisualStability(page);
+      return;
+    } catch (error) {
+      if (attempt === 3 || !isDestroyedExecutionContextError(error)) {
+        throw error;
+      }
+      await page
+        .waitForLoadState("domcontentloaded", { timeout: 15_000 })
+        .catch(() => undefined);
+      await page.waitForTimeout(750);
+    }
+  }
+}
+
+async function collectVisualStability(page: Page) {
   await page.evaluate(async () => {
     const delay = (milliseconds: number) =>
       new Promise((resolve) => window.setTimeout(resolve, milliseconds));

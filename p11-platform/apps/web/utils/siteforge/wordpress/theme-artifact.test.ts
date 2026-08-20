@@ -78,6 +78,57 @@ describe('WordPress theme artifact', () => {
     expect(validateWordPressThemeArtifact(first)).toEqual(first)
   })
 
+  it('fills empty navigation from the approved architecture topology', () => {
+    const artifact = buildWordPressThemeArtifact(
+      designSystem,
+      getBuiltinThemeCapabilities(),
+      undefined,
+      [],
+      undefined,
+      undefined,
+      [
+        { label: 'Home', slug: '/' },
+        { label: 'Contact', slug: '/contact' },
+        { label: 'Floor Plans', slug: '/floor-plans' },
+        { label: 'Amenities', slug: '/amenities' },
+      ]
+    )
+
+    expect(artifact.siteConfiguration.navigation.items).toEqual([
+      { id: 'nav-home', label: 'Home', href: '/' },
+      { id: 'nav-contact', label: 'Contact', href: '/contact' },
+      { id: 'nav-floor-plans', label: 'Floor Plans', href: '/floor-plans' },
+      { id: 'nav-amenities', label: 'Amenities', href: '/amenities' },
+    ])
+    expect(validateWordPressThemeArtifact(artifact)).toEqual(artifact)
+  })
+
+  it('never overwrites configured navigation with architecture topology', () => {
+    const configured = buildWordPressThemeArtifact(
+      designSystem,
+      getBuiltinThemeCapabilities()
+    ).siteConfiguration
+    const artifact = buildWordPressThemeArtifact(
+      designSystem,
+      getBuiltinThemeCapabilities(),
+      {
+        ...configured,
+        navigation: {
+          ...configured.navigation,
+          items: [{ id: 'nav-custom', label: 'Custom', href: '/custom' }],
+        },
+      },
+      [],
+      undefined,
+      undefined,
+      [{ label: 'Home', slug: '/' }]
+    )
+
+    expect(artifact.siteConfiguration.navigation.items).toEqual([
+      { id: 'nav-custom', label: 'Custom', href: '/custom' },
+    ])
+  })
+
   it('normalizes responsive spacing expressions before artifact validation', () => {
     const artifact = buildWordPressThemeArtifact(
       {

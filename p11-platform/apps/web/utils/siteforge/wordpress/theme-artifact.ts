@@ -215,6 +215,10 @@ export function buildWordPressThemeArtifact(
   // compatibility guarantee).
   requiredBlocks: readonly string[] = ACF_BLOCK_TYPES,
   brandPublication?: BrandPublicationPackage,
+  // Approved navigation topology (label + slug per page, in plan order).
+  // Applied only when the resolved configuration has no navigation items, so
+  // editor-owned navigation is never overwritten on rebuilds.
+  navigationItems?: ReadonlyArray<{ label: string; slug: string }>,
 ): WordPressThemeArtifact {
   if (brandPublication) {
     assertDesignSystemBrandInheritance(designSystem, brandPublication)
@@ -261,6 +265,19 @@ export function buildWordPressThemeArtifact(
   }[designSystem.spacing.scale]
   const configuration = siteConfigurationSchema.parse({
     ...parsedConfiguration,
+    navigation: {
+      ...parsedConfiguration.navigation,
+      items: parsedConfiguration.navigation.items.length
+        ? parsedConfiguration.navigation.items
+        : (navigationItems || []).map(item => ({
+            id: `nav-${
+              item.slug.replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '') ||
+              'home'
+            }`,
+            label: item.label,
+            href: item.slug,
+          })),
+    },
     design: {
       ...parsedConfiguration.design,
       spacing: {

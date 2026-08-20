@@ -905,6 +905,10 @@ export async function persistSiteForgeGenerationArtifact(
     wordpressFontAssets,
     undefined,
     brandPublication,
+    architecture.navigation.items.map(item => ({
+      label: item.label,
+      slug: item.slug,
+    })),
   )
   const analytics = createDefaultSiteForgeAnalyticsConfig()
   const verifiedKnowledgeBaseEvidenceIds =

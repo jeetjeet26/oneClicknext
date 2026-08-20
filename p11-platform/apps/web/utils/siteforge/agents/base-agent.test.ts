@@ -200,4 +200,14 @@ describe('BaseAgent.callClaude', () => {
       agent.parseJSONForTest('Here is your result: {"ok":true}')
     ).toThrow('invalid legacy JSON')
   })
+
+  it('unwraps fenced JSON even when prose trails the closing fence', () => {
+    const agent = new TestBaseAgent('property-1')
+    const response =
+      '```json\n{"category":"amenity_photo","quality":8}\n```\nThis photo shows the pool area.'
+
+    expect(
+      agent.parseJSONForTest<{ category: string; quality: number }>(response)
+    ).toEqual({ category: 'amenity_photo', quality: 8 })
+  })
 })
