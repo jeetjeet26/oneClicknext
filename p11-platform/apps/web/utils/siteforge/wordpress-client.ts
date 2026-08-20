@@ -1339,6 +1339,7 @@ function convertToGutenbergBlock(
     content: Record<string, unknown>
     order?: number
     variant?: string
+    presentation?: Record<string, unknown>
   },
   mediaIds: Map<string, number>
 ): GutenbergBlock {
@@ -1361,6 +1362,23 @@ function convertToGutenbergBlock(
         : {})
     )
   )
+
+  // The theme's block wrapper reads these underscore-prefixed data keys to
+  // emit data-siteforge-section-id / data-siteforge-variant attributes and the
+  // presentation classes. Without them, rendered pages carry no section
+  // identity (edit verification matches nothing) and presentation edits like
+  // alignment never take effect. Inject them after repeater flattening so the
+  // nested presentation object survives intact.
+  if (section.id) {
+    data._siteforge_section_id = `section:${section.id}`
+  }
+  if (
+    section.presentation &&
+    typeof section.presentation === 'object' &&
+    Object.keys(section.presentation).length > 0
+  ) {
+    data._siteforge_presentation = section.presentation
+  }
 
   const blockIdSource = section.id || `order-${section.order ?? 0}`
   const blockId = `block_${blockIdSource.replace(/[^a-zA-Z0-9]/g, '').substring(0, 12)}`

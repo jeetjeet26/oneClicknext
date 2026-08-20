@@ -25,7 +25,11 @@ function oneclick_get_block_wrapper_attributes( $block, $extra_attrs = array() )
 	$siteforge_section_id = $block['siteforgeSectionId'] ?? ( $block['data']['_siteforge_section_id'] ?? '' );
 	if ( $siteforge_section_id ) {
 		$resource_id = (string) $siteforge_section_id;
-		$section_id  = preg_replace( '/^section:[^:]+:/', '', $resource_id );
+		// Resource ids arrive as either legacy page-scoped ("section:home:home-hero")
+		// or canonical ("section:core.real_estate.page.primary.section.primary").
+		// Strip "section:" plus an optional page-scope segment so the emitted
+		// attribute always equals the bare section id the editor verifies against.
+		$section_id  = preg_replace( '/^section:(?:[^:]+:)?/', '', $resource_id );
 		$attrs['data-siteforge-resource'] = $resource_id;
 		$attrs['data-siteforge-section-id'] = $section_id;
 	}
@@ -33,6 +37,7 @@ function oneclick_get_block_wrapper_attributes( $block, $extra_attrs = array() )
 	$catalog    = oneclick_siteforge_variant_catalog();
 	if ( isset( $catalog[ $block_name ] ) && in_array( $variant, $catalog[ $block_name ], true ) ) {
 		$attrs['class'] .= ' variant-' . sanitize_html_class( $variant );
+		$attrs['data-siteforge-variant'] = $variant;
 	}
 	$presentation = oneclick_get_block_field( '_siteforge_presentation', $block, array() );
 	if ( is_array( $presentation ) ) {

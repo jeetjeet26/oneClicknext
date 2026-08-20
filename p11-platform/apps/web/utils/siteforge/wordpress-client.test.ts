@@ -288,6 +288,12 @@ describe('wordpress-client', () => {
           },
           reasoning: 'Lead with the hero',
           order: 1,
+          variant: 'split',
+          presentation: {
+            alignment: 'left',
+            containerMode: 'contained',
+            widthPreset: 'content',
+          },
         },
       ],
     }
@@ -384,6 +390,17 @@ describe('wordpress-client', () => {
     expect(blockAttrs.data.slides).toBe(2)
     expect(blockAttrs.data.slides_0_headline).toBe('Slide One')
     expect(blockAttrs.data.slides_1_subheadline).toBe('Second')
+
+    // Section identity and presentation must reach the theme so rendered
+    // markup carries data-siteforge-section-id / data-siteforge-variant and
+    // presentation classes (alignment, container, width).
+    expect(blockAttrs.data._siteforge_section_id).toBe('section:section-hero-1')
+    expect(blockAttrs.data.variant).toBe('split')
+    expect(blockAttrs.data._siteforge_presentation).toEqual({
+      alignment: 'left',
+      containerMode: 'contained',
+      widthPreset: 'content',
+    })
 
     // Classic menu created and assigned to the primary location
     const menuCall = fetchMock.mock.calls[10]
