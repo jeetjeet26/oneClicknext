@@ -58,7 +58,7 @@ describe('evaluator scoring', () => {
     }), context)
 
     expect(scored.presence).toBe(true)
-    expect(scored.llmRank).toBe(1)
+    expect(scored.llmRank).toBeNull()
     expect(scored.flags).not.toContain('possible_hallucination')
   })
 

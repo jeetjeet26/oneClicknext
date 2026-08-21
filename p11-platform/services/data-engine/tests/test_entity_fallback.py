@@ -13,6 +13,27 @@ def test_find_mention_index():
     assert find_mention_index('Other communities nearby.', 'Epoca') is None
 
 
+def test_reads_rank_from_numbered_list():
+    entities = ensure_ordered_entities(
+        existing=[{'name': 'Epoca', 'domain': 'epocalife.com', 'rationale': 'First mentioned in the answer at character 4.', 'position': 1}],
+        analysis_entities=[],
+        brand_name='Epoca',
+        brand_domains=['epocalife.com'],
+        text='\n'.join([
+            'If you are looking within Otay Mesa, these are the strongest areas:',
+            '',
+            '1. **Ocean View Hills — best overall**',
+            '2. **Millenia**',
+            '3. **Epoca**',
+        ]),
+    )
+    assert [f"{entity['position']}:{entity['name']}" for entity in entities] == [
+        '1:Ocean View Hills',
+        '2:Millenia',
+        '3:Epoca',
+    ]
+
+
 def test_rebuilds_list_from_prose():
     entities = ensure_ordered_entities(
         existing=[],
@@ -38,7 +59,7 @@ def test_finalize_strips_hallucination_when_brand_is_named():
         '## Epoca Master Plan — Otay Mesa, San Diego',
         {},
     )
-    assert answer['ordered_entities'][0]['name'] == 'Epoca'
+    assert answer['ordered_entities'] == []
     assert answer['notes']['flags'] == []
     assert reconcile_hallucination_flags(['possible_hallucination'], 'No brand here.', 'Epoca') == [
         'possible_hallucination'
@@ -61,7 +82,7 @@ def test_score_answer_recovers_rank_from_prose():
         },
     )
     assert scored['presence'] is True
-    assert scored['llm_rank'] == 1
+    assert scored['llm_rank'] is None
     assert 'possible_hallucination' not in scored['flags']
 
 

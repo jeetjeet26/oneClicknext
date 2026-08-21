@@ -103,7 +103,37 @@ function knownNames(brandName: string, competitors: string[] = []): string[] {
   return names
 }
 
-function extractEntitiesFromText(input: EntityFallbackContext & { text: string }): FallbackEntity[] {
+function isUsableListName(name: string): boolean {
+  const cleaned = name.trim()
+  if (cleaned.length < 2 || cleaned.length > 70) return false
+  if (!/[A-Za-z]/.test(cleaned)) return false
+  return !/^(if you|these are|the following|note|source|http)/i.test(cleaned)
+}
+
+function extractListEntities(text: string, brandName: string, brandDomains: string[] = []): FallbackEntity[] {
+  const entities: FallbackEntity[] = []
+  const seen = new Set<string>()
+  for (const line of text.split(/\n/)) {
+    const match = line.match(/^\s*(?:#{1,6}\s*)?(?:(\d+)[.)]\s+|[-*]\s+)(?:\*\*|__)?\s*(.+)$/)
+    if (!match) continue
+    const explicitPosition = match[1] ? Number.parseInt(match[1], 10) : null
+    let raw = (match[2] || '').replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').replace(/\*\*|__|`/g, '')
+    const name = raw.split(/\s*[—–|:]\s*/)[0].replace(/\s+-\s+.*$/, '').trim()
+    if (!isUsableListName(name)) continue
+    const key = name.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    entities.push({
+      name,
+      domain: isBrandName(name, brandName) ? (brandDomains[0] || '') : '',
+      rationale: 'Extracted from a numbered or bulleted recommendation list.',
+      position: explicitPosition && explicitPosition > 0 ? explicitPosition : entities.length + 1,
+    })
+  }
+  return entities.sort((left, right) => left.position - right.position)
+}
+
+function extractNamedEntitiesFromText(input: EntityFallbackContext & { text: string }): FallbackEntity[] {
   const hits = knownNames(input.brandName, input.competitors)
     .map(name => ({ name, index: findMentionIndex(input.text, name) }))
     .filter((item): item is { name: string; index: number } => item.index !== null)
@@ -117,28 +147,17 @@ function extractEntitiesFromText(input: EntityFallbackContext & { text: string }
   }))
 }
 
-function ensureBrandInList(
-  entities: FallbackEntity[],
-  input: EntityFallbackContext & { text: string }
-): FallbackEntity[] {
-  if (findTrackedBrandPosition(entities, input.brandName, input.brandDomains) != null) {
-    return entities
-  }
-  if (findMentionIndex(input.text, input.brandName) == null) {
-    return entities
-  }
-  const nextPosition = entities.reduce((max, entity) => Math.max(max, entity.position), 0) + 1
-  const extracted = extractEntitiesFromText(input)
-  const brand = extracted.find(entity => isBrandName(entity.name, input.brandName))
-  return normalizeEntities([
-    ...entities,
-    {
-      name: brand?.name || input.brandName,
-      domain: brand?.domain || input.brandDomains?.[0] || '',
-      rationale: brand?.rationale || 'Tracked brand was named in the answer but omitted from the extracted list.',
-      position: nextPosition,
-    },
-  ])
+function isUnverifiedSoloBrand(entities: FallbackEntity[], brandName: string): boolean {
+  return entities.length === 1
+    && isBrandName(entities[0]?.name || '', brandName)
+    && (entities[0]?.position || 0) === 1
+}
+
+function extractEntitiesFromText(input: EntityFallbackContext & { text: string }): FallbackEntity[] {
+  const fromList = extractListEntities(input.text, input.brandName, input.brandDomains)
+  if (fromList.length >= 2) return fromList
+  const fromNames = extractNamedEntitiesFromText(input)
+  return fromNames.length >= 2 ? fromNames : []
 }
 
 type EntityLike = {
@@ -163,12 +182,12 @@ export function ensureOrderedEntities(input: {
     text: input.text,
   }
   const existing = normalizeEntities(input.existing)
-  if (existing.length > 0) {
-    return ensureBrandInList(existing, context)
+  if (existing.length > 0 && !isUnverifiedSoloBrand(existing, input.brandName)) {
+    return existing
   }
   const fromAnalysis = normalizeEntities(input.analysisEntities)
-  if (fromAnalysis.length > 0) {
-    return ensureBrandInList(fromAnalysis, context)
+  if (fromAnalysis.length > 0 && !isUnverifiedSoloBrand(fromAnalysis, input.brandName)) {
+    return fromAnalysis
   }
   return extractEntitiesFromText(context)
 }

@@ -575,7 +575,7 @@ function generateReportHTML(
           <td>${escapeHtml(String(run.surface || '—'))}</td>
           <td>${score ? Math.round(score.overall_score) : '—'}</td>
           <td>${score ? Math.round(score.visibility_pct) + '%' : '—'}</td>
-          <td>${score?.avg_llm_rank?.toFixed(1) || '—'}</td>
+          <td>${run.presentAvgRank?.toFixed(1) ?? score?.avg_llm_rank?.toFixed(1) ?? '—'}</td>
         </tr>
         `
       }).join('')}
@@ -606,7 +606,7 @@ function generateReportHTML(
           <td>${escapeHtml(String(run.surface || '—'))}</td>
           <td>${score ? Math.round(score.overall_score) : '—'}</td>
           <td>${score ? Math.round(score.visibility_pct) + '%' : '—'}</td>
-          <td>${score?.avg_llm_rank?.toFixed(1) || '—'}</td>
+          <td>${run.presentAvgRank?.toFixed(1) ?? score?.avg_llm_rank?.toFixed(1) ?? '—'}</td>
           <td>${score?.avg_sov ? `${Math.round(score.avg_sov * 100)}%` : '—'}</td>
         </tr>
         `

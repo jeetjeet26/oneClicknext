@@ -54,6 +54,7 @@ export type ReportRun = {
   batch_id?: string | null
   started_at?: string | null
   finished_at?: string | null
+  presentAvgRank?: number | null
   geo_scores?: Array<{
     overall_score: number
     visibility_pct: number
@@ -73,6 +74,7 @@ type ReportScore = NonNullable<ReportRun['geo_scores']>[number]
 
 export type ReportAnswer = {
   id: string
+  run_id?: string | null
   query_id?: string | null
   presence: boolean
   presence_rate?: number | null
@@ -267,6 +269,22 @@ async function fetchSiteAuditDeliverables(
 }
 
 const DEFAULT_RUN_WINDOW = 6
+const TREND_RUN_FETCH_LIMIT = 80
+const TREND_BATCH_LIMIT = 10
+
+async function fetchCompletedRunsForTrends(
+  supabase: ReportingDbClient,
+  propertyId: string
+): Promise<ReportRun[]> {
+  const { data: runs } = await from(supabase, 'geo_runs')
+    .select('id, surface, batch_id, model_name, status, started_at, finished_at, geo_scores(*)')
+    .eq('property_id', propertyId)
+    .eq('status', 'completed')
+    .order('started_at', { ascending: false })
+    .limit(TREND_RUN_FETCH_LIMIT)
+
+  return (runs || []) as ReportRun[]
+}
 
 export async function buildPropertyReportData(
   supabase: ReportingDbClient,
@@ -300,9 +318,9 @@ export async function buildPropertyReportData(
     .eq('is_active', true)
 
   const reportProperty = (property || null) as ReportProperty | null
-  const reportRuns = (runs || []) as ReportRun[]
   const reportQueries = (queries || []) as ReportQuery[]
-  const runIds = reportRuns.map((r) => r.id)
+  const sourcedRuns = (runs || []) as ReportRun[]
+  const runIds = sourcedRuns.map((r) => r.id)
   let rawAnswers: ReportAnswer[] = []
   if (runIds.length > 0) {
     const { data } = await from(supabase, 'geo_answers')
@@ -311,6 +329,7 @@ export async function buildPropertyReportData(
     rawAnswers = backfillReportAnswers((data || []) as ReportAnswer[], reportProperty?.name || '')
   }
 
+  const reportRuns = attachPresentRanks(sourcedRuns, rawAnswers)
   const aiOverviewMap = await fetchAiOverviews(supabase, propertyId, reportQueries.map((q) => q.id))
   const aggregatedAnswers = aggregateAnswersByQuery(rawAnswers, reportQueries, aiOverviewMap)
 
@@ -331,7 +350,7 @@ export async function buildPropertyReportData(
   const rankSummary = buildRankSummary(aggregatedAnswers)
   const citationSummary = buildCitationSummary(rawAnswers)
   const aiOverviewSummary = buildAiOverviewSummary(reportQueries, aiOverviewMap)
-  const trends = buildTrends(reportRuns)
+  const trends = buildTrends(await fetchCompletedRunsForTrends(supabase, propertyId))
   const glossary = buildGlossary()
   const insightsBlock = buildInsights({
     propertyName: reportProperty?.name || 'Property',
@@ -412,7 +431,10 @@ export async function buildRunReportData(
   const recommendationsResult = await generateRecommendations(propertyId, runId)
   const recommendationSummary = buildRecommendationSummary(recommendationsResult.recommendations)
 
-  const rawAnswers = backfillReportAnswers(typedRun.geo_answers || [], typedRun.properties?.name || '')
+  const rawAnswers = backfillReportAnswers(
+    (typedRun.geo_answers || []).map(answer => ({ ...answer, run_id: answer.run_id || typedRun.id })),
+    typedRun.properties?.name || ''
+  )
   const queries = rawAnswers
     .map((answer) => answer.geo_queries)
     .filter((query): query is NonNullable<ReportAnswer['geo_queries']> => Boolean(query))
@@ -422,7 +444,7 @@ export async function buildRunReportData(
   })
 
   const scores = (typedRun.geo_scores || []).filter(Boolean)
-  const runs = [{
+  const runs = attachPresentRanks([{
     id: typedRun.id,
     surface: typedRun.surface,
     model_name: typedRun.model_name,
@@ -430,7 +452,7 @@ export async function buildRunReportData(
     started_at: typedRun.started_at,
     finished_at: typedRun.finished_at,
     geo_scores: typedRun.geo_scores
-  }] as ReportRun[]
+  }], rawAnswers)
 
   const aiOverviewMap = await fetchAiOverviews(supabase, propertyId, Array.from(uniqueQueries.keys()))
   const aggregatedAnswers = aggregateAnswersByQuery(rawAnswers, Array.from(uniqueQueries.values()), aiOverviewMap)
@@ -442,7 +464,7 @@ export async function buildRunReportData(
   const rankSummary = buildRankSummary(aggregatedAnswers)
   const citationSummary = buildCitationSummary(rawAnswers)
   const aiOverviewSummary = buildAiOverviewSummary(Array.from(uniqueQueries.values()), aiOverviewMap)
-  const trends = buildTrends(runs)
+  const trends = buildTrends(await fetchCompletedRunsForTrends(supabase, propertyId))
   const glossary = buildGlossary()
 
   const insightsBlock = buildInsights({
@@ -539,7 +561,7 @@ export function buildCharts(data: {
   return { scoreTrend, visibilityTrend, queryTypeBar, recommendationBar, competitorBar }
 }
 
-function buildTrends(runs: ReportRun[]): Array<{ label: string; score: number | null; visibility: number | null }> {
+export function buildTrends(runs: ReportRun[]): Array<{ label: string; score: number | null; visibility: number | null }> {
   const batches = new Map<string, { startedAt: string | null; scores: number[]; visibility: number[] }>()
 
   runs.forEach(run => {
@@ -569,6 +591,7 @@ function buildTrends(runs: ReportRun[]): Array<{ label: string; score: number | 
       score: batch.scores.length > 0 ? average(batch.scores) : null,
       visibility: batch.visibility.length > 0 ? average(batch.visibility) : null
     }))
+    .slice(-TREND_BATCH_LIMIT)
 }
 
 export function aggregateAnswersByQuery(
@@ -848,6 +871,18 @@ export function formatDiscoveryRank(
   return 'No discovery answers'
 }
 
+export function attachPresentRanks(runs: ReportRun[], answers: ReportAnswer[]): ReportRun[] {
+  return runs.map(run => {
+    const ranks = answers
+      .filter(answer => answer.run_id === run.id && typeof answer.llm_rank === 'number')
+      .map(answer => answer.llm_rank as number)
+    return {
+      ...run,
+      presentAvgRank: ranks.length > 0 ? Math.round(average(ranks) * 10) / 10 : null,
+    }
+  })
+}
+
 export function backfillReportAnswers(answers: ReportAnswer[], brandName: string): ReportAnswer[] {
   if (!brandName) return answers
   return answers.map(answer => {
@@ -860,7 +895,7 @@ export function backfillReportAnswers(answers: ReportAnswer[], brandName: string
     return {
       ...answer,
       ordered_entities: entities,
-      llm_rank: answer.llm_rank ?? findTrackedBrandPosition(entities, brandName),
+      llm_rank: findTrackedBrandPosition(entities, brandName),
     }
   })
 }

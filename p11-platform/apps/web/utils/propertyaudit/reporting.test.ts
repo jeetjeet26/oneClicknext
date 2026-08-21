@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildCompetitorsFromAnswers, buildInsights, buildReportScores, describeDiscoveryRankGap, formatDiscoveryRank, type ReportAnswer, type ReportCompetitor } from './reporting'
+import { buildCompetitorsFromAnswers, buildInsights, buildReportScores, buildTrends, describeDiscoveryRankGap, formatDiscoveryRank, type ReportAnswer, type ReportCompetitor, type ReportRun } from './reporting'
 
 function makeAnswer(orderedEntities: ReportAnswer['ordered_entities']): ReportAnswer {
   return {
@@ -165,5 +165,47 @@ describe('PropertyAudit reporting insights', () => {
       domain: 'trulia.com',
       ambiguityReason: undefined,
     })
+  })
+})
+
+describe('PropertyAudit report trends', () => {
+  function scoredRun(overrides: Partial<ReportRun> & { score: number; visibility: number }): ReportRun {
+    const { score, visibility, ...rest } = overrides
+    return {
+      id: rest.id || 'run',
+      surface: rest.surface || 'chatgpt',
+      batch_id: rest.batch_id || 'batch',
+      started_at: rest.started_at || '2026-08-21T19:35:51.000Z',
+      geo_scores: [{ overall_score: score, visibility_pct: visibility, avg_llm_rank: 1, avg_link_rank: null, avg_sov: null }],
+    }
+  }
+
+  it('needs two scored batches before a trend can render', () => {
+    const oneBatch = buildTrends([
+      scoredRun({ id: 'chatgpt', surface: 'chatgpt', batch_id: 'aug-21', score: 40, visibility: 55 }),
+      scoredRun({ id: 'claude', surface: 'claude', batch_id: 'aug-21', score: 38, visibility: 50 }),
+    ])
+
+    expect(oneBatch).toHaveLength(1)
+  })
+
+  it('builds one point per completed batch, not per surface', () => {
+    const trends = buildTrends([
+      scoredRun({ id: 'aug-chatgpt', surface: 'chatgpt', batch_id: 'aug-21', started_at: '2026-08-21T19:35:51.000Z', score: 40, visibility: 60 }),
+      scoredRun({ id: 'aug-google', surface: 'google_ai', batch_id: 'aug-21', started_at: '2026-08-21T19:35:52.000Z', score: 42, visibility: 62 }),
+      scoredRun({ id: 'jul-chatgpt', surface: 'chatgpt', batch_id: 'jul-27', started_at: '2026-07-27T19:24:07.000Z', score: 30, visibility: 48 }),
+      {
+        id: 'jul-failed',
+        surface: 'gemini',
+        batch_id: 'jul-27',
+        started_at: '2026-07-27T19:24:07.000Z',
+        geo_scores: [],
+      },
+    ])
+
+    expect(trends).toHaveLength(2)
+    expect(trends[0]?.score).toBe(30)
+    expect(trends[1]?.score).toBe(41)
+    expect(trends[1]?.visibility).toBe(61)
   })
 })

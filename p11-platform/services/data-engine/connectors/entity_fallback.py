@@ -103,7 +103,45 @@ def _known_names(brand_name: str, competitors: Optional[Iterable[str]] = None) -
     return names
 
 
-def _extract_entities_from_text(
+def _is_usable_list_name(name: str) -> bool:
+    cleaned = (name or '').strip()
+    if len(cleaned) < 2 or len(cleaned) > 70:
+        return False
+    if not re.search(r'[A-Za-z]', cleaned):
+        return False
+    return not re.match(r'^(if you|these are|the following|note|source|http)', cleaned, flags=re.IGNORECASE)
+
+
+def _extract_list_entities(text: str, brand_name: str, brand_domains: Optional[Iterable[str]] = None) -> List[Dict[str, Any]]:
+    entities: List[Dict[str, Any]] = []
+    seen = set()
+    domains = list(brand_domains or [])
+    for line in (text or '').splitlines():
+        match = re.match(r'^\s*(?:#{1,6}\s*)?(?:(\d+)[.)]\s+|[-*]\s+)(?:\*\*|__)?\s*(.+)$', line)
+        if not match:
+            continue
+        raw = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', match.group(2) or '')
+        raw = re.sub(r'\*\*|__|`', '', raw)
+        name = re.split(r'\s*[—–|:]\s*', raw, maxsplit=1)[0]
+        name = re.sub(r'\s+-\s+.*$', '', name).strip()
+        if not _is_usable_list_name(name):
+            continue
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        explicit = int(match.group(1)) if match.group(1) else len(entities) + 1
+        entities.append({
+            'name': name,
+            'domain': domains[0] if _is_brand_name(name, brand_name) and domains else '',
+            'rationale': 'Extracted from a numbered or bulleted recommendation list.',
+            'position': explicit if explicit > 0 else len(entities) + 1,
+        })
+    entities.sort(key=lambda item: item['position'])
+    return entities
+
+
+def _extract_named_entities_from_text(
     text: str,
     brand_name: str,
     brand_domains: Optional[Iterable[str]] = None,
@@ -128,29 +166,25 @@ def _extract_entities_from_text(
     ]
 
 
-def _ensure_brand_in_list(
-    entities: List[Dict[str, Any]],
+def _is_unverified_solo_brand(entities: List[Dict[str, Any]], brand_name: str) -> bool:
+    return (
+        len(entities) == 1
+        and _is_brand_name(entities[0].get('name') or '', brand_name)
+        and (entities[0].get('position') or 0) == 1
+    )
+
+
+def _extract_entities_from_text(
     text: str,
     brand_name: str,
     brand_domains: Optional[Iterable[str]] = None,
     competitors: Optional[Iterable[str]] = None,
 ) -> List[Dict[str, Any]]:
-    if find_tracked_brand_position(entities, brand_name, brand_domains) is not None:
-        return entities
-    if find_mention_index(text, brand_name) is None:
-        return entities
-    extracted = _extract_entities_from_text(text, brand_name, brand_domains, competitors)
-    brand = next((entity for entity in extracted if _is_brand_name(entity['name'], brand_name)), None)
-    next_position = max((entity.get('position') or 0 for entity in entities), default=0) + 1
-    return _normalize_entities([
-        *entities,
-        {
-            'name': (brand or {}).get('name') or brand_name,
-            'domain': (brand or {}).get('domain') or (list(brand_domains or []) or [''])[0],
-            'rationale': (brand or {}).get('rationale') or 'Tracked brand was named in the answer but omitted from the extracted list.',
-            'position': next_position,
-        },
-    ])
+    from_list = _extract_list_entities(text, brand_name, brand_domains)
+    if len(from_list) >= 2:
+        return from_list
+    from_names = _extract_named_entities_from_text(text, brand_name, brand_domains, competitors)
+    return from_names if len(from_names) >= 2 else []
 
 
 def ensure_ordered_entities(
@@ -162,11 +196,11 @@ def ensure_ordered_entities(
     text: str = '',
 ) -> List[Dict[str, Any]]:
     current = _normalize_entities(existing)
-    if current:
-        return _ensure_brand_in_list(current, text, brand_name, brand_domains, competitors)
+    if current and not _is_unverified_solo_brand(current, brand_name):
+        return current
     from_analysis = _normalize_entities(analysis_entities)
-    if from_analysis:
-        return _ensure_brand_in_list(from_analysis, text, brand_name, brand_domains, competitors)
+    if from_analysis and not _is_unverified_solo_brand(from_analysis, brand_name):
+        return from_analysis
     return _extract_entities_from_text(text, brand_name, brand_domains, competitors)
 
 
