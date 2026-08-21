@@ -306,16 +306,18 @@ Requirements:
         if not self.openai_api_key:
             raise ValueError("OPENAI_API_KEY not configured")
         client = openai.OpenAI(api_key=self.openai_api_key)
-        response = client.chat.completions.create(
-            model=self.openai_model,
-            messages=[
+        params = {
+            "model": self.openai_model,
+            "messages": [
                 {"role": "system", "content": ANALYST_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
             ],
-            response_format={"type": "json_object"},
-            temperature=0.3,
+            "response_format": {"type": "json_object"},
             **openai_completion_token_param(self.openai_model),
-        )
+        }
+        if re.search(r"^gpt-[34]", self.openai_model or "", flags=re.I):
+            params["temperature"] = 0.3
+        response = client.chat.completions.create(**params)
         return json.loads(response.choices[0].message.content)
 
     def _generate_claude(self, prompt: str) -> Dict[str, Any]:
@@ -326,13 +328,14 @@ Requirements:
         client = anthropic.Anthropic(api_key=self.anthropic_api_key)
         response = client.messages.create(
             model=self.claude_model,
-            max_tokens=8000,
+            max_tokens=16000,
             system=ANALYST_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": prompt}],
         )
         content = extract_claude_text(response)
         if not content:
-            raise ValueError("Claude analyst returned no text content")
+            block_types = [getattr(block, "type", type(block).__name__) for block in (response.content or [])]
+            raise ValueError(f"Claude analyst returned no text content (blocks={block_types})")
         try:
             return json.loads(content)
         except json.JSONDecodeError:
