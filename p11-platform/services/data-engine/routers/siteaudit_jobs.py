@@ -66,6 +66,34 @@ def _execute_siteaudit_job(crawl_id: str, claimed_crawl: dict):
     asyncio.run(runner())
 
 
+def _execute_analyze_job(crawl_id: str, property_id: str, batch_id: Optional[str]):
+    """Write grounded recommendations off the request loop so Render cannot time out the LLM."""
+
+    async def runner():
+        supabase = get_supabase_client()
+        try:
+            supabase.table("geo_site_crawls").update({
+                "error_message": "analyst:running",
+            }).eq("id", crawl_id).execute()
+            result = await SiteAuditAnalyst(supabase).generate(property_id, crawl_id, batch_id)
+            message = "" if result.get("success") else f"analyst:{result.get('error') or 'failed'}"[:2000]
+            supabase.table("geo_site_crawls").update({
+                "error_message": message or None,
+            }).eq("id", crawl_id).execute()
+            logger.info(
+                "[SiteAudit] Background analyst for crawl %s: %s",
+                crawl_id,
+                result.get("success"),
+            )
+        except Exception as error:
+            logger.exception("[SiteAudit] Background analyst failed for %s: %s", crawl_id, error)
+            supabase.table("geo_site_crawls").update({
+                "error_message": f"analyst:{error}"[:2000],
+            }).eq("id", crawl_id).execute()
+
+    asyncio.run(runner())
+
+
 @router.post("/run")
 async def run_siteaudit(
     request: CrawlRequest,
@@ -108,18 +136,20 @@ async def analyze_siteaudit(
             status_code=409,
             detail=f"Crawl {request.crawl_id} is not completed",
         )
-    analyst = SiteAuditAnalyst(get_supabase_client())
-    result = await analyst.generate(
-        crawl["property_id"],
-        request.crawl_id,
-        crawl.get("batch_id"),
-    )
-    if not result.get("success"):
-        raise HTTPException(
-            status_code=502,
-            detail=result.get("error") or "Analyst failed to persist recommendations",
+    asyncio.create_task(
+        asyncio.to_thread(
+            _execute_analyze_job,
+            request.crawl_id,
+            crawl["property_id"],
+            crawl.get("batch_id"),
         )
-    return {"success": True, **result}
+    )
+    return {
+        "success": True,
+        "accepted": True,
+        "crawl_id": request.crawl_id,
+        "status": "running",
+    }
 
 
 @router.get("/status/{crawl_id}")

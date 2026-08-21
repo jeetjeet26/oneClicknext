@@ -42,7 +42,7 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def openai_completion_token_param(model: str, limit: int = 8000) -> Dict[str, int]:
+def openai_completion_token_param(model: str, limit: int = 16000) -> Dict[str, int]:
     """GPT-5+ rejects max_tokens; older chat models still require it."""
     if re.search(r"^gpt-[34](?!\.)", model or "", flags=re.I):
         return {"max_tokens": limit}
@@ -318,7 +318,11 @@ Requirements:
         if re.search(r"^gpt-[34]", self.openai_model or "", flags=re.I):
             params["temperature"] = 0.3
         response = client.chat.completions.create(**params)
-        return json.loads(response.choices[0].message.content)
+        content = response.choices[0].message.content or ""
+        finish_reason = getattr(response.choices[0], "finish_reason", None)
+        if finish_reason == "length":
+            logger.warning("[SiteAudit] OpenAI analyst hit the completion-token cap")
+        return json.loads(content)
 
     def _generate_claude(self, prompt: str) -> Dict[str, Any]:
         import anthropic

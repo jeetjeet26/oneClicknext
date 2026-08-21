@@ -4,8 +4,8 @@ from siteaudit.analyst import SiteAuditAnalyst, extract_claude_text, openai_comp
 
 
 def test_openai_token_param_uses_completion_tokens_for_gpt5():
-    assert openai_completion_token_param('gpt-5.6-sol') == {'max_completion_tokens': 8000}
-    assert openai_completion_token_param('gpt-4o') == {'max_tokens': 8000}
+    assert openai_completion_token_param('gpt-5.6-sol') == {'max_completion_tokens': 16000}
+    assert openai_completion_token_param('gpt-4o') == {'max_tokens': 16000}
 
 
 def test_extract_claude_text_skips_thinking_blocks():
