@@ -1,5 +1,7 @@
 # GEO PropertyAudit Client Review Primer
 
+For the step-by-step operator workflow (run the audit, generate the file, deliver it), use `PROPERTYAUDIT_GEO_REPORTS_PROCESS.md`.
+
 ## Executive Summary
 
 The GEO PropertyAudit measures how a property appears in AI-generated answers when prospective residents, renters, buyers, or stakeholders ask questions about local options. In this context, `GEO` means Generative Engine Optimization: visibility in AI answer engines such as ChatGPT-style systems, Gemini-style systems, Perplexity, and Google-grounded AI results.
@@ -42,6 +44,7 @@ The strongest optimization opportunities usually come from specific long-tail pr
 The audit can measure multiple AI/search surfaces. The current client-facing interpretation is:
 
 - ChatGPT-style visibility: grounded API proxy using GPT-5.6 Sol (not the live ChatGPT UI).
+- Claude visibility: natural Claude answers with web-search citations when search is enabled.
 - Gemini-style visibility: grounded API proxy using Gemini 3.1 Pro (not the live Gemini UI).
 - Perplexity visibility: how the property performs in a citation-forward answer engine.
 - Google AI proxy visibility: a directional Google-grounded signal based on search results and answer synthesis.
@@ -57,7 +60,7 @@ The client headline is two rates, computed after collapsing 5× repeats to one r
 - **Branded recognition:** share of branded prompts where the property is mentioned.
 - **Discovery mention:** share of category and local prompts where the property is mentioned. Comparison prompts are excluded because they name the property. Generic city-wide category prompts (`Best {type} in {city}` or `weight <= 0.8`) stay as a benchmark row, not in this headline.
 
-Client averages use the latest completed run on ChatGPT, Gemini, Perplexity, and Google AI only. Claude and legacy OpenAI stay in history. A missing Gemini run is “not measured,” not zero.
+Client averages use the latest completed run on ChatGPT, Claude, Gemini, Perplexity, and Google AI. Legacy OpenAI stays in history. A missing Gemini run is “not measured,” not zero.
 
 Trend movement is shown in **points**, not blended visibility percent.
 
@@ -112,7 +115,7 @@ Weak branded recognition is a priority issue because it suggests the brand/entit
 
 ### Discovery Mention and Rank
 
-Discovery mention is the unprompted recommendation rate on category and local prompts. Discovery rank is the typical position when the property does appear there. Comparison prompts and generic city-wide “best in city” prompts are kept separate so they do not inflate or deflate the discovery headline.
+Discovery mention is the unprompted recommendation rate on category and local prompts. Discovery rank is the typical list position when the property does appear there. If the answer named the property but no recommendation list was extracted, the report says “No list extracted” instead of N/A. Comparison prompts and generic city-wide “best in city” prompts are kept separate so they do not inflate or deflate the discovery headline.
 
 ### AI Overview Visibility
 

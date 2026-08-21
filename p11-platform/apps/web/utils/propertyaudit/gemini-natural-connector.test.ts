@@ -39,6 +39,42 @@ describe('GeminiNaturalConnector', () => {
     }
   })
 
+  it('uses googleSearch grounding for Gemini 3 models', async () => {
+    process.env.GEO_ENABLE_WEB_SEARCH = 'true'
+    process.env.GEO_GEMINI_MODEL = 'gemini-3.1-pro-preview'
+    generateContentMock.mockResolvedValueOnce(makeGeminiResponse('grounded'))
+
+    await new GeminiNaturalConnector().getNaturalResponse('best apartments in Austin')
+
+    expect(getGenerativeModelMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tools: [{ googleSearch: {} }],
+      })
+    )
+  })
+
+  it('falls back to an ungrounded Gemini answer after search grounding is rate-limited', async () => {
+    process.env.GEO_ENABLE_WEB_SEARCH = 'true'
+    process.env.GEO_GEMINI_MODEL = 'gemini-3.1-pro-preview'
+    process.env.GEO_GEMINI_MAX_RETRIES = '0'
+    const rateLimitError = Object.assign(new Error('429 Too Many Requests'), { status: 429 })
+    generateContentMock
+      .mockRejectedValueOnce(rateLimitError)
+      .mockResolvedValueOnce(makeGeminiResponse('ungrounded fallback'))
+
+    const response = await new GeminiNaturalConnector().getNaturalResponse('best apartments in Austin')
+
+    expect(response.text).toBe('ungrounded fallback')
+    expect(getGenerativeModelMock).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ tools: [{ googleSearch: {} }] })
+    )
+    expect(getGenerativeModelMock).toHaveBeenNthCalledWith(
+      2,
+      expect.not.objectContaining({ tools: expect.anything() })
+    )
+  })
+
   it('retries Gemini 429 responses before returning the natural response', async () => {
     const rateLimitError = Object.assign(new Error('429 Too Many Requests'), { status: 429 })
     generateContentMock

@@ -39,6 +39,13 @@ export {
   buildClientHeadline,
 } from './client-headline'
 
+export {
+  ensureOrderedEntities,
+  finalizeAnswerBlock,
+  findTrackedBrandPosition,
+  reconcileHallucinationFlags,
+} from './entity-fallback'
+
 
 
 

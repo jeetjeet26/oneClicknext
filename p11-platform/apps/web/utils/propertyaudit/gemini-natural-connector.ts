@@ -31,6 +31,10 @@ type RetryableError = Error & {
 let geminiThrottleQueue: Promise<void> = Promise.resolve()
 let lastGeminiRequestAt = 0
 
+export function geminiGroundingTool(model: string): Record<string, unknown> {
+  return /^gemini-3/i.test(model) ? { googleSearch: {} } : { googleSearchRetrieval: {} }
+}
+
 function parsePositiveInt(value: string | undefined, fallback: number): number {
   if (!value) return fallback
   const parsed = Number.parseInt(value, 10)
@@ -152,14 +156,8 @@ export class GeminiNaturalConnector implements NaturalConnector {
     }
 
     const client = new GoogleGenerativeAI(config.geminiApiKey)
-    const model = client.getGenerativeModel({
-      model: config.geminiModel,
-      ...(process.env.GEO_ENABLE_WEB_SEARCH === 'true'
-        ? ({ tools: [{ googleSearchRetrieval: {} }] } as any)
-        : {}),
-    } as any)
-
-    const result = await withGeminiRetry(() => model.generateContent({
+    const enableWebSearch = process.env.GEO_ENABLE_WEB_SEARCH === 'true'
+    const request = {
       contents: [{ role: 'user', parts: [{ text: query }] }],
       systemInstruction:
         'You are a helpful assistant. Answer naturally in conversational prose. Do not output JSON. If unsure, say so plainly.',
@@ -170,7 +168,27 @@ export class GeminiNaturalConnector implements NaturalConnector {
           ? { thinkingConfig: { thinkingLevel: 'low' } }
           : {}),
       },
-    } as any))
+    }
+
+    const generate = (withSearch: boolean) => {
+      const model = client.getGenerativeModel({
+        model: config.geminiModel,
+        ...(withSearch ? ({ tools: [geminiGroundingTool(config.geminiModel)] } as any) : {}),
+      } as any)
+      return model.generateContent(request as any)
+    }
+
+    let result
+    try {
+      result = await withGeminiRetry(() => generate(enableWebSearch))
+    } catch (error) {
+      if (enableWebSearch && isRateLimitError(error)) {
+        console.warn('[geo] Gemini grounding rate-limited; retrying without search')
+        result = await withGeminiRetry(() => generate(false))
+      } else {
+        throw error
+      }
+    }
 
     const response = await result.response
     const text = typeof response.text === 'function' ? response.text() : String(response.text || '')

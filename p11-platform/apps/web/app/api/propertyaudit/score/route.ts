@@ -13,7 +13,7 @@ import {
   isClientHeadlineSurface,
   type ClientHeadline,
 } from '@/utils/propertyaudit/client-headline'
-import { aggregateAnswersByQuery, type ReportAnswer, type ReportQuery } from '@/utils/propertyaudit/reporting'
+import { aggregateAnswersByQuery, backfillReportAnswers, type ReportAnswer, type ReportQuery } from '@/utils/propertyaudit/reporting'
 import { getSurfaceLabel, isSupportedSurface, type Surface } from '@/utils/propertyaudit/types'
 
 export interface GeoScoreSummary {
@@ -150,10 +150,17 @@ export async function GET(req: NextRequest) {
     const previousRunIds = Array.from(previousRunsBySurface.values()).map(run => run.id)
     const allRunIds = [...latestRunIds, ...previousRunIds]
 
-    const { data: queryRows } = await supabase
-      .from('geo_queries')
-      .select('id, text, type, weight, run_count')
-      .eq('property_id', propertyId)
+    const [{ data: queryRows }, { data: propertyRow }] = await Promise.all([
+      supabase
+        .from('geo_queries')
+        .select('id, text, type, weight, run_count')
+        .eq('property_id', propertyId),
+      supabase
+        .from('properties')
+        .select('name')
+        .eq('id', propertyId)
+        .single(),
+    ])
 
     const queries = (queryRows || []) as ReportQuery[]
 
@@ -161,9 +168,12 @@ export async function GET(req: NextRequest) {
     if (allRunIds.length > 0) {
       const { data: answerRows } = await supabase
         .from('geo_answers')
-        .select('id, run_id, query_id, presence, llm_rank, link_rank, sov, flags, created_at, answer_summary, geo_queries (id, text, type, weight), geo_citations (url, domain, is_brand_domain)')
+        .select('id, run_id, query_id, presence, llm_rank, link_rank, sov, flags, created_at, answer_summary, natural_response, ordered_entities, geo_queries (id, text, type, weight), geo_citations (url, domain, is_brand_domain)')
         .in('run_id', allRunIds)
-      rawAnswers = (answerRows || []) as Array<ReportAnswer & { run_id?: string }>
+      rawAnswers = backfillReportAnswers(
+        (answerRows || []) as Array<ReportAnswer & { run_id?: string }>,
+        propertyRow?.name || ''
+      ) as Array<ReportAnswer & { run_id?: string }>
     }
 
     const latestHeadline = buildHeadlineForRuns(latestRunsBySurface, rawAnswers, queries)
@@ -189,7 +199,9 @@ export async function GET(req: NextRequest) {
           discoveryMentionPct: surfaceHeadline?.discoveryMentionPct ?? null,
           citationQuality: surfaceHeadline?.citationQuality ?? null,
           ownedCitationPct: surfaceHeadline?.ownedCitationPct ?? null,
-          avgLlmRank: stored?.avg_llm_rank ?? null,
+          avgLlmRank: averageNullable(
+            rawAnswers.filter(answer => answer.run_id === run.id).map(answer => answer.llm_rank)
+          ) ?? stored?.avg_llm_rank ?? null,
           avgLinkRank: stored?.avg_link_rank ?? null,
           avgSov: stored?.avg_sov ?? null,
           runId: run.id,
@@ -242,6 +254,12 @@ export async function GET(req: NextRequest) {
     console.error('PropertyAudit Score GET Error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
+}
+
+function averageNullable(values: Array<number | null | undefined>): number | null {
+  const numeric = values.filter((value): value is number => typeof value === 'number')
+  if (numeric.length === 0) return null
+  return Math.round((numeric.reduce((sum, value) => sum + value, 0) / numeric.length) * 100) / 100
 }
 
 function buildHeadlineForRuns(

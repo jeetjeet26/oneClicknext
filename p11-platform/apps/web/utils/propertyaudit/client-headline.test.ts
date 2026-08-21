@@ -51,7 +51,7 @@ describe('client headline helpers', () => {
     expect(rates.genericCityMentionPct).toBe(0)
   })
 
-  it('averages only sellable v1 surfaces', () => {
+  it('averages sellable surfaces including Claude', () => {
     const headline = buildClientHeadline([
       {
         surface: 'claude',
@@ -61,9 +61,13 @@ describe('client headline helpers', () => {
         surface: 'chatgpt',
         answers: [answer({ presence: true, presence_rate: 1, llm_rank: 1, geo_queries: { type: 'branded', text: 'What is Epoca?' } })],
       },
+      {
+        surface: 'openai',
+        answers: [answer({ presence: false, presence_rate: 0, geo_queries: { type: 'branded', text: 'What is Epoca?' } })],
+      },
     ])
 
-    expect(headline.surfaces.map(surface => surface.surface)).toEqual(['chatgpt'])
+    expect(headline.surfaces.map(surface => surface.surface)).toEqual(['claude', 'chatgpt'])
     expect(headline.brandedRecognitionPct).toBe(100)
   })
 })

@@ -271,7 +271,7 @@ describe('propertyaudit run route', () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe('http://data-engine.local/jobs/propertyaudit/run')
   })
 
-  it('POST dispatches the default four-surface PropertyAudit batch to data-engine', async () => {
+  it('POST dispatches the default five-surface PropertyAudit batch to data-engine', async () => {
     authGetUserMock.mockResolvedValue({
       data: { user: { id: 'user-1' } },
       error: null,
@@ -365,11 +365,12 @@ describe('propertyaudit run route', () => {
     expect(body.processorMode).toBe('data_engine')
     expect((body.runs as Array<{ surface: string }>).map((run) => run.surface)).toEqual([
       'chatgpt',
+      'claude',
       'gemini',
       'perplexity',
       'google_ai',
     ])
-    expect(fetchMock).toHaveBeenCalledTimes(4)
+    expect(fetchMock).toHaveBeenCalledTimes(5)
     expect(geoRunsInsert).toHaveBeenCalledWith(expect.objectContaining({
       measurement_mode: 'natural',
       prompt_source: 'generated',

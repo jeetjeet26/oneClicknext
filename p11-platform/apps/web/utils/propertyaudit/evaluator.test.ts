@@ -51,6 +51,17 @@ describe('evaluator scoring', () => {
     expect(reconcileCitationFlags(['possible_hallucination'], 0)).toEqual(['possible_hallucination', 'no_sources'])
   })
 
+  it('recovers rank from prose when ordered_entities is empty', () => {
+    const scored = scoreAnswer(block({
+      ordered_entities: [],
+      notes: { flags: ['possible_hallucination'] },
+    }), context)
+
+    expect(scored.presence).toBe(true)
+    expect(scored.llmRank).toBe(1)
+    expect(scored.flags).not.toContain('possible_hallucination')
+  })
+
   it('drops no_sources after merging API citations into sourceless prose', () => {
     const merged = mergeSearchSourcesIntoAnswer(
       block({

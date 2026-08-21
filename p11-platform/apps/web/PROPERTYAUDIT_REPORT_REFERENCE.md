@@ -2,6 +2,8 @@
 
 This guide explains what is included in a PropertyAudit report, how to interpret the metrics, and how to turn the recommendations into action.
 
+For the step-by-step operator workflow (run the audit, generate the file, deliver it), use `PROPERTYAUDIT_GEO_REPORTS_PROCESS.md`.
+
 ## What PropertyAudit Measures
 
 PropertyAudit measures how a property or brand appears in AI-generated answers for a defined set of prompts. It focuses on US English AI visibility across these surfaces:

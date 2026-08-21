@@ -9,8 +9,8 @@ import {
 } from './types'
 
 describe('PropertyAudit surface helpers', () => {
-  it('defaults to the four sellable v1 surfaces', () => {
-    expect(DEFAULT_AUDIT_SURFACES).toEqual(['chatgpt', 'gemini', 'perplexity', 'google_ai'])
+  it('defaults to the client surfaces including Claude', () => {
+    expect(DEFAULT_AUDIT_SURFACES).toEqual(['chatgpt', 'claude', 'gemini', 'perplexity', 'google_ai'])
   })
 
   it('validates and labels supported surfaces', () => {

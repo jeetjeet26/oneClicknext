@@ -180,6 +180,8 @@ function generateReportHTML(
       nonBrandedDiscoveryRank: null,
       nonBrandedVisibilityPct: null,
       comparisonAvgRank: null,
+      discoveryRankGap: 'no_discovery_answers',
+      discoveryRankLabel: 'No discovery answers',
     },
     citationSummary,
     trends,
@@ -446,7 +448,7 @@ function generateReportHTML(
       <div class="metric-label">Citation Quality</div>
     </div>
     <div class="metric-card">
-      <div class="metric-value">${rankSummary.nonBrandedDiscoveryRank !== null ? rankSummary.nonBrandedDiscoveryRank.toFixed(1) : 'N/A'}</div>
+      <div class="metric-value">${escapeHtml(rankSummary.discoveryRankLabel)}</div>
       <div class="metric-label">Discovery Rank</div>
     </div>
   </div>
@@ -454,7 +456,7 @@ function generateReportHTML(
   <h3>Client Readout</h3>
   <ul style="line-height: 1.8;">
     <li><strong>Where you are:</strong> Branded recognition is <strong>${rankSummary.brandedRecognitionPct !== null ? `${rankSummary.brandedRecognitionPct}%` : 'N/A'}</strong> and discovery mention is <strong>${rankSummary.nonBrandedVisibilityPct !== null ? `${rankSummary.nonBrandedVisibilityPct}%` : 'N/A'}</strong>. Citation quality is <strong>${latestScore ? Math.round(latestScore.overall_score) : 'N/A'}/100</strong> ${getScoreBucket(latestScore?.overall_score)}.</li>
-    <li><strong>Discovery rank:</strong> ${rankSummary.nonBrandedDiscoveryRank !== null ? `Average #${rankSummary.nonBrandedDiscoveryRank.toFixed(1)} across category and local prompts.` : 'Not enough non-branded ranking data yet.'}</li>
+    <li><strong>Discovery rank:</strong> ${rankSummary.nonBrandedDiscoveryRank !== null ? `Average #${rankSummary.nonBrandedDiscoveryRank.toFixed(1)} across category and local prompts.` : escapeHtml(rankSummary.discoveryRankLabel)}.</li>
     <li><strong>Branded recognition:</strong> ${rankSummary.brandedRecognitionPct !== null ? `${rankSummary.brandedRecognitionPct}% entity recognition on branded prompts. This is tracked separately from discovery mention.` : 'No branded prompt data yet.'}</li>
     <li><strong>Best surface:</strong> ${bestSurface ? `${escapeHtml(bestSurface.label)} at ${Math.round(bestSurface.overallScore || 0)}/100` : 'More run data needed'}.</li>
     <li><strong>Largest surface gap:</strong> ${weakestSurface ? `${escapeHtml(weakestSurface.label)} at ${Math.round(weakestSurface.overallScore || 0)}/100` : 'More run data needed'}.</li>

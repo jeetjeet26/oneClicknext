@@ -4,6 +4,7 @@ import { generateRecommendations } from './recommendation-engine'
 import { auditPublicSiteForProperty, type PublicSiteAudit } from './public-site-audit'
 import { getGeoConfig, getSurfaceLabel, getSurfaceMeasurementNote } from './types'
 import { isClientHeadlineSurface, isDiscoveryQuery } from './client-headline'
+import { ensureOrderedEntities, findTrackedBrandPosition } from './entity-fallback'
 
 type QueryResult<T = unknown> = Promise<{ data: T; error: unknown }>
 
@@ -215,6 +216,8 @@ export type ReportData = {
     nonBrandedDiscoveryRank: number | null
     nonBrandedVisibilityPct: number | null
     comparisonAvgRank: number | null
+    discoveryRankGap: 'none' | 'no_list_extracted' | 'no_discovery_mentions' | 'no_discovery_answers'
+    discoveryRankLabel: string
   }
   citationSummary: { total: number; brandPct: number; topDomains: Array<{ domain: string; count: number }> }
   aiOverviewSummary: { totalTracked: number; visibleCount: number; visibilityPct: number; byType: Array<{ type: string; visiblePct: number }> }
@@ -305,7 +308,7 @@ export async function buildPropertyReportData(
     const { data } = await from(supabase, 'geo_answers')
       .select('*, geo_queries (id, text, type, weight), geo_citations (url, domain, is_brand_domain)')
       .in('run_id', runIds)
-    rawAnswers = (data || []) as ReportAnswer[]
+    rawAnswers = backfillReportAnswers((data || []) as ReportAnswer[], reportProperty?.name || '')
   }
 
   const aiOverviewMap = await fetchAiOverviews(supabase, propertyId, reportQueries.map((q) => q.id))
@@ -409,7 +412,7 @@ export async function buildRunReportData(
   const recommendationsResult = await generateRecommendations(propertyId, runId)
   const recommendationSummary = buildRecommendationSummary(recommendationsResult.recommendations)
 
-  const rawAnswers = typedRun.geo_answers || []
+  const rawAnswers = backfillReportAnswers(typedRun.geo_answers || [], typedRun.properties?.name || '')
   const queries = rawAnswers
     .map((answer) => answer.geo_queries)
     .filter((query): query is NonNullable<ReportAnswer['geo_queries']> => Boolean(query))
@@ -807,13 +810,59 @@ function buildRankSummary(answers: ReportAnswer[]): ReportData['rankSummary'] {
   const comparisonRanks = comparisonAnswers
     .map(answer => answer.llm_rank)
     .filter(isNumber)
+  const nonBrandedDiscoveryRank = discoveryRanks.length > 0 ? average(discoveryRanks) : null
+  const discoveryRankGap = describeDiscoveryRankGap({
+    discoveryAnswerCount: discoveryAnswers.length,
+    discoveryMentionCount: discoveryPresenceRates.filter(rate => rate > 0).length,
+    discoveryRankCount: discoveryRanks.length,
+  })
 
   return {
     brandedRecognitionPct,
-    nonBrandedDiscoveryRank: discoveryRanks.length > 0 ? average(discoveryRanks) : null,
+    nonBrandedDiscoveryRank,
     nonBrandedVisibilityPct: discoveryPresenceRates.length > 0 ? Math.round(average(discoveryPresenceRates) * 100) : null,
     comparisonAvgRank: comparisonRanks.length > 0 ? average(comparisonRanks) : null,
+    discoveryRankGap,
+    discoveryRankLabel: formatDiscoveryRank(nonBrandedDiscoveryRank, discoveryRankGap),
   }
+}
+
+export function describeDiscoveryRankGap(input: {
+  discoveryAnswerCount: number
+  discoveryMentionCount: number
+  discoveryRankCount: number
+}): ReportData['rankSummary']['discoveryRankGap'] {
+  if (input.discoveryRankCount > 0) return 'none'
+  if (input.discoveryAnswerCount === 0) return 'no_discovery_answers'
+  if (input.discoveryMentionCount === 0) return 'no_discovery_mentions'
+  return 'no_list_extracted'
+}
+
+export function formatDiscoveryRank(
+  rank: number | null,
+  gap: ReportData['rankSummary']['discoveryRankGap']
+): string {
+  if (rank != null) return `#${rank.toFixed(1)}`
+  if (gap === 'no_list_extracted') return 'No list extracted'
+  if (gap === 'no_discovery_mentions') return 'No discovery mentions'
+  return 'No discovery answers'
+}
+
+export function backfillReportAnswers(answers: ReportAnswer[], brandName: string): ReportAnswer[] {
+  if (!brandName) return answers
+  return answers.map(answer => {
+    const text = [answer.natural_response, answer.answer_summary].filter(Boolean).join('\n')
+    const entities = ensureOrderedEntities({
+      existing: answer.ordered_entities,
+      brandName,
+      text,
+    })
+    return {
+      ...answer,
+      ordered_entities: entities,
+      llm_rank: answer.llm_rank ?? findTrackedBrandPosition(entities, brandName),
+    }
+  })
 }
 
 function buildCitationSummary(answers: ReportAnswer[]) {
@@ -1080,6 +1129,11 @@ function buildGlossary(): ReportGlossaryEntry[] {
       interpretation: 'Blended presence across all prompt types. Prefer branded recognition and discovery mention for client reviews.'
     },
     {
+      term: 'Discovery Rank',
+      definition: 'Average list position of the property on category and local prompts after collapsing repeats. Comparison and generic city-wide prompts are excluded.',
+      interpretation: 'This is the unprompted recommendation position. If the property was mentioned but no recommendation list was extracted, the report says “No list extracted” instead of N/A.'
+    },
+    {
       term: 'LLM Rank',
       definition: 'Position of the property in the ordered list of entities returned by the LLM.',
       interpretation: 'Lower is better; rank 1 indicates primary recommendation. Avg rank is calculated only from prompts where a ranked mention exists, so absences are reflected through visibility and score rather than the rank average.'
@@ -1132,6 +1186,8 @@ export function buildInsights(input: {
   }
   if (input.rankSummary.nonBrandedDiscoveryRank !== null) {
     risks.push(`Non-branded discovery average rank is #${input.rankSummary.nonBrandedDiscoveryRank.toFixed(1)} across category and local prompts.`)
+  } else if (input.rankSummary.discoveryRankGap === 'no_list_extracted') {
+    risks.push('Discovery mentions were found, but no recommendation list was extracted so discovery rank could not be scored.')
   }
   if (trendDelta !== null) {
     highlights.push(`Score trend over recent runs is ${trendDelta > 0 ? 'up' : trendDelta < 0 ? 'down' : 'flat'} (${trendDelta > 0 ? '+' : ''}${trendDelta.toFixed(1)} pts).`)
@@ -1166,7 +1222,7 @@ export function buildInsights(input: {
   const summaryStats = [
     { label: 'Active Queries', value: `${input.queryTypeStats.reduce((a, b) => a + b.total, 0)}` },
     { label: 'Total Recommendations', value: `${input.recommendationSummary.total}` },
-    { label: 'Discovery Rank', value: input.rankSummary.nonBrandedDiscoveryRank !== null ? `#${input.rankSummary.nonBrandedDiscoveryRank.toFixed(1)}` : 'N/A' },
+    { label: 'Discovery Rank', value: input.rankSummary.discoveryRankLabel },
     { label: 'Branded Recognition', value: input.rankSummary.brandedRecognitionPct !== null ? `${input.rankSummary.brandedRecognitionPct}%` : 'N/A' },
     { label: 'Brand Citation Share', value: `${input.citationSummary.brandPct}%` },
     { label: 'AI Overview Visibility', value: `${input.aiOverviewSummary.visibilityPct}%` }
@@ -1200,7 +1256,7 @@ async function maybeGenerateNarrative(input: {
     `Opportunities: ${input.insights.opportunities.join(' ')}`,
     `Recommendation summary: High ${input.recommendationSummary.high}, Medium ${input.recommendationSummary.medium}, Low ${input.recommendationSummary.low}`,
     `Branded recognition: ${input.rankSummary.brandedRecognitionPct ?? 'N/A'}%`,
-    `Non-branded discovery avg rank: ${input.rankSummary.nonBrandedDiscoveryRank?.toFixed(1) ?? 'N/A'}`,
+    `Non-branded discovery avg rank: ${input.rankSummary.discoveryRankLabel}`,
     `Citation share: ${input.citationSummary.brandPct}% of ${input.citationSummary.total} citations`,
     `AI Overview visibility: ${input.aiOverviewSummary?.visibilityPct ?? 0}% of tracked queries`,
     `Confirmed competitors: ${input.competitors.filter(c => !c.ambiguityReason).slice(0, 3).map(c => `${c.name} (${c.mentionCount})`).join(', ') || 'None'}`,

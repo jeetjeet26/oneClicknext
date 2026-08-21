@@ -2,7 +2,7 @@
 
 ## Overview
 
-PropertyAudit tracks GEO performance across the sellable v1 surfaces: ChatGPT, Gemini, Perplexity, and Google AI Proxy. Claude and legacy OpenAI remain in history but are not averaged into the client headline.
+PropertyAudit tracks GEO performance across the client surfaces: ChatGPT, Claude, Gemini, Perplexity, and Google AI Proxy. Legacy OpenAI remains in history but is not averaged into the client headline.
 
 ---
 
@@ -17,7 +17,11 @@ After collapsing 5× repeats to one median row per query:
 3. **Citation quality (secondary):** existing `45% position + 25% owned-citation rank + 20% SOV + 10% accuracy` on collapsed rows, then equal-average those queries.
 4. **Owned citation rate:** share of collapsed queries with a brand-domain citation.
 
-Client surfaces are the latest **completed** run per `SELLABLE_V1_SURFACES`. Missing Gemini is “not measured”, not 0. Trend uses the same headline rates and is labeled in **points**.
+Client surfaces are the latest **completed** run per `SELLABLE_V1_SURFACES` (ChatGPT, Claude, Gemini, Perplexity, Google AI). Missing Gemini is “not measured”, not 0. Trend uses the same headline rates and is labeled in **points**.
+
+Discovery rank is the average list position on category + local prompts. If the property was mentioned but `ordered_entities` was empty, the extractor now backfills a list from the stored answer text. If that still cannot produce a position, the report labels it **No list extracted**, not N/A.
+
+Claude natural mode persists Anthropic web-search sources as citations so SOV and owned-link rank can be scored.
 
 The stored `geo_scores.overall_score` remains historical. The score API recomputes the headline on read from `geo_answers` / `geo_queries`.
 

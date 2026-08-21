@@ -20,6 +20,7 @@ import httpx
 
 from connectors.openai_natural_connector import OpenAINaturalConnector
 from connectors.claude_natural_connector import ClaudeNaturalConnector
+from connectors.entity_fallback import finalize_answer_block
 from connectors.evaluator import reconcile_citation_flags
 
 logger = logging.getLogger(__name__)
@@ -179,6 +180,17 @@ def gemini_thinking_config(model: str) -> Dict[str, Any]:
     return {}
 
 
+def gemini_grounding_tool(model: str) -> Dict[str, Any]:
+    """Gemini 3+ uses googleSearch. Older models still use googleSearchRetrieval."""
+    if str(model).lower().startswith("gemini-3"):
+        return {"googleSearch": {}}
+    return {"googleSearchRetrieval": {}}
+
+
+def gemini_max_consecutive_rate_limits() -> int:
+    return parse_non_negative_int(os.environ.get("GEO_GEMINI_MAX_CONSECUTIVE_429"), 6)
+
+
 class GeminiNaturalConnector:
     def __init__(self):
         self.api_key = os.environ.get("GOOGLE_GEMINI_API_KEY")
@@ -206,10 +218,22 @@ class GeminiNaturalConnector:
             },
         }
         if self.enable_web_search:
-            payload["tools"] = [{"googleSearchRetrieval": {}}]
+            payload["tools"] = [gemini_grounding_tool(self.model)]
 
         async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await post_gemini_with_retry(client, url, payload)
+            try:
+                response = await post_gemini_with_retry(client, url, payload)
+            except Exception as error:
+                if self.enable_web_search and is_gemini_rate_limit_error(error):
+                    logger.warning(
+                        "[PropertyAudit] Gemini grounding rate-limited; retrying %s without search",
+                        self.model,
+                    )
+                    ungrounded = dict(payload)
+                    ungrounded.pop("tools", None)
+                    response = await post_gemini_with_retry(client, url, ungrounded)
+                else:
+                    raise
             data = response.json()
 
         candidate = (data.get("candidates") or [{}])[0]
@@ -236,7 +260,12 @@ class GeminiNaturalConnector:
     async def invoke_natural_mode(self, context: Dict[str, Any]) -> Dict[str, Any]:
         natural_text, search_sources, phase1_raw = await self.get_natural_response(context["queryText"])
         analyzed = await analyze_with_delegate(context, natural_text, search_sources)
-        answer_block = merge_sources_into_answer(analyzed["envelope"]["answer_block"], search_sources)
+        answer_block = finalize_answer_block(
+            merge_sources_into_answer(analyzed["envelope"]["answer_block"], search_sources),
+            context,
+            natural_text,
+            analyzed["envelope"].get("analysis"),
+        )
         return {
             "answer": answer_block,
             "raw": {
@@ -303,7 +332,12 @@ class PerplexityNaturalConnector:
     async def invoke_natural_mode(self, context: Dict[str, Any]) -> Dict[str, Any]:
         natural_text, search_sources, phase1_raw = await self.get_natural_response(context["queryText"])
         analyzed = await analyze_with_delegate(context, natural_text, search_sources)
-        answer_block = merge_sources_into_answer(analyzed["envelope"]["answer_block"], search_sources)
+        answer_block = finalize_answer_block(
+            merge_sources_into_answer(analyzed["envelope"]["answer_block"], search_sources),
+            context,
+            natural_text,
+            analyzed["envelope"].get("analysis"),
+        )
         return {
             "answer": answer_block,
             "raw": {
@@ -367,7 +401,12 @@ class GoogleProxyNaturalConnector:
             f"the most visible sources and claims are:\n{evidence}"
         )
         analyzed = await analyze_with_delegate(context, natural_text, sources)
-        answer_block = merge_sources_into_answer(analyzed["envelope"]["answer_block"], sources)
+        answer_block = finalize_answer_block(
+            merge_sources_into_answer(analyzed["envelope"]["answer_block"], sources),
+            context,
+            natural_text,
+            analyzed["envelope"].get("analysis"),
+        )
         return {
             "answer": answer_block,
             "raw": {

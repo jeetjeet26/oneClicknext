@@ -65,12 +65,13 @@ export type Surface = (typeof SUPPORTED_SURFACES)[number]
 
 export const SELLABLE_V1_SURFACES = [
   'chatgpt',
+  'claude',
   'gemini',
   'perplexity',
   'google_ai',
 ] as const satisfies readonly Surface[]
 
-export const LEGACY_SURFACES = ['openai', 'claude'] as const satisfies readonly Surface[]
+export const LEGACY_SURFACES = ['openai'] as const satisfies readonly Surface[]
 export const DEFAULT_AUDIT_SURFACES = [...SELLABLE_V1_SURFACES] as Surface[]
 
 export const SURFACE_LABELS: Record<Surface, string> = {
@@ -84,7 +85,7 @@ export const SURFACE_LABELS: Record<Surface, string> = {
 
 export const SURFACE_MEASUREMENT_NOTES: Record<Surface, string> = {
   openai: 'Legacy provider surface kept for backward compatibility.',
-  claude: 'Claude natural-answer capture with structured extraction.',
+  claude: 'Claude natural-answer capture with web-search citations and structured extraction.',
   chatgpt: 'Grounded API proxy for ChatGPT-style answer measurement.',
   gemini: 'Grounded API proxy for Gemini-style answer measurement.',
   perplexity: 'Natural-answer API capture with citation-aware parsing.',
@@ -281,6 +282,14 @@ export interface EvaluationContext {
   brandName: string
   brandDomains: string[]
   competitors: string[]
+  sourceText?: string
+  expectedCity?: string
+  analysisEntities?: Array<{
+    name?: string
+    domain?: string
+    rationale?: string
+    position?: number
+  }>
 }
 
 export interface EvaluatedAnswer {

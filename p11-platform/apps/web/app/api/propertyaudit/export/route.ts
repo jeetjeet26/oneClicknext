@@ -136,6 +136,8 @@ function generateMarkdown(data: Awaited<ReturnType<typeof buildRunReportData>>):
       nonBrandedDiscoveryRank: null,
       nonBrandedVisibilityPct: null,
       comparisonAvgRank: null,
+      discoveryRankGap: 'no_discovery_answers',
+      discoveryRankLabel: 'No discovery answers',
     },
     citationSummary,
     glossary,
@@ -177,7 +179,7 @@ function generateMarkdown(data: Awaited<ReturnType<typeof buildRunReportData>>):
     lines.push(`- **Branded recognition:** ${rankSummary.brandedRecognitionPct !== null ? `${rankSummary.brandedRecognitionPct}%` : 'N/A'}`)
     lines.push(`- **Discovery mention:** ${rankSummary.nonBrandedVisibilityPct !== null ? `${rankSummary.nonBrandedVisibilityPct}%` : 'N/A'}`)
     lines.push(`- **Citation quality:** ${score.overall_score.toFixed(1)}/100`)
-    lines.push(`- **Non-branded discovery rank:** ${rankSummary.nonBrandedDiscoveryRank !== null ? `#${rankSummary.nonBrandedDiscoveryRank.toFixed(1)}` : 'N/A'}`)
+    lines.push(`- **Non-branded discovery rank:** ${rankSummary.discoveryRankLabel}`)
     lines.push(`- **Avg LLM Rank (all prompts):** ${score.avg_llm_rank?.toFixed(1) ?? 'N/A'}`)
     lines.push(`- **Avg Link Rank:** ${score.avg_link_rank?.toFixed(1) ?? 'N/A'}`)
     lines.push(`- **Avg SOV:** ${score.avg_sov ? (score.avg_sov * 100).toFixed(1) + '%' : 'N/A'}`)
@@ -399,6 +401,8 @@ function generateHTML(data: Awaited<ReturnType<typeof buildRunReportData>>): str
       nonBrandedDiscoveryRank: null,
       nonBrandedVisibilityPct: null,
       comparisonAvgRank: null,
+      discoveryRankGap: 'no_discovery_answers',
+      discoveryRankLabel: 'No discovery answers',
     },
     citationSummary,
     glossary,
@@ -472,7 +476,7 @@ function generateHTML(data: Awaited<ReturnType<typeof buildRunReportData>>): str
   </div>
   <div class="metric">
     <div class="metric-label">Discovery Rank</div>
-    <div class="metric-value">${rankSummary.nonBrandedDiscoveryRank !== null ? rankSummary.nonBrandedDiscoveryRank.toFixed(1) : 'N/A'}</div>
+    <div class="metric-value">${escapeHtml(rankSummary.discoveryRankLabel)}</div>
   </div>
   <div class="metric">
     <div class="metric-label">Branded Recognition</div>

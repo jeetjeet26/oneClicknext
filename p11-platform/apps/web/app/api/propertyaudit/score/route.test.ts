@@ -82,6 +82,7 @@ describe('propertyaudit score route', () => {
       builder.order = vi.fn(self)
       builder.limit = vi.fn(self)
       builder.in = vi.fn(self)
+      builder.single = () => Promise.resolve({ data, error: null })
       builder.then = (resolve: (value: { data: unknown; error: null }) => unknown, reject?: (reason: unknown) => unknown) =>
         Promise.resolve({ data, error: null }).then(resolve, reject)
       return builder
@@ -105,6 +106,9 @@ describe('propertyaudit score route', () => {
               geo_scores: [{ overall_score: 19, visibility_pct: 90, avg_llm_rank: 1, avg_link_rank: null, avg_sov: null, breakdown: null }],
             },
           ])
+        }
+        if (table === 'properties') {
+          return thenable({ name: 'Epoca' })
         }
         if (table === 'geo_queries') {
           return thenable([
@@ -156,6 +160,6 @@ describe('propertyaudit score route', () => {
     expect(body.score.discoveryMentionPct).toBe(0)
     expect(body.score.surfaceSummaries.find((item: { surface: string }) => item.surface === 'chatgpt')?.measured).toBe(true)
     expect(body.score.surfaceSummaries.find((item: { surface: string }) => item.surface === 'gemini')?.measured).toBe(false)
-    expect(body.score.surfaces.claude).toBeUndefined()
+    expect(body.score.surfaces.claude).toBeDefined()
   })
 })

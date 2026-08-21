@@ -11,7 +11,7 @@ Current capabilities:
 
 Notes:
 - OpenAI natural mode supports source-aware web search provenance.
-- Claude natural mode currently disables web search until source extraction is implemented.
+- Claude natural mode uses Anthropic web_search and persists those sources as citations.
 """
 import asyncio
 import os
@@ -22,6 +22,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 from supabase import Client
 from postgrest.exceptions import APIError
+from connectors.v1_natural_connectors import gemini_max_consecutive_rate_limits
 
 logger = logging.getLogger(__name__)
 
@@ -227,15 +228,6 @@ class PropertyAuditExecutor:
 
             heartbeat_task = asyncio.create_task(self._heartbeat_run(run_id))
 
-            if self.audit_mode == 'natural' and run.get('surface') == 'claude' and self.enable_web_search:
-                logger.warning(
-                    "[PropertyAudit] Disabling uses_web_search for Claude natural mode until source extraction is implemented"
-                )
-                self.supabase.table('geo_runs').update({
-                    'uses_web_search': False
-                }).eq('id', run_id).execute()
-                run['uses_web_search'] = False
-            
             # 2. Get queries for the property
             queries = self._get_queries(run['property_id'])
             if not queries:
@@ -259,6 +251,7 @@ class PropertyAuditExecutor:
             execution_count = max(1, int(run.get('execution_count') or 1))
             total_executions = len(queries) * execution_count
             executed = 0
+            consecutive_gemini_429 = 0
             
             for query in queries:
                 for attempt in range(execution_count):
@@ -282,6 +275,7 @@ class PropertyAuditExecutor:
                         )
                         
                         results.append(result)
+                        consecutive_gemini_429 = 0
                         
                         # Check AI Overview visibility (only on first execution per query to avoid rate limits)
                         if attempt == 0:
@@ -295,6 +289,35 @@ class PropertyAuditExecutor:
                         logger.error(f"[PropertyAudit] Error processing query {query['id']}: {message}")
                         errors.append(f"Query {query['id']}: {message}")
                         failure_reason = self._classify_failure(message)
+                        if run.get('surface') == 'gemini' and failure_reason == 'rate_limited':
+                            consecutive_gemini_429 += 1
+                            if consecutive_gemini_429 >= gemini_max_consecutive_rate_limits():
+                                error_summary = '; '.join(errors)
+                                if results:
+                                    aggregate = self._calculate_aggregate_scores(results)
+                                    self._insert_scores(run_id, aggregate, results)
+                                self._update_run_status(
+                                    run_id,
+                                    'failed' if not results else 'completed',
+                                    progress_pct=100,
+                                    error_message=error_summary,
+                                    provider_failure_reason=failure_reason
+                                )
+                                logger.warning(
+                                    "[PropertyAudit] Stopping Gemini run_id=%s after %s consecutive 429s (%s answers saved)",
+                                    run_id,
+                                    consecutive_gemini_429,
+                                    len(results),
+                                )
+                                return {
+                                    'success': bool(results),
+                                    'run_id': run_id,
+                                    'processed': len(results),
+                                    'errors': len(errors),
+                                    'error': message,
+                                }
+                        else:
+                            consecutive_gemini_429 = 0
                         if should_abort_run_on_provider_error(run.get('surface'), failure_reason):
                             error_summary = '; '.join(errors)
                             self._update_run_status(
@@ -596,6 +619,8 @@ class PropertyAuditExecutor:
             
             result = await connector.invoke_natural_mode(context)
             natural_response_text = result['raw'].get('natural_response', '')
+            context['sourceText'] = natural_response_text
+            context['analysis'] = result['raw'].get('analysis')
         
         else:
             # Structured mode: Direct GEO extraction

@@ -219,6 +219,15 @@ def score_answer(answer: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, A
     Score an answer using the GEO scoring formula.
     LLM_SERP_SCORE = 45% Position + 25% Link + 20% SOV + 10% Accuracy
     """
+    from connectors.entity_fallback import finalize_answer_block
+
+    answer = finalize_answer_block(
+        answer,
+        context,
+        context.get('sourceText') or '',
+        context.get('analysis') if isinstance(context.get('analysis'), dict) else None,
+    )
+
     # Get metrics
     presence = compute_presence(answer, context)
     llm_rank = find_brand_entity_rank(answer, context)

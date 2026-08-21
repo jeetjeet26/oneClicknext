@@ -112,6 +112,9 @@ def build_analyzer_prompt(ctx: Dict[str, Any]) -> str:
         "- For answer_block.ordered_entities[].rationale: include a short reason + the first_mention_quote in-line.",
         "- You may include provider search sources in citations even when the prose has no URLs.",
         "- Do not invent extra URLs. no_sources is set later from the final citation list; do not flag it when provider sources were supplied.",
+        "- Extract EVERY named property, community, builder, or listing brand. An empty ordered_entities array is only valid if the response names none of those.",
+        "- If the tracked brand is named, it MUST appear in answer_block.ordered_entities with a 1-based position.",
+        "- Do not flag possible_hallucination when the tracked brand is named in the response.",
         "- brand_analysis.location_correct should be false if a different city/state is stated than Expected Location (when Expected Location is known).",
         "- brand_analysis includes: mentioned (bool), position (int or null), location_stated (str or null), location_correct (bool or null), prominence (str or null)",
         "- analysis.ordered_entities should include: name, domain, position, prominence, mention_count, first_mention_quote",
@@ -362,28 +365,35 @@ class OpenAINaturalConnector:
             'searchSources': search_sources,
         })
         
-        # Merge Phase 1 web sources into citations for SOV calculation
+        from connectors.entity_fallback import finalize_answer_block
         from connectors.evaluator import reconcile_citation_flags
+
         answer_block = analyzed['envelope']['answer_block']
-        existing_citations = answer_block.get('citations', [])
-        existing_urls = {c.get('url') for c in existing_citations if c.get('url')}
-        
-        # Add web search sources as citations (for SOV calculation)
+        existing_citations = answer_block.get('citations', []) or []
+        existing_urls = {citation.get('url') for citation in existing_citations if citation.get('url')}
         for source in search_sources:
             if source.get('url') and source['url'] not in existing_urls:
                 existing_citations.append({
                     'url': source['url'],
                     'domain': source.get('domain', extract_domain_from_url(source['url'])),
-                    'entity_ref': None  # Web search sources don't have entity refs
+                    'entity_ref': None,
                 })
                 existing_urls.add(source['url'])
-        
         answer_block['citations'] = existing_citations
         notes = answer_block.get('notes') or {}
         notes['flags'] = reconcile_citation_flags(notes.get('flags') or [], len(existing_citations))
         answer_block['notes'] = notes
-        
-        logger.info(f"[OpenAINatural] Two-phase complete: {len(search_sources)} web sources, {len(existing_citations)} total citations")
+        answer_block = finalize_answer_block(
+            answer_block,
+            context,
+            natural_text,
+            analyzed['envelope'].get('analysis'),
+        )
+        logger.info(
+            f"[OpenAINatural] Two-phase complete: {len(search_sources)} web sources, "
+            f"{len(answer_block.get('citations') or [])} total citations, "
+            f"{len(answer_block.get('ordered_entities') or [])} entities"
+        )
         
         return {
             'answer': answer_block,

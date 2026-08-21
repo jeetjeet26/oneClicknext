@@ -4,7 +4,11 @@ import httpx
 import pytest
 from datetime import datetime, timezone
 
-from connectors.v1_natural_connectors import merge_sources_into_answer, post_gemini_with_retry
+from connectors.v1_natural_connectors import (
+    gemini_grounding_tool,
+    merge_sources_into_answer,
+    post_gemini_with_retry,
+)
 from jobs.propertyaudit import is_stale_running_run, should_abort_run_on_provider_error
 
 
@@ -123,6 +127,11 @@ async def test_post_gemini_with_retry_serializes_concurrent_calls(monkeypatch):
     await second
 
     assert max_active_calls == 1
+
+
+def test_gemini_3_uses_google_search_tool():
+    assert gemini_grounding_tool('gemini-3.1-pro-preview') == {'googleSearch': {}}
+    assert gemini_grounding_tool('gemini-2.5-pro') == {'googleSearchRetrieval': {}}
 
 
 def test_should_not_abort_gemini_on_rate_limit():

@@ -6,11 +6,64 @@ Phase 2: Analyze that response to extract GEO metrics
 import os
 import logging
 import re
-from typing import Dict, Any, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import anthropic
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 logger = logging.getLogger(__name__)
+
+
+def extract_domain(url: str) -> str:
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        return (parsed.hostname or url).replace('www.', '', 1)
+    except Exception:
+        return url
+
+
+def _block_value(block: Any, key: str, default: Any = None) -> Any:
+    if isinstance(block, dict):
+        return block.get(key, default)
+    return getattr(block, key, default)
+
+
+def extract_sources_from_claude_response(response: Any) -> List[Dict[str, str]]:
+    """Pull citation URLs from Anthropic web_search content and text citations."""
+    sources: List[Dict[str, str]] = []
+    seen = set()
+
+    def add_source(url: Optional[str], title: str = '', snippet: str = '') -> None:
+        if not url or url in seen:
+            return
+        seen.add(url)
+        sources.append({
+            'title': title or '',
+            'url': url,
+            'domain': extract_domain(url),
+            'snippet': snippet or '',
+        })
+
+    for block in _block_value(response, 'content', []) or []:
+        for citation in _block_value(block, 'citations', []) or []:
+            add_source(
+                _block_value(citation, 'url'),
+                _block_value(citation, 'title', '') or '',
+                _block_value(citation, 'cited_text', '') or '',
+            )
+
+        if _block_value(block, 'type') != 'web_search_tool_result':
+            continue
+        content = _block_value(block, 'content', []) or []
+        if isinstance(content, list):
+            for item in content:
+                add_source(
+                    _block_value(item, 'url'),
+                    _block_value(item, 'title', '') or '',
+                    _block_value(item, 'snippet', '') or '',
+                )
+
+    return sources
 
 
 class ClaudeNaturalConnector:
@@ -23,7 +76,11 @@ class ClaudeNaturalConnector:
         
         self.client = anthropic.Anthropic(api_key=self.api_key)
         self.model = os.environ.get('GEO_CLAUDE_MODEL', 'claude-sonnet-5')
-        self.enable_web_search = os.environ.get('GEO_ENABLE_WEB_SEARCH', 'false').lower() == 'true'
+        claude_search = os.environ.get('GEO_CLAUDE_WEB_SEARCH')
+        if claude_search is not None:
+            self.enable_web_search = claude_search.lower() == 'true'
+        else:
+            self.enable_web_search = os.environ.get('GEO_ENABLE_WEB_SEARCH', 'true').lower() == 'true'
         
         logger.info(f"[ClaudeNatural] Model: {self.model}, Web search: {self.enable_web_search}")
     
@@ -39,49 +96,77 @@ class ClaudeNaturalConnector:
         logger.info(f"[Claude-Natural] Phase 1: Getting natural response for: {query_text[:50]}...")
         
         system_prompt = 'You are a helpful assistant. Answer naturally in conversational prose. Do not output JSON. If unsure, say so plainly.'
-        search_sources = []
-        
-        # Claude natural-mode web search stays disabled until source extraction is implemented.
-        web_search_disabled_reason = None
+        search_sources: List[Dict[str, str]] = []
+
+        def collect_text(response: Any) -> str:
+            return '\n'.join(
+                _block_value(block, 'text', '') or ''
+                for block in _block_value(response, 'content', []) or []
+                if _block_value(block, 'type') == 'text'
+            ).strip()
+
         if self.enable_web_search:
-            web_search_disabled_reason = (
-                "Claude natural-mode web search is disabled until source extraction is implemented."
-            )
-            logger.warning(f"[Claude-Natural] {web_search_disabled_reason}")
-        
-        # Standard call without web search
-        try:
-            response = self.client.messages.create(
-                model=self.model,
-                max_tokens=2000,
-                system=system_prompt,
-                messages=[
-                    {"role": "user", "content": query_text}
-                ]
-            )
-            
-            content = response.content[0].text
-            logger.info(f"[Claude-Natural] Phase 1 complete: {len(content)} chars")
-            
-            return (
-                content,
-                [],  # No sources without web search
-                {
-                    'response_id': response.id,
-                    'model': self.model,
-                    'usage': {
-                        'input_tokens': response.usage.input_tokens,
-                        'output_tokens': response.usage.output_tokens
+            try:
+                logger.info("[Claude-Natural] Using Anthropic web_search_20250305")
+                response = self.client.messages.create(
+                    model=self.model,
+                    max_tokens=2000,
+                    system=system_prompt,
+                    messages=[{"role": "user", "content": query_text}],
+                    tools=[{
+                        "type": "web_search_20250305",
+                        "name": "web_search",
+                        "max_uses": 5,
+                    }],
+                )
+                search_sources = extract_sources_from_claude_response(response)
+                content = collect_text(response)
+                logger.info(
+                    f"[Claude-Natural] Phase 1 complete: {len(content)} chars, {len(search_sources)} sources"
+                )
+                return (
+                    content,
+                    search_sources,
+                    {
+                        'response_id': response.id,
+                        'model': self.model,
+                        'usage': {
+                            'input_tokens': response.usage.input_tokens,
+                            'output_tokens': response.usage.output_tokens,
+                        },
+                        'stop_reason': response.stop_reason,
+                        'used_web_search': True,
                     },
-                    'stop_reason': response.stop_reason,
-                    'used_web_search': False,
-                    'web_search_disabled_reason': web_search_disabled_reason,
-                }
-            )
-            
-        except Exception as e:
-            logger.error(f"[Claude-Natural] Phase 1 error: {e}", exc_info=True)
-            raise
+                )
+            except Exception as error:
+                logger.error(
+                    "[Claude-Natural] Web search failed, falling back to no web search: %s",
+                    error,
+                    exc_info=True,
+                )
+
+        response = self.client.messages.create(
+            model=self.model,
+            max_tokens=2000,
+            system=system_prompt,
+            messages=[{"role": "user", "content": query_text}],
+        )
+        content = collect_text(response) or (response.content[0].text if response.content else '')
+        logger.info(f"[Claude-Natural] Phase 1 complete: {len(content)} chars")
+        return (
+            content,
+            [],
+            {
+                'response_id': response.id,
+                'model': self.model,
+                'usage': {
+                    'input_tokens': response.usage.input_tokens,
+                    'output_tokens': response.usage.output_tokens,
+                },
+                'stop_reason': response.stop_reason,
+                'used_web_search': False,
+            },
+        )
     
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     async def analyze_response(self, context: Dict[str, Any]) -> Dict[str, Any]:
@@ -137,10 +222,12 @@ Task: Extract structured data from the LLM response above. Return ONLY a JSON ob
    - ordered_entities: Detailed extraction data
 
 CRITICAL:
+- Extract EVERY named property, community, builder, or listing brand. An empty ordered_entities array is only valid if the response names none of those.
 - If {brand_name} is mentioned, it MUST appear in ordered_entities
 - Position numbers start at 1 (the first mentioned property)
 - Only include properties that were actually mentioned in the response
 - If location doesn't match {location_context}, add flag "nap_mismatch"
+- Do not flag possible_hallucination when {brand_name} is named in the response.
 - You may include provider search sources in citations even when the prose has no URLs.
 
 Output ONLY valid JSON, no markdown."""
@@ -230,28 +317,35 @@ Output ONLY valid JSON, no markdown."""
             'searchSources': search_sources,
         })
         
-        # Merge Phase 1 web sources into citations for SOV calculation
+        from connectors.entity_fallback import finalize_answer_block
         from connectors.evaluator import reconcile_citation_flags
+
         answer_block = analyzed['envelope']['answer_block']
-        existing_citations = answer_block.get('citations', [])
-        existing_urls = {c.get('url') for c in existing_citations if c.get('url')}
-        
-        # Add web search sources as citations (for SOV calculation)
+        existing_citations = answer_block.get('citations', []) or []
+        existing_urls = {citation.get('url') for citation in existing_citations if citation.get('url')}
         for source in search_sources:
             if source.get('url') and source['url'] not in existing_urls:
                 existing_citations.append({
                     'url': source['url'],
-                    'domain': source.get('domain', ''),
-                    'entity_ref': None
+                    'domain': source.get('domain') or extract_domain(source['url']),
+                    'entity_ref': None,
                 })
                 existing_urls.add(source['url'])
-        
         answer_block['citations'] = existing_citations
         notes = answer_block.get('notes') or {}
         notes['flags'] = reconcile_citation_flags(notes.get('flags') or [], len(existing_citations))
         answer_block['notes'] = notes
-        
-        logger.info(f"[Claude-Natural] Two-phase complete: {len(search_sources)} web sources, {len(existing_citations)} total citations")
+        answer_block = finalize_answer_block(
+            answer_block,
+            context,
+            natural_text,
+            analyzed['envelope'].get('analysis'),
+        )
+        logger.info(
+            f"[Claude-Natural] Two-phase complete: {len(search_sources)} web sources, "
+            f"{len(answer_block.get('citations') or [])} total citations, "
+            f"{len(answer_block.get('ordered_entities') or [])} entities"
+        )
         
         return {
             'answer': answer_block,

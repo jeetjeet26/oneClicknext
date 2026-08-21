@@ -17,6 +17,7 @@ import type {
   ScoreBreakdown,
   AggregateScores 
 } from './types'
+import { finalizeAnswerBlock } from './entity-fallback'
 
 // ============================================================================
 // Domain Utilities
@@ -197,11 +198,19 @@ export function computeAccuracyComponent(flags: string[]): number {
  * Evaluate an answer block to extract metrics
  */
 export function evaluateAnswer(answer: AnswerBlock, context: EvaluationContext): EvaluatedAnswer {
-  const flags = [...(answer.notes.flags ?? [])]
-  const llmRank = findBrandEntityRank(answer, context)
-  const linkRank = findBrandLinkRank(answer, context)
-  const sov = computeSov(answer, context)
-  const presence = computePresence(answer, context)
+  const hydrated = finalizeAnswerBlock(answer, {
+    brandName: context.brandName,
+    brandDomains: context.brandDomains,
+    competitors: context.competitors,
+    sourceText: context.sourceText,
+    expectedCity: context.expectedCity,
+    analysisEntities: context.analysisEntities,
+  })
+  const flags = [...(hydrated.notes.flags ?? [])]
+  const llmRank = findBrandEntityRank(hydrated, context)
+  const linkRank = findBrandLinkRank(hydrated, context)
+  const sov = computeSov(hydrated, context)
+  const presence = computePresence(hydrated, context)
 
   return {
     presence,

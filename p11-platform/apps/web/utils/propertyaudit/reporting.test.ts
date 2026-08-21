@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildCompetitorsFromAnswers, buildInsights, buildReportScores, type ReportAnswer, type ReportCompetitor } from './reporting'
+import { buildCompetitorsFromAnswers, buildInsights, buildReportScores, describeDiscoveryRankGap, formatDiscoveryRank, type ReportAnswer, type ReportCompetitor } from './reporting'
 
 function makeAnswer(orderedEntities: ReportAnswer['ordered_entities']): ReportAnswer {
   return {
@@ -23,6 +23,8 @@ function makeInsightsInput(overrides: Partial<Parameters<typeof buildInsights>[0
       nonBrandedDiscoveryRank: null,
       nonBrandedVisibilityPct: null,
       comparisonAvgRank: null,
+      discoveryRankGap: 'no_discovery_answers',
+      discoveryRankLabel: 'No discovery answers',
     },
     citationSummary: { total: 0, brandPct: 0, topDomains: [] },
     recommendationSummary: { total: 0, high: 0, medium: 0, low: 0, byType: {} },
@@ -33,7 +35,7 @@ function makeInsightsInput(overrides: Partial<Parameters<typeof buildInsights>[0
 }
 
 describe('PropertyAudit reporting insights', () => {
-  it('uses the latest score per client surface and ignores Claude', () => {
+  it('uses the latest score per client surface and includes Claude', () => {
     const scores = buildReportScores([
       {
         id: 'claude-latest',
@@ -62,8 +64,18 @@ describe('PropertyAudit reporting insights', () => {
     ])
 
     expect(scores).toHaveLength(1)
-    expect(scores[0]?.overall_score).toBe(35)
-    expect(scores[0]?.visibility_pct).toBe(33)
+    expect(scores[0]?.overall_score).toBeCloseTo((19 + 38 + 32) / 3, 5)
+    expect(scores[0]?.visibility_pct).toBeCloseTo((41 + 46 + 20) / 3, 5)
+  })
+
+  it('labels a missing discovery rank as a list-extraction gap', () => {
+    expect(describeDiscoveryRankGap({
+      discoveryAnswerCount: 4,
+      discoveryMentionCount: 2,
+      discoveryRankCount: 0,
+    })).toBe('no_list_extracted')
+    expect(formatDiscoveryRank(null, 'no_list_extracted')).toBe('No list extracted')
+    expect(formatDiscoveryRank(1.2, 'none')).toBe('#1.2')
   })
 
   it('flags same-name entity mentions before treating them as competitor pressure', () => {

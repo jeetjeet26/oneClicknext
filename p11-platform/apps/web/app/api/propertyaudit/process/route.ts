@@ -25,6 +25,7 @@ import { PerplexityNaturalConnector } from '@/utils/propertyaudit/perplexity-nat
 import { GoogleProxyNaturalConnector } from '@/utils/propertyaudit/google-proxy-natural-connector'
 import {
   classifyProviderFailure,
+  finalizeAnswerBlock,
   getDefaultAuditMode,
   mergeSearchSourcesIntoAnswer,
   scoreAnswer,
@@ -524,7 +525,17 @@ export async function POST(req: NextRequest) {
                 searchSources,
               })
 
-              answer = mergeSearchSourcesIntoAnswer(analyzed.envelope.answer_block, searchSources)
+              answer = finalizeAnswerBlock(
+                mergeSearchSourcesIntoAnswer(analyzed.envelope.answer_block, searchSources),
+                {
+                  brandName: context.brandName,
+                  brandDomains: context.brandDomains,
+                  competitors: context.competitors,
+                  sourceText: natural.text,
+                  expectedCity: context.propertyLocation?.city,
+                  analysisEntities: analyzed.envelope.analysis?.ordered_entities,
+                }
+              )
               raw = {
                 audit_mode: auditMode,
                 phase1: natural.rawResponse,

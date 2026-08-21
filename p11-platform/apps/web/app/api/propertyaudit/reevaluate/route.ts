@@ -9,7 +9,7 @@ import type { Json } from '@/types/supabase'
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
-import { AnswerBlockSchema, scoreAnswer, aggregateScores, type ScoredAnswer } from '@/utils/propertyaudit'
+import { AnswerBlockSchema, finalizeAnswerBlock, scoreAnswer, aggregateScores, type ScoredAnswer } from '@/utils/propertyaudit'
 
 function normalizeAnswerBlock(
   orderedEntities: unknown,
@@ -62,6 +62,7 @@ export async function POST(req: NextRequest) {
           id,
           query_id,
           answer_summary,
+          natural_response,
           ordered_entities,
           raw_json
         )
@@ -146,8 +147,15 @@ export async function POST(req: NextRequest) {
           continue
         }
 
+        const hydrated = finalizeAnswerBlock(answerBlock, {
+          brandName,
+          brandDomains,
+          competitors,
+          sourceText: [answer.natural_response, answer.answer_summary].filter(Boolean).join('\n'),
+        })
+
         // Re-score with updated evaluator
-        const scoredAnswer = scoreAnswer(answerBlock, evaluationContext)
+        const scoredAnswer = scoreAnswer(hydrated, evaluationContext)
         results.push(scoredAnswer)
 
         // Update answer in database
@@ -158,7 +166,8 @@ export async function POST(req: NextRequest) {
             llm_rank: scoredAnswer.llmRank,
             link_rank: scoredAnswer.linkRank,
             sov: scoredAnswer.sov,
-            flags: scoredAnswer.flags
+            flags: scoredAnswer.flags,
+            ordered_entities: hydrated.ordered_entities as unknown as Json,
           })
           .eq('id', answer.id)
       } catch (error) {
