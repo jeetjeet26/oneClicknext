@@ -247,11 +247,15 @@ class SiteAuditExecutor:
                 analyst = SiteAuditAnalyst(self.supabase)
                 analyst_result = await analyst.generate(property_id, crawl_id, batch_id)
 
-            self.supabase.table("geo_site_crawls").update({
+            crawl_update = {
                 "status": "completed",
                 "finished_at": _utc_now().isoformat(),
                 "last_updated_at": _utc_now().isoformat(),
-            }).eq("id", crawl_id).execute()
+            }
+            if not analyst_result.get("success"):
+                crawl_update["error_message"] = f"analyst:{analyst_result.get('error') or 'failed'}"[:2000]
+
+            self.supabase.table("geo_site_crawls").update(crawl_update).eq("id", crawl_id).execute()
 
             logger.info(
                 "[SiteAudit] Crawl %s completed: %s pages, findings %s, analyst %s",

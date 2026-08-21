@@ -42,6 +42,25 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def openai_completion_token_param(model: str, limit: int = 8000) -> Dict[str, int]:
+    """GPT-5+ rejects max_tokens; older chat models still require it."""
+    if re.search(r"^gpt-[34](?!\.)", model or "", flags=re.I):
+        return {"max_tokens": limit}
+    return {"max_completion_tokens": limit}
+
+
+def extract_claude_text(response: Any) -> str:
+    blocks = getattr(response, "content", None) or []
+    parts: List[str] = []
+    for block in blocks:
+        if getattr(block, "type", None) and block.type != "text":
+            continue
+        text = getattr(block, "text", None)
+        if text:
+            parts.append(text)
+    return "\n".join(parts).strip()
+
+
 class SiteAuditAnalyst:
     def __init__(self, supabase: Client):
         self.supabase = supabase
@@ -295,7 +314,7 @@ Requirements:
             ],
             response_format={"type": "json_object"},
             temperature=0.3,
-            max_tokens=8000,
+            **openai_completion_token_param(self.openai_model),
         )
         return json.loads(response.choices[0].message.content)
 
@@ -311,7 +330,9 @@ Requirements:
             system=ANALYST_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": prompt}],
         )
-        content = response.content[0].text
+        content = extract_claude_text(response)
+        if not content:
+            raise ValueError("Claude analyst returned no text content")
         try:
             return json.loads(content)
         except json.JSONDecodeError:

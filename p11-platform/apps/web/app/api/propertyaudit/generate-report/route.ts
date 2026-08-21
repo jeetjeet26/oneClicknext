@@ -10,8 +10,6 @@ import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { buildCharts, buildPropertyReportData, buildRunReportData } from '@/utils/propertyaudit/reporting'
 
 type ReportData = Awaited<ReturnType<typeof buildPropertyReportData>>
-type ReportRecommendation = ReportData['recommendations'][number]
-type RecommendationWorkstream = 'Owned Content' | 'Citation Targets' | 'Entity / Technical Fixes' | 'Competitive Plays'
 
 type ReportingClient = {
   from: (table: string) => unknown
@@ -219,8 +217,18 @@ function generateReportHTML(
     .sort((a, b) => (a.overallScore || 0) - (b.overallScore || 0))[0]
   const weakestType = [...queryTypeStats]
     .sort((a, b) => a.presencePct - b.presencePct)[0]
-  const topActions = recommendations.slice(0, 3)
-  const groupedRecommendations = groupRecommendationsByWorkstream(recommendations)
+  const topActions = (llmRoadmap.length > 0
+    ? llmRoadmap.slice(0, 3).map(rec => ({
+        title: rec.title,
+        detail: `${formatOwnerLabel(rec.owner)} / ${rec.priority}`,
+      }))
+    : siteFindings
+        .filter(finding => finding.status !== 'fixed' && finding.status !== 'wont_fix')
+        .slice(0, 3)
+        .map(finding => ({
+          title: finding.title,
+          detail: `${formatFindingCategory(finding.category)} / ${finding.occurrences} occurrence${finding.occurrences === 1 ? '' : 's'}`,
+        })))
   const confirmedCompetitors = competitors.filter(comp => !comp.ambiguityReason)
   const ambiguousCompetitors = competitors.filter(comp => comp.ambiguityReason)
   const competitivePressureText = confirmedCompetitors.length > 0
@@ -468,7 +476,7 @@ function generateReportHTML(
   <h3>Top 3 Next Actions</h3>
   <ol style="line-height: 1.8;">
     ${topActions.map(action => `
-      <li><strong>${escapeHtml(action.title)}</strong> — ${escapeHtml(formatAccessLabel(action.accessLevel || 'URLOnly'))}: ${escapeHtml(action.owner || 'seo')} / ${escapeHtml(action.targetPageType || 'target page TBD')}</li>
+      <li><strong>${escapeHtml(action.title)}</strong> — ${escapeHtml(action.detail)}</li>
     `).join('')}
   </ol>
   ` : ''}
@@ -760,72 +768,10 @@ function generateReportHTML(
   ${hasSection('recommendations') && llmRoadmap.length === 0 ? `
   <h2>Strategic Action Plan</h2>
   <p style="color: #6b7280; margin-bottom: 1.5rem;">
-    ${recommendationSummary.total} recommendations identified. Priorities: ${recommendationSummary.high} high, ${recommendationSummary.medium} medium, ${recommendationSummary.low} low.
+    ${siteFindings.length > 0
+      ? 'The narrative roadmap is generated from this property’s crawl findings and tracked prompts. Until that write lands, use the Technical Findings below — those are the real open issues, not a generic playbook.'
+      : 'No grounded recommendations are available yet. Re-run the site-audit analyst after the crawl finishes; do not substitute a generic 30/60 playbook.'}
   </p>
-  <h3>30/60-Day Action Plan</h3>
-  <ul style="line-height: 1.8;">
-    <li><strong>Next 30 days:</strong> Execute the highest-impact strategic workstreams below: owned demand-capture content, comparison positioning, technical schema/FAQ fixes, and citation authority.</li>
-    <li><strong>Next 60 days:</strong> Re-run the same selected LLM surfaces, compare surface drift, and update the roadmap based on which prompt clusters improved.</li>
-  </ul>
-  <div class="chart-grid">
-    <div class="chart-card">${charts.recommendationBar}</div>
-  </div>
-  ${Object.entries(groupedRecommendations).map(([workstream, recs]) => `
-    <h3>${escapeHtml(workstream)}</h3>
-    <p style="color: #6b7280; font-size: 0.875rem;">${escapeHtml(getWorkstreamDescription(workstream as RecommendationWorkstream))}</p>
-    ${recs.length === 0 ? '<p style="color: #6b7280;">No recommendations in this workstream for this report.</p>' : recs.map((rec, index) => `
-    <div class="recommendation-card">
-      <h3 style="margin-top: 0;">${index + 1}. ${escapeHtml(rec.title)}</h3>
-      <p><strong>Priority:</strong> ${escapeHtml(rec.priority)} | <strong>Impact:</strong> ${rec.impact.score}/100</p>
-      <p><strong>Access Level:</strong> ${escapeHtml(rec.accessLevel || 'URLOnly')} | <strong>Owner:</strong> ${escapeHtml(rec.owner || 'seo')} | <strong>Status:</strong> ${escapeHtml(rec.status || 'todo')}</p>
-      <p><strong>Evidence Mode:</strong> ${escapeHtml(rec.evidenceMode || 'URLOnly')}</p>
-      ${rec.targetPageType ? `<p><strong>Target Page Type:</strong> ${escapeHtml(rec.targetPageType)}</p>` : ''}
-      ${rec.targetUrl ? `<p><strong>Target URL:</strong> ${escapeHtml(rec.targetUrl)}</p>` : ''}
-      <p>${escapeHtml(rec.description)}</p>
-      ${rec.evidence?.length ? `
-        <p><strong>Evidence:</strong></p>
-        <ul>
-          ${rec.evidence.map(item => `<li>${escapeHtml(item)}</li>`).join('')}
-        </ul>
-      ` : ''}
-      ${rec.sourceQueryEvidence?.length ? `
-        <p><strong>GEO Query Evidence:</strong></p>
-        <ul>
-          ${rec.sourceQueryEvidence.map(item => `<li>${escapeHtml(item)}</li>`).join('')}
-        </ul>
-      ` : ''}
-      ${rec.missingSignals?.length ? `
-        <p><strong>Missing Signals:</strong> ${escapeHtml(rec.missingSignals.join(', '))}</p>
-      ` : ''}
-      ${rec.implementationSteps?.length ? `
-        <p><strong>Exact Implementation:</strong></p>
-        <ul>
-          ${rec.implementationSteps.map(item => `<li>${escapeHtml(item)}</li>`).join('')}
-        </ul>
-      ` : ''}
-      ${rec.acceptanceCriteria?.length ? `
-        <p><strong>Acceptance Criteria:</strong></p>
-        <ul>
-          ${rec.acceptanceCriteria.map(item => `<li>${escapeHtml(item)}</li>`).join('')}
-        </ul>
-      ` : ''}
-      ${rec.modelBreakdown ? `
-        <p><strong>Model Impact:</strong>
-          ${rec.modelBreakdown.affectedModels?.length ? rec.modelBreakdown.affectedModels.map(m => m.toUpperCase()).join(', ') : '—'}
-        </p>
-      ` : ''}
-      ${rec.surfaceBreakdown ? `
-        <p><strong>Surface Breakdown:</strong> ${Object.values(rec.surfaceBreakdown).map(surface => `${escapeHtml(surface.label)} ${surface.presence ? 'present' : 'absent'}${surface.rank ? ` (#${surface.rank})` : ''}`).join(', ')}</p>
-      ` : ''}
-      ${rec.competitorContext ? `
-        <p><strong>Competitor Context:</strong> ${escapeHtml(rec.competitorContext.competitorName)} (${escapeHtml(rec.competitorContext.competitorDomain)})</p>
-      ` : ''}
-      ${rec.relatedQueries?.length ? `
-        <p><strong>Related Queries:</strong> ${rec.relatedQueries.map(q => escapeHtml(q.text)).join(', ')}</p>
-      ` : ''}
-    </div>
-    `).join('')}
-  `).join('')}
   ` : ''}
 
   ${siteFindings.length > 0 ? `
@@ -1074,51 +1020,6 @@ function getScoreBucket(score: number | undefined): string {
   if (score >= 50) return '(Good)'
   if (score >= 25) return '(Fair)'
   return '(Needs Improvement)'
-}
-
-function formatAccessLabel(accessLevel: string): string {
-  return cleanReportText(accessLevel)
-}
-
-function getRecommendationWorkstream(rec: ReportRecommendation): RecommendationWorkstream {
-  if (rec.type === 'citation_opportunity' || rec.accessLevel === 'ThirdParty') {
-    return 'Citation Targets'
-  }
-  if (rec.accessLevel === 'CodeRequired' || /schema|robots|sitemap|llms\.txt/i.test(rec.keywords.join(' '))) {
-    return 'Entity / Technical Fixes'
-  }
-  if (rec.type === 'content_gap' || rec.type === 'rank_improvement') {
-    return 'Competitive Plays'
-  }
-  return 'Owned Content'
-}
-
-function groupRecommendationsByWorkstream(recommendations: ReportRecommendation[]): Record<RecommendationWorkstream, ReportRecommendation[]> {
-  const groups: Record<RecommendationWorkstream, ReportRecommendation[]> = {
-    'Owned Content': [],
-    'Citation Targets': [],
-    'Entity / Technical Fixes': [],
-    'Competitive Plays': [],
-  }
-
-  recommendations.forEach(rec => {
-    groups[getRecommendationWorkstream(rec)].push(rec)
-  })
-
-  return groups
-}
-
-function getWorkstreamDescription(workstream: RecommendationWorkstream): string {
-  switch (workstream) {
-    case 'Owned Content':
-      return 'Pages, FAQs, answer blocks, and content updates the client can usually control directly.'
-    case 'Citation Targets':
-      return 'Third-party directories, list pages, PR, or partner placements that influence AI citations.'
-    case 'Entity / Technical Fixes':
-      return 'Structured data, crawlability, metadata, and entity-consistency changes that may require CMS or code access.'
-    case 'Competitive Plays':
-      return 'Prompt clusters where competitors are appearing more strongly and the client needs counter-positioning.'
-  }
 }
 
 function cleanReportText(input: string): string {

@@ -218,6 +218,16 @@ describe('propertyaudit generate-report route', () => {
       glossary: [],
       insights: { highlights: [], risks: [], opportunities: [], summaryStats: [] },
       narrative: 'Al Overview visibility improved. AI answers strong branded prompts cite new- to-brand pages as medium- priority.',
+      siteFindings: [],
+      llmRoadmap: [{
+        title: 'Rewrite neighborhood titles with FAQPage JSON-LD and answer-block copy',
+        priority: 'high',
+        type: 'content_proposal',
+        owner: 'content',
+        narrative: 'Aster House is missing FAQPage JSON-LD and answer-block markup on the neighborhood page.',
+        proposed_changes: [],
+        grounding: { query_evidence: ['best apartments near downtown'] },
+      }],
     })
 
     const { POST } = await import('./route')
@@ -239,13 +249,11 @@ describe('propertyaudit generate-report route', () => {
     expect(text).toContain('GEO Visibility Report')
     expect(text).toContain('Executive Snapshot')
     expect(text).toContain('AI Visibility Position')
-    expect(text).toContain('Owned Content')
-    expect(text).toContain('Access Level')
+    expect(text).toContain('Rewrite neighborhood titles with FAQPage JSON-LD and answer-block copy')
     expect(text).toContain('AI Overview visibility')
     expect(text).toContain('AI answers. Strong branded')
     expect(text).toContain('new-to-brand')
     expect(text).toContain('medium-priority')
-    expect(text).toContain('Code Required: engineering')
     expect(text).toContain('FAQPage JSON-LD')
     expect(text).toContain('answer-block')
     expect(text).not.toContain('Al Overview visibility')

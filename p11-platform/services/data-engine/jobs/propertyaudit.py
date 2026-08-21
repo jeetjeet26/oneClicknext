@@ -309,6 +309,10 @@ class PropertyAuditExecutor:
                                     consecutive_gemini_429,
                                     len(results),
                                 )
+                                await self._refresh_siteaudit_analyst_if_batch_ready(
+                                    run.get('property_id'),
+                                    run.get('batch_id'),
+                                )
                                 return {
                                     'success': bool(results),
                                     'run_id': run_id,
@@ -356,6 +360,7 @@ class PropertyAuditExecutor:
             )
             
             logger.info(f"[PropertyAudit] Completed run_id={run_id}: {len(results)} queries processed, {len(errors)} errors")
+            await self._refresh_siteaudit_analyst_if_batch_ready(run.get('property_id'), run.get('batch_id'))
             
             return {
                 'success': True,
@@ -433,6 +438,48 @@ class PropertyAuditExecutor:
         
         self.supabase.table('geo_runs').update(update_data).eq('id', run_id).execute()
         logger.debug(f"[PropertyAudit] Updated run {run_id}: status={status}, progress={progress_pct}%")
+
+    async def _refresh_siteaudit_analyst_if_batch_ready(
+        self,
+        property_id: Optional[str],
+        batch_id: Optional[str],
+    ) -> None:
+        """Write grounded recommendations once every surface in the batch is done."""
+        if not property_id or not batch_id:
+            return
+        try:
+            siblings = (
+                self.supabase.table('geo_runs')
+                .select('id, status')
+                .eq('batch_id', batch_id)
+                .execute()
+            )
+            statuses = [row.get('status') for row in (siblings.data or [])]
+            if not statuses or any(status in ('queued', 'running') for status in statuses):
+                return
+
+            crawl_response = (
+                self.supabase.table('geo_site_crawls')
+                .select('id, status')
+                .eq('batch_id', batch_id)
+                .eq('status', 'completed')
+                .order('finished_at', desc=True)
+                .limit(1)
+                .execute()
+            )
+            crawl = (crawl_response.data or [None])[0]
+            if not crawl:
+                return
+
+            from siteaudit.analyst import SiteAuditAnalyst
+            result = await SiteAuditAnalyst(self.supabase).generate(property_id, crawl['id'], batch_id)
+            logger.info(
+                "[PropertyAudit] SiteAudit analyst refresh for batch %s: %s",
+                batch_id,
+                result.get('success'),
+            )
+        except Exception as error:
+            logger.warning("[PropertyAudit] SiteAudit analyst refresh failed: %s", error)
     
     def _update_progress(self, run_id: str, progress_pct: int, current_query_index: int):
         """Update progress tracking fields."""

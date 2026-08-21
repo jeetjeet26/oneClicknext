@@ -2,16 +2,14 @@
  * PropertyAudit Recommendations API
  *
  * Reads the persisted LLM-generated recommendations (geo_recommendations,
- * written by the data-engine site audit analyst). Falls back to the legacy
- * rule-based engine only when no persisted generation exists yet, so
- * properties keep getting guidance before their first full crawl completes.
+ * written by the data-engine site audit analyst). Empty until that generation
+ * exists — do not substitute the generic rule-based playbook.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
-import { generateRecommendations } from '@/utils/propertyaudit/recommendation-engine'
 
 const VALID_STATUSES = ['todo', 'in_progress', 'fixed', 'wont_fix'] as const
 
@@ -77,12 +75,19 @@ export async function GET(req: NextRequest) {
       })
     }
 
-    // Legacy fallback: no persisted generation yet (first crawl not complete).
-    const { recommendations, summary } = await generateRecommendations(propertyId, { runId, batchId })
     return NextResponse.json({
-      source: 'legacy_rules',
-      recommendations,
-      summary,
+      source: 'pending_analyst',
+      recommendations: [],
+      summary: {
+        totalRecommendations: 0,
+        highPriority: 0,
+        mediumPriority: 0,
+        lowPriority: 0,
+        proposedChangeCount: 0,
+        generationId: null,
+        modelUsed: null,
+        generatedAt: null,
+      },
       propertyId,
       runId: runId || null,
       batchId: batchId || null,

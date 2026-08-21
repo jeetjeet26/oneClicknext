@@ -143,14 +143,10 @@ describe('propertyaudit recommendations route', () => {
     expect(generateRecommendationsMock).not.toHaveBeenCalled()
   })
 
-  it('falls back to the legacy engine when no persisted generation exists', async () => {
+  it('does not invent template recommendations when no persisted generation exists', async () => {
     authGetUserMock.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
     validatePropertyAccessMock.mockResolvedValue({ authorized: true, orgId: 'org-1' })
     mockPersistedRecommendations([])
-    generateRecommendationsMock.mockResolvedValue({
-      recommendations: [{ id: 'legacy-1', priority: 'high' }],
-      summary: { totalRecommendations: 1 },
-    })
 
     const { GET } = await import('./route')
     const response = await GET(
@@ -159,11 +155,8 @@ describe('propertyaudit recommendations route', () => {
 
     expect(response.status).toBe(200)
     const body = await response.json()
-    expect(body.source).toBe('legacy_rules')
-    expect(body.recommendations).toHaveLength(1)
-    expect(generateRecommendationsMock).toHaveBeenCalledWith('property-1', {
-      runId: undefined,
-      batchId: undefined,
-    })
+    expect(body.source).toBe('pending_analyst')
+    expect(body.recommendations).toEqual([])
+    expect(generateRecommendationsMock).not.toHaveBeenCalled()
   })
 })

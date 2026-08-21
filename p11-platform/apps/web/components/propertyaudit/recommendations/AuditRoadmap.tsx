@@ -116,7 +116,7 @@ export function AuditRoadmap({ propertyId, runId }: AuditRoadmapProps) {
   const [findings, setFindings] = useState<SiteFinding[]>([])
   const [crawl, setCrawl] = useState<CrawlStatus | null>(null)
   const [recommendations, setRecommendations] = useState<LlmRecommendation[]>([])
-  const [recommendationSource, setRecommendationSource] = useState<'llm_analyst' | 'legacy_rules' | null>(null)
+  const [recommendationSource, setRecommendationSource] = useState<'llm_analyst' | 'legacy_rules' | 'pending_analyst' | null>(null)
   const [loading, setLoading] = useState(true)
   const [severityFilter, setSeverityFilter] = useState<string>('all')
   const [categoryFilter, setCategoryFilter] = useState<string>('all')
@@ -539,15 +539,10 @@ export function AuditRoadmap({ propertyId, runId }: AuditRoadmapProps) {
       )}
 
       {/* Legacy fallback while the first crawl/analysis hasn't completed */}
-      {recommendationSource === 'legacy_rules' && (
-        <div className="space-y-3">
-          {findings.length > 0 && (
-            <div className="flex items-center gap-2 p-3 bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-900 rounded-lg text-sm text-amber-800 dark:text-amber-200">
-              <AlertTriangle className="w-4 h-4 shrink-0" />
-              The LLM-written roadmap is generated after the next full audit run completes. Showing rule-based guidance meanwhile.
-            </div>
-          )}
-          <ContentRecommendations propertyId={propertyId} runId={runId} />
+      {(recommendationSource === 'pending_analyst' || recommendationSource === 'legacy_rules') && findings.length > 0 && (
+        <div className="flex items-center gap-2 p-3 bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-900 rounded-lg text-sm text-amber-800 dark:text-amber-200">
+          <AlertTriangle className="w-4 h-4 shrink-0" />
+          The property-specific roadmap is written from this crawl’s findings and tracked prompts. It is not ready yet — use the technical findings above, not a generic playbook.
         </div>
       )}
     </div>

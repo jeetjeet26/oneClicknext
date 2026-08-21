@@ -10,6 +10,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from siteaudit.analyst import SiteAuditAnalyst
 from siteaudit.executor import SiteAuditExecutor
 from siteaudit.migration_manifest import build_migration_manifest
 from utils.auth import verify_api_key
@@ -28,6 +29,10 @@ class CrawlRequest(BaseModel):
 class ManifestRequest(BaseModel):
     crawl_id: str
     target_url: str
+
+
+class AnalyzeRequest(BaseModel):
+    crawl_id: str
 
 
 def _get_crawl_or_404(crawl_id: str) -> dict:
@@ -90,6 +95,31 @@ async def run_siteaudit(
         "crawl_id": request.crawl_id,
         "status": "running",
     }
+
+
+@router.post("/analyze")
+async def analyze_siteaudit(
+    request: AnalyzeRequest,
+    _: str = Depends(verify_api_key),
+):
+    crawl = _get_crawl_or_404(request.crawl_id)
+    if crawl.get("status") != "completed":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Crawl {request.crawl_id} is not completed",
+        )
+    analyst = SiteAuditAnalyst(get_supabase_client())
+    result = await analyst.generate(
+        crawl["property_id"],
+        request.crawl_id,
+        crawl.get("batch_id"),
+    )
+    if not result.get("success"):
+        raise HTTPException(
+            status_code=502,
+            detail=result.get("error") or "Analyst failed to persist recommendations",
+        )
+    return {"success": True, **result}
 
 
 @router.get("/status/{crawl_id}")
