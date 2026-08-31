@@ -212,12 +212,14 @@ class OpenAINaturalConnector:
         logger.info("[OpenAINatural] Using Chat Completions API (fallback)")
         
         completion = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {'role': 'system', 'content': system_prompt},
-                {'role': 'user', 'content': query_text}
-            ],
-            temperature=0.7
+            **({
+                "model": self.model,
+                "messages": [
+                    {'role': 'system', 'content': system_prompt},
+                    {'role': 'user', 'content': query_text}
+                ],
+                **({} if re.search(r'^gpt-5', self.model, re.I) else {"temperature": 0.7})
+            })
         )
         
         text = completion.choices[0].message.content or ''
@@ -272,9 +274,10 @@ class OpenAINaturalConnector:
                         'strict': True,
                         'schema': NATURAL_EXTRACTION_ENVELOPE_SCHEMA
                     }
-                },
-                "temperature": 0.1
+                }
             }
+            if not re.search(r'^gpt-5', self.model, re.I):
+                params["temperature"] = 0.1
             
             # GPT-5+ uses max_completion_tokens, older models use max_tokens
             if re.search(r'^gpt-5', self.model, re.I):
