@@ -534,7 +534,7 @@ function generateReportHTML(
   
   <h3>Historical Performance</h3>
   <p style="color: #6b7280; margin-bottom: 1rem;">
-    Track branded recognition, discovery mention, and citation quality across completed audit batches to identify trends. Trend movement is shown in points, not blended visibility percent.
+    Track branded recognition, discovery mention, and citation quality across completed audit batches from the last 3 months. Trend movement is shown in points, not blended visibility percent.
   </p>
   <div class="chart-grid">
     <div class="chart-card">${charts.scoreTrend}</div>

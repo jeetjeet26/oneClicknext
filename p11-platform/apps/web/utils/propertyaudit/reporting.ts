@@ -11,6 +11,7 @@ type QueryResult<T = unknown> = Promise<{ data: T; error: unknown }>
 type QueryBuilder<T = unknown> = {
   select: (columns: string) => QueryBuilder<T>
   eq: (column: string, value: unknown) => QueryBuilder<T>
+  gte: (column: string, value: unknown) => QueryBuilder<T>
   in: (column: string, values: readonly unknown[]) => QueryBuilder<T>
   order: (column: string, options?: { ascending?: boolean }) => QueryBuilder<T>
   limit: (count: number) => QueryBuilder<T>
@@ -269,17 +270,25 @@ async function fetchSiteAuditDeliverables(
 }
 
 const DEFAULT_RUN_WINDOW = 6
-const TREND_RUN_FETCH_LIMIT = 80
-const TREND_BATCH_LIMIT = 10
+const TREND_RUN_FETCH_LIMIT = 500
+const TREND_WINDOW_MONTHS = 3
+
+function monthsAgoIso(months: number): string {
+  const cutoff = new Date()
+  cutoff.setMonth(cutoff.getMonth() - months)
+  return cutoff.toISOString()
+}
 
 async function fetchCompletedRunsForTrends(
   supabase: ReportingDbClient,
   propertyId: string
 ): Promise<ReportRun[]> {
+  const cutoffIso = monthsAgoIso(TREND_WINDOW_MONTHS)
   const { data: runs } = await from(supabase, 'geo_runs')
     .select('id, surface, batch_id, model_name, status, started_at, finished_at, geo_scores(*)')
     .eq('property_id', propertyId)
     .eq('status', 'completed')
+    .gte('started_at', cutoffIso)
     .order('started_at', { ascending: false })
     .limit(TREND_RUN_FETCH_LIMIT)
 
@@ -591,7 +600,6 @@ export function buildTrends(runs: ReportRun[]): Array<{ label: string; score: nu
       score: batch.scores.length > 0 ? average(batch.scores) : null,
       visibility: batch.visibility.length > 0 ? average(batch.visibility) : null
     }))
-    .slice(-TREND_BATCH_LIMIT)
 }
 
 export function aggregateAnswersByQuery(

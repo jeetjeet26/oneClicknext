@@ -129,6 +129,16 @@ type TrendPoint = {
   visibility: number
 }
 
+const TREND_WINDOW_MONTHS = 3
+
+function isWithinTrendWindow(startedAt: string, months = TREND_WINDOW_MONTHS) {
+  const runTime = Date.parse(startedAt)
+  if (Number.isNaN(runTime)) return false
+  const cutoff = new Date()
+  cutoff.setMonth(cutoff.getMonth() - months)
+  return runTime >= cutoff.getTime()
+}
+
 function average(values: number[]) {
   return values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : 0
 }
@@ -138,6 +148,7 @@ function buildBatchTrendData(runs: GeoRun[]): TrendPoint[] {
 
   runs
     .filter(run => run.status === 'completed' && run.score)
+    .filter(run => isWithinTrendWindow(run.startedAt))
     .forEach(run => {
       const batchKey = run.batchId || run.id
       const entry = batches.get(batchKey) || { startedAt: run.startedAt, scores: [], visibility: [] }
@@ -151,7 +162,6 @@ function buildBatchTrendData(runs: GeoRun[]): TrendPoint[] {
 
   return Array.from(batches.values())
     .sort((a, b) => Date.parse(a.startedAt) - Date.parse(b.startedAt))
-    .slice(-10)
     .map(batch => ({
       date: batch.startedAt,
       score: average(batch.scores),
@@ -248,7 +258,7 @@ export default function PropertyAuditPage() {
   }
 
   const fetchRuns = async () => {
-    const res = await fetch(`/api/propertyaudit/runs?propertyId=${currentProperty?.id}`, {
+    const res = await fetch(`/api/propertyaudit/runs?propertyId=${currentProperty?.id}&limit=200`, {
       cache: 'no-store'
     })
     const data = await res.json()
