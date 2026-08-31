@@ -134,8 +134,12 @@ const TREND_WINDOW_MONTHS = 3
 function isWithinTrendWindow(startedAt: string, months = TREND_WINDOW_MONTHS) {
   const runTime = Date.parse(startedAt)
   if (Number.isNaN(runTime)) return false
+  // Include the full calendar month at the boundary (May 1 for a 3-month
+  // window when current date is in August).
   const cutoff = new Date()
-  cutoff.setMonth(cutoff.getMonth() - months)
+  cutoff.setUTCDate(1)
+  cutoff.setUTCHours(0, 0, 0, 0)
+  cutoff.setUTCMonth(cutoff.getUTCMonth() - months)
   return runTime >= cutoff.getTime()
 }
 
@@ -144,23 +148,37 @@ function average(values: number[]) {
 }
 
 function buildBatchTrendData(runs: GeoRun[]): TrendPoint[] {
-  const batches = new Map<string, { startedAt: string; scores: number[]; visibility: number[] }>()
+  const batches = new Map<string, {
+    startedAt: string
+    scores: number[]
+    visibility: number[]
+    hasIncompleteRuns: boolean
+  }>()
 
   runs
-    .filter(run => run.status === 'completed' && run.score)
     .filter(run => isWithinTrendWindow(run.startedAt))
     .forEach(run => {
       const batchKey = run.batchId || run.id
-      const entry = batches.get(batchKey) || { startedAt: run.startedAt, scores: [], visibility: [] }
+      const entry = batches.get(batchKey) || {
+        startedAt: run.startedAt,
+        scores: [],
+        visibility: [],
+        hasIncompleteRuns: false,
+      }
       if (Date.parse(run.startedAt) < Date.parse(entry.startedAt)) {
         entry.startedAt = run.startedAt
       }
-      entry.scores.push(run.score!.overallScore)
-      entry.visibility.push(run.score!.visibilityPct)
+      if (run.status !== 'completed') {
+        entry.hasIncompleteRuns = true
+      } else if (run.score) {
+        entry.scores.push(run.score.overallScore)
+        entry.visibility.push(run.score.visibilityPct)
+      }
       batches.set(batchKey, entry)
     })
 
   return Array.from(batches.values())
+    .filter(batch => !batch.hasIncompleteRuns && batch.scores.length > 0)
     .sort((a, b) => Date.parse(a.startedAt) - Date.parse(b.startedAt))
     .map(batch => ({
       date: batch.startedAt,

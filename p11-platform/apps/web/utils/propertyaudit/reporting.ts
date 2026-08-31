@@ -273,9 +273,13 @@ const DEFAULT_RUN_WINDOW = 6
 const TREND_RUN_FETCH_LIMIT = 500
 const TREND_WINDOW_MONTHS = 3
 
-function monthsAgoIso(months: number): string {
+function trendWindowStartIso(months: number): string {
+  // Include the full calendar month at the window boundary
+  // (e.g., on Aug 31 with months=3, include runs from May 1 onward).
   const cutoff = new Date()
-  cutoff.setMonth(cutoff.getMonth() - months)
+  cutoff.setUTCDate(1)
+  cutoff.setUTCHours(0, 0, 0, 0)
+  cutoff.setUTCMonth(cutoff.getUTCMonth() - months)
   return cutoff.toISOString()
 }
 
@@ -283,11 +287,10 @@ async function fetchCompletedRunsForTrends(
   supabase: ReportingDbClient,
   propertyId: string
 ): Promise<ReportRun[]> {
-  const cutoffIso = monthsAgoIso(TREND_WINDOW_MONTHS)
+  const cutoffIso = trendWindowStartIso(TREND_WINDOW_MONTHS)
   const { data: runs } = await from(supabase, 'geo_runs')
     .select('id, surface, batch_id, model_name, status, started_at, finished_at, geo_scores(*)')
     .eq('property_id', propertyId)
-    .eq('status', 'completed')
     .gte('started_at', cutoffIso)
     .order('started_at', { ascending: false })
     .limit(TREND_RUN_FETCH_LIMIT)
@@ -571,25 +574,40 @@ export function buildCharts(data: {
 }
 
 export function buildTrends(runs: ReportRun[]): Array<{ label: string; score: number | null; visibility: number | null }> {
-  const batches = new Map<string, { startedAt: string | null; scores: number[]; visibility: number[] }>()
+  const batches = new Map<string, {
+    startedAt: string | null
+    scores: number[]
+    visibility: number[]
+    hasIncompleteRuns: boolean
+  }>()
 
   runs.forEach(run => {
-    const score = run.geo_scores?.[0]
-    if (!score) return
     const batchKey = run.batch_id || run.id
-    const entry = batches.get(batchKey) || { startedAt: run.started_at || null, scores: [], visibility: [] }
+    const entry = batches.get(batchKey) || {
+      startedAt: run.started_at || null,
+      scores: [],
+      visibility: [],
+      hasIncompleteRuns: false,
+    }
     if (
       run.started_at &&
       (!entry.startedAt || new Date(run.started_at).getTime() < new Date(entry.startedAt).getTime())
     ) {
       entry.startedAt = run.started_at
     }
-    entry.scores.push(score.overall_score)
-    entry.visibility.push(score.visibility_pct)
+    if (run.status !== 'completed') {
+      entry.hasIncompleteRuns = true
+    }
+    const score = run.geo_scores?.[0]
+    if (run.status === 'completed' && score) {
+      entry.scores.push(score.overall_score)
+      entry.visibility.push(score.visibility_pct)
+    }
     batches.set(batchKey, entry)
   })
 
   return Array.from(batches.values())
+    .filter(batch => !batch.hasIncompleteRuns && batch.scores.length > 0)
     .sort((a, b) => {
       const aTime = new Date(a.startedAt || 0).getTime()
       const bTime = new Date(b.startedAt || 0).getTime()
