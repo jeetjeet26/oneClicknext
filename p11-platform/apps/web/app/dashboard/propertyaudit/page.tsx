@@ -152,7 +152,6 @@ function buildBatchTrendData(runs: GeoRun[]): TrendPoint[] {
     startedAt: string
     scores: number[]
     visibility: number[]
-    hasIncompleteRuns: boolean
   }>()
 
   runs
@@ -163,14 +162,11 @@ function buildBatchTrendData(runs: GeoRun[]): TrendPoint[] {
         startedAt: run.startedAt,
         scores: [],
         visibility: [],
-        hasIncompleteRuns: false,
       }
       if (Date.parse(run.startedAt) < Date.parse(entry.startedAt)) {
         entry.startedAt = run.startedAt
       }
-      if (run.status !== 'completed') {
-        entry.hasIncompleteRuns = true
-      } else if (run.score) {
+      if (run.status === 'completed' && run.score) {
         entry.scores.push(run.score.overallScore)
         entry.visibility.push(run.score.visibilityPct)
       }
@@ -178,7 +174,7 @@ function buildBatchTrendData(runs: GeoRun[]): TrendPoint[] {
     })
 
   return Array.from(batches.values())
-    .filter(batch => !batch.hasIncompleteRuns && batch.scores.length > 0)
+    .filter(batch => batch.scores.length > 0)
     .sort((a, b) => Date.parse(a.startedAt) - Date.parse(b.startedAt))
     .map(batch => ({
       date: batch.startedAt,

@@ -291,6 +291,7 @@ async function fetchCompletedRunsForTrends(
   const { data: runs } = await from(supabase, 'geo_runs')
     .select('id, surface, batch_id, model_name, status, started_at, finished_at, geo_scores(*)')
     .eq('property_id', propertyId)
+    .eq('status', 'completed')
     .gte('started_at', cutoffIso)
     .order('started_at', { ascending: false })
     .limit(TREND_RUN_FETCH_LIMIT)
@@ -578,7 +579,6 @@ export function buildTrends(runs: ReportRun[]): Array<{ label: string; score: nu
     startedAt: string | null
     scores: number[]
     visibility: number[]
-    hasIncompleteRuns: boolean
   }>()
 
   runs.forEach(run => {
@@ -587,7 +587,6 @@ export function buildTrends(runs: ReportRun[]): Array<{ label: string; score: nu
       startedAt: run.started_at || null,
       scores: [],
       visibility: [],
-      hasIncompleteRuns: false,
     }
     if (
       run.started_at &&
@@ -595,11 +594,8 @@ export function buildTrends(runs: ReportRun[]): Array<{ label: string; score: nu
     ) {
       entry.startedAt = run.started_at
     }
-    if (run.status !== 'completed') {
-      entry.hasIncompleteRuns = true
-    }
     const score = run.geo_scores?.[0]
-    if (run.status === 'completed' && score) {
+    if (score) {
       entry.scores.push(score.overall_score)
       entry.visibility.push(score.visibility_pct)
     }
@@ -607,7 +603,7 @@ export function buildTrends(runs: ReportRun[]): Array<{ label: string; score: nu
   })
 
   return Array.from(batches.values())
-    .filter(batch => !batch.hasIncompleteRuns && batch.scores.length > 0)
+    .filter(batch => batch.scores.length > 0)
     .sort((a, b) => {
       const aTime = new Date(a.startedAt || 0).getTime()
       const bTime = new Date(b.startedAt || 0).getTime()
