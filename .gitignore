@@ -49,6 +49,7 @@ p11-platform/supabase/.branches/
 !wordpress-plugin/oneclick-siteforge-runtime/fixtures/v2/*.json
 !wordpress-plugin/oneclick-siteforge-runtime/fixtures/v3/*.json
 !wordpress-theme/oneclick-siteforge/acf-json/group_siteforge_*.json
+!wordpress-theme/oneclick-siteforge/theme.json
 google-credentials.json
 *-credentials.json
 oneclick-*.json
