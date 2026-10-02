@@ -1,3 +1,5 @@
+import { readMarketingFacts, MarketingReadError } from '@/utils/analytics/read-marketing-facts'
+import { campaignIdentity } from '@/utils/analytics/marketing-fact'
 import { createClient } from '@/utils/supabase/server';
 import { NextRequest, NextResponse } from 'next/server';
 import { validatePropertyAccess } from '@/utils/services/auth-guard';
@@ -17,6 +19,7 @@ type PerformanceRow = {
   channel_id?: string | null;
   channel?: string | null;
   campaign_id?: string | null;
+  source_account_id?: string | null;
   campaign_name?: string | null;
   spend?: number | null;
   clicks?: number | null;
@@ -84,7 +87,7 @@ export async function GET(
       .select(`
         id,
         name,
-        ad_account_connections!inner (
+        ad_account_connections (
           platform,
           account_id,
           is_active
@@ -111,22 +114,12 @@ export async function GET(
       (c) => c.platform === 'meta_ads' && c.is_active === true
     );
     
-    // Fetch historical data from fact_marketing_performance
-    const { data: performance, error: perfError } = await supabase
-      .from('fact_marketing_performance')
-      .select('*')
-      .eq('property_id', propertyId)
-      .in('channel_id', channelFilters)
-      .gte('date', startDate.toISOString().split('T')[0])
-      .order('date', { ascending: false });
-    
-    if (perfError) {
-      return NextResponse.json(
-        { error: 'Failed to fetch performance data' },
-        { status: 500 }
-      );
-    }
-    
+    const performance = await readMarketingFacts(supabase, {
+      propertyId, channels: channelFilters,
+      startDate: startDate.toISOString().split('T')[0],
+      endDate: new Date().toISOString().split('T')[0],
+    });
+
     // Aggregate data by channel and campaign
     const aggregated = aggregatePerformance(performance || []);
     
@@ -149,6 +142,7 @@ export async function GET(
     });
     
   } catch (error) {
+    if (error instanceof MarketingReadError) return NextResponse.json({ error: error.message }, { status: error.status });
     console.error('MarketVision API error:', error);
     return NextResponse.json(
       { error: 'Internal server error' },
@@ -171,6 +165,7 @@ function aggregatePerformance(data: PerformanceRow[]) {
   }> = {};
   const by_campaign: Record<string, {
     campaign_id: string;
+    source_account_id: string | null;
     campaign_name: string;
     channel: string;
     spend: number;
@@ -204,13 +199,15 @@ function aggregatePerformance(data: PerformanceRow[]) {
     channelBucket.clicks += row.clicks || 0;
     channelBucket.impressions += row.impressions || 0;
     channelBucket.conversions += row.conversions || 0;
-    channelBucket.campaigns.add(campaignId);
+    const campaignKey = campaignIdentity(channel, row.source_account_id ?? null, campaignId);
+    channelBucket.campaigns.add(campaignKey);
     
     // By campaign
-    const campaignKey = `${channel}_${campaignId}`;
+
     if (!by_campaign[campaignKey]) {
       by_campaign[campaignKey] = {
         campaign_id: campaignId,
+        source_account_id: row.source_account_id ?? null,
         campaign_name: campaignName,
         channel,
         spend: 0,

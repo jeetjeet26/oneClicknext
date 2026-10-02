@@ -1,38 +1,26 @@
-import { deriveSharedLifecycleStatus } from '@/utils/substrate/shared-vocabulary'
+export type ImportJobState = 'pending' | 'running' | 'complete' | 'partial' | 'failed' | 'unknown'
 
-export type ImportJobState = 'pending' | 'running' | 'complete' | 'partial' | 'failed'
-
-type ImportJobRecord = {
-  status?: string | null
-  error_message?: string | null
-}
+type ImportJobRecord = { status?: string | null; error_message?: string | null; recovery_version?: number | null; lease_expires_at?: string | null }
 
 export function deriveImportJobState(job: ImportJobRecord): ImportJobState {
-  const normalizedStatus = (job.status || '').trim().toLowerCase()
-  const hasErrorMessage = Boolean(job.error_message && job.error_message.trim().length > 0)
-
-  if (normalizedStatus === 'partial') {
-    return 'partial'
+  const status = job.status?.trim().toLowerCase()
+  if (status === 'pending' || status === 'queued') return 'pending'
+  if (status === 'running' || status === 'processing' || status === 'retrying') return 'running'
+  if (status === 'failed' || status === 'cancelled' || status === 'canceled') return 'failed'
+  if (status === 'partial') return 'partial'
+  if (status === 'complete' || status === 'completed' || status === 'success' || status === 'succeeded') {
+    return job.error_message?.trim() ? 'partial' : 'complete'
   }
-
-  const shared = deriveSharedLifecycleStatus(normalizedStatus, { hasWarnings: hasErrorMessage })
-
-  if (shared.status === 'queued') return 'pending'
-  if (shared.status === 'running' || shared.status === 'retrying') {
-    return hasErrorMessage ? 'partial' : 'running'
-  }
-  if (shared.status === 'failed' || shared.status === 'cancelled') return 'failed'
-  if (shared.status === 'succeeded') return shared.isDegraded ? 'partial' : 'complete'
-
-  return hasErrorMessage ? 'partial' : 'running'
+  return 'unknown'
 }
 
 export function normalizeImportJobRecord<T extends ImportJobRecord>(job: T) {
-  const importState = deriveImportJobState(job)
+  const recoveryNeeded = job.status === 'running' && job.recovery_version === 1 && Boolean(job.lease_expires_at) && Date.parse(job.lease_expires_at!) < Date.now()
+  const importState = recoveryNeeded ? 'pending' : deriveImportJobState(job)
   return {
-    ...job,
-    import_state: importState,
-    has_warnings: importState === 'partial',
-    is_terminal: importState === 'complete' || importState === 'partial' || importState === 'failed',
+    ...job, import_state: importState, recovery_needed: recoveryNeeded,
+    ...(recoveryNeeded ? { current_step: 'Waiting for the recovery worker; saved progress is retained' } : {}),
+    has_warnings: Boolean(job.error_message?.trim()) || importState === 'partial',
+    is_terminal: ['complete', 'partial', 'failed'].includes(importState),
   }
 }

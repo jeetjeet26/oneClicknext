@@ -1,7 +1,8 @@
 'use client'
+import {Instagram,Facebook,Linkedin,Twitter} from '@/components/ui/BrandIcons'
 
 import { useState, useEffect } from 'react'
-import { ChevronLeft, ChevronRight, Calendar, Clock, Instagram, Facebook, Linkedin, Twitter, FileText } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Calendar, Clock, FileText } from 'lucide-react'
 
 interface ScheduledContent {
   id: string

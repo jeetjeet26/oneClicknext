@@ -1,5 +1,6 @@
 'use client'
 
+import {ReviewAnalysisBatchPanel} from '@/components/reviewflow/ReviewAnalysisBatchPanel'
 import { useState, useCallback } from 'react'
 import { usePropertyContext } from '@/components/layout/PropertyContext'
 import { 
@@ -17,7 +18,6 @@ import {
   TrendingUp,
   AlertTriangle,
   Settings,
-  Sparkles,
   RefreshCw,
   Loader2,
   Star,
@@ -59,10 +59,17 @@ type TabId = 'overview' | 'reviews' | 'insights' | 'tickets' | 'settings'
 
 export default function ReviewFlowPage() {
   const { currentProperty } = usePropertyContext()
+  return <ReviewFlowWorkspace key={currentProperty.id}/>
+}
+
+function ReviewFlowWorkspace() {
+  const { currentProperty } = usePropertyContext()
+  const [initialIntakeId,setInitialIntakeId]=useState<string>(),[initialBatchId,setInitialBatchId]=useState<string>(),[batchOpen,setBatchOpen]=useState(false)
   const [activeTab, setActiveTab] = useState<TabId>('overview')
   const [selectedReview, setSelectedReview] = useState<Review | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
   const [generating, setGenerating] = useState<string | null>(null)
+  const [generationError,setGenerationError]=useState('')
   const [showImportModal, setShowImportModal] = useState(false)
 
   const handleRefresh = useCallback(() => {
@@ -70,28 +77,13 @@ export default function ReviewFlowPage() {
   }, [])
 
   const handleGenerateResponse = async (reviewId: string) => {
-    setGenerating(reviewId)
+    setGenerating(reviewId);setGenerationError('')
     try {
-      // First analyze the review if not already analyzed
-      await fetch('/api/reviewflow/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reviewId })
-      })
-
-      // Then generate a response
-      await fetch('/api/reviewflow/respond', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reviewId, tone: 'professional' })
-      })
-
-      handleRefresh()
-    } catch (error) {
-      console.error('Error generating response:', error)
-    } finally {
-      setGenerating(null)
-    }
+      const response=await fetch(`/api/reviewflow/reviews?propertyId=${currentProperty.id}&reviewId=${reviewId}&limit=1`,{cache:'no-store',signal:AbortSignal.timeout(20_000)})
+      const data=await response.json();if(!response.ok||!data.reviews?.[0])throw new Error(data.error||'The saved review is unavailable.')
+      setSelectedReview(data.reviews[0])
+    } catch(error){setGenerationError(error instanceof Error?error.message:'The response workspace could not be opened.')}
+    finally{setGenerating(null)}
   }
 
   const tabs = [
@@ -103,16 +95,16 @@ export default function ReviewFlowPage() {
   ]
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 p-4 sm:p-0">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-rose-500 to-pink-600 flex items-center justify-center text-white shadow-lg shadow-rose-500/20">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="h-12 w-12 shrink-0 rounded-xl bg-gradient-to-br from-rose-500 to-pink-600 flex items-center justify-center text-white shadow-lg shadow-rose-500/20">
             <Star className="w-6 h-6" />
           </div>
-          <div>
+          <div className="min-w-0">
             <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-              <span className="text-slate-900 dark:text-slate-900">ReviewFlow AI</span>
+              <span className="text-slate-900 dark:text-slate-100">ReviewFlow AI</span>
               <span className="text-xs px-2 py-0.5 bg-gradient-to-r from-rose-500 to-pink-500 text-white rounded-full">
                 Beta
               </span>
@@ -142,14 +134,14 @@ export default function ReviewFlowPage() {
 
       {/* Tabs */}
       <div className="border-b border-slate-200 dark:border-slate-700">
-        <nav className="flex gap-6">
+        <nav className="flex gap-6 overflow-x-auto">
           {tabs.map((tab) => {
             const Icon = tab.icon
             return (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-2 pb-3 text-sm font-medium border-b-2 transition-colors ${
+                className={`flex shrink-0 items-center gap-2 pb-3 text-sm font-medium border-b-2 transition-colors ${
                   activeTab === tab.id
                     ? 'border-rose-500 text-rose-600 dark:text-rose-400'
                     : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
@@ -163,6 +155,8 @@ export default function ReviewFlowPage() {
         </nav>
       </div>
 
+      {generating&&<p role="status" className="flex items-center gap-2 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin"/>Opening the saved response workspace…</p>}
+      {generationError&&<p role="alert" className="text-sm text-red-600">{generationError}</p>}
       {/* Tab Content */}
       {activeTab === 'overview' && (
         <div className="space-y-6">
@@ -170,8 +164,9 @@ export default function ReviewFlowPage() {
           <TodayQueue
             propertyId={currentProperty.id}
             refreshKey={refreshKey}
-            onSelectReview={(review) => setSelectedReview(review as unknown as Review)}
-            onGenerateResponse={handleGenerateResponse}
+            onOpenReview={handleGenerateResponse}
+            onOpenIntake={id=>{setInitialIntakeId(id);setActiveTab('settings')}}
+            onOpenBatch={id=>{setInitialBatchId(id);setBatchOpen(true);setActiveTab('reviews')}}
           />
 
           {/* Stats */}
@@ -183,16 +178,18 @@ export default function ReviewFlowPage() {
       )}
 
       {activeTab === 'reviews' && (
+       <div className="space-y-6"><details open={batchOpen} onToggle={e=>setBatchOpen(e.currentTarget.open)}><summary className="cursor-pointer rounded-xl border p-4 font-medium">Analyze all unanalysed reviews</summary><div className="mt-3">{batchOpen&&<ReviewAnalysisBatchPanel propertyId={currentProperty.id} onReview={handleGenerateResponse} initialId={initialBatchId}/>}</div></details>
         <ReviewList
           key={`reviews-${refreshKey}`}
           propertyId={currentProperty.id}
           onSelectReview={(review) => setSelectedReview(review as Review)}
           onGenerateResponse={handleGenerateResponse}
-        />
+        /></div>
       )}
 
       {activeTab === 'insights' && (
         <InsightsPanel
+          onReview={handleGenerateResponse}
           propertyId={currentProperty.id}
           refreshKey={refreshKey}
         />
@@ -206,12 +203,14 @@ export default function ReviewFlowPage() {
       )}
 
       {activeTab === 'settings' && (
-        <ReviewFlowConfig propertyId={currentProperty.id} />
+        <ReviewFlowConfig propertyId={currentProperty.id} initialIntakeId={initialIntakeId} />
       )}
 
       {/* Review Detail Drawer */}
       {selectedReview && (
         <ReviewDetailDrawer
+          key={`${currentProperty.id}:${selectedReview.id}`}
+          propertyId={currentProperty.id}
           review={selectedReview}
           onClose={() => setSelectedReview(null)}
           onUpdate={() => {

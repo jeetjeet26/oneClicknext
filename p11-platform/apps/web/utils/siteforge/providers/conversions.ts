@@ -1018,6 +1018,8 @@ export async function ingestPublicSiteForgeConversion(
       leadId: leadResult.leadId,
       propertyId: context.propertyId,
       eventType: 'website_lead_submitted',
+      idempotencyKey: `siteforge/lead-submitted/${submissionId}/${leadResult.leadId}`,
+      origin: 'siteforge',
       metadata: {
         websiteId: context.websiteId,
         artifactId: context.artifactId,

@@ -88,14 +88,9 @@ class SalesforceAdapter(BaseCRMAdapter):
         logger.info("[Salesforce] Testing connection")
         
         try:
-            # Query current user to verify connection
-            user_info = self.sf.query("SELECT Id, Name, Email FROM User WHERE Id = '{}'".format(
-                self.sf.session_id[:15] if hasattr(self.sf, 'session_id') else ''
-            ))
-            
-            # Alternative: just check limits endpoint
-            limits = self.sf.limits()
-            
+            # Limits is an authenticated read; a session token is not a user ID.
+            self.sf.limits()
+
             return ConnectionResult(
                 success=True,
                 message="Successfully connected to Salesforce",
@@ -160,7 +155,8 @@ class SalesforceAdapter(BaseCRMAdapter):
                 api_version=self.sf.sf_version if hasattr(self.sf, 'sf_version') else 'v58.0',
                 object_name="Lead",
                 object_label="Lead",
-                fields=fields
+                fields=fields,
+                    evidence_source="provider_response"
             )
             
         except Exception as e:

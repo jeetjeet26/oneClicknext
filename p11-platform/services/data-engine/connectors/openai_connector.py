@@ -12,7 +12,6 @@ import logging
 import re
 from typing import Dict, Any, List, Optional
 import openai
-from tenacity import retry, stop_after_attempt, wait_exponential
 
 logger = logging.getLogger(__name__)
 
@@ -175,15 +174,14 @@ class OpenAIConnector:
         if not self.api_key:
             raise ValueError("OPENAI_API_KEY not set")
         
-        self.client = openai.OpenAI(
+        self.client = openai.AsyncOpenAI(
             api_key=self.api_key,
-            timeout=600.0,  # 10 minutes
-            max_retries=2
+            timeout=45.0,
+            max_retries=0
         )
         self.model = os.environ.get('GEO_OPENAI_MODEL', 'gpt-4o')
         self.enable_web_search = os.environ.get('GEO_ENABLE_WEB_SEARCH', 'false').lower() == 'true'
     
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     async def invoke(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """
         Invoke OpenAI with full feature set.
@@ -235,7 +233,7 @@ class OpenAIConnector:
             }
         
         try:
-            response = self.client.chat.completions.create(**params)
+            response = await self.client.chat.completions.create(**params)
             
             content = response.choices[0].message.content
             logger.debug(f"[OpenAI] Response: {len(content)} chars")

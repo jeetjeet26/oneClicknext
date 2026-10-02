@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NextRequest } from 'next/server'
 
+const readMeasurementsMock = vi.fn()
+vi.mock('@/utils/propertyaudit/read-measurements', () => ({readMeasurements:readMeasurementsMock}))
+
 const authGetUserMock = vi.fn()
 const createClientMock = vi.fn()
 const createServiceClientMock = vi.fn()
@@ -114,45 +117,23 @@ describe('propertyaudit analysis route auth', () => {
     await expect(response.json()).resolves.toEqual({ error: 'Forbidden' })
   })
 
-  it('POST returns 403 when batch resolves to unauthorized property', async () => {
-    authGetUserMock.mockResolvedValue({
-      data: { user: { id: 'user-1' } },
-      error: null,
-    })
-    validatePropertyAccessMock.mockResolvedValue({
-      authorized: false,
-      error: 'Forbidden',
-    })
-
-    createServiceClientMock.mockReturnValue({
-      from: vi.fn((table: string) => {
-        if (table !== 'geo_runs') {
-          throw new Error(`Unexpected table ${table}`)
-        }
-
-        return {
-          select: vi.fn(() => ({
-            eq: vi.fn(() => ({
-              limit: vi.fn().mockResolvedValue({
-                data: [{ property_id: 'property-1' }],
-                error: null,
-              }),
-            })),
-          })),
-        }
-      }),
-    })
-
-    const { POST } = await import('./route')
-    const request = makeNextRequest('http://localhost/api/propertyaudit/analysis', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ batchId: 'batch-1' }),
-    })
-
-    const response = await POST(request)
-
-    expect(response.status).toBe(403)
-    await expect(response.json()).resolves.toEqual({ error: 'Forbidden' })
+  it('retires unrecorded model execution without reading or writing provider data', async () => {
+    const {POST}=await import('./route')
+    const response=await POST()
+    expect(response.status).toBe(410)
+    expect(createServiceClientMock).not.toHaveBeenCalled()
+    expect(createClientMock).not.toHaveBeenCalled()
   })
+  it('never lets an allowed property authorize a different property batch', async () => {
+    authGetUserMock.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
+    validatePropertyAccessMock.mockResolvedValue({ authorized: true })
+    readMeasurementsMock.mockImplementation(async (actor, property, input) => ({state:'ready',batchId:input.batchId,runs:property === 'allowed-property' ? [] : [{run:{id:'private',cross_model_analysis:'PRIVATE OTHER PROPERTY ANALYSIS'},scores:[]}]}))
+    const {GET}=await import('./route')
+    const response=await GET(makeNextRequest('http://localhost/api/propertyaudit/analysis?propertyId=allowed-property&batchId=foreign-batch'))
+    expect(validatePropertyAccessMock).toHaveBeenCalledWith('user-1','allowed-property')
+    expect(readMeasurementsMock).toHaveBeenCalledWith('user-1','allowed-property',{kind:'batch',batchId:'foreign-batch'})
+    expect(response.status).toBe(404)
+    expect(await response.text()).not.toContain('PRIVATE OTHER PROPERTY ANALYSIS')
+  })
+
 })

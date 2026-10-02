@@ -1,3 +1,4 @@
+import {readMarketingFacts} from '@/utils/analytics/read-marketing-facts'
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { NextRequest, NextResponse } from 'next/server'
@@ -91,21 +92,10 @@ export async function GET(request: NextRequest) {
   const sixtyDaysAgo = subDays(today, 60)
 
   try {
-    // Get marketing performance for current period (last 30 days)
-    const { data: currentPeriodData } = await supabase
-      .from('fact_marketing_performance')
-      .select('spend, clicks, conversions, impressions')
-      .eq('property_id', propertyId)
-      .gte('date', format(thirtyDaysAgo, 'yyyy-MM-dd'))
-      .lte('date', format(today, 'yyyy-MM-dd'))
-
-    // Get marketing performance for previous period (30-60 days ago)
-    const { data: previousPeriodData } = await supabase
-      .from('fact_marketing_performance')
-      .select('spend, clicks, conversions, impressions')
-      .eq('property_id', propertyId)
-      .gte('date', format(sixtyDaysAgo, 'yyyy-MM-dd'))
-      .lt('date', format(thirtyDaysAgo, 'yyyy-MM-dd'))
+    const [currentPeriodData, previousPeriodData] = await Promise.all([
+      readMarketingFacts(supabase, {propertyId, startDate: format(thirtyDaysAgo, 'yyyy-MM-dd'), endDate: format(today, 'yyyy-MM-dd')}),
+      readMarketingFacts(supabase, {propertyId, startDate: format(sixtyDaysAgo, 'yyyy-MM-dd'), endDate: format(subDays(thirtyDaysAgo, 1), 'yyyy-MM-dd')}),
+    ])
 
     // Get leads count for current period
     const { count: currentLeads } = await supabase

@@ -1,0 +1,3 @@
+import {NextResponse} from 'next/server'
+import {InventoryError,inventoryActor,inventoryQuery,readInventory} from '@/utils/knowledge/inventory'
+export async function GET(req:Request){const headers={'Cache-Control':'private, no-store'};try{const actor=await inventoryActor();const input=inventoryQuery.safeParse(Object.fromEntries(new URL(req.url).searchParams));if(!input.success)return NextResponse.json({error:'Choose a property and a valid knowledge inventory page.'},{status:400,headers});return NextResponse.json(await readInventory(actor,input.data),{headers})}catch(e){return NextResponse.json({error:e instanceof InventoryError?e.message:'Saved knowledge is unavailable.'},{status:e instanceof InventoryError?e.status:503,headers})}}

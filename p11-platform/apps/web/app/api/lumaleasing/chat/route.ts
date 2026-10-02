@@ -1,19 +1,17 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { createServiceClient } from '@/utils/supabase/admin';
-import { recordLeadNoteAndSyncToCRM, syncLeadToCRM } from '@/utils/services/crm-sync';
-import { startWorkflow } from '@/utils/services/workflow-processor';
-import { chatLimiter, getRateLimitKey, rateLimitHeaders } from '@/utils/services/rate-limiter';
-import { buildCorsHeaders, corsPreflightResponse, serverError, rateLimited, badRequest } from '@/utils/services/api-helpers';
-import { validateBody, chatRequestSchema } from '@/utils/services/validation';
-import { auditLog, getRequestIp } from '@/utils/services/audit-logger';
-import { createRequestContext } from '@/utils/services/request-context';
-import { bookLumaLeasingTour } from '@/utils/services/lumaleasing-tour-booking';
-import { trackEngagementEvent } from '@/utils/services/engagement-tracker';
+import { buildPropertyOnlyResponse,containsContactInfo,detectTourIntent,detectTourOffer,isPropertyChatInScope,stripMarkdownFormatting } from '@/utils/chat-scope';
 import { getPropertyTypeConfig } from '@/utils/property-types';
-import { buildPropertyOnlyResponse, containsContactInfo, detectTourIntent, detectTourOffer, isPropertyChatInScope, stripMarkdownFormatting } from '@/utils/chat-scope';
-import { formatPropertyAddress } from '@/utils/services/property-address';
+import { badRequest,buildCorsHeaders,corsPreflightResponse,rateLimited,serverError } from '@/utils/services/api-helpers';
+import { auditLog,getRequestIp } from '@/utils/services/audit-logger';
 import { loadPropertyChatbotContext } from '@/utils/services/chatbot-context-editor';
 import { upsertLeadByContact } from '@/utils/services/lead-upsert';
+import { budgetedLumaCompletion } from '@/utils/services/luma-ai-budget';
+import { linkLumaVisitorLead,saveLumaMessage,withLumaRequest } from '@/utils/services/luma-requests';
+import { chatLimiter,getRateLimitKey,rateLimitHeaders } from '@/utils/services/rate-limiter';
+import { createRequestContext } from '@/utils/services/request-context';
+import { chatRequestSchema,validateBody } from '@/utils/services/validation';
+import { isWidgetSessionExpired } from '@/utils/services/widget-session';
+import { createServiceClient } from '@/utils/supabase/admin';
+import { NextRequest,NextResponse } from 'next/server';
 import OpenAI from 'openai';
 
 // Type for extracted conversation data
@@ -131,7 +129,7 @@ async function loadTrustedConversationHistory(
       .order('created_at', { ascending: false })
       .limit(12)
 
-    if (error || !data) return []
+    if (error || !data) throw new Error('Could not load saved conversation history')
     return (data as RecentMessageRow[])
       .filter(row => (
         (row.role === 'user' || row.role === 'assistant') &&
@@ -141,8 +139,7 @@ async function loadTrustedConversationHistory(
       .slice()
       .reverse()
   } catch (error) {
-    console.error('[LumaLeasing] Trusted history lookup failed:', error)
-    return []
+    throw error
   }
 }
 
@@ -155,10 +152,8 @@ async function extractAndProcessConversation(
   sessionId: string | null,
   conversationId: string | null,
   existingLeadId: string | null,
-  config: {
-    properties?: { name?: string; address?: unknown } | null
-    widget_name?: string | null
-  }
+  modeRevision: number,
+
 ): Promise<void> {
   // Low-PII trace; conversation content is intentionally excluded.
   console.log('[LumaLeasing] extraction_started', {
@@ -171,7 +166,7 @@ async function extractAndProcessConversation(
   // Build conversation text for analysis
   const conversationText = messages
     .map(m => `${m.role.toUpperCase()}: ${m.content}`)
-    .join('\n');
+    .join('\n').slice(-6000);
 
   // Extract structured data using LLM
   const extractionPrompt = `Analyze this conversation and extract any contact information and tour booking requests.
@@ -206,15 +201,16 @@ Respond with ONLY valid JSON in this exact format:
 }`;
 
   try {
-    const extraction = await openai.chat.completions.create({
+    const extraction = await budgetedLumaCompletion(openai, supabase, propertyId, {
       model: 'gpt-4o-mini',
       messages: [{ role: 'user', content: extractionPrompt }],
       temperature: 0,
       response_format: { type: 'json_object' },
-    });
+      max_tokens: 500,
+    }, 'extraction', {conversationId,modeRevision});
 
     const rawJson = extraction.choices[0].message.content;
-    if (!rawJson) return;
+    if (!rawJson) throw new Error('The retained contact extraction returned no usable result.');
 
     const data: ExtractedData = JSON.parse(rawJson);
     // Avoid logging extracted PII (name/email/phone/notes). Capture only
@@ -243,12 +239,12 @@ ${conversationText}
 
 Write a professional CRM note (no bullet points, just flowing text):`;
 
-    const summaryResponse = await openai.chat.completions.create({
+    const summaryResponse = await budgetedLumaCompletion(openai, supabase, propertyId, {
       model: 'gpt-4o-mini',
       messages: [{ role: 'user', content: summaryPrompt }],
       temperature: 0.3,
       max_tokens: 150,
-    });
+    }, 'summary', {conversationId,modeRevision});
 
     const conversationSummary = summaryResponse.choices[0].message.content?.trim() || null;
 
@@ -302,140 +298,21 @@ Write a professional CRM note (no bullet points, just flowing text):`;
       } else {
         console.log('[LumaLeasing] lead_created', { leadId, propertyId });
 
-        try {
-          const { data: scoreId } = await supabase.rpc('score_lead', {
-            p_lead_id: leadId,
-          });
-          if (scoreId) {
-            const { data: scoreData } = await supabase
-              .from('lead_scores')
-              .select('total_score, score_bucket')
-              .eq('id', scoreId)
-              .single();
 
-            if (scoreData) {
-              await supabase
-                .from('leads')
-                .update({
-                  score: scoreData.total_score,
-                  score_bucket: scoreData.score_bucket
-                })
-                .eq('id', leadId);
-            }
-          }
-        } catch (scoreError) {
-          console.error('[LumaLeasing] Failed to score lead:', scoreError);
-        }
       }
 
-      try {
-        const crmResult = await syncLeadToCRM(propertyId, leadId, {
-          first_name: leadData.first_name || undefined,
-          last_name: leadData.last_name || undefined,
-          email: leadData.email || undefined,
-          phone: leadData.phone || undefined,
-          source: 'LumaLeasing Widget',
-          status: leadResult.lead.status || undefined,
-          notes: conversationSummary || leadNotes,
-        });
-        console.log('[LumaLeasing] CRM sync result:', crmResult.action);
-      } catch (crmError) {
-        console.error('[LumaLeasing] CRM sync failed (non-blocking):', crmError);
-      }
 
-      if (leadResult.isExisting && conversationSummary) {
-        recordLeadNoteAndSyncToCRM(
-          propertyId,
-          leadId,
-          conversationSummary,
-          { persistNote: false }
-        ).catch((crmError) =>
-          console.error('[LumaLeasing] CRM note sync failed (non-blocking):', crmError)
-        );
-      }
-
-      if (!leadResult.isExisting) {
-        startWorkflow(leadId, propertyId, 'lead_created').catch(e =>
-          console.error('[LumaLeasing Chat] Workflow start failed (non-blocking):', e)
-        )
-      }
     }
 
     if (leadId && !existingLeadId) {
-      if (sessionId) {
-        const { error: sessionError } = await supabase
-          .from('widget_sessions')
-          .update({ lead_id: leadId, converted_at: new Date().toISOString() })
-          .eq('id', sessionId)
-          .eq('property_id', propertyId);
-        if (sessionError) {
-          console.error('[LumaLeasing] Failed to update session:', sessionError);
-        } else {
-          console.log('[LumaLeasing] session_lead_linked', { sessionId, leadId });
-        }
-      }
-      if (conversationId) {
-        const { error: convError } = await supabase
-          .from('conversations')
-          .update({ lead_id: leadId })
-          .eq('id', conversationId)
-          .eq('property_id', propertyId);
-        if (convError) {
-          console.error('[LumaLeasing] Failed to update conversation:', convError);
-        } else {
-          trackEngagementEvent({
-            leadId,
-            propertyId,
-            eventType: 'chat_started',
-            metadata: {
-              conversation_id: conversationId,
-              source: 'lumaleasing_widget_conversion',
-              backfilled: true,
-            },
-          }).catch(e => console.error('[LumaLeasing Chat] Converted chat tracking failed (non-blocking):', e))
-        }
-      }
+      await linkLumaVisitorLead(supabase,propertyId,leadId,sessionId,conversationId);
     }
 
-    // Process tour request if detected with date/time. The shared booking
-    // service is the single canonical write path, so chat extraction goes
-    // through the same availability validation + side effects as the public
-    // tours POST endpoint.
-    const tourData = data.tour;
-    if (tourData?.requested && tourData.date && leadId && leadData?.email) {
-      const requestedTourTime = tourData.time || '10:00';
-      const propertyName = config.properties?.name || 'our community';
-      const propertyAddress = formatPropertyAddress(config.properties?.address);
-
-      const bookingResult = await bookLumaLeasingTour({
-        supabase,
-        propertyId,
-        propertyName,
-        propertyAddress,
-        leadId,
-        leadInfo: {
-          first_name: leadData.first_name || undefined,
-          last_name: leadData.last_name || undefined,
-          email: leadData.email,
-          phone: leadData.phone || undefined,
-        },
-        bookingDate: tourData.date,
-        bookingTime: requestedTourTime,
-        specialRequests: tourData.notes || null,
-        source: 'lumaleasing_extraction',
-        conversationId: conversationId ?? null,
-      });
-
-      if (!bookingResult.ok) {
-        console.error(
-          '[LumaLeasing] Chat extraction tour booking rejected:',
-          bookingResult.reason,
-          bookingResult.message
-        );
-      }
-    }
+    // Tour intent is shown as a visitor-confirmed scheduling CTA. Extracted
+    // relative dates or an inferred default time must not create a reservation.
   } catch (error) {
     console.error('[LumaLeasing] Extraction failed:', error);
+    throw error;
   }
 }
 
@@ -459,6 +336,10 @@ export async function OPTIONS(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  return withLumaRequest(req, 'chat', handlePost)
+}
+
+async function handlePost(req: NextRequest) {
   const ctx = createRequestContext(req, '/api/lumaleasing/chat')
   ctx.logStart()
   const origin = req.headers.get('origin')
@@ -506,7 +387,7 @@ export async function POST(req: NextRequest) {
     }
 
     const supabase = createServiceClient();
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
 
     // 1. Validate API key and get config
     const { data: config, error: configError } = await supabase
@@ -546,41 +427,45 @@ export async function POST(req: NextRequest) {
     let widgetSession: { id?: string; lead_id?: string | null; message_count?: number | null } | null = null;
 
     if (activeSessionId) {
-      const { data: existingSession } = await supabase
+      const { data: existingSession, error: sessionError } = await supabase
         .from('widget_sessions')
         .select('*')
         .eq('id', activeSessionId)
         .eq('property_id', propertyId)
         .maybeSingle();
       
+      if (sessionError) throw sessionError;
       widgetSession = existingSession;
 
       if (!widgetSession) {
-        ctx.logSuccess(400, { reason: 'invalid_session_id', sessionId: activeSessionId, propertyId })
-        return badRequest('Invalid sessionId for this property', responseHeaders);
+        ctx.logSuccess(404, { reason: 'invalid_session_id', sessionId: activeSessionId, propertyId })
+        return NextResponse.json({ error: 'Session not found', code: 'invalid_widget_session' }, { status: 404, headers: responseHeaders });
+      }
+      if (isWidgetSessionExpired(existingSession!)) {
+        return NextResponse.json({ error: 'Session expired', code: 'session_expired' }, { status: 410, headers: responseHeaders });
       }
     }
 
-    if (!widgetSession && visitorId) {
+    if (!widgetSession) {
       // Create new session
-      const { data: newSession } = await supabase
+      const { data: newSession, error: newSessionError } = await supabase
         .from('widget_sessions')
         .insert({
           property_id: propertyId,
-          visitor_id: visitorId,
+          visitor_id: visitorId || crypto.randomUUID(),
           user_agent: req.headers.get('user-agent'),
           referrer_url: req.headers.get('referer'),
         })
         .select()
         .single();
       
+      if (newSessionError || !newSession?.id) throw new Error('Could not confirm the new widget session');
       widgetSession = newSession;
       activeSessionId = newSession?.id || null;
     }
 
     // 3. Handle lead capture if info provided
     let leadId: string | null = widgetSession?.lead_id ?? null;
-    let leadConvertedThisRequest = false;
 
     if (leadInfo) {
       const directLeadResult = await upsertLeadByContact({
@@ -610,62 +495,34 @@ export async function POST(req: NextRequest) {
       });
       leadId = directLeadResult.leadId;
 
-      try {
-        const crmResult = await syncLeadToCRM(propertyId, leadId, {
-          first_name: leadInfo.first_name || undefined,
-          last_name: leadInfo.last_name || undefined,
-          email: leadInfo.email || undefined,
-          phone: leadInfo.phone || undefined,
-          source: 'LumaLeasing Widget',
-          status: directLeadResult.lead.status || undefined,
-        });
-        console.log('[LumaLeasing] CRM sync for direct lead:', crmResult.action);
-      } catch (crmError) {
-        console.error('[LumaLeasing] CRM sync failed (non-blocking):', crmError);
-      }
-
-      if (!directLeadResult.isExisting) {
-        startWorkflow(leadId, propertyId, 'lead_created').catch(e =>
-          console.error('[LumaLeasing Chat] Workflow start failed (non-blocking):', e)
-        )
-      }
-
-      // Update session with lead
-      if (widgetSession && leadId && activeSessionId) {
-        await supabase
-          .from('widget_sessions')
-          .update({ lead_id: leadId, converted_at: new Date().toISOString() })
-          .eq('id', activeSessionId)
-          .eq('property_id', propertyId);
-        leadConvertedThisRequest = true;
+      if (leadId && activeSessionId) {
+        await linkLumaVisitorLead(supabase,propertyId,leadId,activeSessionId,null);
       }
     }
 
     // 4. Get or create conversation
     let conversationId: string | null = null;
-    let conversationCreated = false;
     let trustedHistory: RecentMessageRow[] = [];
 
     if (widgetSession && activeSessionId) {
       // Check for existing conversation
-      const { data: existingConv } = await supabase
+      const { data: existingConv, error: conversationError } = await supabase
         .from('conversations')
         .select('id, is_human_mode')
         .eq('widget_session_id', activeSessionId)
+        .eq('property_id', propertyId)
         .order('created_at', { ascending: false })
         .limit(1)
-        .single();
+        .maybeSingle();
+
+      if (conversationError) throw conversationError;
 
       if (existingConv) {
         conversationId = existingConv.id;
 
         // If in human mode, save message but don't generate AI response
         if (existingConv.is_human_mode) {
-          await supabase.from('messages').insert({
-            conversation_id: conversationId,
-            role: 'user',
-            content: lastMessage,
-          });
+          await saveLumaMessage(supabase,propertyId,conversationId,'user',lastMessage);
 
           // Update session activity
           if (activeSessionId) {
@@ -687,7 +544,7 @@ export async function POST(req: NextRequest) {
         }
       } else {
         // Create new conversation
-        const { data: newConv } = await supabase
+        const { data: newConv, error: newConversationError } = await supabase
           .from('conversations')
           .insert({
             property_id: propertyId,
@@ -698,8 +555,8 @@ export async function POST(req: NextRequest) {
           .select('id')
           .single();
 
-        conversationId = newConv?.id || null;
-        conversationCreated = Boolean(conversationId);
+        if (newConversationError || !newConv?.id) throw new Error('Could not confirm the new conversation');
+        conversationId = newConv.id;
       }
     }
 
@@ -707,24 +564,9 @@ export async function POST(req: NextRequest) {
       trustedHistory = await loadTrustedConversationHistory(supabase, conversationId)
     }
 
-    if (leadId && conversationId && (conversationCreated || leadConvertedThisRequest)) {
-      trackEngagementEvent({
-        leadId,
-        propertyId,
-        eventType: 'chat_started',
-        metadata: {
-          conversation_id: conversationId,
-          source: leadConvertedThisRequest
-            ? 'lumaleasing_widget_conversion'
-            : 'lumaleasing_widget',
-          backfilled: leadConvertedThisRequest,
-        },
-      }).catch(e => console.error('[LumaLeasing Chat] Chat started tracking failed (non-blocking):', e))
-    }
-
     // 5. Save user message
     if (conversationId) {
-      const duplicateReply = findRecentDuplicateReply(trustedHistory, lastMessage)
+      const duplicateReply = validation.data.requestId ? null : findRecentDuplicateReply(trustedHistory, lastMessage)
       if (duplicateReply) {
         const messageCount = widgetSession?.message_count || 0
         const shouldPromptLeadCapture = !leadId && config.collect_email && messageCount >= 3
@@ -751,12 +593,11 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    let modeRevision:number|undefined;
     if (conversationId) {
-      await supabase.from('messages').insert({
-        conversation_id: conversationId,
-        role: 'user',
-        content: lastMessage,
-      });
+      const saved=await saveLumaMessage(supabase, propertyId, conversationId, 'user', lastMessage);
+      modeRevision=saved.modeRevision;
+      if(saved.human)return NextResponse.json({content:null,sessionId:activeSessionId,conversationId,isHumanMode:true,waitingForHuman:true},{headers:responseHeaders});
     }
 
     const trustedMessages = [
@@ -770,11 +611,8 @@ export async function POST(req: NextRequest) {
     if (!isPropertyChatInScope(lastMessage, propertyName)) {
       const reply = buildPropertyOnlyResponse(propertyName);
       if (conversationId) {
-        await supabase.from('messages').insert({
-          conversation_id: conversationId,
-          role: 'assistant',
-          content: reply,
-        });
+        const saved = await saveLumaMessage(supabase, propertyId, conversationId, 'assistant', reply, modeRevision);
+        if (saved.human||saved.stale) return NextResponse.json({content:null,sessionId:activeSessionId,conversationId,isHumanMode:saved.human,waitingForHuman:saved.human,responseSuperseded:!!saved.stale},{headers:responseHeaders});
       }
 
       const messageCount = activeSessionId
@@ -804,11 +642,8 @@ export async function POST(req: NextRequest) {
     if (!generatedContext) {
       const reply = `I'm still getting ${propertyName}'s property information ready. I can have someone from our team follow up with you about that.`;
       if (conversationId) {
-        await supabase.from('messages').insert({
-          conversation_id: conversationId,
-          role: 'assistant',
-          content: reply,
-        });
+        const saved = await saveLumaMessage(supabase, propertyId, conversationId, 'assistant', reply, modeRevision);
+        if (saved.human||saved.stale) return NextResponse.json({content:null,sessionId:activeSessionId,conversationId,isHumanMode:saved.human,waitingForHuman:saved.human,responseSuperseded:!!saved.stale},{headers:responseHeaders});
       }
 
       const messageCount = activeSessionId
@@ -836,11 +671,8 @@ export async function POST(req: NextRequest) {
     if (generatedContext.servingMode === 'degraded') {
       const reply = `${propertyName}'s latest property details are being reviewed. I can have someone from the team follow up with verified information.`;
       if (conversationId) {
-        await supabase.from('messages').insert({
-          conversation_id: conversationId,
-          role: 'assistant',
-          content: reply,
-        });
+        const saved = await saveLumaMessage(supabase, propertyId, conversationId, 'assistant', reply, modeRevision);
+        if (saved.human||saved.stale) return NextResponse.json({content:null,sessionId:activeSessionId,conversationId,isHumanMode:saved.human,waitingForHuman:saved.human,responseSuperseded:!!saved.stale},{headers:responseHeaders});
       }
       const messageCount = activeSessionId
         ? await incrementSessionMessageCount(supabase, activeSessionId)
@@ -924,8 +756,8 @@ ${config.availability_url ? `- Availability page: ${config.availability_url}` : 
 ` : ''}
 
 CONTACT INFO HANDLING (CRITICAL):
-- The leasing platform automatically and securely saves any contact details (name, email, phone) a visitor shares in this chat, and the ${propertyName} team follows up with them.
-- When a visitor shares their name, email, or phone number, warmly thank them, confirm the team will follow up, and continue helping with their questions.
+- Contact-save status for this turn: ${leadId ? "saved for the property team" : "not yet confirmed"}. Never claim that information was saved or sent unless this status confirms it.
+- Thank visitors for contact details. Do not promise a follow-up, email, calendar event or confirmed tour. Use the scheduling button for explicit reservations.
 - NEVER say you cannot collect, store, accept, or process contact information. The platform handles that for you, so refusing is incorrect and confuses visitors.
 
 RESPONSE GUIDELINES:
@@ -948,7 +780,7 @@ Let them know you can help them book a tour.
 
 ${sharedContactInfo ? `
 CONTACT INFO JUST SHARED:
-The visitor's most recent message includes their contact details. Those details are already saved and the ${propertyName} team will follow up. Thank them warmly (by name if they gave one), confirm the team will be in touch, and offer a helpful next step such as scheduling a tour.
+The visitor's most recent message includes their contact details. ${leadId ? "Contact details are saved for the property team." : "Contact saving is not yet confirmed."} Thank them warmly and continue answering their property question. Do not promise delivery or a response time.
 ` : ''}
 
 ${leadId ? `
@@ -961,8 +793,11 @@ The platform automatically shows a contact-info request at the right moment and 
 
 Remember: You represent ${propertyName}. Provide exceptional customer service with clean, human-friendly responses!`;
 
+    if (!conversationId || modeRevision === undefined) throw new Error('Conversation authority could not be confirmed.');
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 25000, maxRetries: 0 });
+
     // 10. Generate AI response
-    const completion = await openai.chat.completions.create({
+    const completion = await budgetedLumaCompletion(openai, supabase, propertyId, {
       model: 'gpt-4o-mini',
       messages: (() => {
         const recent = trustedMessages.slice(-10).map((m: { role: string; content: string }) => ({
@@ -973,13 +808,13 @@ Remember: You represent ${propertyName}. Provide exceptional customer service wi
           recent.shift();
         }
         return [
-        { role: 'system', content: systemPrompt },
+        { role: 'system', content: systemPrompt.slice(0, 24000) },
           ...recent,
         ];
       })(),
       temperature: 0.7,
       max_tokens: 400,
-    });
+    }, 'answer', {conversationId,modeRevision,assistantContext:generatedContext});
 
     // Deterministic backstop: the model sometimes ignores the prompt's
     // no-markdown rule, and the widget renders plain text.
@@ -989,11 +824,8 @@ Remember: You represent ${propertyName}. Provide exceptional customer service wi
 
     // 11. Save AI response
     if (conversationId) {
-      await supabase.from('messages').insert({
-        conversation_id: conversationId,
-        role: 'assistant',
-        content: reply,
-      });
+      const saved = await saveLumaMessage(supabase, propertyId, conversationId, 'assistant', reply, modeRevision);
+        if (saved.human||saved.stale) return NextResponse.json({content:null,sessionId:activeSessionId,conversationId,isHumanMode:saved.human,waitingForHuman:saved.human,responseSuperseded:!!saved.stale},{headers:responseHeaders});
     }
 
     // 12. LLM-based extraction of lead info and tour requests
@@ -1017,18 +849,7 @@ Remember: You represent ${propertyName}. Provide exceptional customer service wi
           activeSessionId ? activeSessionId : null,
           conversationId,
           leadId,
-          {
-            widget_name: config.widget_name,
-            properties:
-              config.properties &&
-              typeof config.properties === 'object' &&
-              !Array.isArray(config.properties)
-                ? {
-                    name: config.properties.name,
-                    address: config.properties.address,
-                  }
-                : null,
-          }
+          modeRevision,
         );
         extractionRan = true;
         console.log('[LumaLeasing] Extraction completed successfully');

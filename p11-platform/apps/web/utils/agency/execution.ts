@@ -1,0 +1,20 @@
+import {z} from 'zod'
+const id=z.string().uuid(),hash=z.string().regex(/^[a-f0-9]{64}$/),reason=z.string().trim().min(3).max(2000)
+const envelope={propertyId:id,requestId:id}
+export const executionStep=z.discriminatedUnion('action',[
+ z.object({action:z.literal('lead.note.add'),targetId:id,sourceHash:hash,content:z.string().trim().min(1).max(2000)}).strict(),
+ z.object({action:z.literal('market.alert.dismiss'),targetId:id,sourceHash:hash}).strict()
+])
+export const executionCommand=z.discriminatedUnion('operation',[
+ z.object({...envelope,operation:z.literal('prepare'),planRevision:id,steps:z.array(executionStep).min(1).max(2),reason}).strict(),
+ z.object({...envelope,operation:z.enum(['authorize','advance','pause','resume','stop','reverse']),runId:id,expectedVersion:z.number().int().min(1).max(999999999),specHash:hash,reason}).strict(),
+ z.object({...envelope,operation:z.literal('cancel_unused'),inputHash:hash}).strict()
+])
+export type ExecutionCommand=z.infer<typeof executionCommand>
+export const executionQuery=z.object({propertyId:id,kind:z.enum(['board','history','run','decision']).default('board'),runId:id.optional(),decisionId:id.optional(),before:z.string().regex(/^[1-9][0-9]{0,18}$/).refine(v=>/^[1-9][0-9]{0,18}$/.test(v)&&BigInt(v)<=BigInt('9223372036854775807')).optional()}).strict().refine(v=>v.kind==='run'?!!v.runId&&!v.decisionId&&!v.before:v.kind==='decision'?!!v.decisionId&&!v.runId&&!v.before:v.kind==='history'?!v.runId&&!v.decisionId:!v.runId&&!v.decisionId&&!v.before)
+const status=z.enum(['prepared','authorized','running','paused','completed','stopped','reversing','reversed','attention'])
+export const executionResult=z.object({runId:id.nullable(),status:status.nullable(),version:z.number().int().positive().nullable(),appliedCount:z.number().int().min(0).max(2).nullable(),reversedCount:z.number().int().min(0).max(2).nullable(),interventions:z.number().int().nonnegative().nullable(),issue:z.string().nullable(),nativeReceiptId:id.nullable(),stepId:id.nullable(),ordinal:z.number().int().min(0).max(1).nullable(),mode:z.literal('local_rehearsal_only'),nativeEffect:z.boolean(),providerCalls:z.literal(0),providerSpendUsd:z.literal(0),businessOutcome:z.literal('unmeasured')})
+export const executionBoard=z.object({state:z.literal('ready'),propertyId:id,enabled:z.boolean(),canManage:z.boolean(),mode:z.literal('local_rehearsal_only'),items:z.array(z.object({id,run_id:id.nullable(),operation:z.string(),result:executionResult,created_at:z.string(),sequence:z.number().int()})).max(20),nextBefore:z.string().nullable()})
+export const executionReceipt=z.object({state:z.enum(['ready','saved','replayed']),propertyId:id,decisionId:id,record:z.object({id,property_id:id,org_id:id,actor_id:id,run_id:id.nullable(),input:z.record(z.string(),z.unknown()),input_hash:hash,result:executionResult,created_at:z.string(),sequence:z.number().int()})})
+export const executionRun=z.object({state:z.literal('ready'),propertyId:id,enabled:z.boolean(),canManage:z.boolean(),run:z.object({id,property_id:id,org_id:id,plan_revision:id,created_by:id,authorized_by:id.nullable(),spec:z.record(z.string(),z.unknown()),spec_hash:hash,contract_hash:hash,status,version:z.number().int().positive(),applied_count:z.number().int().min(0).max(2),reversed_count:z.number().int().min(0).max(2),interventions:z.number().int().nonnegative(),issue:z.string().nullable(),created_at:z.string(),updated_at:z.string()}),steps:z.array(z.object({id,run_id:id,ordinal:z.number().int().min(0).max(1),action:z.enum(['lead.note.add','market.alert.dismiss']),target_id:id,source_hash:hash,input:z.record(z.string(),z.unknown()),status:z.enum(['pending','applied','reversed']),native_id:id,undo_id:id,receipt:z.unknown(),after_hash:hash.nullable(),undo_receipt:z.unknown(),applied_at:z.string().nullable(),reversed_at:z.string().nullable()})).max(2),cost:z.object({providerCalls:z.literal(0),providerSpendUsd:z.literal(0),businessOutcome:z.literal('unmeasured')})})
+export type ExecutionBoard=z.infer<typeof executionBoard>

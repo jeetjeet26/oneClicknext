@@ -1,87 +1,105 @@
-'use client'
+"use client";
 
-import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { LayoutDashboard, MessageSquare, BarChart3, Settings, Building2, Users, Sparkles, Activity, Bot, Flame, TrendingUp, Star, Wand2, Globe, Search, BedDouble } from 'lucide-react';
+import Link from "next/link";
+import { P11Logo } from "@/components/ui/P11Logo";
+import { usePathname } from "next/navigation";
+import { Menu, ArrowUpRight, type LucideIcon } from "lucide-react";
+import { navigationGroups, settingsNavigation } from "./navigation";
 
-type NavItem = {
+function NavLink({
+  href,
+  label,
+  icon: Icon,
+  description,
+}: {
   href: string;
   label: string;
-  icon: React.ReactNode;
-}
-
-function NavLink({ href, label, icon }: NavItem) {
-  const pathname = usePathname();
-  const isActive = pathname === href || (href !== '/dashboard' && pathname.startsWith(href));
-  
+  icon: LucideIcon;
+  description: string;
+}) {
+  const path = usePathname(),
+    active =
+      path === href || (href !== "/dashboard" && path.startsWith(href + "/"));
   return (
-    <Link 
-      href={href} 
-      className={`flex items-center space-x-2 px-3 py-2 rounded-md transition-colors ${
-        isActive 
-          ? 'bg-indigo-600 text-white' 
-          : 'text-slate-300 hover:bg-slate-800'
-      }`}
+    <Link
+      href={href}
+      aria-current={active ? "page" : undefined}
+      title={description}
+      onClick={(e) =>
+        e.currentTarget.closest("details")?.removeAttribute("open")
+      }
+      className={`console-nav-link ${active ? "is-active" : ""}`}
     >
-      {icon}
+      <Icon size={17} strokeWidth={1.65} aria-hidden="true" />
       <span>{label}</span>
+      {active && <span className="console-nav-dot" />}
     </Link>
   );
 }
-
-export function Sidebar() {
+function SidebarContent() {
   return (
-    <div className="w-64 bg-slate-900 h-screen text-white flex flex-col">
-      <div className="p-6 border-b border-slate-800">
-        <div className="flex items-center gap-3">
-          <div className="h-9 w-9 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-lg flex items-center justify-center shadow-lg shadow-indigo-500/20">
-            <span className="text-white font-bold text-sm">P11</span>
-          </div>
-          <div>
-            <h1 className="text-lg font-bold tracking-tight">P11 Console</h1>
-            <p className="text-xs text-slate-400">Autonomous Agency</p>
-          </div>
-        </div>
+    <div className="console-sidebar-content">
+      <Link
+        className="console-brand"
+        href="/dashboard"
+        aria-label="P11 Console home"
+      >
+        <P11Logo />
+        <span>
+          <strong>Console</strong>
+          <span className="console-brand-caption">Agency workspace</span>
+        </span>
+      </Link>
+      <div className="console-workspace-label">
+        <span className="h-1.5 w-1.5 rounded-full bg-emerald-600" />
+        Internal workspace
       </div>
-      
-      <div className="p-4 flex-1 overflow-y-auto">
-        <div className="mb-6">
-          <h2 className="text-xs uppercase text-slate-500 font-semibold mb-2 px-3">Platform</h2>
-          <nav className="space-y-1">
-            <NavLink href="/dashboard" label="Overview" icon={<LayoutDashboard size={18} />} />
-            <NavLink href="/dashboard/community" label="Property" icon={<Building2 size={18} />} />
-            <NavLink href="/dashboard/floor-plans" label="Floorplans" icon={<BedDouble size={18} />} />
-            <NavLink href="/dashboard/team" label="Team" icon={<Users size={18} />} />
-          </nav>
-        </div>
-
-        <div className="mb-6">
-          <h2 className="text-xs uppercase text-slate-500 font-semibold mb-2 px-3">Products</h2>
-          <nav className="space-y-1">
-            <NavLink href="/dashboard/lumaleasing" label="LumaLeasing" icon={<MessageSquare size={18} />} />
-            <NavLink href="/dashboard/leads" label="TourSpark" icon={<Sparkles size={18} />} />
-            <NavLink href="/dashboard/leadpulse" label="LeadPulse" icon={<Flame size={18} />} />
-            <NavLink href="/dashboard/forgestudio" label="ForgeStudio AI" icon={<Wand2 size={18} />} />
-            <NavLink href="/dashboard/siteforge" label="SiteForge" icon={<Globe size={18} />} />
-            <NavLink href="/dashboard/marketvision" label="MarketVision 360" icon={<TrendingUp size={18} />} />
-            <NavLink href="/dashboard/propertyaudit" label="PropertyAudit" icon={<Search size={18} />} />
-            <NavLink href="/dashboard/reviewflow" label="ReviewFlow AI" icon={<Star size={18} />} />
-            <NavLink href="/dashboard/bi" label="MultiChannel BI" icon={<BarChart3 size={18} />} />
-            <NavLink href="/dashboard/pipelines" label="Pipelines" icon={<Activity size={18} />} />
-          </nav>
-        </div>
-
-        <div className="mb-6">
-          <h2 className="text-xs uppercase text-slate-500 font-semibold mb-2 px-3">AI Tools</h2>
-          <nav className="space-y-1">
-            <NavLink href="/dashboard/luma" label="Luma AI Assistant" icon={<Bot size={18} />} />
-          </nav>
-        </div>
+      <div className="console-sidebar-scroll">
+        {navigationGroups.map((group) => (
+          <section key={group.label} className="console-nav-group">
+            <h2>{group.label}</h2>
+            <nav aria-label={group.label}>
+              {group.items.map((item) => (
+                <NavLink key={item.href} {...item} />
+              ))}
+            </nav>
+          </section>
+        ))}
       </div>
-
-      <div className="p-4 border-t border-slate-800">
-        <NavLink href="/dashboard/settings" label="Settings" icon={<Settings size={18} />} />
+      <div className="console-sidebar-footer">
+        <NavLink {...settingsNavigation} />
+        <p>
+          Real estate marketing. Amplified.
+          <ArrowUpRight size={12} aria-hidden="true" />
+        </p>
       </div>
     </div>
+  );
+}
+export function Sidebar() {
+  return (
+    <aside className="console-sidebar">
+      <div className="hidden h-dvh lg:block">
+        <SidebarContent />
+      </div>
+      <details
+        className="console-mobile-navigation lg:hidden"
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.currentTarget.removeAttribute("open");
+            e.currentTarget.querySelector("summary")?.focus();
+          }
+        }}
+      >
+        <summary>
+          <Menu size={20} aria-hidden="true" />
+          <span>Navigation</span>
+          <P11Logo className="p11-logo-mobile" />
+        </summary>
+        <div className="console-mobile-panel">
+          <SidebarContent />
+        </div>
+      </details>
+    </aside>
   );
 }

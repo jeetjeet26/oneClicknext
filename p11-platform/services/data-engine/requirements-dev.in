@@ -1,0 +1,4 @@
+# Test-only dependencies (not installed on Render)
+-r requirements.in
+pytest==9.1.1
+pytest-asyncio==1.4.0

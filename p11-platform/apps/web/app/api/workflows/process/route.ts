@@ -1,3 +1,4 @@
+import { processLumaDelivery } from '@/utils/services/luma-delivery'
 /**
  * Workflow Processor API
  * Called by CRON job to process pending workflow actions
@@ -10,15 +11,15 @@
  * Security: Uses CRON_SECRET to prevent unauthorized access
  */
 
-import { NextRequest, NextResponse } from 'next/server'
-import { processWorkflows } from '@/utils/services/workflow-processor'
-import { finishCronJobRun, startCronJobRun } from '@/utils/services/cron-job-runs'
 import {
-  validateCronAuth,
-  serverError,
-  unauthorized,
+serverError,
+unauthorized,
+validateCronAuth,
 } from '@/utils/services/api-helpers'
+import { cronStatusFromOutcomes,confirmCronJobRun,finishCronJobRun,startCronJobRun } from '@/utils/services/cron-job-runs'
 import { createRequestContext } from '@/utils/services/request-context'
+import { processWorkflows } from '@/utils/services/workflow-processor'
+import { NextRequest,NextResponse } from 'next/server'
 
 export async function GET(request: NextRequest) {
   const ctx = createRequestContext(request, '/api/workflows/process')
@@ -38,18 +39,32 @@ export async function GET(request: NextRequest) {
   const startTime = Date.now()
 
   try {
+    if (!run) throw new Error('Could not save scheduled run')
+    const delivery = await processLumaDelivery()
     const result = await processWorkflows()
+    result.processed += delivery.processed
+    result.succeeded += delivery.succeeded
+    result.failed += delivery.failed
+    if (delivery.failed) result.errors.push('Some tour confirmations need retry or review')
     const duration = Date.now() - startTime
+    const status = cronStatusFromOutcomes(result)
+    const httpStatus = status === 'failed' ? 503 : 200
 
-    ctx.logSuccess(200, {
+    const logDetails = {
       processed: result.processed,
       succeeded: result.succeeded,
       failed: result.failed,
       durationMs: duration,
-    })
+    }
+    if (status === 'success') {
+      ctx.logSuccess(httpStatus, logDetails)
+    } else {
+      ctx.logError(httpStatus, new Error(result.errors.join('; ') || 'Workflow actions failed'), logDetails)
+    }
 
-    await finishCronJobRun(run, {
-      status: 'success',
+    await confirmCronJobRun(run, {
+      status,
+      error: result.errors.length ? result.errors.join('; ').slice(0, 2000) : null,
       summary: {
         processed: result.processed,
         succeeded: result.succeeded,
@@ -59,12 +74,13 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(
       {
-        success: true,
+        success: status === 'success',
+        status,
         ...result,
         duration_ms: duration,
         timestamp: new Date().toISOString(),
       },
-      { headers: ctx.responseHeaders }
+      { status: httpStatus, headers: ctx.responseHeaders }
     )
   } catch (error) {
     ctx.logError(500, error, { operation: 'process_workflows' })
@@ -81,4 +97,3 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   return GET(request)
 }
-

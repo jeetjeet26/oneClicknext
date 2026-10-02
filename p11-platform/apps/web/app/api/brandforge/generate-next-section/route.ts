@@ -1,10 +1,8 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/utils/supabase/server'
+import { NextRequest } from 'next/server'
 import { createAdminClient } from '@/utils/supabase/admin'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import { GoogleAuth } from 'google-auth-library'
 import path from 'path'
-import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || '')
 
@@ -466,56 +464,15 @@ Output JSON:
   }
 }
 
-export async function POST(req: NextRequest) {
-  try {
-    const supabase = await createClient()
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
+import { runBrandCommand } from '@/utils/brandforge/operations'
 
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const { brandAssetId } = await req.json()
-
-    if (!brandAssetId) {
-      return NextResponse.json({ error: 'brandAssetId required' }, { status: 400 })
-    }
-
-    const supabaseAdmin = createAdminClient()
-
-    // Get brand asset with all approved sections
-    const { data: brandRaw, error: brandError } = await supabaseAdmin
-      .from('property_brand_assets')
-      .select('*')
-      .eq('id', brandAssetId)
-      .single()
-
-    if (brandError || !brandRaw) {
-      return NextResponse.json({ error: 'Brand asset not found' }, { status: 404 })
-    }
-
-    const propertyId = typeof brandRaw.property_id === 'string' ? brandRaw.property_id : null
-    if (!propertyId) {
-      return NextResponse.json({ error: 'Brand asset not found' }, { status: 404 })
-    }
-
-    const access = await validatePropertyAccess(user.id, propertyId)
-    if (!access.authorized) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-    }
-
-    const brand = brandRaw as unknown as Record<string, unknown>
-    const currentStep = asNumber(brand.current_step)
-    if (!currentStep) {
-      return NextResponse.json({ error: 'Invalid step' }, { status: 400 })
-    }
-
-    const config = SECTION_CONFIGS[currentStep as keyof typeof SECTION_CONFIGS]
-
-    if (!config) {
-      return NextResponse.json({ error: 'Invalid step' }, { status: 400 })
-    }
-
+export async function POST(request: NextRequest) {
+ return runBrandCommand(request, 'generate', {}, async ({ brand: brandRaw }) => {
+ const brand = brandRaw
+ const propertyId = brand.property_id
+ const currentStep = asNumber(brand.current_step)
+ const config = currentStep ? SECTION_CONFIGS[currentStep as keyof typeof SECTION_CONFIGS] : null
+ if (!currentStep || !config) throw new Error('Invalid saved step')
     // Build context from conversation summary and approved sections
     const context: BrandContext = {
       ...(asRecord(brandRaw.conversation_summary) as BrandContext),
@@ -525,7 +482,10 @@ export async function POST(req: NextRequest) {
 
     let generatedData
 
-    if ('generate' in config && typeof config.generate === 'function') {
+    const proposed = asRecord(brand.proposed_sections)?.[`section_${currentStep}_${config.name}`]
+    if (proposed && typeof proposed === 'object' && !Array.isArray(proposed)) {
+      generatedData = proposed
+    } else if ('generate' in config && typeof config.generate === 'function') {
       // Custom generation (e.g., logo with Imagen)
       generatedData = await config.generate(context, brand as BrandApproved)
     } else if ('prompt' in config) {
@@ -572,28 +532,6 @@ export async function POST(req: NextRequest) {
       approval_status: 'reviewing',
     }
 
-    // Save as draft section
-    await supabaseAdmin
-      .from('property_brand_assets')
-      .update(updatePayload as never)
-      .eq('id', brandAssetId)
-
-    return NextResponse.json({
-      success: true,
-      step: currentStep,
-      sectionName: config.name,
-      sectionTitle: config.title,
-      data: generatedData
-    })
-
-  } catch (error) {
-    console.error('Generate Section Error:', error)
-    return NextResponse.json({ 
-      error: 'Generation failed', 
-      details: error instanceof Error ? error.message : 'Unknown error' 
-    }, { status: 500 })
-  }
+    return { updates: updatePayload, result: { step: currentStep, sectionName: config.name, sectionTitle: config.title, data: generatedData, version: 1 } }
+ })
 }
-
-
-

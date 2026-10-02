@@ -1,4 +1,5 @@
 import asyncio
+import os
 import unittest
 from unittest.mock import Mock, patch
 
@@ -359,51 +360,45 @@ class LassoAdapterTest(unittest.TestCase):
         self.assertIn("projectId", result.error)
 
     @patch("routers.crm_integration.get_supabase_client")
-    def test_save_mapping_sets_validation_timestamp(self, get_supabase_client_mock):
-        execute_mock = Mock(return_value=Mock(data=[]))
-        upsert_mock = Mock(return_value=Mock(execute=execute_mock))
-        table_mock = Mock(return_value=Mock(upsert=upsert_mock))
-        get_supabase_client_mock.return_value = Mock(table=table_mock)
+    def test_legacy_save_cannot_assert_provider_validation(self, database):
+        with self.assertRaises(HTTPException) as blocked:
+            asyncio.run(save_mapping(SaveMappingRequest(
+                property_id="00000000-0000-0000-0000-000000000001", crm_type="lasso",
+                credentials={"api_key":"fixture-only"}, field_mapping={"first_name":"first_name"}, validated=True,
+            ), api_key="fixture"))
+        self.assertEqual(blocked.exception.status_code, 409)
+        database.assert_not_called()
 
-        response = asyncio.run(
-            save_mapping(
-                SaveMappingRequest(
-                    property_id="00000000-0000-0000-0000-000000000001",
-                    crm_type="lasso",
-                    credentials={"api_key": "secret"},
-                    field_mapping={"first_name": "first_name"},
-                    validated=True,
-                ),
-                api_key="engine-key",
-            )
-        )
-
-        self.assertTrue(response["success"])
-        upsert_payload = upsert_mock.call_args.args[0]
-        self.assertEqual(upsert_payload["platform"], "lasso")
-        self.assertTrue(upsert_payload["mapping_validated"])
-        self.assertIsNotNone(upsert_payload["mapping_validated_at"])
-
-    def test_validate_mapping_accepts_lasso_public_registration_key_without_test_write(self):
-        response = asyncio.run(
-            validate_mapping(
-                ValidateMappingRequest(
-                    property_id="00000000-0000-0000-0000-000000000001",
-                    crm_type="lasso",
-                    credentials={
-                        "api_key": "eyJ.token.value",
-                        "client_id": "920",
-                        "project_id": "23969",
-                    },
-                    field_mapping={"first_name": "first_name"},
-                ),
-                api_key="engine-key",
-            )
-        )
-
-        self.assertTrue(response["valid"])
-        self.assertIn("write-only", response["warnings"][0])
+    @patch.dict(os.environ, {"OUTBOUND_DELIVERY_PAUSED": "false"})
+    @patch("routers.crm_integration.get_crm_adapter")
+    def test_legacy_validation_requires_a_saved_provider_operation(self, adapter):
+        with self.assertRaises(HTTPException) as blocked:
+            asyncio.run(validate_mapping(ValidateMappingRequest(
+                property_id="00000000-0000-0000-0000-000000000001", crm_type="lasso",
+                credentials={"api_key":"fixture-only","client_id":"fixture","project_id":"fixture"},
+                field_mapping={"first_name":"first_name"},
+            ), api_key="fixture"))
+        self.assertEqual(blocked.exception.status_code, 409)
+        adapter.assert_not_called()
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LassoAcknowledgmentTests(unittest.TestCase):
+    @patch("connectors.crm_adapters.lasso_adapter.requests.post")
+    def test_creation_confirmation_requires_completed_response_and_record_id(self,post):
+        adapter=LassoAdapter({'api_key':'synthetic','client_id':'client','project_id':'project'})
+        for status,data,expected in [(201,{'registrantId':'id'},'confirmed'),(200,{'registrantId':'id'},'confirmed'),(202,{'registrantId':'id'},'accepted'),(201,{},'accepted')]:
+            post.return_value=mock_response(status,data)
+            result=adapter.create_lead({'email':'fixture@example.invalid'})
+            self.assertEqual(result.confirmation,expected);self.assertFalse(post.call_args.kwargs['allow_redirects'])
+
+    @patch("connectors.crm_adapters.lasso_adapter.requests.post")
+    def test_note_without_confirmed_id_remains_uncertain(self,post):
+        adapter=LassoAdapter({'api_key':'synthetic'})
+        for status,data,expected in [(201,{'noteId':'note'},'confirmed'),(202,{'noteId':'note'},'accepted'),(200,{},'accepted'),(201,{'registrantId':'parent-id'},'accepted')]:
+            post.return_value=mock_response(status,data,text='synthetic JSON response')
+            self.assertEqual(adapter.add_note('id','Saved note').confirmation,expected)
+            self.assertFalse(post.call_args.kwargs['allow_redirects'])

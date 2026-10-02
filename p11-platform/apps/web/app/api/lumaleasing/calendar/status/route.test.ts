@@ -86,12 +86,13 @@ describe('Calendar status route', () => {
       orgId: 'org-1',
     })
     createServiceClientMock.mockReturnValue({
+      rpc:vi.fn().mockResolvedValue({data:{state:'ready',summary:{total_events:3,synced_events:1,failed_events:1,external_drift_events:1,external_missing_events:0,external_cancelled_events:0,other_events:0,missing_event_bookings:1,degraded:true}},error:null}),
       from: vi.fn((table: string) => {
         if (table === 'agent_calendars') {
           return {
             select: vi.fn(() => ({
               eq: vi.fn(() => ({
-                maybeSingle: vi.fn().mockResolvedValue({
+                is: vi.fn().mockReturnThis(), maybeSingle: vi.fn().mockResolvedValue({
                   data: null,
                   error: null,
                 }),
@@ -114,7 +115,7 @@ describe('Calendar status route', () => {
     expect(response.headers.get('x-request-id')).toBeTruthy()
     await expect(response.json()).resolves.toMatchObject({
       connected: false,
-      message: 'Google Calendar not connected',
+      message: 'Calendar not connected',
       webhook_capability: {
         mode: 'unconfigured',
         ready: false,
@@ -135,16 +136,17 @@ describe('Calendar status route', () => {
       orgId: 'org-1',
     })
     createServiceClientMock.mockReturnValue({
+      rpc:vi.fn().mockResolvedValue({data:{state:'ready',summary:{total_events:3,synced_events:1,failed_events:1,external_drift_events:1,external_missing_events:0,external_cancelled_events:0,other_events:0,missing_event_bookings:1,degraded:true}},error:null}),
       from: vi.fn((table: string) => {
         if (table === 'agent_calendars') {
           return {
             select: vi.fn(() => ({
               eq: vi.fn(() => ({
-                maybeSingle: vi.fn().mockResolvedValue({
+                is: vi.fn().mockReturnThis(), maybeSingle: vi.fn().mockResolvedValue({
                   data: {
                     id: 'calendar-1',
                     google_email: 'leasing@example.com',
-                    token_status: 'healthy',
+                    token_status: 'healthy', scopes: ['https://www.googleapis.com/auth/calendar','https://www.googleapis.com/auth/gmail.modify','User.Read','Calendars.ReadWrite','Mail.Send','Mail.Read'], provider_metadata: {scopeEvidence:'provider_response'},
                     last_health_check_at: '2026-03-10T00:00:00.000Z',
                     token_expires_at: '2026-03-11T00:00:00.000Z',
                     timezone: 'America/Chicago',
@@ -216,7 +218,7 @@ describe('Calendar status route', () => {
     expect(json).toMatchObject({
       connected: true,
       email: 'leasing@example.com',
-      token_status: 'healthy',
+      token_status: 'healthy', permission_state: 'confirmed',
       timezone: 'America/Chicago',
       sync_enabled: true,
       calendar_id: 'primary',
@@ -241,4 +243,12 @@ describe('Calendar status route', () => {
     expect(typeof json.webhook_capability?.watch_ttl_minutes).toBe('number')
     expect((json.webhook_capability?.watch_ttl_minutes ?? 0) > 0).toBe(true)
   })
+})
+
+it.each(['google','microsoft'])('holds fresh %s credentials without verified permission evidence',async provider=>{
+ authGetUserMock.mockResolvedValue({data:{user:{id:'user-1'}}});createClientMock.mockResolvedValue({auth:{getUser:authGetUserMock}});validatePropertyAccessMock.mockResolvedValue({authorized:true})
+ const row={id:'connection-1',provider,google_email:'fixture@example.invalid',token_status:'healthy',sync_enabled:true,token_expires_at:'2099-01-01',scopes:['User.Read','Calendars.ReadWrite','Mail.Send','Mail.Read'],provider_metadata:{},timezone:'UTC'}
+ createServiceClientMock.mockReturnValue({rpc:vi.fn().mockResolvedValue({data:{state:'ready',summary:{degraded:false}},error:null}),from:(name:string)=>{const value=name==='agent_calendars'?row:[];const q:Record<string,unknown>={then:(resolve:(x:unknown)=>void)=>resolve({data:value,error:null})};for(const method of ['select','eq','is','in','order','limit'])q[method]=()=>q;q.maybeSingle=async()=>({data:value,error:null});return q}})
+ const {GET}=await import('./route');const response=await GET(new Request('http://localhost/api/lumaleasing/calendar/status?propertyId=property-1') as NextRequest);const body=await response.json()
+ expect(response.status).toBe(200);expect(body).toMatchObject({state:'reconnect_required',connected:false,permission_state:'permissions_unconfirmed',webhook_capability:{ready:false}});expect(body.permission_message).toContain('Reconnect');expect(body).not.toHaveProperty('provider_metadata');expect(body).not.toHaveProperty('scopes')
 })

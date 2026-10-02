@@ -1,149 +1,21 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { NextRequest } from 'next/server'
-
-const authGetUserMock = vi.fn()
-const createClientMock = vi.fn()
-const createAdminClientMock = vi.fn()
-const fromMock = vi.fn()
-const rpcMock = vi.fn()
-const afterMock = vi.fn()
-
-vi.mock('@/utils/supabase/server', () => ({
-  createClient: createClientMock,
-}))
-
-vi.mock('@/utils/supabase/admin', () => ({
-  createAdminClient: createAdminClientMock,
-}))
-
-vi.mock('next/server', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('next/server')>()
-  return {
-    ...actual,
-    after: afterMock,
-  }
-})
-
-describe('properties add route auth', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    fromMock.mockReset()
-    createClientMock.mockResolvedValue({
-      auth: { getUser: authGetUserMock },
-    })
-    createAdminClientMock.mockReturnValue({
-      from: fromMock,
-      rpc: rpcMock,
-    })
-  })
-
-  it('POST returns 401 when unauthenticated', async () => {
-    authGetUserMock.mockResolvedValue({ data: { user: null }, error: null })
-
-    const { POST } = await import('./route')
-    const response = await POST(
-      new Request('http://localhost/api/properties/add', {
-        method: 'POST',
-        body: JSON.stringify({ name: 'New Property' }),
-      }) as NextRequest
-    )
-
-    expect(response.status).toBe(401)
-    await expect(response.json()).resolves.toEqual({ error: 'Unauthorized' })
-  })
-
-  it('POST returns 403 when role lacks permission', async () => {
-    authGetUserMock.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
-
-    const singleMock = vi.fn().mockResolvedValue({
-      data: { org_id: 'org-1', role: 'member' },
-      error: null,
-    })
-    const eqMock = vi.fn().mockReturnValue({ single: singleMock })
-    const selectMock = vi.fn().mockReturnValue({ eq: eqMock })
-    fromMock.mockReturnValue({ select: selectMock })
-
-    const { POST } = await import('./route')
-    const response = await POST(
-      new Request('http://localhost/api/properties/add', {
-        method: 'POST',
-        body: JSON.stringify({ name: 'New Property' }),
-      }) as NextRequest
-    )
-
-    expect(response.status).toBe(403)
-    await expect(response.json()).resolves.toEqual({ error: 'Only admins and managers can add properties' })
-  })
-
-  it('POST returns 400 for an unknown property type', async () => {
-    authGetUserMock.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
-
-    const { POST } = await import('./route')
-    const response = await POST(
-      new Request('http://localhost/api/properties/add', {
-        method: 'POST',
-        body: JSON.stringify({ name: 'New Property', propertyType: 'hotel' }),
-      }) as NextRequest
-    )
-
-    expect(response.status).toBe(400)
-    await expect(response.json()).resolves.toEqual({ error: 'Invalid property type' })
-    expect(fromMock).not.toHaveBeenCalled()
-  })
-
-  it('POST responds immediately and defers the website scrape to after()', async () => {
-    authGetUserMock.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
-
-    const profileSingleMock = vi.fn().mockResolvedValue({
-      data: { org_id: 'org-1', role: 'admin' },
-      error: null,
-    })
-    const insertSingleMock = vi.fn().mockResolvedValue({
-      data: { id: 'prop-1', name: 'New Property' },
-      error: null,
-    })
-    fromMock.mockImplementation((table: string) => {
-      if (table === 'profiles') {
-        return {
-          select: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({ single: profileSingleMock }),
-          }),
-        }
-      }
-      if (table === 'properties') {
-        return {
-          insert: vi.fn().mockReturnValue({
-            select: vi.fn().mockReturnValue({ single: insertSingleMock }),
-          }),
-        }
-      }
-      throw new Error(`Unexpected table: ${table}`)
-    })
-    rpcMock.mockResolvedValue({ data: null, error: null })
-
-    const fetchSpy = vi.spyOn(globalThis, 'fetch')
-
-    const { POST } = await import('./route')
-    const response = await POST(
-      new Request('http://localhost/api/properties/add', {
-        method: 'POST',
-        body: JSON.stringify({
-          name: 'New Property',
-          websiteUrl: 'https://example.com',
-        }),
-      }) as NextRequest
-    )
-
-    expect(response.status).toBe(200)
-    await expect(response.json()).resolves.toMatchObject({
-      success: true,
-      property: { id: 'prop-1' },
-    })
-
-    // Scrape must be deferred, never awaited in the request path
-    expect(afterMock).toHaveBeenCalledTimes(1)
-    expect(fetchSpy).not.toHaveBeenCalled()
-
-    fetchSpy.mockRestore()
-  })
+import {beforeEach,describe,expect,it,vi} from 'vitest'
+const d=vi.hoisted(()=>({auth:vi.fn(),rpc:vi.fn()}))
+vi.mock('@/utils/supabase/server',()=>({createClient:async()=>({auth:{getUser:d.auth}})}))
+vi.mock('@/utils/supabase/admin',()=>({createServiceClient:()=>({rpc:d.rpc})}))
+import {POST} from './route'
+import {POST as template} from '../creation/template/route'
+import {GET as recovery} from '../creation/route'
+import {creationProfile} from '@/utils/property-setup/creation-contracts'
+const id='11111111-1111-1111-1111-111111111111',source='33333333-3333-3333-3333-333333333333',flags={contacts:true,connections:false,guidance:false}
+const payload=()=>({requestId:id,profile:creationProfile({name:'Private property',unitCount:'0',address:{city:'Only city'},websiteUrl:'example.test'}),template:null})
+const post=(v:unknown)=>POST(new Request('http://local/api/properties/add',{method:'POST',body:JSON.stringify(v)}))
+beforeEach(()=>{vi.resetAllMocks();d.auth.mockResolvedValue({data:{user:{id:'authenticated-actor'}},error:null});d.rpc.mockResolvedValue({data:{state:'created',requestId:id},error:null})})
+describe('recoverable property creation adapters',()=>{
+ it('requires authentication before all reads and writes',async()=>{d.auth.mockResolvedValue({data:{user:null},error:null});expect((await post(payload())).status).toBe(401);expect((await recovery(new Request(`http://local/api/properties/creation?requestId=${id}`))).status).toBe(401);expect((await template(new Request('http://local/api/properties/creation/template',{method:'POST',body:'{}'}))).status).toBe(401);expect(d.rpc).not.toHaveBeenCalled()})
+ it('passes exact intent with the authenticated actor and no automatic website fetch',async()=>{const fetcher=vi.spyOn(globalThis,'fetch');try{const response=await post(payload());expect(response.status).toBe(200);expect(response.headers.get('cache-control')).toBe('private, no-store');expect(d.rpc).toHaveBeenCalledWith('create_property_from_setup',{p_id:id,p_actor_id:'authenticated-actor',p_input:{profile:payload().profile,template:null}});expect(payload().profile.unitCount).toBe(0);expect(payload().profile.address.city).toBe('Only city');expect(fetcher).not.toHaveBeenCalled()}finally{fetcher.mockRestore()}})
+ it('rejects unversioned input, actor injection, unsafe sites and unconfirmed guidance',async()=>{for(const value of[{name:'Old format'},{...payload(),actorId:id},{...payload(),profile:{...payload().profile,websiteUrl:'https://user:secret@example.test'}},{...payload(),template:{sourceId:source,snapshotHash:'a'.repeat(64),flags:{...flags,guidance:true},guidanceConfirmed:false}}])expect((await post(value)).status).toBe(400);expect(d.rpc).not.toHaveBeenCalled()})
+ it('preserves native current-role denial and changed-template conflicts',async()=>{d.rpc.mockResolvedValueOnce({data:{state:'forbidden'},error:null});expect((await post(payload())).status).toBe(403);d.rpc.mockResolvedValueOnce({data:{state:'template_changed'},error:null});const response=await post(payload());expect(response.status).toBe(409);expect((await response.json()).error).toContain('changed after review')})
+ it('does not expose private database errors or turn uncertainty into success',async()=>{d.rpc.mockResolvedValue({data:null,error:{message:'Private credential or database internals'}});const r=await post(payload());expect(r.status).toBe(503);expect(await r.text()).not.toContain('credential')})
+ it('reads only an exact saved request and retains unknown identity as not found',async()=>{d.rpc.mockResolvedValue({data:{state:'not_found'},error:null});expect((await recovery(new Request(`http://local/api/properties/creation?requestId=${id}`))).status).toBe(404);expect(d.rpc).toHaveBeenCalledWith('read_property_creation',{p_id:id,p_actor_id:'authenticated-actor'});d.rpc.mockClear();expect((await recovery(new Request(`http://local/api/properties/creation?requestId=${id}&actorId=${source}`))).status).toBe(400);expect(d.rpc).not.toHaveBeenCalled()})
+ it('previews only selected template sections through the current actor',async()=>{d.rpc.mockResolvedValue({data:{state:'ready'},error:null});const r=await template(new Request('http://local/api/properties/creation/template',{method:'POST',body:JSON.stringify({sourceId:source,flags})}));expect(r.status).toBe(200);expect(d.rpc).toHaveBeenCalledWith('read_property_creation_template',{p_source_property:source,p_actor_id:'authenticated-actor',p_flags:flags})})
 })

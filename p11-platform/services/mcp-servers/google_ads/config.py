@@ -38,6 +38,7 @@ def get_google_ads_config() -> dict:
         "client_id": GOOGLE_ADS_CLIENT_ID,
         "client_secret": GOOGLE_ADS_CLIENT_SECRET,
         "use_proto_plus": True,
+        **({"login_customer_id": GOOGLE_ADS_CUSTOMER_ID} if GOOGLE_ADS_CUSTOMER_ID else {}),
     }
 
 def is_configured() -> bool:

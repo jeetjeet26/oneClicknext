@@ -130,7 +130,7 @@ export function createSiteForgeHandlerRegistry(
     if (!payload.propertyId || !payload.leadId || !payload.lead) {
       throw new PermanentOutboxError('CRM lead sync payload is incomplete')
     }
-    const result = await syncLeadToCRM(payload.propertyId, payload.leadId, payload.lead)
+    const result = await syncLeadToCRM(payload.propertyId, payload.leadId, payload.lead, {origin:'siteforge',requestKey:'siteforge/'+context.idempotencyKey})
     if (!result.success) throw new Error(result.error || 'CRM lead sync failed')
     return {
       provider: 'crm',
@@ -170,6 +170,7 @@ export function createSiteForgeHandlerRegistry(
       throw new PermanentOutboxError('LeadPulse engagement payload is incomplete')
     }
     await trackEngagementEvent({
+      origin: 'siteforge',
       propertyId: payload.propertyId,
       leadId: payload.leadId,
       eventType: payload.eventType,

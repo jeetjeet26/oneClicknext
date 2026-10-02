@@ -32,7 +32,7 @@ describe('brandforge analyze route', () => {
     const { POST } = await import('./route')
     const response = await POST(
       makeJsonRequest('http://localhost/api/brandforge/analyze', {
-        body: { propertyId: 'property-1', address: '123 Main St' },
+        body: { propertyId: '33333333-3333-3333-3333-333333333333', requestId:'55555555-5555-4555-8555-555555555555', mode:'saved' },
       })
     )
 
@@ -46,7 +46,7 @@ describe('brandforge analyze route', () => {
     const { POST } = await import('./route')
     const response = await POST(
       makeJsonRequest('http://localhost/api/brandforge/analyze', {
-        body: { propertyId: 'property-1', address: '123 Main St' },
+        body: { propertyId: '33333333-3333-3333-3333-333333333333', requestId:'55555555-5555-4555-8555-555555555555', mode:'saved' },
       })
     )
 

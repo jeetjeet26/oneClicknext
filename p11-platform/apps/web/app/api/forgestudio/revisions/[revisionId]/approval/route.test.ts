@@ -33,7 +33,7 @@ function makeRequest(body: unknown): NextRequest {
   return new Request(`http://localhost/api/forgestudio/revisions/${REVISION_ID}/approval`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
+    body: JSON.stringify({requestId:REVISION_ID,contentHash:'a'.repeat(64),...(body as Record<string,unknown>)}),
   }) as NextRequest
 }
 
@@ -119,6 +119,8 @@ describe('forgestudio revision approval route', () => {
       revision: { id: REVISION_ID, approval_status: 'approved' },
     })
     expect(setRevisionApprovalMock).toHaveBeenCalledWith({
+      requestId: REVISION_ID,
+      contentHash: 'a'.repeat(64),
       revisionId: REVISION_ID,
       decision: 'approved',
       reviewerId: 'user-1',

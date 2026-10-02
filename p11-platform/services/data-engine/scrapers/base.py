@@ -12,6 +12,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime
 
 import httpx
+from utils.public_http import public_request
 from bs4 import BeautifulSoup
 from fake_useragent import UserAgent
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
@@ -180,7 +181,7 @@ class BaseScraper(ABC):
         self._rate_limit()
         
         logger.info(f"Fetching: {url}")
-        response = self.client.get(url, headers=self._get_headers())
+        response = public_request(url, headers=self._get_headers(), timeout=self.TIMEOUT)
         response.raise_for_status()
         
         return response.text

@@ -1,6 +1,9 @@
+vi.mock('@/utils/services/luma-public-read',()=>({admitLumaRead:vi.fn().mockResolvedValue(null)}))
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NextRequest } from 'next/server'
 
+const bookTourMock = vi.fn()
+vi.mock('@/utils/services/lumaleasing-tour-booking',()=>({bookLumaLeasingTour:bookTourMock}))
 const createServiceClientMock = vi.fn()
 const generateTourCalendarResponseMock = vi.fn()
 const sendEmailMock = vi.fn()
@@ -71,6 +74,7 @@ vi.mock('@/utils/services/crm-sync', () => ({
 describe('LumaLeasing tours route', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    bookTourMock.mockResolvedValue({ok:true,duplicate:false,booking:{id:'booking-1',scheduled_date:'2026-03-21',scheduled_time:'10:00',status:'confirmed'},calendar:{google:'google-link',outlook:'outlook-link',office365:'office-link',yahoo:'yahoo-link',icsDownload:'ics-link'},message:'Your tour is reserved. Calendar and email confirmation are pending.'})
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-03-01T12:00:00.000Z'))
     getRateLimitKeyMock.mockReturnValue('tour-key')
@@ -397,25 +401,13 @@ describe('LumaLeasing tours route', () => {
       },
     })
 
-    expect(startWorkflowMock).toHaveBeenCalledWith(
-      'lead-1',
-      'property-1',
-      'lead_created'
-    )
-    expect(trackEngagementEventMock).toHaveBeenCalledWith({
-      leadId: 'lead-1',
-      propertyId: 'property-1',
-      eventType: 'tour_scheduled',
-      metadata: {
-        booking_id: 'booking-1',
-        source: 'lumaleasing_tour_widget',
-      },
-    })
-    expect(sendEmailMock).toHaveBeenCalled()
-    expect(createCalendarEventMock).toHaveBeenCalled()
+    expect(startWorkflowMock).not.toHaveBeenCalled()
+    expect(trackEngagementEventMock).not.toHaveBeenCalled()
+    expect(sendEmailMock).not.toHaveBeenCalled()
+    expect(createCalendarEventMock).not.toHaveBeenCalled()
   })
 
-  it('still confirms a booking when Google Calendar event creation fails', async () => {
+  it('returns a saved reservation with pending confirmation before any calendar transport', async () => {
     const calendarEventsInsert = vi.fn().mockResolvedValue({ error: null })
     const configSingle = vi.fn().mockResolvedValue({
       data: {
@@ -560,12 +552,13 @@ describe('LumaLeasing tours route', () => {
         status: 'confirmed',
       },
     })
-    expect(createCalendarEventMock).toHaveBeenCalled()
+    expect(createCalendarEventMock).not.toHaveBeenCalled()
     expect(calendarEventsInsert).not.toHaveBeenCalled()
-    expect(sendEmailMock).toHaveBeenCalled()
+    expect(sendEmailMock).not.toHaveBeenCalled()
   })
 
   it('returns the existing booking instead of creating a duplicate on retry', async () => {
+    bookTourMock.mockResolvedValueOnce({ok:true,duplicate:true,booking:{id:'booking-existing',scheduled_date:'2026-03-21',scheduled_time:'10:00',status:'confirmed'},calendar:{},message:'Your existing tour is reserved.'})
     const leadInsertMock = vi.fn()
     const bookingInsertMock = vi.fn()
     const leadActivitiesInsertMock = vi.fn()
@@ -713,14 +706,7 @@ describe('LumaLeasing tours route', () => {
         update: expect.objectContaining({ status: 'tour_booked' }),
       })
     )
-    expect(syncLeadToCRMMock).toHaveBeenCalledWith(
-      'property-1',
-      'lead-1',
-      expect.objectContaining({
-        status: 'tour_booked',
-        notes: expect.stringContaining('Tour requested'),
-      })
-    )
+    expect(syncLeadToCRMMock).not.toHaveBeenCalled()
     expect(startWorkflowMock).not.toHaveBeenCalled()
   })
 
@@ -893,3 +879,13 @@ describe('LumaLeasing tours route', () => {
     })
   })
 })
+
+// Route cases exercise validation and user-facing behavior. Durable admission,
+// atomic message writes and budgets have their own contract/real-DB suites.
+vi.mock('@/utils/services/luma-requests', () => ({
+  withLumaRequest: (req: NextRequest,_operation:string,handler:(req:NextRequest)=>Promise<Response>)=>handler(req),
+  saveLumaMessage: vi.fn().mockResolvedValue({saved:true,human:false,id:'message-saved'}),
+}))
+vi.mock('@/utils/services/luma-ai-budget', () => ({
+  budgetedLumaCompletion: (openai:{chat:{completions:{create:(params:unknown)=>unknown}}},_db:unknown,_propertyId:string,params:unknown)=>openai.chat.completions.create(params),
+}))

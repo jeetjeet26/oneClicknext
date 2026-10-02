@@ -1,3 +1,4 @@
+vi.mock('@/utils/services/safe-public-fetch',()=>({safePublicFetch:async (url:string,options?:{method?:string;headers?:Record<string,string>})=>(await fetch(url,options)).clone()}))
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { auditPublicSite } from './public-site-audit'
 

@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createServiceClient } from '@/utils/supabase/admin'
+import {authorizationOperation,closeAuthorizationOutcome,type AuthorizationFailure,type AuthorizationResult} from '@/utils/services/integration-authorization'
 import {
-  verifySignedIntegrationOAuthState,
+  verifySignedIntegrationOAuthState, INTEGRATION_STATE_TTL_MS, type IntegrationOAuthStatePayload,
 } from '@/utils/services/integration-oauth-state'
 import {
   getMicrosoftTokenUrl,
   getProviderClientId,
   getProviderClientSecret,
-  getProviderScopes,
   GOOGLE_TOKEN_URL,
   MICROSOFT_GRAPH_API,
   normalizeProvider,
@@ -17,12 +16,7 @@ import { getAppBaseUrl } from '@/utils/services/runtime-config'
 import { getCalendarConfig, ensureCalendarWatch } from '@/utils/services/google-calendar'
 import { normalizeTimezoneToIana } from '@/utils/services/timezone'
 
-type ProviderTokenResponse = {
-  access_token?: string
-  refresh_token?: string
-  expires_in?: number
-  scope?: string
-}
+import {confirmOAuthGrant, OAuthGrantError} from '@/utils/services/integration-oauth-grant'
 
 type ProviderAccount = {
   accountEmail: string
@@ -59,7 +53,7 @@ async function exchangeCode(params: {
   provider: 'google' | 'microsoft'
   code: string
   redirectUri: string
-}): Promise<ProviderTokenResponse> {
+}): Promise<unknown> {
   const clientId = getProviderClientId(params.provider)
   const clientSecret = getProviderClientSecret(params.provider)
   if (!clientId || !clientSecret) {
@@ -70,6 +64,7 @@ async function exchangeCode(params: {
     params.provider === 'google' ? GOOGLE_TOKEN_URL : getMicrosoftTokenUrl(),
     {
       method: 'POST',
+      signal: AbortSignal.timeout(20_000),
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
         code: params.code,
@@ -82,10 +77,10 @@ async function exchangeCode(params: {
   )
 
   if (!tokenResponse.ok) {
-    throw new Error(`Token exchange failed: ${tokenResponse.status}`)
+    throw new Error('provider_exchange_failed')
   }
 
-  return tokenResponse.json()
+  try { return await tokenResponse.json() } catch { throw new OAuthGrantError('invalid_token_response') }
 }
 
 async function fetchGoogleAccount(
@@ -93,7 +88,7 @@ async function fetchGoogleAccount(
   capabilities: string[]
 ): Promise<ProviderAccount> {
   const userinfoResponse = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
-    headers: { Authorization: `Bearer ${accessToken}` },
+    headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(20_000),
   })
   if (!userinfoResponse.ok) {
     throw new Error(`Google userinfo failed: ${userinfoResponse.status}`)
@@ -110,9 +105,10 @@ async function fetchGoogleAccount(
 
   let timezone: string | null = null
   if (capabilities.includes('calendar')) {
+   try {
     const timezoneResponse = await fetch(
       'https://www.googleapis.com/calendar/v3/users/me/settings/timezone',
-      { headers: { Authorization: `Bearer ${accessToken}` } }
+      { headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(20_000) }
     )
     if (timezoneResponse.ok) {
       const timezoneData = await timezoneResponse.json()
@@ -120,6 +116,7 @@ async function fetchGoogleAccount(
         typeof timezoneData?.value === 'string' ? timezoneData.value : null
       )
     }
+   } catch { /* Keep missing timezone explicit for operator setup. */ }
   }
 
   return {
@@ -134,7 +131,7 @@ async function fetchGoogleAccount(
 async function fetchMicrosoftAccount(accessToken: string): Promise<ProviderAccount> {
   const meResponse = await fetch(
     `${MICROSOFT_GRAPH_API}/me?$select=id,mail,userPrincipalName,displayName`,
-    { headers: { Authorization: `Bearer ${accessToken}` } }
+    { headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(20_000) }
   )
   if (!meResponse.ok) {
     throw new Error(`Microsoft userinfo failed: ${meResponse.status}`)
@@ -151,8 +148,9 @@ async function fetchMicrosoftAccount(accessToken: string): Promise<ProviderAccou
   }
 
   let timezone: string | null = null
+  try {
   const settingsResponse = await fetch(`${MICROSOFT_GRAPH_API}/me/mailboxSettings`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
+    headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(20_000),
   })
   if (settingsResponse.ok) {
     const settings = await settingsResponse.json()
@@ -163,10 +161,12 @@ async function fetchMicrosoftAccount(accessToken: string): Promise<ProviderAccou
     )
   } else {
     console.error(
-      '[IntegrationOAuth] mailboxSettings fetch failed; falling back to default timezone:',
+      '[IntegrationOAuth] mailboxSettings unavailable; timezone setup may be required:',
       settingsResponse.status
     )
   }
+
+  } catch { /* Keep missing timezone explicit for operator setup. */ }
 
   return {
     accountEmail,
@@ -177,260 +177,75 @@ async function fetchMicrosoftAccount(accessToken: string): Promise<ProviderAccou
   }
 }
 
-async function assertDashboardAccess(profileId: string, propertyId: string) {
-  const supabase = createServiceClient()
-  const [{ data: profile }, { data: property }] = await Promise.all([
-    supabase.from('profiles').select('org_id').eq('id', profileId).single(),
-    supabase.from('properties').select('org_id').eq('id', propertyId).single(),
-  ])
-
-  return Boolean(profile?.org_id && property?.org_id && profile.org_id === property.org_id)
-}
-
-async function storeCalendarConnection(params: {
-  propertyId: string
-  profileId: string | null
-  provider: 'google' | 'microsoft'
-  account: ProviderAccount
-  tokens: Required<Pick<ProviderTokenResponse, 'access_token' | 'refresh_token' | 'expires_in'>>
-  scopes: string[]
-  authSource: 'dashboard' | 'external_invite'
-  inviteId?: string
-}) {
-  const supabase = createServiceClient()
-  const tokenExpiresAt = new Date(Date.now() + params.tokens.expires_in * 1000).toISOString()
-  const payload = {
-    profile_id: params.profileId,
-    property_id: params.propertyId,
-    provider: params.provider,
-    google_email: params.account.accountEmail,
-    account_email: params.account.accountEmail,
-    provider_subject: params.account.providerSubject,
-    tenant_id: params.account.tenantId,
-    scopes: params.scopes,
-    auth_source: params.authSource,
-    authorized_by_profile_id: params.profileId,
-    external_invite_id: params.inviteId || null,
-    access_token: params.tokens.access_token,
-    refresh_token: params.tokens.refresh_token,
-    token_expires_at: tokenExpiresAt,
-    timezone: params.account.timezone || 'America/Chicago',
-    sync_enabled: true,
-    token_status: 'healthy',
-    last_health_check_at: new Date().toISOString(),
-    health_check_error: null,
-    provider_metadata: JSON.parse(JSON.stringify(params.account.metadata)),
-    updated_at: new Date().toISOString(),
-  }
-
-  const { data: existing } = await supabase
-    .from('agent_calendars')
-    .select('id')
-    .eq('property_id', params.propertyId)
-    .eq('provider', params.provider)
-    .maybeSingle()
-
-  if (existing) {
-    const { error } = await supabase.from('agent_calendars').update(payload).eq('id', existing.id)
-    if (error) throw error
-    return existing.id
-  }
-
-  const { data, error } = await supabase
-    .from('agent_calendars')
-    .insert(payload)
-    .select('id')
-    .single()
-  if (error || !data) throw error || new Error('Failed to store calendar connection')
-  return data.id
-}
-
-async function storeEmailConnection(params: {
-  propertyId: string
-  profileId: string | null
-  provider: 'google' | 'microsoft'
-  account: ProviderAccount
-  tokens: Required<Pick<ProviderTokenResponse, 'access_token' | 'refresh_token' | 'expires_in'>>
-  scopes: string[]
-  authSource: 'dashboard' | 'external_invite'
-  inviteId?: string
-}) {
-  const supabase = createServiceClient()
-  const tokenExpiresAt = new Date(Date.now() + params.tokens.expires_in * 1000).toISOString()
-  const payload = {
-    profile_id: params.profileId,
-    property_id: params.propertyId,
-    provider: params.provider,
-    google_email: params.account.accountEmail,
-    account_email: params.account.accountEmail,
-    provider_subject: params.account.providerSubject,
-    tenant_id: params.account.tenantId,
-    scopes: params.scopes,
-    auth_source: params.authSource,
-    authorized_by_profile_id: params.profileId,
-    external_invite_id: params.inviteId || null,
-    access_token: params.tokens.access_token,
-    refresh_token: params.tokens.refresh_token,
-    token_expires_at: tokenExpiresAt,
-    sync_enabled: true,
-    token_status: 'healthy',
-    last_health_check_at: new Date().toISOString(),
-    health_check_error: null,
-    provider_metadata: JSON.parse(JSON.stringify(params.account.metadata)),
-    updated_at: new Date().toISOString(),
-  }
-
-  const { data: existing } = await supabase
-    .from('email_configurations')
-    .select('id')
-    .eq('property_id', params.propertyId)
-    .eq('provider', params.provider)
-    .maybeSingle()
-
-  if (existing) {
-    const { error } = await supabase.from('email_configurations').update(payload).eq('id', existing.id)
-    if (error) throw error
-    return existing.id
-  }
-
-  const { data, error } = await supabase
-    .from('email_configurations')
-    .insert(payload)
-    .select('id')
-    .single()
-  if (error || !data) throw error || new Error('Failed to store email connection')
-
-  await supabase
-    .from('lumaleasing_config')
-    .update({ email_enabled: true, email_configuration_id: data.id, updated_at: new Date().toISOString() })
-    .eq('property_id', params.propertyId)
-
-  return data.id
-}
-
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ provider: string }> }
 ) {
   const ctx = createRequestContext(request, '/api/lumaleasing/integrations/oauth/[provider]/callback')
   ctx.logStart()
-
+  let verified: IntegrationOAuthStatePayload | undefined
+  let claimToken: string | undefined
+  let stage: 'state' | 'claim' | 'exchange' | 'account' | 'save' = 'state'
+  const redirectResult=(saved:AuthorizationResult)=>resultRedirect(ctx.responseHeaders, {
+    success: verified!.capabilities.includes('calendar') ? (saved.timezoneSetupRequired ? 'calendar_setup_required' : 'calendar_connected') : 'email_connected',
+    provider:verified!.provider,source:verified!.authSource,propertyId:verified!.propertyId,
+  })
+  const failure=(reason:string)=>resultRedirect(ctx.responseHeaders,{
+    error:reason,source:verified?.authSource||'dashboard',...(verified?{propertyId:verified.propertyId}:{}),
+  })
+  const close=async(reason:AuthorizationFailure)=>{
+    try {
+      const outcome=await closeAuthorizationOutcome(verified!,reason,claimToken)
+      return outcome.state==='replayed'?redirectResult(outcome):failure(String(outcome.state))
+    } catch { return failure('authorization_outcome_unconfirmed') }
+  }
   try {
     const { provider: providerParam } = await params
-    const provider = normalizeProvider(providerParam)
-    const { searchParams } = new URL(request.url)
-    const code = searchParams.get('code')
-    const state = searchParams.get('state')
-    const providerError = searchParams.get('error')
+    const provider=normalizeProvider(providerParam)
+    const {searchParams}=new URL(request.url)
+    const state=searchParams.get('state')
+    if(!provider||!state)return failure('invalid_callback')
+    // Expired signed state may close its saved request. It can never exchange a code.
+    const signed=verifySignedIntegrationOAuthState(state,Date.now(),{outcomeOnly:true})
+    if(signed.provider!==provider)return failure('provider_mismatch')
+    verified=signed
+    if(Date.now()-verified.timestamp>INTEGRATION_STATE_TTL_MS)return close('expired_state')
+    const providerError=searchParams.get('error')
+    if(providerError)return close(providerError==='access_denied'?'authorization_denied':'provider_error')
+    const code=searchParams.get('code')
+    if(!code)return close('invalid_callback')
 
-    if (!provider || providerError || !code || !state) {
-      ctx.logSuccess(307, { reason: providerError || 'invalid_callback', provider })
-      return resultRedirect(ctx.responseHeaders, {
-        error: providerError || 'invalid_callback',
-        source: 'dashboard',
-      })
-    }
-
-    const verifiedState = verifySignedIntegrationOAuthState(state)
-    if (verifiedState.provider !== provider) {
-      ctx.logSuccess(307, { reason: 'provider_mismatch', provider })
-      return resultRedirect(ctx.responseHeaders, {
-        error: 'provider_mismatch',
-        source: verifiedState.authSource,
-      })
-    }
-
-    if (verifiedState.authSource === 'dashboard') {
-      if (!verifiedState.profileId || !(await assertDashboardAccess(verifiedState.profileId, verifiedState.propertyId))) {
-        ctx.logSuccess(307, { reason: 'state_access_invalid', propertyId: verifiedState.propertyId })
-        return resultRedirect(ctx.responseHeaders, {
-          error: 'state_access_invalid',
-          source: 'dashboard',
-        })
-      }
-    }
-
-    const requestOrigin = new URL(request.url).origin
-    const redirectUri = `${requestOrigin}/api/lumaleasing/integrations/oauth/${provider}/callback`
-    const tokens = await exchangeCode({ provider, code, redirectUri })
-    if (!tokens.access_token || !tokens.refresh_token || typeof tokens.expires_in !== 'number') {
-      throw new Error('OAuth token response missing required tokens')
-    }
-
-    const scopes = tokens.scope?.split(' ').filter(Boolean) ||
-      getProviderScopes(provider, verifiedState.capabilities)
-    const account = provider === 'google'
-      ? await fetchGoogleAccount(tokens.access_token, verifiedState.capabilities)
-      : await fetchMicrosoftAccount(tokens.access_token)
-
-    let calendarId: string | null = null
-    let emailConfigId: string | null = null
-    const profileId = verifiedState.profileId || null
-    const common = {
-      propertyId: verifiedState.propertyId,
-      profileId,
-      provider,
-      account,
-      tokens: {
-        access_token: tokens.access_token,
-        refresh_token: tokens.refresh_token,
-        expires_in: tokens.expires_in,
-      },
-      scopes,
-      authSource: verifiedState.authSource,
-      inviteId: verifiedState.inviteId,
-    }
-
-    if (verifiedState.capabilities.includes('calendar')) {
-      calendarId = await storeCalendarConnection(common)
-      if (provider === 'google') {
-        try {
-          const calendarConfig = await getCalendarConfig(verifiedState.propertyId)
-          if (calendarConfig) await ensureCalendarWatch(calendarConfig)
-        } catch (watchError) {
-          console.error('[IntegrationOAuth] Calendar watch setup failed:', watchError)
-        }
-      }
-    }
-
-    if (verifiedState.capabilities.includes('email')) {
-      emailConfigId = await storeEmailConnection(common)
-    }
-
-    if (verifiedState.inviteId) {
-      const supabase = createServiceClient()
-      await supabase
-        .from('integration_auth_invites')
-        .update({
-          consumed_at: new Date().toISOString(),
-          consumed_calendar_id: calendarId,
-          consumed_email_configuration_id: emailConfigId,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', verifiedState.inviteId)
-        .eq('token_hash', verifiedState.tokenHash || '')
-    }
-
-    ctx.logSuccess(307, {
-      propertyId: verifiedState.propertyId,
-      provider,
-      capabilities: verifiedState.capabilities,
-      accountEmail: account.accountEmail,
+    stage='claim'
+    const claim=await authorizationOperation('claim',verified)
+    if(claim.state==='replayed')return redirectResult(claim)
+    if(claim.state!=='claimed')return failure(String(claim.state))
+    claimToken=claim.claimToken as string
+    stage='exchange'
+    const tokens=confirmOAuthGrant(provider,verified.capabilities,
+      await exchangeCode({provider,code,redirectUri:verified.redirectUri!}),verified.requestedScopes)
+    stage='account'
+    const account=provider==='google'?await fetchGoogleAccount(tokens.access_token,verified.capabilities):await fetchMicrosoftAccount(tokens.access_token)
+    if(!account.providerSubject)throw new Error('account_unconfirmed')
+    stage='save'
+    const saved=await authorizationOperation('finish',verified,{
+      accessToken:tokens.access_token,refreshToken:tokens.refresh_token,
+      expiresAt:new Date(Date.now()+tokens.expires_in*1000).toISOString(),
+      accountEmail:account.accountEmail,subject:account.providerSubject,timezone:account.timezone,
+      scopes:tokens.scopes,scopeEvidence:tokens.scopeEvidence,
     })
-
-    return resultRedirect(ctx.responseHeaders, {
-      success: verifiedState.capabilities.includes('calendar') ? 'calendar_connected' : 'email_connected',
-      provider,
-      email: account.accountEmail,
-      source: verifiedState.authSource,
-    })
-  } catch (error) {
-    ctx.logError(307, error, { operation: 'integration_oauth_callback' })
-    return resultRedirect(ctx.responseHeaders, {
-      error: error instanceof Error && error.message === 'OAuth state has expired'
-        ? 'expired_state'
-        : 'callback_failed',
-      source: 'dashboard',
-    })
+    if(!['saved','replayed'].includes(String(saved.state)))return failure(String(saved.state))
+    if(provider==='google'&&saved.calendarId&&!saved.timezoneSetupRequired){
+      try {const config=await getCalendarConfig(verified.propertyId);if(config)await ensureCalendarWatch(config)}
+      catch {console.error('[IntegrationOAuth] Calendar watch setup needs attention')}
+    }
+    return redirectResult(saved)
+  } catch(error) {
+    const reason:AuthorizationFailure=error instanceof OAuthGrantError?error.code:
+      stage==='account'?'account_unconfirmed':stage==='save'?'authorization_save_unconfirmed':
+      stage==='exchange'&&error instanceof Error&&error.message==='provider_exchange_failed'?'provider_exchange_failed':
+      stage==='state'?'invalid_callback':'authorization_unconfirmed'
+    ctx.logError(307,new Error(reason),{operation:'integration_oauth_callback'})
+    // Uncertain claims have no owner token: leave them for expiry, never re-exchange.
+    return verified&&claimToken?close(reason):failure(reason)
   }
 }

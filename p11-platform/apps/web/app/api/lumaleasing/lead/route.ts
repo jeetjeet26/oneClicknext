@@ -1,13 +1,13 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { createServiceClient } from '@/utils/supabase/admin';
-import { leadLimiter, getRateLimitKey, rateLimitHeaders } from '@/utils/services/rate-limiter';
-import { buildCorsHeaders, corsPreflightResponse, serverError, rateLimited, badRequest } from '@/utils/services/api-helpers';
-import { validateBody, leadCaptureSchema } from '@/utils/services/validation';
-import { auditLog, getRequestIp } from '@/utils/services/audit-logger';
-import { createRequestContext } from '@/utils/services/request-context';
-import { syncLeadToCRM } from '@/utils/services/crm-sync';
-import { startWorkflow } from '@/utils/services/workflow-processor';
+import { badRequest,buildCorsHeaders,corsPreflightResponse,rateLimited,serverError } from '@/utils/services/api-helpers';
+import { auditLog,getRequestIp } from '@/utils/services/audit-logger';
 import { upsertLeadByContact } from '@/utils/services/lead-upsert';
+import { withLumaRequest,linkLumaVisitorLead } from '@/utils/services/luma-requests';
+import { getRateLimitKey,leadLimiter,rateLimitHeaders } from '@/utils/services/rate-limiter';
+import { createRequestContext } from '@/utils/services/request-context';
+import { leadCaptureSchema,validateBody } from '@/utils/services/validation';
+import { isWidgetSessionExpired } from '@/utils/services/widget-session';
+import { createServiceClient } from '@/utils/supabase/admin';
+import { NextRequest,NextResponse } from 'next/server';
 
 // Handle CORS preflight — origin-restricted in production
 export async function OPTIONS(req: NextRequest) {
@@ -17,6 +17,10 @@ export async function OPTIONS(req: NextRequest) {
 
 // POST - Capture lead information
 export async function POST(req: NextRequest) {
+  return withLumaRequest(req, 'lead', handlePost)
+}
+
+async function handlePost(req: NextRequest) {
   const ctx = createRequestContext(req, '/api/lumaleasing/lead')
   ctx.logStart()
   const origin = req.headers.get('origin')
@@ -103,28 +107,33 @@ export async function POST(req: NextRequest) {
     const propertyId = config.property_id
 
     if (sessionId) {
-      const { data: session } = await supabase
+      const { data: session, error: sessionError } = await supabase
         .from('widget_sessions')
-        .select('id')
+        .select('*')
         .eq('id', sessionId)
         .eq('property_id', propertyId)
         .maybeSingle()
 
+      if (sessionError) throw sessionError;
       if (!session) {
         ctx.logSuccess(400, { reason: 'invalid_session_id', sessionId, propertyId })
         return badRequest('Invalid sessionId for this property', responseHeaders)
       }
+      if (isWidgetSessionExpired(session)) {
+        return NextResponse.json({ error: 'Session expired', code: 'session_expired' }, { status: 410, headers: responseHeaders });
+      }
     }
 
     if (conversationId) {
-      const { data: conversation } = await supabase
+      const { data: conversation, error: conversationError } = await supabase
         .from('conversations')
-        .select('id')
+        .select('id, widget_session_id')
         .eq('id', conversationId)
         .eq('property_id', propertyId)
         .maybeSingle()
 
-      if (!conversation) {
+      if (conversationError) throw conversationError;
+      if (!conversation || (sessionId && conversation.widget_session_id !== sessionId)) {
         ctx.logSuccess(400, { reason: 'invalid_conversation_id', conversationId, propertyId })
         return badRequest('Invalid conversationId for this property', responseHeaders)
       }
@@ -185,84 +194,16 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    if (leadId) {
-      // CRM sync — mirrors `/api/lumaleasing/chat` so leads captured via the
-      // widget lead form arrive in the connected CRM the same way as leads
-      // discovered during a chat exchange. Repeat captures are re-synced so
-      // the connected CRM receives the latest contact and intent details.
-      try {
-        const crmNoteParts = [];
-        if (moveInDate) crmNoteParts.push(`Desired move-in: ${moveInDate}`);
-        if (bedroomPreference) crmNoteParts.push(`Bedroom preference: ${bedroomPreference}`);
-        if (notes) crmNoteParts.push(notes);
+    // CRM handoff and configured workflows were saved atomically with the lead.
 
-        const crmResult = await syncLeadToCRM(propertyId, leadId, {
-          first_name: firstName || undefined,
-          last_name: lastName || undefined,
-          email: email || undefined,
-          phone: phone || undefined,
-          source: 'LumaLeasing Widget',
-          status: leadResult.lead.status || undefined,
-          move_in_date: moveInDate || undefined,
-          bedrooms: bedroomPreference || undefined,
-          notes: crmNoteParts.length > 0 ? crmNoteParts.join('. ') : undefined,
-        });
-        if (!crmResult.success) {
-          console.warn(
-            '[LumaLeasing Lead] CRM sync returned non-success:',
-            crmResult.action
-          );
-        }
-      } catch (crmError) {
-        console.error(
-          '[LumaLeasing Lead] CRM sync failed (non-blocking):',
-          crmError
-        );
-      }
-
-      if (isNewLead) {
-        // Repeat captures update the current lead without restarting nurture.
-        startWorkflow(leadId, propertyId, 'lead_created').catch((workflowError) =>
-          console.error(
-            '[LumaLeasing Lead] Workflow start failed (non-blocking):',
-            workflowError
-          )
-        )
-      }
-    }
-
-    // Update session with lead
-    if (sessionId && leadId) {
-      await supabase
-        .from('widget_sessions')
-        .update({
-          lead_id: leadId,
-          converted_at: new Date().toISOString()
-        })
-        .eq('id', sessionId)
-        .eq('property_id', propertyId);
-
-      // Also update any conversations linked to this session
-      await supabase
-        .from('conversations')
-        .update({ lead_id: leadId })
-        .eq('widget_session_id', sessionId)
-        .eq('property_id', propertyId);
-    }
-
-    // Update specific conversation if provided
-    if (conversationId && leadId) {
-      await supabase
-        .from('conversations')
-        .update({ lead_id: leadId })
-        .eq('id', conversationId)
-        .eq('property_id', propertyId);
+    if (leadId && (sessionId || conversationId)) {
+      await linkLumaVisitorLead(supabase,propertyId,leadId,sessionId||null,conversationId||null);
     }
 
     return NextResponse.json({
       success: true,
       leadId,
-      message: `Thanks${firstName ? `, ${firstName}` : ''}! We've saved your information and will be in touch soon.`,
+      message: `Thanks${firstName ? `, ${firstName}` : ''}! We've saved your information for the property team.`,
     }, { headers: responseHeaders });
 
   } catch (error) {

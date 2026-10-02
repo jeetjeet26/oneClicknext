@@ -1,0 +1,9 @@
+# MCP SDK
+mcp>=1.28,<2
+# Google Ads
+google-ads==33.0.0
+# Utilities
+python-dotenv==1.2.3
+pydantic==2.13.5
+supabase==2.31.0
+httpx==0.28.1

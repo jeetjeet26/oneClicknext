@@ -11,8 +11,10 @@ def normalize_google_data(raw_data: List[Dict[str, Any]]) -> pd.DataFrame:
     df = pd.DataFrame(raw_data)
     
     normalized = pd.DataFrame()
-    normalized['date'] = pd.to_datetime(df.get('date', ''))
+    normalized['date'] = pd.to_datetime(df.get('date', '')).dt.strftime('%Y-%m-%d')
     normalized['channel_id'] = 'google_ads'
+    normalized['source_account_id'] = df['source_account_id']
+    normalized['currency_code'] = df['currency_code']
     normalized['campaign_name'] = df.get('campaign.name', 'Unknown')
     normalized['campaign_id'] = df.get('campaign.id', '')
     

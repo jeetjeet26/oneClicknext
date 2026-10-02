@@ -1,3 +1,4 @@
+import { isVerifiedHealthCheck } from './health-state'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database, Json } from '@/types/supabase'
 import { createServiceClient } from '@/utils/supabase/admin'
@@ -48,9 +49,9 @@ async function verifyRestore(
       contentHash: drill.expected_content_hash,
       url: website.production_url,
     },
-    { trigger: 'restore' }
+    { trigger: 'restore', service: client }
   )
-  if (!health.checks.identity.passed || !health.checks.reachability.passed) {
+  if (!isVerifiedHealthCheck(health.checks.identity) || !isVerifiedHealthCheck(health.checks.reachability)) {
     throw new Error(
       'Restored production failed identity or reachability verification'
     )
@@ -75,10 +76,14 @@ export async function processSiteForgeRestoreDrills(
   const results: Array<{
     drillId: string
     orgId: string
+    websiteId: string
+    propertyId: string
+    observedAt: string
     status: 'succeeded' | 'failed' | 'awaiting_operator'
     error?: string
   }> = []
   for (const drill of drills || []) {
+    const observedAt = new Date().toISOString()
     const existingReport = asRecord(drill.verification_report)
     if (drill.status === 'queued') {
       const requestedAt = new Date().toISOString()
@@ -107,19 +112,20 @@ export async function processSiteForgeRestoreDrills(
         results.push({
           drillId: drill.id,
           orgId: drill.org_id,
+          websiteId: drill.website_id, propertyId: drill.property_id, observedAt,
           status: 'awaiting_operator',
         })
       }
       continue
     }
     if (
-      drill.status === 'verifying' &&
-      (existingReport.restoreCompleted !== true ||
-        !drill.provider_operation_id)
+      existingReport.restoreCompleted !== true ||
+        !drill.provider_operation_id
     ) {
       results.push({
         drillId: drill.id,
         orgId: drill.org_id,
+          websiteId: drill.website_id, propertyId: drill.property_id, observedAt,
         status: 'awaiting_operator',
       })
       continue
@@ -128,7 +134,7 @@ export async function processSiteForgeRestoreDrills(
     try {
       const health = await verifyRestore(drill, client)
       const completedAt = new Date().toISOString()
-      const { error: completeError } = await client
+      const { data: completed, error: completeError } = await client
         .from('siteforge_restore_drills')
         .update({
           status: 'succeeded',
@@ -146,20 +152,23 @@ export async function processSiteForgeRestoreDrills(
         })
         .eq('id', drill.id)
         .eq('status', 'verifying')
-      if (completeError) {
+        .eq('provider_operation_id', drill.provider_operation_id)
+        .select('id').maybeSingle()
+      if (completeError || !completed) {
         throw new Error(
-          `Failed to complete restore drill: ${completeError.message}`
+          `Failed to complete restore drill: ${completeError?.message || 'The verification row changed'}`
         )
       }
       results.push({
         drillId: drill.id,
         orgId: drill.org_id,
+          websiteId: drill.website_id, propertyId: drill.property_id, observedAt,
         status: 'succeeded',
       })
     } catch (cause) {
       const message =
         cause instanceof Error ? cause.message : 'SiteForge restore drill failed'
-      await client
+      const failedSave = await client
         .from('siteforge_restore_drills')
         .update({
           status: 'failed',
@@ -171,11 +180,18 @@ export async function processSiteForgeRestoreDrills(
           completed_at: new Date().toISOString(),
         })
         .eq('id', drill.id)
+        .eq('status', 'verifying')
+        .eq('provider_operation_id', drill.provider_operation_id)
+        .select('id').maybeSingle()
+      const recordedError = failedSave.error || !failedSave.data
+        ? `${message}. The failure record was not confirmed; inspect the current drill before retrying.`
+        : message
       results.push({
         drillId: drill.id,
         orgId: drill.org_id,
+          websiteId: drill.website_id, propertyId: drill.property_id, observedAt,
         status: 'failed',
-        error: message,
+        error: recordedError,
       })
     }
   }

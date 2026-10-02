@@ -1,5 +1,7 @@
 'use client'
 
+import { formatConversions, campaignIdentity } from '@/utils/analytics/marketing-fact'
+
 import { useState, useMemo } from 'react'
 import { 
   ChevronUp, 
@@ -16,15 +18,17 @@ import { getMarketingChannelLabel, normalizeMarketingChannelId } from '@/utils/a
 
 type Campaign = {
   campaign_id: string
+  source_account_id?: string | null
+  campaign_key?: string
   campaign_name: string
   channel: string
   impressions: number
   clicks: number
-  spend: number
+  spend: number | null
   conversions: number
-  ctr: number
-  cpc: number
-  cpa: number
+  ctr: number | null
+  cpc: number | null
+  cpa: number | null
   first_date: string
   last_date: string
 }
@@ -55,17 +59,19 @@ function formatNumber(value: number, decimals: number = 0): string {
   return value.toFixed(decimals)
 }
 
-function formatCurrency(value: number): string {
+function formatCurrency(value: number | null): string {
+  if(value===null)return "Not available"
   return `$${formatNumber(value, 2)}`
 }
 
-function formatPercent(value: number): string {
+function formatPercent(value: number | null): string {
+  if(value===null)return "Not available"
   return `${value.toFixed(2)}%`
 }
 
 // Performance indicator based on CPA (lower is better)
-function getPerformanceIndicator(cpa: number, avgCpa: number) {
-  if (avgCpa === 0) return null
+function getPerformanceIndicator(cpa: number | null, avgCpa: number | null) {
+  if (cpa===null||avgCpa===null||avgCpa===0) return null
   const diff = ((cpa - avgCpa) / avgCpa) * 100
   
   if (diff <= -20) return { icon: TrendingUp, color: 'text-emerald-500', label: 'Excellent' }
@@ -74,6 +80,15 @@ function getPerformanceIndicator(cpa: number, avgCpa: number) {
   if (diff <= 20) return { icon: TrendingDown, color: 'text-amber-500', label: 'Below avg' }
   return { icon: TrendingDown, color: 'text-red-500', label: 'Poor' }
 }
+
+function SortIcon({ columnKey, sortConfig }: { columnKey: keyof Campaign; sortConfig: { key: keyof Campaign; direction: 'asc' | 'desc' } }) {
+    if (sortConfig.key !== columnKey) {
+      return <ChevronUp className="opacity-0 group-hover:opacity-30" size={14} />
+    }
+    return sortConfig.direction === 'desc'
+      ? <ChevronDown size={14} className="text-indigo-600" />
+      : <ChevronUp size={14} className="text-indigo-600" />
+  }
 
 export function CampaignTable({ 
   campaigns, 
@@ -85,12 +100,17 @@ export function CampaignTable({
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedChannel, setSelectedChannel] = useState<string>('')
   const [showFilters, setShowFilters] = useState(false)
+  const [pagination,setPagination]=useState<{campaigns:Campaign[]|null;context:string;page:number}>({campaigns:null,context:'',page:0})
+  const pageContext=JSON.stringify([searchTerm,selectedChannel,sortConfig])
+  const page=pagination.campaigns===campaigns&&pagination.context===pageContext?pagination.page:0
+  const setPage=(next:number)=>setPagination({campaigns,context:pageContext,page:next})
 
   // Calculate average CPA for performance comparison
   const avgCpa = useMemo(() => {
-    const totalSpend = campaigns.reduce((sum, c) => sum + c.spend, 0)
+    if(campaigns.some(c=>c.spend===null))return null
+    const totalSpend = campaigns.reduce((sum, c) => sum + c.spend!, 0)
     const totalConversions = campaigns.reduce((sum, c) => sum + c.conversions, 0)
-    return totalConversions > 0 ? totalSpend / totalConversions : 0
+    return totalConversions > 0 ? totalSpend / totalConversions : null
   }, [campaigns])
 
   // Filter and sort campaigns
@@ -116,6 +136,8 @@ export function CampaignTable({
       const aVal = a[sortConfig.key]
       const bVal = b[sortConfig.key]
       
+      if(aVal===null||aVal===undefined)return bVal===null||bVal===undefined?0:1
+      if(bVal===null||bVal===undefined)return -1
       if (typeof aVal === 'string' && typeof bVal === 'string') {
         return sortConfig.direction === 'asc' 
           ? aVal.localeCompare(bVal)
@@ -131,22 +153,17 @@ export function CampaignTable({
   }, [campaigns, searchTerm, selectedChannel, sortConfig])
 
   const handleSort = (key: keyof Campaign) => {
+    setPage(0)
     setSortConfig(current => ({
       key,
       direction: current.key === key && current.direction === 'desc' ? 'asc' : 'desc'
     }))
   }
 
-  const SortIcon = ({ columnKey }: { columnKey: keyof Campaign }) => {
-    if (sortConfig.key !== columnKey) {
-      return <ChevronUp className="opacity-0 group-hover:opacity-30" size={14} />
-    }
-    return sortConfig.direction === 'desc' 
-      ? <ChevronDown size={14} className="text-indigo-600" />
-      : <ChevronUp size={14} className="text-indigo-600" />
-  }
+
 
   const clearFilters = () => {
+    setPage(0)
     setSearchTerm('')
     setSelectedChannel('')
   }
@@ -193,7 +210,7 @@ export function CampaignTable({
                 type="text"
                 placeholder="Search campaigns..."
                 value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
+                onChange={(e) => {setPage(0);setSearchTerm(e.target.value)}}
                 className="pl-9 pr-4 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent w-48"
               />
             </div>
@@ -233,7 +250,7 @@ export function CampaignTable({
           <div className="mt-4 pt-4 border-t border-slate-100">
             <div className="flex flex-wrap gap-2">
               <button
-                onClick={() => setSelectedChannel('')}
+                onClick={() => {setPage(0);setSelectedChannel('')}}
                 className={`px-3 py-1.5 text-sm rounded-full transition-colors ${
                   !selectedChannel
                     ? 'bg-indigo-600 text-white'
@@ -245,7 +262,7 @@ export function CampaignTable({
               {channels.map(ch => (
                 <button
                   key={ch}
-                  onClick={() => setSelectedChannel(ch)}
+                  onClick={() => {setPage(0);setSelectedChannel(ch)}}
                   className={`px-3 py-1.5 text-sm rounded-full transition-colors ${
                     selectedChannel === ch
                       ? 'bg-indigo-600 text-white'
@@ -271,7 +288,7 @@ export function CampaignTable({
                   className="group flex items-center gap-1 text-xs font-semibold text-slate-500 uppercase tracking-wider hover:text-slate-700"
                 >
                   Campaign
-                  <SortIcon columnKey="campaign_name" />
+                  <SortIcon sortConfig={sortConfig} columnKey="campaign_name" />
                 </button>
               </th>
               <th className="text-left px-4 py-3">
@@ -285,7 +302,7 @@ export function CampaignTable({
                   className="group flex items-center justify-end gap-1 text-xs font-semibold text-slate-500 uppercase tracking-wider hover:text-slate-700 ml-auto"
                 >
                   Spend
-                  <SortIcon columnKey="spend" />
+                  <SortIcon sortConfig={sortConfig} columnKey="spend" />
                 </button>
               </th>
               <th className="text-right px-4 py-3">
@@ -294,7 +311,7 @@ export function CampaignTable({
                   className="group flex items-center justify-end gap-1 text-xs font-semibold text-slate-500 uppercase tracking-wider hover:text-slate-700 ml-auto"
                 >
                   Impressions
-                  <SortIcon columnKey="impressions" />
+                  <SortIcon sortConfig={sortConfig} columnKey="impressions" />
                 </button>
               </th>
               <th className="text-right px-4 py-3">
@@ -303,7 +320,7 @@ export function CampaignTable({
                   className="group flex items-center justify-end gap-1 text-xs font-semibold text-slate-500 uppercase tracking-wider hover:text-slate-700 ml-auto"
                 >
                   Clicks
-                  <SortIcon columnKey="clicks" />
+                  <SortIcon sortConfig={sortConfig} columnKey="clicks" />
                 </button>
               </th>
               <th className="text-right px-4 py-3">
@@ -312,7 +329,7 @@ export function CampaignTable({
                   className="group flex items-center justify-end gap-1 text-xs font-semibold text-slate-500 uppercase tracking-wider hover:text-slate-700 ml-auto"
                 >
                   CTR
-                  <SortIcon columnKey="ctr" />
+                  <SortIcon sortConfig={sortConfig} columnKey="ctr" />
                 </button>
               </th>
               <th className="text-right px-4 py-3">
@@ -321,7 +338,7 @@ export function CampaignTable({
                   className="group flex items-center justify-end gap-1 text-xs font-semibold text-slate-500 uppercase tracking-wider hover:text-slate-700 ml-auto"
                 >
                   Conv.
-                  <SortIcon columnKey="conversions" />
+                  <SortIcon sortConfig={sortConfig} columnKey="conversions" />
                 </button>
               </th>
               <th className="text-right px-4 py-3">
@@ -330,7 +347,7 @@ export function CampaignTable({
                   className="group flex items-center justify-end gap-1 text-xs font-semibold text-slate-500 uppercase tracking-wider hover:text-slate-700 ml-auto"
                 >
                   CPA
-                  <SortIcon columnKey="cpa" />
+                  <SortIcon sortConfig={sortConfig} columnKey="cpa" />
                 </button>
               </th>
               <th className="text-center px-4 py-3">
@@ -357,14 +374,14 @@ export function CampaignTable({
                 </td>
               </tr>
             ) : (
-              filteredCampaigns.map((campaign) => {
+              filteredCampaigns.slice(page*25,(page+1)*25).map((campaign) => {
                 const performance = getPerformanceIndicator(campaign.cpa, avgCpa)
                 const normalizedChannel = normalizeMarketingChannelId(campaign.channel)
                 const channelStyle = channelColors[normalizedChannel] || channelColors.unknown
                 
                 return (
                   <tr 
-                    key={campaign.campaign_id}
+                    key={campaign.campaign_key || campaignIdentity(campaign.channel, campaign.source_account_id ?? null, campaign.campaign_id)}
                     className="hover:bg-slate-50 transition-colors cursor-pointer"
                     onClick={() => onSelectCampaign?.(campaign)}
                   >
@@ -374,7 +391,7 @@ export function CampaignTable({
                           {campaign.campaign_name}
                         </p>
                         <p className="text-xs text-slate-400 mt-0.5 truncate max-w-[200px]" title={campaign.campaign_id}>
-                          {campaign.campaign_id}
+                          {campaign.campaign_id} · {campaign.source_account_id ? `Account ${campaign.source_account_id}` : 'Account needs review'}
                         </p>
                       </div>
                     </td>
@@ -397,12 +414,12 @@ export function CampaignTable({
                     </td>
                     <td className="px-4 py-4 text-right">
                       <span className={campaign.conversions > 0 ? 'font-semibold text-emerald-600' : 'text-slate-400'}>
-                        {campaign.conversions}
+                        {formatConversions(campaign.conversions)}
                       </span>
                     </td>
                     <td className="px-4 py-4 text-right">
-                      <span className={campaign.cpa > 0 ? 'font-medium text-slate-900' : 'text-slate-400'}>
-                        {campaign.cpa > 0 ? formatCurrency(campaign.cpa) : '—'}
+                      <span className={campaign.cpa !== null ? 'font-medium text-slate-900' : 'text-slate-400'}>
+                        {campaign.cpa !== null ? formatCurrency(campaign.cpa) : '—'}
                       </span>
                     </td>
                     <td className="px-4 py-4 text-center">
@@ -431,7 +448,7 @@ export function CampaignTable({
           <div className="flex flex-wrap items-center gap-4 text-sm text-slate-600">
             <span>
               <strong className="text-slate-900">
-                {formatCurrency(filteredCampaigns.reduce((sum, c) => sum + c.spend, 0))}
+                {formatCurrency(filteredCampaigns.some(c=>c.spend===null)?null:filteredCampaigns.reduce((sum,c)=>sum+c.spend!,0))}
               </strong> total spend
             </span>
             <span className="text-slate-300">|</span>
@@ -443,7 +460,7 @@ export function CampaignTable({
             <span className="text-slate-300">|</span>
             <span>
               <strong className="text-slate-900">
-                {filteredCampaigns.reduce((sum, c) => sum + c.conversions, 0)}
+                {formatConversions(filteredCampaigns.reduce((sum, c) => sum + c.conversions, 0))}
               </strong> conversions
             </span>
             <span className="text-slate-300">|</span>
@@ -455,6 +472,7 @@ export function CampaignTable({
           </div>
         </div>
       )}
+      {filteredCampaigns.length>25&&<div className="flex items-center justify-between gap-3 border-t p-3"><button disabled={page===0} onClick={()=>setPage(page-1)}>Previous campaigns</button><span>Campaign page {page+1} of {Math.ceil(filteredCampaigns.length/25)}</span><button disabled={(page+1)*25>=filteredCampaigns.length} onClick={()=>setPage(page+1)}>Next campaigns</button></div>}
     </div>
   )
 }

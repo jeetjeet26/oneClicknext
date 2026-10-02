@@ -5,11 +5,12 @@ import type {
   IntegrationProvider,
 } from './integration-provider-config'
 import {
+  getProviderScopes,
   normalizeCapabilities,
   normalizeProvider,
 } from './integration-provider-config'
 
-const STATE_TTL_MS = 15 * 60 * 1000
+export const INTEGRATION_STATE_TTL_MS = 15 * 60 * 1000
 const FUTURE_CLOCK_SKEW_MS = 60 * 1000
 
 export interface IntegrationOAuthStatePayload {
@@ -18,6 +19,10 @@ export interface IntegrationOAuthStatePayload {
   capabilities: IntegrationCapability[]
   authSource: IntegrationAuthSource
   timestamp: number
+  replacementId?: string
+  requestId?: string
+  redirectUri?: string
+  requestedScopes?: string[]
   profileId?: string
   inviteId?: string
   tokenHash?: string
@@ -67,6 +72,7 @@ export function createSignedIntegrationOAuthState(
     ...payload,
     timestamp: payload.timestamp ?? Date.now(),
     capabilities: [...new Set(payload.capabilities)],
+    requestedScopes: getProviderScopes(payload.provider, payload.capabilities),
   }
 
   const encodedPayload = encodeBase64Url(JSON.stringify(normalizedPayload))
@@ -75,7 +81,8 @@ export function createSignedIntegrationOAuthState(
 
 export function verifySignedIntegrationOAuthState(
   state: string,
-  now = Date.now()
+  now = Date.now(),
+  options: { outcomeOnly?: boolean } = {}
 ): IntegrationOAuthStatePayload {
   const [encodedPayload, encodedSignature, ...extraParts] = state.split('.')
   if (!encodedPayload || !encodedSignature || extraParts.length > 0) {
@@ -101,25 +108,33 @@ export function verifySignedIntegrationOAuthState(
     !provider ||
     capabilities.length === 0 ||
     (parsed.authSource !== 'dashboard' && parsed.authSource !== 'external_invite') ||
-    typeof parsed.timestamp !== 'number'
+    typeof parsed.timestamp !== 'number' || !Number.isFinite(parsed.timestamp)
   ) {
     throw new Error('Invalid OAuth state payload')
+  }
+
+  if (parsed.requestedScopes !== undefined && (!Array.isArray(parsed.requestedScopes) || parsed.requestedScopes.length > 100 || parsed.requestedScopes.some(scope => typeof scope !== 'string' || !scope || scope.length > 1024 || /\s/.test(scope)))) {
+    throw new Error('Invalid OAuth requested scopes')
   }
 
   if (parsed.timestamp > now + FUTURE_CLOCK_SKEW_MS) {
     throw new Error('OAuth state timestamp is invalid')
   }
 
-  if (now - parsed.timestamp > STATE_TTL_MS) {
+  if (now - parsed.timestamp > (options.outcomeOnly ? 24 * 60 * 60 * 1000 : INTEGRATION_STATE_TTL_MS)) {
     throw new Error('OAuth state has expired')
   }
 
   return {
+    replacementId: typeof parsed.replacementId === 'string' ? parsed.replacementId : undefined,
+    requestId: typeof parsed.requestId === 'string' ? parsed.requestId : undefined,
+    redirectUri: typeof parsed.redirectUri === 'string' ? parsed.redirectUri : undefined,
     propertyId: parsed.propertyId,
     provider,
     capabilities,
     authSource: parsed.authSource,
     timestamp: parsed.timestamp,
+    requestedScopes: parsed.requestedScopes,
     profileId: typeof parsed.profileId === 'string' ? parsed.profileId : undefined,
     inviteId: typeof parsed.inviteId === 'string' ? parsed.inviteId : undefined,
     tokenHash: typeof parsed.tokenHash === 'string' ? parsed.tokenHash : undefined,

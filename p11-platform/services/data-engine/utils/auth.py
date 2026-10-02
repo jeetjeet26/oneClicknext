@@ -3,6 +3,7 @@ API Key Authentication for Data Engine Job Endpoints
 Protects background job execution endpoints from unauthorized access
 """
 import os
+import secrets
 from fastapi import HTTPException, Header, Request
 from typing import Optional
 import logging
@@ -27,9 +28,7 @@ def verify_api_key(x_api_key: Optional[str] = Header(None)) -> str:
         str: The validated API key
     """
     if not DATA_ENGINE_API_KEY:
-        # If no API key is configured, allow requests (development mode)
-        logger.warning("⚠️  DATA_ENGINE_API_KEY not set - running in open mode (not secure for production)")
-        return "dev-mode"
+        raise HTTPException(status_code=503, detail="Data Engine authentication is not configured")
     
     if not x_api_key:
         logger.error("❌ API key missing from request")
@@ -39,7 +38,7 @@ def verify_api_key(x_api_key: Optional[str] = Header(None)) -> str:
             headers={"WWW-Authenticate": "ApiKey"},
         )
     
-    if x_api_key != DATA_ENGINE_API_KEY:
+    if not secrets.compare_digest(x_api_key.encode(), DATA_ENGINE_API_KEY.encode()):
         logger.error("❌ Invalid API key provided")
         raise HTTPException(
             status_code=403,
@@ -48,6 +47,18 @@ def verify_api_key(x_api_key: Optional[str] = Header(None)) -> str:
     
     logger.debug("✅ API key validated")
     return x_api_key
+
+
+def verify_service_key(authorization: Optional[str]) -> None:
+    """Require a configured service key for Bearer-authenticated endpoints."""
+    expected_key = os.environ.get("DATA_ENGINE_API_KEY")
+    if not expected_key:
+        raise HTTPException(status_code=503, detail="Data Engine authentication is not configured")
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing authorization")
+    token = authorization.removeprefix("Bearer ")
+    if not secrets.compare_digest(token.encode(), expected_key.encode()):
+        raise HTTPException(status_code=401, detail="Invalid API key")
 
 
 async def log_request_middleware(request: Request, call_next):
@@ -63,7 +74,6 @@ async def log_request_middleware(request: Request, call_next):
     response.headers['X-Correlation-ID'] = correlation_id
     
     return response
-
 
 
 

@@ -1,0 +1,290 @@
+{
+  "programHash": "87c37835022b57728bcbb015b72227628ac65913aeabcc6f8567a2e46dd5c36f",
+  "source": "synthetic",
+  "asOf": "2026-09-01T00:00:00Z",
+  "reviewerId": "02b93b284a355f07b100886c95994a31e0fe6600d5efcc80d96d4e74ffdba0a5",
+  "sources": [
+    {
+      "sha256": "eaebe0a0c869465049a7b59dbe15a2c62f263778b8d2e00d09c7f069b0b13adf",
+      "clientId": "0426edc5034cbd6b79a3b07041e44160331130720dbfc4d88e988862405cc3d7",
+      "availableAt": "2026-08-31T00:00:00Z"
+    },
+    {
+      "sha256": "3fe97809e18212a2ed46cfeb18606bcbcdf72b18383458156841d927deb5aa40",
+      "clientId": null,
+      "availableAt": "2026-08-31T00:00:00Z"
+    }
+  ],
+  "pilots": [
+    {
+      "pilotId": "9307ee3840564f0c4d4201d56838cf0ac62fcb04b76005294db82625d4b6e8a7",
+      "clientId": "0426edc5034cbd6b79a3b07041e44160331130720dbfc4d88e988862405cc3d7",
+      "finance": {
+        "earnedFees": {
+          "value": 100000,
+          "evidence": [
+            "eaebe0a0c869465049a7b59dbe15a2c62f263778b8d2e00d09c7f069b0b13adf"
+          ]
+        },
+        "paidFees": {
+          "value": 100000,
+          "evidence": [
+            "eaebe0a0c869465049a7b59dbe15a2c62f263778b8d2e00d09c7f069b0b13adf"
+          ]
+        },
+        "passThroughRevenue": {
+          "value": 500000,
+          "evidence": [
+            "eaebe0a0c869465049a7b59dbe15a2c62f263778b8d2e00d09c7f069b0b13adf"
+          ]
+        },
+        "passThroughCosts": {
+          "value": 500000,
+          "evidence": [
+            "eaebe0a0c869465049a7b59dbe15a2c62f263778b8d2e00d09c7f069b0b13adf"
+          ]
+        },
+        "directLabour": {
+          "value": 10000,
+          "evidence": [
+            "eaebe0a0c869465049a7b59dbe15a2c62f263778b8d2e00d09c7f069b0b13adf"
+          ]
+        },
+        "providers": {
+          "value": 5000,
+          "evidence": [
+            "eaebe0a0c869465049a7b59dbe15a2c62f263778b8d2e00d09c7f069b0b13adf"
+          ]
+        },
+        "suppliers": {
+          "value": 2000,
+          "evidence": [
+            "eaebe0a0c869465049a7b59dbe15a2c62f263778b8d2e00d09c7f069b0b13adf"
+          ]
+        },
+        "support": {
+          "value": 3000,
+          "evidence": [
+            "eaebe0a0c869465049a7b59dbe15a2c62f263778b8d2e00d09c7f069b0b13adf"
+          ]
+        },
+        "onboarding": {
+          "value": 10000,
+          "evidence": [
+            "eaebe0a0c869465049a7b59dbe15a2c62f263778b8d2e00d09c7f069b0b13adf"
+          ]
+        }
+      },
+      "costAllocationHash": "eaebe0a0c869465049a7b59dbe15a2c62f263778b8d2e00d09c7f069b0b13adf",
+      "renewal": {
+        "state": "paid_renewed",
+        "paidMinor": 100000,
+        "evidence": [
+          "eaebe0a0c869465049a7b59dbe15a2c62f263778b8d2e00d09c7f069b0b13adf"
+        ]
+      },
+      "tasks": [
+        {
+          "taskId": "79a011d9738cbd12ada2ba6b79007332494ae26e3afe6d4d4dfb04d1af9f4675",
+          "baselineSeconds": {
+            "value": 100,
+            "evidence": [
+              "eaebe0a0c869465049a7b59dbe15a2c62f263778b8d2e00d09c7f069b0b13adf"
+            ]
+          },
+          "assistedSeconds": {
+            "value": 20,
+            "evidence": [
+              "eaebe0a0c869465049a7b59dbe15a2c62f263778b8d2e00d09c7f069b0b13adf"
+            ]
+          },
+          "reviewSeconds": {
+            "value": 10,
+            "evidence": [
+              "eaebe0a0c869465049a7b59dbe15a2c62f263778b8d2e00d09c7f069b0b13adf"
+            ]
+          },
+          "remediationSeconds": {
+            "value": 10,
+            "evidence": [
+              "eaebe0a0c869465049a7b59dbe15a2c62f263778b8d2e00d09c7f069b0b13adf"
+            ]
+          },
+          "accepted": {
+            "value": true,
+            "evidence": [
+              "eaebe0a0c869465049a7b59dbe15a2c62f263778b8d2e00d09c7f069b0b13adf"
+            ]
+          }
+        },
+        {
+          "taskId": "445d75888db4d1fc7d18fadf2306428f4d26db4e091ece99d95b016f7def099e",
+          "baselineSeconds": {
+            "value": 100,
+            "evidence": [
+              "eaebe0a0c869465049a7b59dbe15a2c62f263778b8d2e00d09c7f069b0b13adf"
+            ]
+          },
+          "assistedSeconds": {
+            "value": 20,
+            "evidence": [
+              "eaebe0a0c869465049a7b59dbe15a2c62f263778b8d2e00d09c7f069b0b13adf"
+            ]
+          },
+          "reviewSeconds": {
+            "value": 10,
+            "evidence": [
+              "eaebe0a0c869465049a7b59dbe15a2c62f263778b8d2e00d09c7f069b0b13adf"
+            ]
+          },
+          "remediationSeconds": {
+            "value": 10,
+            "evidence": [
+              "eaebe0a0c869465049a7b59dbe15a2c62f263778b8d2e00d09c7f069b0b13adf"
+            ]
+          },
+          "accepted": {
+            "value": true,
+            "evidence": [
+              "eaebe0a0c869465049a7b59dbe15a2c62f263778b8d2e00d09c7f069b0b13adf"
+            ]
+          }
+        }
+      ],
+      "delivery": {
+        "eligible": {
+          "value": 1000,
+          "evidence": [
+            "eaebe0a0c869465049a7b59dbe15a2c62f263778b8d2e00d09c7f069b0b13adf"
+          ]
+        },
+        "confirmed": {
+          "value": 1000,
+          "evidence": [
+            "eaebe0a0c869465049a7b59dbe15a2c62f263778b8d2e00d09c7f069b0b13adf"
+          ]
+        }
+      },
+      "operations": {
+        "openCriticalDefects": {
+          "value": 0,
+          "evidence": [
+            "eaebe0a0c869465049a7b59dbe15a2c62f263778b8d2e00d09c7f069b0b13adf"
+          ]
+        },
+        "interventions": {
+          "value": 2,
+          "evidence": [
+            "eaebe0a0c869465049a7b59dbe15a2c62f263778b8d2e00d09c7f069b0b13adf"
+          ]
+        },
+        "exceptions": {
+          "value": 0,
+          "evidence": [
+            "eaebe0a0c869465049a7b59dbe15a2c62f263778b8d2e00d09c7f069b0b13adf"
+          ]
+        },
+        "supportSeconds": {
+          "value": 500,
+          "evidence": [
+            "eaebe0a0c869465049a7b59dbe15a2c62f263778b8d2e00d09c7f069b0b13adf"
+          ]
+        },
+        "onboardingSeconds": {
+          "value": 1000,
+          "evidence": [
+            "eaebe0a0c869465049a7b59dbe15a2c62f263778b8d2e00d09c7f069b0b13adf"
+          ]
+        },
+        "completedTasks": {
+          "value": 2,
+          "evidence": [
+            "eaebe0a0c869465049a7b59dbe15a2c62f263778b8d2e00d09c7f069b0b13adf"
+          ]
+        },
+        "elapsedSeconds": {
+          "value": 10000,
+          "evidence": [
+            "eaebe0a0c869465049a7b59dbe15a2c62f263778b8d2e00d09c7f069b0b13adf"
+          ]
+        },
+        "acceptedOutcome": {
+          "value": true,
+          "evidence": [
+            "eaebe0a0c869465049a7b59dbe15a2c62f263778b8d2e00d09c7f069b0b13adf"
+          ]
+        }
+      },
+      "outcomes": [
+        {
+          "metricId": "0603972e565cf3ff957ac3243e2e97b7cac885b2b79662c68dc9e388c347184b",
+          "definitionHash": "58f154c54e004d23d48f9d4928dc79432b9384cd0ad077b7d5ddd0cd309dbdf4",
+          "value": "12.5",
+          "unit": "accepted sites",
+          "evidence": [
+            "eaebe0a0c869465049a7b59dbe15a2c62f263778b8d2e00d09c7f069b0b13adf"
+          ]
+        }
+      ]
+    }
+  ],
+  "acceptance": [
+    {
+      "id": "production_access",
+      "state": "reported_satisfied",
+      "evidence": [
+        "3fe97809e18212a2ed46cfeb18606bcbcdf72b18383458156841d927deb5aa40"
+      ]
+    },
+    {
+      "id": "client_product_journeys",
+      "state": "reported_satisfied",
+      "evidence": [
+        "3fe97809e18212a2ed46cfeb18606bcbcdf72b18383458156841d927deb5aa40"
+      ]
+    },
+    {
+      "id": "hosted_release_restore",
+      "state": "reported_satisfied",
+      "evidence": [
+        "3fe97809e18212a2ed46cfeb18606bcbcdf72b18383458156841d927deb5aa40"
+      ]
+    },
+    {
+      "id": "model_quality",
+      "state": "reported_satisfied",
+      "evidence": [
+        "3fe97809e18212a2ed46cfeb18606bcbcdf72b18383458156841d927deb5aa40"
+      ]
+    },
+    {
+      "id": "client_retention",
+      "state": "reported_satisfied",
+      "evidence": [
+        "3fe97809e18212a2ed46cfeb18606bcbcdf72b18383458156841d927deb5aa40"
+      ]
+    },
+    {
+      "id": "live_operating_window",
+      "state": "reported_satisfied",
+      "evidence": [
+        "3fe97809e18212a2ed46cfeb18606bcbcdf72b18383458156841d927deb5aa40"
+      ]
+    },
+    {
+      "id": "bounded_autonomy",
+      "state": "reported_satisfied",
+      "evidence": [
+        "3fe97809e18212a2ed46cfeb18606bcbcdf72b18383458156841d927deb5aa40"
+      ]
+    },
+    {
+      "id": "reviewflow_response_suite",
+      "state": "reported_satisfied",
+      "evidence": [
+        "3fe97809e18212a2ed46cfeb18606bcbcdf72b18383458156841d927deb5aa40"
+      ]
+    }
+  ],
+  "demand": []
+}

@@ -1,0 +1,8 @@
+import {beforeEach,it,expect,vi} from 'vitest'
+const d=vi.hoisted(()=>({rpc:vi.fn()}));vi.mock('@/utils/supabase/admin',()=>({createServiceClient:()=>d}));vi.mock('@/utils/knowledge/inventory',()=>({inventoryActor:vi.fn(),InventoryError:class extends Error{constructor(message:string,readonly status=503){super(message)}}}))
+import {unitRpc,decideUnit} from './store'
+import type {UnitCommand} from './contracts'
+beforeEach(()=>{vi.clearAllMocks();d.rpc.mockResolvedValue({data:{state:'saved'},error:null})})
+it('maps native stale state to a safe conflict',async()=>{d.rpc.mockResolvedValue({data:{state:'unit_changed'},error:null});await expect(unitRpc('release_property_unit',{})).rejects.toMatchObject({status:409,message:expect.stringContaining('current floor-plan facts changed')})})
+it('holds unknown native outcomes and transport errors without leaking details',async()=>{d.rpc.mockResolvedValue({data:null,error:{message:'database secret'}});await expect(unitRpc('release_property_unit',{})).rejects.toMatchObject({status:503});d.rpc.mockResolvedValue({data:{state:'unknown'},error:null});await expect(unitRpc('release_property_unit',{})).rejects.toMatchObject({status:409})})
+it('routes an exact save, release and cancellation to their atomic native boundary',async()=>{for(const[operation,name]of[['save','save_property_unit_draft'],['approve','release_property_unit'],['cancel_unused','cancel_unused_knowledge_decision']]){await decideUnit('actor',{operation,requestId:'request',propertyId:'property',reason:'Review'}as UnitCommand);expect(d.rpc).toHaveBeenLastCalledWith(name,{p_id:'request',p_property_id:'property',p_actor_id:'actor',p_input:operation==='approve'?{reason:'Review',operation}:{reason:'Review'}})}})

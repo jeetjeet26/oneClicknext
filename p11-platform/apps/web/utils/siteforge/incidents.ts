@@ -1,3 +1,4 @@
+import { isVerifiedHealthCheck, monitoringPurpose } from './health-state'
 import type { Json } from '@/types/supabase'
 import { createServiceClient } from '@/utils/supabase/admin'
 import {
@@ -29,12 +30,13 @@ const RECHECKABLE_CATEGORIES = new Set([
 
 export async function listSiteForgeIncidents(websiteId: string) {
   const service = createServiceClient()
-  const [{ data: incidents, error }, { data: healthRuns }, { data: repairs }] =
+  const [{ data: incidents, error, count: activeIncidentCount }, { data: healthRuns, error: healthError }, { data: repairs, error: repairError }] =
     await Promise.all([
       service
         .from('siteforge_incidents')
-        .select('*')
+        .select('*', { count: 'exact' })
         .eq('website_id', websiteId)
+        .neq('status', 'resolved')
         .order('created_at', { ascending: false })
         .limit(100),
       service
@@ -51,7 +53,10 @@ export async function listSiteForgeIncidents(websiteId: string) {
         .limit(50),
     ])
   if (error) throw new Error(`Failed to list SiteForge incidents: ${error.message}`)
-  return { incidents: incidents || [], healthRuns: healthRuns || [], repairs: repairs || [] }
+  if (activeIncidentCount === null) throw new Error('Active incident count is unavailable')
+  if (healthError) throw new Error(`Health history is unavailable: ${healthError.message}`)
+  if (repairError) throw new Error(`Repair history is unavailable: ${repairError.message}`)
+  return { activeIncidentCount, incidents: incidents || [], healthRuns: healthRuns || [], repairs: repairs || [] }
 }
 
 export async function acknowledgeSiteForgeIncident(input: {
@@ -102,23 +107,28 @@ export async function runSiteForgeIncidentRecheck(input: {
   if (!RECHECKABLE_CATEGORIES.has(incident.category)) {
     throw new Error('This incident requires manual restore or rollback supervision')
   }
-  const { count } = await service
+  const { count, error: countError } = await service
     .from('siteforge_repair_attempts')
     .select('id', { count: 'exact', head: true })
     .eq('incident_id', incident.id)
-  if ((count || 0) >= 1) {
+  if (countError || count === null) throw new Error('The prior repair allowance could not be verified')
+  if (count >= 1) {
     throw new Error('The bounded one-pass repair allowance has already been used')
   }
   const { data: website, error: websiteError } = await service
     .from('property_websites')
     .select(
-      'id, org_id, property_id, production_artifact_id, production_content_hash, production_url, pages_generated'
+      'id, org_id, property_id, production_artifact_id, production_content_hash, production_url, production_target_id, pages_generated'
     )
     .eq('id', incident.website_id)
     .single()
   if (websiteError || !website?.production_url) {
     throw new Error('Production target is unavailable for repair verification')
   }
+  const { data: monitoringTarget, error: targetError } = website.production_target_id
+    ? await service.from('siteforge_wordpress_targets').select('target_type, is_active, site_url, metadata').eq('id', website.production_target_id).eq('website_id', website.id).maybeSingle()
+    : { data: null, error: null }
+  if (targetError) throw new Error('Monitoring target purpose is unavailable')
   const { data: connectorRows, error: connectorError } = await service
     .from('siteforge_connector_configs')
     .select('id, capability, status, last_success_at, freshness_seconds')
@@ -180,6 +190,7 @@ export async function runSiteForgeIncidentRecheck(input: {
         artifactId: website.production_artifact_id,
         contentHash: website.production_content_hash,
         url: website.production_url,
+        purpose: monitoringPurpose(monitoringTarget, website.production_url),
         declaredPages: declaredSiteForgePagePaths(website.pages_generated),
         connectors: (connectorRows || []).map(connector => ({
           id: connector.id,
@@ -192,7 +203,7 @@ export async function runSiteForgeIncidentRecheck(input: {
       { trigger: 'repair', probes: input.probes }
     )
     const verified =
-      health.checks[incident.category as keyof typeof health.checks]?.passed === true
+      isVerifiedHealthCheck(health.checks[incident.category as keyof typeof health.checks])
     const completedAt = new Date().toISOString()
     await Promise.all([
       service
@@ -284,7 +295,7 @@ export async function runOnePassSiteForgeRepair(input: {
 
   const { data: healthRun, error: healthError } = await service
     .from('siteforge_health_runs')
-    .select('id, status, checks, completed_at')
+    .select('id, status, checks, started_at, completed_at')
     .eq('website_id', incident.website_id)
     .not('completed_at', 'is', null)
     .order('completed_at', { ascending: false })
@@ -302,18 +313,20 @@ export async function runOnePassSiteForgeRepair(input: {
     !Array.isArray(checks[incident.category])
       ? (checks[incident.category] as Record<string, unknown>)
       : null
-  if (healthError || !healthRun?.completed_at || check?.passed !== true) {
+  if (healthError || !healthRun?.completed_at || !isVerifiedHealthCheck(check) ||
+      healthRun.status === 'failed' || Date.parse(healthRun.started_at) < Date.parse(incident.updated_at)) {
     throw new Error(
       'Safe repair requires a completed passing recheck for this exact incident category'
     )
   }
 
-  const { count } = await service
+  const { count, error: countError } = await service
     .from('siteforge_repair_attempts')
     .select('id', { count: 'exact', head: true })
     .eq('incident_id', incident.id)
     .eq('repair_type', input.handler)
-  if ((count || 0) >= 1) {
+  if (countError || count === null) throw new Error('The prior repair allowance could not be verified')
+  if (count >= 1) {
     throw new Error('The bounded one-pass safe repair allowance has already been used')
   }
 
@@ -385,6 +398,7 @@ export async function runOnePassSiteForgeRepair(input: {
             owner_id: input.actorId,
           })
           .eq('id', incident.id)
+          .eq('updated_at', incident.updated_at)
           .neq('status', 'resolved')
           .select('id, status, resolved_at, owner_id, updated_at')
           .single()

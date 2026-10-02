@@ -1,18 +1,17 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import {sendMarketDecision} from '@/utils/marketvision/decision-client'
 import { 
   Building2, 
   ExternalLink, 
   Phone, 
   MapPin, 
   MoreVertical,
-  Trash2,
   Edit2,
   Eye,
   Plus,
   Search,
-  Filter,
   RefreshCw
 } from 'lucide-react'
 
@@ -26,6 +25,7 @@ interface CompetitorUnit {
 }
 
 interface Competitor {
+  version: number
   id: string
   propertyId?: string
   name: string
@@ -56,25 +56,25 @@ export function CompetitorList({
   propertyId, 
   onAddClick, 
   onEditClick, 
-  onViewClick,
-  onRefresh 
+  onViewClick
 }: CompetitorListProps) {
+  const readGeneration=useRef(0)
   const [competitors, setCompetitors] = useState<Competitor[]>([])
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
   const [showInactive, setShowInactive] = useState(false)
+  const [error,setError]=useState<string|null>(null)
+  const [decision,setDecision]=useState<Competitor|null>(null)
+  const [reason,setReason]=useState('')
+  const [saving,setSaving]=useState(false)
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
 
-  useEffect(() => {
-    if (propertyId) {
-      fetchCompetitors()
-    }
-  }, [propertyId, showInactive])
-
-  const fetchCompetitors = async () => {
+  const fetchCompetitors = useCallback(async () => {
     if (!propertyId) return
 
+    const generation=++readGeneration.current
     setLoading(true)
+    setError(null)
     try {
       const params = new URLSearchParams({
         propertyId,
@@ -84,52 +84,26 @@ export function CompetitorList({
 
       const res = await fetch(`/api/marketvision/competitors?${params}`)
       const data = await res.json()
-
-      if (res.ok) {
-        setCompetitors(data.competitors || [])
-      }
+      if(generation!==readGeneration.current)return
+      if (!res.ok) throw new Error(data.error || 'Competitors could not be loaded.')
+      setCompetitors(data.competitors || [])
     } catch (err) {
-      console.error('Error fetching competitors:', err)
+      if(generation!==readGeneration.current)return
+      setError(err instanceof Error ? err.message : 'Competitors could not be loaded.')
+      setCompetitors([])
     } finally {
-      setLoading(false)
+      if(generation===readGeneration.current)setLoading(false)
     }
-  }
+  },[propertyId,showInactive])
+  const cancelRead=useCallback(()=>{readGeneration.current++},[])
+  useEffect(()=>{void fetchCompetitors();return cancelRead},[fetchCompetitors,cancelRead])
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this competitor?')) return
-
-    try {
-      const res = await fetch(`/api/marketvision/competitors?id=${id}`, {
-        method: 'DELETE'
-      })
-
-      if (res.ok) {
-        setCompetitors(competitors.filter(c => c.id !== id))
-        onRefresh?.()
-      }
-    } catch (err) {
-      console.error('Error deleting competitor:', err)
-    }
-  }
-
-  const handleToggleActive = async (competitor: Competitor) => {
-    try {
-      const res = await fetch('/api/marketvision/competitors', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: competitor.id,
-          isActive: !competitor.isActive
-        })
-      })
-
-      if (res.ok) {
-        fetchCompetitors()
-        onRefresh?.()
-      }
-    } catch (err) {
-      console.error('Error updating competitor:', err)
-    }
+  const handleToggleActive = async () => {
+    if(!decision || !propertyId)return
+    setSaving(true);setError(null)
+    try{await sendMarketDecision('/api/marketvision/competitors','PUT',{propertyId,competitorId:decision.id,expectedVersion:decision.version,action:decision.isActive?'archive':'restore',reason});setDecision(null);setReason('');await fetchCompetitors()}
+    catch(e){setError(e instanceof Error?e.message:'This decision could not be confirmed.')}
+    finally{setSaving(false)}
   }
 
   const filteredCompetitors = competitors.filter(c => 
@@ -190,13 +164,14 @@ export function CompetitorList({
           <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 cursor-pointer">
             <input
               type="checkbox"
-              checked={showInactive}
+              disabled={saving} checked={showInactive}
               onChange={(e) => setShowInactive(e.target.checked)}
               className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
             />
             Show inactive
           </label>
           <button
+            disabled={saving} aria-label="Reload competitors"
             onClick={fetchCompetitors}
             className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
           >
@@ -205,6 +180,8 @@ export function CompetitorList({
         </div>
       </div>
 
+      {error && <p role="alert" className="p-4 text-red-700">{error} <button onClick={()=>{setDecision(null);void fetchCompetitors()}} className="underline">Reload competitors</button></p>}
+      {decision && <section aria-label="Review competitor status" className="p-4 border-y space-y-3"><p>{decision.isActive?'Archive':'Restore'} {decision.name}? Saved units and history will be retained.</p><label className="block text-sm">Reason for status change<textarea value={reason} onChange={e=>setReason(e.target.value)} minLength={3} maxLength={2000} className="block border rounded p-2 w-full" /></label><button disabled={saving||reason.trim().length<3} onClick={handleToggleActive} className="border rounded px-3 py-2 disabled:opacity-50">{saving?'Saving…':decision.isActive?'Archive competitor':'Restore competitor'}</button> <button disabled={saving} onClick={()=>setDecision(null)}>Cancel</button></section>}
       {/* Competitor List */}
       <div className="divide-y divide-gray-100 dark:divide-gray-700">
         {loading ? (
@@ -300,6 +277,7 @@ export function CompetitorList({
                   {/* More Menu */}
                   <div className="relative">
                     <button
+                      disabled={saving} aria-label={`Actions for ${competitor.name}`}
                       onClick={() => setMenuOpen(menuOpen === competitor.id ? null : competitor.id)}
                       className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
                     >
@@ -330,23 +308,12 @@ export function CompetitorList({
                         </button>
                         <button
                           onClick={() => {
-                            handleToggleActive(competitor)
+                            setDecision(competitor);setReason('')
                             setMenuOpen(null)
                           }}
                           className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
                         >
-                          {competitor.isActive ? 'Deactivate' : 'Activate'}
-                        </button>
-                        <hr className="my-1 border-gray-200 dark:border-gray-700" />
-                        <button
-                          onClick={() => {
-                            handleDelete(competitor.id)
-                            setMenuOpen(null)
-                          }}
-                          className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                          Delete
+                          {competitor.isActive ? 'Archive' : 'Restore'}
                         </button>
                       </div>
                     )}

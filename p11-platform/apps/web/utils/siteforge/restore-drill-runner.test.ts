@@ -80,4 +80,18 @@ describe('SiteForge restore drill runner', () => {
     )
     expect(healthMock).not.toHaveBeenCalled()
   })
+  it.each([true,false])('requires a confirmed restoration result (save=%s)', async confirmed => {
+    const drill={id:'drill',org_id:'org',property_id:'property',website_id:'website',status:'verifying',provider_operation_id:'operation',
+      expected_artifact_id:'artifact',expected_content_hash:'hash',verification_report:{restoreCompleted:true}}
+    const load=resolvedChain({data:[drill],error:null})
+    const website=resolvedChain({data:{production_url:'https://fixture.test',production_artifact_id:'artifact',production_content_hash:'hash'},error:null})
+    const save=resolvedChain({data:confirmed?{id:'drill'}:null,error:null})
+    let calls=0
+    const client={from:vi.fn((table:string)=>table==='property_websites'?website:++calls===1?load:save)}
+    healthMock.mockResolvedValue({runId:'health',status:'healthy',checks:{identity:{passed:true},reachability:{passed:true}}})
+    const result=await processSiteForgeRestoreDrills({},client as never)
+    expect(result.succeeded).toBe(confirmed?1:0);expect(result.failed).toBe(confirmed?0:1)
+    if(!confirmed)expect(result.results[0].error).toContain('not confirmed')
+  })
+
 })

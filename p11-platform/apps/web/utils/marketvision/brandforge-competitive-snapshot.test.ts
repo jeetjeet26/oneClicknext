@@ -12,6 +12,7 @@ const first = {
   brandVoice: 'energetic',
   targetAudience: 'Urban professionals',
   messagingThemes: ['Access', 'Energy'],
+  reviewedClaims: [{category:'positioning' as const,kind:'source_claim' as const,statement:'Effortless urban access',quote:'urban access'}],
   observedAt: '2026-08-15T12:00:00.000Z',
 }
 const second = {
@@ -24,6 +25,7 @@ const second = {
   brandVoice: 'calm',
   targetAudience: 'Design-conscious households',
   messagingThemes: ['Design', 'Retreat'],
+  reviewedClaims: [{category:'positioning' as const,kind:'interpretation' as const,statement:'Quiet design-led homes',quote:'Quiet design-led homes'}],
   observedAt: '2026-08-14T12:00:00.000Z',
 }
 
@@ -76,3 +78,7 @@ describe('MarketVision BrandForge competitive snapshot hashes', () => {
     expect(verticalChanged.causalHash).not.toBe(base.causalHash)
   })
 })
+
+it('carries exact quotations and honest coverage without promoting legacy confidence',()=>{const result=buildCompetitivePositioningSnapshot({propertyId,vertical:'multifamily_rental',generatedAt:'2026-09-22T12:00:00.000Z',rows:[first],activeCompetitors:17});expect(result.evidence[0].source).toMatchObject({sourceType:'competitor_brand_review',reviewedClaims:first.reviewedClaims});expect(result.coverage).toMatchObject({activeCompetitors:17,reviewedCompetitors:1});expect(result.coverage?.limitations).toContain('not independently verified');expect(result.marketGaps.every(s=>s.includes('Candidate idea'))).toBe(true)})
+
+it('coverage changes invalidate the retained downstream context even when quotations are unchanged',()=>{const base={propertyId,vertical:'multifamily_rental' as const,generatedAt:'2026-09-22T12:00:00.000Z',rows:[first]};expect(buildCompetitivePositioningSnapshot({...base,activeCompetitors:1}).causalHash).not.toBe(buildCompetitivePositioningSnapshot({...base,activeCompetitors:2}).causalHash)})

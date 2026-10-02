@@ -1,6 +1,9 @@
 'use client'
 
-import { use, useEffect, useState } from 'react'
+import { brandRequest, brandResponse } from '@/utils/brandforge/client-requests'
+
+import { use, useEffect, useRef, useState } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
 import { 
@@ -482,20 +485,12 @@ export default function BrandBookViewerPage({
       const res = await fetch('/api/brandforge/embed-to-kb', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          brandAssetId: brandAsset.id,
-          propertyId
-        })
+        body: brandRequest(imageRequestMemory, 'publish', { brandAssetId: brandAsset.id, propertyId, revision: brandAsset.revision })
       })
 
-      if (!res.ok) {
-        const error = await res.json()
-        throw new Error(error.error || 'Embedding failed')
-      }
-
-      const result = await res.json()
+      const result = await brandResponse(res, imageRequestMemory, 'publish')
       setEmbeddedToKB(true)
-      alert(`Success! ${result.embeddedChunks} chunks embedded to knowledge base.`)
+      alert(`Brand knowledge published (${result.embeddedChunks} sections). Refresh the leasing assistant’s knowledge to use this version.`)
     } catch (err) {
       console.error('KB embedding failed:', err)
       alert(err instanceof Error ? err.message : 'Embedding failed')
@@ -503,6 +498,8 @@ export default function BrandBookViewerPage({
       setEmbeddingToKB(false)
     }
   }
+
+  const imageRequestMemory = useRef(new Map<string, { identity: string; requestId: string }>())
 
   async function generateImages(type: 'logo' | 'moodboard' | 'photo_examples') {
     if (!brandAsset) return
@@ -512,21 +509,13 @@ export default function BrandBookViewerPage({
       const res = await fetch('/api/brandforge/generate-images', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          brandAssetId: brandAsset.id,
-          propertyId,
-          type,
-          brandData: brandAsset
-        })
+        body: brandRequest(imageRequestMemory, 'visuals', { brandAssetId: brandAsset.id, propertyId, revision: brandAsset.revision, type })
       })
 
-      if (!res.ok) {
-        const error = await res.json()
-        throw new Error(error.error || 'Image generation failed')
-      }
+      await brandResponse(res, imageRequestMemory, 'visuals')
 
-      // Refresh brand asset to get updated URLs
-      await fetchBrandAsset()
+      // Generated visuals are a saved proposal and need review.
+      router.push(`/dashboard/brandforge/${propertyId}/create`)
     } catch (err) {
       console.error('Image generation failed:', err)
       alert(err instanceof Error ? err.message : 'Image generation failed')
@@ -583,7 +572,9 @@ export default function BrandBookViewerPage({
               {brandAsset?.section_1_introduction?.tagline || 'Comprehensive brand guidelines'}
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            <Link href={`/dashboard/brandforge/${propertyId}/assets`} className="rounded-lg border border-indigo-200 px-4 py-2 text-indigo-700">Review brand assets</Link>
+            {brandAsset && <Link href={`/dashboard/brandforge/${propertyId}/import`} className="rounded-lg border border-indigo-200 px-4 py-2 text-indigo-700">Import replacement brand</Link>}
             {brandAsset && (
               <button
                 onClick={embedToKnowledgeBase}
@@ -642,6 +633,7 @@ export default function BrandBookViewerPage({
           >
             Generate Brand Book
           </button>
+          <Link href={`/dashboard/brandforge/${propertyId}/import`} className="ml-3 inline-flex rounded-lg border border-indigo-300 px-5 py-3 text-indigo-700">Import existing brand</Link>
         </div>
       ) : (
         <div className="space-y-6">

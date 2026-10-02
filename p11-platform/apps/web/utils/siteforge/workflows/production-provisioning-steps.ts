@@ -326,7 +326,7 @@ async function completeProvisioningJob(
       stage: 'ready',
       progress: 100,
       current_step: 'Dedicated production WordPress application is ready',
-      result: output as unknown as Json,
+      output: output as unknown as Json,
       finished_at: now,
       heartbeat_at: now,
       lease_expires_at: null,

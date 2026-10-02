@@ -1,4 +1,5 @@
 'use client'
+import {Instagram,Facebook,Linkedin,Twitter} from '@/components/ui/BrandIcons'
 
 import { useState } from 'react'
 import {
@@ -9,10 +10,6 @@ import {
   Check,
   X,
   Clock,
-  Instagram,
-  Facebook,
-  Linkedin,
-  Twitter,
   FileText,
   Video,
   Image as ImageIcon,

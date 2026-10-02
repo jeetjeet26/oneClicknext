@@ -1,9 +1,11 @@
+import { admitLumaRead } from '@/utils/services/luma-public-read'
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/utils/supabase/admin';
 import { getRateLimitKey, publicReadLimiter, rateLimitHeaders } from '@/utils/services/rate-limiter';
 import { rateLimited, serverError } from '@/utils/services/api-helpers';
 import { createRequestContext } from '@/utils/services/request-context';
-import type { Json } from '@/types/supabase';
+import {businessHoursStatus} from '@/utils/services/business-hours';
+import {resolveCalendarTimezone} from '@/utils/services/timezone';
 
 function extractApiKey(req: NextRequest): string | null {
   const headerKey = req.headers.get('X-API-Key') || req.headers.get('x-api-key');
@@ -24,16 +26,6 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'GET, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, X-API-Key, Authorization',
 };
-
-function asBusinessHours(
-  value: Json
-): Record<string, { start: string; end: string } | null> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return {}
-  }
-
-  return value as Record<string, { start: string; end: string } | null>
-}
 
 export async function OPTIONS() {
   return new NextResponse(null, { headers: corsHeaders });
@@ -67,6 +59,7 @@ export async function GET(req: NextRequest) {
     const { data: config, error } = await supabase
       .from('lumaleasing_config')
       .select(`
+        property_id,
         widget_name,
         primary_color,
         secondary_color,
@@ -84,7 +77,7 @@ export async function GET(req: NextRequest) {
         business_hours,
         timezone,
         is_active,
-        properties(id, name)
+        properties(id, name, settings)
       `)
       .eq('api_key', apiKey)
       .single();
@@ -108,11 +101,15 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // Check if currently within business hours
-    const isWithinBusinessHours = checkBusinessHours(
-      asBusinessHours(config.business_hours),
-      config.timezone || 'America/Chicago'
-    );
+    if(!config.property_id) return NextResponse.json({error:'Property unavailable'},{status:404,headers:responseHeaders})
+    const denied = await admitLumaRead(supabase,req,config.property_id,responseHeaders)
+    if(denied) return denied
+
+    const {data:logo,error:logoError}=await supabase.rpc('luma_widget_logo',{p_property_id:config.property_id})
+    if(logoError||!logo||typeof logo!=='object'||Array.isArray(logo))throw new Error('Widget logo availability could not be confirmed')
+    const property=Array.isArray(config.properties)?config.properties[0]:config.properties
+    const timezone=resolveCalendarTimezone(property?.settings,config.timezone)
+    const isWithinBusinessHours=businessHoursStatus(config.business_hours,timezone)
 
     const propertyName = (() => {
       const props = config.properties
@@ -130,7 +127,7 @@ export async function GET(req: NextRequest) {
         widgetName: config.widget_name,
         primaryColor: config.primary_color,
         secondaryColor: config.secondary_color,
-        logoUrl: config.logo_url,
+        logoUrl: typeof logo.url==='string'?logo.url:null,
         agentAvatarUrl: config.agent_avatar_url,
         welcomeMessage: config.welcome_message,
         offlineMessage: config.offline_message,
@@ -145,40 +142,13 @@ export async function GET(req: NextRequest) {
       },
       isOnline: isWithinBusinessHours,
       businessHours: config.business_hours,
-      timezone: config.timezone,
+      timezone,
+      businessHoursVerified: isWithinBusinessHours!==null,
     }, { headers: responseHeaders });
 
   } catch (error) {
     ctx.logError(500, error, { operation: 'fetch_lumaleasing_public_config' })
     return serverError(error, responseHeaders);
-  }
-}
-
-function checkBusinessHours(businessHours: Record<string, { start: string; end: string } | null>, timezone: string): boolean {
-  try {
-    const now = new Date();
-    const formatter = new Intl.DateTimeFormat('en-US', {
-      timeZone: timezone,
-      weekday: 'long',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-    });
-
-    const parts = formatter.formatToParts(now);
-    const weekday = parts.find(p => p.type === 'weekday')?.value?.toLowerCase();
-    const hour = parts.find(p => p.type === 'hour')?.value;
-    const minute = parts.find(p => p.type === 'minute')?.value;
-
-    if (!weekday || !hour || !minute) return true; // Default to online
-
-    const todayHours = businessHours[weekday];
-    if (!todayHours) return false; // Closed today
-
-    const currentTime = `${hour}:${minute}`;
-    return currentTime >= todayHours.start && currentTime <= todayHours.end;
-  } catch {
-    return true; // Default to online if timezone parsing fails
   }
 }
 

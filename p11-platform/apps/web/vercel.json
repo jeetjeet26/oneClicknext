@@ -3,7 +3,7 @@
   "version": 2,
   "framework": "nextjs",
   "buildCommand": "npm run build",
-  "installCommand": "npm install",
+  "installCommand": "npm ci --ignore-scripts",
   "crons": [
     {
       "path": "/api/workflows/process",
@@ -47,7 +47,7 @@
     },
     {
       "path": "/api/cron/scrape-competitors",
-      "schedule": "0 3 * * *"
+      "schedule": "0 * * * *"
     },
     {
       "path": "/api/cron/crm-sync",
@@ -64,6 +64,18 @@
     {
       "path": "/api/cron/siteforge-analytics",
       "schedule": "5 * * * *"
+    },
+    {
+      "path": "/api/cron/integration-authorizations",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/process-review-analysis",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/client-report-drafts",
+      "schedule": "30 * * * *"
     }
   ]
 }

@@ -1,6 +1,6 @@
 'use client'
 
-import { Smile, Meh, Frown, AlertTriangle } from 'lucide-react'
+import { Smile, Meh, Frown, AlertTriangle, CircleHelp } from 'lucide-react'
 
 interface SentimentBadgeProps {
   sentiment: 'positive' | 'neutral' | 'negative' | null
@@ -56,8 +56,8 @@ export function SentimentBadge({
 
   return (
     <span className={`inline-flex items-center gap-1.5 rounded-full font-medium bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300 ${sizeClasses[size]}`}>
-      <Meh size={iconSizes[size]} />
-      {showLabel && 'Neutral'}
+      {sentiment==='neutral'?<Meh size={iconSizes[size]} />:<CircleHelp size={iconSizes[size]} />}
+      {showLabel && (sentiment==='neutral'?'Neutral':'Not classified')}
     </span>
   )
 }

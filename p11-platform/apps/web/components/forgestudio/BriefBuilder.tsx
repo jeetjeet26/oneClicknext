@@ -1,5 +1,8 @@
 'use client'
 
+import {loadSocialConnections} from '@/utils/forgestudio/connections-client'
+
+import {savedEditorialRequest} from '@/utils/forgestudio/client'
 import { useEffect, useState } from 'react'
 import {
   AlertTriangle,
@@ -44,9 +47,9 @@ const DEFAULT_FORMATS: Record<ChannelId, ContentFormat[]> = {
 interface Connection {
   id: string
   platform: string
-  account_name: string
+  account_name: string | null
   account_username: string | null
-  is_active: boolean
+  is_active: boolean | null
 }
 
 interface SourceFact {
@@ -55,6 +58,8 @@ interface SourceFact {
 }
 
 interface BriefBuilderProps {
+  initialAssetId?:string
+  onRequestChanged:()=>void
   propertyId: string
   onGenerated: (result: { packageId: string; revisionId: string }) => void
 }
@@ -67,7 +72,7 @@ function channelForConnection(platform: string): ChannelId | null {
     : null
 }
 
-export function BriefBuilder({ propertyId, onGenerated }: BriefBuilderProps) {
+export function BriefBuilder({ propertyId, onGenerated, onRequestChanged, initialAssetId }: BriefBuilderProps) {
   const [title, setTitle] = useState('')
   const [objective, setObjective] = useState('')
   const [topic, setTopic] = useState('')
@@ -76,7 +81,7 @@ export function BriefBuilder({ propertyId, onGenerated }: BriefBuilderProps) {
   const [factDraft, setFactDraft] = useState('')
   const [mustAvoid, setMustAvoid] = useState('')
   const [selectedConnections, setSelectedConnections] = useState<string[]>([])
-  const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([])
+  const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>(()=>initialAssetId?[initialAssetId]:[])
   const [formatSelections, setFormatSelections] = useState<Record<ChannelId, ContentFormat[]>>(
     () => structuredClone(DEFAULT_FORMATS)
   )
@@ -84,29 +89,20 @@ export function BriefBuilder({ propertyId, onGenerated }: BriefBuilderProps) {
 
   const [connections, setConnections] = useState<Connection[]>([])
   const [loadingConnections, setLoadingConnections] = useState(true)
+  const [connectionError,setConnectionError]=useState('')
+  const [connectionReload,setConnectionReload]=useState(0)
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [claimWarnings, setClaimWarnings] = useState<Array<{ type: string; text: string }>>([])
 
   useEffect(() => {
-    let cancelled = false
-    setLoadingConnections(true)
-    fetch(`/api/forgestudio/social/connections?propertyId=${propertyId}`)
-      .then((res) => res.json())
-      .then((data) => {
-        if (cancelled) return
-        setConnections(
-          (data.connections || []).filter(
-            (conn: Connection) => conn.is_active && channelForConnection(conn.platform)
-          )
-        )
-      })
-      .catch(() => undefined)
-      .finally(() => !cancelled && setLoadingConnections(false))
-    return () => {
-      cancelled = true
-    }
-  }, [propertyId])
+    const controller=new AbortController()
+    loadSocialConnections(propertyId,controller.signal)
+      .then(data=>{if(!controller.signal.aborted){setConnections((data.connections||[]).filter((connection:Connection)=>connection.is_active&&channelForConnection(connection.platform)));setConnectionError('')}})
+      .catch(error=>{if(!controller.signal.aborted){setConnections([]);setConnectionError(error instanceof Error?error.message:'Connected accounts could not be loaded.')}})
+      .finally(()=>{if(!controller.signal.aborted)setLoadingConnections(false)})
+    return()=>controller.abort()
+  },[propertyId,connectionReload])
 
   const selectedChannels = [
     ...new Set(
@@ -146,10 +142,7 @@ export function BriefBuilder({ propertyId, onGenerated }: BriefBuilderProps) {
 
     try {
       // 1. Create the brief.
-      const briefRes = await fetch('/api/forgestudio/briefs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const request=await savedEditorialRequest('brief',{
           propertyId,
           title: title.trim(),
           objective: objective.trim(),
@@ -163,19 +156,20 @@ export function BriefBuilder({ propertyId, onGenerated }: BriefBuilderProps) {
           connectionIds: selectedConnections,
           assetIds: selectedAssetIds,
           formatPlan,
-        }),
-      })
+        })
+      const briefRes = await fetch('/api/forgestudio/briefs', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(request.body)})
       const briefData = await briefRes.json()
       if (!briefRes.ok) {
         throw new Error(briefData.error || 'Failed to create brief')
       }
 
-      // 2. Generate the package from the brief.
+      // Keep this generation identity across a lost response or page reload.
+      const generationRequest=await savedEditorialRequest('generate-'+briefData.brief.id,{briefId:briefData.brief.id})
       const generateRes = await fetch(`/api/forgestudio/briefs/${briefData.brief.id}/generate`, {
-        method: 'POST',
+        method: 'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(generationRequest.body),
       })
       const generateData = await generateRes.json()
-      if (!generateRes.ok) {
+      if (!generateRes.ok || generateRes.status===202) {
         if (generateRes.status === 422 && generateData.unsupportedClaims) {
           setClaimWarnings(generateData.unsupportedClaims)
           throw new Error(
@@ -185,14 +179,15 @@ export function BriefBuilder({ propertyId, onGenerated }: BriefBuilderProps) {
         throw new Error(generateData.error || 'Generation failed')
       }
 
+      request.acknowledge();generationRequest.acknowledge()
       onGenerated({
-        packageId: generateData.package.id,
-        revisionId: generateData.revision.id,
+        packageId: generateData.result.packageId,
+        revisionId: generateData.result.revisionId,
       })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong')
     } finally {
-      setGenerating(false)
+      setGenerating(false);onRequestChanged()
     }
   }
 
@@ -207,7 +202,7 @@ export function BriefBuilder({ propertyId, onGenerated }: BriefBuilderProps) {
       </div>
 
       {error && (
-        <div className="bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/30 rounded-lg p-3 text-sm text-red-700 dark:text-red-300 flex items-start gap-2">
+        <div role="alert" className="bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/30 rounded-lg p-3 text-sm text-red-700 dark:text-red-300 flex items-start gap-2">
           <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
           <div>
             <p>{error}</p>
@@ -230,6 +225,7 @@ export function BriefBuilder({ propertyId, onGenerated }: BriefBuilderProps) {
             Campaign title *
           </label>
           <input
+            aria-label="Campaign title"
             value={title}
             onChange={(event) => setTitle(event.target.value)}
             placeholder="August pool season push"
@@ -254,6 +250,7 @@ export function BriefBuilder({ propertyId, onGenerated }: BriefBuilderProps) {
           Objective *
         </label>
         <textarea
+          aria-label="Campaign objective"
           value={objective}
           onChange={(event) => setObjective(event.target.value)}
             placeholder="Drive tour bookings from renters seeking pet-friendly homes this fall"
@@ -345,7 +342,7 @@ export function BriefBuilder({ propertyId, onGenerated }: BriefBuilderProps) {
           <div className="flex items-center gap-2 text-sm text-slate-500">
             <Loader2 className="w-4 h-4 animate-spin" /> Loading connected accounts…
           </div>
-        ) : connections.length === 0 ? (
+        ) : connectionError ? <div role="alert" className="text-sm text-red-700">{connectionError}<button className="ml-2 underline" onClick={()=>{setLoadingConnections(true);setConnectionReload(value=>value+1)}}>Reload connected accounts</button></div> : connections.length === 0 ? (
           <p className="text-sm text-amber-600 dark:text-amber-400 flex items-center gap-1">
             <Link2 className="w-4 h-4" />
             No active social connections. Connect accounts in the Connections tab first.

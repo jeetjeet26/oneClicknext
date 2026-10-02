@@ -237,7 +237,7 @@ class ScrapingCoordinator:
         competitors = competitors_result.data or []
         
         if not competitors:
-            return {'success': True, 'updated_count': 0, 'message': 'No competitors to refresh'}
+            return {'success': True, 'total_competitors':0, 'error_count':0, 'updated_count': 0, 'message': 'No competitors to refresh'}
         
         discovery = CompetitorDiscovery(proxy_url=self.proxy_url)
         
@@ -298,13 +298,15 @@ class ScrapingCoordinator:
                 })
         
         # Update last scraped timestamp
-        self.supabase.table('scrape_config').update({
-            'last_run_at': datetime.now(timezone.utc).isoformat(),
+        saved = self.supabase.table('scrape_config').update({
+            **({'last_run_at': datetime.now(timezone.utc).isoformat()} if not errors else {}),
             'error_count': len(errors)
         }).eq('property_id', property_id).execute()
         
+        if not saved.data:
+            raise RuntimeError('Scrape result persistence was not confirmed')
         return {
-            'success': True,
+            'success': not errors,
             'total_competitors': len(competitors),
             'updated_count': updated,
             'website_updated': website_updated,
@@ -665,118 +667,14 @@ class ScrapingCoordinator:
         }
     
     def refresh_property_from_website(
-        self,
-        property_id: str,
-        website_url: Optional[str] = None
+        self, property_id: str, website_url: Optional[str] = None
     ) -> Dict[str, Any]:
-        """
-        Refresh pricing data for a property from its own website.
-        
-        Uses the same scraping logic as competitors but stores results in property_units.
-        
-        Args:
-            property_id: Property UUID
-            website_url: Optional URL override (otherwise fetched from properties table)
-            
-        Returns:
-            Dict with refresh results
-        """
-        # Get property details
-        property_result = self.supabase.table('properties').select(
-            'id, name, website_url'
-        ).eq('id', property_id).single().execute()
-        
-        if not property_result.data:
-            return {'success': False, 'error': 'Property not found'}
-        
-        property_data = property_result.data
-        
-        # Get website URL
-        url = website_url or property_data.get('website_url')
-        if not url:
-            return {'success': False, 'error': 'No website URL for this property'}
-        
-        logger.info(f"Refreshing {property_data['name']} from website: {url}")
-        
-        try:
-            # Use the same website scraper as competitors
-            scraper = CommunityWebsiteScraper(
-                prefer_playwright=True,
-                use_llm_extraction=True  # Use GPT-4o-mini for intelligent pricing extraction
-            )
-            # Run in separate thread to avoid event loop conflicts
-            knowledge = run_async_in_thread(scraper.extract_community_knowledge(url))
-            
-            if not knowledge.floor_plans:
-                return {
-                    'success': False,
-                    'error': 'No pricing/floorplan data found on website',
-                    'url': url
-                }
-            
-            # Delete existing scraped units for this property (manual entries preserved)
-            self.supabase.table('property_units').delete().eq(
-                'property_id', property_id
-            ).eq('source', 'scraped').execute()
-            
-            # Insert new units
-            units_to_insert = []
-            for fp in knowledge.floor_plans:
-                units_to_insert.append({
-                    'property_id': property_id,
-                    'unit_type': fp.unit_type,
-                    'bedrooms': fp.bedrooms,
-                    'bathrooms': fp.bathrooms,
-                    'sqft_min': fp.sqft_min,
-                    'sqft_max': fp.sqft_max,
-                    'rent_min': fp.rent_min,
-                    'rent_max': fp.rent_max,
-                    'deposit': fp.deposit,
-                    'available_count': fp.available_count,
-                    'move_in_specials': fp.move_in_specials,
-                    'source': 'scraped',
-                    'source_url': url,
-                    'last_updated_at': datetime.now(timezone.utc).isoformat()
-                })
-            
-            if units_to_insert:
-                result = self.supabase.table('property_units').insert(units_to_insert).execute()
-                
-                # Add price history for each unit
-                if result.data:
-                    for unit_data in result.data:
-                        if unit_data.get('rent_min') or unit_data.get('rent_max'):
-                            self.supabase.table('property_price_history').insert({
-                                'property_unit_id': unit_data['id'],
-                                'rent_min': unit_data.get('rent_min'),
-                                'rent_max': unit_data.get('rent_max'),
-                                'available_count': unit_data.get('available_count'),
-                                'source': 'website_scrape'
-                            }).execute()
-            
-            # Update property updated_at timestamp
-            self.supabase.table('properties').update({
-                'updated_at': datetime.now(timezone.utc).isoformat()
-            }).eq('id', property_id).execute()
-            
-            return {
-                'success': True,
-                'units_found': len(units_to_insert),
-                'url': url,
-                'property_name': property_data['name'],
-                'floor_plans_found': len(knowledge.floor_plans),
-                'specials_found': len(knowledge.specials),
-                'amenities_found': len(knowledge.amenities),
-                'message': f"Successfully scraped {len(units_to_insert)} floor plans"
-            }
-            
-        except Exception as e:
-            logger.error(f"Error scraping property website: {e}")
-            return {
-                'success': False,
-                'error': str(e),
-                'url': url
-            }
+        """Legacy immediate pricing replacement is retired; no fetch or mutation."""
+        return {
+            "success": False,
+            "code": "review_required",
+            "error": "Use the recorded floor-plan review before changing property facts.",
+        }
     
     def _add_competitors(
         self, 

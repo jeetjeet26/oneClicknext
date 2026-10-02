@@ -1,0 +1,20 @@
+import {beforeEach,describe,it,expect,vi} from 'vitest'
+const mocks=vi.hoisted(()=>({rpc:vi.fn()}))
+vi.mock('@/utils/supabase/admin',()=>({createServiceClient:()=>({rpc:mocks.rpc})}))
+import {buildIntakePreview,intakeRpc,readIntake} from './intake-store'
+import {IntakeDecision,IntakeRequest,intakeUrl} from './intake-contracts'
+const id='33333333-3333-3333-3333-333333333333'
+describe('saved competitor intake',()=>{
+ beforeEach(()=>{vi.clearAllMocks()})
+ it('retains exact paragraphs while suggestions remain operator reports',()=>{const notes='  North by Builder (City): from $2000.\r\nTwo reported beds.\r\n\r\nSouth: promotion reported.  ';const rows=buildIntakePreview(notes);expect(rows).toHaveLength(2);expect(rows[0]).toMatchObject({name:'North',location:'City',sourceText:'North by Builder (City): from $2000.\nTwo reported beds.',claims:{priceText:'from $2000'}});expect(rows[1].name).toBe('South');expect(JSON.stringify(rows)).not.toContain('undefined')})
+ it('keeps malformed-name paragraphs for review instead of dropping evidence',()=>{const rows=buildIntakePreview('. Notes with no usable header.');expect(rows).toHaveLength(1);expect(rows[0].sourceText).toBe('. Notes with no usable header.');expect(rows[0].name).toBe('')})
+ it('fails visibly beyond the complete preview bound instead of truncating',()=>{expect(()=>buildIntakePreview(Array.from({length:51},(_,i)=>`Candidate ${i}: operator note`).join('\n\n'))).toThrow('one to 50');expect(buildIntakePreview(Array.from({length:50},(_,i)=>`Candidate ${i}: operator note`).join('\n\n'))).toHaveLength(50)})
+ it.each(['javascript:alert(1)','https://user:pass@example.com/','https://example.com/a b','not a url'])('rejects unsafe or incomplete source address %s',value=>expect(intakeUrl.safeParse(value).success).toBe(false))
+ it.each(['https://example.com/','http://example.com/path',null])('accepts an optional reported address without fetching %s',value=>expect(intakeUrl.safeParse(value).success).toBe(true))
+ it('accepts deployed non-RFC identifiers and preserves exact raw whitespace',()=>{const rawText='  Original notes with source detail.  ';const p=IntakeRequest.parse({requestId:id,propertyId:id,rawText,reason:'Reviewed notes'});expect(p.rawText).toBe(rawText)})
+ it('rejects caller model or verified fact payloads',()=>{expect(IntakeRequest.safeParse({requestId:id,propertyId:id,rawText:'Original complete note text',reason:'Review notes',preview:[]}).success).toBe(false)})
+ it.each([{acknowledgeUnverified:false},{expectedVersion:0},{previewHash:'old'},{candidates:[{id,action:'add',name:'Sample',location:null,url:null,rent:2000}]}])('rejects unqualified apply inputs %j',change=>{expect(IntakeDecision.safeParse({requestId:id,propertyId:id,intakeId:id,expectedVersion:1,previewHash:'a'.repeat(64),action:'apply',reason:'Reviewed identities',acknowledgeUnverified:true,candidates:[{id,action:'skip'}],...change}).success).toBe(false)})
+ it.each(['forbidden','not_found','request_conflict','stale_intake','duplicate_competitor','duplicate_selection','intake_finished','cursor_changed'])('surfaces saved recovery state %s',async state=>{mocks.rpc.mockResolvedValue({data:{state},error:null});await expect(intakeRpc('decide',{})).rejects.toThrow()})
+ it('never describes database failure as a confirmed empty result',async()=>{mocks.rpc.mockResolvedValue({data:null,error:{message:'private backend detail'}});await expect(readIntake(id,id)).rejects.toThrow('could not be confirmed');mocks.rpc.mockResolvedValue({data:{state:'ready',intakes:[]},error:null});await expect(readIntake(id,id)).rejects.toThrow('complete saved intake')})
+ it('checks complete paginated reads and exact actor/property scope',async()=>{mocks.rpc.mockResolvedValue({data:{state:'ready',intakes:[],total:23,nextCursor:null,legacy:false},error:null});expect(await readIntake(id,'actor',undefined,id)).toMatchObject({total:23});expect(mocks.rpc).toHaveBeenCalledWith('read_marketvision_intakes',{p_property_id:id,p_actor_id:'actor',p_request_id:null,p_cursor:id,p_legacy:false})})
+})

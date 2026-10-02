@@ -1,284 +1,31 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { NextRequest } from 'next/server'
-
-const authGetUserMock = vi.fn()
-const createClientMock = vi.fn()
-const createServiceClientMock = vi.fn()
-const validatePropertyAccessMock = vi.fn()
-const rpcMock = vi.fn()
-
-vi.mock('@/utils/supabase/server', () => ({
-  createClient: createClientMock,
-}))
-
-vi.mock('@/utils/supabase/admin', () => ({
-  createServiceClient: createServiceClientMock,
-}))
-
-vi.mock('@/utils/services/auth-guard', () => ({
-  validatePropertyAccess: validatePropertyAccessMock,
-}))
-
-function makeSingleResult(data: unknown, error: unknown = null) {
-  return {
-    data,
-    error,
-  }
-}
-
-describe('LeadPulse events route', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-
-    createClientMock.mockResolvedValue({
-      auth: {
-        getUser: authGetUserMock,
-      },
-      from: vi.fn((table: string) => {
-        if (table === 'lead_engagement_events') {
-          return {
-            select: vi.fn(() => ({
-              eq: vi.fn(() => ({
-                order: vi.fn(() => ({
-                  limit: vi.fn().mockResolvedValue({
-                    data: [
-                      {
-                        id: 'event-1',
-                        event_type: 'tour_scheduled',
-                        metadata: { foo: 'bar' },
-                        score_weight: 25,
-                        created_at: '2026-03-12T10:00:00.000Z',
-                      },
-                    ],
-                    error: null,
-                  }),
-                })),
-              })),
-            })),
-          }
-        }
-
-        throw new Error(`Unexpected table ${table}`)
-      }),
-    })
-
-    rpcMock.mockResolvedValue({ data: 'score-1', error: null })
-  })
-
-  afterEach(() => {
-    vi.restoreAllMocks()
-  })
-
-  it('returns 400 for invalid event types', async () => {
-    authGetUserMock.mockResolvedValue({
-      data: { user: { id: 'user-1' } },
-      error: null,
-    })
-
-    const { POST } = await import('./route')
-
-    const request = new Request('http://localhost/api/leadpulse/events', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        leadId: 'lead-1',
-        eventType: 'not_real',
-      }),
-    }) as NextRequest
-
-    const response = await POST(request)
-
-    expect(response.status).toBe(400)
-    await expect(response.json()).resolves.toEqual({ error: 'Invalid eventType' })
-  })
-
-  it('records an event and triggers rescoring', async () => {
-    authGetUserMock.mockResolvedValue({
-      data: { user: { id: 'user-1' } },
-      error: null,
-    })
-    validatePropertyAccessMock.mockResolvedValue({
-      authorized: true,
-      orgId: 'org-1',
-    })
-
-    createServiceClientMock.mockReturnValue({
-      from: vi.fn((table: string) => {
-        if (table === 'leads') {
-          return {
-            select: vi.fn(() => ({
-              eq: vi.fn(() => ({
-                single: vi.fn().mockResolvedValue(
-                  makeSingleResult({
-                    id: 'lead-1',
-                    property_id: 'property-1',
-                  })
-                ),
-              })),
-            })),
-          }
-        }
-
-        if (table === 'lead_engagement_events') {
-          return {
-            insert: vi.fn(() => ({
-              select: vi.fn(() => ({
-                single: vi.fn().mockResolvedValue(
-                  makeSingleResult({
-                    id: 'event-1',
-                    lead_id: 'lead-1',
-                    event_type: 'tour_scheduled',
-                    score_weight: 25,
-                    created_at: '2026-03-12T10:00:00.000Z',
-                  })
-                ),
-              })),
-            })),
-          }
-        }
-
-        throw new Error(`Unexpected table ${table}`)
-      }),
-      rpc: rpcMock,
-    })
-
-    const { POST } = await import('./route')
-
-    const request = new Request('http://localhost/api/leadpulse/events', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        leadId: 'lead-1',
-        eventType: 'tour_scheduled',
-        metadata: { source: 'widget' },
-      }),
-    }) as NextRequest
-
-    const response = await POST(request)
-    const json = await response.json()
-
-    expect(response.status).toBe(200)
-    expect(response.headers.get('x-request-id')).toBeTruthy()
-    expect(json).toEqual({
-      success: true,
-      event: {
-        id: 'event-1',
-        leadId: 'lead-1',
-        eventType: 'tour_scheduled',
-        scoreWeight: 25,
-        createdAt: '2026-03-12T10:00:00.000Z',
-      },
-      rescored: true,
-    })
-    expect(validatePropertyAccessMock).toHaveBeenCalledWith(
-      'user-1',
-      'property-1'
-    )
-    expect(rpcMock).toHaveBeenCalledWith('score_lead', {
-      p_lead_id: 'lead-1',
-    })
-  })
-
-  it('rejects a property assertion that does not match the lead', async () => {
-    authGetUserMock.mockResolvedValue({
-      data: { user: { id: 'user-1' } },
-      error: null,
-    })
-    createServiceClientMock.mockReturnValue({
-      from: vi.fn((table: string) => {
-        if (table === 'leads') {
-          return {
-            select: vi.fn(() => ({
-              eq: vi.fn(() => ({
-                single: vi.fn().mockResolvedValue(
-                  makeSingleResult({
-                    id: 'lead-1',
-                    property_id: 'property-owned-by-lead',
-                  })
-                ),
-              })),
-            })),
-          }
-        }
-        throw new Error(`Unexpected table ${table}`)
-      }),
-      rpc: rpcMock,
-    })
-
-    const { POST } = await import('./route')
-    const request = new Request('http://localhost/api/leadpulse/events', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        leadId: 'lead-1',
-        propertyId: 'attacker-controlled-property',
-        eventType: 'chat_started',
-      }),
-    }) as NextRequest
-
-    const response = await POST(request)
-
-    expect(response.status).toBe(400)
-    await expect(response.json()).resolves.toEqual({
-      error: 'propertyId does not match lead',
-    })
-    expect(validatePropertyAccessMock).not.toHaveBeenCalled()
-    expect(rpcMock).not.toHaveBeenCalled()
-  })
-
-  it('returns events for an authorized lead', async () => {
-    authGetUserMock.mockResolvedValue({
-      data: { user: { id: 'user-1' } },
-      error: null,
-    })
-    validatePropertyAccessMock.mockResolvedValue({
-      authorized: true,
-      orgId: 'org-1',
-    })
-
-    createServiceClientMock.mockReturnValue({
-      from: vi.fn((table: string) => {
-        if (table === 'leads') {
-          return {
-            select: vi.fn(() => ({
-              eq: vi.fn(() => ({
-                single: vi.fn().mockResolvedValue(
-                  makeSingleResult({
-                    property_id: 'property-1',
-                  })
-                ),
-              })),
-            })),
-          }
-        }
-
-        throw new Error(`Unexpected table ${table}`)
-      }),
-      rpc: rpcMock,
-    })
-
-    const { GET } = await import('./route')
-
-    const request = new Request(
-      'http://localhost/api/leadpulse/events?leadId=lead-1&limit=10',
-      { method: 'GET' }
-    ) as NextRequest & { nextUrl: NextRequest['nextUrl'] }
-    request.nextUrl = new URL(request.url) as unknown as NextRequest['nextUrl']
-
-    const response = await GET(request)
-    const json = await response.json()
-
-    expect(response.status).toBe(200)
-    expect(json).toEqual({
-      events: [
-        {
-          id: 'event-1',
-          eventType: 'tour_scheduled',
-          metadata: { foo: 'bar' },
-          scoreWeight: 25,
-          createdAt: '2026-03-12T10:00:00.000Z',
-        },
-      ],
-    })
-  })
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { NextRequest } from 'next/server'
+const mocks = vi.hoisted(() => ({ auth: vi.fn(), access: vi.fn(), rpc: vi.fn(), from: vi.fn(), leads: [] as {id:string;property_id:string}[] }))
+vi.mock('@/utils/supabase/server', () => ({ createClient: async () => ({auth:{getUser:mocks.auth}}) }))
+vi.mock('@/utils/supabase/admin', () => ({ createServiceClient: () => ({rpc:mocks.rpc,from:mocks.from}) }))
+vi.mock('@/utils/services/auth-guard', () => ({validatePropertyAccess:mocks.access}))
+const requestId='10000000-0000-4000-8000-000000000001'
+function request(method:string, body?:unknown, query='') { return new NextRequest('http://localhost/api/leadpulse/test'+query,{method,...(body?{body:JSON.stringify(body),headers:{'Content-Type':'application/json'}}:{})}) }
+beforeEach(() => {
+ vi.clearAllMocks()
+ mocks.auth.mockResolvedValue({data:{user:{id:'actor'}},error:null});mocks.access.mockResolvedValue({authorized:true,orgId:'org'})
+ mocks.leads=[{id:'lead-1',property_id:'property-1'}]
+ mocks.from.mockImplementation((table:string)=> {
+  if(table==='leads') return {select:()=>({in:async()=>({data:mocks.leads,error:null})})}
+  if(table==='lead_workflows') { const q={select:()=>q,eq:()=>q,order:()=>q,limit:()=>q,maybeSingle:async()=>({data:null,error:null})};return q }
+  throw new Error('Unexpected table '+table)
+ })
+})
+import {GET,POST,PATCH} from './route'
+describe('LeadPulse engagement commands',()=>{
+ it('rejects unknown types including inherited object keys',async()=>{for(const eventType of ['not_real','toString']){const r=await POST(request('POST',{requestId,leadId:'lead-1',eventType}));expect(r.status).toBe(400)}expect(mocks.rpc).not.toHaveBeenCalled()})
+ it('records event and score atomically with operator provenance',async()=>{mocks.rpc.mockResolvedValue({data:{state:'applied',eventId:'event-1',scoreId:'score-1'},error:null});const r=await POST(request('POST',{requestId,leadId:'lead-1',eventType:'call_inbound',metadata:{note:'Private note'}}));expect(r.status).toBe(200);expect(mocks.rpc).toHaveBeenCalledTimes(1);expect(mocks.rpc).toHaveBeenCalledWith('record_lead_engagement',{p_property_id:'property-1',p_actor_id:'actor',p_lead_id:'lead-1',p_event_type:'call_inbound',p_request_key:`operator/${requestId}`,p_origin:'operator',p_metadata:{note:'Private note'}})})
+ it('rejects client weights, origins and unbounded metadata',async()=>{for(const extra of [{scoreWeight:999},{origin:'siteforge'},{metadata:{note:'x'.repeat(6100)}}])expect((await POST(request('POST',{requestId,leadId:'lead-1',eventType:'call_inbound',...extra}))).status).toBe(400);expect(mocks.rpc).not.toHaveBeenCalled()})
+ it('rejects mismatched property before any mutation',async()=>{expect((await POST(request('POST',{requestId,leadId:'lead-1',propertyId:'other',eventType:'call_inbound'}))).status).toBe(400);expect(mocks.rpc).not.toHaveBeenCalled()})
+ it('checks membership even on retry',async()=>{mocks.access.mockResolvedValue({authorized:false});expect((await POST(request('POST',{requestId,leadId:'lead-1',eventType:'call_inbound'}))).status).toBe(403);expect(mocks.rpc).not.toHaveBeenCalled()})
+ it('returns the saved receipt on replay without a separate rescore',async()=>{mocks.rpc.mockResolvedValue({data:{state:'replayed',scoreId:'original'},error:null});expect(await (await POST(request('POST',{requestId,leadId:'lead-1',eventType:'call_inbound'}))).json()).toMatchObject({state:'replayed',scoreId:'original'});expect(mocks.rpc).toHaveBeenCalledTimes(1)})
+ it('does not claim the event saved when the transaction is unknown',async()=>{mocks.rpc.mockResolvedValue({data:null,error:{message:'db unavailable'}});expect((await POST(request('POST',{requestId,leadId:'lead-1',eventType:'call_inbound'}))).status).toBe(503)})
+ it('rejects invalid event pagination',async()=>{for(const limit of ['-1','1.5','999','NaN'])expect((await GET(request('GET',undefined,`?leadId=lead-1&limit=${limit}`))).status).toBe(400);expect(mocks.rpc).not.toHaveBeenCalled()})
+ it('returns bounded evidence without fetching raw metadata',async()=>{mocks.rpc.mockResolvedValue({data:{state:'saved',events:[],total:70},error:null});const r=await GET(request('GET',undefined,'?leadId=lead-1&limit=20&offset=40'));expect(await r.json()).toMatchObject({events:[],total:70});expect(mocks.rpc).toHaveBeenCalledWith('read_leadpulse_events',expect.objectContaining({p_limit:20,p_offset:40,p_actor_id:'actor'}))})
+ it('requires a correction reason and binds it to the saved event',async()=>{expect((await PATCH(request('PATCH',{requestId,eventId:requestId,leadId:'lead-1',propertyId:'property-1',reason:' '}))).status).toBe(400);mocks.rpc.mockResolvedValue({data:{state:'applied'},error:null});expect((await PATCH(request('PATCH',{requestId,eventId:requestId,leadId:'lead-1',propertyId:'property-1',reason:'Recorded in error'}))).status).toBe(200);expect(mocks.rpc).toHaveBeenCalledWith('correct_lead_engagement',expect.objectContaining({p_event_id:requestId,p_reason:'Recorded in error'}))})
 })

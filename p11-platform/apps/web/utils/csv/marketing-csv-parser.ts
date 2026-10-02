@@ -137,6 +137,13 @@ function parseNumber(value: string): number {
   return isNaN(num) ? 0 : Math.round(num)
 }
 
+/** Preserve attributed fractions; invalid values remain invalid for upload validation. */
+function parseConversions(value: string): number {
+  if (!value || value === '-' || value === 'No data') return 0
+  const cleaned = value.replace(/[,"]/g, '').trim()
+  return /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(cleaned) ? Number(cleaned) : NaN
+}
+
 /**
  * Extract date range from filename
  * e.g., "Time_series(2025.11.01-2025.11.30).csv" -> { start: "2025-11-01", end: "2025-11-30" }
@@ -299,7 +306,7 @@ function parseGoogleAdsTimeSeries(
       impressions: impressionsIdx !== undefined ? parseNumber(row[impressionsIdx]) : 0,
       clicks: clicksIdx !== undefined ? parseNumber(row[clicksIdx]) : 0,
       spend: costIdx !== undefined ? parseCurrency(row[costIdx]) : 0,
-      conversions: conversionsIdx !== undefined ? parseNumber(row[conversionsIdx]) : 0
+      conversions: conversionsIdx !== undefined ? parseConversions(row[conversionsIdx]) : 0
     }
     
     result.rows.push(parsed)
@@ -388,7 +395,7 @@ function parseMetaAdsTimeSeries(
       impressions: impressionsIdx !== undefined ? parseNumber(row[impressionsIdx]) : 0,
       clicks: clicksIdx !== undefined ? parseNumber(row[clicksIdx]) : 0,
       spend: spendIdx !== undefined ? parseCurrency(row[spendIdx]) : 0,
-      conversions: conversionsIdx !== undefined ? parseNumber(row[conversionsIdx]) : 0
+      conversions: conversionsIdx !== undefined ? parseConversions(row[conversionsIdx]) : 0
     }
     
     result.rows.push(parsed)
@@ -650,7 +657,7 @@ function parseGoogleAdsCampaignSummary(
       impressions: impressionsIdx !== -1 ? parseNumber(row[impressionsIdx]) : 0,
       clicks: clicksIdx !== -1 ? parseNumber(row[clicksIdx]) : 0,
       spend: costIdx !== -1 ? parseCurrency(row[costIdx]) : 0,
-      conversions: conversionsIdx !== -1 ? parseNumber(row[conversionsIdx]) : 0
+      conversions: conversionsIdx !== -1 ? parseConversions(row[conversionsIdx]) : 0
     }
     
     result.rows.push(parsed)
@@ -693,7 +700,7 @@ export function parseMarketingCSV(
   const dataRows = allRows.slice(headerRowIndex + 1).filter(row => row.length > 0 && row.some(cell => cell.trim()))
   
   // Try to extract date range from metadata rows or filename
-  let dateRange = extractDateRangeFromFilename(filename) || extractDateRangeFromMetadata(allRows.slice(0, headerRowIndex))
+  const dateRange = extractDateRangeFromFilename(filename) || extractDateRangeFromMetadata(allRows.slice(0, headerRowIndex))
   
   const reportType = detectReportType(headers)
   const normalizedHint = platformHint

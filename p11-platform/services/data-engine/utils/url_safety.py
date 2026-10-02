@@ -40,21 +40,16 @@ def is_safe_public_url(url: Optional[str]) -> bool:
     host = (parsed.hostname or "").lower()
     if not host or host == "localhost" or host.endswith(".localhost"):
         return False
-    if "." not in host:
+    if "." not in host and ":" not in host:
         # Bare single-label hostnames (internal service names) are not allowed.
         return False
     try:
         address = ipaddress.ip_address(host)
     except ValueError:
         return True  # Hostname, not an IP literal.
-    return not (
-        address.is_private
-        or address.is_loopback
-        or address.is_link_local
-        or address.is_reserved
-        or address.is_multicast
-        or address.is_unspecified
-    )
+    return address.is_global and not (address.is_multicast or address.is_reserved or
+        getattr(address, 'ipv4_mapped', None) or getattr(address, 'sixtofour', None) or getattr(address, 'teredo', None))
+
 
 
 def is_apartments_com_url(url: Optional[str]) -> bool:

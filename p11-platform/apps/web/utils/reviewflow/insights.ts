@@ -7,12 +7,13 @@
  * reviewers and never executes anything.
  */
 
-import { TAXONOMY_VERSION, type IssueDomain } from '@/utils/reviewflow/taxonomy'
+import { TAXONOMY_VERSION, ISSUE_DOMAINS, type IssueDomain } from '@/utils/reviewflow/taxonomy'
 
-export const INSIGHTS_VERSION = 'reviewflow-insights-v1'
+export const INSIGHTS_VERSION = 'reviewflow-insights-v2'
 
 export interface ReviewForInsights {
   id: string
+  source_version: number
   rating: number | null
   sentiment: string | null
   review_text: string | null
@@ -22,6 +23,9 @@ export interface ReviewForInsights {
 }
 
 export interface AnalysisForInsights {
+  id: string
+  source_version: number
+  analysis_version: number
   review_id: string
   issue_domains: unknown
   severity: string | null
@@ -41,6 +45,8 @@ export interface CaseForInsights {
 
 export interface EvidenceCitation {
   reviewId: string
+  sourceVersion: number
+  analysisId: string | null
   snippet: string
   reviewDate: string | null
   rating: number | null
@@ -71,7 +77,7 @@ export interface IssueCluster {
   avgRating: number | null
   openCases: number
   reopenedCases: number
-  trend: 'worsening' | 'improving' | 'stable' | 'insufficient_data'
+  trend: 'increasing' | 'decreasing' | 'stable' | 'insufficient_data'
   evidence: EvidenceCitation[]
   recommendation: Intervention | null
 }
@@ -194,7 +200,7 @@ const INTERVENTION_MAP: Partial<Record<string, Omit<Intervention, 'rationale'>>>
 
 function normalizeIssueDomains(value: unknown): string[] {
   if (!Array.isArray(value)) return []
-  return value.filter((item): item is string => typeof item === 'string')
+  return [...new Set(value.filter((item): item is string => typeof item === 'string' && (ISSUE_DOMAINS as readonly string[]).includes(item)))]
 }
 
 export function computeIssueClusters(input: {
@@ -209,8 +215,11 @@ export function computeIssueClusters(input: {
   const midpoint = new Date((windowStart.getTime() + now.getTime()) / 2)
 
   const analysisByReview = new Map<string, AnalysisForInsights>()
+  const reviewsInWindow = input.reviews.filter(review => { const observed = new Date(review.review_date || review.created_at); return observed >= windowStart && observed <= now })
+  const reviewById = new Map(reviewsInWindow.map(review => [review.id, review]))
   for (const analysis of input.analyses) {
-    analysisByReview.set(analysis.review_id, analysis)
+    const current = reviewById.get(analysis.review_id), previous = analysisByReview.get(analysis.review_id)
+    if (current && current.source_version === analysis.source_version && (!previous || previous.analysis_version < analysis.analysis_version)) analysisByReview.set(analysis.review_id, analysis)
   }
 
   type ClusterAccumulator = {
@@ -232,11 +241,11 @@ export function computeIssueClusters(input: {
   }
 
   let classifiedReviews = 0
-  for (const review of input.reviews) {
+  for (const review of reviewsInWindow) {
     const analysis = analysisByReview.get(review.id)
-    const domains = normalizeIssueDomains(analysis?.issue_domains)
-    if (domains.length === 0) continue
+    if (!analysis) continue
     classifiedReviews += 1
+    const domains = normalizeIssueDomains(analysis.issue_domains)
 
     const observedAt = new Date(review.review_date || review.created_at)
     for (const domain of domains) {
@@ -249,6 +258,7 @@ export function computeIssueClusters(input: {
 
   const openCaseStatuses = new Set(['open', 'triaged', 'awaiting_approval', 'ready_to_post', 'remediation'])
   for (const caseRow of input.cases) {
+    if (!openCaseStatuses.has(caseRow.status)) continue
     const domains = normalizeIssueDomains(caseRow.issue_domains)
     for (const domain of domains) {
       const acc = clusterFor(domain)
@@ -270,8 +280,8 @@ export function computeIssueClusters(input: {
 
     let trend: IssueCluster['trend'] = 'insufficient_data'
     if (acc.recentCount + acc.earlierCount >= 3) {
-      if (acc.recentCount > acc.earlierCount) trend = 'worsening'
-      else if (acc.recentCount < acc.earlierCount) trend = 'improving'
+      if (acc.recentCount > acc.earlierCount) trend = 'increasing'
+      else if (acc.recentCount < acc.earlierCount) trend = 'decreasing'
       else trend = 'stable'
     }
 
@@ -284,6 +294,8 @@ export function computeIssueClusters(input: {
       .slice(0, 3)
     const evidence: EvidenceCitation[] = evidenceSource.map((review) => ({
       reviewId: review.id,
+      sourceVersion: review.source_version,
+      analysisId: analysisByReview.get(review.id)?.id ?? null,
       snippet: (review.review_text || '').slice(0, 180),
       reviewDate: review.review_date,
       rating: review.rating,
@@ -305,8 +317,8 @@ export function computeIssueClusters(input: {
         ...mapped,
         rationale: isPraise
           ? `${acc.reviews.length} positive reviews cite this theme in the last ${input.windowDays} days.`
-          : `${negative.length} negative review(s), ${acc.openCases} open case(s), ` +
-            `${acc.reopenedCases} reopened case(s) in the last ${input.windowDays} days; trend ${trend}.`,
+          : `${negative.length} negative review(s) in the selected window; ${acc.openCases} currently open case(s), ` +
+            `${acc.reopenedCases} previously reopened open case(s). Mention volume is ${trend.replaceAll('_', ' ')}; this does not establish outcome improvement.`,
       }
     }
 
@@ -334,15 +346,15 @@ export function computeIssueClusters(input: {
     insightsVersion: INSIGHTS_VERSION,
     taxonomyVersion: TAXONOMY_VERSION,
     windowDays: input.windowDays,
-    totalReviews: input.reviews.length,
+    totalReviews: reviewsInWindow.length,
     classifiedReviews,
     sourceCoverageNote:
-      classifiedReviews < input.reviews.length
-        ? `${input.reviews.length - classifiedReviews} review(s) are not yet classified; clusters may undercount.`
-        : 'All reviews in the window are classified.',
+      classifiedReviews < reviewsInWindow.length
+        ? `${reviewsInWindow.length - classifiedReviews} review(s) are not yet classified with usable current-source analysis; clusters may undercount.`
+        : 'All stored reviews in this window have usable current-source analysis.',
     clusters,
     attributionLimits:
-      'Clusters are aggregate public-review evidence only. Reviewers are never matched to ' +
+      'Coverage is limited to saved reviews; external-source completeness is not established. Counts compare mentions in equal halves of the review-date window, using import date only when review date is missing. Open cases are current across all dates; reopened counts describe their history. Clusters are aggregate public-review evidence only. Reviewers are never matched to ' +
       'residents or leads, and recommendations are advisory — every intervention needs a named ' +
       'owner and its measurement window tracks correlation, not proven causation.',
   }

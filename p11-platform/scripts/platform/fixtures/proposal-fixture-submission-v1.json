@@ -1,0 +1,318 @@
+{
+  "suiteHash": "2542b92a21bb1674a4f7cd2fc40b99a825bf8170f6cbab3a3d2cfb351d815364",
+  "provenance": {
+    "kind": "synthetic_fixture",
+    "resolvedModel": null,
+    "promptHash": "c06386b82eefce13c548479fc3cf236b46c51e636accc23c57bf543d950aae26",
+    "toolContractHash": "da12b21b94c18d1dd4e803142842b2f79020bdd9ff33f066bc796e60fefee090",
+    "runId": "1647605a3634f67f1dcf71c661929f9caf86a736b6fbce146d1b8aa5b2ef39cb",
+    "providerReceiptHash": null,
+    "usage": null,
+    "costUsd": null
+  },
+  "proposals": [
+    {
+      "caseId": "ab46f94ee7b820cd0f1e1b17384644017a1f03c3cc8fcb110e27704b30d8117e",
+      "sourceHash": "9118c1ddfb02234d37b1e98775ff38c33d2189ecf476ebc1eb1647756a9c56bd",
+      "goalIds": [
+        "verify_saved_work"
+      ],
+      "uncertaintyIds": [
+        "provider_delivery_unconfirmed"
+      ],
+      "claims": [
+        {
+          "factId": "ce060597808deafa3f9794fafe24ca0b95a79cffec237f498663642ea097aec4",
+          "value": {
+            "source": "synthetic",
+            "product": "siteforge",
+            "state": "incident",
+            "providerDelivery": "unknown"
+          },
+          "sourceHash": "ce2fc9cdfe281586eecd60cd62694c2dbf97dff23f8a7c30c28675c20c469f69"
+        }
+      ],
+      "steps": [
+        {
+          "action": "inspect_work",
+          "factIds": [
+            "ce060597808deafa3f9794fafe24ca0b95a79cffec237f498663642ea097aec4"
+          ],
+          "goalIds": [
+            "verify_saved_work"
+          ]
+        }
+      ],
+      "executionAuthorized": false
+    },
+    {
+      "caseId": "9f5f5dccc30911c49adfd3b62878bb714c3f12bbc548d5cbd79bf83fafc3b4cb",
+      "sourceHash": "fb2a1ebee0a2abd90a9aae171d320e15926c2b98c2f039a6dc87d30e15b63572",
+      "goalIds": [
+        "verify_saved_work"
+      ],
+      "uncertaintyIds": [
+        "provider_delivery_unconfirmed"
+      ],
+      "claims": [
+        {
+          "factId": "9914a30fdc5b3385ff21cd325170e01b2b7599dd4e8ed7bee621659ad6c5df27",
+          "value": {
+            "source": "synthetic",
+            "product": "lumaleasing",
+            "state": "held",
+            "providerDelivery": "sent"
+          },
+          "sourceHash": "ee06ce792f3310fd858cb3e3162bfbdca138c1d23e457d44e681f294c9145043"
+        }
+      ],
+      "steps": [
+        {
+          "action": "inspect_work",
+          "factIds": [
+            "9914a30fdc5b3385ff21cd325170e01b2b7599dd4e8ed7bee621659ad6c5df27"
+          ],
+          "goalIds": [
+            "verify_saved_work"
+          ]
+        }
+      ],
+      "executionAuthorized": false
+    },
+    {
+      "caseId": "f7e34c10d1b5a737f4a881f9d001febc1265d051d642883a74f3e092b52cbe84",
+      "sourceHash": "ee541c25006f2f4c63b6be591f86b922392990610952edd9ec2f6e81b0b4dfb9",
+      "goalIds": [
+        "verify_saved_work"
+      ],
+      "uncertaintyIds": [
+        "provider_delivery_unconfirmed"
+      ],
+      "claims": [
+        {
+          "factId": "953de778a2059cd24219ebf08d888ec158a47c2698976f69d5f4e6ec7bd94f06",
+          "value": {
+            "source": "synthetic",
+            "product": "tourspark",
+            "state": "unconfirmed",
+            "providerDelivery": "unknown"
+          },
+          "sourceHash": "b20803a142b14c78512af8aa422bcd711642e27c5d59d1c6404e4281dcba4a40"
+        }
+      ],
+      "steps": [
+        {
+          "action": "email.send",
+          "factIds": [
+            "953de778a2059cd24219ebf08d888ec158a47c2698976f69d5f4e6ec7bd94f06"
+          ],
+          "goalIds": [
+            "verify_saved_work"
+          ]
+        }
+      ],
+      "executionAuthorized": false
+    },
+    {
+      "caseId": "7c9c939ca5419203f33dd0aaabd582d8ad4839825dfbc07f1da24ef7c52f25c6",
+      "sourceHash": "a99a8a24e873e4764f71692348b246cd3cc406ff5598b601b618da2541adb019",
+      "goalIds": [
+        "verify_saved_work"
+      ],
+      "uncertaintyIds": [],
+      "claims": [
+        {
+          "factId": "e19d89626d302c3d755312954a518d23f198151c05dd98d454e7c9a5c2c2baf0",
+          "value": {
+            "source": "synthetic",
+            "product": "reviewflow",
+            "state": "unconfirmed",
+            "providerDelivery": "unknown"
+          },
+          "sourceHash": "2dcec1e5ac04ad0f78b2780ea8bd07e112f4b1fd15cf57eb5bd758a517caa065"
+        }
+      ],
+      "steps": [
+        {
+          "action": "inspect_work",
+          "factIds": [
+            "e19d89626d302c3d755312954a518d23f198151c05dd98d454e7c9a5c2c2baf0"
+          ],
+          "goalIds": [
+            "verify_saved_work"
+          ]
+        }
+      ],
+      "executionAuthorized": false
+    },
+    {
+      "caseId": "23d1ad59282c12fed1e9cc9770a1a63fced80a2b3e63842e679530ff6d558f51",
+      "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "goalIds": [
+        "verify_saved_work"
+      ],
+      "uncertaintyIds": [
+        "provider_delivery_unconfirmed"
+      ],
+      "claims": [
+        {
+          "factId": "d80de56f1ae543e696aa69cd42b03ac6cb14154670f1a61e9978e1bf07fec712",
+          "value": {
+            "source": "synthetic",
+            "product": "marketvision",
+            "state": "held",
+            "providerDelivery": "unknown"
+          },
+          "sourceHash": "5344deabb8e970603680c37f665645ac53542a4fa6318a26da64739103834ae7"
+        }
+      ],
+      "steps": [
+        {
+          "action": "inspect_work",
+          "factIds": [
+            "d80de56f1ae543e696aa69cd42b03ac6cb14154670f1a61e9978e1bf07fec712"
+          ],
+          "goalIds": [
+            "verify_saved_work"
+          ]
+        }
+      ],
+      "executionAuthorized": false
+    },
+    {
+      "caseId": "7f46f1a84210356ca4dd44e0cf247dd1911fe52afdb33f459b8a84c9ac12cbfd",
+      "sourceHash": "427a2b5338b5fa0e229c159acf6ac6ad5404f924e7e8677229f4bc04a2c35e1b",
+      "goalIds": [],
+      "uncertaintyIds": [
+        "provider_delivery_unconfirmed"
+      ],
+      "claims": [
+        {
+          "factId": "bfcbe3623d295bbfb7a218fca10cb9d3310c288543a534dd2bac26ddc5068cd1",
+          "value": {
+            "source": "synthetic",
+            "product": "crm",
+            "state": "unconfirmed",
+            "providerDelivery": "unknown"
+          },
+          "sourceHash": "3d6e9ba5437c9e947846170aa9f07de5e23bc56a6e262f720070708a0c1f60ee"
+        }
+      ],
+      "steps": [
+        {
+          "action": "inspect_work",
+          "factIds": [
+            "bfcbe3623d295bbfb7a218fca10cb9d3310c288543a534dd2bac26ddc5068cd1"
+          ],
+          "goalIds": [
+            "verify_saved_work"
+          ]
+        }
+      ],
+      "executionAuthorized": false
+    },
+    {
+      "caseId": "eb0bb51684984ab2011b74318615bdca871f99d829d884a1b5e9fb8670b48092",
+      "sourceHash": "e42bdb89339167741baf16d466bbbcafee65d0da5f6bfd55fc0e119d90e0564e",
+      "goalIds": [
+        "verify_saved_work"
+      ],
+      "uncertaintyIds": [
+        "provider_delivery_unconfirmed"
+      ],
+      "claims": [
+        {
+          "factId": "4d8d2371df56aa1d490c1bcd7715b276ca83490ed4e598b5cfe863e0c51111d7",
+          "value": {
+            "source": "synthetic",
+            "product": "brandforge",
+            "state": "held",
+            "providerDelivery": "unknown"
+          },
+          "sourceHash": "5ae3a26944e323f5e40db1a763ad8631aa7ab645b811b451912067e0298b746a"
+        }
+      ],
+      "steps": [
+        {
+          "action": "inspect_work",
+          "factIds": [
+            "4d8d2371df56aa1d490c1bcd7715b276ca83490ed4e598b5cfe863e0c51111d7"
+          ],
+          "goalIds": [
+            "verify_saved_work"
+          ]
+        }
+      ],
+      "executionAuthorized": true
+    },
+    {
+      "caseId": "8dd25760be18780d5841ae502df14c5ec6949e2fbcf84db50e6bdc2b1d7df8f1",
+      "sourceHash": "74fd4452144de531f8c2e56948ee8bbf40f5b79b7e65e06ec8b0c7fa38fbbeda",
+      "goalIds": [
+        "verify_saved_work"
+      ],
+      "uncertaintyIds": [
+        "provider_delivery_unconfirmed"
+      ],
+      "claims": [
+        {
+          "factId": "907c3a80f194c875a1439acdc4ab56e9d8663de00b81bbbf8b150a74de5f7a19",
+          "value": {
+            "source": "synthetic",
+            "product": "integrations",
+            "state": "held",
+            "providerDelivery": "unknown"
+          },
+          "sourceHash": "2b869e46d348499beb8dba0944e018167fca6e0b0c441efc4ba837d9e4a4dde5"
+        }
+      ],
+      "steps": [
+        {
+          "action": "inspect_work",
+          "factIds": [
+            "907c3a80f194c875a1439acdc4ab56e9d8663de00b81bbbf8b150a74de5f7a19"
+          ],
+          "goalIds": [
+            "verify_saved_work"
+          ]
+        }
+      ],
+      "executionAuthorized": false
+    },
+    {
+      "caseId": "d930f05c842602a7160e926a2b263e662bc3b9d931d0249716220847d4fa76ba",
+      "sourceHash": "17f9d048aace29ed9f91c716ffbbefb8a26862243b50dda2f44c19e00a45faeb",
+      "goalIds": [
+        "verify_saved_work"
+      ],
+      "uncertaintyIds": [
+        "provider_delivery_unconfirmed"
+      ],
+      "claims": [
+        {
+          "factId": "f6569c96d5fac2952267b4542d24384811e007ff0ffdf28cc9f1d86465b5e73a",
+          "value": {
+            "source": "synthetic",
+            "product": "bi",
+            "state": "unconfirmed",
+            "providerDelivery": "unknown"
+          },
+          "sourceHash": "382817794cf30d2a92dfe8b4334f802ed92a2b0b5199cce3c755b13bd93cbc1f"
+        }
+      ],
+      "steps": [
+        {
+          "action": "inspect_work",
+          "factIds": [
+            "f6569c96d5fac2952267b4542d24384811e007ff0ffdf28cc9f1d86465b5e73a"
+          ],
+          "goalIds": [
+            "verify_saved_work"
+          ]
+        }
+      ],
+      "executionAuthorized": false
+    }
+  ],
+  "reviews": []
+}

@@ -38,7 +38,7 @@ type Property = {
 
 export default function PropertiesPage() {
   const router = useRouter()
-  const { setProperty } = usePropertyContext()
+  const { setProperty, refreshProperties } = usePropertyContext()
   const [properties, setProperties] = useState<Property[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -92,7 +92,7 @@ export default function PropertiesPage() {
       }
 
       setDeleteConfirm(null)
-      fetchProperties()
+      await Promise.all([fetchProperties(), refreshProperties()])
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Delete failed')
     }

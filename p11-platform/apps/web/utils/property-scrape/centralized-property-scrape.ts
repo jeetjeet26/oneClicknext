@@ -1,3 +1,4 @@
+import { safePublicFetch } from '@/utils/services/safe-public-fetch'
 import * as cheerio from 'cheerio'
 
 export type PropertyScrapePageType =
@@ -361,84 +362,19 @@ function isSafePublicUrl(url: URL): boolean {
   return secondOctet < 16 || secondOctet > 31
 }
 
-function buildReaderUrl(url: string): string {
-  return `https://r.jina.ai/${url}`
-}
-
+// Public pages use one DNS-pinned transport, including every redirect. A remote
+// reader fallback would independently resolve the target and bypass this boundary.
 async function fetchDirectText(url: string, timeoutMs = FETCH_TIMEOUT_MS): Promise<FetchedPage> {
-  const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
   try {
-    const response = await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; PropertyAudit/1.0; +https://oneclick)',
-      },
-    })
-    return {
-      ok: response.ok,
-      status: response.status,
-      body: await response.text().catch(() => null),
-      contentType: response.headers.get('content-type'),
-      source: response.ok ? 'direct' : null,
-    }
+    const response = await safePublicFetch(url, { timeoutMs })
+    return { ok: response.ok, status: response.status, body: await response.text(),
+      contentType: response.headers.get('content-type'), source: response.ok ? 'direct' : null }
   } catch {
     return { ok: false, status: null, body: null, contentType: null, source: null }
-  } finally {
-    clearTimeout(timeoutId)
   }
 }
-
 async function fetchPage(url: string): Promise<FetchedPage> {
-  try {
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-      },
-      signal: AbortSignal.timeout(10000),
-    })
-    if (response.ok) {
-      return {
-        ok: true,
-        status: response.status,
-        body: await response.text(),
-        contentType: response.headers.get('content-type'),
-        source: 'direct',
-      }
-    }
-  } catch {
-    // Try reader fallback below.
-  }
-
-  try {
-    const readerResponse = await fetch(buildReaderUrl(url), {
-      headers: {
-        Accept: 'text/plain,text/markdown,*/*;q=0.8',
-        'User-Agent': 'Mozilla/5.0 (compatible; oneClickBot/1.0; +https://oneclick.local)',
-      },
-      signal: AbortSignal.timeout(15000),
-    })
-    if (!readerResponse.ok) {
-      return {
-        ok: false,
-        status: readerResponse.status,
-        body: await readerResponse.text().catch(() => null),
-        contentType: readerResponse.headers.get('content-type'),
-        source: null,
-      }
-    }
-    return {
-      ok: true,
-      status: readerResponse.status,
-      body: await readerResponse.text(),
-      contentType: readerResponse.headers.get('content-type') || 'text/plain',
-      source: 'reader',
-    }
-  } catch {
-    return { ok: false, status: null, body: null, contentType: null, source: null }
-  }
+  return fetchDirectText(url, 15000)
 }
 
 function normalizeSameOriginUrl(rawHref: string, baseUrl: URL): string | null {

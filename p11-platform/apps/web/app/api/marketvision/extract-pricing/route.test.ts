@@ -1,57 +1,22 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { NextRequest } from 'next/server'
+import {beforeEach,it,expect,vi} from 'vitest'
+import {NextRequest} from 'next/server'
+const d=vi.hoisted(()=>({access:vi.fn(),request:vi.fn(),rpc:vi.fn(),run:vi.fn(),recover:vi.fn(),after:vi.fn()}))
+vi.mock('next/server',async original=>({...await original<typeof import('next/server')>(),after:d.after}))
+vi.mock('@/utils/marketvision/decision-store',async original=>({...await original<typeof import('@/utils/marketvision/decision-store')>(),requireMarketOperator:d.access}))
+vi.mock('@/utils/marketvision/extraction-store',()=>({requestExtraction:d.request,extractionRpc:d.rpc,runExtraction:d.run,recoverExtraction:d.recover,extractionExecutionStatus:()=>({paused:true,configured:false})}))
+import {MarketStoreError} from '@/utils/marketvision/decision-store'
+import {GET,POST,PUT,PATCH} from './route'
+const id='33333333-3333-3333-3333-333333333333',rid='55555555-5555-4555-8555-555555555555',body={requestId:rid,propertyId:id,competitorId:id,sourceVersion:1,content:'Source pricing '.repeat(10),sourceUrl:'',effectiveAt:null,reason:'Reviewed source'}
+const req=(method:string,value?:unknown,query='')=>new NextRequest(`http://localhost/api/marketvision/extract-pricing${query}`,{method,...(value===undefined?{}:{body:JSON.stringify(value)})})
+beforeEach(()=>{vi.clearAllMocks();d.access.mockResolvedValue('actor');d.request.mockResolvedValue({state:'queued',requestId:rid});d.rpc.mockResolvedValue({state:'saved',requestId:rid})})
+it('requires authentication and property access before saving source',async()=>{d.access.mockRejectedValueOnce(new MarketStoreError('Sign in',401));expect((await POST(req('POST',body))).status).toBe(401);d.access.mockRejectedValueOnce(new MarketStoreError('Unavailable',403));expect((await POST(req('POST',body))).status).toBe(403);expect(d.request).not.toHaveBeenCalled()})
+it('rejects the legacy save-again model invocation path',async()=>{expect((await POST(req('POST',{content:body.content,propertyId:id,competitorId:id,action:'save'}))).status).toBe(400);expect(d.request).not.toHaveBeenCalled();expect(d.after).not.toHaveBeenCalled()})
+it('records one saved request before scheduling the exact request ID',async()=>{const r=await POST(req('POST',body));expect(r.status).toBe(200);expect(d.request).toHaveBeenCalledWith({...body,content:body.content.trim()},'actor');expect(d.after).toHaveBeenCalledTimes(1);await d.after.mock.calls[0][0]();expect(d.run).toHaveBeenCalledWith(rid)})
+it('an existing busy request is shown without invoking it again',async()=>{d.request.mockResolvedValue({state:'busy',requestId:id});expect((await POST(req('POST',body))).status).toBe(200);expect(d.after).not.toHaveBeenCalled()})
+it('scopes detail reads and omits a caller-chosen actor',async()=>{expect((await GET(req('GET',undefined,`?propertyId=${id}&competitorId=${id}&requestId=${rid}`))).status).toBe(200);expect(d.rpc).toHaveBeenCalledWith('read_marketvision_extractions',{p_property_id:id,p_actor_id:'actor',p_competitor_id:id,p_request_id:rid,p_cursor:null})})
+it('saves recovery before attempting local receipt recovery',async()=>{await PUT(req('PUT',{requestId:rid,propertyId:id,extractionId:id,expectedVersion:3,action:'recover',reason:'Recover saved result'}));await d.after.mock.calls[0][0]();expect(d.recover).toHaveBeenCalledWith(id);expect(d.run).not.toHaveBeenCalled()})
+it('stopping and rebasing do not schedule a model invocation',async()=>{for(const action of ['stop','rebase'])expect((await PUT(req('PUT',{requestId:rid,propertyId:id,extractionId:id,expectedVersion:3,action,reason:'Review saved work'}))).status).toBe(200);expect(d.after).not.toHaveBeenCalled()})
+it('applies the exact reviewed selection without using the model path',async()=>{const values={unit_type:'A1',bedrooms:1,bathrooms:null,sqft_min:null,sqft_max:null,rent_min:1000,rent_max:null,deposit:null,available_count:null,move_in_specials:null};const r=await PATCH(req('PATCH',{requestId:rid,propertyId:id,extractionId:id,expectedVersion:4,previewHash:'a'.repeat(64),confirmedMonthlyRentUsd:true,selection:[{sourceIndex:0,values}],reason:'Reviewed exact candidates'}));expect(r.status).toBe(200);expect(d.rpc).toHaveBeenCalledWith('apply_marketvision_extraction',expect.objectContaining({p_actor_id:'actor',p_input:expect.objectContaining({selection:[{sourceIndex:0,values}]})}));expect(d.request).not.toHaveBeenCalled();expect(d.after).not.toHaveBeenCalled()})
+it('surfaces stale-source conflicts without pretending they were applied',async()=>{d.rpc.mockRejectedValue(new MarketStoreError('Source changed',409));expect((await PUT(req('PUT',{requestId:rid,propertyId:id,extractionId:id,expectedVersion:3,action:'rebase',reason:'Review changed source'}))).status).toBe(409)})
 
-const authGetUserMock = vi.fn()
-const createClientMock = vi.fn()
-const validatePropertyAccessMock = vi.fn()
-
-vi.mock('@/utils/supabase/server', () => ({
-  createClient: createClientMock,
-}))
-
-vi.mock('@/utils/services/auth-guard', () => ({
-  validatePropertyAccess: validatePropertyAccessMock,
-}))
-
-vi.mock('openai', () => ({
-  default: class MockOpenAI {},
-}))
-
-function makeNextRequest(url: string, init?: RequestInit): NextRequest {
-  return new Request(url, init) as NextRequest
-}
-
-describe('marketvision extract-pricing route auth', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    createClientMock.mockResolvedValue({
-      auth: { getUser: authGetUserMock },
-    })
-  })
-
-  it('POST returns 401 when unauthenticated', async () => {
-    authGetUserMock.mockResolvedValue({ data: { user: null }, error: null })
-    const { POST } = await import('./route')
-    const response = await POST(
-      makeNextRequest('http://localhost/api/marketvision/extract-pricing', {
-        method: 'POST',
-        body: JSON.stringify({ content: 'a'.repeat(100), propertyId: 'property-1' }),
-      }),
-    )
-    expect(response.status).toBe(401)
-  })
-
-  it('POST returns 403 when property access is denied', async () => {
-    authGetUserMock.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
-    validatePropertyAccessMock.mockResolvedValue({ authorized: false })
-    const { POST } = await import('./route')
-    const response = await POST(
-      makeNextRequest('http://localhost/api/marketvision/extract-pricing', {
-        method: 'POST',
-        body: JSON.stringify({ content: 'a'.repeat(100), propertyId: 'property-1' }),
-      }),
-    )
-    expect(response.status).toBe(403)
-    await expect(response.json()).resolves.toEqual({ error: 'Forbidden' })
-  })
-})
+it('receipt recovery finishes locally before returning even when delivery is paused',async()=>{d.rpc.mockResolvedValue({state:'saved',requestState:'result_ready'});expect((await PUT(req('PUT',{requestId:rid,propertyId:id,extractionId:id,expectedVersion:3,action:'recover',reason:'Recover retained receipt'}))).status).toBe(200);expect(d.recover).toHaveBeenCalledWith(id);expect(d.after).not.toHaveBeenCalled()})

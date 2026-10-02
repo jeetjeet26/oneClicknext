@@ -1,3 +1,4 @@
+import {assertEmailReplyAccount,EmailReplyAccountError} from '@/utils/services/email-reply-binding'
 /**
  * Send Email via Gmail API
  * Sends emails to leads via Gmail
@@ -452,6 +453,9 @@ export async function POST(request: NextRequest) {
       ctx.logSuccess(400, { reason: 'gmail_reconnect_required', propertyId })
       return badRequest('Gmail authorization revoked. Please reconnect.', ctx.responseHeaders)
     }
+
+    try { await assertEmailReplyAccount(emailConfig,{threadId,replyToMessageId}) }
+    catch(error) { if(error instanceof EmailReplyAccountError)return badRequest(error.message,ctx.responseHeaders);throw error }
 
     const duplicateSend = await findRecentDuplicateEmail(serviceSupabase, {
       emailConfigurationId: emailConfig.id,

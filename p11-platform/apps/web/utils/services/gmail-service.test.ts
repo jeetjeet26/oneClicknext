@@ -7,8 +7,11 @@ vi.mock('@/utils/supabase/admin', () => ({
   createServiceClient: createServiceClientMock,
 }))
 
+vi.mock('./email-credentials', () => ({renewEmailCredentials: async (config: {access_token: string; token_expires_at: string}) => ({accessToken: config.access_token, expiresAt: config.token_expires_at})}))
+
 describe('gmail service', () => {
   beforeEach(() => {
+    vi.stubEnv('OUTBOUND_DELIVERY_PAUSED', 'false')
     vi.clearAllMocks()
     vi.resetModules()
     vi.stubGlobal('fetch', fetchMock)
@@ -17,6 +20,7 @@ describe('gmail service', () => {
   afterEach(() => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
   })
 
   it('syncInbox stores inbound messages with the current email schema', async () => {

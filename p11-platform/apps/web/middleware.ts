@@ -1,3 +1,4 @@
+import {clientApiAllowed,clientPageAllowed} from '@/utils/client-portal/routing'
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 import type { Database } from '@/types/supabase'
@@ -57,11 +58,31 @@ export async function middleware(request: NextRequest) {
   } = await supabase.auth.getUser()
 
   // Define public routes that don't require authentication
-  const publicRoutes = ['/auth/login', '/auth/signup', '/auth/callback', '/auth/forgot-password', '/auth/error', '/.well-known']
+  const publicRoutes = ['/auth/login', '/auth/signup', '/auth/callback', '/auth/forgot-password', '/auth/reset-password', '/auth/error', '/.well-known']
   const isPublicRoute = publicRoutes.some(route => 
     request.nextUrl.pathname.startsWith(route)
   )
   
+  const path=request.nextUrl.pathname
+  const isApi=path.startsWith('/api/')
+  if(user){
+    const identity=await supabase.rpc('client_portal_identity')
+    if(identity.error)return NextResponse.json({error:'Account access is temporarily unavailable. Please try again.'},{status:503,headers:{'Cache-Control':'private, no-store'}})
+    const isClient=!!identity.data&&typeof identity.data==='object'&&!Array.isArray(identity.data)&&identity.data.kind==='client'
+    if(isClient){
+      if(isApi)return clientApiAllowed(path,request.method)?supabaseResponse:NextResponse.json({error:'This client account has read-only access to its assigned properties.'},{status:403,headers:{'Cache-Control':'private, no-store'}})
+      if(!clientPageAllowed(path)||path==='/auth/login'&&request.nextUrl.searchParams.get('reauth')!=='1'||path==='/auth/signup'){
+        const url=request.nextUrl.clone();url.pathname='/client';url.search='';return NextResponse.redirect(url)
+      }
+      return supabaseResponse
+    }
+  }
+  // Existing public widgets, callbacks and workers keep their own API authorization.
+  if(isApi)return supabaseResponse
+
+  // Invitation review exchanges its fragment for a private cookie before sign-in.
+  if (['/join/team','/join/client'].includes(request.nextUrl.pathname)) return supabaseResponse
+
   // Onboarding is a special route - requires auth but no org
   const isOnboardingRoute = request.nextUrl.pathname.startsWith('/onboarding')
 
@@ -81,7 +102,7 @@ export async function middleware(request: NextRequest) {
   }
 
   // For authenticated users, check if they need onboarding
-  if (user && !isPublicRoute && !isOnboardingRoute) {
+  if (user && !isPublicRoute && !isOnboardingRoute && request.nextUrl.pathname !== '/account/security') {
     // Check if user has an org_id in their profile
     const { data: profile } = await supabase
       .from('profiles')
@@ -97,23 +118,11 @@ export async function middleware(request: NextRequest) {
     }
   }
 
-  // If user has an org and tries to access onboarding, redirect to dashboard
-  if (user && isOnboardingRoute) {
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('org_id')
-      .eq('id', user.id)
-      .single()
-
-    if (profile?.org_id) {
-      const url = request.nextUrl.clone()
-      url.pathname = '/dashboard'
-      return NextResponse.redirect(url)
-    }
-  }
+  // First-time setup retains its own authenticated completion receipt and recovery.
+  // Existing members are read-only in that route; native setup commands reject a second org.
 
   // Redirect to dashboard if user is authenticated and trying to access auth pages
-  if (user && isPublicRoute) {
+  if (user && isPublicRoute && ['/auth/login','/auth/signup'].includes(request.nextUrl.pathname) && !(request.nextUrl.pathname === '/auth/login' && request.nextUrl.searchParams.get('reauth') === '1')) {
     const url = request.nextUrl.clone()
     url.pathname = '/dashboard'
     return NextResponse.redirect(url)
@@ -137,10 +146,10 @@ export const config = {
      * - _next/image (image optimization files)
      * - favicon.ico (favicon file)
      * - public files (images, js for widgets, etc)
-     * - api routes (they handle their own auth)
+     * API handlers retain their authorization; client identities also receive an outer read-only fence.
      * - lumaleasing.js (public widget script)
      */
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|js)$|api|lumaleasing).*)',
+    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|js)$|lumaleasing).*)',
   ],
 }
 

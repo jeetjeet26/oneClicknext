@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef } from 'react'
 import { Calendar, ChevronDown, ChevronLeft, ChevronRight, X } from 'lucide-react'
 import { 
   format, 
@@ -20,7 +20,6 @@ import {
   endOfDay,
   getDaysInMonth,
   getDay,
-  addDays,
   isWithinInterval
 } from 'date-fns'
 
@@ -38,22 +37,22 @@ type DateRangePickerProps = {
 const PRESETS: DateRange[] = [
   {
     label: 'Last 7 days',
-    start: subDays(new Date(), 7),
+    start: subDays(new Date(), 6),
     end: new Date(),
   },
   {
     label: 'Last 14 days',
-    start: subDays(new Date(), 14),
+    start: subDays(new Date(), 13),
     end: new Date(),
   },
   {
     label: 'Last 30 days',
-    start: subDays(new Date(), 30),
+    start: subDays(new Date(), 29),
     end: new Date(),
   },
   {
     label: 'Last 90 days',
-    start: subDays(new Date(), 90),
+    start: subDays(new Date(), 89),
     end: new Date(),
   },
   {
@@ -200,15 +199,8 @@ export function DateRangePicker({ value, onChange }: DateRangePickerProps) {
   const [hoverDate, setHoverDate] = useState<Date | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
-  // Reset custom selection when closing
-  useEffect(() => {
-    if (!showCustom) {
-      setSelectedStart(null)
-      setSelectedEnd(null)
-      setHoverDate(null)
-    }
-  }, [showCustom])
-  
+  function closeCustom(){setShowCustom(false);setSelectedStart(null);setSelectedEnd(null);setHoverDate(null)}
+
   const handleDateClick = (date: Date) => {
     if (!selectedStart || (selectedStart && selectedEnd)) {
       // First click or reset
@@ -232,7 +224,7 @@ export function DateRangePicker({ value, onChange }: DateRangePickerProps) {
         start: startOfDay(selectedStart),
         end: endOfDay(selectedEnd),
       })
-      setShowCustom(false)
+      closeCustom()
       setIsOpen(false)
     }
   }
@@ -246,7 +238,7 @@ export function DateRangePicker({ value, onChange }: DateRangePickerProps) {
   return (
     <div className="relative" ref={containerRef}>
       <button
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={() => {if(isOpen)closeCustom();setIsOpen(!isOpen)}}
         className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors text-sm font-medium text-slate-700"
       >
         <Calendar size={16} className="text-slate-400" />
@@ -263,7 +255,7 @@ export function DateRangePicker({ value, onChange }: DateRangePickerProps) {
             className="fixed inset-0 z-10" 
             onClick={() => {
               setIsOpen(false)
-              setShowCustom(false)
+              closeCustom()
             }}
           />
           <div className={`absolute right-0 mt-2 bg-white rounded-xl shadow-lg border border-slate-200 z-20 animate-in fade-in slide-in-from-top-1 duration-150 ${showCustom ? 'w-auto' : 'w-64'}`}>
@@ -314,7 +306,7 @@ export function DateRangePicker({ value, onChange }: DateRangePickerProps) {
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="font-medium text-slate-900">Select Date Range</h3>
                   <button
-                    onClick={() => setShowCustom(false)}
+                    onClick={() => closeCustom()}
                     className="p-1 hover:bg-slate-100 rounded transition-colors"
                   >
                     <X size={16} className="text-slate-400" />
@@ -395,7 +387,7 @@ export function DateRangePicker({ value, onChange }: DateRangePickerProps) {
                 {/* Action buttons */}
                 <div className="flex gap-2 mt-4">
                   <button
-                    onClick={() => setShowCustom(false)}
+                    onClick={() => closeCustom()}
                     className="flex-1 px-4 py-2 text-sm font-medium text-slate-600 bg-slate-100 rounded-lg hover:bg-slate-200 transition-colors"
                   >
                     Cancel

@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 import httpx
+from utils.public_http import PublicAsyncClient, guard_browser_context
 from bs4 import BeautifulSoup
 from fake_useragent import UserAgent
 
@@ -1111,7 +1112,7 @@ Return ONLY valid JSON in this exact format:
         all_content: List[ExtractedContent] = []
         
         # Use cookies and HTTP/2 for better compatibility
-        async with httpx.AsyncClient(
+        async with PublicAsyncClient(
             timeout=httpx.Timeout(self.TIMEOUT, connect=10.0),
             http2=True,
             cookies=httpx.Cookies(),
@@ -1164,7 +1165,7 @@ Return ONLY valid JSON in this exact format:
                     ]
                 )
                 
-                context = await browser.new_context(
+                context = await browser.new_context(service_workers='block',
                     viewport={'width': 1920, 'height': 1080},
                     user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                     locale='en-US',
@@ -1177,6 +1178,7 @@ Return ONLY valid JSON in this exact format:
                     });
                 """)
                 
+                await guard_browser_context(context)
                 page = await context.new_page()
                 
                 # Pages to scrape

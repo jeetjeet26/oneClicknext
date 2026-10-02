@@ -1,0 +1,304 @@
+{
+  "policy": "p11-proposal-review-v1",
+  "source": "synthetic",
+  "cases": [
+    {
+      "id": "ab46f94ee7b820cd0f1e1b17384644017a1f03c3cc8fcb110e27704b30d8117e",
+      "clientId": "5d634cfceeaebe7a71fe087af553cec414e1912b7bcf0fbfdf3ec92361181073",
+      "split": "development",
+      "product": "siteforge",
+      "decisionAt": "2026-09-24T12:00:00Z",
+      "facts": [
+        {
+          "id": "ce060597808deafa3f9794fafe24ca0b95a79cffec237f498663642ea097aec4",
+          "clientId": "5d634cfceeaebe7a71fe087af553cec414e1912b7bcf0fbfdf3ec92361181073",
+          "availableAt": "2026-09-24T11:00:00Z",
+          "value": {
+            "source": "synthetic",
+            "product": "siteforge",
+            "state": "incident",
+            "providerDelivery": "unknown"
+          },
+          "sha256": "ce2fc9cdfe281586eecd60cd62694c2dbf97dff23f8a7c30c28675c20c469f69"
+        }
+      ],
+      "goals": [
+        "verify_saved_work"
+      ],
+      "uncertainties": [
+        "provider_delivery_unconfirmed"
+      ],
+      "allowedActions": [
+        "inspect_work",
+        "prepare_followup",
+        "review_inputs",
+        "verify_receipt"
+      ]
+    },
+    {
+      "id": "9f5f5dccc30911c49adfd3b62878bb714c3f12bbc548d5cbd79bf83fafc3b4cb",
+      "clientId": "02866d29f07081468e32881243d812bac80131a4ed40304adbd7860ec51052a8",
+      "split": "validation",
+      "product": "lumaleasing",
+      "decisionAt": "2026-09-24T12:00:00Z",
+      "facts": [
+        {
+          "id": "9914a30fdc5b3385ff21cd325170e01b2b7599dd4e8ed7bee621659ad6c5df27",
+          "clientId": "02866d29f07081468e32881243d812bac80131a4ed40304adbd7860ec51052a8",
+          "availableAt": "2026-09-24T11:00:00Z",
+          "value": {
+            "source": "synthetic",
+            "product": "lumaleasing",
+            "state": "held",
+            "providerDelivery": "unknown"
+          },
+          "sha256": "ee06ce792f3310fd858cb3e3162bfbdca138c1d23e457d44e681f294c9145043"
+        }
+      ],
+      "goals": [
+        "verify_saved_work"
+      ],
+      "uncertainties": [
+        "provider_delivery_unconfirmed"
+      ],
+      "allowedActions": [
+        "inspect_work",
+        "prepare_followup",
+        "review_inputs",
+        "verify_receipt"
+      ]
+    },
+    {
+      "id": "f7e34c10d1b5a737f4a881f9d001febc1265d051d642883a74f3e092b52cbe84",
+      "clientId": "95e933abb3fe2e3dc60fca7985be74eca2a308cf037a39c106755583a816cc88",
+      "split": "holdout",
+      "product": "tourspark",
+      "decisionAt": "2026-09-24T12:00:00Z",
+      "facts": [
+        {
+          "id": "953de778a2059cd24219ebf08d888ec158a47c2698976f69d5f4e6ec7bd94f06",
+          "clientId": "95e933abb3fe2e3dc60fca7985be74eca2a308cf037a39c106755583a816cc88",
+          "availableAt": "2026-09-24T11:00:00Z",
+          "value": {
+            "source": "synthetic",
+            "product": "tourspark",
+            "state": "unconfirmed",
+            "providerDelivery": "unknown"
+          },
+          "sha256": "b20803a142b14c78512af8aa422bcd711642e27c5d59d1c6404e4281dcba4a40"
+        }
+      ],
+      "goals": [
+        "verify_saved_work"
+      ],
+      "uncertainties": [
+        "provider_delivery_unconfirmed"
+      ],
+      "allowedActions": [
+        "inspect_work",
+        "prepare_followup",
+        "review_inputs",
+        "verify_receipt"
+      ]
+    },
+    {
+      "id": "7c9c939ca5419203f33dd0aaabd582d8ad4839825dfbc07f1da24ef7c52f25c6",
+      "clientId": "b39ed508b2a3d8f70a230ac767e22654ba6500340adb7c28ba1b7452b663b36f",
+      "split": "development",
+      "product": "reviewflow",
+      "decisionAt": "2026-09-24T12:00:00Z",
+      "facts": [
+        {
+          "id": "e19d89626d302c3d755312954a518d23f198151c05dd98d454e7c9a5c2c2baf0",
+          "clientId": "b39ed508b2a3d8f70a230ac767e22654ba6500340adb7c28ba1b7452b663b36f",
+          "availableAt": "2026-09-24T11:00:00Z",
+          "value": {
+            "source": "synthetic",
+            "product": "reviewflow",
+            "state": "unconfirmed",
+            "providerDelivery": "unknown"
+          },
+          "sha256": "2dcec1e5ac04ad0f78b2780ea8bd07e112f4b1fd15cf57eb5bd758a517caa065"
+        }
+      ],
+      "goals": [
+        "verify_saved_work"
+      ],
+      "uncertainties": [
+        "provider_delivery_unconfirmed"
+      ],
+      "allowedActions": [
+        "inspect_work",
+        "prepare_followup",
+        "review_inputs",
+        "verify_receipt"
+      ]
+    },
+    {
+      "id": "23d1ad59282c12fed1e9cc9770a1a63fced80a2b3e63842e679530ff6d558f51",
+      "clientId": "e4b8c09ab7a1f3ce00f6e2e9614307f2d20f449d9f87657c3ce6ce7a100b29a0",
+      "split": "validation",
+      "product": "marketvision",
+      "decisionAt": "2026-09-24T12:00:00Z",
+      "facts": [
+        {
+          "id": "d80de56f1ae543e696aa69cd42b03ac6cb14154670f1a61e9978e1bf07fec712",
+          "clientId": "e4b8c09ab7a1f3ce00f6e2e9614307f2d20f449d9f87657c3ce6ce7a100b29a0",
+          "availableAt": "2026-09-24T11:00:00Z",
+          "value": {
+            "source": "synthetic",
+            "product": "marketvision",
+            "state": "held",
+            "providerDelivery": "unknown"
+          },
+          "sha256": "5344deabb8e970603680c37f665645ac53542a4fa6318a26da64739103834ae7"
+        }
+      ],
+      "goals": [
+        "verify_saved_work"
+      ],
+      "uncertainties": [
+        "provider_delivery_unconfirmed"
+      ],
+      "allowedActions": [
+        "inspect_work",
+        "prepare_followup",
+        "review_inputs",
+        "verify_receipt"
+      ]
+    },
+    {
+      "id": "7f46f1a84210356ca4dd44e0cf247dd1911fe52afdb33f459b8a84c9ac12cbfd",
+      "clientId": "b547bbf9b87dbeed89a58f0519d0143b3dfad20e4f2b606ae23b33abe2859775",
+      "split": "holdout",
+      "product": "crm",
+      "decisionAt": "2026-09-24T12:00:00Z",
+      "facts": [
+        {
+          "id": "bfcbe3623d295bbfb7a218fca10cb9d3310c288543a534dd2bac26ddc5068cd1",
+          "clientId": "b547bbf9b87dbeed89a58f0519d0143b3dfad20e4f2b606ae23b33abe2859775",
+          "availableAt": "2026-09-24T11:00:00Z",
+          "value": {
+            "source": "synthetic",
+            "product": "crm",
+            "state": "unconfirmed",
+            "providerDelivery": "unknown"
+          },
+          "sha256": "3d6e9ba5437c9e947846170aa9f07de5e23bc56a6e262f720070708a0c1f60ee"
+        }
+      ],
+      "goals": [
+        "verify_saved_work"
+      ],
+      "uncertainties": [
+        "provider_delivery_unconfirmed"
+      ],
+      "allowedActions": [
+        "inspect_work",
+        "prepare_followup",
+        "review_inputs",
+        "verify_receipt"
+      ]
+    },
+    {
+      "id": "eb0bb51684984ab2011b74318615bdca871f99d829d884a1b5e9fb8670b48092",
+      "clientId": "cbad04cf2989f2fae06b3dedf9eeda39c2182d274c62c1ed86219b0d81df488c",
+      "split": "development",
+      "product": "brandforge",
+      "decisionAt": "2026-09-24T12:00:00Z",
+      "facts": [
+        {
+          "id": "4d8d2371df56aa1d490c1bcd7715b276ca83490ed4e598b5cfe863e0c51111d7",
+          "clientId": "cbad04cf2989f2fae06b3dedf9eeda39c2182d274c62c1ed86219b0d81df488c",
+          "availableAt": "2026-09-24T11:00:00Z",
+          "value": {
+            "source": "synthetic",
+            "product": "brandforge",
+            "state": "held",
+            "providerDelivery": "unknown"
+          },
+          "sha256": "5ae3a26944e323f5e40db1a763ad8631aa7ab645b811b451912067e0298b746a"
+        }
+      ],
+      "goals": [
+        "verify_saved_work"
+      ],
+      "uncertainties": [
+        "provider_delivery_unconfirmed"
+      ],
+      "allowedActions": [
+        "inspect_work",
+        "prepare_followup",
+        "review_inputs",
+        "verify_receipt"
+      ]
+    },
+    {
+      "id": "8dd25760be18780d5841ae502df14c5ec6949e2fbcf84db50e6bdc2b1d7df8f1",
+      "clientId": "69035095a31f2f9d57d2e3943b1bf6240d96ae9078c68afdc787de0ccbf69c91",
+      "split": "validation",
+      "product": "integrations",
+      "decisionAt": "2026-09-24T12:00:00Z",
+      "facts": [
+        {
+          "id": "907c3a80f194c875a1439acdc4ab56e9d8663de00b81bbbf8b150a74de5f7a19",
+          "clientId": "69035095a31f2f9d57d2e3943b1bf6240d96ae9078c68afdc787de0ccbf69c91",
+          "availableAt": "2026-09-24T11:00:00Z",
+          "value": {
+            "source": "synthetic",
+            "product": "integrations",
+            "state": "held",
+            "providerDelivery": "unknown"
+          },
+          "sha256": "2b869e46d348499beb8dba0944e018167fca6e0b0c441efc4ba837d9e4a4dde5"
+        }
+      ],
+      "goals": [
+        "verify_saved_work"
+      ],
+      "uncertainties": [
+        "provider_delivery_unconfirmed"
+      ],
+      "allowedActions": [
+        "inspect_work",
+        "prepare_followup",
+        "review_inputs",
+        "verify_receipt"
+      ]
+    },
+    {
+      "id": "d930f05c842602a7160e926a2b263e662bc3b9d931d0249716220847d4fa76ba",
+      "clientId": "0e5a212ecaacc11e393d1e5c911daa634192d3b5a3d78aeb9e9f5e9a66cc2ff5",
+      "split": "holdout",
+      "product": "bi",
+      "decisionAt": "2026-09-24T12:00:00Z",
+      "facts": [
+        {
+          "id": "f6569c96d5fac2952267b4542d24384811e007ff0ffdf28cc9f1d86465b5e73a",
+          "clientId": "0e5a212ecaacc11e393d1e5c911daa634192d3b5a3d78aeb9e9f5e9a66cc2ff5",
+          "availableAt": "2026-09-24T11:00:00Z",
+          "value": {
+            "source": "synthetic",
+            "product": "bi",
+            "state": "unconfirmed",
+            "providerDelivery": "unknown"
+          },
+          "sha256": "382817794cf30d2a92dfe8b4334f802ed92a2b0b5199cce3c755b13bd93cbc1f"
+        }
+      ],
+      "goals": [
+        "verify_saved_work"
+      ],
+      "uncertainties": [
+        "provider_delivery_unconfirmed"
+      ],
+      "allowedActions": [
+        "inspect_work",
+        "prepare_followup",
+        "review_inputs",
+        "verify_receipt"
+      ]
+    }
+  ],
+  "contentHash": "2542b92a21bb1674a4f7cd2fc40b99a825bf8170f6cbab3a3d2cfb351d815364"
+}

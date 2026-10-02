@@ -1,0 +1,19 @@
+import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest'
+const {rpc,from,fetchOnce,prepare}=vi.hoisted(()=>({rpc:vi.fn(),from:vi.fn(),fetchOnce:vi.fn(),prepare:vi.fn()}))
+vi.mock('./analysis-store',async()=>({...await vi.importActual('./analysis-store'),reviewRpc:rpc}))
+vi.mock('@/utils/supabase/admin',()=>({createServiceClient:()=>({from})}))
+vi.mock('./intake-fetch',()=>({executeSavedIntakeFetch:fetchOnce,prepareIntakeFetch:prepare}))
+import {runSavedIntake,recoverIntake,requestIntake,reviewScheduleKey} from './intake-store'
+function chain(data:unknown,error:unknown=null){const q={select:vi.fn(),eq:vi.fn(),maybeSingle:vi.fn().mockResolvedValue({data,error})};q.select.mockReturnValue(q);q.eq.mockReturnValue(q);return q}
+beforeEach(()=>{vi.clearAllMocks();vi.stubEnv('OUTBOUND_DELIVERY_PAUSED','false');rpc.mockResolvedValue({state:'running'});fetchOnce.mockResolvedValue({status:'received',content:'{}',httpStatus:200,receivedAt:'2026-09-18T00:00:00Z'})})
+afterEach(()=>vi.unstubAllEnvs())
+describe('saved intake execution and recovery',()=>{
+ it('does not claim work while paused',async()=>{vi.stubEnv('OUTBOUND_DELIVERY_PAUSED','true');expect(await runSavedIntake('request')).toEqual({state:'paused'});expect(rpc).not.toHaveBeenCalled();expect(fetchOnce).not.toHaveBeenCalled()})
+ it('never sends a request unless the claim grants one invocation',async()=>{expect(await runSavedIntake('request')).toEqual({state:'running'});expect(fetchOnce).not.toHaveBeenCalled()})
+ it('retries receipt persistence only, using the exact same immutable result',async()=>{rpc.mockResolvedValueOnce({state:'invoke_once',claimToken:'claim',fetchInput:{fixture:true}}).mockRejectedValueOnce(new Error('lost reply')).mockResolvedValueOnce({state:'saved',requestState:'held'});await runSavedIntake('request');expect(fetchOnce).toHaveBeenCalledTimes(1);expect(rpc.mock.calls[1]).toEqual(rpc.mock.calls[2]);expect(rpc.mock.calls[1][0]).toBe('record_reviewflow_intake_result')})
+ it('does not fetch again when both receipt saves fail',async()=>{rpc.mockResolvedValueOnce({state:'invoke_once',claimToken:'claim',fetchInput:{}}).mockRejectedValue(new Error('db unavailable'));await expect(runSavedIntake('request')).rejects.toThrow();expect(fetchOnce).toHaveBeenCalledTimes(1)})
+ it('recovers a saved manual source without external execution and holds invalid rows',async()=>{from.mockReturnValue(chain({id:'request',kind:'manual',state:'result_ready',raw_result:{content:'not-json'},result_hash:'saved-hash'}));rpc.mockResolvedValue({state:'held'});await recoverIntake('request','property');expect(rpc).toHaveBeenCalledWith('preview_reviewflow_intake',expect.objectContaining({p_result_hash:'saved-hash',p_normalized:null,p_error:expect.stringContaining('valid JSON')}));expect(fetchOnce).not.toHaveBeenCalled()})
+ it('does not reinterpret a closed or held import',async()=>{from.mockReturnValue(chain({id:'request',state:'completed'}));expect(await recoverIntake('request','property')).toEqual({state:'completed',requestId:'request'});expect(rpc).not.toHaveBeenCalled()})
+ it('replays a source request without reconstructing its target from changed settings',async()=>{from.mockReturnValue(chain({id:'request'}));rpc.mockResolvedValue({state:'completed'});await requestIntake('request','property','actor',{kind:'source',connectionId:'connection',connectionVersion:1});expect(prepare).not.toHaveBeenCalled();expect(rpc).toHaveBeenCalledWith('begin_reviewflow_intake',expect.objectContaining({p_fetch_input:{}}))})
+ it('uses separate daily and hourly UTC scheduling buckets',()=>{const c={id:'source',version:2,sync_frequency:'hourly'};expect(reviewScheduleKey(c,new Date('2026-09-18T08:59:00Z'))).toBe('source:2:2026-09-18-08');expect(reviewScheduleKey({...c,sync_frequency:'daily'},new Date('2026-09-18T08:59:00Z'))).toBe('source:2:2026-09-18')})
+})

@@ -1,3 +1,4 @@
+import {integrationPermissionState} from '@/utils/services/integration-permissions'
 /**
  * Google Calendar Status API
  * Returns calendar connection status for a property
@@ -10,8 +11,10 @@ import { badRequest, forbidden, serverError, unauthorized } from '@/utils/servic
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { createRequestContext } from '@/utils/services/request-context'
 
+import { resolveCalendarTimezone } from '@/utils/services/timezone'
+
 type WebhookCapability = {
-  mode: 'push_watch' | 'unconfigured'
+  mode: 'push_watch' | 'unconfigured' | 'manual_check'
   ready: boolean
   blockers: string[]
   watch_expires_at: string | null
@@ -19,7 +22,7 @@ type WebhookCapability = {
   watch_last_message_number: number | null
 }
 
-type ConnectionState = 'connected' | 'reconnect_required' | 'disconnected'
+type ConnectionState = 'connected' | 'reconnect_required' | 'disconnected' | 'setup_required'
 
 function parseIsoTimestamp(value: string | null | undefined): number | null {
   if (!value) {
@@ -31,6 +34,7 @@ function parseIsoTimestamp(value: string | null | undefined): number | null {
 
 function getCalendarWebhookCapability(params: {
   connected: boolean
+  provider?: string | null
   tokenStatus: string | null
   syncEnabled: boolean | null
   watchExpiration: string | null
@@ -38,6 +42,11 @@ function getCalendarWebhookCapability(params: {
   watchResourceId: string | null
   watchLastMessageNumber: number | null
 }): WebhookCapability {
+  if (params.provider === 'microsoft') {
+    return { mode: 'manual_check', ready: false, blockers: ['automatic_updates_unavailable', ...(!params.connected ? ['missing_calendar_connection'] : [])],
+      watch_expires_at: null, watch_ttl_minutes: null, watch_last_message_number: null }
+  }
+
   if (!params.connected) {
     return {
       mode: 'unconfigured',
@@ -48,6 +57,7 @@ function getCalendarWebhookCapability(params: {
       watch_last_message_number: null,
     }
   }
+
 
   const blockers: string[] = []
   const nowMs = Date.now()
@@ -90,7 +100,7 @@ function getConnectionState(params: {
   }
 
   const tokenExpiresMs = parseIsoTimestamp(params.tokenExpiresAt)
-  if (params.tokenStatus !== 'healthy' || (tokenExpiresMs !== null && tokenExpiresMs <= Date.now())) {
+  if (params.tokenStatus !== 'healthy' || tokenExpiresMs === null || tokenExpiresMs <= Date.now()) {
     return 'reconnect_required'
   }
 
@@ -129,17 +139,19 @@ export async function GET(request: NextRequest) {
     const serviceSupabase = createServiceClient()
     const { data: calendar, error } = await serviceSupabase
       .from('agent_calendars')
-      .select('id, provider, google_email, account_email, token_status, last_health_check_at, token_expires_at, timezone, sync_enabled, calendar_id, watch_expiration, watch_channel_id, watch_resource_id, watch_last_message_number')
+      .select('id, scopes, provider_metadata, provider, google_email, account_email, token_status, last_health_check_at, token_expires_at, timezone, sync_enabled, calendar_id, watch_expiration, watch_channel_id, watch_resource_id, watch_last_message_number, properties(settings)')
       .eq('property_id', propertyId)
+      .is('retired_at', null)
       .maybeSingle()
 
-    if (error || !calendar) {
+    if (error) throw error
+    if (!calendar) {
       ctx.logSuccess(200, { propertyId, connected: false })
       return NextResponse.json(
         {
           connected: false,
           state: 'disconnected',
-          message: 'Google Calendar not connected',
+          message: 'Calendar not connected',
           webhook_capability: getCalendarWebhookCapability({
             connected: false,
             tokenStatus: null,
@@ -154,11 +166,20 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    const state = getConnectionState({
+    const timezone = resolveCalendarTimezone(calendar.properties?.settings, calendar.timezone)
+    const connectionState = getConnectionState({
       tokenStatus: calendar.token_status,
       syncEnabled: calendar.sync_enabled,
       tokenExpiresAt: calendar.token_expires_at,
     })
+    const permissionState = integrationPermissionState(calendar.provider === 'microsoft' ? 'microsoft' : 'google', 'calendar', calendar.scopes, calendar.provider_metadata)
+    const state: ConnectionState = connectionState === 'connected' && permissionState !== 'confirmed' ? 'reconnect_required' : connectionState === 'connected' && !timezone ? 'setup_required' : connectionState
+
+
+    const reader = serviceSupabase as unknown as {rpc:(name:string,args:Record<string,unknown>)=>Promise<{data:{state:string;summary:Record<string,number|boolean>}|null;error:unknown}>}
+    const {data:summaryResult,error:summaryError}=await reader.rpc('read_calendar_sync_summary',{p_property_id:propertyId,p_calendar_id:calendar.id,p_actor_id:user.id})
+    if(summaryError||summaryResult?.state!=='ready')throw new Error('Calendar summary could not be loaded')
+    const calendarSyncSummary={...summaryResult.summary,degraded:state!=='connected'||summaryResult.summary.degraded===true}
 
     ctx.logSuccess(200, {
       propertyId,
@@ -166,7 +187,8 @@ export async function GET(request: NextRequest) {
       state,
       tokenStatus: calendar.token_status,
       webhookReady: getCalendarWebhookCapability({
-        connected: true,
+        connected: state === 'connected',
+        provider: calendar.provider,
         tokenStatus: calendar.token_status,
         syncEnabled: calendar.sync_enabled,
         watchExpiration: calendar.watch_expiration,
@@ -176,70 +198,6 @@ export async function GET(request: NextRequest) {
       }).ready,
     })
 
-    const calendarSyncSummary = {
-      total_events: 0,
-      synced_events: 0,
-      failed_events: 0,
-      external_drift_events: 0,
-      external_missing_events: 0,
-      external_cancelled_events: 0,
-      other_events: 0,
-      missing_event_bookings: 0,
-      degraded:
-        calendar.token_status !== 'healthy',
-    }
-
-    const { data: calendarEvents } = await serviceSupabase
-      .from('calendar_events')
-      .select('tour_booking_id, sync_status')
-      .eq('agent_calendar_id', calendar.id)
-      .limit(1000)
-
-    const eventRows = (calendarEvents || []) as Array<{
-      tour_booking_id: string | null
-      sync_status: string | null
-    }>
-    const bookingIdsWithEvent = new Set(
-      eventRows
-        .map((row) => row.tour_booking_id)
-        .filter((value): value is string => typeof value === 'string' && value.length > 0)
-    )
-    calendarSyncSummary.total_events = eventRows.length
-    for (const row of eventRows) {
-      if (row.sync_status === 'synced') {
-        calendarSyncSummary.synced_events += 1
-      } else if (row.sync_status === 'failed') {
-        calendarSyncSummary.failed_events += 1
-      } else if (row.sync_status === 'external_drift') {
-        calendarSyncSummary.external_drift_events += 1
-      } else if (row.sync_status === 'external_missing') {
-        calendarSyncSummary.external_missing_events += 1
-      } else if (row.sync_status === 'external_cancelled') {
-        calendarSyncSummary.external_cancelled_events += 1
-      } else {
-        calendarSyncSummary.other_events += 1
-      }
-    }
-
-    const { data: activeBookings } = await serviceSupabase
-      .from('tour_bookings')
-      .select('id')
-      .eq('property_id', propertyId)
-      .in('status', ['scheduled', 'confirmed'])
-      .limit(1000)
-
-    const activeBookingRows = (activeBookings || []) as Array<{ id: string }>
-    calendarSyncSummary.missing_event_bookings = activeBookingRows.filter(
-      (booking) => !bookingIdsWithEvent.has(booking.id)
-    ).length
-    calendarSyncSummary.degraded =
-      calendarSyncSummary.degraded ||
-      calendarSyncSummary.failed_events > 0 ||
-      calendarSyncSummary.external_drift_events > 0 ||
-      calendarSyncSummary.external_missing_events > 0 ||
-      calendarSyncSummary.external_cancelled_events > 0 ||
-      calendarSyncSummary.missing_event_bookings > 0
-
     return NextResponse.json(
       {
         connected: state === 'connected',
@@ -247,14 +205,18 @@ export async function GET(request: NextRequest) {
         provider: calendar.provider || 'google',
         email: calendar.account_email || calendar.google_email,
         account_email: calendar.account_email || calendar.google_email,
+        permission_state: permissionState,
+        permission_message: permissionState === 'confirmed' ? null : permissionState === 'permissions_incomplete' ? 'Required permissions are missing. Reconnect and grant the requested access.' : 'Saved permissions are unconfirmed. Reconnect this account to verify access.',
         token_status: calendar.token_status,
         last_health_check_at: calendar.last_health_check_at,
         token_expires_at: calendar.token_expires_at,
-        timezone: calendar.timezone,
+        timezone,
+        timezone_setup_required: !timezone,
         sync_enabled: calendar.sync_enabled,
         calendar_id: calendar.calendar_id,
         webhook_capability: getCalendarWebhookCapability({
-          connected: true,
+          connected: state === 'connected',
+          provider: calendar.provider,
           tokenStatus: calendar.token_status,
           syncEnabled: calendar.sync_enabled,
           watchExpiration: calendar.watch_expiration,

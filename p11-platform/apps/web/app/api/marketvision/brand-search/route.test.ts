@@ -1,0 +1,16 @@
+import {beforeEach,it,expect,vi} from 'vitest'
+import {NextRequest} from 'next/server'
+const d=vi.hoisted(()=>({access:vi.fn(),rpc:vi.fn()}))
+vi.mock('@/utils/marketvision/decision-store',async o=>({...await o<typeof import('@/utils/marketvision/decision-store')>(),requireMarketOperator:d.access}))
+vi.mock('@/utils/marketvision/brand-search-store',()=>({brandSearchRpc:d.rpc}))
+import {MarketStoreError} from '@/utils/marketvision/decision-store'
+import {SearchRequest,SearchRead} from '@/utils/marketvision/brand-search-contracts'
+import {GET,POST} from './route'
+const id='33333333-3333-3333-3333-333333333333',body={requestId:id,propertyId:id,query:'garden park',mode:'all',category:'all',kind:'all',competitorId:null}
+const req=(method:string,input?:unknown,query='')=>new NextRequest(`http://localhost/api/marketvision/brand-search${query}`,{method,...(input?{body:JSON.stringify(input)}:{})})
+beforeEach(()=>{vi.clearAllMocks();d.access.mockResolvedValue('actor');d.rpc.mockResolvedValue({state:'saved',searchId:id,matches:2})})
+it('requires current property access before any search or history read',async()=>{d.access.mockRejectedValue(new MarketStoreError('Forbidden',403));expect((await POST(req('POST',body))).status).toBe(403);expect((await GET(req('GET',undefined,`?propertyId=${id}`))).status).toBe(403);expect(d.rpc).not.toHaveBeenCalled()})
+it('saves exact scope using the server actor and returns a private response',async()=>{const response=await POST(req('POST',body));expect(response.status).toBe(200);expect(response.headers.get('cache-control')).toBe('private, no-store');expect(d.rpc).toHaveBeenCalledWith('save_marketvision_brand_search',{p_id:id,p_property_id:id,p_actor_id:'actor',p_input:{query:body.query,mode:'all',category:'all',kind:'all',competitorId:null,reason:'Search the selected reviewed brand evidence'}})})
+it('rejects natural-language execution options and unbounded search words',async()=>{for(const extra of [{model:'gpt-any'},{limit:20000},{actorId:id}])expect((await POST(req('POST',{...body,...extra}))).status).toBe(400);expect(SearchRequest.safeParse({...body,query:Array(11).fill('word').join(' ')}).success).toBe(false);expect(SearchRequest.safeParse({...body,mode:'phrase',query:Array(11).fill('word').join(' ')}).success).toBe(true);expect(d.rpc).not.toHaveBeenCalled()})
+it('preserves saved result paging and rejects mixed history/result cursors',async()=>{expect((await GET(req('GET',undefined,`?propertyId=${id}&requestId=${id}&after=20`))).status).toBe(200);expect(d.rpc).toHaveBeenCalledWith('read_marketvision_brand_searches',{p_property_id:id,p_actor_id:'actor',p_request_id:id,p_cursor:null,p_after:20});expect(SearchRead.safeParse({propertyId:id,requestId:id,cursor:id}).success).toBe(false);expect(SearchRead.safeParse({propertyId:id,after:20}).success).toBe(false);expect(SearchRead.safeParse({propertyId:id,requestId:id,after:1}).success).toBe(false)})
+it('shows persistence failures instead of returning empty search success',async()=>{d.rpc.mockRejectedValue(new MarketStoreError('Search could not be confirmed'));const r=await POST(req('POST',body));expect(r.status).toBe(503);expect(await r.json()).toEqual({error:'Search could not be confirmed'})})

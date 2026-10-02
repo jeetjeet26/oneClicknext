@@ -16,6 +16,7 @@ function review(
   const date = new Date(NOW.getTime() - daysAgo * 24 * 60 * 60 * 1000).toISOString()
   return {
     id,
+    source_version: 1,
     rating: 2,
     sentiment: 'negative',
     review_text: `Review ${id}`,
@@ -27,7 +28,7 @@ function review(
 }
 
 function analysis(reviewId: string, domains: string[]): AnalysisForInsights {
-  return { review_id: reviewId, issue_domains: domains, severity: 'medium', journey_stage: 'residency' }
+  return { id: 'analysis-' + reviewId, source_version: 1, analysis_version: 1, review_id: reviewId, issue_domains: domains, severity: 'medium', journey_stage: 'residency' }
 }
 
 describe('computeIssueClusters', () => {
@@ -44,7 +45,7 @@ describe('computeIssueClusters', () => {
     expect(result.sourceCoverageNote).toContain('not yet classified')
   })
 
-  it('marks a cluster worsening when recent volume exceeds earlier volume', () => {
+  it('marks a cluster increasing when recent volume exceeds earlier volume', () => {
     // 90-day window: midpoint at 45 days ago. Three recent, one earlier.
     const reviews = [review('r1', 5), review('r2', 10), review('r3', 20), review('r4', 80)]
     const result = computeIssueClusters({
@@ -55,12 +56,12 @@ describe('computeIssueClusters', () => {
       now: NOW,
     })
     const cluster = result.clusters.find((c) => c.issueDomain === 'maintenance')
-    expect(cluster?.trend).toBe('worsening')
+    expect(cluster?.trend).toBe('increasing')
     expect(cluster?.reviewCount).toBe(4)
     expect(cluster?.recommendation).toBeTruthy()
   })
 
-  it('marks a cluster improving when earlier volume exceeds recent volume', () => {
+  it('marks a cluster decreasing when earlier volume exceeds recent volume', () => {
     const reviews = [review('r1', 60), review('r2', 70), review('r3', 80), review('r4', 5)]
     const result = computeIssueClusters({
       reviews,
@@ -69,7 +70,7 @@ describe('computeIssueClusters', () => {
       windowDays: 90,
       now: NOW,
     })
-    expect(result.clusters.find((c) => c.issueDomain === 'noise')?.trend).toBe('improving')
+    expect(result.clusters.find((c) => c.issueDomain === 'noise')?.trend).toBe('decreasing')
   })
 
   it('reports insufficient data for tiny clusters', () => {
@@ -188,4 +189,12 @@ describe('computeIssueClusters', () => {
     expect(cluster?.evidence[0].reviewId).toBe('r2')
     expect(cluster?.evidence[0].snippet).toContain('Review r2')
   })
+})
+
+describe('current source and window evidence',()=>{
+ it('excludes an old imported review and a future review from the actual review-date window',()=>{const rows=[review('old',400,{created_at:NOW.toISOString()}),review('future',-1),review('current',2)];const r=computeIssueClusters({reviews:rows,analyses:rows.map(r=>analysis(r.id,['maintenance'])),cases:[],windowDays:90,now:NOW});expect(r.totalReviews).toBe(1);expect(r.classifiedReviews).toBe(1);expect(r.clusters[0].evidence[0].reviewId).toBe('current')})
+ it('rejects stale source classifications and chooses the newest exact analysis independent of order',()=>{const r=computeIssueClusters({reviews:[review('r',2,{source_version:2})],analyses:[{...analysis('r',['maintenance']),source_version:2,analysis_version:3,id:'newest'},{...analysis('r',['noise']),source_version:2,analysis_version:2},{...analysis('r',['pests']),source_version:1,analysis_version:9}],cases:[],windowDays:90,now:NOW});expect(r.clusters.map(c=>c.issueDomain)).toEqual(['maintenance']);expect(r.clusters[0].evidence[0]).toMatchObject({sourceVersion:2,analysisId:'newest'})})
+ it('counts a classified review with no supported issue as analyzed without inventing a theme',()=>{const r=computeIssueClusters({reviews:[review('r',2)],analyses:[analysis('r',[])],cases:[],windowDays:90,now:NOW});expect(r.classifiedReviews).toBe(1);expect(r.clusters).toHaveLength(0)})
+ it('deduplicates supported domains and ignores unregistered model labels',()=>{const r=computeIssueClusters({reviews:[review('r',2)],analyses:[analysis('r',['maintenance','maintenance','made_up'])],cases:[],windowDays:90,now:NOW});expect(r.clusters).toHaveLength(1);expect(r.clusters[0].reviewCount).toBe(1)})
+ it('does not count closed historical cases as current open recurrence',()=>{const c:CaseForInsights={id:'case',review_id:'r',status:'resolved',priority:'high',issue_domains:['pests'],reopened_count:2,created_at:review('r',200).created_at,resolved_at:NOW.toISOString()};const r=computeIssueClusters({reviews:[],analyses:[],cases:[c],windowDays:90,now:NOW});expect(r.clusters).toHaveLength(0)})
 })

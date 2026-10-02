@@ -1,48 +1,19 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { NextRequest } from 'next/server'
-
-const authGetUserMock = vi.fn()
-const createClientMock = vi.fn()
-const validatePropertyAccessMock = vi.fn()
-
-vi.mock('@/utils/supabase/server', () => ({
-  createClient: createClientMock,
-}))
-
-vi.mock('@/utils/services/auth-guard', () => ({
-  validatePropertyAccess: validatePropertyAccessMock,
-}))
-
-function makeNextRequest(url: string): NextRequest {
-  const request = new Request(url) as NextRequest
-  Object.defineProperty(request, 'nextUrl', {
-    value: new URL(url),
-    configurable: true,
-  })
-  return request
-}
-
-describe('marketvision competitors route auth', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    createClientMock.mockResolvedValue({
-      auth: { getUser: authGetUserMock },
-    })
-  })
-
-  it('GET returns 401 when unauthenticated', async () => {
-    authGetUserMock.mockResolvedValue({ data: { user: null }, error: null })
-    const { GET } = await import('./route')
-    const response = await GET(makeNextRequest('http://localhost/api/marketvision/competitors?propertyId=property-1'))
-    expect(response.status).toBe(401)
-  })
-
-  it('GET returns 403 when property access is denied', async () => {
-    authGetUserMock.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
-    validatePropertyAccessMock.mockResolvedValue({ authorized: false })
-    const { GET } = await import('./route')
-    const response = await GET(makeNextRequest('http://localhost/api/marketvision/competitors?propertyId=property-1'))
-    expect(response.status).toBe(403)
-    await expect(response.json()).resolves.toEqual({ error: 'Forbidden' })
-  })
-})
+import {beforeEach,it,expect,vi} from 'vitest'
+import {NextRequest} from 'next/server'
+const mock=vi.hoisted(()=>({user:vi.fn(),access:vi.fn(),manager:vi.fn(),rpc:vi.fn(),from:vi.fn()}))
+vi.mock('@/utils/supabase/server',()=>({createClient:async()=>({auth:{getUser:mock.user}})}))
+vi.mock('@/utils/supabase/admin',()=>({createServiceClient:()=>({rpc:mock.rpc,from:mock.from})}))
+vi.mock('@/utils/services/auth-guard',()=>({validatePropertyAccess:mock.access,validatePropertyManagerAccess:mock.manager}))
+const propertyId='33333333-3333-3333-3333-333333333333',requestId='55555555-5555-4555-8555-555555555555',competitorId='66666666-6666-4666-8666-666666666666'
+function req(path:string,method='GET',body?:unknown){return new NextRequest(`http://localhost/api/marketvision/${path}`,{method,...(body===undefined?{}:{body:JSON.stringify(body),headers:{'Content-Type':'application/json'}})})}
+beforeEach(()=>{vi.clearAllMocks();mock.user.mockResolvedValue({data:{user:{id:'11111111-1111-1111-1111-111111111111'}},error:null});mock.access.mockResolvedValue({authorized:true});mock.manager.mockResolvedValue({authorized:true});mock.rpc.mockResolvedValue({data:{state:'saved',version:1},error:null})})
+import {GET,POST,PUT,DELETE} from './route'
+const values={name:'Fixture',address:null,website_url:null,phone:null,units_count:null,year_built:null,property_type:'multifamily',amenities:[],notes:null},body={propertyId,requestId,action:'create',reason:'Reviewed local fixture',values,units:[]}
+it('requires current authentication',async()=>{mock.user.mockResolvedValue({data:{user:null},error:null});expect((await GET(req(`competitors?propertyId=${propertyId}`))).status).toBe(401);expect(mock.rpc).not.toHaveBeenCalled()})
+it('requires current property access',async()=>{mock.access.mockResolvedValue({authorized:false});expect((await POST(req('competitors','POST',body))).status).toBe(403);expect(mock.rpc).not.toHaveBeenCalled()})
+it('rejects legacy unversioned writes',async()=>{expect((await POST(req('competitors','POST',{propertyId,name:'Old'}))).status).toBe(400);expect((await DELETE(req('competitors?id='+competitorId,'DELETE'))).status).toBe(400);expect(mock.rpc).not.toHaveBeenCalled()})
+it('passes one exact create command for the entire unit collection',async()=>{const r=await POST(req('competitors','POST',body));expect(r.status).toBe(201);expect(mock.rpc).toHaveBeenCalledWith('save_marketvision_competitor',expect.objectContaining({p_id:requestId,p_property_id:propertyId,p_input:{action:'create',reason:body.reason,values,units:[]}}))})
+it('makes stale edits a visible conflict',async()=>{mock.rpc.mockResolvedValue({data:{state:'stale_competitor'},error:null});const r=await PUT(req('competitors','PUT',{...body,action:'save',units:undefined,competitorId,expectedVersion:1}));expect(r.status).toBe(409);expect(await r.json()).toEqual({error:expect.stringContaining('changed')})})
+it('maps duplicate names to a recoverable conflict',async()=>{mock.rpc.mockResolvedValue({data:null,error:{code:'23505',message:'private details'}});const r=await POST(req('competitors','POST',body));expect(r.status).toBe(409);expect(JSON.stringify(await r.json())).not.toContain('private details')})
+it('reads complete records without filling unknown availability or inferring editable amenities',async()=>{mock.rpc.mockResolvedValue({data:{state:'ready',count:1,competitors:[{id:competitorId,version:4,amenities:[],brand_intel:{highlighted_amenities:['Unreviewed pool']},units:[{id:requestId,version:2,rent_min:0,available_count:null,bathrooms:null}]}]},error:null});const r=await GET(req(`competitors?propertyId=${propertyId}&activeOnly=false`)),d=await r.json();expect(d.competitors[0]).toMatchObject({version:4,amenities:[],units:[{rentMin:0,availableCount:null,bathrooms:null}]});expect(mock.rpc).toHaveBeenCalledWith('read_marketvision_competitors',expect.objectContaining({p_active_only:false}))})
+it('rejects create on the update method',async()=>{expect((await PUT(req('competitors','PUT',body))).status).toBe(400)})

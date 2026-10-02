@@ -1,0 +1,6 @@
+import {expect,it} from 'vitest'
+import {websiteUrl,webCommand,webQuery} from './web-contracts'
+const id='11111111-1111-1111-1111-111111111111',body={requestId:id,propertyId:id,operation:'capture',title:'Reviewed source',url:'https://example.test/policy',parentCaptureId:null,expectedParentRevision:null,materialId:null,reason:'Review website source'}
+it('requires exact capture intent and no provider or arbitrary source payload',()=>{expect(webCommand.safeParse(body).success).toBe(true);expect(webCommand.safeParse({...body,extractedData:{verified:true}}).success).toBe(false);expect(webCommand.safeParse({...body,materialId:undefined}).success).toBe(false)})
+it.each(['javascript:alert(1)','https://user:pass@example.test','https://example.test/#fragment','http://localhost','http://internal.localhost','https://example.test:8080'])('rejects unsupported URL %s',url=>expect(websiteUrl.safeParse(url).success).toBe(false))
+it('scopes exact capture/history reads and requires confirmed source acceptance',()=>{expect(webQuery.safeParse({propertyId:id,kind:'capture'}).success).toBe(false);expect(webQuery.safeParse({propertyId:id,kind:'capture',captureId:id}).success).toBe(true);expect(webCommand.safeParse({...body,operation:'accept',confirmed:false}).success).toBe(false)})

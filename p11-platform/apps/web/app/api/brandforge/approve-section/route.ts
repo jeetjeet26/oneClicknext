@@ -1,78 +1,17 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest } from 'next/server'
 import { createHash } from 'node:crypto'
-import { createClient } from '@/utils/supabase/server'
-import { createAdminClient } from '@/utils/supabase/admin'
-import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import {
   brandContractToStorageSections,
   hashBrandForgeContract,
   normalizeBrandAssetRow,
 } from '@/utils/brandforge/normalize'
 
-type DraftSection = {
-  step: number
-  name: string
-  data: Record<string, unknown>
-  version?: number
-}
+import { runBrandCommand, savedDraft, sectionNames } from '@/utils/brandforge/operations'
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return null
-  }
-  return value as Record<string, unknown>
-}
-
-function asDraftSection(value: unknown): DraftSection | null {
-  const record = asRecord(value)
-  if (!record) return null
-  if (typeof record.step !== 'number' || typeof record.name !== 'string') return null
-  const data = asRecord(record.data) ?? {}
-  const version = typeof record.version === 'number' ? record.version : undefined
-  return {
-    step: record.step,
-    name: record.name,
-    data,
-    version,
-  }
-}
-
-export async function POST(req: NextRequest) {
-  try {
-    const supabase = await createClient()
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const { brandAssetId } = await req.json()
-
-    if (!brandAssetId) {
-      return NextResponse.json({ error: 'brandAssetId required' }, { status: 400 })
-    }
-
-    const supabaseAdmin = createAdminClient()
-
-    const { data: brandRaw } = await supabaseAdmin
-      .from('property_brand_assets')
-      .select('*')
-      .eq('id', brandAssetId)
-      .single()
-
-    const brand = asRecord(brandRaw)
-    const propertyId = typeof brand?.property_id === 'string' ? brand.property_id : null
-    const draftSection = asDraftSection(brand?.draft_section)
-
-    if (!brand || !propertyId || !draftSection) {
-      return NextResponse.json({ error: 'No draft section to approve' }, { status: 400 })
-    }
-
-    const access = await validatePropertyAccess(user.id, propertyId)
-    if (!access.authorized) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-    }
-
+export async function POST(request: NextRequest) {
+ return runBrandCommand(request, 'approve', {}, async ({ body: { brandAssetId }, brand, userId, orgId, client: supabaseAdmin }) => {
+ const propertyId = brand.property_id
+ const draftSection = savedDraft(brand)
     const currentStep = draftSection.step
 
     // Determine column name for this section
@@ -81,10 +20,11 @@ export async function POST(req: NextRequest) {
     const approvedAt = new Date().toISOString()
     const approvedData = {
       ...draftSection.data,
+      _meta: { ...(draftSection.data._meta as Record<string, unknown> || {}), approval: { status: 'approved', approvedBy: userId, approvedAt } },
       status: 'approved',
       version: draftSection.version || 1,
       approved_at: approvedAt,
-      approved_by: user.id
+      approved_by: userId
     }
 
     const isComplete = currentStep === 12
@@ -93,11 +33,11 @@ export async function POST(req: NextRequest) {
       [sectionColumn]: approvedData,
       generation_status: isComplete ? 'complete' : 'generating',
       approval_status: isComplete ? 'approved' : 'reviewing',
-      approved_by: isComplete ? user.id : brand.approved_by,
+      approved_by: isComplete ? userId : brand.approved_by,
       approved_at: isComplete ? approvedAt : brand.approved_at,
     }
     let normalized = normalizeBrandAssetRow(prospectiveBrand)
-    if (currentStep === 6 && access.orgId) {
+    if (currentStep === 6 && orgId) {
       const roleMap = {
         primary: 'primary_logo',
         secondary: 'secondary_logo',
@@ -107,14 +47,24 @@ export async function POST(req: NextRequest) {
       } as const
       const variants = await Promise.all(
         normalized.logos.variants.map(async variant => {
-          if (variant.assetId || !variant.url) return variant
-          const response = await fetch(variant.url, {
+          if (variant.assetId) {
+            const { data: asset, error } = await supabaseAdmin.from('content_assets').select('file_url,approval_status,rights_status,expires_at,duplicate_of').eq('id', variant.assetId).eq('property_id', propertyId).single()
+            if (error || !asset || asset.approval_status !== 'approved' || !['owned','licensed','generated'].includes(asset.rights_status || '') || asset.duplicate_of || (asset.expires_at && new Date(asset.expires_at) <= new Date()) || asset.file_url !== variant.url) throw new Error('The selected logo needs asset review')
+            return variant
+          }
+          if (!variant.url) return variant
+          const url = new URL(variant.url)
+          const storage = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL || '')
+          if (url.origin !== storage.origin || !url.pathname.startsWith('/storage/v1/object/public/brand-assets/')) throw new Error('Upload the approved logo to the brand asset library first')
+          const response = await fetch(url, { redirect: 'error',
             signal: AbortSignal.timeout(20_000),
           })
           if (!response.ok) {
             throw new Error(`Approved logo could not be snapshotted (${response.status})`)
           }
+          if (Number(response.headers.get('content-length')) > 10_000_000) throw new Error('Logo is too large')
           const bytes = new Uint8Array(await response.arrayBuffer())
+          if (bytes.byteLength > 10_000_000) throw new Error('Logo is too large')
           const contentHash = createHash('sha256').update(bytes).digest('hex')
           const { data: existing } = await supabaseAdmin
             .from('content_assets')
@@ -126,7 +76,7 @@ export async function POST(req: NextRequest) {
           const { data: created, error: assetError } = await supabaseAdmin
             .from('content_assets')
             .insert({
-              org_id: access.orgId,
+              org_id: orgId,
               property_id: propertyId,
               name: `${normalized.identity.name || 'Property'} ${variant.role} logo`,
               asset_type: 'image',
@@ -140,7 +90,7 @@ export async function POST(req: NextRequest) {
               rights_status: 'generated',
               approval_status: 'approved',
               curation_status: 'approved',
-              approved_by: user.id,
+              approved_by: userId,
               approved_at: approvedAt,
               alt_text: variant.alt,
             })
@@ -174,52 +124,13 @@ export async function POST(req: NextRequest) {
     if (isComplete) {
       updates.generation_status = 'complete'
       updates.current_step = 12 // Stay at 12
-      updates.approved_by = user.id
+      updates.approved_by = userId
       updates.approved_at = approvedAt
     } else {
       updates.generation_status = 'generating'
-      updates.current_step_name = getStepName(currentStep + 1)
+      updates.current_step_name = sectionNames[currentStep]
     }
 
-    await supabaseAdmin
-      .from('property_brand_assets')
-      .update(updates as never)
-      .eq('id', brandAssetId)
-
-    return NextResponse.json({
-      success: true,
-      approvedStep: currentStep,
-      nextStep: currentStep === 12 ? null : currentStep + 1,
-      isComplete,
-      progress: `${currentStep}/12`
-    })
-
-  } catch (error) {
-    console.error('Approve Section Error:', error)
-    return NextResponse.json({ 
-      error: 'Approval failed', 
-      details: error instanceof Error ? error.message : 'Unknown error' 
-    }, { status: 500 })
-  }
+    return { updates, result: { approvedStep: currentStep, nextStep: isComplete ? null : currentStep + 1, isComplete, progress: `${currentStep}/12` } }
+ })
 }
-
-function getStepName(step: number): string {
-  const names: Record<number, string> = {
-    1: 'introduction',
-    2: 'positioning',
-    3: 'target_audience',
-    4: 'personas',
-    5: 'name_story',
-    6: 'logo',
-    7: 'typography',
-    8: 'colors',
-    9: 'design_elements',
-    10: 'photo_yep',
-    11: 'photo_nope',
-    12: 'implementation'
-  }
-  return names[step] || ''
-}
-
-
-

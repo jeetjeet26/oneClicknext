@@ -6,8 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
-import { startWorkflow } from '@/utils/services/workflow-processor'
-import { trackEngagementEvent } from '@/utils/services/engagement-tracker'
+import { findTourForOutcome, recordTourOutcome, outcomeFailure } from '@/utils/services/tour-outcomes'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { adminLimiter, getRateLimitKey, rateLimitHeaders } from '@/utils/services/rate-limiter'
 import { validateBody, tourCompleteSchema } from '@/utils/services/validation'
@@ -37,25 +36,19 @@ export async function POST(req: NextRequest) {
     }
 
     // Validate input
-    const rawBody = await req.json()
+    const rawBody = await req.json().catch(() => null)
     const validation = validateBody(rawBody, tourCompleteSchema)
     if (!validation.success) {
       ctx.logSuccess(400, { reason: 'validation_failed' })
       return badRequest(validation.error, ctx.responseHeaders)
     }
 
-    const { tourId, notes } = validation.data
+    const { tourId, notes, requestId } = validation.data
 
     const serviceClient = createServiceClient()
 
-    // Get the tour with lead and property info
-    const { data: tour, error: tourError } = await serviceClient
-      .from('tour_bookings')
-      .select('id, lead_id, property_id, status, scheduled_date, scheduled_time')
-      .eq('id', tourId)
-      .single()
-
-    if (tourError || !tour) return notFound('Tour')
+    const tour = await findTourForOutcome(serviceClient, tourId)
+    if (!tour) return notFound('Tour', ctx.responseHeaders)
 
     if (!tour.property_id || !tour.lead_id) {
       ctx.logSuccess(404, { reason: 'tour_relationship_missing', tourId })
@@ -76,52 +69,12 @@ export async function POST(req: NextRequest) {
       return forbidden(ctx.responseHeaders)
     }
 
-    if (tour.status === 'completed') {
-      ctx.logSuccess(400, { reason: 'already_completed', tourId })
-      return badRequest('Tour already completed', ctx.responseHeaders)
-    }
-
-    const now = new Date().toISOString()
-
-    // Mark tour as completed
-    await serviceClient
-      .from('tour_bookings')
-      .update({
-        status: 'completed',
-        completed_at: now,
-        completion_notes: notes || null,
-      })
-      .eq('id', tourId)
-
-    // Update lead status
-    await serviceClient
-      .from('leads')
-      .update({
-        status: 'toured',
-        last_contacted_at: now,
-      })
-      .eq('id', tour.lead_id)
-
-    // Create activity on lead
-    await serviceClient.from('lead_activities').insert({
-      lead_id: tour.lead_id,
-      type: 'tour_completed',
-      description: `Tour completed on ${tour.scheduled_date}`,
-      metadata: { tour_id: tourId, notes },
-    })
-
-    // Track tour_completed engagement event (non-blocking)
-    trackEngagementEvent({
-      leadId: tour.lead_id,
-      propertyId: tour.property_id,
-      eventType: 'tour_completed',
-      metadata: { tour_id: tourId },
-    }).catch(e => console.error('[Tour Complete] Engagement tracking failed:', e))
-
-    // Start tour_completed follow-up workflow (non-blocking)
-    startWorkflow(tour.lead_id, tour.property_id, 'tour_completed').catch(e =>
-      console.error('[Tour Complete] Workflow start failed:', e)
-    )
+    const result = await recordTourOutcome({
+      propertyId: tour.property_id, leadId: tour.lead_id, source: tour.source,
+      tourId, outcome: 'completed', notes, actorId:user.id,requestId,
+    }, serviceClient)
+    const failure = outcomeFailure(result)
+    if (failure) return NextResponse.json({error: failure.error}, {status: failure.status, headers: ctx.responseHeaders})
 
     auditLog({
       eventType: 'tour_completed',
@@ -140,10 +93,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         success: true,
+        replayed: result.state === 'replayed' || result.state === 'legacy',
+        followup: result.outcome!.followup_state,
+        leadStatus: result.leadStatus,
         tour: {
           id: tourId,
           status: 'completed',
-          completedAt: now,
+          completedAt: result.outcome!.outcome_at,
         },
       },
       { headers: ctx.responseHeaders }

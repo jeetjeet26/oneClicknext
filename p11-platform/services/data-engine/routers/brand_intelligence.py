@@ -152,64 +152,7 @@ async def trigger_brand_intelligence_extraction(
     request: ExtractRequest,
     background_tasks: BackgroundTasks
 ):
-    """
-    Trigger brand intelligence extraction for a property's competitors.
-    Runs in background and returns a job ID for tracking.
-    
-    Args:
-        request: Extraction request with property_id and optional competitor_ids
-        
-    Returns:
-        Job ID for tracking progress
-    """
-    try:
-        from scrapers.brand_intelligence import CompetitorBatchProcessor
-        
-        supabase = get_supabase_client()
-        
-        # Get competitors to process
-        if request.competitor_ids:
-            verify_competitors_in_property(supabase, request.competitor_ids, request.property_id)
-            competitor_ids = request.competitor_ids
-        else:
-            # Get all competitors for the property
-            result = supabase.table('competitors').select('id').eq(
-                'property_id', request.property_id
-            ).execute()
-            competitor_ids = [c['id'] for c in (result.data or [])]
-        
-        if not competitor_ids:
-            return {
-                "success": True,
-                "message": "No competitors to process",
-                "data": {"job_id": None}
-            }
-        
-        # Create processor and job
-        processor = CompetitorBatchProcessor()
-        job_id = processor.create_job(request.property_id, competitor_ids)
-        
-        # Run processing in background
-        async def run_extraction():
-            try:
-                await processor.process_job(job_id, force_refresh=request.force_refresh)
-            except Exception as e:
-                logger.error(f"Background extraction failed: {e}")
-        
-        background_tasks.add_task(run_extraction)
-        
-        return {
-            "success": True,
-            "message": "Brand intelligence extraction started",
-            "data": {
-                "job_id": job_id,
-                "competitor_count": len(competitor_ids)
-            }
-        }
-        
-    except Exception as e:
-        logger.error(f"Error triggering extraction: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    raise HTTPException(status_code=410, detail="Use the retained-source brand evidence review workflow in MarketVision.")
 
 
 @router.get("/competitor/{competitor_id}")
@@ -328,93 +271,11 @@ async def batch_extract_brand_intelligence(
     request: BatchRequest,
     background_tasks: BackgroundTasks
 ):
-    """
-    Batch process multiple competitors for brand intelligence.
-    
-    Args:
-        request: Batch request with property_id and competitor_ids
-        
-    Returns:
-        Job ID for tracking progress
-    """
-    try:
-        from scrapers.brand_intelligence import CompetitorBatchProcessor
-        
-        if not request.competitor_ids:
-            return {
-                "success": True,
-                "message": "No competitors to process",
-                "data": {"job_id": None}
-            }
-        
-        verify_competitors_in_property(
-            get_supabase_client(), request.competitor_ids, request.property_id
-        )
-        
-        # Create processor and job
-        processor = CompetitorBatchProcessor()
-        job_id = processor.create_job(request.property_id, request.competitor_ids)
-        
-        # Run processing in background
-        async def run_batch():
-            try:
-                await processor.process_job(job_id, force_refresh=request.force_refresh)
-            except Exception as e:
-                logger.error(f"Background batch processing failed: {e}")
-        
-        background_tasks.add_task(run_batch)
-        
-        return {
-            "success": True,
-            "message": "Batch extraction started",
-            "data": {
-                "job_id": job_id,
-                "competitor_count": len(request.competitor_ids)
-            }
-        }
-        
-    except Exception as e:
-        logger.error(f"Error starting batch extraction: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    raise HTTPException(status_code=410, detail="Use the retained-source brand evidence review workflow in MarketVision.")
 
 
 @router.post("/search")
 async def search_competitor_content(request: SearchRequest):
-    """
-    Semantic search across competitor content chunks.
-    
-    Args:
-        request: Search request with query and optional filters
-        
-    Returns:
-        Matching content chunks with similarity scores
-    """
-    try:
-        from scrapers.brand_intelligence import SemanticSearchService
-        
-        if request.competitor_ids:
-            verify_competitors_in_property(
-                get_supabase_client(), request.competitor_ids, request.property_id
-            )
-        
-        search_service = SemanticSearchService()
-        
-        results = await search_service.search(
-            query=request.query,
-            property_id=request.property_id,
-            competitor_ids=request.competitor_ids,
-            limit=request.limit,
-            threshold=request.threshold
-        )
-        
-        return {
-            "success": True,
-            "count": len(results),
-            "results": results
-        }
-        
-    except Exception as e:
-        logger.error(f"Error in semantic search: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    raise HTTPException(status_code=410, detail="Use the retained-source brand evidence review workflow in MarketVision.")
 
 

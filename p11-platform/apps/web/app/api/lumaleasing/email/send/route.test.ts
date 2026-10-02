@@ -7,6 +7,8 @@ const createServiceClientMock = vi.fn()
 const validatePropertyAccessMock = vi.fn()
 const getGmailConfigMock = vi.fn()
 const sendEmailMock = vi.fn()
+const replyBindingMock=vi.fn().mockResolvedValue(undefined)
+vi.mock('@/utils/services/email-reply-binding',()=>({assertEmailReplyAccount:replyBindingMock,EmailReplyAccountError:class extends Error {}}))
 
 vi.mock('@/utils/supabase/server', () => ({
   createClient: createClientMock,

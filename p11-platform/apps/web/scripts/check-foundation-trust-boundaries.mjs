@@ -16,21 +16,23 @@ const requiredRouteTests = [
 ]
 
 const requiredRouteGuards = [
+  {file: 'app/api/community/knowledge-inventory/route.ts', checks: ['inventoryActor()', 'readInventory(actor,input.data)']},
+  {file: 'utils/knowledge/inventory.ts', checks: ['auth.getUser()', "rpc('read_property_knowledge'", 'p_actor_id:actor', "data.state==='forbidden'"]},
   {
     file: 'app/api/dashboard/overview/route.ts',
     checks: ['validatePropertyAccess('],
   },
   {
     file: 'app/api/documents/route.ts',
-    checks: ['validatePropertyAccess('],
+    checks: ['inventoryGET(', 'inventoryActor()'],
   },
   {
     file: 'app/api/cron/runs/route.ts',
-    checks: [".from('profiles')", "['admin', 'manager']"],
+    checks: [".from('profiles')", "profile.role !== 'admin'", 'P11_OPERATIONS_ADMIN_IDS', 'operators.includes(user.id)'],
   },
   {
     file: 'app/api/cron/knowledge-refresh/route.ts',
-    checks: ['createRequestContext(', 'ctx.logStart('],
+    checks: ['hasValidCronAuth(request)', 'if(!run)', 'confirmCronJobRun(run'],
   },
   {
     file: 'app/api/cron/publish-scheduled/route.ts',
@@ -42,7 +44,7 @@ const requiredRouteGuards = [
   },
   {
     file: 'app/api/cron/sync-reviews/route.ts',
-    checks: ['createRequestContext(', 'ctx.logStart('],
+    checks: ['hasValidCronAuth(request)', 'if(!run)', 'if(!recorded)'],
   },
   {
     file: 'app/api/siteforge/deploy/[websiteId]/route.ts',

@@ -56,7 +56,7 @@ describe('community integrations route', () => {
     await expect(response.json()).resolves.toEqual({ error: 'Forbidden' })
   })
 
-  it('GET computes verified readiness from credential state', async () => {
+  it('GET keeps legacy CRM flags unqualified and strips stored secrets', async () => {
     authGetUserMock.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
     validatePropertyAccessMock.mockResolvedValue({ authorized: true })
 
@@ -88,7 +88,7 @@ describe('community integrations route', () => {
       data: { token_status: 'healthy', sync_enabled: true },
       error: null,
     })
-    const emailEqMock = vi.fn().mockReturnValue({ maybeSingle: emailMaybeSingleMock })
+    const emailEqMock = vi.fn().mockReturnValue({ is: vi.fn().mockReturnThis(), maybeSingle: emailMaybeSingleMock })
     const emailSelectMock = vi.fn().mockReturnValue({ eq: emailEqMock })
 
     const adminFromMock = vi.fn((table: string) => {
@@ -111,14 +111,16 @@ describe('community integrations route', () => {
     expect(payload.integrations[0]).toMatchObject({
       id: 'int-crm',
       platform: 'crm',
-      status: 'verified',
+      status: 'requested',
       statusSource: 'verified_state',
       readiness: {
         mode: 'verified_state',
-        ready: true,
-        blockers: [],
+        ready: false,
+        blockers: ['mapping_not_validated'],
       },
     })
+    expect(JSON.stringify(payload)).not.toContain('secret')
+    expect(payload.integrations[0]).not.toHaveProperty('credentials')
     expect(payload.integrations[1]).toMatchObject({
       id: 'int-email',
       platform: 'email_marketing',

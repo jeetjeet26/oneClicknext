@@ -21,12 +21,15 @@ interface SyncLog {
   newMessages?: number
   updatedThreads?: number
   watchRenewed?: boolean
-  tokenHealthChecked?: boolean
+  credentialsChecked?: boolean
   error?: string
 }
 
 interface EmailConfigRow {
   id: string
+  credential_version?: number
+  provider_subject?: string | null
+  tenant_id?: string | null
   property_id: string | null
   profile_id: string | null
   provider: string | null
@@ -60,6 +63,9 @@ function toGmailConfig(config: EmailConfigRow): GmailConfig | null {
 
   return {
     id: config.id,
+    credential_version: config.credential_version,
+    provider_subject: config.provider_subject,
+    tenant_id: config.tenant_id,
     property_id: config.property_id,
     profile_id: config.profile_id,
     provider: config.provider === 'microsoft' ? 'microsoft' : 'google',
@@ -150,7 +156,7 @@ export async function GET(request: NextRequest) {
 
       try {
         if (!gmailConfig) {
-          log.status = 'skipped'
+          log.status = 'failed'
           log.error = 'Incomplete Gmail configuration'
           syncLogs.push(log)
           continue
@@ -159,63 +165,15 @@ export async function GET(request: NextRequest) {
         // ====================================================================
         // 1. Token Health Check (if needed)
         // ====================================================================
-        const lastHealthCheck = config.last_health_check_at
-          ? new Date(config.last_health_check_at)
-          : null
         const now = new Date()
-        const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000)
-
-        if (!lastHealthCheck || lastHealthCheck < oneHourAgo) {
-          try {
-            await refreshAccessTokenIfNeeded(gmailConfig)
-            log.tokenHealthChecked = true
-
-            // Update last health check timestamp
-            await supabase
-              .from('email_configurations')
-              .update({
-                last_health_check_at: new Date().toISOString(),
-                health_check_error: null,
-                updated_at: new Date().toISOString(),
-              })
-              .eq('id', config.id)
-
-            console.log(
-              `[Gmail Sync CRON] Token health check passed for ${config.google_email || config.account_email}`
-            )
-          } catch (tokenError) {
-            console.error(
-              `[Gmail Sync CRON] Token health check failed for ${config.google_email || config.account_email}:`,
-              tokenError
-            )
-
-            const tokenErrorMessage =
-              tokenError instanceof Error ? tokenError.message : 'Token health check failed'
-            const isRevoked =
-              tokenErrorMessage.includes('revoked') ||
-              tokenErrorMessage.includes('reconnect')
-
-            await supabase
-              .from('email_configurations')
-              .update({
-                ...(isRevoked ? { token_status: 'revoked' } : {}),
-                health_check_error: tokenErrorMessage,
-                last_health_check_at: new Date().toISOString(),
-                updated_at: new Date().toISOString(),
-              })
-              .eq('id', config.id)
-
-            log.status = 'failed'
-            log.error = tokenErrorMessage
-            syncLogs.push(log)
-            continue
-          }
-        }
+        // This rechecks the saved connection. It does not prove mailbox/provider health.
+        await refreshAccessTokenIfNeeded(gmailConfig)
+        log.credentialsChecked = true
 
         // ====================================================================
         // 2. Check and Renew Watch Subscriptions
         // ====================================================================
-        if (config.watch_expiration) {
+        if (gmailConfig.provider !== 'microsoft' && config.watch_expiration) {
           const watchExpiration = new Date(config.watch_expiration)
           const oneDayFromNow = new Date(now.getTime() + 24 * 60 * 60 * 1000)
 
@@ -234,7 +192,7 @@ export async function GET(request: NextRequest) {
               // Don't fail the sync if watch renewal fails, just log it
             }
           }
-        } else {
+        } else if (gmailConfig.provider !== 'microsoft') {
           // No watch set up yet, establish one
           try {
             await setupWatch(gmailConfig)
@@ -271,34 +229,10 @@ export async function GET(request: NextRequest) {
             syncError
           )
 
-          // Check if it's a token error
-          if (
-            syncError instanceof Error &&
-            (syncError.message.includes('401') || syncError.message.includes('revoked'))
-          ) {
-            await supabase
-              .from('email_configurations')
-              .update({
-                token_status: 'revoked',
-                health_check_error: syncError.message,
-                updated_at: new Date().toISOString(),
-              })
-              .eq('id', config.id)
+          // Only the versioned refresh transaction may change credential health.
+          log.status = 'failed'
+          log.error = 'Inbox sync could not be completed.'
 
-            log.status = 'failed'
-            log.error = 'Token revoked or expired'
-          } else {
-            log.status = 'failed'
-            log.error = syncError instanceof Error ? syncError.message : 'Unknown sync error'
-
-            await supabase
-              .from('email_configurations')
-              .update({
-                health_check_error: log.error,
-                updated_at: new Date().toISOString(),
-              })
-              .eq('id', config.id)
-          }
         }
       } catch (error) {
         console.error(
@@ -321,14 +255,14 @@ export async function GET(request: NextRequest) {
     const totalNewMessages = syncLogs.reduce((sum, l) => sum + (l.newMessages || 0), 0)
     const totalUpdatedThreads = syncLogs.reduce((sum, l) => sum + (l.updatedThreads || 0), 0)
     const watchRenewed = syncLogs.filter(l => l.watchRenewed).length
-    const healthChecked = syncLogs.filter(l => l.tokenHealthChecked).length
+    const healthChecked = syncLogs.filter(l => l.credentialsChecked).length
 
     const duration = Date.now() - startTime
 
     console.log(
       `[Gmail Sync CRON] Complete: ${successful} successful, ${failed} failed, ` +
       `${totalNewMessages} messages synced, ${watchRenewed} watches renewed, ` +
-      `${healthChecked} token health checks performed (${duration}ms)`
+      `${healthChecked} credential checks performed (${duration}ms)`
     )
 
     ctx.logSuccess(200, {
@@ -340,7 +274,7 @@ export async function GET(request: NextRequest) {
     })
 
     await finishCronJobRun(run, {
-      status: 'success',
+      status: failed ? (successful ? 'partial' : 'failed') : 'success',
       summary: {
         processed: syncLogs.length,
         synced: successful,
@@ -348,20 +282,20 @@ export async function GET(request: NextRequest) {
         totalNewMessages,
         totalUpdatedThreads,
         watchRenewed,
-        tokenHealthChecks: healthChecked,
+        credentialChecks: healthChecked,
       },
     })
 
     return NextResponse.json(
       {
-        success: true,
+        success: failed === 0,
         processed: syncLogs.length,
         synced: successful,
         failed,
         totalNewMessages,
         totalUpdatedThreads,
         watchRenewed,
-        tokenHealthChecks: healthChecked,
+        credentialChecks: healthChecked,
         duration,
         results: syncLogs,
       },

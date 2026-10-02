@@ -1,0 +1,2 @@
+export function localAuthRedirect(value:string|null){if(!value?.startsWith('/'))return'/dashboard';try{const url=new URL(value,'https://local.invalid');return url.origin==='https://local.invalid'?url.pathname+url.search+url.hash:'/dashboard'}catch{return'/dashboard'}}
+export function accountAuthRedirect(value:string|null,hasOrganization:boolean){const target=localAuthRedirect(value);return hasOrganization||['/join/team','/join/client','/account/security'].includes(target)?target:'/onboarding'}

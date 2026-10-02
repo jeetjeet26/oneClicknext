@@ -1,7 +1,9 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { Loader2, Sparkles, MapPin, Building2, TrendingUp, Target, ChevronRight, Users, Palette } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { brandRequest, brandResponse } from '@/utils/brandforge/client-requests'
+import type { ResearchAnalysis } from '@/utils/brandforge/research'
+import { Loader2, Sparkles, MapPin, Building2, TrendingUp, Target, ChevronRight } from 'lucide-react'
 import { ConversationInterface } from './ConversationInterface'
 import { SectionReview } from './SectionReview'
 import { CompletionView } from './CompletionView'
@@ -18,21 +20,10 @@ interface BrandForgeWizardProps {
     zip?: string
   }
   propertyType: string
-  onComplete: (brandAsset: any) => void
+  onComplete: (brandAsset: BrandForgeCompletionResult) => void
 }
 
 type WizardStep = 'settings' | 'analyzing' | 'review-analysis' | 'conversation' | 'generation' | 'complete'
-
-interface CompetitorCard {
-  name: string
-  address?: string
-  brandVoice?: string
-  positioning?: string
-  targetAudience?: string
-  colorScheme?: string[]
-  strengths?: string[]
-  weaknesses?: string[]
-}
 
 export function BrandForgeWizard({ 
   propertyId, 
@@ -40,11 +31,16 @@ export function BrandForgeWizard({
   propertyType,
   onComplete 
 }: BrandForgeWizardProps) {
+  const [restoring, setRestoring] = useState(true)
   const [step, setStep] = useState<WizardStep>('settings')
   const [brandAssetId, setBrandAssetId] = useState<string | null>(null)
-  const [competitiveContext, setCompetitiveContext] = useState<any>(null)
+  const [competitiveContext, setCompetitiveContext] = useState<ResearchAnalysis | null>(null)
   const [currentSection, setCurrentSection] = useState<number>(1)
   const [isLoading, setIsLoading] = useState(false)
+  const [activeResearch, setActiveResearch] = useState<{id:string} | null>(null)
+  const researchMemory = useRef(new Map<string,{identity:string;requestId:string}>())
+  const researchOwner = useRef<string | null>(null)
+  const researchStops = useRef(new Map<string,string>())
   const [error, setError] = useState<string | null>(null)
   const [completionResult, setCompletionResult] = useState<BrandForgeCompletionResult | null>(null)
   
@@ -52,35 +48,68 @@ export function BrandForgeWizard({
   const [radiusMiles, setRadiusMiles] = useState(3)
   const [maxCompetitors, setMaxCompetitors] = useState(10)
 
-  async function runAnalysis() {
-    setStep('analyzing')
-    setIsLoading(true)
-    setError(null)
+  useEffect(() => {
+    const controller = new AbortController()
+    void fetch(`/api/brandforge/status?propertyId=${encodeURIComponent(propertyId)}`, { signal: controller.signal, cache: 'no-store' }).then(async response => {
+      if (!response.ok) throw new Error('Saved brand could not be loaded')
+      const saved = await response.json()
+      if (controller.signal.aborted) return
+      if (!saved.brandAsset) { await loadResearch(controller.signal); return }
+      setBrandAssetId(saved.brandAsset.id)
+      if (saved.brandAsset.isComplete) {
+        setCompletionResult({ brandAssetId: saved.brandAsset.id, pdfUrl: saved.brandAsset.pdfUrl || null, revision: saved.brandAsset.revision })
+        setStep('complete')
+      } else if (!['draft','conversation'].includes(saved.brandAsset.generationStatus)) setStep('generation')
+      else setStep('conversation')
+    }).catch(cause => { if (!controller.signal.aborted) setError(cause.message) }).finally(() => { if (!controller.signal.aborted) setRestoring(false) })
+    return () => controller.abort()
+    // Each property owns its saved research and draft.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [propertyId])
 
+  async function loadResearch(signal?: AbortSignal) {
     try {
-      const res = await fetch('/api/brandforge/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          propertyId,
-          address: propertyAddress,
-          propertyType,
-          radiusMiles,
-          maxCompetitors
-        })
-      })
+      const response=await fetch(`/api/brandforge/analyze?propertyId=${encodeURIComponent(propertyId)}`,{signal,cache:'no-store'})
+      if(!response.ok)throw new Error('Saved research could not be loaded. Try again.')
+      const body=await response.json()
+      if(signal?.aborted)return
+      const runs=(body.runs || []) as Array<{id:string;state:string;result:ResearchAnalysis}>
+      const active=runs.find(run=>run.state==='running')
+      setActiveResearch(active || null)
+      if(active){setStep('analyzing');return}
+      researchOwner.current=null;setIsLoading(false)
+      const saved=runs.find(run=>run.state==='succeeded')
+      if(saved){setCompetitiveContext(saved.result);setStep('review-analysis')}
+      else { setStep('settings'); if(runs[0]?.state==='failed')setError('The last research request failed. Its saved status is retained; a provider job may have continued. Check provider jobs before requesting another refresh.') }
+    }catch(cause){if(!signal?.aborted)setError(cause instanceof Error?cause.message:'Saved research could not be loaded.')}
+  }
 
-      if (!res.ok) throw new Error('Analysis failed')
+  async function runAnalysis(mode:'saved'|'refresh'='refresh',newRequest=false) {
+    if(isLoading || activeResearch)return
+    if(newRequest)researchMemory.current.delete('research')
+    const body=brandRequest(researchMemory,'research',{propertyId,mode,radiusMiles,maxCompetitors})
+    const requestId=JSON.parse(body).requestId as string
+    researchOwner.current=requestId
+    setStep('analyzing');setIsLoading(true);setError(null)
+    try {
+      const response=await fetch('/api/brandforge/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body})
+      const data=await brandResponse(response,researchMemory,'research')
+      if(researchOwner.current!==requestId)return
+      setCompetitiveContext(data.analysis);setActiveResearch(null);setStep('review-analysis')
+    }catch(cause){if(researchOwner.current===requestId){setError(cause instanceof Error?cause.message:'Research could not be confirmed.');await loadResearch()}}
+    finally{if(researchOwner.current===requestId){researchOwner.current=null;setIsLoading(false)}}
+  }
 
-      const data = await res.json()
-      setCompetitiveContext(data.analysis)
-      setStep('review-analysis')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Analysis failed')
-      setStep('settings')
-    } finally {
-      setIsLoading(false)
-    }
+  async function stopResearch() {
+    if(!activeResearch)return
+    const decisionId=researchStops.current.get(activeResearch.id)||crypto.randomUUID()
+    researchStops.current.set(activeResearch.id,decisionId)
+    try{
+      const response=await fetch('/api/brandforge/analyze',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({propertyId,requestId:activeResearch.id,decisionId})})
+      const result=await response.json()
+      if(!response.ok)throw new Error(result.error||'The request could not be stopped.')
+      researchOwner.current=null;setIsLoading(false);researchMemory.current.delete('research');await loadResearch()
+    }catch(cause){setError(cause instanceof Error?cause.message:'The request could not be stopped.')}
   }
 
   function handleConversationComplete(assetId: string) {
@@ -94,15 +123,18 @@ export function BrandForgeWizard({
     onComplete(result)
   }
 
+  if (restoring) return <p className="p-6 text-slate-600">Loading saved brand and research…</p>
+
   return (
     <div className="w-full">
+      {error && step !== 'settings' && <div role="alert" className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{error}</div>}
       {/* Progress indicator */}
       <div className="mb-6">
         <div className="flex items-center justify-between text-sm mb-2">
           <span className="font-medium text-slate-900">
             {step === 'settings' && 'Configure Analysis'}
             {step === 'analyzing' && 'Analyzing Market'}
-            {step === 'review-analysis' && 'Market Intelligence Report'}
+            {step === 'review-analysis' && 'Competitor Evidence Review'}
             {step === 'conversation' && 'Brand Strategy Conversation'}
             {step === 'generation' && `Creating Brand Book (${currentSection}/12)`}
             {step === 'complete' && 'Brand Book Complete'}
@@ -156,7 +188,7 @@ export function BrandForgeWizard({
             {/* Radius Selector */}
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-2">
-                Search Radius
+                Requested Discovery Radius
               </label>
               <div className="grid grid-cols-4 gap-2">
                 {[1, 3, 5, 10].map((r) => (
@@ -200,12 +232,14 @@ export function BrandForgeWizard({
             )}
 
             <button
-              onClick={runAnalysis}
+              onClick={() => void runAnalysis('refresh')}
               className="w-full py-3 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 transition-colors flex items-center justify-center gap-2"
             >
               <Target className="w-5 h-5" />
               Start Competitive Analysis
             </button>
+            <button type="button" disabled={isLoading || Boolean(activeResearch)} onClick={() => void runAnalysis('saved')} className="mt-3 w-full rounded-lg border border-indigo-200 px-4 py-3 text-indigo-700">Review saved competitor evidence</button>
+            <button type="button" onClick={() => void loadResearch()} className="mt-2 text-sm text-slate-600 underline">Reload saved research</button>
           </div>
         </div>
       )}
@@ -220,35 +254,40 @@ export function BrandForgeWizard({
             Analyzing Your Market
           </h3>
           <p className="text-slate-600">
-            Discovering {maxCompetitors} competitors within {radiusMiles} miles...
+            Preparing the requested competitor evidence and saving its result...
           </p>
           <p className="text-sm text-slate-500 mt-2">
-            Analyzing brand positioning, voice, and market gaps
+            A saved request protects against duplicate refreshes. Check its status if the response is interrupted.
           </p>
+          <div className="mt-5 flex justify-center gap-4"><button type="button" className="text-indigo-700 underline" onClick={() => void loadResearch()}>Check saved research</button>{activeResearch && <button type="button" className="text-rose-700 underline" onClick={() => void stopResearch()}>Stop research request</button>}</div>
+          {activeResearch && <p className="mt-3 text-sm text-slate-500">Stopping prevents this report from saving a late result. A provider job already accepted may continue.</p>}
         </div>
       )}
 
       {/* Step 3: Review Analysis - MarketVision Style */}
       {step === 'review-analysis' && competitiveContext && (
         <div className="space-y-6">
+          <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-600">Snapshot saved {new Date(competitiveContext.capturedAt).toLocaleString()}. {competitiveContext.evidence.current} current, {competitiveContext.evidence.stale} older and {competitiveContext.evidence.unverified} unverified competitor records at that time. Saved competitors can include earlier searches.</div>
+          {competitiveContext.warnings.map(warning => <p key={warning} className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{warning}</p>)}
+          <div className="flex flex-wrap gap-4"><button type="button" disabled={isLoading} className="text-sm text-indigo-700 underline" onClick={() => void runAnalysis('saved',true)}>Update snapshot from saved evidence</button><button type="button" disabled={isLoading} className="text-sm text-indigo-700 underline" onClick={() => void runAnalysis('refresh',true)}>Request new competitor research</button></div>
           {/* Market Summary Card */}
           <div className="bg-gradient-to-br from-indigo-600 to-purple-700 rounded-xl p-6 text-white">
             <h3 className="text-xl font-bold mb-4 flex items-center gap-2">
               <TrendingUp className="w-6 h-6" />
-              Market Intelligence Report
+              Competitor Evidence Review
             </h3>
             <div className="grid md:grid-cols-3 gap-4">
               <div className="bg-white/10 rounded-lg p-4">
                 <p className="text-3xl font-bold">{competitiveContext.competitorCount || 0}</p>
-                <p className="text-indigo-100 text-sm">Competitors Found</p>
+                <p className="text-indigo-100 text-sm">Saved Competitors</p>
               </div>
               <div className="bg-white/10 rounded-lg p-4">
-                <p className="text-3xl font-bold">{radiusMiles} mi</p>
-                <p className="text-indigo-100 text-sm">Search Radius</p>
+                <p className="text-3xl font-bold">{competitiveContext.radiusMiles} mi</p>
+                <p className="text-indigo-100 text-sm">Requested Discovery Radius</p>
               </div>
               <div className="bg-white/10 rounded-lg p-4">
                 <p className="text-3xl font-bold">{competitiveContext.marketGaps?.length || 0}</p>
-                <p className="text-indigo-100 text-sm">Market Gaps Identified</p>
+                <p className="text-indigo-100 text-sm">Positioning Hypotheses</p>
               </div>
             </div>
           </div>
@@ -258,7 +297,7 @@ export function BrandForgeWizard({
             <div className="bg-white rounded-xl border border-slate-200 p-6">
               <h4 className="font-semibold text-slate-900 mb-4 flex items-center gap-2">
                 <Target className="w-5 h-5 text-green-600" />
-                Strategic Opportunities (Market Gaps)
+                Positioning ideas to validate
               </h4>
               <div className="grid md:grid-cols-2 gap-3">
                 {competitiveContext.marketGaps.map((gap: string, idx: number) => (
@@ -301,7 +340,7 @@ export function BrandForgeWizard({
             <div className="bg-amber-50 border border-amber-200 rounded-xl p-6">
               <h4 className="font-semibold text-amber-900 mb-4 flex items-center gap-2">
                 <Sparkles className="w-5 h-5 text-amber-600" />
-                AI Strategic Recommendations
+                Review guidance
               </h4>
               <ul className="space-y-2">
                 {competitiveContext.recommendations.map((rec: string, idx: number) => (
@@ -328,10 +367,12 @@ export function BrandForgeWizard({
       )}
 
       {/* Step 4: Conversation */}
-      {step === 'conversation' && competitiveContext && (
+      {step === 'conversation' && (
         <ConversationInterface
+            key={propertyId}
           propertyId={propertyId}
           competitiveContext={competitiveContext}
+          researchId={competitiveContext?.requestId || null}
           onComplete={handleConversationComplete}
         />
       )}
@@ -351,6 +392,7 @@ export function BrandForgeWizard({
           propertyId={propertyId}
           brandAssetId={brandAssetId}
           completionResult={completionResult}
+          onReview={() => setStep('generation')}
         />
       )}
     </div>

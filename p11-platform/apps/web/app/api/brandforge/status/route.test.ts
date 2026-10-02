@@ -81,7 +81,7 @@ describe('brandforge status route', () => {
     await expect(response.json()).resolves.toEqual({ exists: false })
   })
 
-  it('returns current progress, draft metadata, and warnings', async () => {
+  it('reports only confirmed approvals alongside legacy content and warnings', async () => {
     authGetUserMock.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
     validatePropertyAccessMock.mockResolvedValue({ authorized: true })
 
@@ -136,9 +136,9 @@ describe('brandforge status route', () => {
         generationStatus: 'reviewing',
         phase: 'reviewing',
         phaseLabel: 'Operator Review',
-        approvedSections: 5,
+        approvedSections: 0,
         totalSections: 12,
-        progress: 51,
+        progress: 20,
         isComplete: false,
         pdfUrl: null,
         exportUrl: null,

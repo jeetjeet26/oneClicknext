@@ -1,21 +1,44 @@
 'use client';
+import {LumaConversationInbox} from '@/components/lumaleasing/LumaConversationInbox';
 
-import React, { useState, useEffect } from 'react';
-import { 
-  MessageSquare, Users, Calendar, TrendingUp, Clock, 
-  CheckCircle, XCircle, ArrowUpRight, Eye, Settings,
-  Sparkles, Bot, UserCheck, Mail, Copy, Link
-} from 'lucide-react';
+import {IntegrationReplacementPanel} from '@/components/lumaleasing/IntegrationReplacementPanel';
+import {IntegrationInvitesPanel} from '@/components/lumaleasing/IntegrationInvitesPanel';
+import {integrationFailureMessage} from '@/utils/services/integration-result-message';
 import { usePropertyContext } from '@/components/layout/PropertyContext';
 import { LumaLeasingConfig } from '@/components/lumaleasing/LumaLeasingConfig';
+import {RequestEvidence}from '@/components/lumaleasing/RequestEvidence';
+import { ReliabilityPanel } from '@/components/operations/ReliabilityPanel';
+import {
+ArrowUpRight,
+Bot,
+Calendar,
+CheckCircle,
+Clock,
+Eye,
+Link,
+Mail,
+MessageSquare,
+Settings,
+Sparkles,
+TrendingUp,
+UserCheck,
+Users,
+XCircle
+} from 'lucide-react';
+import {PropertyTimezoneSetup} from '@/components/leads/PropertyTimezoneSetup';
+import React,{ useEffect,useState } from 'react';
 
 interface WidgetStats {
   totalSessions: number;
   totalConversations: number;
-  leadsCapture: number;
+  linkedSessions: number;
+  uniqueLeads: number;
+  tourBookingRate: number|null;
+  asOf: string;
+  complete: true;
   toursBooked: number;
-  avgResponseTime: number;
-  conversionRate: number;
+  avgResponseTime: null;
+  conversionRate: number|null;
 }
 
 interface RecentConversation {
@@ -24,62 +47,79 @@ interface RecentConversation {
   lead_email: string | null;
   message_count: number;
   is_human_mode: boolean;
-  created_at: string;
+  created_at: string|null;
   last_message: string | null;
 }
 
 export default function LumaLeasingPage() {
+  const { currentProperty,loading,hasLoadedProperties,properties,setProperty } = usePropertyContext()
+  useEffect(() => {
+    if(loading || !hasLoadedProperties) return
+    const url = new URL(window.location.href);const target = url.searchParams.get('propertyId')
+    if(target && (url.searchParams.has('success') || url.searchParams.has('error')) && properties.some(property => property.id === target)) {
+      setProperty(target);url.searchParams.delete('propertyId');window.history.replaceState({},'',url.pathname+url.search)
+    }
+  }, [loading,hasLoadedProperties,properties,setProperty])
+  if(loading) return <p role="status" className="p-6 text-sm text-slate-500">Loading property records…</p>
+  if(!hasLoadedProperties) return <p role="alert" className="p-6 text-sm text-amber-700">Your property records are unavailable. Reload the page to try again.</p>
+  return <LumaLeasingWorkspace key={currentProperty.id} />
+}
+
+function LumaLeasingWorkspace() {
   const { currentProperty } = usePropertyContext();
   const [activeTab, setActiveTab] = useState<'overview' | 'conversations' | 'integrations' | 'config'>('overview');
+  const [connectionError,setConnectionError] = useState<string|null>(null);
+  const [selectedConversation,setSelectedConversation]=useState<string|null>(null);
+  useEffect(() => {const params=new URLSearchParams(window.location.search);if(params.has('success') || params.has('error')) setActiveTab('integrations');else if(params.get('tab')==='conversations')setActiveTab('conversations');const requested=params.get('conversation');if(requested&&/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(requested)){setSelectedConversation(requested);setActiveTab('conversations')};setConnectionError(params.get('error'))}, []);
   const [stats, setStats] = useState<WidgetStats | null>(null);
   const [conversations, setConversations] = useState<RecentConversation[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const [loadError,setLoadError] = useState(false)
+  const [revision,setRevision] = useState(0)
   useEffect(() => {
-    loadData();
-  }, [currentProperty.id]);
-
-  const loadData = async () => {
-    setLoading(true);
-    try {
-      // Load stats
-      const statsRes = await fetch(`/api/lumaleasing/admin/stats?propertyId=${currentProperty.id}`);
-      if (statsRes.ok) {
-        const statsData = await statsRes.json();
-        setStats(statsData);
-      }
-
-      // Load recent conversations
-      const convsRes = await fetch(`/api/lumaleasing/admin/conversations?propertyId=${currentProperty.id}`);
-      if (convsRes.ok) {
-        const convsData = await convsRes.json();
-        setConversations(convsData.conversations || []);
-      }
-    } catch (error) {
-      console.error('Failed to load data:', error);
-    } finally {
-      setLoading(false);
+    const controller = new AbortController()
+    let active = true
+    setLoading(true);setLoadError(false);setStats(null);setConversations([])
+    const load = async () => {
+      try {
+        const response=await fetch(`/api/lumaleasing/admin/stats?propertyId=${currentProperty.id}`,{signal:controller.signal,cache:'no-store'});
+        if(!response.ok)throw new Error('Overview unavailable');
+        const data=await response.json();if(data.complete!==true||data.propertyId!==currentProperty.id)throw new Error('Complete overview unavailable');
+        if(active){setStats(data);setConversations(data.conversations)}
+      } catch {if(active) setLoadError(true)}
+      finally {if(active) setLoading(false)}
     }
-  };
+    void load()
+    return ()=>{active=false;controller.abort()}
+  }, [currentProperty.id,revision])
 
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white shadow-lg">
+          <div className="h-12 w-12 rounded-xl bg-[#eaf0f2] flex items-center justify-center text-[#476d79]">
             <Sparkles className="w-6 h-6" />
           </div>
           <div>
             <h1 className="text-2xl font-bold text-slate-900">LumaLeasing</h1>
-            <p className="text-slate-500">AI-powered leasing assistant for {currentProperty.name}</p>
+            <p className="text-slate-500">Conversations, tours and leasing support for {currentProperty.name}</p>
           </div>
         </div>
       </div>
 
+      {connectionError && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+        <p className="font-semibold">Connection needs attention</p>
+        <p>{integrationFailureMessage(connectionError)}</p>
+        <button type="button" className="mt-2 underline" onClick={()=>{setConnectionError(null);const url=new URL(window.location.href);url.searchParams.delete('error');window.history.replaceState({},'',url.pathname+url.search)}}>Dismiss connection message</button>
+      </div>}
+      <ReliabilityPanel key={currentProperty.id} propertyId={currentProperty.id} area="luma" />
+      <RequestEvidence key={`requests-${currentProperty.id}`} propertyId={currentProperty.id}/>
+
       {/* Tabs */}
       <div className="border-b border-slate-200">
-        <div className="flex gap-8">
+        <div className="flex flex-wrap gap-x-6 gap-y-2">
           {[
             { id: 'overview', label: 'Overview', icon: TrendingUp },
             { id: 'conversations', label: 'Conversations', icon: MessageSquare },
@@ -102,49 +142,50 @@ export default function LumaLeasingPage() {
         </div>
       </div>
 
+      {loading && <p role="status" className="text-sm text-slate-500">Loading conversation records…</p>}
+      {loadError && <div role="alert" className="rounded-xl border border-amber-200 p-4 text-sm text-amber-800">
+        Conversation records could not be loaded. <button type="button" className="underline" onClick={()=>setRevision(value=>value+1)}>Try again</button>
+      </div>}
       {/* Content */}
-      {activeTab === 'overview' && (
+      {activeTab === 'overview' && !loading && !loadError && stats && (
         <div className="space-y-6">
+          <p className="text-sm text-slate-500">All retained widget sessions and conversation records · Updated {new Date(stats.asOf).toLocaleString()}. Bookings include cancellations; counts do not prove tours were attended.</p>
           {/* Stats Grid */}
-          <div className="grid grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
             <StatCard
               label="Total Sessions"
-              value={stats?.totalSessions || 0}
+              value={stats.totalSessions}
               icon={Eye}
-              trend="+12%"
               color="indigo"
             />
             <StatCard
-              label="Leads Captured"
-              value={stats?.leadsCapture || 0}
+              label="Unique Leads"
+              value={stats.uniqueLeads}
               icon={Users}
-              trend="+8%"
               color="emerald"
             />
             <StatCard
-              label="Tours Booked"
-              value={stats?.toursBooked || 0}
+              label="Bookings Recorded"
+              value={stats.toursBooked}
               icon={Calendar}
-              trend="+15%"
               color="violet"
             />
             <StatCard
-              label="Conversion Rate"
-              value={`${stats?.conversionRate || 0}%`}
+              label="Sessions Linked to Leads"
+              value={stats.conversionRate===null?'No sessions':`${stats.conversionRate}%`}
               icon={TrendingUp}
-              trend="+3%"
               color="amber"
             />
           </div>
 
           {/* Recent Activity */}
-          <div className="grid grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
             {/* Recent Conversations */}
             <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="font-semibold text-slate-900">Recent Conversations</h3>
+                <h3 className="font-semibold text-slate-900">Newest Widget Conversations</h3>
                 <button
-                  onClick={() => setActiveTab('conversations')}
+                  onClick={() => {setSelectedConversation(null);setActiveTab('conversations')}}
                   className="text-sm text-indigo-600 hover:text-indigo-700 flex items-center gap-1"
                 >
                   View all <ArrowUpRight className="w-3 h-3" />
@@ -160,7 +201,7 @@ export default function LumaLeasingPage() {
               ) : (
                 <div className="space-y-3">
                   {conversations.slice(0, 5).map((conv) => (
-                    <div key={conv.id} className="flex items-center gap-3 p-3 rounded-lg hover:bg-slate-50 transition-colors">
+                    <button key={conv.id} type="button" aria-label={`Open recent conversation: ${conv.lead_name||conv.lead_email||'Anonymous visitor'}`} onClick={()=>{setSelectedConversation(conv.id);setActiveTab('conversations')}} className="w-full text-left flex items-center gap-3 p-3 rounded-lg hover:bg-slate-50 transition-colors">
                       <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
                         conv.is_human_mode 
                           ? 'bg-amber-100 text-amber-600' 
@@ -178,11 +219,11 @@ export default function LumaLeasingPage() {
                       </div>
                       <div className="text-right">
                         <p className="text-xs text-slate-400">
-                          {new Date(conv.created_at).toLocaleDateString()}
+                          {conv.created_at?new Date(conv.created_at).toLocaleDateString():'Time not recorded'}
                         </p>
                         <p className="text-xs text-slate-500">{conv.message_count} messages</p>
                       </div>
-                    </div>
+                    </button>
                   ))}
                 </div>
               )}
@@ -197,12 +238,12 @@ export default function LumaLeasingPage() {
                   <div className="flex items-center gap-3">
                     <Clock className="w-5 h-5 text-slate-400" />
                     <div>
-                      <p className="text-sm font-medium text-slate-900">Avg Response Time</p>
-                      <p className="text-xs text-slate-500">First AI response</p>
+                      <p className="text-sm font-medium text-slate-900">Response Timing</p>
+                      <p className="text-xs text-slate-500">Separate assistant timing is not measured</p>
                     </div>
                   </div>
                   <p className="text-lg font-semibold text-slate-900">
-                    {stats?.avgResponseTime || 0}ms
+                    Not measured
                   </p>
                 </div>
 
@@ -210,12 +251,12 @@ export default function LumaLeasingPage() {
                   <div className="flex items-center gap-3">
                     <CheckCircle className="w-5 h-5 text-emerald-500" />
                     <div>
-                      <p className="text-sm font-medium text-slate-900">Lead Capture Rate</p>
-                      <p className="text-xs text-slate-500">Visitors who became leads</p>
+                      <p className="text-sm font-medium text-slate-900">Session Lead Link Rate</p>
+                      <p className="text-xs text-slate-500">Sessions linked to a lead; repeat sessions count</p>
                     </div>
                   </div>
                   <p className="text-lg font-semibold text-emerald-600">
-                    {stats?.conversionRate || 0}%
+                    {stats.conversionRate===null?'No sessions':`${stats.conversionRate}%`}
                   </p>
                 </div>
 
@@ -224,11 +265,11 @@ export default function LumaLeasingPage() {
                     <Calendar className="w-5 h-5 text-violet-500" />
                     <div>
                       <p className="text-sm font-medium text-slate-900">Tour Booking Rate</p>
-                      <p className="text-xs text-slate-500">Leads who booked tours</p>
+                      <p className="text-xs text-slate-500">Distinct linked leads with a non-cancelled Luma booking</p>
                     </div>
                   </div>
                   <p className="text-lg font-semibold text-violet-600">
-                    {stats?.leadsCapture ? Math.round((stats.toursBooked / stats.leadsCapture) * 100) : 0}%
+                    {stats.tourBookingRate===null?'No linked leads':`${stats.tourBookingRate}%`}
                   </p>
                 </div>
               </div>
@@ -237,13 +278,7 @@ export default function LumaLeasingPage() {
         </div>
       )}
 
-      {activeTab === 'conversations' && (
-        <ConversationsList 
-          conversations={conversations} 
-          propertyId={currentProperty.id}
-          onRefresh={loadData}
-        />
-      )}
+      {activeTab === 'conversations' && <LumaConversationInbox propertyId={currentProperty.id} initialConversationId={selectedConversation}/> }
 
       {activeTab === 'integrations' && (
         <IntegrationsPanel propertyId={currentProperty.id} />
@@ -258,13 +293,11 @@ function StatCard({
   label, 
   value, 
   icon: Icon, 
-  trend, 
   color 
 }: { 
   label: string; 
   value: number | string; 
   icon: React.ElementType; 
-  trend: string;
   color: 'indigo' | 'emerald' | 'violet' | 'amber';
 }) {
   const colors = {
@@ -280,9 +313,6 @@ function StatCard({
         <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${colors[color]}`}>
           <Icon className="w-5 h-5" />
         </div>
-        <span className="text-xs font-medium text-emerald-600 bg-emerald-50 px-2 py-1 rounded-full">
-          {trend}
-        </span>
       </div>
       <p className="text-2xl font-bold text-slate-900">{value}</p>
       <p className="text-sm text-slate-500">{label}</p>
@@ -290,85 +320,12 @@ function StatCard({
   );
 }
 
-function ConversationsList({ 
-  conversations, 
-  propertyId,
-  onRefresh 
-}: { 
-  conversations: RecentConversation[];
-  propertyId: string;
-  onRefresh: () => void;
-}) {
-  return (
-    <div className="bg-white rounded-xl shadow-sm border border-slate-200">
-      <div className="p-4 border-b border-slate-100 flex items-center justify-between">
-        <h3 className="font-semibold text-slate-900">All Conversations</h3>
-        <button 
-          onClick={onRefresh}
-          className="text-sm text-indigo-600 hover:text-indigo-700"
-        >
-          Refresh
-        </button>
-      </div>
-      
-      {conversations.length === 0 ? (
-        <div className="text-center py-12">
-          <MessageSquare className="w-12 h-12 text-slate-300 mx-auto mb-4" />
-          <p className="text-slate-500 font-medium">No conversations yet</p>
-          <p className="text-sm text-slate-400 mt-1">
-            Widget conversations will appear here
-          </p>
-        </div>
-      ) : (
-        <div className="divide-y divide-slate-100">
-          {conversations.map((conv) => (
-            <div key={conv.id} className="p-4 hover:bg-slate-50 transition-colors cursor-pointer">
-              <div className="flex items-center gap-4">
-                <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
-                  conv.is_human_mode 
-                    ? 'bg-amber-100 text-amber-600' 
-                    : 'bg-indigo-100 text-indigo-600'
-                }`}>
-                  {conv.is_human_mode ? <UserCheck className="w-6 h-6" /> : <Bot className="w-6 h-6" />}
-                </div>
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <p className="font-medium text-slate-900">
-                      {conv.lead_name || 'Anonymous Visitor'}
-                    </p>
-                    {conv.is_human_mode && (
-                      <span className="text-xs px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full">
-                        Human Mode
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-sm text-slate-500">{conv.lead_email || 'No email'}</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-sm font-medium text-slate-900">{conv.message_count} messages</p>
-                  <p className="text-xs text-slate-400">
-                    {new Date(conv.created_at).toLocaleString()}
-                  </p>
-                </div>
-              </div>
-              {conv.last_message && (
-                <p className="mt-2 text-sm text-slate-600 truncate pl-16">
-                  "{conv.last_message}"
-                </p>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function IntegrationsPanel({ propertyId }: { propertyId: string }) {
-  const [creatingLink, setCreatingLink] = useState<string | null>(null);
   const [calendarStatus, setCalendarStatus] = useState<{
     connected: boolean;
-    state?: 'connected' | 'reconnect_required' | 'disconnected';
+    state?: 'connected' | 'reconnect_required' | 'disconnected' | 'setup_required';
+    timezone?: string | null;
+    timezone_setup_required?: boolean;
     provider?: 'google' | 'microsoft';
     account_email?: string;
     email?: string;
@@ -383,56 +340,26 @@ function IntegrationsPanel({ propertyId }: { propertyId: string }) {
     token_status?: string;
   } | null>(null);
 
+  const [revision, setRevision] = useState(0);
+  const [statusLoading, setStatusLoading] = useState(true);
+  const [statusErrors, setStatusErrors] = useState({calendar: '', email: ''});
   useEffect(() => {
-    const loadIntegrationStatus = async () => {
+    const controller = new AbortController();
+    setStatusLoading(true);setCalendarStatus(null);setEmailStatus(null);
+    setStatusErrors({calendar: '', email: ''});
+    const load = async (kind: 'calendar' | 'email') => {
       try {
-        const [calendarResponse, emailResponse] = await Promise.all([
-          fetch(`/api/lumaleasing/calendar/status?propertyId=${propertyId}`),
-          fetch(`/api/lumaleasing/email/status?propertyId=${propertyId}`),
-        ]);
-
-        if (calendarResponse.ok) {
-          setCalendarStatus(await calendarResponse.json());
-        }
-        if (emailResponse.ok) {
-          setEmailStatus(await emailResponse.json());
-        }
-      } catch (error) {
-        console.error('Failed to load integration status:', error);
+        const response = await fetch(`/api/lumaleasing/${kind}/status?propertyId=${propertyId}`, {signal: controller.signal, cache: 'no-store'});
+        if(!response.ok) throw new Error('Status unavailable');
+        const status = await response.json();
+        if(!controller.signal.aborted) (kind === 'calendar' ? setCalendarStatus : setEmailStatus)(status);
+      } catch {
+        if(!controller.signal.aborted) setStatusErrors(previous => ({...previous, [kind]: 'Connection status is unavailable. Retry before changing this account.'}));
       }
     };
-
-    loadIntegrationStatus();
-  }, [propertyId]);
-
-  const createExternalAuthLink = async (
-    provider: 'google' | 'microsoft',
-    capability: 'calendar' | 'email'
-  ) => {
-    try {
-      setCreatingLink(`${provider}-${capability}`);
-      const response = await fetch('/api/lumaleasing/integration-invites', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          propertyId,
-          provider,
-          capabilities: [capability],
-        }),
-      });
-      const payload = await response.json().catch(() => null);
-      if (!response.ok || !payload?.url) {
-        throw new Error(payload?.error || 'Failed to create authorization link');
-      }
-      await navigator.clipboard.writeText(payload.url);
-      alert('Authorization link copied.');
-    } catch (error) {
-      console.error('Failed to create authorization link:', error);
-      alert(error instanceof Error ? error.message : 'Failed to create authorization link');
-    } finally {
-      setCreatingLink(null);
-    }
-  };
+    void Promise.all([load('calendar'), load('email')]).finally(() => {if(!controller.signal.aborted) setStatusLoading(false)});
+    return () => controller.abort();
+  }, [propertyId, revision]);
 
   const cards = [
     {
@@ -489,11 +416,12 @@ function IntegrationsPanel({ propertyId }: { propertyId: string }) {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {cards.map((card) => {
           const Icon = card.icon;
-          const isCreating = creatingLink === `${card.provider}-${card.capability}`;
           const status = card.capability === 'calendar' ? calendarStatus : emailStatus;
           const matchesConnectedProvider =
             status?.provider === card.provider && status.state !== 'disconnected';
           const isHealthy = matchesConnectedProvider && status?.state === 'connected';
+          const statusError = statusErrors[card.capability];
+          const needsSetup = card.capability === 'calendar' && matchesConnectedProvider && calendarStatus?.timezone_setup_required;
           const needsReconnect = matchesConnectedProvider && status?.state === 'reconnect_required';
           const accountEmail = status?.account_email || status?.email;
 
@@ -506,6 +434,8 @@ function IntegrationsPanel({ propertyId }: { propertyId: string }) {
                 <div className="flex-1">
                   <h4 className="font-semibold text-slate-900">{card.title}</h4>
                   <p className="text-sm text-slate-500 mt-1">{card.description}</p>
+                  {statusLoading && <p role="status" className="mt-3 text-sm text-slate-500">Loading connection status…</p>}
+                  {statusError && <div role="alert" className="mt-3 text-sm text-red-700"><p>{statusError}</p><button type="button" onClick={() => setRevision(value => value + 1)} className="mt-2 underline">Retry {card.title} status</button></div>}
                   {matchesConnectedProvider && (
                     <div className={`mt-3 rounded-lg border px-3 py-2 text-sm ${
                       isHealthy
@@ -518,38 +448,36 @@ function IntegrationsPanel({ propertyId }: { propertyId: string }) {
                         ) : (
                           <XCircle className="w-4 h-4" />
                         )}
-                        {isHealthy ? 'Connected' : 'Reconnect required'}
+                        {isHealthy ? 'Connected' : status?.state === 'setup_required' ? 'Timezone setup required' : 'Reconnect required'}
                       </div>
                       {accountEmail && (
                         <p className="mt-1 text-xs">{accountEmail}</p>
                       )}
                       {status?.token_status && (
-                        <p className="mt-1 text-xs">Token: {status.token_status}</p>
+                        <p className="mt-1 text-xs">{status.token_status === 'refresh_unconfirmed' ? 'Renewal could not be confirmed. Reconnect this account.' : status.token_status === 'healthy' && !isHealthy ? 'Access needs attention' : `Access: ${status.token_status.replaceAll('_', ' ')}`}</p>
                       )}
                     </div>
                   )}
                 </div>
               </div>
+              {needsSetup && <div className="mt-4"><PropertyTimezoneSetup key={propertyId} propertyId={propertyId} onSaved={() => setRevision(value => value + 1)}/></div>}
+              {card.capability === 'calendar' && matchesConnectedProvider && calendarStatus?.timezone && <p className="mt-3 text-sm text-slate-600">Tour timezone: {calendarStatus.timezone}</p>}
               <div className="flex flex-wrap gap-2 mt-5">
                 <button
                   onClick={() => window.location.href = card.connectHref}
+                  disabled={statusLoading || !!statusError}
                   className={`px-4 py-2 rounded-lg text-white text-sm font-medium transition-colors ${card.color}`}
                 >
-                  {needsReconnect ? 'Reconnect' : matchesConnectedProvider ? 'Reconnect / Change Account' : 'Connect'}
+                  {needsReconnect ? 'Reconnect' : matchesConnectedProvider ? 'Reconnect' : 'Connect'}
                 </button>
-                <button
-                  onClick={() => createExternalAuthLink(card.provider, card.capability)}
-                  disabled={isCreating}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-200 text-slate-700 text-sm font-medium hover:bg-slate-50 disabled:opacity-60"
-                >
-                  <Copy className="w-4 h-4" />
-                  {isCreating ? 'Creating...' : 'Copy Client Link'}
-                </button>
+
               </div>
             </div>
           );
         })}
       </div>
+      <IntegrationReplacementPanel key={`replacement-${propertyId}`} propertyId={propertyId}/>
+      <IntegrationInvitesPanel key={propertyId} propertyId={propertyId}/>
     </div>
   );
 }

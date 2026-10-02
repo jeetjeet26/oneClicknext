@@ -4,8 +4,6 @@ import {
   CheckCircle, ArrowLeft, Sparkles, Building2, MapPin, 
   Users, Link2, FileText, AlertCircle, Edit2, Loader2
 } from 'lucide-react'
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
 import { useOnboarding } from '../components/OnboardingProvider'
 import { INTEGRATION_CONFIG } from '../types'
 import { getPropertyTypeLabel } from '@/utils/property-types'
@@ -55,90 +53,18 @@ function SectionCard({ icon, title, isComplete, onEdit, children }: SectionCardP
 }
 
 export function ReviewStep() {
-  const router = useRouter()
-  const { formData, setStep, isLoading, setIsLoading, error, setError } = useOnboarding()
+  const { formData, setStep, isLoading:submitting, error, completeSetup } = useOnboarding()
   const { organization, community, contacts, integrations, documents } = formData
-  const [submitting, setSubmitting] = useState(false)
 
   const primaryContact = contacts.find(c => c.type === 'primary')
   const billingContact = contacts.find(c => c.type === 'billing')
-  const connectedIntegrations = integrations.filter(i => i.status === 'connected' || i.status === 'verified')
+  const plannedIntegrations = integrations
 
   const isOrgComplete = !!organization.name
   const isCommunityComplete = !!community.name
   const isContactsComplete = primaryContact && primaryContact.name && primaryContact.email
 
-  const handleSubmit = async () => {
-    if (!isOrgComplete || !isCommunityComplete || !isContactsComplete) {
-      setError('Please complete all required sections before continuing')
-      return
-    }
-
-    setSubmitting(true)
-    setIsLoading(true)
-    setError(null)
-
-    try {
-      const response = await fetch('/api/onboarding', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          organization: {
-            name: organization.name,
-            type: organization.type || null,
-            legalName: organization.legalName || null,
-          },
-          community: {
-            name: community.name,
-            type: community.type || null,
-            address: community.address.street ? community.address : null,
-            websiteUrl: community.websiteUrl || null,
-            additionalUrls: community.additionalUrls?.filter(u => u?.trim()) || [],
-            unitCount: community.unitCount ? parseInt(community.unitCount) : null,
-            yearBuilt: community.yearBuilt ? parseInt(community.yearBuilt) : null,
-            amenities: community.amenities,
-          },
-          contacts: contacts.map(c => ({
-            type: c.type,
-            name: c.name,
-            email: c.email,
-            phone: c.phone || null,
-            role: c.role || null,
-            billingAddress: c.billingAddress || null,
-            billingMethod: c.billingMethod || null,
-            specialInstructions: c.specialInstructions || null,
-            needsW9: c.needsW9 || false,
-          })),
-          integrations: integrations.map(i => ({
-            platform: i.platform,
-            status: i.status,
-            accountId: i.accountId || null,
-            accountName: i.accountName || null,
-            notes: i.notes || null,
-          })),
-          documentCount: documents.length,
-        }),
-      })
-
-      const data = await response.json()
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to complete setup')
-      }
-
-      // Success! Navigate to complete step then dashboard
-      setStep('complete')
-      setTimeout(() => {
-        router.push('/dashboard')
-        router.refresh()
-      }, 2000)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Something went wrong')
-    } finally {
-      setSubmitting(false)
-      setIsLoading(false)
-    }
-  }
+  const handleSubmit = () => { void completeSetup() }
 
   return (
     <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -147,7 +73,7 @@ export function ReviewStep() {
           <CheckCircle className="w-8 h-8 text-white" />
         </div>
         <h1 className="text-3xl font-bold text-white mb-3">
-          Review & Launch
+          Review & Create
         </h1>
         <p className="text-slate-400 text-lg">
           Double-check your information before we set everything up
@@ -226,15 +152,15 @@ export function ReviewStep() {
             isComplete={true}
             onEdit={() => setStep('integrations')}
           >
-            {connectedIntegrations.length > 0 ? (
-              connectedIntegrations.map(i => (
+            {plannedIntegrations.length > 0 ? (
+              plannedIntegrations.map(i => (
                 <p key={i.platform}><span className="text-emerald-400">✓</span> {INTEGRATION_CONFIG[i.platform].name}</p>
               ))
             ) : (
               <p>No integrations configured yet</p>
             )}
-            {integrations.length > connectedIntegrations.length && (
-              <p className="text-amber-400">{integrations.length - connectedIntegrations.length} pending setup</p>
+            {integrations.length > plannedIntegrations.length && (
+              <p className="text-amber-400">{integrations.length - plannedIntegrations.length} pending setup</p>
             )}
           </SectionCard>
 
@@ -246,9 +172,9 @@ export function ReviewStep() {
             onEdit={() => setStep('knowledge')}
           >
             {documents.length > 0 ? (
-              <p>{documents.length} document{documents.length !== 1 ? 's' : ''} ready to process</p>
+              <p>{documents.length} document{documents.length !== 1 ? 's' : ''} listed for later review</p>
             ) : (
-              <p>No documents uploaded (can be added later)</p>
+              <p>Private files and website captures can be added after setup</p>
             )}
           </SectionCard>
         </div>
@@ -258,9 +184,9 @@ export function ReviewStep() {
           <h4 className="font-semibold text-white mb-2">What happens next?</h4>
           <ul className="text-sm text-slate-400 space-y-1">
             <li>• We&apos;ll create your organization and community in the platform</li>
-            <li>• Your uploaded documents will be processed for AI training</li>
+            <li>• Knowledge sources require separate private upload, review and publication</li>
             <li>• You&apos;ll get a personalized onboarding checklist</li>
-            <li>• Our team will reach out to help with integrations</li>
+            <li>• Connection plans remain inactive until separately authorized</li>
           </ul>
         </div>
 

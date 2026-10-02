@@ -67,12 +67,12 @@ export function serverError(internalError?: unknown, headers?: Record<string, st
 /**
  * Validate CRON secret for scheduled job endpoints.
  * When CRON_SECRET is set, requires Bearer token.
- * When unset (e.g. local dev), allows.
+ * Missing configuration rejects the request in every environment.
  * Returns 401 response on failure, null when ok.
  */
 export function validateCronAuth(request: Request): NextResponse | null {
   const cronSecret = process.env.CRON_SECRET
-  if (!cronSecret) return null
+  if (!cronSecret) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const authHeader = request.headers.get('authorization')
   if (authHeader === `Bearer ${cronSecret}`) return null
   return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })

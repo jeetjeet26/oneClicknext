@@ -14,7 +14,7 @@ import { PROPERTY_TYPE_OPTIONS } from '@/utils/property-types'
 interface UnitInput {
   unitType: string
   bedrooms: number
-  bathrooms: number
+  bathrooms: number | null
   sqftMin: string
   sqftMax: string
   rentMin: string
@@ -23,6 +23,7 @@ interface UnitInput {
 }
 
 interface CompetitorFormData {
+  reason: string
   name: string
   address: string
   websiteUrl: string
@@ -62,6 +63,7 @@ export function CompetitorForm({
   isEdit = false
 }: CompetitorFormProps) {
   const [formData, setFormData] = useState<CompetitorFormData>({
+    reason: '',
     name: initialData?.name || '',
     address: initialData?.address || '',
     websiteUrl: initialData?.websiteUrl || '',
@@ -123,7 +125,7 @@ export function CompetitorForm({
       units: [...prev.units, {
         unitType: '1BR',
         bedrooms: 1,
-        bathrooms: 1,
+        bathrooms: null,
         sqftMin: '',
         sqftMax: '',
         rentMin: '',
@@ -153,6 +155,7 @@ export function CompetitorForm({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     
+    if (formData.reason.trim().length < 3) {setError('Add a reason for this change.');return}
     if (!formData.name.trim()) {
       setError('Competitor name is required')
       return
@@ -172,7 +175,7 @@ export function CompetitorForm({
   }
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+    <div role="dialog" aria-label={isEdit ? 'Edit competitor' : 'Add competitor'} className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-hidden">
         {/* Header */}
         <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
@@ -181,6 +184,7 @@ export function CompetitorForm({
             {isEdit ? 'Edit Competitor' : 'Add Competitor'}
           </h2>
           <button
+            aria-label="Close competitor form"
             onClick={onClose}
             className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
           >
@@ -190,7 +194,7 @@ export function CompetitorForm({
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="overflow-y-auto max-h-[calc(90vh-140px)]">
-          <div className="p-6 space-y-6">
+          <fieldset disabled={loading} className="min-w-0 p-6 space-y-6">
             {error && (
               <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-red-600 dark:text-red-400 text-sm">
                 {error}
@@ -205,7 +209,7 @@ export function CompetitorForm({
                 </label>
                 <input
                   type="text"
-                  value={formData.name}
+                  aria-label="Property name" value={formData.name}
                   onChange={(e) => handleChange('name', e.target.value)}
                   className="w-full px-4 py-2 border border-gray-200 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white dark:bg-gray-700"
                   placeholder="e.g., The Residences at Downtown"
@@ -218,7 +222,7 @@ export function CompetitorForm({
                 </label>
                 <input
                   type="text"
-                  value={formData.address}
+                  aria-label="Address" value={formData.address}
                   onChange={(e) => handleChange('address', e.target.value)}
                   className="w-full px-4 py-2 border border-gray-200 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white dark:bg-gray-700"
                   placeholder="123 Main St, City, State 12345"
@@ -231,7 +235,7 @@ export function CompetitorForm({
                 </label>
                 <input
                   type="url"
-                  value={formData.websiteUrl}
+                  aria-label="Website" value={formData.websiteUrl}
                   onChange={(e) => handleChange('websiteUrl', e.target.value)}
                   className="w-full px-4 py-2 border border-gray-200 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white dark:bg-gray-700"
                   placeholder="https://..."
@@ -244,7 +248,7 @@ export function CompetitorForm({
                 </label>
                 <input
                   type="tel"
-                  value={formData.phone}
+                  aria-label="Phone" value={formData.phone}
                   onChange={(e) => handleChange('phone', e.target.value)}
                   className="w-full px-4 py-2 border border-gray-200 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white dark:bg-gray-700"
                   placeholder="(555) 123-4567"
@@ -257,7 +261,7 @@ export function CompetitorForm({
                 </label>
                 <input
                   type="number"
-                  value={formData.unitsCount}
+                  aria-label="Total units" value={formData.unitsCount}
                   onChange={(e) => handleChange('unitsCount', e.target.value)}
                   className="w-full px-4 py-2 border border-gray-200 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white dark:bg-gray-700"
                   placeholder="e.g., 250"
@@ -270,7 +274,7 @@ export function CompetitorForm({
                 </label>
                 <input
                   type="number"
-                  value={formData.yearBuilt}
+                  aria-label="Year built" value={formData.yearBuilt}
                   onChange={(e) => handleChange('yearBuilt', e.target.value)}
                   className="w-full px-4 py-2 border border-gray-200 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white dark:bg-gray-700"
                   placeholder="e.g., 2020"
@@ -332,6 +336,7 @@ export function CompetitorForm({
               )}
             </div>
 
+            {!isEdit && <>
             {/* Unit Pricing */}
             <div>
               <div className="flex items-center justify-between mb-3">
@@ -392,7 +397,7 @@ export function CompetitorForm({
                             <DollarSign className="absolute left-2 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                             <input
                               type="number"
-                              value={unit.rentMin}
+                              aria-label={`Initial unit ${index+1} minimum price`} value={unit.rentMin}
                               onChange={(e) => updateUnit(index, 'rentMin', e.target.value)}
                               className="w-full pl-7 pr-3 py-1.5 text-sm border border-gray-200 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700"
                               placeholder="1200"
@@ -407,7 +412,7 @@ export function CompetitorForm({
                             <DollarSign className="absolute left-2 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                             <input
                               type="number"
-                              value={unit.rentMax}
+                              aria-label={`Initial unit ${index+1} maximum price`} value={unit.rentMax}
                               onChange={(e) => updateUnit(index, 'rentMax', e.target.value)}
                               className="w-full pl-7 pr-3 py-1.5 text-sm border border-gray-200 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700"
                               placeholder="1500"
@@ -455,20 +460,24 @@ export function CompetitorForm({
               )}
             </div>
 
+            </>}
+            <label className="block text-sm">Reason for this change<textarea required minLength={3} maxLength={2000} value={formData.reason} onChange={e=>handleChange('reason',e.target.value)} className="block w-full border rounded-lg p-2 mt-1" /></label>
+            <p className="text-xs text-gray-500">These are operator-reported details. Saving them does not verify them against a provider. Unknown prices and availability remain unknown.</p>
+            {isEdit && <p className="text-sm text-gray-600">Edit individual saved units from the competitor details panel. This form changes property details only.</p>}
             {/* Notes */}
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                 Notes
               </label>
               <textarea
-                value={formData.notes}
+                aria-label="Notes" value={formData.notes}
                 onChange={(e) => handleChange('notes', e.target.value)}
                 rows={3}
                 className="w-full px-4 py-2 border border-gray-200 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white dark:bg-gray-700 resize-none"
                 placeholder="Any additional notes about this competitor..."
               />
             </div>
-          </div>
+          </fieldset>
 
           {/* Footer */}
           <div className="px-6 py-4 border-t border-gray-200 dark:border-gray-700 flex items-center justify-end gap-3">

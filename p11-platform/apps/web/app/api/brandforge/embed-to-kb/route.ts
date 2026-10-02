@@ -1,15 +1,8 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { createClient as createServerClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/admin'
-import { validatePropertyAccess } from '@/utils/services/auth-guard'
-import { upsertManagedKnowledgeSource } from '@/utils/services/knowledge-sources'
-import type { Json } from '@/types/supabase'
+import { NextRequest } from 'next/server'
 import OpenAI from 'openai'
 import { normalizeBrandAssetRow } from '@/utils/brandforge/normalize'
 
-const supabase = createServiceClient()
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, maxRetries: 0, timeout: 30000 })
 
 type Chunk = {
   content: string
@@ -72,75 +65,11 @@ function getTypographyFontNames(section: Record<string, unknown>): string[] {
   ].filter(Boolean)
 }
 
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
-
-function getErrorDetails(error: unknown): string {
-  if (error instanceof Error) return error.message
-  if (typeof error === 'object' && error !== null) {
-    const record = error as Record<string, unknown>
-    if (typeof record.message === 'string' && record.message.length > 0) {
-      return record.message
-    }
-    try {
-      return JSON.stringify(record)
-    } catch {
-      return '[unserializable error object]'
-    }
-  }
-  return String(error)
-}
-
-/**
- * Embed brand book content into knowledge base for RAG
- * This makes brand assets searchable by other products (SiteForge, LumaLeasing, etc.)
- */
+import { randomUUID } from 'node:crypto'
+import { brandId, runBrandCommand } from '@/utils/brandforge/operations'
 export async function POST(request: NextRequest) {
-  try {
-    const authClient = await createServerClient()
-    const { data: { user }, error: authError } = await authClient.auth.getUser()
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const { brandAssetId, propertyId } = await request.json()
-
-    if (!brandAssetId || !propertyId) {
-      return NextResponse.json(
-        { error: 'brandAssetId and propertyId required' },
-        { status: 400 }
-      )
-    }
-
-    const access = await validatePropertyAccess(user.id, propertyId)
-    if (!access.authorized) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-    }
-
-    // Fetch the brand asset
-    const { data: brand, error: fetchError } = await supabase
-      .from('property_brand_assets')
-      .select('*')
-      .eq('id', brandAssetId)
-      .single()
-
-    if (fetchError || !brand) {
-      return NextResponse.json({ error: 'Brand asset not found' }, { status: 404 })
-    }
-
-    if (brand.property_id !== propertyId) {
-      return NextResponse.json({ error: 'Property mismatch for brand asset' }, { status: 400 })
-    }
-    if (
-      brand.approval_status !== 'approved'
-      && brand.generation_status !== 'complete'
-    ) {
-      return NextResponse.json(
-        { error: 'Brand contract must be approved before embedding' },
-        { status: 409 },
-      )
-    }
+ return runBrandCommand(request, 'publish', { propertyId: brandId }, async ({ body: { brandAssetId, propertyId }, brand }) => {
+  if (brand.property_id !== propertyId) throw new Error('Property mismatch')
     const contract = normalizeBrandAssetRow(
       brand as unknown as Record<string, unknown>,
     )
@@ -320,110 +249,15 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    // Delete any existing brand book embeddings for this property
-    await supabase
-      .from('documents')
-      .delete()
-      .eq('property_id', propertyId)
-      .eq('metadata->>type', 'brand_book')
-
-    // Generate embeddings and insert
-    let embeddedCount = 0
-    for (const chunk of chunks) {
-      try {
-        const embeddingResponse = await openai.embeddings.create({
-          model: 'text-embedding-3-small',
-          input: chunk.content
-        })
-
-        const embedding = embeddingResponse.data[0].embedding
-
-        const { error: insertError } = await supabase
-          .from('documents')
-          .insert({
-            property_id: propertyId,
-            content: chunk.content,
-            metadata: {
-              ...chunk.metadata,
-              brand_origin: contract.origin,
-              brand_asset_id: brandAssetId,
-              embedded_at: new Date().toISOString()
-            },
-            embedding
-          } as never)
-
-        if (insertError) {
-          console.error('Error inserting embedding:', insertError)
-        } else {
-          embeddedCount++
-        }
-      } catch (err) {
-        console.error('Error generating embedding for chunk:', getErrorMessage(err))
-      }
-    }
-
-    const summaryBrandName = contract.identity.name || asString(summary?.brandName)
-    const sourceName = summaryBrandName
-      ? `Brand Book: ${summaryBrandName}`
-      : `Brand Book: ${brandAssetId}`
-
-    await upsertManagedKnowledgeSource(supabase, {
-      propertyId,
-      sourceType: 'brand_book',
-      sourceName,
-      status: 'completed',
-      documentsCreated: embeddedCount,
-      extractedData: {
-        brand_origin: contract.origin,
-        embedding_type: 'brand_book',
-        brand_asset_id: brandAssetId,
-        total_chunks: chunks.length,
-        embedded_chunks: embeddedCount,
-      } as Json,
+    // Prepare every vector before replacing any currently published knowledge.
+    const response = await openai.embeddings.create({ model: 'text-embedding-3-small', input: chunks.map(chunk => chunk.content) })
+    if (response.data.length !== chunks.length) throw new Error('Incomplete embedding response')
+    const byIndex = new Map(response.data.map(item => [item.index, item.embedding]))
+    const documents = chunks.map((chunk, index) => {
+      const embedding = byIndex.get(index)
+      if (!embedding || embedding.length !== 1536 || embedding.some(value => !Number.isFinite(value))) throw new Error('Invalid embedding response')
+      return { id: randomUUID(), content: chunk.content, embedding, metadata: { ...chunk.metadata, brand_origin: contract.origin } }
     })
-
-    // Update brand asset to mark as embedded
-    await supabase
-      .from('property_brand_assets')
-      .update({
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', brandAssetId)
-
-    return NextResponse.json({
-      success: true,
-      embeddedChunks: embeddedCount,
-      totalChunks: chunks.length,
-      message: `Brand book embedded into knowledge base (${embeddedCount}/${chunks.length} chunks)`
-    })
-
-  } catch (error) {
-    console.error('Brand book embedding error:', error)
-    const details = getErrorDetails(error)
-    return NextResponse.json(
-      { error: 'Embedding failed', details },
-      { status: 500 }
-    )
-  }
+    return { updates: {}, result: { embeddedChunks: documents.length, totalChunks: documents.length, publishedRevision: brand.revision, contextRefresh: 'pending', knowledgeReceipt: { documents, sourceName: `Brand Book: ${contract.identity.name || brandAssetId}` } } }
+ })
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

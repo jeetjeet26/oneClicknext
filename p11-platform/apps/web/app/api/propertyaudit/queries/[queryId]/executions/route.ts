@@ -6,6 +6,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { readMeasurements } from '@/utils/propertyaudit/read-measurements'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
 
 export interface ExecutionData {
@@ -33,6 +34,11 @@ export interface ExecutionData {
   createdAt: string
   analysisMethod: string | null
   naturalResponse: string | null
+  originalQuestion: string | null
+  queryType: string | null
+  archived: boolean
+  synthetic: boolean
+  runStatus: string
 }
 
 export interface ExecutionAggregates {
@@ -89,11 +95,8 @@ export async function GET(
 
     const { queryId } = await params
     const { searchParams } = req.nextUrl
-    const requestedLimit = Number.parseInt(searchParams.get('limit') || '50', 10)
-    const limit = Number.isFinite(requestedLimit)
-      ? Math.min(100, Math.max(1, requestedLimit))
-      : 50
-
+    const offset = Number(searchParams.get('offset') || '0')
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset > 1000000) return NextResponse.json({error:'Invalid history page'}, {status:400})
     const { data: query, error: queryError } = await supabase
       .from('geo_queries')
       .select('property_id')
@@ -109,45 +112,14 @@ export async function GET(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
-    // Fetch all answers for this query with run info and citations
-    const { data: answers, error: answersError } = await supabase
-      .from('geo_answers')
-      .select(`
-        id,
-        run_id,
-        presence,
-        llm_rank,
-        link_rank,
-        sov,
-        flags,
-        answer_summary,
-        ordered_entities,
-        analysis_method,
-        natural_response,
-        created_at,
-        geo_runs!inner (
-          id,
-          surface,
-          model_name,
-          execution_count
-        ),
-        geo_citations (
-          url,
-          domain,
-          is_brand_domain
-        )
-      `)
-      .eq('query_id', queryId)
-      .order('created_at', { ascending: false })
-      .limit(limit)
-
-    if (answersError) {
-      console.error('Error fetching executions:', answersError)
-      return NextResponse.json({ error: 'Failed to fetch executions' }, { status: 500 })
+    const source = await readMeasurements(user.id, query.property_id, {kind:'query', queryId, offset, ...(searchParams.get('hash') ? {expectedHash:searchParams.get('hash')!} : {})}) as unknown as {
+      state: string; scope: string; count: number; hash: string; offset: number; nextOffset: number | null;
+      items: {answer: Omit<ExecutionAnswerRow,'geo_runs' | 'geo_citations'>; run: NonNullable<ExecutionAnswerRow['geo_runs']> & {archived_at: string | null; measurement_mode: string; status: string}; query: {text?: string; type?: string} | null; citations: ExecutionAnswerRow['geo_citations']}[]
     }
-
+    if (source.state !== 'ready') return NextResponse.json({error:source.state === 'source_changed' ? 'History changed. Reload the first page.' : 'Audit history unavailable',state:source.state}, {status:source.state === 'forbidden' ? 403 : 409})
+    const answers = source.items.map(item => ({...item.answer, geo_runs:item.run, geo_citations:item.citations, originalQuestion:item.query?.text || null, queryType:item.query?.type || null, archived:Boolean(item.run.archived_at), synthetic:item.run.measurement_mode === 'local_fixture', runStatus:item.run.status}))
     // Transform to API response format
-    const executions: ExecutionData[] = ((answers || []) as unknown as ExecutionAnswerRow[]).map((answer) => ({
+    const executions: ExecutionData[] = answers.map((answer) => ({
       id: answer.id,
       runId: answer.run_id,
       surface: answer.geo_runs?.surface || 'unknown',
@@ -168,7 +140,8 @@ export async function GET(
       })),
       createdAt: answer.created_at || new Date(0).toISOString(),
       analysisMethod: answer.analysis_method,
-      naturalResponse: answer.natural_response
+      naturalResponse: answer.natural_response,
+      originalQuestion:answer.originalQuestion, queryType:answer.queryType, archived:answer.archived, synthetic:answer.synthetic, runStatus:answer.runStatus,
     }))
 
     // Calculate aggregates
@@ -178,7 +151,8 @@ export async function GET(
       success: true,
       queryId,
       executions,
-      aggregates
+      aggregates,
+      scope:source.scope, total:source.count, hash:source.hash, offset:source.offset, nextOffset:source.nextOffset,
     })
   } catch (error) {
     console.error('PropertyAudit Executions GET Error:', error)

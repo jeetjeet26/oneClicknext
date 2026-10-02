@@ -9,32 +9,19 @@ p11-platform/apps/web/utils/reviewflow/ingestion.ts. Every response reports:
 - completeness ('complete' | 'sample' | 'degraded' | 'unknown')
 - note describing sampling limits / degradations
 
-Authentication: when DATA_ENGINE_API_KEY is set the endpoints require a
-matching Bearer token; when unset (local development) requests are allowed.
+Authentication: DATA_ENGINE_API_KEY and a matching Bearer token are required.
 """
 
 import logging
-import os
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
+from utils.auth import verify_service_key
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/scraper", tags=["reviews"])
-
-
-def verify_service_key(authorization: Optional[str]) -> None:
-    """Require Bearer DATA_ENGINE_API_KEY when the key is configured."""
-    expected_key = os.environ.get("DATA_ENGINE_API_KEY")
-    if not expected_key:
-        return
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing authorization")
-    token = authorization.replace("Bearer ", "", 1)
-    if token != expected_key:
-        raise HTTPException(status_code=401, detail="Invalid API key")
 
 
 # ---------------------------------------------------------------------------

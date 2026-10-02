@@ -1,66 +1,17 @@
-'use client'
-
-import { Suspense, useMemo } from 'react'
-import { useSearchParams } from 'next/navigation'
-
-function ConnectContent() {
-  const searchParams = useSearchParams()
-  const token = searchParams.get('token') || ''
-
-  const googleUrl = useMemo(() => (
-    token ? `/api/lumaleasing/integrations/oauth/google/start?token=${encodeURIComponent(token)}` : '#'
-  ), [token])
-  const microsoftUrl = useMemo(() => (
-    token ? `/api/lumaleasing/integrations/oauth/microsoft/start?token=${encodeURIComponent(token)}` : '#'
-  ), [token])
-
-  return (
-    <main className="min-h-screen bg-slate-100 flex items-center justify-center px-4">
-      <section className="bg-white rounded-2xl shadow-lg border border-slate-200 max-w-lg w-full p-8">
-        <p className="text-xs font-semibold uppercase tracking-wide text-indigo-600 mb-3">
-          P11 LumaLeasing
-        </p>
-        <h1 className="text-2xl font-bold text-slate-900 mb-3">
-          Connect Your Calendar Or Inbox
-        </h1>
-        <p className="text-sm text-slate-600 mb-6">
-          This secure link connects the requested Google or Microsoft account to a single property.
-          It does not create a P11 platform login.
-        </p>
-
-        {!token ? (
-          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            This authorization link is missing its token. Please ask your P11 contact for a new link.
-          </div>
-        ) : (
-          <div className="space-y-3">
-            <a
-              href={googleUrl}
-              className="block w-full rounded-lg bg-slate-900 px-4 py-3 text-center text-sm font-semibold text-white hover:bg-slate-800"
-            >
-              Continue With Google
-            </a>
-            <a
-              href={microsoftUrl}
-              className="block w-full rounded-lg bg-indigo-600 px-4 py-3 text-center text-sm font-semibold text-white hover:bg-indigo-700"
-            >
-              Continue With Microsoft
-            </a>
-          </div>
-        )}
-
-        <p className="text-xs text-slate-500 mt-6">
-          If your organization blocks third-party consent, your Google Workspace or Microsoft 365 admin may need to approve access.
-        </p>
-      </section>
-    </main>
-  )
-}
-
-export default function IntegrationConnectPage() {
-  return (
-    <Suspense fallback={null}>
-      <ConnectContent />
-    </Suspense>
-  )
+import type {Metadata} from 'next'
+import {readIntegrationInviteLink} from '@/utils/services/integration-auth-invites'
+export const metadata:Metadata={title:'Authorize account access',robots:{index:false,follow:false},referrer:'no-referrer'}
+export default async function IntegrationConnectPage({searchParams}:{searchParams:Promise<{token?:string|string[]}>}) {
+ const params=await searchParams,token=typeof params.token==='string'?params.token:''
+ let invite:Awaited<ReturnType<typeof readIntegrationInviteLink>>=null,unavailable=false
+ try{invite=await readIntegrationInviteLink(token)}catch{unavailable=true}
+ const access=invite?.capabilities.join(' and '),provider=invite?.provider==='microsoft'?'Microsoft':'Google'
+ const messages:Record<string,string>={used:'This link has already been used. Your P11 contact can manage the connected account.',revoked:'Your P11 contact revoked this link. Ask them for a new link if access is still needed.',expired:'This link has expired. Ask your P11 contact for a new link.'}
+ return <main className="flex min-h-screen items-center justify-center bg-slate-100 px-4"><section className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-8 shadow-lg">
+  <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-indigo-600">P11 LumaLeasing</p><h1 className="mb-3 text-2xl font-bold text-slate-900">Authorize account access</h1>
+  {unavailable?<div role="alert" className="space-y-3 text-sm text-amber-800"><p>We could not check this authorization link. Try again shortly.</p><a className="underline" href={`/lumaleasing/integrations/connect?token=${encodeURIComponent(token)}`}>Retry link status</a></div>:!invite?<p role="alert" className="text-sm text-red-700">This authorization link is invalid or missing. Ask your P11 contact for a new link.</p>:<div className="space-y-4">
+   <p className="text-sm text-slate-700">{provider} {access} access for <strong>{invite.propertyName}</strong>.</p>
+   {invite.state==='pending'?<><p className="text-sm text-slate-600">Connect the requested account to this property. This does not create a console login.</p><a href={`/api/lumaleasing/integrations/oauth/${invite.provider}/start?token=${encodeURIComponent(token)}`} className="block rounded-lg bg-slate-900 px-4 py-3 text-center text-sm font-semibold text-white">Continue with {provider}</a><p className="text-xs text-slate-500">Expires {new Date(invite.expiresAt).toLocaleString('en-US',{timeZone:'UTC'})} UTC. Your organization may require an administrator to approve access.</p></>:<p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">{messages[invite.state]}</p>}
+  </div>}
+ </section></main>
 }

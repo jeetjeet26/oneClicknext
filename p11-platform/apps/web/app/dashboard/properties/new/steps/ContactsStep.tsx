@@ -1,7 +1,7 @@
 'use client'
 
 import { Users, ArrowRight, ArrowLeft, Plus, Trash2, User, Mail, Phone, Briefcase, CreditCard } from 'lucide-react'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useAddProperty, ContactData, ContactType, BillingMethod } from '../AddPropertyProvider'
 
 const CONTACT_TYPES: { value: ContactType; label: string }[] = [
@@ -31,7 +31,7 @@ const ROLE_SUGGESTIONS = [
 ]
 
 function generateId() {
-  return Math.random().toString(36).substring(2, 9)
+  return crypto.randomUUID()
 }
 
 function ContactCard({ 
@@ -53,7 +53,7 @@ function ContactCard({
       <div className="flex items-center justify-between">
         <select
           value={contact.type}
-          onChange={(e) => onUpdate({ type: e.target.value as ContactType })}
+          onChange={(e) => onUpdate({ type: e.target.value as ContactType, isPrimary: e.target.value === 'primary' })}
           className="px-3 py-1.5 bg-slate-900/50 border border-slate-600 rounded-lg text-sm text-white focus:outline-none focus:ring-2 focus:ring-amber-500/50"
         >
           {CONTACT_TYPES.map(({ value, label }) => (
@@ -263,11 +263,13 @@ function ContactCard({
 export function ContactsStep() {
   const { formData, addContact, updateContact, removeContact, error, setError, goToNextStep, goToPreviousStep } = useAddProperty()
   const { contacts } = formData
-  const [initialized, setInitialized] = useState(false)
+  const initialized = useRef(false)
 
   // Initialize with primary contact if empty (only once)
   useEffect(() => {
-    if (!initialized && contacts.length === 0) {
+    if (initialized.current) return
+    initialized.current = true
+    if (contacts.length === 0) {
       addContact({
         id: generateId(),
         type: 'primary',
@@ -276,9 +278,8 @@ export function ContactsStep() {
         phone: '',
         role: ''
       })
-      setInitialized(true)
     }
-  }, [initialized, contacts.length, addContact])
+  }, [contacts.length, addContact])
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()

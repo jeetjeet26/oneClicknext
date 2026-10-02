@@ -7,8 +7,8 @@ const attributionSchema = z.object({
   trackingToken: z.string().uuid(),
   eventType: z.enum(['lead', 'tour_booked', 'tour_completed', 'lease']),
   anonymousSubject: z.string().min(8).max(500),
-  occurredAt: z.string().datetime({ offset: true }).optional(),
-  attributionWindowDays: z.number().int().min(1).max(90).optional(),
+  occurredAt: z.string().datetime({ offset: true }),
+  attributionWindowDays: z.literal(30).optional(),
   metadata: z.object({
     sourceSystem: z.string().min(1).max(100),
     sourceEventId: z.string().min(1).max(200),

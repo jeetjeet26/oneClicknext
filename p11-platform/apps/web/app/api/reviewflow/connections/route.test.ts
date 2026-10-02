@@ -1,192 +1,22 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { NextRequest } from 'next/server'
-
-const authGetUserMock = vi.fn()
-const fromMock = vi.fn()
-const createClientMock = vi.fn()
-const validatePropertyAccessMock = vi.fn()
-
-vi.mock('@/utils/supabase/server', () => ({
-  createClient: createClientMock,
-}))
-
-vi.mock('@/utils/services/auth-guard', () => ({
-  validatePropertyAccess: validatePropertyAccessMock,
-}))
-
-describe('reviewflow connections route', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    fromMock.mockReset()
-    createClientMock.mockResolvedValue({
-      auth: { getUser: authGetUserMock },
-      from: fromMock,
-    })
-  })
-
-  it('returns 401 for GET when unauthenticated', async () => {
-    authGetUserMock.mockResolvedValue({ data: { user: null }, error: null })
-
-    const { GET } = await import('./route')
-    const response = await GET(
-      new Request('http://localhost/api/reviewflow/connections?propertyId=property-1') as NextRequest
-    )
-
-    expect(response.status).toBe(401)
-    await expect(response.json()).resolves.toEqual({ error: 'Unauthorized' })
-  })
-
-  it('returns 403 for POST when property access is denied', async () => {
-    authGetUserMock.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
-    validatePropertyAccessMock.mockResolvedValue({ authorized: false })
-
-    const { POST } = await import('./route')
-    const response = await POST(
-      new Request('http://localhost/api/reviewflow/connections', {
-        method: 'POST',
-        body: JSON.stringify({ propertyId: 'property-1', platform: 'google', placeId: 'abc' }),
-      }) as NextRequest
-    )
-
-    expect(response.status).toBe(403)
-    await expect(response.json()).resolves.toEqual({ error: 'Forbidden' })
-  })
-
-  it('returns 403 for PATCH when connection property access is denied', async () => {
-    authGetUserMock.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
-    validatePropertyAccessMock.mockResolvedValue({ authorized: false })
-
-    const singleMock = vi.fn().mockResolvedValue({
-      data: { id: 'conn-1', property_id: 'property-1' },
-      error: null,
-    })
-    const eqMock = vi.fn().mockReturnValue({ single: singleMock })
-    const selectMock = vi.fn().mockReturnValue({ eq: eqMock })
-    fromMock.mockReturnValue({ select: selectMock })
-
-    const { PATCH } = await import('./route')
-    const response = await PATCH(
-      new Request('http://localhost/api/reviewflow/connections', {
-        method: 'PATCH',
-        body: JSON.stringify({ connectionId: 'conn-1', isActive: false }),
-      }) as NextRequest
-    )
-
-    expect(response.status).toBe(403)
-    await expect(response.json()).resolves.toEqual({ error: 'Forbidden' })
-  })
-
-  it('returns 403 for DELETE when connection property access is denied', async () => {
-    authGetUserMock.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
-    validatePropertyAccessMock.mockResolvedValue({ authorized: false })
-
-    const singleMock = vi.fn().mockResolvedValue({
-      data: { id: 'conn-1', property_id: 'property-1' },
-      error: null,
-    })
-    const eqMock = vi.fn().mockReturnValue({ single: singleMock })
-    const selectMock = vi.fn().mockReturnValue({ eq: eqMock })
-    fromMock.mockReturnValue({ select: selectMock })
-
-    const { DELETE } = await import('./route')
-    const response = await DELETE(
-      new Request('http://localhost/api/reviewflow/connections?connectionId=conn-1') as NextRequest
-    )
-
-    expect(response.status).toBe(403)
-    await expect(response.json()).resolves.toEqual({ error: 'Forbidden' })
-  })
-
-  it('returns 403 for POST when the profile lacks a manager role', async () => {
-    authGetUserMock.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
-    validatePropertyAccessMock.mockResolvedValue({ authorized: true })
-
-    // loadProfileRole reads profiles.role via the session client.
-    const profileSingle = vi.fn().mockResolvedValue({ data: { role: 'member' }, error: null })
-    const profileEq = vi.fn().mockReturnValue({ single: profileSingle })
-    const profileSelect = vi.fn().mockReturnValue({ eq: profileEq })
-    fromMock.mockImplementation((table: string) => {
-      if (table === 'profiles') return { select: profileSelect }
-      throw new Error(`Unexpected table ${table}`)
-    })
-
-    const { POST } = await import('./route')
-    const response = await POST(
-      new Request('http://localhost/api/reviewflow/connections', {
-        method: 'POST',
-        body: JSON.stringify({ propertyId: 'property-1', platform: 'google', placeId: 'abc' }),
-      }) as NextRequest
-    )
-
-    expect(response.status).toBe(403)
-    await expect(response.json()).resolves.toEqual({
-      error: 'Manager or admin role is required to manage connections',
-    })
-  })
-
-  it('returns 400 for POST with an unsupported platform', async () => {
-    authGetUserMock.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
-    validatePropertyAccessMock.mockResolvedValue({ authorized: true })
-
-    const profileSingle = vi.fn().mockResolvedValue({ data: { role: 'admin' }, error: null })
-    const profileEq = vi.fn().mockReturnValue({ single: profileSingle })
-    const profileSelect = vi.fn().mockReturnValue({ eq: profileEq })
-    fromMock.mockImplementation((table: string) => {
-      if (table === 'profiles') return { select: profileSelect }
-      throw new Error(`Unexpected table ${table}`)
-    })
-
-    const { POST } = await import('./route')
-    const response = await POST(
-      new Request('http://localhost/api/reviewflow/connections', {
-        method: 'POST',
-        body: JSON.stringify({ propertyId: 'property-1', platform: 'facebook', placeId: 'abc' }),
-      }) as NextRequest
-    )
-
-    expect(response.status).toBe(400)
-    const json = await response.json()
-    expect(json.error).toContain("Platform 'facebook' is not supported")
-  })
-
-  it('redacts credential fields from GET responses', async () => {
-    authGetUserMock.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
-    validatePropertyAccessMock.mockResolvedValue({ authorized: true })
-
-    const connectionRow = {
-      id: 'conn-1',
-      property_id: 'property-1',
-      platform: 'google',
-      place_id: 'place-1',
-      google_maps_url: null,
-      yelp_business_id: null,
-      yelp_business_url: null,
-      account_id: null,
-      is_active: true,
-      api_key: 'super-secret-key',
-      access_token: 'oauth-token',
-      refresh_token: 'refresh-token',
-    }
-    const orderMock = vi.fn().mockResolvedValue({ data: [connectionRow], error: null })
-    const eqMock = vi.fn().mockReturnValue({ order: orderMock })
-    const selectMock = vi.fn().mockReturnValue({ eq: eqMock })
-    fromMock.mockReturnValue({ select: selectMock })
-
-    const { GET } = await import('./route')
-    const response = await GET(
-      new Request('http://localhost/api/reviewflow/connections?propertyId=property-1') as NextRequest
-    )
-
-    expect(response.status).toBe(200)
-    const json = await response.json()
-    expect(json.connections).toHaveLength(1)
-    const connection = json.connections[0]
-    expect(connection.api_key).toBeUndefined()
-    expect(connection.access_token).toBeUndefined()
-    expect(connection.refresh_token).toBeUndefined()
-    // Capability honesty is exposed instead of raw credentials.
-    expect(connection.capabilities).toBeDefined()
-    expect(JSON.stringify(json)).not.toContain('super-secret-key')
-    expect(JSON.stringify(json)).not.toContain('oauth-token')
-  })
+import {beforeEach,describe,expect,it,vi} from 'vitest'
+import {NextRequest} from 'next/server'
+const {operator,role,from,rpc}=vi.hoisted(()=>({operator:vi.fn(),role:vi.fn(),from:vi.fn(),rpc:vi.fn()}))
+vi.mock('@/utils/supabase/admin',()=>({createServiceClient:()=>({from})}))
+vi.mock('@/utils/reviewflow/access',async()=>({...await vi.importActual('@/utils/reviewflow/access'),requireReviewOperator:operator,loadProfileRole:role}))
+vi.mock('@/utils/reviewflow/response-store',()=>({responseRpc:rpc}))
+import {ReviewStoreError} from '@/utils/reviewflow/analysis-store'
+import {GET,POST} from './route'
+const propertyId='33333333-3333-3333-3333-333333333333',requestId='55555555-5555-4555-8555-555555555555'
+function req(body?:unknown,query=`propertyId=${propertyId}`){return new NextRequest('http://localhost/api/reviewflow/settings?'+query,body?{method:'POST',body:JSON.stringify(body)}:undefined)}
+function chain(data:unknown,error:unknown=null){const result={data,error},q={select:vi.fn(),eq:vi.fn(),order:vi.fn(),limit:vi.fn(),or:vi.fn(),single:vi.fn().mockResolvedValue(result),maybeSingle:vi.fn().mockResolvedValue(result),then:vi.fn()};for(const k of ['select','eq','order','limit','or'] as const)q[k].mockReturnValue(q);q.then.mockImplementation((r:(v:unknown)=>unknown)=>Promise.resolve(result).then(r));return q}
+beforeEach(()=>{vi.clearAllMocks();operator.mockResolvedValue('operator');role.mockResolvedValue('admin');rpc.mockResolvedValue({state:'saved'});from.mockImplementation((table:string)=>chain(table==='properties'?{org_id:'org'}:table==='reviewflow_config'?null:[]))})
+const body={propertyId,requestId,operation:'save',connectionId:null,expectedVersion:0,platform:'google',providerId:'FixturePlace',sourceUrl:'https://www.google.com/maps/place/fixture',method:'api',frequency:'manual',replaceTarget:false,reason:'Reviewed source identity'},RPC_NAME='decide_reviewflow_connection'
+describe('recorded review sources',()=>{
+it('requires current authentication and property access for reads and writes',async()=>{for(const status of [401,403]){operator.mockRejectedValue(new ReviewStoreError('Unavailable',status));expect((await GET(req())).status).toBe(status);expect((await POST(req(body))).status).toBe(status)}expect(from).not.toHaveBeenCalled();expect(rpc).not.toHaveBeenCalled()})
+it('requires a manager and rejects unknown payload fields',async()=>{role.mockResolvedValue('member');expect((await POST(req(body))).status).toBe(403);expect((await POST(req({...body,api_key:'unsafe'}))).status).toBe(400);expect(rpc).not.toHaveBeenCalled()})
+it('uses the exact version and stable command identity',async()=>{expect((await POST(req(body))).status).toBe(200);expect(rpc).toHaveBeenCalledWith(RPC_NAME,expect.objectContaining({p_id:requestId,p_property_id:propertyId,p_actor_id:'operator',p_input:expect.objectContaining({expectedVersion:0})}))})
+it('surfaces read errors and rejects unavailable cursors',async()=>{from.mockReturnValue(chain(null,{message:'private failure'}));const r=await GET(req());expect(r.status).toBe(503);expect(await r.text()).not.toContain('private failure');from.mockImplementation((table:string)=>chain(table==='properties'?{org_id:'org'}:null));expect((await GET(req(undefined,`propertyId=${propertyId}&cursor=${requestId}`))).status).toBe(409)})
+it('rejects non-provider URLs and unsupported automatic scraping',async()=>{for(const change of [{sourceUrl:'https://evil.invalid/maps'},{sourceUrl:'https://user:secret@google.com/maps/place/fixture'},{platform:'yelp',sourceUrl:'https://yelp.com/biz/fixture',method:'scraper'}])expect((await POST(req({...body,...change}))).status).toBe(400);expect(rpc).not.toHaveBeenCalled()})
+it('whitelists safe source fields even when storage includes old secrets',async()=>{const q=chain([{id:requestId,platform:'google',property_id:propertyId,version:1,place_id:'FixturePlace',google_maps_url:'https://www.google.com/maps/place/fixture',is_active:true,access_token:'private-access',refresh_token:'private-refresh',api_key:'private-key',scraping_config:{credential:'private-nested'}}]);from.mockImplementation((t:string)=>t==='properties'?chain({org_id:'org'}):t==='review_platform_connections'?q:chain([]));const r=await GET(req()),text=await r.text();expect(r.status).toBe(200);expect(text).not.toMatch(/private-|access_token|refresh_token|api_key|scraping_config/);expect(JSON.parse(text).connections[0]).toMatchObject({providerId:'FixturePlace',directReplyAvailable:false});expect(q.eq).toHaveBeenCalledWith('org_id','org')})
+it('retains connection history instead of hard deletion',async()=>{const {DELETE}=await import('./route');expect((await DELETE()).status).toBe(405);expect(rpc).not.toHaveBeenCalled()})
 })

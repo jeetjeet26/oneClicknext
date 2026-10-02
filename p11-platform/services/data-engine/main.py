@@ -19,6 +19,7 @@ from routers.competitor_intake import router as competitor_intake_router
 from routers.crm_integration import router as crm_integration_router
 from routers.propertyaudit_jobs import router as propertyaudit_jobs_router
 from routers.reviews import router as reviews_router
+from routers.marketing_import import router as marketing_import_router
 from routers.scraper import router as scraper_router
 from routers.siteaudit_jobs import router as siteaudit_jobs_router
 from jobs.propertyaudit import recover_stale_running_runs
@@ -34,6 +35,7 @@ app.include_router(competitor_intake_router)
 app.include_router(crm_integration_router)
 app.include_router(propertyaudit_jobs_router)
 app.include_router(reviews_router)
+app.include_router(marketing_import_router)
 app.include_router(scraper_router)
 app.include_router(siteaudit_jobs_router)
 
@@ -71,17 +73,34 @@ async def _propertyaudit_stale_run_sweeper():
 @app.on_event("startup")
 async def start_propertyaudit_recovery():
     asyncio.create_task(_propertyaudit_stale_run_sweeper())
+    from jobs.geo_durable import durable_geo_worker
+    if os.environ.get('PROPERTYAUDIT_WORKER_ENABLED', 'true').lower() == 'true':
+        app.state.geo_worker = asyncio.create_task(durable_geo_worker())
+    from jobs.marketing_import import marketing_import_worker, worker_enabled
+    if worker_enabled():
+        app.state.marketing_import_worker = asyncio.create_task(marketing_import_worker())
+
+
+@app.on_event("shutdown")
+async def stop_marketing_import_worker():
+    import contextlib
+    geo_task = getattr(app.state, 'geo_worker', None)
+    if geo_task:
+        geo_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await geo_task
+    task = getattr(app.state, 'marketing_import_worker', None)
+    if task:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
 
 # Authentication
 def verify_api_key(authorization: Optional[str] = Header(None)):
     """Verify API key from Authorization header."""
-    expected_key = os.environ.get("DATA_ENGINE_API_KEY")
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing authorization")
-    
-    token = authorization.replace("Bearer ", "")
-    if token != expected_key:
-        raise HTTPException(status_code=401, detail="Invalid API key")
+    from utils.auth import verify_service_key
+    verify_service_key(authorization)
     return True
 
 
@@ -89,70 +108,8 @@ def verify_api_key(authorization: Optional[str] = Header(None)):
 # Marketing Data Sync Endpoints
 # ============================================
 
-class SyncMarketingRequest(BaseModel):
-    property_id: str
-    channels: List[str] = ["google_ads", "meta_ads"]
-    date_range: str = "LAST_7_DAYS"
-
 class SyncAllRequest(BaseModel):
     date_range: str = "LAST_7_DAYS"
-
-@app.post("/sync-marketing-data")
-async def sync_marketing_data(
-    request: SyncMarketingRequest,
-    background_tasks: BackgroundTasks,
-    authorized: bool = Depends(verify_api_key)
-):
-    """
-    Trigger marketing data sync for a specific property.
-    Runs in background to avoid timeout.
-    Creates import_job for tracking.
-    """
-    from pipelines.mcp_marketing_sync import MCPMarketingSync
-    from utils.supabase_client import get_supabase_client
-    from datetime import datetime
-    
-    # Create import job
-    supabase = get_supabase_client()
-    job_result = supabase.table('import_jobs').insert({
-        'property_id': request.property_id,
-        'channels': request.channels,
-        'date_range': request.date_range,
-        'status': 'pending',
-        'progress_pct': 0,
-        'created_at': datetime.utcnow().isoformat()
-    }).execute()
-    
-    job_id = job_result.data[0]['id'] if job_result.data else None
-    
-    async def run_sync():
-        try:
-            syncer = MCPMarketingSync(job_id=job_id)
-            # Don't pass date_range to let incremental calculation work
-            # This uses MAXIMUM for first-time imports, then calculates based on last_import
-            await syncer.sync_property(
-                property_id=request.property_id,
-                channels=request.channels,
-                date_range=None,  # Let sync_property calculate based on last import
-                incremental=True
-            )
-        except Exception as e:
-            print(f"Sync error: {e}")
-            if job_id:
-                supabase.table('import_jobs').update({
-                    'status': 'failed',
-                    'error_message': str(e),
-                    'completed_at': datetime.utcnow().isoformat()
-                }).eq('id', job_id).execute()
-    
-    background_tasks.add_task(run_sync)
-    
-    return {
-        "status": "import_started",
-        "job_id": job_id,
-        "property_id": request.property_id,
-        "channels": request.channels,
-    }
 
 @app.post("/sync-all-properties")
 async def sync_all_properties(
@@ -164,18 +121,8 @@ async def sync_all_properties(
     Trigger marketing data sync for all properties.
     Runs in background.
     """
-    from pipelines.mcp_marketing_sync import MCPMarketingSync
-    
-    async def run_sync():
-        syncer = MCPMarketingSync()
-        await syncer.sync_all_properties()
-    
-    background_tasks.add_task(run_sync)
-    
-    return {
-        "status": "sync_started",
-        "message": "Syncing all properties in background"
-    }
+    raise HTTPException(409, 'Choose explicit properties and use tracked /sync-marketing-data imports. Untracked bulk sync is disabled.')
+
 
 
 # ============================================

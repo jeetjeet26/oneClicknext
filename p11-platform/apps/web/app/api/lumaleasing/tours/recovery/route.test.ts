@@ -57,76 +57,11 @@ describe('LumaLeasing tour recovery route', () => {
     authGetUserMock.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
     validatePropertyAccessMock.mockResolvedValue({ authorized: true, orgId: 'org-1' })
 
-    createServiceClientMock.mockReturnValue({
-      from: vi.fn((table: string) => {
-        if (table === 'tour_bookings') {
-          return {
-            select: vi.fn(() => ({
-              eq: vi.fn(() => ({
-                order: vi.fn(() => ({
-                  order: vi.fn(() => ({
-                    limit: vi.fn().mockResolvedValue({
-                      data: [
-                        {
-                          id: 'booking-1',
-                          property_id: 'property-1',
-                          lead_id: 'lead-1',
-                          scheduled_date: '2026-03-25',
-                          scheduled_time: '10:00:00',
-                          duration_minutes: 30,
-                          status: 'confirmed',
-                          special_requests: null,
-                        },
-                      ],
-                      error: null,
-                    }),
-                  })),
-                })),
-              })),
-            })),
-          }
-        }
-
-        if (table === 'calendar_events') {
-          return {
-            select: vi.fn(() => ({
-              limit: vi.fn().mockResolvedValue({
-                data: [
-                  {
-                    id: 'cal-1',
-                    tour_booking_id: 'booking-1',
-                    google_event_id: 'google-1',
-                    sync_status: 'synced',
-                  },
-                ],
-                error: null,
-              }),
-            })),
-          }
-        }
-
-        if (table === 'leads') {
-          return {
-            select: vi.fn(() => ({
-              in: vi.fn().mockResolvedValue({
-                data: [
-                  {
-                    id: 'lead-1',
-                    first_name: 'Jane',
-                    last_name: 'Doe',
-                    email: 'jane@example.com',
-                    phone: '555-111-2222',
-                  },
-                ],
-                error: null,
-              }),
-            })),
-          }
-        }
-
-        throw new Error(`Unexpected table ${table}`)
-      }),
-    })
+    const calls:Array<[string,string,unknown,unknown?]>=[]
+    createServiceClientMock.mockReturnValue({from:(table:string)=>{
+      const data=table==='tour_bookings'?[{id:'booking-1',property_id:'property-1',lead_id:'lead-1',scheduled_date:'2026-03-25',scheduled_time:'10:00:00',duration_minutes:30,status:'confirmed',schedule_version:1}]:table==='calendar_events'?[{id:'cal-1',tour_booking_id:'booking-1',google_event_id:'google-1',sync_status:'synced'}]:[{id:'lead-1',first_name:'Jane',last_name:'Doe',email:'jane@example.com',phone:'555-111-2222'}]
+      const q={select:()=>q,eq:(column:string,value:unknown)=>{calls.push([table,'eq',column,value]);return q},in:(column:string,value:unknown)=>{calls.push([table,'in',column,value]);return q},order:()=>q,limit:()=>q,or:()=>q,then:(resolve:(value:unknown)=>unknown)=>Promise.resolve({data,error:null}).then(resolve)};return q
+    }})
 
     const { GET } = await import('./route')
     const request = new Request(
@@ -137,6 +72,7 @@ describe('LumaLeasing tour recovery route', () => {
     const json = await response.json()
 
     expect(response.status).toBe(200)
+    expect(calls).toContainEqual(['calendar_events','in','tour_booking_id',['booking-1']]);expect(calls).toContainEqual(['leads','eq','property_id','property-1'])
     expect(json.bookings).toHaveLength(1)
     expect(json.bookings[0]).toMatchObject({
       id: 'booking-1',
@@ -147,141 +83,18 @@ describe('LumaLeasing tour recovery route', () => {
     })
   })
 
-  it('POST cancels a booking and marks calendar event cancelled', async () => {
-    authGetUserMock.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
-    validatePropertyAccessMock.mockResolvedValue({ authorized: true, orgId: 'org-1' })
-    getCalendarConfigMock.mockResolvedValue({
-      id: 'calendar-1',
-      token_status: 'healthy',
-      calendar_id: 'primary',
-      timezone: 'America/Chicago',
-      access_token: 'token',
-      refresh_token: 'refresh',
-      token_expires_at: '2099-01-01T00:00:00.000Z',
-    })
+  it('rejects an invalid pagination cursor before database access',async()=>{
+    const {GET}=await import('./route')
+    const cursor=Buffer.from(JSON.stringify({date:'2026-09-30),id.neq.x',time:'10:00:00',id:'any'})).toString('base64url')
+    expect((await GET(new Request(`http://localhost/api/lumaleasing/tours/recovery?propertyId=property-1&cursor=${cursor}`) as NextRequest)).status).toBe(400)
+    expect(createServiceClientMock).not.toHaveBeenCalled()
+  })
 
-    const bookingUpdateEq = vi.fn().mockResolvedValue({ error: null })
-    const calendarUpdateEq = vi.fn().mockResolvedValue({ error: null })
-
-    createServiceClientMock.mockReturnValue({
-      from: vi.fn((table: string) => {
-        if (table === 'tour_bookings') {
-          return {
-            select: vi.fn(() => ({
-              eq: vi.fn(() => ({
-                eq: vi.fn(() => ({
-                  maybeSingle: vi.fn().mockResolvedValue({
-                    data: {
-                      id: 'booking-1',
-                      property_id: 'property-1',
-                      lead_id: 'lead-1',
-                      scheduled_date: '2026-03-26',
-                      scheduled_time: '10:00:00',
-                      duration_minutes: 30,
-                      status: 'confirmed',
-                      special_requests: null,
-                    },
-                    error: null,
-                  }),
-                })),
-              })),
-            })),
-            update: vi.fn((payload: unknown) => {
-              expect(payload).toMatchObject({ status: 'cancelled' })
-              return { eq: bookingUpdateEq }
-            }),
-          }
-        }
-
-        if (table === 'properties') {
-          return {
-            select: vi.fn(() => ({
-              eq: vi.fn(() => ({
-                maybeSingle: vi.fn().mockResolvedValue({
-                  data: { name: 'The Beacon', address: { street: '123 Main St' } },
-                  error: null,
-                }),
-              })),
-            })),
-          }
-        }
-
-        if (table === 'leads') {
-          return {
-            select: vi.fn(() => ({
-              eq: vi.fn(() => ({
-                maybeSingle: vi.fn().mockResolvedValue({
-                  data: {
-                    first_name: 'Jane',
-                    last_name: 'Doe',
-                    email: 'jane@example.com',
-                    phone: '555-111-2222',
-                  },
-                  error: null,
-                }),
-              })),
-            })),
-          }
-        }
-
-        if (table === 'calendar_events') {
-          return {
-            select: vi.fn(() => ({
-              eq: vi.fn(() => ({
-                maybeSingle: vi.fn().mockResolvedValue({
-                  data: {
-                    id: 'cal-1',
-                    google_event_id: 'google-1',
-                    sync_status: 'synced',
-                  },
-                  error: null,
-                }),
-              })),
-            })),
-            update: vi.fn((payload: unknown) => {
-              expect(payload).toMatchObject({ sync_status: 'external_cancelled' })
-              return { eq: calendarUpdateEq }
-            }),
-          }
-        }
-
-        if (table === 'lead_activities') {
-          return {
-            insert: vi.fn().mockResolvedValue({ error: null }),
-          }
-        }
-
-        throw new Error(`Unexpected table ${table}`)
-      }),
-    })
-
-    const { POST } = await import('./route')
-    const request = new Request('http://localhost/api/lumaleasing/tours/recovery', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        propertyId: 'property-1',
-        bookingId: 'booking-1',
-        action: 'cancel',
-        reason: 'Lead requested cancellation',
-      }),
-    }) as NextRequest
-
-    const response = await POST(request)
-    const json = await response.json()
-
-    expect(response.status).toBe(200)
-    expect(json).toMatchObject({
-      success: true,
-      bookingId: 'booking-1',
-      action: 'cancel',
-      calendarAction: 'cancelled',
-    })
-    expect(cancelCalendarEventMock).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'calendar-1' }),
-      'google-1'
-    )
-    expect(bookingUpdateEq).toHaveBeenCalledWith('id', 'booking-1')
-    expect(calendarUpdateEq).toHaveBeenCalledWith('id', 'cal-1')
+  it('requires the versioned cancellation contract before any provider work',async()=>{
+    const {POST}=await import('./route')
+    const response=await POST(new Request('http://localhost/api/lumaleasing/tours/recovery',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({propertyId:'property-1',bookingId:'booking-1',action:'cancel'})}) as NextRequest)
+    expect(response.status).toBe(400)
+    expect(cancelCalendarEventMock).not.toHaveBeenCalled()
+    expect(createServiceClientMock).not.toHaveBeenCalled()
   })
 })

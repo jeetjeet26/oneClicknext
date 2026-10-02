@@ -28,7 +28,7 @@ function conversionClient() {
   return { from: vi.fn(() => builder) }
 }
 
-describe('SiteForge conversion to existing Lasso outbox path', () => {
+describe('SiteForge conversion to the governed CRM outbox path', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     syncLeadToCRMMock.mockResolvedValue({
@@ -111,7 +111,8 @@ describe('SiteForge conversion to existing Lasso outbox path', () => {
         email: 'jordan@example.com',
         phone: '555-555-0100',
         source: 'SiteForge Website',
-      })
+      }),
+      { origin: 'siteforge', requestKey: 'siteforge/acacia-lasso-form-123:crm' }
     )
   })
 })

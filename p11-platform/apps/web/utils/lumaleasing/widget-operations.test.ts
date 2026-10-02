@@ -1,0 +1,12 @@
+import {describe,it,expect} from 'vitest'
+import {widgetDecision,widgetRead} from './widget-operations'
+const id='12345678-1234-1234-1234-123456789012',base={id,propertyId:id,expectedActorId:id},hash='a'.repeat(64)
+describe('widget operation contracts',()=>{
+ it('requires acknowledged impact and a reason for key replacement',()=>{const input={...base,operation:'rotate',keyVersion:hash,replaceInstalledKey:true,reason:'Replace installed key'};expect(widgetDecision.safeParse(input).success).toBe(true);expect(widgetDecision.safeParse({...input,replaceInstalledKey:false}).success).toBe(false);expect(widgetDecision.safeParse({...input,reason:' '}).success).toBe(false);expect(widgetDecision.safeParse({...input,keyVersion:undefined}).success).toBe(false)})
+ it('requires exact asset identity and revision',()=>{const input={...base,operation:'logo',configurationRevision:hash,assetId:id,assetRevision:2,contentHash:hash,reason:'Reviewed image'};expect(widgetDecision.safeParse(input).success).toBe(true);expect(widgetDecision.safeParse({...input,contentHash:null}).success).toBe(false);expect(widgetDecision.safeParse({...input,fileUrl:'https://forged.invalid/image.png'}).success).toBe(false)})
+ it('does not accept client installation source or keys',()=>{for(const extra of [{origin:'https://other.invalid'},{apiKey:'forged'},{artifact:'changed'}])expect(widgetDecision.safeParse({...base,operation:'prepare',keyVersion:hash,kind:'embed',...extra}).success).toBe(false)})
+ it.each(['installed','delivered','verified'])('cannot claim a provider or website outcome %s',outcome=>{expect(widgetDecision.safeParse({...base,operation:'report',preparationId:id,artifactHash:hash,outcome}).success).toBe(false)})
+ it.each(['copied','download_initiated','failed'])('accepts browser-reported %s',outcome=>{expect(widgetDecision.safeParse({...base,operation:'report',preparationId:id,artifactHash:hash,outcome}).success).toBe(true)})
+ it('bounds private history pages',()=>{expect(widgetRead.safeParse({propertyId:id,offset:'25'}).success).toBe(true);expect(widgetRead.safeParse({propertyId:id,offset:'-1'}).success).toBe(false);expect(widgetRead.safeParse({propertyId:id,offset:'0.5'}).success).toBe(false)})
+ it('allows only identity on unused cancellation',()=>{expect(widgetDecision.safeParse({...base,operation:'cancel'}).success).toBe(true);expect(widgetDecision.safeParse({...base,operation:'cancel',apiKey:'old'}).success).toBe(false)})
+})

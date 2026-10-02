@@ -1,3 +1,4 @@
+from utils.public_http import guard_browser_context
 """
 Apartments.com Scraper with Playwright Support
 Scrapes apartment listings from Apartments.com with full JavaScript rendering
@@ -109,7 +110,7 @@ class ApartmentsComScraper(BaseScraper):
     
     async def _create_stealth_context(self, browser: Browser):
         """Create a browser context with stealth settings"""
-        context = await browser.new_context(
+        context = await browser.new_context(service_workers='block',
             viewport={'width': 1920, 'height': 1080},
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             locale='en-US',
@@ -173,6 +174,7 @@ class ApartmentsComScraper(BaseScraper):
                 )
                 
                 context = await self._create_stealth_context(browser)
+                await guard_browser_context(context)
                 page = await context.new_page()
                 
                 # Navigate to page
@@ -261,6 +263,7 @@ class ApartmentsComScraper(BaseScraper):
                 )
                 
                 context = await self._create_stealth_context(browser)
+                await guard_browser_context(context)
                 page = await context.new_page()
                 
                 while len(results) < max_results and page_num <= 5:

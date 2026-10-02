@@ -30,6 +30,7 @@ build/
 !p11-platform/.env.example
 
 # Local Supabase runtime artifacts
+supabase/.temp/
 p11-platform/supabase/.temp/
 p11-platform/supabase/.branches/
 
@@ -40,6 +41,11 @@ p11-platform/supabase/.branches/
 !tsconfig.json
 !vercel.json
 !eslint.config.mjs
+# Explicit synthetic platform qualification fixtures (no client records)
+!p11-platform/scripts/platform/fixtures/proposal-suite-v1.json
+!p11-platform/scripts/platform/fixtures/proposal-fixture-submission-v1.json
+!p11-platform/scripts/platform/fixtures/demand-program-v1.json
+!p11-platform/scripts/platform/fixtures/demand-fixture-evidence-v1.json
 !wordpress-plugin/oneclick-siteforge-runtime/fixtures/v2/*.json
 !wordpress-plugin/oneclick-siteforge-runtime/fixtures/v3/*.json
 !wordpress-theme/oneclick-siteforge/acf-json/group_siteforge_*.json

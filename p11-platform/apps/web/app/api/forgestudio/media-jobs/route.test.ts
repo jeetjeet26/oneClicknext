@@ -1,65 +1,25 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { NextRequest } from 'next/server'
-
-const { authMock, accessMock, enqueueMock } = vi.hoisted(() => ({
-  authMock: vi.fn(),
-  accessMock: vi.fn(),
-  enqueueMock: vi.fn(),
-}))
-
-vi.mock('@/utils/supabase/server', () => ({
-  createClient: async () => ({
-    auth: { getUser: authMock },
-  }),
-}))
-vi.mock('@/utils/services/auth-guard', () => ({
-  validatePropertyAccess: accessMock,
-}))
-vi.mock('@/utils/forgestudio/media-jobs', () => ({
-  MEDIA_JOB_DOMAIN: 'forgestudio.media',
-  enqueueMediaGeneration: enqueueMock,
-}))
-
-describe('POST /api/forgestudio/media-jobs', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    authMock.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
-    accessMock.mockResolvedValue({ authorized: true, orgId: '11111111-1111-4111-8111-111111111111' })
-    enqueueMock.mockResolvedValue({ id: 'job-1', lifecycle_status: 'queued' })
-  })
-
-  it('requires authentication', async () => {
-    authMock.mockResolvedValue({ data: { user: null }, error: null })
-    const { POST } = await import('./route')
-    const response = await POST(new Request('http://localhost/api/forgestudio/media-jobs', {
-      method: 'POST',
-      body: '{}',
-    }) as NextRequest)
-    expect(response.status).toBe(401)
-  })
-
-  it('enqueues validated, property-scoped media work', async () => {
-    const { POST } = await import('./route')
-    const response = await POST(new Request('http://localhost/api/forgestudio/media-jobs', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        propertyId: '22222222-2222-4222-8222-222222222222',
-        modality: 'image',
-        tier: 'final',
-        prompt: 'Create campaign art using the approved property identity.',
-        aspectRatio: '1:1',
-        altText: 'Campaign artwork for the property',
-        name: 'Campaign art',
-        maxCostUsd: 1,
-      }),
-    }) as NextRequest)
-
-    expect(response.status).toBe(202)
-    expect(enqueueMock).toHaveBeenCalledWith(expect.objectContaining({
-      propertyId: '22222222-2222-4222-8222-222222222222',
-      actorId: 'user-1',
-      request: expect.objectContaining({ modality: 'image', tier: 'final' }),
-    }))
-  })
+import {beforeEach,describe,expect,it,vi} from 'vitest'
+import {NextRequest} from 'next/server'
+const {auth,access,enqueue,rpc,recover,from}=vi.hoisted(()=>({auth:vi.fn(),access:vi.fn(),enqueue:vi.fn(),rpc:vi.fn(),recover:vi.fn(),from:vi.fn()}))
+vi.mock('@/utils/supabase/server',()=>({createClient:async()=>({auth:{getUser:auth}})}))
+vi.mock('@/utils/supabase/admin',()=>({createServiceClient:()=>({from})}))
+vi.mock('@/utils/services/auth-guard',()=>({validatePropertyAccess:access}))
+vi.mock('@/utils/forgestudio/media-jobs',()=>({enqueueMediaGeneration:enqueue,mediaRpc:rpc,recoverMediaGeneration:recover}))
+import {GET,POST,PATCH} from './route'
+const property='22222222-2222-4222-8222-222222222222',requestId='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',jobId='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',stamp='2026-09-17T12:00:00Z'
+const body={propertyId:property,requestId,modality:'image',tier:'final',prompt:'Generate abstract artwork for a property campaign',aspectRatio:'1:1',altText:'Abstract campaign artwork',name:'Artwork',maxCostUsd:1}
+const decision={propertyId:property,requestId,jobId,action:'stop',expectedUpdatedAt:stamp,reason:'Stop this saved request'}
+const req=(method:string,value:unknown)=>new NextRequest('http://localhost/api/forgestudio/media-jobs',{method,body:JSON.stringify(value),headers:{'Content-Type':'application/json'}})
+function builder(data:unknown[]=[]){const q={select:vi.fn(()=>q),eq:vi.fn(()=>q),or:vi.fn(()=>q),order:vi.fn(()=>q),limit:vi.fn(async()=>({data,error:null}))};return q}
+beforeEach(()=>{vi.clearAllMocks();auth.mockResolvedValue({data:{user:{id:'actor'}}});access.mockResolvedValue({authorized:true,orgId:'org'});enqueue.mockResolvedValue({id:jobId,state:'saved'});rpc.mockResolvedValue({state:'saved',jobId});recover.mockResolvedValue({state:'saved',assetId:jobId});from.mockReturnValue(builder())})
+describe('saved media API',()=>{
+ it('requires authentication before accessing saved evidence',async()=>{auth.mockResolvedValue({data:{user:null}});expect((await POST(req('POST',body))).status).toBe(401);expect((await PATCH(req('PATCH',decision))).status).toBe(401);expect((await GET(new NextRequest('http://localhost/api/forgestudio/media-jobs?propertyId='+property))).status).toBe(401);expect(from).not.toHaveBeenCalled()})
+ it('requires a stable request id and valid video format before enqueuing',async()=>{expect((await POST(req('POST',{...body,requestId:undefined}))).status).toBe(400);expect((await POST(req('POST',{...body,modality:'video',tier:'social',durationSeconds:8,generateAudio:true}))).status).toBe(400);expect(enqueue).not.toHaveBeenCalled()})
+ it('saves validated media work under current property and actor access',async()=>{expect((await POST(req('POST',body))).status).toBe(202);expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({requestId,propertyId:property,actorId:'actor',orgId:'org',request:expect.objectContaining({modality:'image',tier:'final'})}))})
+ it('rejects property access before either recovery or stop mutation',async()=>{access.mockResolvedValue({authorized:false});expect((await PATCH(req('PATCH',decision))).status).toBe(403);expect(rpc).not.toHaveBeenCalled();expect(recover).not.toHaveBeenCalled()})
+ it('binds stop to an exact saved version and a reason',async()=>{expect((await PATCH(req('PATCH',{...decision,reason:''}))).status).toBe(400);expect((await PATCH(req('PATCH',decision))).status).toBe(200);expect(rpc).toHaveBeenCalledWith('decide_forgestudio_media',expect.objectContaining({p_actor_id:'actor',p_payload:{jobId,action:'stop',expectedUpdatedAt:stamp,reason:decision.reason}}),['saved','replayed'])})
+ it('recovers only with current organization context and no generation enqueue',async()=>{expect((await PATCH(req('PATCH',{...decision,action:'recover'}))).status).toBe(200);expect(recover).toHaveBeenCalledWith(expect.objectContaining({orgId:'org',actorId:'actor',jobId,expectedUpdatedAt:stamp}));expect(enqueue).not.toHaveBeenCalled()})
+ it('paginates saved requests without exposing raw manifests or provider evidence',async()=>{const rows=Array.from({length:31},(_,i)=>({id:i===29?jobId:requestId,state:'result_ready',input:{request:{name:'Artwork',prompt:'Saved instructions',modality:'image'}},asset_id:null,result_manifest:{private:'private-result-secret'},error_code:null,created_at:stamp,updated_at:stamp,lease_expires_at:null}));const q=builder(rows);from.mockReturnValue(q);const response=await GET(new NextRequest('http://localhost/api/forgestudio/media-jobs?propertyId='+property));const data=await response.json();expect(data.jobs).toHaveLength(30);expect(data.nextCursor).toBe(stamp+'|'+jobId);expect(JSON.stringify(data)).not.toContain('private-result-secret');expect(q.eq).toHaveBeenCalledWith('org_id','org')})
+ it('loads an exact older request and rejects malformed pagination',async()=>{const q=builder();from.mockReturnValue(q);expect((await GET(new NextRequest(`http://localhost/api/forgestudio/media-jobs?propertyId=${property}&jobId=${jobId}`))).status).toBe(200);expect(q.eq).toHaveBeenCalledWith('id',jobId);expect((await GET(new NextRequest(`http://localhost/api/forgestudio/media-jobs?propertyId=${property}&cursor=invalid`))).status).toBe(400)})
+ it('keeps history read failures visible rather than returning an empty list',async()=>{const q=builder();q.limit.mockResolvedValue({data:null,error:{message:'unavailable'}} as never);from.mockReturnValue(q);expect((await GET(new NextRequest('http://localhost/api/forgestudio/media-jobs?propertyId='+property))).status).toBe(503)})
 })

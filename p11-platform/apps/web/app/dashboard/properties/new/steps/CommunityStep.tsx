@@ -1,64 +1,39 @@
 'use client'
 
-import { MapPin, ArrowRight, Globe, Building, Calendar, Hash, Sparkles, Loader2, CheckCircle2, AlertTriangle, Wand2, X, Plus, Link } from 'lucide-react'
-import { useState, useCallback } from 'react'
+import { MapPin, ArrowRight, Globe, Building, Calendar, Hash, Loader2, X, Plus, Link } from 'lucide-react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { useAddProperty, AMENITY_OPTIONS, WebsiteScrapeResult } from '../AddPropertyProvider'
+import { useAddProperty, AMENITY_OPTIONS } from '../AddPropertyProvider'
+import { usePropertyContext } from '@/components/layout/PropertyContext'
+import {PropertyTemplatePicker}from '@/components/community/PropertyTemplatePicker'
+import {createProperty,recoverPendingCreation,acknowledgeCreation}from '@/utils/property-setup/creation-client'
+import {creationProfile,type CreationReceipt}from '@/utils/property-setup/creation-contracts'
+import type {AddPropertyFormData}from '../AddPropertyProvider'
 import { PROPERTY_TYPE_OPTIONS } from '@/utils/property-types'
 
-interface ScrapeStatus {
-  status: 'idle' | 'scraping' | 'success' | 'error'
-  message?: string
-  result?: WebsiteScrapeResult
-}
+
 
 export function CommunityStep() {
   const router = useRouter()
-  const { formData, updateCommunity, setWebsiteScrapeResult, error, setError, canProceed, goToNextStep, editMode, createdPropertyId, setCreatedPropertyId, isLoading, setIsLoading } = useAddProperty()
+  const { refreshProperties } = usePropertyContext()
+  const { setupHash,setSetupHash,setSetupSnapshot,creationTemplate,setCreationTemplate,templatePending,setTemplatePending,setFormData,setStep,formData, updateCommunity, error, setError, canProceed, goToNextStep, editMode, createdPropertyId, setCreatedPropertyId, isLoading, setIsLoading } = useAddProperty()
   const { community } = formData
   const [showAmenities, setShowAmenities] = useState(false)
-  const [scrapeStatus, setScrapeStatus] = useState<ScrapeStatus>({ status: 'idle' })
 
+
+  const[recovered,setRecovered]=useState<CreationReceipt|null>(null)
+  const[checkingCreation,setCheckingCreation]=useState(true)
+  useEffect(()=>{let active=true;void recoverPendingCreation().then(value=>{if(active)setRecovered(value)}).catch(e=>{if(active)setError(e instanceof Error?e.message:'Saved creation could not be checked.')}).finally(()=>{if(active)setCheckingCreation(false)});return()=>{active=false}},[setError])
+  async function checkSavedCreation(){setCheckingCreation(true);try{setRecovered(await recoverPendingCreation())}catch(e){setError(e instanceof Error?e.message:'Creation recovery is unavailable.')}finally{setCheckingCreation(false)}}
+  async function acceptCreated(value:CreationReceipt){const p=value.snapshot.profile;setCreatedPropertyId(value.propertyId);setSetupHash(value.snapshotHash);setSetupSnapshot(value.snapshot);setFormData({...formData,community:{...community,name:p.name,type:(p.propertyType||'')as AddPropertyFormData['community']['type'],address:p.address,websiteUrl:p.websiteUrl,additionalUrls:p.additionalUrls,unitCount:p.unitCount?.toString()??'',yearBuilt:p.yearBuilt?.toString()??'',amenities:p.amenities},contacts:value.snapshot.contacts.map(c=>({...c,billingMethod:c.billingMethod||undefined})),integrations:value.snapshot.connectionRequests.map(c=>({...c,status:'pending' as const}))});setRecovered(null);setError(null);const ready=await refreshProperties(value.propertyId);if(!ready)setError('The property is saved, but the selector could not refresh. Continue setup with this saved property or retry the selector.');if(value.property.onboarding_completed_at){acknowledgeCreation(value.requestId);setStep('complete');return true}return false;}
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (isLoading) return // Prevent duplicate submissions while creating
-    if (!community.name.trim()) {
-      setError('Community name is required')
-      return
-    }
+    if(isLoading||checkingCreation)return
+    if(!community.name.trim()){setError('Community name is required');return}
+    if(!createdPropertyId&&templatePending&&!creationTemplate){setError('Review and accept the selected template, or choose no template.');return}
     setError(null)
-    
-    // Create property early if not in edit mode, so we have propertyId for BrandForge
-    if (!createdPropertyId && !editMode.isEditing) {
-      setIsLoading(true)
-      try {
-        const res = await fetch('/api/properties/add', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: community.name.trim(),
-            address: community.address.street ? community.address : null,
-            propertyType: community.type || null,
-            websiteUrl: community.websiteUrl || null,
-            additionalUrls: community.additionalUrls.filter(url => url.trim()),
-            unitCount: community.unitCount ? parseInt(community.unitCount) : null,
-            yearBuilt: community.yearBuilt ? parseInt(community.yearBuilt) : null
-          })
-        })
-        
-        const data = await res.json()
-        
-        if (res.ok && data.property?.id) {
-          setCreatedPropertyId(data.property.id)
-        }
-      } catch (err) {
-        console.error('Early property creation failed:', err)
-        // Continue anyway - will create at Review step
-      } finally {
-        setIsLoading(false)
-      }
-    }
-    
+    if(!createdPropertyId&&!editMode.isEditing){setIsLoading(true);try{const value=await createProperty(creationProfile(community),creationTemplate);if(!await acceptCreated(value))goToNextStep()}catch(e){setError(e instanceof Error?e.message:'Creation is unconfirmed. Check the saved result or retry this request.')}finally{setIsLoading(false)}return}
+    if(!setupHash&&!editMode.isEditing){setError('Recover the saved property version before completing setup.');return}
     goToNextStep()
   }
 
@@ -76,83 +51,7 @@ export function CommunityStep() {
     updateCommunity({ additionalUrls: current.filter((_, i) => i !== index) })
   }
 
-  const handleScrapeWebsite = useCallback(async () => {
-    // Collect all URLs to scrape (filter out empty strings)
-    const urlsToScrape: string[] = []
-    if (community.websiteUrl?.trim()) {
-      urlsToScrape.push(community.websiteUrl.trim())
-    }
-    if (community.additionalUrls?.length) {
-      urlsToScrape.push(...community.additionalUrls.filter(u => u.trim()))
-    }
 
-    if (urlsToScrape.length === 0) {
-      setError('Please enter at least one URL to scrape')
-      return
-    }
-
-    setScrapeStatus({ status: 'scraping', message: `Analyzing ${urlsToScrape.length} page(s)...` })
-    setError(null)
-
-    try {
-      // If editing an existing property, include propertyId so chunks get saved immediately
-      const requestBody: { urls: string[]; propertyId?: string } = { urls: urlsToScrape }
-      if (editMode.isEditing && editMode.propertyId) {
-        requestBody.propertyId = editMode.propertyId
-      }
-
-      const response = await fetch('/api/onboarding/scrape-website', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody),
-      })
-
-      const result: WebsiteScrapeResult = await response.json()
-
-      if (!response.ok || result.error) {
-        setScrapeStatus({ 
-          status: 'error', 
-          message: result.error || 'Failed to analyze website'
-        })
-        return
-      }
-
-      // Update community data with extracted info
-      const updates: Partial<typeof community> = {}
-
-      if (result.propertyName && !community.name.trim()) {
-        updates.name = result.propertyName
-      }
-
-      if (result.amenities && result.amenities.length > 0) {
-        const existingAmenities = new Set(community.amenities || [])
-        result.amenities.forEach(a => existingAmenities.add(a))
-        updates.amenities = Array.from(existingAmenities)
-      }
-
-      if (Object.keys(updates).length > 0) {
-        updateCommunity(updates)
-      }
-
-      setWebsiteScrapeResult(result)
-
-      if (result.amenities && result.amenities.length > 0) {
-        setShowAmenities(true)
-      }
-
-      setScrapeStatus({
-        status: 'success',
-        message: `Found ${result.amenities?.length || 0} amenities, ${result.pagesScraped} pages analyzed`,
-        result,
-      })
-
-    } catch (err) {
-      setScrapeStatus({
-        status: 'error',
-        message: err instanceof Error ? err.message : 'Failed to connect to website'
-      })
-    }
-  }, [community.websiteUrl, community.additionalUrls, community.name, community.amenities, updateCommunity, setWebsiteScrapeResult, setError, editMode])
 
   return (
     <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -187,110 +86,31 @@ export function CommunityStep() {
                 id="websiteUrl"
                 type="url"
                 value={community.websiteUrl}
-                onChange={(e) => {
-                  updateCommunity({ websiteUrl: e.target.value })
-                  if (scrapeStatus.status !== 'idle') {
-                    setScrapeStatus({ status: 'idle' })
-                  }
-                }}
+                onChange={(e) => updateCommunity({ websiteUrl: e.target.value })}
                 placeholder="https://thereserveatsandpoint.com"
                 className="flex-1 px-4 py-3 bg-slate-900/50 border border-slate-600 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all"
               />
-              <button
-                type="button"
-                onClick={handleScrapeWebsite}
-                disabled={(!community.websiteUrl?.trim() && (!community.additionalUrls || community.additionalUrls.filter(u => u.trim()).length === 0)) || scrapeStatus.status === 'scraping'}
-                className={`
-                  flex items-center gap-2 px-4 py-3 rounded-xl font-medium transition-all
-                  ${scrapeStatus.status === 'scraping'
-                    ? 'bg-amber-500/20 text-amber-300 cursor-wait'
-                    : scrapeStatus.status === 'success'
-                      ? 'bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30'
-                      : 'bg-gradient-to-r from-purple-500 to-indigo-600 text-white hover:from-purple-600 hover:to-indigo-700 shadow-lg shadow-purple-500/20'
-                  }
-                  disabled:opacity-50 disabled:cursor-not-allowed
-                `}
-              >
-                {scrapeStatus.status === 'scraping' ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    <span className="hidden sm:inline">Analyzing...</span>
-                  </>
-                ) : scrapeStatus.status === 'success' ? (
-                  <>
-                    <CheckCircle2 className="w-4 h-4" />
-                    <span className="hidden sm:inline">Re-scan</span>
-                  </>
-                ) : (
-                  <>
-                    <Wand2 className="w-4 h-4" />
-                    <span className="hidden sm:inline">Scan Pages</span>
-                  </>
-                )}
-              </button>
+
             </div>
-            
-            {scrapeStatus.status === 'idle' && (
-              <p className="mt-2 text-xs text-slate-500 flex items-center gap-1">
-                <Sparkles className="w-3 h-3 text-amber-400" />
-                Add URLs below, then click &quot;Scan Pages&quot; to extract info into the knowledge base
-              </p>
-            )}
-            
-            {scrapeStatus.status === 'scraping' && (
-              <div className="mt-3 bg-amber-500/10 border border-amber-500/20 rounded-lg p-3">
-                <div className="flex items-center gap-2 text-amber-300 text-sm">
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Analyzing website content, this may take a moment...</span>
-                </div>
-              </div>
-            )}
-            
-            {scrapeStatus.status === 'success' && scrapeStatus.result && (
-              <div className="mt-3 bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-3">
-                <div className="flex items-center gap-2 text-emerald-300 text-sm mb-2">
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>{scrapeStatus.message}</span>
-                </div>
-                <div className="flex flex-wrap gap-2 text-xs">
-                  {scrapeStatus.result.petPolicy && (
-                    <span className="px-2 py-1 bg-emerald-500/20 text-emerald-300 rounded-full">
-                      Pet Policy Found
-                    </span>
-                  )}
-                  {scrapeStatus.result.unitTypes && scrapeStatus.result.unitTypes.length > 0 && (
-                    <span className="px-2 py-1 bg-emerald-500/20 text-emerald-300 rounded-full">
-                      {scrapeStatus.result.unitTypes.length} Unit Types
-                    </span>
-                  )}
-                  {scrapeStatus.result.specials && scrapeStatus.result.specials.length > 0 && (
-                    <span className="px-2 py-1 bg-amber-500/20 text-amber-300 rounded-full">
-                      {scrapeStatus.result.specials.length} Specials
-                    </span>
-                  )}
-                </div>
-              </div>
-            )}
-            
-            {scrapeStatus.status === 'error' && (
-              <div className="mt-3 bg-red-500/10 border border-red-500/20 rounded-lg p-3">
-                <div className="flex items-center gap-2 text-red-300 text-sm">
-                  <AlertTriangle className="w-4 h-4" />
-                  <span>{scrapeStatus.message}</span>
-                </div>
-              </div>
-            )}
+
+            <p className="mt-2 text-sm text-slate-400">After saving this property, use Website Sources in Community knowledge to capture and review each page. Website addresses alone do not import facts.</p>
+
+
+
+
+
+
 
             {/* Additional URLs Section */}
             <div className="mt-4 pt-4 border-t border-slate-700/50">
               <label className="flex items-center gap-2 text-xs font-medium text-slate-400 mb-2">
                 <Link className="w-3 h-3" />
-                Additional Pages to Scrape (optional)
+                Additional page addresses (optional)
               </label>
               <p className="text-xs text-slate-500 mb-3">
                 Add specific page URLs (e.g., amenities, floor plans, pet policy) to include in the knowledge base
               </p>
-              
+
               {/* URL Input Fields */}
               <div className="space-y-2 mb-3">
                 {(community.additionalUrls || []).map((url, idx) => (
@@ -333,7 +153,7 @@ export function CommunityStep() {
                 <Plus className="w-4 h-4" />
                 Add URL
               </button>
-              
+
               {community.additionalUrls && community.additionalUrls.filter(u => u.trim()).length > 0 && (
                 <p className="text-xs text-slate-500 mt-3">
                   {community.additionalUrls.filter(u => u.trim()).length + (community.websiteUrl ? 1 : 0)} total URL(s) will be scraped
@@ -483,7 +303,7 @@ export function CommunityStep() {
                 {showAmenities ? 'Hide' : 'Show'} options
               </span>
             </button>
-            
+
             {showAmenities && (
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-48 overflow-y-auto p-1">
                 {AMENITY_OPTIONS.map((amenity) => (
@@ -507,44 +327,11 @@ export function CommunityStep() {
           </div>
 
           {/* AI Insights Preview */}
-          {scrapeStatus.status === 'success' && scrapeStatus.result && (
-            <div className="bg-gradient-to-br from-purple-500/10 to-indigo-500/10 border border-purple-500/20 rounded-xl p-4 space-y-3">
-              <h3 className="text-sm font-semibold text-purple-300 flex items-center gap-2">
-                <Sparkles className="w-4 h-4" />
-                AI-Extracted Insights
-              </h3>
-              
-              {scrapeStatus.result.brandVoice && (
-                <div>
-                  <span className="text-xs text-slate-500">Brand Voice:</span>
-                  <p className="text-sm text-slate-300">{scrapeStatus.result.brandVoice}</p>
-                </div>
-              )}
-              
-              {scrapeStatus.result.petPolicy && (
-                <div>
-                  <span className="text-xs text-slate-500">Pet Policy:</span>
-                  <p className="text-sm text-slate-300">
-                    {scrapeStatus.result.petPolicy.petsAllowed 
-                      ? `Pets allowed${scrapeStatus.result.petPolicy.deposit ? ` • $${scrapeStatus.result.petPolicy.deposit} deposit` : ''}${scrapeStatus.result.petPolicy.maxPets ? ` • Max ${scrapeStatus.result.petPolicy.maxPets} pets` : ''}`
-                      : 'No pets allowed'
-                    }
-                  </p>
-                </div>
-              )}
 
-              {scrapeStatus.result.specials && scrapeStatus.result.specials.length > 0 && (
-                <div>
-                  <span className="text-xs text-slate-500">Current Specials:</span>
-                  <ul className="text-sm text-amber-300 list-disc list-inside">
-                    {scrapeStatus.result.specials.slice(0, 3).map((special, i) => (
-                      <li key={i} className="truncate">{special}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-          )}
+
+          {!createdPropertyId&&<PropertyTemplatePicker onChange={(selection,pending)=>{setCreationTemplate(selection);setTemplatePending(pending)}}/>}
+          {!createdPropertyId&&<div className="mt-4 space-y-2 text-sm text-slate-300">{checkingCreation?<p role="status">Checking saved creation…</p>:<button type="button" className="underline" onClick={()=>void checkSavedCreation()}>Check saved creation</button>}{recovered&&<div role="status"><p>A property was already saved for this browser request: {recovered.property.name}. Resuming replaces this new-property draft with its saved details.</p><button type="button" className="mt-2 rounded-lg border border-slate-500 px-3 py-2" onClick={()=>void acceptCreated(recovered)}>Resume saved property</button><button type="button" className="ml-2 mt-2 underline" onClick={()=>{acknowledgeCreation(recovered.requestId);setRecovered(null)}}>Keep the saved property and start another</button></div>}</div>}
+          {createdPropertyId&&<p className="mt-4 text-sm text-slate-300">This property is saved. Further form changes are applied together at the final review. Website addresses do not automatically start an import.</p>}
 
           {/* Navigation Buttons */}
           <div className="flex gap-3 pt-2">
@@ -558,7 +345,7 @@ export function CommunityStep() {
             </button>
             <button
               type="submit"
-              disabled={!canProceed() || isLoading}
+              disabled={!canProceed() || isLoading || checkingCreation}
               className="flex-1 flex items-center justify-center gap-2 px-6 py-3.5 bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-semibold rounded-xl shadow-lg shadow-cyan-500/25 hover:shadow-cyan-500/40 hover:from-cyan-600 hover:to-blue-700 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isLoading ? (

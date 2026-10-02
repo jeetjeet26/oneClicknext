@@ -38,6 +38,7 @@ function makePostRequest(body: unknown): NextRequest {
 }
 
 const validBody = {
+  requestId: PROPERTY_ID,
   propertyId: PROPERTY_ID,
   title: 'Pool season kickoff',
   objective: 'Drive tour bookings for summer',

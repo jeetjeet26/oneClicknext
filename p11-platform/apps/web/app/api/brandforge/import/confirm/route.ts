@@ -7,10 +7,11 @@ import { createRequestContext } from '@/utils/services/request-context'
 
 const confirmSchema = z.object({
   propertyId: z.guid(),
+  requestId: z.guid(),
   importId: z.string().uuid(),
   contract: z.record(z.string(), z.unknown()).optional(),
   resolutions: z.record(z.string(), z.unknown()).optional(),
-})
+}).strict()
 
 export async function POST(request: NextRequest) {
   const ctx = createRequestContext(request, '/api/brandforge/import/confirm')

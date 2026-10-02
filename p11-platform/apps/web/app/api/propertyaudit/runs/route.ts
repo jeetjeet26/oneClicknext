@@ -106,8 +106,10 @@ export async function GET(req: NextRequest) {
     const searchParams = req.nextUrl.searchParams
     const propertyId = searchParams.get('propertyId')
     const surface = searchParams.get('surface')
-    const limit = parseInt(searchParams.get('limit') || '20')
-    const offset = parseInt(searchParams.get('offset') || '0')
+    const limit = Number(searchParams.get('limit') || '20')
+    const offset = Number(searchParams.get('offset') || '0')
+    const through = searchParams.get('through') || new Date().toISOString()
+    const since = searchParams.get('since')
 
     if (!propertyId) {
       return NextResponse.json({ error: 'propertyId required' }, { status: 400 })
@@ -125,6 +127,7 @@ export async function GET(req: NextRequest) {
       )
     }
 
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200 || !Number.isSafeInteger(offset) || offset < 0 || offset > 1000000 || !Number.isFinite(Date.parse(through)) || (since && !Number.isFinite(Date.parse(since)))) return NextResponse.json({error:'Invalid history window'}, {status:400})
     // Fetch runs with scores
     let query = supabase
       .from('geo_runs')
@@ -137,14 +140,20 @@ export async function GET(req: NextRequest) {
           avg_link_rank,
           avg_sov
         )
-      `)
+      `, {count:'exact'})
       .eq('property_id', propertyId)
+      .is('archived_at', null)
+      .or('measurement_mode.is.null,measurement_mode.neq.local_fixture')
+      .lte('started_at', through)
       .order('started_at', { ascending: false })
+      .order('id', {ascending:false})
       .range(offset, offset + limit - 1)
 
     if (surface && isSupportedSurface(surface)) {
       query = query.eq('surface', surface)
     }
+
+    if (since) query = query.gte('started_at', since)
 
     const { data: runs, error, count } = await query
 
@@ -155,30 +164,11 @@ export async function GET(req: NextRequest) {
 
     // Calculate diffs between consecutive runs
     const runsWithDiffs = (runs || [])
-      .map((run, index): GeoRunWithScore | null => {
+      .map((run): GeoRunWithScore | null => {
       const scoreData = run.geo_scores?.[0]
-      const currentScore = scoreData?.overall_score || 0
-      const currentVisibility = scoreData?.visibility_pct || 0
-
-      // Get previous run for diff calculation
-      const prevRun = runs?.[index + 1]
-      const prevScoreData = prevRun?.geo_scores?.[0]
-      
-      let diff = null
-      if (prevScoreData && scoreData) {
-        const prevScore = prevScoreData.overall_score || 0
-        const prevVisibility = prevScoreData.visibility_pct || 0
-        const scoreChange = currentScore - prevScore
-        const visibilityChange = currentVisibility - prevVisibility
-        
-        const direction: 'up' | 'down' | 'stable' = scoreChange > 0.5 ? 'up' : scoreChange < -0.5 ? 'down' : 'stable';
-        
-        diff = {
-          scoreChange: Math.round(scoreChange * 10) / 10,
-          visibilityChange: Math.round(visibilityChange * 10) / 10,
-          direction,
-        }
-      }
+      // A list-page neighbour may be a different surface, model or question set.
+      // Only the summary's captured-source comparison may claim improvement.
+      const diff = null
 
       if (
         !run.id ||
@@ -244,7 +234,8 @@ export async function GET(req: NextRequest) {
       Array.from(
         new Map(
           runsWithDiffs
-            .filter(run => run.score)
+            .filter(run => run.status === 'completed' && run.score)
+            .reverse()
             .map(run => [run.surface, run.score])
         ).entries()
       )
@@ -252,7 +243,11 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       runs: runsWithDiffs,
-      total: count || runs?.length || 0,
+      total: count ?? 0,
+      nextOffset: offset + limit < (count ?? 0) ? offset + limit : null,
+      through,
+      scope: 'Unarchived, non-synthetic runs in the selected time window. Different sources may not be comparable.',
+      summaryScope: 'Latest scored run per surface on this page. Use the headline for property-wide summaries.',
       summary: {
         openai: summaryBySurface.openai || summaryBySurface.chatgpt || null,
         claude: summaryBySurface.claude || null,

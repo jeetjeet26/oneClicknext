@@ -1,0 +1,14 @@
+import {beforeEach,it,expect,vi} from 'vitest'
+const d=vi.hoisted(()=>({actor:vi.fn(),read:vi.fn(),execute:vi.fn(),verify:vi.fn(),change:vi.fn()}))
+vi.mock('@/utils/account-sessions/server',()=>({sessionActor:d.actor}))
+vi.mock('@/utils/account-credentials/provider',()=>({verifyCurrentPassword:d.verify}))
+vi.mock('@/utils/account-credentials/store',async original=>({...await original<object>(),readCredentials:d.read,executeCredential:d.execute}))
+import {GET,POST} from './route'
+const actor={actorId:'11111111-1111-1111-1111-111111111111',sessionId:'22222222-2222-2222-2222-222222222222',aal:'aal1'},input={operation:'change',requestId:'33333333-3333-3333-3333-333333333333',sourceHash:'a'.repeat(64),currentPassword:'SYNTHETIC-OLD-PASSWORD',newPassword:'SYNTHETIC-NEW-PASSWORD',confirmed:true}
+const req=(body:unknown,origin='http://local')=>new Request('http://local/api/account/credentials',{method:'POST',headers:{origin,'Content-Type':'application/json'},body:JSON.stringify(body)})
+beforeEach(()=>{vi.clearAllMocks();d.actor.mockResolvedValue({actor,email:'fixture@example.test',changePassword:d.change});d.read.mockResolvedValue({state:'ready',actorId:actor.actorId});d.execute.mockResolvedValue({status:'confirmed',requestId:input.requestId,actorId:actor.actorId})})
+it('reads only the current verified account with private no-store caching',async()=>{const r=await GET(new Request('http://local/api/account/credentials'));expect(r.status).toBe(200);expect(r.headers.get('cache-control')).toContain('no-store');expect(d.read).toHaveBeenCalledWith(actor,expect.objectContaining({kind:'current'}))})
+it('rejects outside origins, account overrides and oversized secret payloads before execution',async()=>{for(const r of[req(input,'https://outside.invalid'),req({...input,email:'other@example.test'}),req({...input,actorId:'other'}),req({...input,currentPassword:'x'.repeat(9000)})])expect((await POST(r)).status).toBeGreaterThanOrEqual(400);expect(d.execute).not.toHaveBeenCalled()})
+it('derives verification email and actor exclusively from the current provider account',async()=>{expect((await POST(req(input))).status).toBe(200);const provider=d.execute.mock.calls[0][2];await provider.verify('SYNTHETIC-OLD-PASSWORD');expect(d.verify).toHaveBeenCalledExactlyOnceWith(actor.actorId,'fixture@example.test','SYNTHETIC-OLD-PASSWORD');expect(provider.change).toBe(d.change)})
+it('returns only the bounded receipt and never echoes supplied passwords',async()=>{const r=await POST(req(input));expect(await r.json()).toEqual({status:'confirmed',requestId:input.requestId,actorId:actor.actorId})})
+it('hides raw provider exceptions and asks for recorded result recovery',async()=>{d.execute.mockRejectedValue(new Error('PRIVATE-PROVIDER-PAYLOAD'));const r=await POST(req(input));expect(r.status).toBe(503);expect(JSON.stringify(await r.json())).not.toContain('PRIVATE')})

@@ -38,7 +38,7 @@ describe('brandforge edit-section route', () => {
     const response = await POST(
       new Request('http://localhost/api/brandforge/edit-section', {
         method: 'POST',
-        body: JSON.stringify({ brandAssetId: 'brand-1', updates: { title: 'new' } }),
+        body: JSON.stringify({ brandAssetId: '11111111-1111-4111-8111-111111111111', requestId: '55555555-5555-4555-8555-555555555555', revision: 1, updates: { title: 'new' } }),
       }) as NextRequest
     )
 
@@ -62,7 +62,7 @@ describe('brandforge edit-section route', () => {
     const response = await POST(
       new Request('http://localhost/api/brandforge/edit-section', {
         method: 'POST',
-        body: JSON.stringify({ brandAssetId: 'brand-1', updates: { title: 'new' } }),
+        body: JSON.stringify({ brandAssetId: '11111111-1111-4111-8111-111111111111', requestId: '55555555-5555-4555-8555-555555555555', revision: 1, updates: { title: 'new' } }),
       }) as NextRequest
     )
 

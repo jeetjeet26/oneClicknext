@@ -1,239 +1,59 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { NextRequest } from 'next/server'
-
-const authGetUserMock = vi.fn()
-const createClientMock = vi.fn()
-const createServiceClientMock = vi.fn()
-const validatePropertyAccessMock = vi.fn()
-const validateBodyMock = vi.fn()
-const getRateLimitKeyMock = vi.fn()
-const adminLimiterCheckMock = vi.fn()
-const rateLimitHeadersMock = vi.fn()
-const trackEngagementEventMock = vi.fn()
-const startWorkflowMock = vi.fn()
-const auditLogMock = vi.fn()
-const getRequestIpMock = vi.fn()
-
-vi.mock('@/utils/supabase/server', () => ({
-  createClient: createClientMock,
-}))
-
-vi.mock('@/utils/supabase/admin', () => ({
-  createServiceClient: createServiceClientMock,
-}))
-
-vi.mock('@/utils/services/auth-guard', () => ({
-  validatePropertyAccess: validatePropertyAccessMock,
-}))
-
-vi.mock('@/utils/services/validation', () => ({
-  validateBody: validateBodyMock,
-  tourCompleteSchema: {},
-}))
-
-vi.mock('@/utils/services/rate-limiter', () => ({
-  adminLimiter: {
-    check: adminLimiterCheckMock,
-  },
-  getRateLimitKey: getRateLimitKeyMock,
-  rateLimitHeaders: rateLimitHeadersMock,
-}))
-
-vi.mock('@/utils/services/engagement-tracker', () => ({
-  trackEngagementEvent: trackEngagementEventMock,
-}))
-
-vi.mock('@/utils/services/workflow-processor', () => ({
-  startWorkflow: startWorkflowMock,
-}))
-
-vi.mock('@/utils/services/audit-logger', () => ({
-  auditLog: auditLogMock,
-  getRequestIp: getRequestIpMock,
-}))
-
-function makeEqChainSingle(result: unknown) {
-  const single = vi.fn().mockResolvedValue(result)
-  const secondEq = vi.fn(() => ({ single }))
-  const firstEq = vi.fn(() => ({ eq: secondEq, single }))
-  return { eq: firstEq, single }
-}
-
-describe('POST /api/tours/complete', () => {
+import {beforeEach, describe, expect, it, vi} from 'vitest'
+import type {NextRequest} from 'next/server'
+const mocks = vi.hoisted(() => ({auth: vi.fn(), access: vi.fn(), find: vi.fn(), record: vi.fn(), rate: vi.fn()}))
+vi.mock('@/utils/supabase/server', () => ({createClient: async () => ({auth: {getUser: mocks.auth}})}))
+vi.mock('@/utils/supabase/admin', () => ({createServiceClient: () => ({})}))
+vi.mock('@/utils/services/auth-guard', () => ({validatePropertyAccess: mocks.access}))
+vi.mock('@/utils/services/tour-outcomes', async original => ({...await original<object>(), findTourForOutcome: mocks.find, recordTourOutcome: mocks.record}))
+vi.mock('@/utils/services/rate-limiter', () => ({adminLimiter: {check: mocks.rate}, getRateLimitKey: () => 'test', rateLimitHeaders: () => ({})}))
+vi.mock('@/utils/services/audit-logger', () => ({auditLog: vi.fn(), getRequestIp: () => '127.0.0.1'}))
+import {POST} from './route'
+const id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+function request(body: unknown = {tourId: id,requestId:id}) {return new Request('http://localhost/api/tours/complete', {method: 'POST', body: JSON.stringify(body)}) as NextRequest}
+describe('tour completion API', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-
-    createClientMock.mockResolvedValue({
-      auth: {
-        getUser: authGetUserMock,
-      },
-    })
-
-    getRateLimitKeyMock.mockReturnValue('tour-complete-key')
-    adminLimiterCheckMock.mockReturnValue({ allowed: true })
-    rateLimitHeadersMock.mockReturnValue({})
-    getRequestIpMock.mockReturnValue('127.0.0.1')
-    trackEngagementEventMock.mockReturnValue(Promise.resolve())
-    startWorkflowMock.mockReturnValue(Promise.resolve())
-    auditLogMock.mockImplementation(() => {})
+    mocks.rate.mockReturnValue({allowed: true})
+    mocks.auth.mockResolvedValue({data: {user: {id: 'user'}}, error: null})
+    mocks.access.mockResolvedValue({authorized: true})
+    mocks.find.mockResolvedValue({id, property_id: 'property', lead_id: 'lead', source: 'tours'})
+    mocks.record.mockResolvedValue({state: 'applied', outcome: {outcome_at: '2026-09-15T12:00:00Z', followup_state: 'configured'}})
   })
-
-  afterEach(() => {
-    vi.restoreAllMocks()
+  it('rejects unauthenticated writes before lookup', async () => {
+    mocks.auth.mockResolvedValue({data: {user: null}})
+    expect((await POST(request())).status).toBe(401); expect(mocks.find).not.toHaveBeenCalled()
   })
-
-  it('returns 401 when unauthorized', async () => {
-    authGetUserMock.mockResolvedValue({
-      data: { user: null },
-      error: new Error('unauthorized'),
-    })
-
-    const { POST } = await import('./route')
-
-    const request = new Request('http://localhost/api/tours/complete', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ tourId: 'tour-1' }),
-    }) as NextRequest
-
-    const response = await POST(request)
-
-    expect(response.status).toBe(401)
-    await expect(response.json()).resolves.toEqual({ error: 'Unauthorized' })
+  it('rejects property access before mutation', async () => {
+    mocks.access.mockResolvedValue({authorized: false})
+    expect((await POST(request())).status).toBe(403); expect(mocks.record).not.toHaveBeenCalled()
   })
-
-  it('returns 400 when the tour is already completed', async () => {
-    authGetUserMock.mockResolvedValue({
-      data: { user: { id: 'user-1' } },
-      error: null,
-    })
-    validateBodyMock.mockReturnValue({
-      success: true,
-      data: { tourId: 'tour-1', notes: 'done' },
-    })
-    validatePropertyAccessMock.mockResolvedValue({ authorized: true, orgId: 'org-1' })
-
-    const tourBookingsChain = makeEqChainSingle({
-      data: {
-        id: 'tour-1',
-        lead_id: 'lead-1',
-        property_id: 'property-1',
-        status: 'completed',
-        scheduled_date: '2026-03-12',
-        scheduled_time: '10:00:00',
-      },
-      error: null,
-    })
-
-    createServiceClientMock.mockReturnValue({
-      from: vi.fn((table: string) => {
-        if (table === 'tour_bookings') return { select: vi.fn(() => tourBookingsChain) }
-        throw new Error(`Unexpected table ${table}`)
-      }),
-    })
-
-    const { POST } = await import('./route')
-
-    const request = new Request('http://localhost/api/tours/complete', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ tourId: 'tour-1', notes: 'done' }),
-    }) as NextRequest
-
-    const response = await POST(request)
-
-    expect(response.status).toBe(400)
-    await expect(response.json()).resolves.toEqual({ error: 'Tour already completed' })
+  it('validates identifiers and malformed JSON', async () => {
+    expect((await POST(request({tourId: 'bad'}))).status).toBe(400)
+    expect((await POST(new Request('http://localhost/api/tours/complete', {method:'POST', body:'{bad'}) as NextRequest)).status).toBe(400)
+    expect(mocks.record).not.toHaveBeenCalled()
   })
-
-  it('completes a tour and triggers side effects', async () => {
-    authGetUserMock.mockResolvedValue({
-      data: { user: { id: 'user-1' } },
-      error: null,
-    })
-    validateBodyMock.mockReturnValue({
-      success: true,
-      data: { tourId: 'tour-1', notes: 'great tour' },
-    })
-    validatePropertyAccessMock.mockResolvedValue({ authorized: true, orgId: 'org-1' })
-
-    const singleTourResult = {
-      data: {
-        id: 'tour-1',
-        lead_id: 'lead-1',
-        property_id: 'property-1',
-        status: 'confirmed',
-        scheduled_date: '2026-03-12',
-        scheduled_time: '10:00:00',
-      },
-      error: null,
-    }
-
-    const serviceClient = {
-      from: vi.fn((table: string) => {
-        if (table === 'tour_bookings') {
-          return {
-            select: vi.fn(() => ({
-              eq: vi.fn(() => ({
-                single: vi.fn().mockResolvedValue(singleTourResult),
-              })),
-            })),
-            update: vi.fn(() => ({
-              eq: vi.fn().mockResolvedValue({ error: null }),
-            })),
-          }
-        }
-
-        if (table === 'leads') {
-          return {
-            update: vi.fn(() => ({
-              eq: vi.fn().mockResolvedValue({ error: null }),
-            })),
-          }
-        }
-
-        if (table === 'lead_activities') {
-          return {
-            insert: vi.fn().mockResolvedValue({ error: null }),
-          }
-        }
-
-        throw new Error(`Unexpected table ${table}`)
-      }),
-    }
-
-    createServiceClientMock.mockReturnValue(serviceClient)
-
-    const { POST } = await import('./route')
-
-    const request = new Request('http://localhost/api/tours/complete', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ tourId: 'tour-1', notes: 'great tour' }),
-    }) as NextRequest
-
-    const response = await POST(request)
-    const json = await response.json()
-
+  it('reports a missing tour with request identity', async () => {
+    mocks.find.mockResolvedValue(null)
+    const response = await POST(request()); expect(response.status).toBe(404); expect(response.headers.get('x-request-id')).toBeTruthy()
+  })
+  it('completes either source through the atomic operation', async () => {
+    const response = await POST(request({tourId: id,requestId:id, notes: 'Attended'}))
     expect(response.status).toBe(200)
-    expect(response.headers.get('x-request-id')).toBeTruthy()
-    expect(json).toMatchObject({
-      success: true,
-      tour: {
-        id: 'tour-1',
-        status: 'completed',
-      },
-    })
-    expect(trackEngagementEventMock).toHaveBeenCalledWith({
-      leadId: 'lead-1',
-      propertyId: 'property-1',
-      eventType: 'tour_completed',
-      metadata: { tour_id: 'tour-1' },
-    })
-    expect(startWorkflowMock).toHaveBeenCalledWith(
-      'lead-1',
-      'property-1',
-      'tour_completed'
-    )
+    expect(await response.json()).toMatchObject({success: true, replayed: false, followup: 'configured', tour: {id, status: 'completed'}})
+    expect(mocks.record).toHaveBeenCalledWith({propertyId: 'property', leadId: 'lead', source: 'tours', tourId: id, outcome: 'completed', notes: 'Attended',actorId:'user',requestId:id}, {})
+  })
+  it('replays the original saved completion timestamp', async () => {
+    mocks.record.mockResolvedValue({state: 'replayed', outcome: {outcome_at: '2026-09-01T12:00:00Z', followup_state: 'not_configured'}})
+    const response = await POST(request())
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({replayed: true, tour: {completedAt: '2026-09-01T12:00:00Z'}})
+  })
+  it.each(['conflict','not_due','delivery_busy'])('does not report %s as a completion', async state => {
+    mocks.record.mockResolvedValue({state})
+    expect((await POST(request())).status).toBe(409)
+  })
+  it('does not report failed persistence as success', async () => {
+    mocks.record.mockRejectedValue(new Error('write unavailable'))
+    expect((await POST(request())).status).toBe(500)
   })
 })

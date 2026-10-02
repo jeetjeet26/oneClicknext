@@ -35,6 +35,7 @@ def fetch_google_data(customer_id: str, client_config: Dict, login_customer_id: 
     # GAQL Query - Last 3 days to catch delayed conversions
     query = """
         SELECT 
+            customer.id, customer.currency_code,
             segments.date,
             campaign.id, 
             campaign.name, 
@@ -43,7 +44,7 @@ def fetch_google_data(customer_id: str, client_config: Dict, login_customer_id: 
             metrics.cost_micros, 
             metrics.conversions 
         FROM campaign 
-        WHERE segments.date DURING LAST_3_DAYS
+        WHERE segments.date DURING LAST_7_DAYS
     """
     
     stream = ga_service.search_stream(customer_id=customer_id, query=query)
@@ -51,9 +52,13 @@ def fetch_google_data(customer_id: str, client_config: Dict, login_customer_id: 
     results = []
     for batch in stream:
         for row in batch.results:
+            if str(row.customer.id) != customer_id or row.customer.currency_code != 'USD':
+                raise ValueError('Google report account or USD currency is not confirmed')
             # Flatten protobuf object to dict
             item = {
                 "date": row.segments.date,
+                "source_account_id": str(row.customer.id),
+                "currency_code": row.customer.currency_code,
                 "campaign.id": str(row.campaign.id),
                 "campaign.name": row.campaign.name,
                 "metrics.impressions": row.metrics.impressions,
@@ -82,8 +87,10 @@ def get_linked_accounts(supabase) -> List[Dict[str, Any]]:
         return []
 
 
-def update_sync_status(supabase, account_id: str, status: str, error: Optional[str] = None):
+def update_sync_status(supabase, account_id: str, status: str, error: Optional[str] = None, property_id: Optional[str] = None):
     """Update the sync status for an ad account connection."""
+    if not property_id:
+        raise ValueError('Property identity is required for account status')
     try:
         update_data = {
             'last_sync_at': 'now()',
@@ -93,7 +100,7 @@ def update_sync_status(supabase, account_id: str, status: str, error: Optional[s
         }
         supabase.table('ad_account_connections').update(update_data).eq(
             'platform', 'google_ads'
-        ).eq('account_id', account_id).execute()
+        ).eq('account_id', account_id).eq('property_id', property_id).execute()
     except Exception as e:
         print(f"Warning: Could not update sync status: {e}")
 
@@ -123,7 +130,7 @@ def run_pipeline_for_account(
         
         if not raw_data:
             print(f"    No data returned for this account")
-            update_sync_status(supabase, customer_id, 'success')
+            update_sync_status(supabase, customer_id, 'success', property_id=property_id)
             return True
         
         # Normalize
@@ -134,17 +141,17 @@ def run_pipeline_for_account(
         records = df.to_dict(orient='records')
         
         response = supabase.table('fact_marketing_performance').upsert(
-            records, on_conflict="date, property_id, campaign_id"
+            records, on_conflict="date,property_id,channel_id,source_account_id,campaign_id"
         ).execute()
         
         print(f"    ✓ Loaded {len(records)} rows")
-        update_sync_status(supabase, customer_id, 'success')
+        update_sync_status(supabase, customer_id, 'success', property_id=property_id)
         return True
         
     except Exception as e:
         error_msg = str(e)
         print(f"    ✗ Error: {error_msg}")
-        update_sync_status(supabase, customer_id, 'failed', error_msg)
+        update_sync_status(supabase, customer_id, 'failed', error_msg, property_id=property_id)
         return False
 
 
@@ -248,7 +255,7 @@ def run_pipeline():
         
         try:
             response = supabase.table('fact_marketing_performance').upsert(
-                records, on_conflict="date, property_id, campaign_id"
+                records, on_conflict="date,property_id,channel_id,source_account_id,campaign_id"
             ).execute()
             print(f"✓ Successfully loaded {len(records)} rows to Supabase.")
         except Exception as e:

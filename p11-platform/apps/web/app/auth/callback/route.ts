@@ -1,3 +1,5 @@
+import {clientRedirect} from '@/utils/client-portal/routing'
+import {accountAuthRedirect}from '@/utils/auth/redirect'
 import { createClient } from '@/utils/supabase/server'
 import { NextResponse } from 'next/server'
 
@@ -13,19 +15,22 @@ export async function GET(request: Request) {
     if (!error) {
       // Check if user needs onboarding (no org_id)
       const { data: { user } } = await supabase.auth.getUser()
-      let redirectPath = next
+      let redirectPath = accountAuthRedirect(next,false)
       
+      if (!user)return NextResponse.redirect(`${origin}/auth/error?error=account_unavailable`)
       if (user) {
-        const { data: profile } = await supabase
+        const { data: profile,error:profileError } = await supabase
           .from('profiles')
           .select('org_id')
           .eq('id', user.id)
           .single()
         
-        // New users without an org go to onboarding
-        if (!profile?.org_id) {
-          redirectPath = '/onboarding'
-        }
+        if(profileError||!profile)return NextResponse.redirect(`${origin}/auth/error?error=account_unavailable`)
+        // Invitation review remains accessible before organization membership.
+        const identity=await supabase.rpc('client_portal_identity')
+        if(identity.error)return NextResponse.redirect(`${origin}/auth/error?error=account_unavailable`)
+        const isClient=!!identity.data&&typeof identity.data==='object'&&!Array.isArray(identity.data)&&identity.data.kind==='client'
+        redirectPath = isClient?clientRedirect(next):accountAuthRedirect(next,!!profile?.org_id)
       }
 
       const forwardedHost = request.headers.get('x-forwarded-host')

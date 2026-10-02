@@ -1,3 +1,5 @@
+import {tourCalendarDb} from './tour-calendar-db'
+import {withTourDelivery} from './tour-schedule-delivery'
 import { createServiceClient } from '@/utils/supabase/admin'
 import {
   createCalendarEvent,
@@ -6,6 +8,9 @@ import {
 } from '@/utils/services/google-calendar'
 
 type BookingRow = {
+  schedule_timezone?: string | null
+  duration_minutes?:number
+  schedule_version:number
   id: string
   property_id: string
   lead_id: string
@@ -103,9 +108,9 @@ export async function reconcileCalendarForProperty(
     { data: calendarEvents, error: calendarEventsError },
   ] = await Promise.all([
     serviceSupabase.from('properties').select('name, address').eq('id', propertyId).maybeSingle(),
-    serviceSupabase
+    tourCalendarDb(serviceSupabase)
       .from('tour_bookings')
-      .select('id, property_id, lead_id, scheduled_date, scheduled_time, special_requests, status')
+      .select('id, property_id, lead_id, scheduled_date, scheduled_time, special_requests, status, schedule_version, duration_minutes, schedule_timezone')
       .eq('property_id', propertyId)
       .in('status', ['scheduled', 'confirmed'])
       .limit(1000),
@@ -179,11 +184,21 @@ export async function reconcileCalendarForProperty(
       propertyAddress,
     }
 
+    if(eventRow?.sync_status==='synced'){alreadySynced++;continue}
+    if(eventRow && ['external_drift','external_missing','external_cancelled','pending'].includes(eventRow.sync_status||'')) {
+      skipped++;failures.push({bookingId:booking.id,reason:'External calendar change or pending delivery requires review'});continue
+    }
+    const bookingCalendar={...calendarConfig,timezone:booking.schedule_timezone||calendarConfig.timezone,tour_duration_minutes:booking.duration_minutes??calendarConfig.tour_duration_minutes}
+    const requestId=`${booking.id}-v${booking.schedule_version}-legacy-calendar`
+
+    if(booking.schedule_version>1){skipped++;failures.push({bookingId:booking.id,reason:'Versioned calendar update requires queue review'});continue}
+    let deliveryKind:'created'|'repaired'|null=null
     try {
+      const delivered=await withTourDelivery({propertyId,source:'tour_bookings',tourId:booking.id,version:booking.schedule_version,kind:'calendar_reconcile'},async()=>{
       if (!eventRow || !eventRow.google_event_id) {
-        const createdEvent = await createCalendarEvent(calendarConfig, tourDetails)
+        const createdEvent = await createCalendarEvent(bookingCalendar, {...tourDetails,requestId})
         if (eventRow?.id) {
-          await serviceSupabase
+          const saved = await serviceSupabase
             .from('calendar_events')
             .update({
               google_event_id: createdEvent.eventId,
@@ -193,8 +208,9 @@ export async function reconcileCalendarForProperty(
               last_synced_at: reconciledAt,
             })
             .eq('id', eventRow.id)
+          if(saved.error)throw saved.error
         } else {
-          await serviceSupabase.from('calendar_events').insert({
+          const saved = await serviceSupabase.from('calendar_events').insert({
             agent_calendar_id: calendarConfig.id,
             tour_booking_id: booking.id,
             google_event_id: createdEvent.eventId,
@@ -203,25 +219,26 @@ export async function reconcileCalendarForProperty(
             sync_status: 'synced',
             last_synced_at: reconciledAt,
           })
+          if(saved.error)throw saved.error
         }
-        created += 1
-        continue
+        deliveryKind='created'
+        return
       }
 
       if (eventRow.sync_status === 'synced') {
         alreadySynced += 1
-        continue
+        return
       }
 
       try {
-        await updateCalendarEvent(calendarConfig, eventRow.google_event_id, tourDetails)
+        await updateCalendarEvent(bookingCalendar, eventRow.google_event_id, tourDetails)
       } catch (updateError) {
         if (!isCalendarEventNotFoundError(updateError)) {
           throw updateError
         }
 
-        const recreatedEvent = await createCalendarEvent(calendarConfig, tourDetails)
-        await serviceSupabase
+        const recreatedEvent = await createCalendarEvent(bookingCalendar, {...tourDetails,requestId})
+        const saved = await serviceSupabase
           .from('calendar_events')
           .update({
             google_event_id: recreatedEvent.eventId,
@@ -231,18 +248,23 @@ export async function reconcileCalendarForProperty(
             last_synced_at: reconciledAt,
           })
           .eq('id', eventRow.id)
-        repaired += 1
-        continue
+        if(saved.error)throw saved.error
+        deliveryKind='repaired'
+        return
       }
 
-      await serviceSupabase
+      const saved = await serviceSupabase
         .from('calendar_events')
         .update({
           sync_status: 'synced',
           last_synced_at: reconciledAt,
         })
         .eq('id', eventRow.id)
-      repaired += 1
+      if(saved.error)throw saved.error
+      deliveryKind='repaired'
+      },serviceSupabase)
+      if(delivered){if(deliveryKind==='created')created++;if(deliveryKind==='repaired')repaired++}
+      if(!delivered){skipped++;failures.push({bookingId:booking.id,reason:'Calendar delivery is paused, queued or already claimed'})}
     } catch (reconcileError) {
       failed += 1
       failures.push({
@@ -250,15 +272,16 @@ export async function reconcileCalendarForProperty(
         reason: reconcileError instanceof Error ? reconcileError.message : 'unknown_error',
       })
       if (eventRow?.id) {
-        await serviceSupabase
+        const saved = await serviceSupabase
           .from('calendar_events')
           .update({
             sync_status: 'failed',
             last_synced_at: reconciledAt,
           })
           .eq('id', eventRow.id)
+        if(saved.error)throw saved.error
       }
-      await serviceSupabase.from('lead_activities').insert({
+      const activity = await serviceSupabase.from('lead_activities').insert({
         lead_id: booking.lead_id,
         type: 'calendar_sync_failed',
         description: `Calendar reconciliation failed for booking ${booking.id}`,
@@ -268,6 +291,7 @@ export async function reconcileCalendarForProperty(
           reason: reconcileError instanceof Error ? reconcileError.message : 'unknown_error',
         },
       })
+      if(activity.error)throw activity.error
     }
   }
 

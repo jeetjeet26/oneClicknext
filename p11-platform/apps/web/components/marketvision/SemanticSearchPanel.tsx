@@ -1,233 +1,29 @@
 'use client'
-
-/**
- * Semantic Search Panel Component
- * Natural language search across competitor content
- */
-
-import React, { useState, useCallback } from 'react'
-import { SemanticSearchResult } from './types'
-
-interface SemanticSearchPanelProps {
-  propertyId: string
-  competitorIds?: string[]
+import {useCallback,useEffect,useRef,useState} from 'react'
+import Link from 'next/link'
+import {useRouter,useSearchParams} from 'next/navigation'
+import {brandCategories} from '@/utils/marketvision/brand-evidence-contracts'
+import {sendMarketDecision} from '@/utils/marketvision/decision-client'
+import {publicMarketUrl} from '@/utils/marketvision/decision-contracts'
+import {marketDate} from './MarketEvidence'
+import {brandHref} from './BrandEvidencePanel'
+const path='/api/marketvision/brand-search',button='rounded border bg-white px-3 py-2 disabled:opacity-50',field='block w-full rounded border bg-white p-2'
+const searchHref=(id?:string)=>`/dashboard/marketvision?tab=ask${id?`&brandSearchId=${id}`:''}`
+type Coverage={activeCompetitors:number;reviewedCompetitors:number;searchableStatements:number;matchedStatements:number}
+type Search={id:string;query:string;mode:string;category:string;kind:string;terms:string[];createdAt:string;coverage:Coverage}
+type Result={ordinal:number;competitorId:string;competitorName:string;requestId:string;reviewId:string;sourceUrl:string;capturedAt:string;claim:{category:string;kind:string;statement:string;quote:string};stillCurrent:boolean}
+export function SemanticSearchPanel({propertyId,competitorId}:{propertyId:string;competitorId?:string}){const params=useSearchParams(),requestId=params.get('brandSearchId')??undefined,scope=competitorId??params.get('searchCompetitorId')??undefined;return <SavedEvidenceSearch key={[propertyId,scope,requestId].join(':')} propertyId={propertyId} competitorId={scope} requestId={requestId}/>}
+function SavedEvidenceSearch({propertyId,competitorId,requestId}:{propertyId:string;competitorId?:string;requestId?:string}){
+ const router=useRouter(),[query,setQuery]=useState(''),[mode,setMode]=useState('all'),[category,setCategory]=useState('all'),[kind,setKind]=useState('all'),[busy,setBusy]=useState(true),[ready,setReady]=useState(false),[error,setError]=useState(''),[history,setHistory]=useState<Search[]>([]),[results,setResults]=useState<Result[]>([]),[search,setSearch]=useState<Search|null>(null),[next,setNext]=useState<number|null>(null),[cursor,setCursor]=useState<string|null>(null),[total,setTotal]=useState(0)
+ const generation=useRef(0),invalidate=useCallback(()=>{generation.current++},[])
+ const load=useCallback(async(after?:number,older?:string)=>{const turn=++generation.current;setBusy(true);setReady(false);setError('');try{const r=await fetch(`${path}?${new URLSearchParams({propertyId,...(requestId?{requestId}:{}),...(after?{after:String(after)}:{}),...(older?{cursor:older}:{})})}`,{cache:'no-store',signal:AbortSignal.timeout(15000)}),d=await r.json();if(!r.ok)throw new Error(d.error||'Saved searches could not be loaded.');if(turn!==generation.current)return;if(requestId){setSearch(d.search);setResults(old=>after?[...old,...d.items]:d.items);setNext(d.nextOffset)}else{setHistory(old=>older?[...old,...d.items]:d.items);setCursor(d.nextCursor);setTotal(d.total)}setReady(true)}catch(e){if(turn===generation.current)setError(e instanceof Error?e.message:'Saved searches could not be loaded.')}finally{if(turn===generation.current)setBusy(false)}},[propertyId,requestId])
+ useEffect(()=>{void load();return invalidate},[load,invalidate])
+ async function run(e:React.FormEvent){e.preventDefault();const turn=generation.current;setBusy(true);setError('');try{const d=await sendMarketDecision(path,'POST',{propertyId,query,mode,category,kind,competitorId:competitorId??null},['saved','replayed'],true);if(turn===generation.current)router.push(searchHref(d.result.searchId))}catch(e){if(turn===generation.current)setError(e instanceof Error?e.message:'The search could not be confirmed.')}finally{if(turn===generation.current)setBusy(false)}}
+ return <section aria-label="Saved evidence search" className="space-y-5 text-sm"><div className="flex flex-wrap justify-between gap-3"><h3 className="text-lg font-semibold">Find reviewed evidence</h3><button className={button} disabled={busy} onClick={()=>load()}>Reload saved searches</button></div><p>Find literal words or a phrase in reviewed statements and quotations. Search does not generate an answer or measure semantic similarity.</p>{error&&<p role="alert" className="rounded bg-red-50 p-3 text-red-700">{error}</p>}{busy&&<p role="status">Loading or saving search…</p>}
+  {requestId?<Link href={searchHref()} className="inline-block text-indigo-700">New search and history</Link>:<form onSubmit={run}><fieldset disabled={busy||!ready} className="min-w-0 space-y-3"><label className="block">Search words or phrase<input aria-label="Search words or phrase" className={field} minLength={2} maxLength={200} required value={query} onChange={e=>setQuery(e.target.value)}/></label><div className="grid gap-3 sm:grid-cols-3"><label>Match<select aria-label="Search match" className={field} value={mode} onChange={e=>setMode(e.target.value)}><option value="all">All words</option><option value="any">Any word</option><option value="phrase">Exact phrase</option></select></label><label>Category<select aria-label="Search category" className={field} value={category} onChange={e=>setCategory(e.target.value)}><option value="all">All categories</option>{brandCategories.map(c=><option key={c} value={c}>{c.replaceAll('_',' ')}</option>)}</select></label><label>Evidence type<select aria-label="Search evidence type" className={field} value={kind} onChange={e=>setKind(e.target.value)}><option value="all">Claims and interpretations</option><option value="source_claim">Source claims</option><option value="interpretation">Interpretations</option></select></label></div><p className="text-slate-600">Scope: {competitorId?'this selected competitor':'active competitors in this property'}. Only current reviewed evidence enters a new search. Earlier unqualified analyses are excluded.</p><Link href={brandHref(competitorId)} className="block text-indigo-700">Choose a competitor in the brand workspace to narrow the search</Link><button className={button} disabled={query.trim().length<2||(mode!=='phrase'&&query.trim().split(/\s+/).length>10)}>Search and retain results</button></fieldset></form>}
+  {ready&&!requestId&&<><h4 className="font-semibold">Search history</h4><p>{total} saved searches.</p>{history.length===0&&<p>No searches have been saved yet.</p>}<ul className="space-y-3">{history.map(item=><li key={item.id} className="rounded border p-3"><Link href={searchHref(item.id)} className="break-words font-medium text-indigo-700">{item.query}</Link><p>{item.coverage.matchedStatements} matched statements · {item.mode==='all'?'all words':item.mode==='any'?'any word':'exact phrase'} · {marketDate(item.createdAt)}</p></li>)}</ul>{cursor&&<button className={button} disabled={busy} onClick={()=>load(undefined,cursor)}>Older searches</button>}</>}
+  {ready&&search&&<article aria-label="Retained search results" className="space-y-4"><h4 className="break-words text-lg font-semibold">Results for “{search.query}”</h4><p>Saved {marketDate(search.createdAt)} · {search.mode==='all'?'all words':search.mode==='any'?'any word':'exact phrase'} · {search.category.replaceAll('_',' ')} categories · {search.kind==='all'?'claims and interpretations':search.kind.replaceAll('_',' ')}.</p><p className="rounded bg-slate-50 p-3">{search.coverage.matchedStatements} matches from {search.coverage.searchableStatements} reviewed statements. {search.coverage.reviewedCompetitors} of {search.coverage.activeCompetitors} active competitors had reviewed evidence in the saved scope. Missing evidence does not establish absence in the market.</p><p className="text-slate-600">These are retained results from this search. Each result shows whether that review still qualifies now. Website claims are not independently verified; captured promotions may no longer be active.</p>{results.length===0&&<p>No literal matches in this reviewed selection. Try different words or review more source evidence.</p>}
+   <ul className="space-y-4">{results.map(item=><li key={item.ordinal} className="space-y-2 rounded border bg-white p-4"><h5 className="font-semibold">{item.competitorName}</h5><p className="text-xs text-slate-500">{item.claim.category.replaceAll('_',' ')} · {item.claim.kind==='source_claim'?'Claim made by the source':'Reviewed interpretation'}</p><p className="break-words">{item.claim.statement}</p><blockquote className="break-words border-l-2 pl-3">“{item.claim.quote}”</blockquote><p>Captured {marketDate(item.capturedAt)} · {item.stillCurrent?'Review still qualifies':'Historical result · review has changed or was withdrawn'}</p>{publicMarketUrl(item.sourceUrl)&&<a href={item.sourceUrl} target="_blank" rel="noreferrer" className="block break-all text-indigo-700">{item.sourceUrl}</a>}<Link href={brandHref(item.competitorId,item.requestId)} className="inline-block text-indigo-700">Open original reviewed analysis</Link></li>)}</ul>{next!==null&&<button className={button} disabled={busy} onClick={()=>load(next)}>More retained results</button>}
+  </article>}
+ </section>
 }
-
-export function SemanticSearchPanel({ 
-  propertyId,
-  competitorIds 
-}: SemanticSearchPanelProps) {
-  const [query, setQuery] = useState('')
-  const [results, setResults] = useState<SemanticSearchResult[]>([])
-  const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [hasSearched, setHasSearched] = useState(false)
-
-  const handleSearch = useCallback(async () => {
-    if (!query.trim()) return
-
-    setIsLoading(true)
-    setError(null)
-    setHasSearched(true)
-
-    try {
-      const response = await fetch('/api/marketvision/brand-intelligence/search', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          query: query.trim(),
-          propertyId,
-          competitorIds,
-          limit: 10
-        })
-      })
-
-      const data = await response.json()
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Search failed')
-      }
-
-      setResults(data.results || [])
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Search failed')
-      setResults([])
-    } finally {
-      setIsLoading(false)
-    }
-  }, [query, propertyId, competitorIds])
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      handleSearch()
-    }
-  }
-
-  const exampleQueries = [
-    "How do competitors talk about pet policies?",
-    "What move-in specials are being offered?",
-    "How do they market their fitness amenities?",
-    "What sustainability features do they highlight?",
-    "How do competitors describe their location benefits?"
-  ]
-
-  return (
-    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-      {/* Header */}
-      <div className="p-6 border-b border-gray-200 bg-gradient-to-r from-indigo-50 to-purple-50">
-        <h3 className="text-lg font-semibold text-gray-900 mb-1">
-          Competitive Intelligence Search
-        </h3>
-        <p className="text-sm text-gray-600">
-          Ask questions in natural language to find insights across competitor websites
-        </p>
-      </div>
-
-      {/* Search Input */}
-      <div className="p-6 border-b border-gray-100">
-        <div className="flex gap-3">
-          <div className="flex-1 relative">
-            <input
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="e.g., How do competitors promote their pools?"
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm"
-            />
-            <div className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
-            </div>
-          </div>
-          <button
-            onClick={handleSearch}
-            disabled={isLoading || !query.trim()}
-            className="px-6 py-3 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            {isLoading ? (
-              <span className="flex items-center gap-2">
-                <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                </svg>
-                Searching...
-              </span>
-            ) : (
-              'Search'
-            )}
-          </button>
-        </div>
-
-        {/* Example Queries */}
-        {!hasSearched && (
-          <div className="mt-4">
-            <p className="text-xs text-gray-500 mb-2">Try searching for:</p>
-            <div className="flex flex-wrap gap-2">
-              {exampleQueries.map((example, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => setQuery(example)}
-                  className="px-3 py-1 text-xs bg-gray-100 text-gray-700 rounded-full hover:bg-gray-200 transition-colors"
-                >
-                  {example}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Results */}
-      <div className="p-6">
-        {error && (
-          <div className="p-4 bg-red-50 border border-red-100 rounded-lg text-sm text-red-700 mb-4">
-            {error}
-          </div>
-        )}
-
-        {isLoading && (
-          <div className="flex items-center justify-center py-12">
-            <div className="flex flex-col items-center gap-3">
-              <svg className="animate-spin h-8 w-8 text-indigo-600" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-              </svg>
-              <p className="text-sm text-gray-600">Searching competitor content...</p>
-            </div>
-          </div>
-        )}
-
-        {!isLoading && hasSearched && results.length === 0 && !error && (
-          <div className="text-center py-12">
-            <div className="text-4xl mb-3">🔍</div>
-            <h4 className="text-lg font-medium text-gray-900 mb-1">No results found</h4>
-            <p className="text-sm text-gray-600">
-              Try a different search query or make sure competitors have been analyzed
-            </p>
-          </div>
-        )}
-
-        {!isLoading && results.length > 0 && (
-          <div className="space-y-4">
-            <p className="text-sm text-gray-600 mb-4">
-              Found {results.length} relevant results
-            </p>
-
-            {results.map((result) => (
-              <div 
-                key={result.id}
-                className="p-4 border border-gray-200 rounded-lg hover:border-indigo-200 hover:bg-indigo-50/30 transition-colors"
-              >
-                <div className="flex items-start justify-between mb-2">
-                  <div>
-                    <span className="font-medium text-gray-900">
-                      {result.competitorName}
-                    </span>
-                    <span className="mx-2 text-gray-300">•</span>
-                    <span className="text-sm text-gray-500 capitalize">
-                      {result.pageType} page
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-1 px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded text-xs">
-                    {Math.round(result.similarity * 100)}% match
-                  </div>
-                </div>
-                
-                <p className="text-sm text-gray-700 leading-relaxed">
-                  {result.content.length > 500 
-                    ? `${result.content.slice(0, 500)}...` 
-                    : result.content
-                  }
-                </p>
-
-                {result.pageUrl && (
-                  <a 
-                    href={result.pageUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-block mt-2 text-xs text-blue-600 hover:underline"
-                  >
-                    View source ↗
-                  </a>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-
-        {!hasSearched && !isLoading && (
-          <div className="text-center py-12 text-gray-500">
-            <div className="text-4xl mb-3">💡</div>
-            <p className="text-sm">
-              Enter a question above to search competitor content
-            </p>
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-

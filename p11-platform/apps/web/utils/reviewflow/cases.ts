@@ -226,7 +226,7 @@ export async function transitionCaseForReview(
 
   const nowIso = new Date().toISOString()
   const update: TablesUpdate<'reputation_cases'> = {
-    status: input.status,
+    status: TERMINAL_STATUSES.has(existing.status) ? existing.status : input.status,
     last_activity_at: nowIso,
     updated_at: nowIso,
   }
@@ -234,9 +234,6 @@ export async function transitionCaseForReview(
   if (input.status === 'resolved' || input.status === 'dismissed') {
     update.resolved_at = nowIso
     if (input.resolutionNotes) update.resolution_notes = input.resolutionNotes
-  } else if (TERMINAL_STATUSES.has(existing.status)) {
-    update.reopened_count = (existing.reopened_count ?? 0) + 1
-    update.resolved_at = null
   }
 
   const { error } = await supabase
@@ -258,7 +255,7 @@ export async function transitionCaseForReview(
     propertyId: existing.property_id,
     eventType: input.eventType,
     actorProfileId: input.actorProfileId,
-    payload: { ...input.payload, fromStatus: existing.status, toStatus: input.status },
+    payload: { ...input.payload, fromStatus: existing.status, toStatus: update.status },
   })
 }
 

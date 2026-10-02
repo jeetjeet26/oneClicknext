@@ -1,0 +1,9 @@
+# Phase 5 — tour decision recording
+
+Qualified locally September 16, 2026. Shared activity history now records manual outcomes, no-show corrections, reschedules, cancellations and reminder-delivery reviews, in addition to the earlier follow-up controls/reviews. The authenticated actor, scoped product references, before/after state and actual product receipts are saved in the same transaction as each operation. Free-text notes and provider-review evidence remain in the scoped product records; history links them rather than duplicating their text. All events remain excluded from training.
+
+Manual outcome requests now require stable request IDs. Browser retries reuse that identity. Changed intent cannot reuse a successful identity, an old no-show request cannot undo a later correction, and an old schedule retry reports current state. Recording failure rolls back the business mutation. Blocked valid decisions are recorded as failed, never as completed; a retry after resolving the blocker can succeed, retaining the failure evidence. Repeated checks of the same blocked logical decision are deduplicated. Invalid/unauthorized requests remain security/request-log concerns.
+
+Verification: 102 service/API cases, 57 rollback-only database assertions covering both tour sources, all 16 existing tour browser journeys and two added shared-history browser checks. Full web type checking and targeted lint pass. Advisors remain at 1,386 pre-existing WARN/ERROR findings with none added. Evidence: `work/tour-action-history/` in the development task. Local-only migration; no hosted release, provider sends or training runs.
+
+This is confirmed coverage of the listed decisions. Initial booking, remaining delivery/calendar decisions, public/automated interactions and all other products still need their own completion and recording qualification. It is not a claim that every user action is captured yet.

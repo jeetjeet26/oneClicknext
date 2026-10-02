@@ -1,561 +1,79 @@
 'use client'
-
-/**
- * Market Brief - the default MarketVision surface.
- *
- * Answers, in order: what changed, why it matters for this property, and
- * what to consider next. Every claim shows its evidence (source record,
- * observation time, competitor) and every recommendation shows confidence,
- * freshness, and rank. No fabricated progress or freshness.
- */
-
-import { useCallback, useEffect, useState } from 'react'
-import {
-  AlertCircle,
-  ArrowDownRight,
-  ArrowUpRight,
-  CheckCircle,
-  ChevronDown,
-  ChevronUp,
-  FileText,
-  Loader2,
-  RefreshCw,
-  Send,
-  Sparkles,
-} from 'lucide-react'
-
-interface Citation {
-  sourceKind: string
-  sourceId: string
-  captureId: string | null
-  competitorId: string | null
-  competitorName: string | null
-  observedAt: string | null
+import {MarketHandoffs} from './MarketHandoffs'
+import {useCallback,useEffect,useRef,useState} from 'react'
+import {sendMarketDecision} from '@/utils/marketvision/decision-client'
+import type {SavedMarketBrief,BriefRecommendation} from '@/utils/marketvision/saved-brief'
+import {MarketEvidence,marketDate,marketMoney} from './MarketEvidence'
+interface Item{id:string;state:string;version:number;createdAt:string;windowDays:number;reason:string}
+interface Decision{id:string;kind:string;input:{recommendationId?:string;decision?:string;reason:string};result:Record<string,unknown>;createdAt:string}
+interface Detail {report:{id:string;state:string;version:number;result:SavedMarketBrief|null;created_at:string;input:{reason:string;windowDays:number}};sourceChanged:boolean|null;currentEvidenceState:string;decisions:Decision[]}
+function RecordedChanges({report}:{report:SavedMarketBrief}){
+ const [page,setPage]=useState(0),rows=report.analysis.changes
+ return <section aria-label="Recorded pricing changes"><h4 className="font-semibold">Recorded pricing changes ({rows.length})</h4>
+  {rows.length===0?<p className="mt-2 text-sm text-slate-600">No comparable price changes were saved in this window. This does not establish that live prices stayed unchanged.</p>:<><ul className="mt-3 space-y-3">{rows.slice(page*20,(page+1)*20).map(c=><li key={`${c.unitId}:${c.citations.at(-1)?.historyId}`} className="rounded border p-3"><p className="font-medium">{c.competitorName} · {c.unitType}</p><p className="text-sm">{marketMoney(c.previousValue)} → {marketMoney(c.currentValue)} · saved {marketDate(c.recordedAt)}</p><MarketEvidence evidence={c.citations}/></li>)}</ul>{rows.length>20&&<div className="mt-3 flex flex-wrap gap-3"><button disabled={page===0} onClick={()=>setPage(v=>v-1)}>Previous changes</button><span>Page {page+1} of {Math.ceil(rows.length/20)}</span><button disabled={(page+1)*20>=rows.length} onClick={()=>setPage(v=>v+1)}>More changes</button></div>}</>}
+  <p className="mt-3 text-sm text-slate-600">Comparable history covers {report.analysis.trendCoverage.matchedPlans} plans across {report.analysis.trendCoverage.matchedCompetitors} competitors. {report.analysis.trendCoverage.netChangePct===null?'Insufficient evidence for a percentage movement.':`Mean saved starting rent changed ${report.analysis.trendCoverage.netChangePct}% within that fixed sample.`}</p>
+ </section>
 }
-
-interface BriefChange {
-  changeType: string
-  competitorName: string
-  unitType: string | null
-  bedrooms: number | null
-  previousValue: number | null
-  currentValue: number | null
-  changeAmount: number | null
-  changePercent: number | null
-  observedAt: string
-  freshnessDays: number
-  citations: Citation[]
+function HistoricalBrief({value}:{value:unknown}){
+ const saved=value&&typeof value==='object'?value as Record<string,unknown>:{},raw=saved.data&&typeof saved.data==='object'?saved.data as Record<string,unknown>:{},rows=(key:string)=>Array.isArray(raw[key])?raw[key].filter((v):v is Record<string,unknown>=>v!==null&&typeof v==='object'):[]
+ const plain=(v:unknown)=>typeof v==='string'||typeof v==='number'?String(v):'Unknown'
+ return <article className="mt-3 space-y-3 rounded border p-3 text-sm"><h4 className="font-semibold">Unverified historical narrative</h4><p>Originally generated: {typeof saved.generatedAt==='string'?marketDate(saved.generatedAt):'Unknown'}</p>
+  {rows('changes').map((r,i)=><p key={`c${i}`}>{plain(r.competitorName)} · {plain(r.unitType)}: {plain(r.previousValue)} → {plain(r.currentValue)}</p>)}
+  {rows('insights').map((r,i)=><div key={`i${i}`}><h5 className="font-medium">{plain(r.headline)}</h5><p>{plain(r.detail)}</p></div>)}
+  {rows('recommendations').map((r,i)=><div key={`r${i}`}><h5 className="font-medium">{plain(r.title)}</h5><p>{plain(r.rationale)}</p></div>)}
+  <p className="text-slate-600">Original confidence and revenue claims are historical assertions. Create a saved-source brief before acting on them.</p>
+ </article>
 }
-
-interface BriefInsight {
-  insightType: string
-  headline: string
-  detail: string
-  confidence: number
-  limitations: string[]
-  citations: Citation[]
-}
-
-interface BriefRecommendation {
-  id: string
-  recommendationType: string
-  title: string
-  rationale: string
-  impact: number
-  confidence: number
-  freshness: number
-  reversibility: number
-  rankScore: number
-  citations: Citation[]
-}
-
-interface Brief {
-  schemaVersion: string
-  generatedAt: string
-  windowDays: number
-  coverage: {
-    competitorsTotal: number
-    competitorsWithRecentObservations: number
-    observationsInWindow: number
-  }
-  changes: BriefChange[]
-  positions: Array<{
-    bedrooms: number
-    subjectRentMin: number | null
-    marketAvgRent: number | null
-    marketMinRent: number | null
-    marketMaxRent: number | null
-    competitorsSampled: number
-    relativeToMarketPct: number | null
-    position: string
-  }>
-  movements: Array<{
-    bedrooms: number
-    direction: string
-    netChangePct: number | null
-    observations: number
-    competitorsCovered: number
-    windowDays: number
-  }>
-  insights: BriefInsight[]
-  recommendations: BriefRecommendation[]
-}
-
-interface ProposalRecord {
-  id: string
-  actionType: string
-  proposalDecisionStatus: string
-  executionStatus: string
-  proposedAt: string
-  outcomes: Array<{
-    kpiName: string
-    outcomeStatus: string
-    deltaValue: number | null
-  }>
-}
-
-interface MarketBriefViewProps {
-  propertyId: string
-}
-
-/** Maps a recommendation type to the governed proposal class that reviews it. */
-function proposalTypeFor(recommendationType: string): string {
-  switch (recommendationType) {
-    case 'brandforge_positioning_review':
-    case 'siteforge_content_patch':
-    case 'forgestudio_messaging_brief':
-      return recommendationType
-    default:
-      // pricing_review, concession_review, operator_task
-      return 'operator_pricing_review'
-  }
-}
-
-const PROPOSAL_TYPE_LABELS: Record<string, string> = {
-  brandforge_positioning_review: 'BrandForge positioning review',
-  siteforge_content_patch: 'SiteForge content patch draft',
-  forgestudio_messaging_brief: 'ForgeStudio messaging brief',
-  operator_pricing_review: 'Pricing/concession review task',
-}
-
-function EvidenceList({ citations }: { citations: Citation[] }) {
-  if (citations.length === 0) {
-    return (
-      <p className="text-xs text-gray-500 italic">
-        Derived from aggregate data; no single-source citation.
-      </p>
-    )
-  }
-  return (
-    <ul className="space-y-1">
-      {citations.map((citation, idx) => (
-        <li key={`${citation.sourceId}-${idx}`} className="text-xs text-gray-600 dark:text-gray-400">
-          <span className="font-mono bg-gray-100 dark:bg-gray-700 px-1 rounded">
-            {citation.sourceKind}
-          </span>{' '}
-          {citation.competitorName && <span>{citation.competitorName} · </span>}
-          {citation.observedAt && (
-            <span>observed {new Date(citation.observedAt).toLocaleString()}</span>
-          )}
-          {citation.captureId && (
-            <span className="text-gray-400"> · capture {citation.captureId.slice(0, 8)}</span>
-          )}
-        </li>
-      ))}
-    </ul>
-  )
-}
-
-function EvidenceToggle({ citations }: { citations: Citation[] }) {
-  const [open, setOpen] = useState(false)
-  return (
-    <div className="mt-2">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-700"
-      >
-        {open ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-        Evidence ({citations.length})
-      </button>
-      {open && (
-        <div className="mt-2 p-2 bg-gray-50 dark:bg-gray-900/40 rounded-lg">
-          <EvidenceList citations={citations} />
-        </div>
-      )}
-    </div>
-  )
-}
-
-export function MarketBriefView({ propertyId }: MarketBriefViewProps) {
-  const [brief, setBrief] = useState<Brief | null>(null)
-  const [proposals, setProposals] = useState<ProposalRecord[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [isGenerating, setIsGenerating] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [proposalStatus, setProposalStatus] = useState<
-    Record<string, 'creating' | 'created' | 'duplicate' | 'error'>
-  >({})
-
-  const loadBrief = useCallback(async () => {
-    setIsLoading(true)
-    setError(null)
-    try {
-      const [briefRes, proposalsRes] = await Promise.all([
-        fetch(`/api/marketvision/brief?propertyId=${propertyId}`),
-        fetch(`/api/marketvision/proposals?propertyId=${propertyId}`),
-      ])
-      const data = await briefRes.json()
-      if (!briefRes.ok) throw new Error(data.error || 'Failed to load brief')
-      setBrief(data.brief)
-      if (proposalsRes.ok) {
-        const proposalsData = await proposalsRes.json()
-        setProposals(proposalsData.proposals || [])
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load brief')
-    } finally {
-      setIsLoading(false)
-    }
-  }, [propertyId])
-
-  useEffect(() => {
-    loadBrief()
-  }, [loadBrief])
-
-  const createProposal = async (rec: BriefRecommendation) => {
-    setProposalStatus((s) => ({ ...s, [rec.id]: 'creating' }))
-    try {
-      const res = await fetch('/api/marketvision/proposals', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          propertyId,
-          proposalType: proposalTypeFor(rec.recommendationType),
-          recommendation: rec,
-        }),
-      })
-      if (res.status === 409) {
-        setProposalStatus((s) => ({ ...s, [rec.id]: 'duplicate' }))
-        return
-      }
-      if (!res.ok) throw new Error('Failed to create proposal')
-      setProposalStatus((s) => ({ ...s, [rec.id]: 'created' }))
-      // Refresh the proposals ledger so the new entry shows immediately.
-      const proposalsRes = await fetch(`/api/marketvision/proposals?propertyId=${propertyId}`)
-      if (proposalsRes.ok) {
-        const proposalsData = await proposalsRes.json()
-        setProposals(proposalsData.proposals || [])
-      }
-    } catch {
-      setProposalStatus((s) => ({ ...s, [rec.id]: 'error' }))
-    }
-  }
-
-  const generateBrief = async () => {
-    setIsGenerating(true)
-    setError(null)
-    try {
-      const res = await fetch('/api/marketvision/brief', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ propertyId }),
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Failed to generate brief')
-      setBrief(data.brief)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to generate brief')
-    } finally {
-      setIsGenerating(false)
-    }
-  }
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center py-16 text-gray-500">
-        <Loader2 className="w-6 h-6 animate-spin mr-2" /> Loading market brief…
-      </div>
-    )
-  }
-
-  return (
-    <div className="space-y-6">
-      {/* Header row */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
-            <FileText className="w-5 h-5 text-emerald-500" />
-            Market Brief
-          </h2>
-          {brief && (
-            <p className="text-sm text-gray-500">
-              Generated {new Date(brief.generatedAt).toLocaleString()} · last {brief.windowDays}{' '}
-              days · {brief.coverage.competitorsWithRecentObservations}/
-              {brief.coverage.competitorsTotal} competitors with fresh observations
-            </p>
-          )}
-        </div>
-        <button
-          onClick={generateBrief}
-          disabled={isGenerating}
-          className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-50"
-        >
-          {isGenerating ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <RefreshCw className="w-4 h-4" />
-          )}
-          {brief ? 'Regenerate Brief' : 'Generate Brief'}
-        </button>
-      </div>
-
-      {error && (
-        <div className="flex items-center gap-2 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-sm text-red-700 dark:text-red-300">
-          <AlertCircle className="w-4 h-4 shrink-0" /> {error}
-        </div>
-      )}
-
-      {!brief && !error && (
-        <div className="text-center py-12 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
-          <Sparkles className="w-8 h-8 text-emerald-500 mx-auto mb-3" />
-          <p className="text-gray-700 dark:text-gray-300 font-medium">No brief yet</p>
-          <p className="text-sm text-gray-500 mt-1">
-            Generate your first Market Brief to see what changed, why it matters, and what to
-            consider next.
-          </p>
-        </div>
-      )}
-
-      {brief && (
-        <>
-          {/* What changed */}
-          <section className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
-            <h3 className="font-semibold text-gray-900 dark:text-white mb-4">What changed?</h3>
-            {brief.changes.length === 0 ? (
-              <p className="text-sm text-gray-500">
-                No competitor changes observed in the last {brief.windowDays} days
-                {brief.coverage.observationsInWindow === 0 &&
-                  ' — no observations were collected in this window. Refresh sources to keep this brief trustworthy.'}
-              </p>
-            ) : (
-              <ul className="divide-y divide-gray-100 dark:divide-gray-700">
-                {brief.changes.slice(0, 10).map((change, idx) => (
-                  <li key={idx} className="py-3">
-                    <div className="flex items-start gap-3">
-                      {change.changeType === 'price_drop' ? (
-                        <ArrowDownRight className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
-                      ) : change.changeType === 'price_increase' ? (
-                        <ArrowUpRight className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />
-                      ) : (
-                        <RefreshCw className="w-5 h-5 text-blue-500 shrink-0 mt-0.5" />
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-gray-900 dark:text-white">
-                          {change.competitorName}
-                          {change.unitType ? ` · ${change.unitType}` : ''}
-                          {': '}
-                          {change.changeType === 'availability_change'
-                            ? `availability ${change.previousValue} → ${change.currentValue}`
-                            : `$${change.previousValue} → $${change.currentValue}`}
-                          {change.changePercent !== null && (
-                            <span
-                              className={
-                                change.changePercent < 0 ? 'text-red-600' : 'text-emerald-600'
-                              }
-                            >
-                              {' '}
-                              ({change.changePercent > 0 ? '+' : ''}
-                              {change.changePercent}%)
-                            </span>
-                          )}
-                        </p>
-                        <p className="text-xs text-gray-500">
-                          Observed {new Date(change.observedAt).toLocaleString()} (
-                          {change.freshnessDays === 0
-                            ? 'today'
-                            : `${change.freshnessDays}d ago`}
-                          )
-                        </p>
-                        <EvidenceToggle citations={change.citations} />
-                      </div>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-
-          {/* Why it matters */}
-          <section className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
-            <h3 className="font-semibold text-gray-900 dark:text-white mb-4">
-              Why does it matter?
-            </h3>
-            {brief.insights.length === 0 ? (
-              <p className="text-sm text-gray-500">
-                No significant market signals in this window.
-              </p>
-            ) : (
-              <div className="space-y-4">
-                {brief.insights.map((insight, idx) => (
-                  <div
-                    key={idx}
-                    className="border border-gray-100 dark:border-gray-700 rounded-lg p-4"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="font-medium text-gray-900 dark:text-white text-sm">
-                        {insight.headline}
-                      </p>
-                      <span className="text-xs text-gray-500 whitespace-nowrap">
-                        {Math.round(insight.confidence * 100)}% confidence
-                      </span>
-                    </div>
-                    <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                      {insight.detail}
-                    </p>
-                    {insight.limitations.length > 0 && (
-                      <p className="text-xs text-amber-600 dark:text-amber-400 mt-2">
-                        Limitations: {insight.limitations.join(' ')}
-                      </p>
-                    )}
-                    <EvidenceToggle citations={insight.citations} />
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
-
-          {/* What to consider */}
-          <section className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
-            <h3 className="font-semibold text-gray-900 dark:text-white mb-4">
-              What should we consider?
-            </h3>
-            {brief.recommendations.length === 0 ? (
-              <p className="text-sm text-gray-500">
-                No recommendations — nothing in the current evidence calls for action.
-              </p>
-            ) : (
-              <div className="space-y-4">
-                {brief.recommendations.map((rec) => (
-                  <div
-                    key={rec.id}
-                    className="border border-gray-100 dark:border-gray-700 rounded-lg p-4"
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <p className="font-medium text-gray-900 dark:text-white text-sm flex items-center gap-2">
-                        <CheckCircle className="w-4 h-4 text-emerald-500 shrink-0" />
-                        {rec.title}
-                      </p>
-                      <span className="text-xs font-mono text-gray-500 whitespace-nowrap">
-                        rank {rec.rankScore}
-                      </span>
-                    </div>
-                    <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                      {rec.rationale}
-                    </p>
-                    <div className="flex gap-4 mt-2 text-xs text-gray-500">
-                      <span>impact {Math.round(rec.impact * 100)}%</span>
-                      <span>confidence {Math.round(rec.confidence * 100)}%</span>
-                      <span>freshness {Math.round(rec.freshness * 100)}%</span>
-                      <span>reversibility {Math.round(rec.reversibility * 100)}%</span>
-                    </div>
-                    <div className="flex items-center justify-between mt-2">
-                      <EvidenceToggle citations={rec.citations} />
-                      <div className="flex items-center gap-2">
-                        {proposalStatus[rec.id] === 'created' && (
-                          <span className="text-xs text-emerald-600">
-                            Proposal created — awaiting review
-                          </span>
-                        )}
-                        {proposalStatus[rec.id] === 'duplicate' && (
-                          <span className="text-xs text-amber-600">
-                            Proposal already exists for this recommendation
-                          </span>
-                        )}
-                        {proposalStatus[rec.id] === 'error' && (
-                          <span className="text-xs text-red-600">Failed to create proposal</span>
-                        )}
-                        {proposalStatus[rec.id] !== 'created' && (
-                          <button
-                            onClick={() => createProposal(rec)}
-                            disabled={proposalStatus[rec.id] === 'creating'}
-                            className="flex items-center gap-1 px-3 py-1.5 text-xs bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50"
-                            title={`Create governed proposal: ${PROPOSAL_TYPE_LABELS[proposalTypeFor(rec.recommendationType)]}`}
-                          >
-                            {proposalStatus[rec.id] === 'creating' ? (
-                              <Loader2 className="w-3 h-3 animate-spin" />
-                            ) : (
-                              <Send className="w-3 h-3" />
-                            )}
-                            Create proposal
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
-
-          {/* What happens next / did it work */}
-          {proposals.length > 0 && (
-            <section className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
-              <h3 className="font-semibold text-gray-900 dark:text-white mb-4">
-                Proposals &amp; outcomes
-              </h3>
-              <ul className="divide-y divide-gray-100 dark:divide-gray-700">
-                {proposals.map((proposal) => (
-                  <li key={proposal.id} className="py-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium text-gray-900 dark:text-white">
-                          {PROPOSAL_TYPE_LABELS[proposal.actionType] || proposal.actionType}
-                        </p>
-                        <p className="text-xs text-gray-500">
-                          Proposed {new Date(proposal.proposedAt).toLocaleString()}
-                        </p>
-                        {proposal.outcomes.length > 0 && (
-                          <p className="text-xs mt-1 text-gray-600 dark:text-gray-400">
-                            Outcomes:{' '}
-                            {proposal.outcomes
-                              .map(
-                                (outcome) =>
-                                  `${outcome.kpiName} ${outcome.outcomeStatus}${
-                                    outcome.deltaValue !== null
-                                      ? ` (${outcome.deltaValue > 0 ? '+' : ''}${outcome.deltaValue})`
-                                      : ''
-                                  }`
-                              )
-                              .join(', ')}
-                          </p>
-                        )}
-                      </div>
-                      <span
-                        className={`text-xs px-2 py-0.5 rounded-full whitespace-nowrap ${
-                          proposal.proposalDecisionStatus === 'approved' ||
-                          proposal.proposalDecisionStatus === 'modified'
-                            ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
-                            : proposal.proposalDecisionStatus === 'denied'
-                              ? 'bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-300'
-                              : 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
-                        }`}
-                      >
-                        {proposal.proposalDecisionStatus === 'proposed'
-                          ? 'awaiting review'
-                          : proposal.proposalDecisionStatus}
-                      </span>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-              <p className="text-xs text-gray-500 mt-3">
-                Proposals are reviewed (approve / deny / modify with rationale) before any
-                downstream product acts on them. MarketVision never auto-publishes or auto-prices.
-              </p>
-            </section>
-          )}
-        </>
-      )}
-    </div>
-  )
+export function MarketBriefView({propertyId,openRequestId,openHandoffId}:{propertyId:string;openRequestId?:string;openHandoffId?:string}){
+ const [items,setItems]=useState<Item[]>([]),[cursor,setCursor]=useState<string|null>(null),[detail,setDetail]=useState<Detail|null>(null),[loading,setLoading]=useState(true),[error,setError]=useState<string|null>(null),[busy,setBusy]=useState(false),[ready,setReady]=useState(false),[reason,setReason]=useState(''),[days,setDays]=useState('30'),[reviewReason,setReviewReason]=useState(''),[ack,setAck]=useState(false),[message,setMessage]=useState(''),[legacyCount,setLegacyCount]=useState(0),[legacy,setLegacy]=useState<{id:string;createdAt:string|null}[]>([]),[legacyCursor,setLegacyCursor]=useState<string|null>(null),[legacyData,setLegacyData]=useState<unknown>(null)
+ const generation=useRef(0)
+ const read=useCallback(async(query:Record<string,string>)=>{const res=await fetch(`/api/marketvision/brief?${new URLSearchParams({propertyId,...query})}`,{cache:'no-store'}),data=await res.json();if(!res.ok)throw new Error(data.error||'Saved briefs could not be loaded.');return data},[propertyId])
+ const load=useCallback(async(id?:string,next?:string)=>{const g=++generation.current;setLoading(true);setReady(false);setError(null);try{
+   const list=await read(next?{cursor:next}:{})
+   if(g!==generation.current)return
+   setItems(old=>next?[...old,...list.reports]:list.reports);setCursor(list.nextCursor);setLegacyCount(list.legacyCount)
+   const selected=id??list.reports[0]?.id
+   const d=selected?await read({requestId:selected}):null
+   if(g!==generation.current)return
+   setDetail(d);setAck(false);setReviewReason('');setReady(true)
+ }catch(e){if(g===generation.current){setDetail(null);setError(e instanceof Error?e.message:'Saved briefs could not be loaded.')}}finally{if(g===generation.current)setLoading(false)}},[read])
+ useEffect(()=>{const counter=generation;void load(openRequestId);return()=>{counter.current++}},[load,openRequestId])
+ const open=async(id:string)=>{const g=++generation.current;setLoading(true);setReady(false);setError(null);try{const d=await read({requestId:id});if(g!==generation.current)return;setDetail(d);setAck(false);setReviewReason('');setReady(true)}catch(e){if(g===generation.current){setDetail(null);setError(e instanceof Error?e.message:'This brief could not be loaded.')}}finally{if(g===generation.current)setLoading(false)}}
+ const generate=async()=>{setBusy(true);setError(null);setMessage('');const g=generation.current;try{const data=await sendMarketDecision('/api/marketvision/brief','POST',{propertyId,windowDays:Number(days),reason},['ready'],true);if(g!==generation.current)return;setReason('');await load(String(data.result.requestId));setMessage('Saved brief completed from its exact retained evidence.')}catch(e){if(g===generation.current)setError(e instanceof Error?e.message:'The brief could not be confirmed.')}finally{setBusy(false)}}
+ const recover=async()=>{if(!detail)return;setBusy(true);setError(null);try{await sendMarketDecision('/api/marketvision/brief','PUT',{propertyId,briefId:detail.report.id,expectedVersion:detail.report.version,reason:reviewReason},['ready']);await load(detail.report.id);setMessage('The original saved report was completed without acquiring new sources.')}catch(e){setError(e instanceof Error?e.message:'Recovery could not be confirmed.')}finally{setBusy(false)}}
+ const review=async(rec:BriefRecommendation,decision:'consider'|'dismiss')=>{if(!detail)return;setBusy(true);setError(null);try{const last=detail.decisions.filter(d=>d.kind==='brief.reviewed'&&d.input.recommendationId===rec.id).at(-1);await sendMarketDecision('/api/marketvision/brief/review','POST',{propertyId,briefId:detail.report.id,expectedVersion:detail.report.version,recommendationId:rec.id,expectedReviewId:last?.id??null,decision,acknowledgedSourceChange:ack,reason:reviewReason});await open(detail.report.id);setMessage('Recommendation review recorded. No pricing change or downstream work was started.')}catch(e){setError(e instanceof Error?e.message:'Review could not be confirmed.')}finally{setBusy(false)}}
+ const download=async(format:'json'|'markdown')=>{if(!detail)return;setBusy(true);setError(null);try{const data=await sendMarketDecision('/api/marketvision/brief/export','POST',{propertyId,briefId:detail.report.id,expectedVersion:detail.report.version,format,reason:reviewReason}),content=String(data.result.content),hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(content))),v=>v.toString(16).padStart(2,'0')).join('');if(hash!==data.result.contentHash)throw new Error('Download bytes did not match the saved artifact. Retry the same download.');const url=URL.createObjectURL(new Blob([content],{type:format==='json'?'application/json':'text/markdown;charset=utf-8'})),a=document.createElement('a');a.href=url;a.download=`market-brief-${detail.report.id}.${format==='json'?'json':'md'}`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);await open(detail.report.id);setMessage('Exact report file prepared and download requested. File receipt is not confirmed.')}catch(e){setError(e instanceof Error?e.message:'The download could not be prepared.')}finally{setBusy(false)}}
+ const loadLegacy=async(next?:string,id?:string)=>{setError(null);setBusy(true);try{const data=await read({view:'legacy',...(next?{cursor:next}:{}),...(id?{requestId:id}:{})});if(id)setLegacyData(data.legacyReport);else{setLegacy(old=>next?[...old,...data.legacyReports]:data.legacyReports);setLegacyCursor(data.nextCursor)}}catch(e){setError(e instanceof Error?e.message:'Historical reports could not be loaded.')}finally{setBusy(false)}}
+ const report=detail?.report.result,canDecide=ready&&!busy&&!loading&&reviewReason.trim().length>=3
+ return <section aria-label="Saved market briefs" className="space-y-5">
+  <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-lg font-semibold">Market brief</h2><button disabled={busy||loading} onClick={()=>void load(detail?.report.id)} className="rounded border px-3 py-2 text-sm disabled:opacity-50">Reload saved briefs</button></div>
+  <p className="text-sm text-slate-600">Save an exact pricing snapshot to review, revisit or download. Creating a brief uses existing records and does not fetch pages or call a model.</p>
+  {error&&<p role="alert" className="rounded border border-red-200 bg-red-50 p-3 text-red-700">{error}</p>}{message&&<p role="status" className="rounded bg-emerald-50 p-3 text-emerald-800">{message}</p>}
+  <div className="rounded-xl border bg-white p-4"><h3 className="font-semibold">Prepare a new brief</h3><label className="mt-3 block text-sm">Reporting window <select value={days} disabled={busy} onChange={e=>setDays(e.target.value)} className="ml-2 rounded border p-2">{[7,30,60,90].map(d=><option key={d} value={d}>{d} days</option>)}</select></label><label className="mt-3 block text-sm">Reason for this brief<textarea value={reason} onChange={e=>setReason(e.target.value)} disabled={busy} maxLength={2000} className="mt-1 block w-full rounded border p-2"/></label><button disabled={!ready||busy||loading||reason.trim().length<3} onClick={()=>void generate()} className="mt-3 rounded bg-indigo-700 px-4 py-2 text-white disabled:opacity-50">Save new brief</button></div>
+  {loading&&<p role="status">Loading saved brief evidence…</p>}
+  {ready&&items.length===0&&<p>No saved-source briefs yet.</p>}
+  {items.length>0&&<div className="rounded-xl border bg-white p-4"><h3 className="font-semibold">Saved briefs</h3><ul className="mt-3 space-y-2">{items.map(item=><li key={item.id}><button disabled={busy||loading} onClick={()=>void open(item.id)} className="w-full break-words rounded border p-3 text-left disabled:opacity-50">{marketDate(item.createdAt)} · {item.windowDays} days · {item.state==='ready'?'Complete':'Needs local completion'}<span className="mt-1 block text-sm text-slate-600">{item.reason}</span></button></li>)}</ul>{cursor&&<button disabled={busy||loading} onClick={()=>void load(detail?.report.id,cursor)} className="mt-3 text-indigo-700">Older briefs</button>}</div>}
+  {detail&&ready&&<div className="space-y-4 rounded-xl border bg-white p-4">
+   <h3 className="font-semibold">{detail.report.state==='ready'?'Saved brief details':'Saved evidence awaits completion'}</h3><p className="text-sm text-slate-600">Requested {marketDate(detail.report.created_at)} · {detail.report.input.windowDays} days</p>
+   {detail.sourceChanged===true&&<p role="alert" className="rounded bg-amber-50 p-3 text-amber-900">Source records or the reporting window changed since this snapshot. This saved report has not been rewritten. Create a new brief for a current comparison.</p>}
+   {detail.sourceChanged===null&&<p role="alert" className="rounded bg-amber-50 p-3">Current evidence could not be checked. This is the retained historical report.</p>}
+   <label className="block text-sm">Reason for report review or download<textarea value={reviewReason} onChange={e=>setReviewReason(e.target.value)} disabled={busy} maxLength={2000} className="mt-1 block w-full rounded border p-2"/></label>
+   {detail.report.state==='prepared'&&<button onClick={()=>void recover()} disabled={!canDecide} className="rounded bg-indigo-700 px-4 py-2 text-white disabled:opacity-50">Complete saved brief</button>}
+   {report&&<>
+    <p className="text-sm">Evidence snapshot: {marketDate(report.snapshotAt)}. {report.analysis.summary.pricedPlans} of {report.analysis.summary.totalUnitsTracked} plans have a known starting rent.</p>
+    <div className="flex flex-wrap gap-3"><button disabled={!canDecide} onClick={()=>void download('markdown')} className="rounded border px-3 py-2 disabled:opacity-50">Download readable report</button><button disabled={!canDecide} onClick={()=>void download('json')} className="rounded border px-3 py-2 disabled:opacity-50">Download report data</button></div>
+    <div className="overflow-x-auto"><table className="w-full text-left text-sm"><caption className="py-3 text-left font-semibold">Subject and competitor starting rents</caption><thead><tr><th className="p-2">Bedrooms</th><th className="p-2">Subject mean</th><th className="p-2">Competitor mean</th><th className="p-2">Priced plans</th></tr></thead><tbody>{report.positions.map(p=><tr key={p.bedrooms} className="border-t"><td className="p-2">{p.bedrooms===0?'Studio':p.bedrooms}</td><td className="p-2">{marketMoney(p.subjectMean)}</td><td className="p-2">{marketMoney(p.competitorMean)}</td><td className="p-2">{p.subjectPlans} subject / {p.competitorPlans} competitor</td></tr>)}</tbody></table></div>
+    <details className="rounded border p-3"><summary>Subject property pricing sources ({report.subjectUnits.length})</summary><MarketEvidence evidence={report.subjectUnits.map(u=>({unitId:u.id,unitType:u.unit_type,competitorId:propertyId,competitorName:report.propertyName,historyId:null,recordedAt:u.last_updated_at,captureId:null,sourceType:u.source,sourceUrl:u.source_url,capturedAt:null,fetchedAt:null,effectiveAt:u.effective_at,contentHash:null}))}/></details>
+    <RecordedChanges key={report.reportId} report={report}/>
+    <h4 className="font-semibold">What needs review</h4>
+    {detail.sourceChanged===true&&<label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={ack} onChange={e=>setAck(e.target.checked)}/><span>I understand this review refers to historical evidence, not the current market.</span></label>}
+    {report.recommendations.length===0?<p>No review prompt was produced by the saved comparison rules.</p>:report.recommendations.map(rec=>{const last=detail.decisions.filter(d=>d.kind==='brief.reviewed'&&d.input.recommendationId===rec.id).at(-1);return <article key={rec.id} className="rounded-lg border p-3"><h5 className="font-medium">{rec.title}</h5><p className="mt-2 text-sm">{rec.rationale}</p><p className="mt-2 text-sm text-slate-600">Review: {last?.input.decision==='consider'?'Marked for consideration':last?.input.decision==='dismiss'?'Dismissed':'Not reviewed'}</p><div className="mt-3 flex flex-wrap gap-3"><button disabled={!canDecide||detail.sourceChanged===null||(detail.sourceChanged&&!ack)} onClick={()=>void review(rec,'consider')} className="rounded border px-3 py-2 disabled:opacity-50">Mark for consideration</button><button disabled={!canDecide} onClick={()=>void review(rec,'dismiss')} className="rounded border px-3 py-2 disabled:opacity-50">Dismiss prompt</button></div><p className="mt-2 text-xs text-slate-600">This records your decision; it does not change prices or start another product.</p><MarketEvidence evidence={rec.evidence}/></article>})}
+    <MarketHandoffs initialHandoffId={openHandoffId} key={`${propertyId}:${report.reportId}`} propertyId={propertyId} briefId={report.reportId} version={detail.report.version} sourceCurrent={detail.sourceChanged===false} recommendations={report.recommendations} reviews={detail.decisions} disabled={busy||loading}/>
+    <details className="rounded border p-3"><summary>Calculation limits</summary><ul className="mt-2 list-disc space-y-2 pl-5 text-sm">{[...report.limitations,...report.analysis.limitations].map(t=><li key={t}>{t}</li>)}</ul></details>
+    <MarketEvidence evidence={report.analysis.evidence}/>
+   </>}
+   <details className="rounded border p-3"><summary>Saved report decisions ({detail.decisions.length})</summary><ul className="mt-3 space-y-3 text-sm">{detail.decisions.map(d=><li key={d.id}><p>{d.kind==='brief.exported'?'Download prepared':d.kind==='brief.recovered'?'Completion requested':'Recommendation reviewed'} · {marketDate(d.createdAt)}</p><p>{d.input.reason}</p></li>)}</ul></details>
+  </div>}
+  {legacyCount>0&&<details className="rounded border bg-white p-4"><summary>Earlier briefs ({legacyCount})</summary><p className="mt-2 text-sm text-slate-600">Retained historical reports. Their original input snapshots and confidence claims were not qualified by the new saved-source workflow.</p><button disabled={busy} onClick={()=>void loadLegacy()} className="mt-3 text-indigo-700">Load earlier reports</button><ul className="mt-3 space-y-2">{legacy.map(r=><li key={r.id}><button onClick={()=>void loadLegacy(undefined,r.id)} disabled={busy} className="text-indigo-700">Open historical report · {marketDate(r.createdAt)}</button></li>)}</ul>{legacyCursor&&<button onClick={()=>void loadLegacy(legacyCursor)} disabled={busy}>Older historical reports</button>}{legacyData!==null&&<HistoricalBrief value={legacyData}/>}</details>}
+ </section>
 }

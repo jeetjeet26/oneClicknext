@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import {APICallError} from 'ai'
 import { MockLanguageModelV4 } from 'ai/test'
 import {
   GenerationClaimError,
@@ -150,7 +151,7 @@ describe('generateRevisionContent', () => {
     ])
 
     expect(result.metadata.contextHash).toBe('hash-123')
-    expect(result.metadata.promptVersion).toBe('forgestudio.generation.v1')
+    expect(result.metadata.promptVersion).toBe('forgestudio.generation.v2')
     expect(result.metadata.usage.totalTokens).toBe(300)
   })
 
@@ -248,4 +249,38 @@ describe('generateRevisionContent', () => {
       'instagram:story:1',
     ])
   })
+})
+
+describe('saved raw generation evidence',()=>{
+ it('saves raw output and usage before rejecting unsupported claims',async()=>{
+  const onResult=vi.fn().mockResolvedValue(undefined)
+  const output={...validOutput,claims:[{text:'Invented price',type:'pricing' as const,sourceIds:['missing-source']}]}
+  await expect(generateRevisionContent({bundle,objective:'Test raw evidence',channels:['facebook'],formatPlan:[{platform:'facebook',contentFormat:'text',quantity:1}],model:makeModel(output),onResult})).rejects.toBeInstanceOf(GenerationClaimError)
+  expect(onResult).toHaveBeenCalledOnce();expect(onResult).toHaveBeenCalledWith(expect.objectContaining({output,metadata:expect.objectContaining({usage:expect.objectContaining({totalTokens:300}),contextHash:bundle.contextHash})}))
+ })
+ it('holds materialization if the raw result receipt cannot be saved',async()=>{
+  const onResult=vi.fn().mockRejectedValue(new Error('Saved result unavailable'))
+  await expect(generateRevisionContent({bundle,objective:'Test raw evidence',channels:['facebook'],formatPlan:[{platform:'facebook',contentFormat:'text',quantity:1}],model:makeModel(validOutput),onResult})).rejects.toThrow('Saved result unavailable');expect(onResult).toHaveBeenCalledOnce()
+ })
+})
+
+it('does not retry a retryable model request behind the saved one-call intent',async()=>{
+ let calls=0
+ const model=new MockLanguageModelV4({doGenerate:async()=>{calls++;throw new APICallError({message:'Simulated unavailable provider',url:'https://provider.invalid',requestBodyValues:undefined,statusCode:503,isRetryable:true})}})
+ await expect(generateRevisionContent({bundle,objective:'No silent retries',channels:['facebook'],formatPlan:[{platform:'facebook',contentFormat:'text',quantity:1}],model})).rejects.toThrow('Simulated unavailable provider');expect(calls).toBe(1)
+})
+
+import {buildGenerationPrompt} from './generation'
+const settingsPlan=[{platform:'instagram' as const,contentFormat:'image' as const,quantity:1},{platform:'facebook' as const,contentFormat:'text' as const,quantity:1}]
+it('includes exact saved channel preferences and the stricter caption limit in the prompt',()=>{
+ const prompt=buildGenerationPrompt({bundle:{...bundle,channelSettings:{includeHashtags:false,includeCta:false,maxCaptionLength:150}},objective:'Introduce the community',channels:['instagram','facebook'],formatPlan:settingsPlan})
+ expect(prompt.system).toContain('Set callToAction to null');expect(prompt.prompt).toContain('caption ≤ 150 chars');expect(prompt.prompt).toContain('≤ 0 hashtags')
+})
+it.each(['hashtags','caption hashtag','cta','caption limit'])('rejects generated content that violates saved %s preferences without changing its raw result',async(kind)=>{
+ const output=structuredClone(validOutput);output.variants.forEach(v=>{v.hashtags=[];v.callToAction=null})
+ if(kind==='hashtags')output.variants[0].hashtags=['unexpected'];if(kind==='caption hashtag')output.variants[0].caption+=' #unexpected';if(kind==='cta')output.variants[0].callToAction='Book a tour';if(kind==='caption limit')output.variants[0].caption='A'.repeat(181)
+ const receipt=vi.fn();await expect(generateRevisionContent({bundle:{...bundle,channelSettings:{includeHashtags:false,includeCta:false,maxCaptionLength:180}},objective:'Introduce the community',channels:['instagram','facebook'],formatPlan:settingsPlan,model:makeModel(output),onResult:receipt})).rejects.toThrow(/saved studio/);expect(receipt).toHaveBeenCalledOnce()
+})
+it('materializes valid output under saved preferences without requiring optional hashtags or CTA',async()=>{
+ const output=structuredClone(validOutput);output.variants.forEach(v=>{v.hashtags=[];v.callToAction=null});const result=await generateRevisionContent({bundle:{...bundle,channelSettings:{includeHashtags:false,includeCta:false,maxCaptionLength:180}},objective:'Introduce the community',channels:['instagram','facebook'],formatPlan:settingsPlan,model:makeModel(output)});expect(result.content.variants.every(v=>v.hashtags.length===0&&v.callToAction===null)).toBe(true)
 })

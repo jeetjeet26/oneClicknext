@@ -1,3 +1,5 @@
+import { BrandClaim } from './brand-evidence-contracts'
+import { z } from 'zod'
 import { createAdminClient } from '@/utils/supabase/admin'
 import { sha256Hex } from '@/utils/sha256'
 import {
@@ -19,6 +21,7 @@ type CompetitiveSourceRow = {
   targetAudience: string | null
   messagingThemes: string[]
   observedAt: string | null
+  reviewedClaims: z.infer<typeof BrandClaim>[]
 }
 
 function canonicalize(value: unknown): unknown {
@@ -61,11 +64,11 @@ function deriveMarketGaps(evidence: CompetitivePositioningEvidence[]): string[] 
 
   const gaps = candidates
     .filter(([, signals]) => signals.every(signal => !corpus.includes(signal)))
-    .map(([gap]) => gap)
+    .map(([gap]) => `Candidate idea within the reviewed source selection: ${gap}; validate with the client`)
 
   return gaps.length > 0
     ? gaps
-    : ['Differentiate through a sharper, property-specific expression of established category themes']
+    : ['Candidate idea: explore property-specific expression; this limited source selection cannot establish a market gap']
 }
 
 function deriveWebsiteExpressionOpportunities(
@@ -88,6 +91,7 @@ export function buildCompetitivePositioningSnapshot(input: {
   vertical: BrandForgeVertical
   generatedAt: string
   rows: CompetitiveSourceRow[]
+  activeCompetitors?: number
 }): CompetitivePositioningSnapshot {
   const evidence = input.rows.map<CompetitivePositioningEvidence>(row => ({
     competitorId: row.competitorId,
@@ -97,7 +101,8 @@ export function buildCompetitivePositioningSnapshot(input: {
     targetAudience: normalizedText(row.targetAudience),
     messagingThemes: [...new Set(row.messagingThemes.map(value => value.trim()).filter(Boolean))].sort(),
     source: {
-      sourceType: 'competitor_brand_intelligence',
+      sourceType: 'competitor_brand_review',
+      reviewedClaims: row.reviewedClaims,
       sourceId: row.intelligenceId,
       captureId: row.captureId,
       sourceUrl: row.sourceUrl,
@@ -105,9 +110,9 @@ export function buildCompetitivePositioningSnapshot(input: {
     },
   })).sort((left, right) => left.competitorId.localeCompare(right.competitorId))
 
-  const sourceHash = hashCanonical(evidence)
+  const sourceHash = hashCanonical({evidence,activeCompetitors:input.activeCompetitors??evidence.length})
   const causalHash = hashCanonical({
-    algorithm: 'brandforge-competitive-positioning-v1',
+    algorithm: 'brandforge-reviewed-competitive-positioning-v2',
     propertyId: input.propertyId,
     vertical: input.vertical,
     sourceHash,
@@ -120,6 +125,7 @@ export function buildCompetitivePositioningSnapshot(input: {
     vertical: input.vertical,
     generatedAt: input.generatedAt,
     evidence,
+    coverage: {activeCompetitors: input.activeCompetitors ?? evidence.length, reviewedCompetitors:evidence.length, limitations:'Only current, operator-reviewed source quotations are included. Website claims and interpretations are not independently verified. Missing evidence does not establish a market gap; observed promotions may no longer be active.'},
     marketGaps,
     websiteExpressionOpportunities:
       deriveWebsiteExpressionOpportunities(evidence, marketGaps),
@@ -132,53 +138,14 @@ export async function loadCompetitivePositioningSnapshot(input: {
   propertyId: string
   vertical: BrandForgeVertical
 }): Promise<CompetitivePositioningSnapshot> {
-  const supabase = createAdminClient()
-  const { data, error } = await supabase
-    .from('competitors')
-    .select(`
-      id,
-      name,
-      website_url,
-      brand_intel:competitor_brand_intelligence(
-        id,
-        capture_id,
-        positioning_statement,
-        brand_voice,
-        target_audience,
-        key_messaging_themes,
-        last_analyzed_at
-      )
-    `)
-    .eq('property_id', input.propertyId)
-    .eq('is_active', true)
-    .order('name')
-
-  if (error) {
-    throw new Error(`Unable to load MarketVision positioning evidence: ${error.message}`)
-  }
-
-  const rows: CompetitiveSourceRow[] = (data || []).flatMap(competitor => {
-    const intelligence = Array.isArray(competitor.brand_intel)
-      ? competitor.brand_intel[0]
-      : competitor.brand_intel
-    if (!intelligence?.id) return []
-    return [{
-      competitorId: competitor.id,
-      competitorName: competitor.name,
-      sourceUrl: competitor.website_url,
-      intelligenceId: intelligence.id,
-      captureId: intelligence.capture_id,
-      positioning: intelligence.positioning_statement,
-      brandVoice: intelligence.brand_voice,
-      targetAudience: intelligence.target_audience,
-      messagingThemes: intelligence.key_messaging_themes || [],
-      observedAt: intelligence.last_analyzed_at,
-    }]
+  const supabase=createAdminClient() as unknown as {rpc:(name:string,args:Record<string,unknown>)=>Promise<{data:unknown;error:unknown}>}
+  const {data,error}=await supabase.rpc('read_marketvision_brand_context',{p_property_id:input.propertyId})
+  if(error)throw new Error('The complete reviewed MarketVision evidence could not be loaded.')
+  const parsed=z.object({propertyId:z.string(),activeCompetitors:z.number().int().nonnegative(),evidence:z.array(z.object({competitor_id:z.string(),competitor_name:z.string(),review_id:z.string(),request_id:z.string(),capture_id:z.string(),source_url:z.string(),observed_at:z.string(),claims:z.array(BrandClaim.extend({sourceIndex:z.number().int()}))}))}).safeParse(data)
+  if(!parsed.success||parsed.data.propertyId!==input.propertyId)throw new Error('The complete reviewed MarketVision evidence could not be confirmed.')
+  const rows:CompetitiveSourceRow[]=parsed.data.evidence.map(row=>{
+    const text=(category:string)=>row.claims.filter(c=>c.category===category).map(c=>c.statement).join(' ')||null
+    return {competitorId:row.competitor_id,competitorName:row.competitor_name,intelligenceId:row.review_id,captureId:row.capture_id,sourceUrl:row.source_url,observedAt:new Date(row.observed_at).toISOString(),positioning:text('positioning'),brandVoice:text('voice'),targetAudience:text('audience'),messagingThemes:row.claims.filter(c=>c.category==='messaging').map(c=>c.statement),reviewedClaims:row.claims.map(claim=>({category:claim.category,kind:claim.kind,statement:claim.statement,quote:claim.quote}))}
   })
-
-  return buildCompetitivePositioningSnapshot({
-    ...input,
-    generatedAt: new Date().toISOString(),
-    rows,
-  })
+  return buildCompetitivePositioningSnapshot({...input,generatedAt:new Date().toISOString(),rows,activeCompetitors:parsed.data.activeCompetitors})
 }

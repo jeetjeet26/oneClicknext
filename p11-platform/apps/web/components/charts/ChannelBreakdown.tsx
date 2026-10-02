@@ -14,9 +14,9 @@ import { getMarketingChannelLabel, normalizeMarketingChannelId } from '@/utils/a
 
 type ChannelData = {
   channel: string
-  spend: number
+  spend: number | null
   conversions: number
-  cpa: number
+  cpa: number | null
   color: string
 }
 
@@ -71,7 +71,7 @@ export function ChannelBreakdown({
   const metricConfig = {
     spend: { label: 'Spend', prefix: '$', suffix: '' },
     conversions: { label: 'Conversions', prefix: '', suffix: '' },
-    cpa: { label: 'Cost per Acquisition', prefix: '$', suffix: '' },
+    cpa: { label: 'Cost per reported conversion', prefix: '$', suffix: '' },
   }
 
   const config = metricConfig[metric]
@@ -115,9 +115,9 @@ export function ChannelBreakdown({
             itemStyle={{ color: '#fff' }}
             formatter={(value) => {
               const numeric =
-                typeof value === 'number' ? value : Number(value ?? 0)
+                value==null?null:typeof value === 'number' ? value : Number(value)
               return [
-                `${config.prefix}${numeric.toLocaleString()}${config.suffix}`,
+                numeric===null?'Not available':`${config.prefix}${numeric.toLocaleString()}${config.suffix}`,
                 config.label
               ] as [string, string]
             }}
@@ -142,7 +142,7 @@ export function ChannelBreakdown({
               />
               <span className="text-sm text-slate-600">{channel.displayName}</span>
               <span className="text-sm font-medium text-slate-900">
-                {config.prefix}{channel[metric].toLocaleString()}{config.suffix}
+                {channel[metric]===null?'Not available':config.prefix+channel[metric].toLocaleString()+config.suffix}
               </span>
             </div>
           ))}

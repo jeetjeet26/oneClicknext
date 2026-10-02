@@ -13,6 +13,8 @@ import {
 } from 'lucide-react'
 
 export interface BrandForgeCompetitor {
+  evidenceStatus?: 'current' | 'stale' | 'unverified'
+  analyzedAt?: string | null
   id: string
   name: string
   address: string | null
@@ -64,6 +66,7 @@ export function BrandForgeCompetitorCard({ competitor }: BrandForgeCompetitorCar
 
   return (
     <div className="border border-slate-200 rounded-xl bg-white hover:border-indigo-300 hover:shadow-md transition-all duration-200 overflow-hidden">
+      {competitor.evidenceStatus && <div className="border-b border-slate-100 bg-slate-50 px-5 py-2 text-xs text-slate-600">{competitor.evidenceStatus === 'current' ? 'Current evidence at snapshot' : competitor.evidenceStatus === 'stale' ? 'Older evidence — review before use' : 'Evidence needs verification'}{competitor.analyzedAt ? ` · Analyzed ${new Date(competitor.analyzedAt).toLocaleDateString()}` : ''}</div>}
       {/* Header */}
       <div className="p-5 border-b border-slate-100">
         <div className="flex items-start justify-between mb-3">
@@ -154,7 +157,7 @@ export function BrandForgeCompetitorCard({ competitor }: BrandForgeCompetitorCar
         {competitor.positioning && competitor.positioning !== 'Not analyzed' && (
           <div className="bg-indigo-50 border border-indigo-100 rounded-lg p-3">
             <p className="text-sm text-indigo-800 italic leading-relaxed">
-              "{competitor.positioning}"
+              &ldquo;{competitor.positioning}&rdquo;
             </p>
           </div>
         )}

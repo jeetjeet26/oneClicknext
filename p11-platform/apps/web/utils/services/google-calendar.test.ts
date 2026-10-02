@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const createServiceClientMock = vi.fn()
 const fetchMock = vi.fn()
+vi.mock('./calendar-credentials',()=>({renewCalendarCredentials:vi.fn(async()=>({accessToken:'access-token',expiresAt:'2099-01-01T00:00:00Z'}))}))
 
 vi.mock('@/utils/supabase/admin', () => ({
   createServiceClient: createServiceClientMock,
@@ -10,6 +11,7 @@ vi.mock('@/utils/supabase/admin', () => ({
 describe('google calendar service', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.stubEnv('OUTBOUND_DELIVERY_PAUSED','false')
     vi.resetModules()
     vi.stubGlobal('fetch', fetchMock)
   })
@@ -17,15 +19,16 @@ describe('google calendar service', () => {
   afterEach(() => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
   })
 
-  it('normalizes nullable calendar config fields into safe defaults', async () => {
+  it('keeps configured timezone and does not invent token health', async () => {
     createServiceClientMock.mockReturnValue({
       from: vi.fn(() => ({
         select: vi.fn(() => ({
           eq: vi.fn(() => ({
             eq: vi.fn(() => ({
-              single: vi.fn().mockResolvedValue({
+              maybeSingle: vi.fn().mockResolvedValue({
                 data: {
                   id: 'calendar-1',
                   property_id: 'property-1',
@@ -37,7 +40,7 @@ describe('google calendar service', () => {
                   working_hours: null,
                   tour_duration_minutes: null,
                   buffer_minutes: null,
-                  timezone: null,
+                  timezone: 'America/Chicago',
                   token_status: null,
                 },
                 error: null,
@@ -59,7 +62,7 @@ describe('google calendar service', () => {
       tour_duration_minutes: 30,
       buffer_minutes: 15,
       timezone: 'America/Chicago',
-      token_status: 'healthy',
+      token_status: 'unknown',
     })
     expect(config?.working_hours.mon).toEqual({
       start: '09:00',
@@ -72,7 +75,7 @@ describe('google calendar service', () => {
     const { generateAvailableSlots } = await import('./google-calendar')
 
     const slots = generateAvailableSlots(
-      new Date('2026-03-09T00:00:00'),
+      '2026-03-09',
       {
         id: 'calendar-1',
         property_id: 'property-1',
@@ -104,7 +107,8 @@ describe('google calendar service', () => {
           start: '2026-03-09T14:00:00.000Z',
           end: '2026-03-09T15:00:00.000Z',
         },
-      ]
+      ],
+      new Date('2026-03-01T00:00:00Z')
     )
 
     expect(slots).toEqual([
@@ -114,7 +118,7 @@ describe('google calendar service', () => {
     ])
   })
 
-  it('creates Google Calendar events using local wall-clock times', async () => {
+  it('creates Google Calendar events using exact instants and the property timezone', async () => {
     fetchMock.mockResolvedValue({
       ok: true,
       json: vi.fn().mockResolvedValue({
@@ -169,11 +173,11 @@ describe('google calendar service', () => {
     const body = JSON.parse(requestInit.body as string)
 
     expect(body.start).toEqual({
-      dateTime: '2026-03-21T10:00:00',
+      dateTime: '2026-03-21T15:00:00.000Z',
       timeZone: 'America/Chicago',
     })
     expect(body.end).toEqual({
-      dateTime: '2026-03-21T10:45:00',
+      dateTime: '2026-03-21T15:45:00.000Z',
       timeZone: 'America/Chicago',
     })
     expect(body.description).toBe('Property Tour with Jane Doe\n\nContact: jane@example.com')
@@ -186,8 +190,8 @@ describe('google calendar service', () => {
       json: vi.fn().mockResolvedValue({
         id: 'event-1',
         status: 'confirmed',
-        start: { dateTime: '2026-03-21T10:00:00' },
-        end: { dateTime: '2026-03-21T10:45:00' },
+        start: { dateTime: '2026-03-21T10:00:00-05:00' },
+        end: { dateTime: '2026-03-21T10:45:00-05:00' },
       }),
     })
 
@@ -225,8 +229,8 @@ describe('google calendar service', () => {
     expect(event).toEqual({
       id: 'event-1',
       status: 'confirmed',
-      startDateTime: '2026-03-21T10:00:00',
-      endDateTime: '2026-03-21T10:45:00',
+      startDateTime: '2026-03-21T15:00:00.000Z',
+      endDateTime: '2026-03-21T15:45:00.000Z',
     })
   })
 })

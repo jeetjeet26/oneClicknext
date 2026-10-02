@@ -1,0 +1,9 @@
+import {z} from 'zod'
+import {responseIdSchema} from './response-contracts'
+export function reviewSourceUrl(platform:string,value:string){if(!value)return true;try{const u=new URL(value);if(u.protocol!=='https:'||u.username||u.password||u.port)return false;return platform==='google'?(['google.com','www.google.com'].includes(u.hostname)&&u.pathname.startsWith('/maps'))||(u.hostname==='maps.google.com'&&u.pathname.startsWith('/')):['yelp.com','www.yelp.com'].includes(u.hostname)&&/^\/biz\/[A-Za-z0-9_-]+\/?$/.test(u.pathname)}catch{return false}}
+const uuid=responseIdSchema,reason=z.string().trim().min(3).max(2000),common={propertyId:uuid,requestId:uuid,reason}
+export const connectionWriteSchema=z.discriminatedUnion('operation',[
+ z.object({...common,operation:z.literal('save'),connectionId:uuid.nullable(),expectedVersion:z.number().int().min(0),platform:z.enum(['google','yelp']),providerId:z.string().trim().regex(/^[A-Za-z0-9_-]{1,300}$/),sourceUrl:z.string().trim().max(2048),method:z.enum(['api','scraper']),frequency:z.enum(['manual','hourly','daily']),replaceTarget:z.boolean()}).strict(),
+ z.object({...common,operation:z.literal('disconnect'),connectionId:uuid,expectedVersion:z.number().int().positive()}).strict(),
+]).superRefine((input,ctx)=>{if(input.operation==='save'){if(!reviewSourceUrl(input.platform,input.sourceUrl))ctx.addIssue({code:'custom',message:'Choose the matching provider public page',path:['sourceUrl']});if(input.platform==='yelp'&&input.method!=='api')ctx.addIssue({code:'custom',message:'Yelp supports API review intake',path:['method']});if((input.connectionId===null)!==(input.expectedVersion===0))ctx.addIssue({code:'custom',message:'Reload the saved source version',path:['expectedVersion']})}})
+export const connectionReadSchema=z.object({propertyId:uuid,connectionId:uuid.optional(),cursor:uuid.optional()}).strict()

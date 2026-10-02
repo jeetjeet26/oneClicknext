@@ -1,16 +1,14 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import Link from 'next/link'
 import { 
   Sparkles, 
   RefreshCw, 
-  Loader2, 
   Palette,
-  Type,
   Users,
   MessageSquare,
   TrendingUp,
-  Eye
 } from 'lucide-react'
 
 interface BrandInsights {
@@ -44,51 +42,24 @@ const BRAND_VOICE_COLORS: Record<string, { bg: string; text: string; border: str
 export function PropertyBrandInsightsCard({ propertyId, propertyName }: PropertyBrandInsightsCardProps) {
   const [insights, setInsights] = useState<BrandInsights | null>(null)
   const [loading, setLoading] = useState(true)
-  const [analyzing, setAnalyzing] = useState(false)
-
-  useEffect(() => {
-    fetchInsights()
-  }, [propertyId])
-
-  async function fetchInsights() {
-    setLoading(true)
-    try {
-      // Check if insights already exist in property settings
-      const res = await fetch(`/api/properties/${propertyId}`)
-      const data = await res.json()
-      
-      if (data.property?.settings?.brand_insights) {
-        setInsights(data.property.settings.brand_insights)
-      } else {
-        // No insights yet - analyze now
-        await analyzeDocuments()
-      }
-    } catch (err) {
-      console.error('Failed to fetch insights:', err)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  async function analyzeDocuments() {
-    setAnalyzing(true)
-    try {
-      const res = await fetch('/api/brandforge/analyze-existing', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ propertyId })
-      })
-
-      if (res.ok) {
-        const data = await res.json()
-        setInsights(data.insights)
-      }
-    } catch (err) {
-      console.error('Failed to analyze documents:', err)
-    } finally {
-      setAnalyzing(false)
-    }
-  }
+  const [error,setError]=useState<string|null>(null)
+  const [revision,setRevision]=useState(0)
+  useEffect(()=>{
+    let active=true
+    const controller=new AbortController()
+    setLoading(true);setInsights(null);setError(null)
+    void (async()=>{
+      try{
+        const response=await fetch(`/api/properties/${propertyId}`,{cache:'no-store',signal:controller.signal})
+        const data=await response.json()
+        if(!response.ok)throw new Error(data.error||'Saved brand notes are unavailable.')
+        const notes=data.property?.settings?.brand_insights
+        if(active&&notes&&typeof notes==='object'&&typeof notes.analyzedAt==='string')setInsights(notes)
+      }catch(e){if(active)setError(e instanceof Error?e.message:'Saved brand notes are unavailable.')}
+      finally{if(active)setLoading(false)}
+    })()
+    return()=>{active=false;controller.abort()}
+  },[propertyId,revision])
 
   if (loading) {
     return (
@@ -103,7 +74,11 @@ export function PropertyBrandInsightsCard({ propertyId, propertyName }: Property
   }
 
   if (!insights) {
-    return null
+    return <section className="rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-700" aria-label="Saved brand notes">
+      {error?<p role="alert">{error}</p>:<p>No saved brand notes for {propertyName}. Review sources in BrandForge before starting an analysis.</p>}
+      {error&&<button type="button" className="mr-4 mt-3 underline" onClick={()=>setRevision(v=>v+1)}>Retry saved brand notes</button>}
+      <Link className="mt-3 inline-block underline" href="/dashboard/brandforge">Review brand sources</Link>
+    </section>
   }
 
   const voiceColors = insights.brandVoice 
@@ -125,10 +100,10 @@ export function PropertyBrandInsightsCard({ propertyId, propertyName }: Property
         <div>
           <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
             <Sparkles className="w-5 h-5 text-indigo-600" />
-            Brand Insights
+            Previously saved brand notes
           </h3>
           <p className="text-sm text-gray-500 mt-1">
-            Extracted from {insights.documentCount} knowledge base documents
+            Recorded from {insights.documentCount} documents; current source freshness has not been checked.
           </p>
         </div>
         
@@ -252,12 +227,11 @@ export function PropertyBrandInsightsCard({ propertyId, propertyName }: Property
         </div>
         
         <button
-          onClick={analyzeDocuments}
-          disabled={analyzing}
+          onClick={()=>setRevision(v=>v+1)}
           className="text-sm text-indigo-600 hover:text-indigo-700 font-medium flex items-center gap-1 disabled:opacity-50"
         >
-          <RefreshCw className={`w-3.5 h-3.5 ${analyzing ? 'animate-spin' : ''}`} />
-          Refresh
+          <RefreshCw className="w-3.5 h-3.5" />
+          Refresh saved notes
         </button>
       </div>
     </div>

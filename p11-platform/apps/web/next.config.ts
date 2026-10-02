@@ -42,12 +42,14 @@ const nextConfig: NextConfig = {
   allowedDevOrigins: ["127.0.0.1"],
   reactCompiler: true,
   serverExternalPackages: [
+    "unpdf",
     "ssh2",
     "@browserbasehq/sdk",
     "playwright-core",
     "axe-core",
   ],
   outputFileTracingIncludes: {
+    "/api/knowledge/files": ["./runtime-assets/knowledge-pdf-worker.cjs", "./node_modules/unpdf/**/*"],
     "/.well-known/workflow/v1/step": ["./runtime-assets/*"],
     "/api/siteforge/browser-certifier": [
       "./node_modules/playwright-core/**/*",

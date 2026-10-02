@@ -173,3 +173,14 @@ describe('upsertLeadByContact', () => {
     expect(activityInsert).not.toHaveBeenCalled()
   })
 })
+
+it('uses the scoped operator recorder for repeat submissions without direct activity-table access',async()=>{
+ const recordOperatorRepeat=vi.fn().mockResolvedValue(undefined)
+ const query:Record<string,ReturnType<typeof vi.fn>>={}
+ for(const name of ['select','eq','update'])query[name]=vi.fn(()=>query)
+ query.maybeSingle=vi.fn().mockResolvedValue({data:{id:'existing',notes:'Original'},error:null});query.single=vi.fn().mockResolvedValue({data:{id:'existing',status:'contacted'},error:null})
+ const client={from:vi.fn((table:string)=>{if(table!=='leads')throw new Error('Direct activity access forbidden');return query})}
+ const input={client:client as never,propertyId:'property',existingLeadId:'existing',create:{status:'new' as const},update:{notes:'Updated'},repeatActivity:{description:'Repeated console inquiry'},recordOperatorRepeat}
+ expect((await upsertLeadByContact(input)).isExisting).toBe(true);expect(recordOperatorRepeat).toHaveBeenCalledWith('existing',input.repeatActivity)
+ recordOperatorRepeat.mockRejectedValue(new Error('Note could not be recorded'));await expect(upsertLeadByContact(input)).rejects.toThrow('Note could not be recorded')
+})

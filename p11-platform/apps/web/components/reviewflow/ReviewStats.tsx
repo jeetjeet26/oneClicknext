@@ -1,10 +1,11 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { 
   Star, TrendingUp, TrendingDown, MessageCircle, 
   AlertTriangle, Clock, BarChart3, Loader2
 } from 'lucide-react'
+import {reviewJson} from './ReviewCasePanel'
 import { PlatformIcon } from './PlatformIcon'
 import { SentimentBadge } from './SentimentBadge'
 
@@ -14,9 +15,14 @@ interface ReviewStatsProps {
 }
 
 interface Stats {
+  ratedReviews:number
+  coverageNote:string
+  dateFallbackReviews:number
+  analysisCoverage:{current:number;staffReview:number;unclassified:number}
+  responseEvidence:{staffReported:number;legacyUnverified:number;providerConfirmed:number}
   totalReviews: number
-  avgRating: number
-  responseRate: number
+  avgRating: number | null
+  responseRate: number | null
   sentimentCounts: {
     positive: number
     neutral: number
@@ -55,32 +61,20 @@ interface Stats {
     sentiment: string | null
     platform: string
     created_at: string
+    observed_at:string
+    date_basis:string
   }>
   periodDays: number
 }
 
-export function ReviewStats({ propertyId, days = 0 }: ReviewStatsProps) {
+export function ReviewStats(props:ReviewStatsProps){return <Statistics key={`${props.propertyId}:${props.days||0}`} {...props}/>}
+function Statistics({ propertyId, days = 0 }: ReviewStatsProps) {
   const [stats, setStats] = useState<Stats | null>(null)
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    const fetchStats = async () => {
-      setLoading(true)
-      try {
-        const res = await fetch(`/api/reviewflow/stats?propertyId=${propertyId}&days=${days}`)
-        if (res.ok) {
-          const data = await res.json()
-          setStats(data.stats)
-        }
-      } catch (error) {
-        console.error('Error fetching stats:', error)
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    fetchStats()
-  }, [propertyId, days])
+  const [error,setError]=useState(''),[reload,setReload]=useState(0)
+  const refresh=useCallback(()=>{setLoading(true);setError('');setStats(null);setReload(n=>n+1)},[])
+  useEffect(()=>{const c=new AbortController();void reviewJson<{stats:Stats}>(`/api/reviewflow/stats?propertyId=${propertyId}&days=${days}`,{signal:AbortSignal.any([c.signal,AbortSignal.timeout(20000)])}).then(r=>{if(!c.signal.aborted)setStats(r.stats)}).catch(e=>{if(!c.signal.aborted)setError(e instanceof Error?e.message:'Statistics could not be loaded.')}).finally(()=>{if(!c.signal.aborted)setLoading(false)});return()=>c.abort()},[propertyId,days,reload])
 
   if (loading) {
     return (
@@ -90,26 +84,28 @@ export function ReviewStats({ propertyId, days = 0 }: ReviewStatsProps) {
     )
   }
 
-  if (!stats) {
+  if (error||!stats) {
     return (
       <div className="text-center py-12 text-slate-500">
-        Unable to load statistics
+        <p role="alert">{error||"Statistics could not be loaded."}</p><button className="mt-2 rounded-lg border px-3 py-2 text-sm" onClick={refresh}>Retry review statistics</button>
       </div>
     )
   }
 
   return (
-    <div className="space-y-6">
+    <section aria-label="Review statistics" className="space-y-6">
+      <p className="text-sm text-slate-500">{stats.coverageNote}</p>
+      <p className="text-sm text-slate-500">{stats.ratedReviews} rated reviews · {stats.dateFallbackReviews} reviews use import date. {stats.responseEvidence.staffReported} current responses have staff publication reports; {stats.responseEvidence.legacyUnverified} have only legacy records; {stats.responseEvidence.providerConfirmed} have qualified provider verification.</p>
       {/* Top Stats */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatCard
           icon={Star}
           iconColor="text-amber-500"
           iconBg="bg-amber-50 dark:bg-amber-900/20"
           label="Average Rating"
-          value={stats.avgRating.toFixed(1)}
-          suffix="/5"
-          trend={stats.avgRating >= 4 ? 'up' : stats.avgRating < 3 ? 'down' : undefined}
+          value={stats.avgRating===null?"—":stats.avgRating.toFixed(1)}
+          suffix={stats.avgRating===null?undefined:"/5"}
+          sublabel={stats.avgRating===null?"No rated reviews":undefined}
         />
         <StatCard
           icon={MessageCircle}
@@ -123,9 +119,9 @@ export function ReviewStats({ propertyId, days = 0 }: ReviewStatsProps) {
           icon={Clock}
           iconColor="text-emerald-500"
           iconBg="bg-emerald-50 dark:bg-emerald-900/20"
-          label="Response Rate"
-          value={`${stats.responseRate}%`}
-          trend={stats.responseRate >= 80 ? 'up' : stats.responseRate < 50 ? 'down' : undefined}
+          label="Recorded response coverage"
+          value={stats.responseRate===null?"—":`${stats.responseRate}%`}
+          sublabel={stats.responseRate===null?"No eligible reviews":"Excludes skipped responses"}
         />
         <StatCard
           icon={AlertTriangle}
@@ -150,13 +146,14 @@ export function ReviewStats({ propertyId, days = 0 }: ReviewStatsProps) {
         />
       </div>
 
-      <div className="grid grid-cols-2 gap-6">
+      <div className="grid gap-6 md:grid-cols-2">
         {/* Sentiment Breakdown */}
         <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6">
           <h3 className="font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
             <BarChart3 className="w-5 h-5 text-indigo-500" />
-            Sentiment Breakdown
+            Current Analysis Sentiment
           </h3>
+          <p className="mb-3 text-sm text-slate-500">{stats.analysisCoverage.current} current analyses; {stats.analysisCoverage.staffReview} need staff review; {stats.analysisCoverage.unclassified} have no current analysis.</p>
           <div className="space-y-4">
             <SentimentBar 
               label="Positive" 
@@ -286,7 +283,7 @@ export function ReviewStats({ propertyId, days = 0 }: ReviewStatsProps) {
                     {review.reviewer_name || 'Anonymous'}
                   </p>
                   <p className="text-xs text-slate-500">
-                    {new Date(review.created_at).toLocaleDateString()}
+                    {new Date(review.observed_at).toLocaleDateString()}{review.date_basis==='import_date'?' (import date)':''}
                   </p>
                 </div>
                 {review.rating && (
@@ -309,7 +306,7 @@ export function ReviewStats({ propertyId, days = 0 }: ReviewStatsProps) {
           </p>
         )}
       </div>
-    </div>
+    </section>
   )
 }
 

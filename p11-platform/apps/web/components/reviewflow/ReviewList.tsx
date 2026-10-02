@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Search, Filter, RefreshCw, Loader2 } from 'lucide-react'
 import { ReviewCard } from './ReviewCard'
 import { PlatformIcon } from './PlatformIcon'
@@ -38,7 +38,8 @@ type FilterOption = {
 
 const PAGE_SIZE = 25
 
-export function ReviewList({ propertyId, onSelectReview, onGenerateResponse }: ReviewListProps) {
+export function ReviewList(props:ReviewListProps){return <ReviewListWorkspace key={props.propertyId} {...props}/>}
+function ReviewListWorkspace({ propertyId, onSelectReview, onGenerateResponse }: ReviewListProps) {
   const [reviews, setReviews] = useState<Review[]>([])
   const [total, setTotal] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
@@ -47,67 +48,16 @@ export function ReviewList({ propertyId, onSelectReview, onGenerateResponse }: R
   const [filters, setFilters] = useState<FilterOption>({})
   const [showFilters, setShowFilters] = useState(false)
 
-  const buildParams = (offset: number) => {
-    const params = new URLSearchParams({
-      propertyId,
-      limit: String(PAGE_SIZE),
-      offset: String(offset),
-    })
-    if (filters.platform) params.append('platform', filters.platform)
-    if (filters.sentiment) params.append('sentiment', filters.sentiment)
-    if (filters.status) params.append('status', filters.status)
-    return params
-  }
+  const [error,setError]=useState(''),[search,setSearch]=useState('')
+  const request=useRef<AbortController|null>(null)
+  const params=useCallback((offset:number)=>{const q=new URLSearchParams({propertyId,limit:String(PAGE_SIZE),offset:String(offset)});if(filters.platform)q.set('platform',filters.platform);if(filters.sentiment)q.set('sentiment',filters.sentiment);if(filters.status)q.set('status',filters.status);if(search)q.set('search',search);return q},[propertyId,filters,search])
+  const fetchReviews=useCallback(async()=>{request.current?.abort();const c=new AbortController();request.current=c;setLoading(true);setLoadingMore(false);setError('');setReviews([]);setTotal(null);try{const r=await fetch(`/api/reviewflow/reviews?${params(0)}`,{cache:'no-store',signal:AbortSignal.any([c.signal,AbortSignal.timeout(20000)])});const body=await r.json();if(!r.ok)throw new Error(body.error||'Reviews could not be loaded.');if(!c.signal.aborted){setReviews(body.reviews);setTotal(body.total)}}catch(e){if(!c.signal.aborted)setError(e instanceof Error?e.message:'Reviews could not be loaded.')}finally{if(!c.signal.aborted)setLoading(false)}},[params])
+  const loadMore=async()=>{if(loadingMore)return;request.current?.abort();const c=new AbortController();request.current=c;setLoadingMore(true);setError('');try{const r=await fetch(`/api/reviewflow/reviews?${params(reviews.length)}`,{cache:'no-store',signal:AbortSignal.any([c.signal,AbortSignal.timeout(20000)])});const body=await r.json();if(!r.ok)throw new Error(body.error||'More reviews could not be loaded.');if(!c.signal.aborted){setReviews(previous=>[...previous,...body.reviews.filter((r:Review)=>!previous.some(p=>p.id===r.id))]);setTotal(body.total)}}catch(e){if(!c.signal.aborted)setError(e instanceof Error?e.message:'More reviews could not be loaded.')}finally{if(!c.signal.aborted)setLoadingMore(false)}}
+  useEffect(()=>{const timer=setTimeout(()=>setSearch(searchQuery.trim()),250);return()=>clearTimeout(timer)},[searchQuery])
+  useEffect(()=>{void fetchReviews();return()=>request.current?.abort()},[fetchReviews])
+  const hasMore=total!==null&&reviews.length<total,filteredReviews=reviews
 
-  const fetchReviews = async () => {
-    setLoading(true)
-    try {
-      const res = await fetch(`/api/reviewflow/reviews?${buildParams(0)}`)
-      if (res.ok) {
-        const data = await res.json()
-        setReviews(data.reviews || [])
-        setTotal(typeof data.total === 'number' ? data.total : null)
-      }
-    } catch (error) {
-      console.error('Error fetching reviews:', error)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const loadMore = async () => {
-    setLoadingMore(true)
-    try {
-      const res = await fetch(`/api/reviewflow/reviews?${buildParams(reviews.length)}`)
-      if (res.ok) {
-        const data = await res.json()
-        setReviews(prev => [...prev, ...(data.reviews || [])])
-        setTotal(typeof data.total === 'number' ? data.total : null)
-      }
-    } catch (error) {
-      console.error('Error fetching more reviews:', error)
-    } finally {
-      setLoadingMore(false)
-    }
-  }
-
-  const hasMore = total !== null && reviews.length < total
-
-  useEffect(() => {
-    fetchReviews()
-  }, [propertyId, filters])
-
-  const filteredReviews = reviews.filter(review => {
-    if (!searchQuery) return true
-    const query = searchQuery.toLowerCase()
-    return (
-      review.reviewer_name?.toLowerCase().includes(query) ||
-      review.review_text.toLowerCase().includes(query) ||
-      review.topics?.some(t => t.toLowerCase().includes(query))
-    )
-  })
-
-  const platforms = ['google', 'yelp', 'apartments_com', 'facebook']
+  const platforms = ['google', 'yelp', 'apartments_com', 'facebook', 'other']
   const sentiments = ['positive', 'neutral', 'negative']
   const statuses = [
     { value: 'pending', label: 'Needs Response' },
@@ -117,14 +67,16 @@ export function ReviewList({ propertyId, onSelectReview, onGenerateResponse }: R
   ]
 
   return (
-    <div className="space-y-4">
+    <section aria-label="Property reviews" className="space-y-4">
       {/* Search and Filters */}
       <div className="flex items-center gap-4">
         <div className="flex-1 relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
           <input
             type="text"
-            placeholder="Search reviews..."
+            aria-label="Search all review text and names"
+            placeholder="Search all review text and names"
+            maxLength={200}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full pl-10 pr-4 py-2 border border-slate-200 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
@@ -133,21 +85,22 @@ export function ReviewList({ propertyId, onSelectReview, onGenerateResponse }: R
         <button
           onClick={() => setShowFilters(!showFilters)}
           className={`flex items-center gap-2 px-4 py-2 border rounded-lg transition-colors ${
-            showFilters || Object.keys(filters).length > 0
+            showFilters || Object.values(filters).filter(Boolean).length > 0
               ? 'border-indigo-500 text-indigo-600 bg-indigo-50 dark:bg-indigo-900/20'
               : 'border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700'
           }`}
         >
           <Filter className="w-4 h-4" />
           Filters
-          {Object.keys(filters).length > 0 && (
+          {Object.values(filters).filter(Boolean).length > 0 && (
             <span className="w-5 h-5 bg-indigo-600 text-white text-xs rounded-full flex items-center justify-center">
-              {Object.keys(filters).length}
+              {Object.values(filters).filter(Boolean).length}
             </span>
           )}
         </button>
         <button
-          onClick={fetchReviews}
+          aria-label="Reload reviews"
+          onClick={()=>void fetchReviews()}
           disabled={loading}
           className="p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors disabled:opacity-50"
         >
@@ -162,7 +115,7 @@ export function ReviewList({ propertyId, onSelectReview, onGenerateResponse }: R
       {/* Filter Panel */}
       {showFilters && (
         <div className="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-4 space-y-4">
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid gap-4 sm:grid-cols-3">
             {/* Platform Filter */}
             <div>
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
@@ -172,6 +125,7 @@ export function ReviewList({ propertyId, onSelectReview, onGenerateResponse }: R
                 {platforms.map(platform => (
                   <button
                     key={platform}
+                    aria-label={`Filter ${platform} reviews`}
                     onClick={() => setFilters(f => ({
                       ...f,
                       platform: f.platform === platform ? undefined : platform
@@ -239,7 +193,7 @@ export function ReviewList({ propertyId, onSelectReview, onGenerateResponse }: R
             </div>
           </div>
 
-          {Object.keys(filters).length > 0 && (
+          {Object.values(filters).filter(Boolean).length > 0 && (
             <button
               onClick={() => setFilters({})}
               className="text-sm text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
@@ -250,19 +204,21 @@ export function ReviewList({ propertyId, onSelectReview, onGenerateResponse }: R
         </div>
       )}
 
+      {error&&<div role="alert" className="rounded-lg border border-red-200 p-3 text-sm text-red-600">{error} <button className="underline" onClick={()=>void fetchReviews()}>Retry review list</button></div>}
+      {!loading&&!error&&total!==null&&<p className="text-sm text-slate-500">{total} matching reviews across this property.</p>}
       {/* Reviews Grid */}
       {loading ? (
         <div className="flex items-center justify-center py-12">
           <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
         </div>
-      ) : filteredReviews.length === 0 ? (
+      ) : error && reviews.length===0 ? null : filteredReviews.length === 0 ? (
         <div className="text-center py-12 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
           <Search className="w-12 h-12 text-slate-300 mx-auto mb-4" />
           <h3 className="text-lg font-medium text-slate-900 dark:text-white mb-2">
             No reviews found
           </h3>
           <p className="text-slate-500">
-            {searchQuery || Object.keys(filters).length > 0
+            {searchQuery || Object.values(filters).filter(Boolean).length > 0
               ? 'Try adjusting your search or filters'
               : 'Reviews will appear here once they are imported'}
           </p>
@@ -279,7 +235,7 @@ export function ReviewList({ propertyId, onSelectReview, onGenerateResponse }: R
               />
             ))}
           </div>
-          {hasMore && !searchQuery && (
+          {hasMore && (
             <div className="flex justify-center pt-2">
               <button
                 onClick={loadMore}
@@ -293,7 +249,7 @@ export function ReviewList({ propertyId, onSelectReview, onGenerateResponse }: R
           )}
         </>
       )}
-    </div>
+    </section>
   )
 }
 

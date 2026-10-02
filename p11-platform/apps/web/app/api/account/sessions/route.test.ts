@@ -1,0 +1,13 @@
+import {beforeEach,it,expect,vi} from 'vitest'
+const d=vi.hoisted(()=>({actor:vi.fn(),clear:vi.fn(),read:vi.fn(),execute:vi.fn(),provider:vi.fn()}))
+vi.mock('@/utils/account-sessions/server',()=>({sessionActor:d.actor,clearSessionCookies:d.clear}))
+vi.mock('@/utils/account-sessions/store',async original=>({...await original<object>(),readSessions:d.read,executeSessionDecision:d.execute}))
+import {GET,POST} from './route'
+const actor={actorId:'11111111-1111-1111-1111-111111111111',sessionId:'22222222-2222-2222-2222-222222222222',aal:'aal1'},input={operation:'revoke',requestId:'33333333-3333-3333-3333-333333333333',scope:'others',sourceHash:'a'.repeat(64),confirmed:true}
+const request=(body:unknown,origin='http://local')=>new Request('http://local/api/account/sessions',{method:'POST',headers:{origin,'Content-Type':'application/json'},body:JSON.stringify(body)})
+beforeEach(()=>{vi.clearAllMocks();d.actor.mockResolvedValue({actor,provider:d.provider});d.read.mockResolvedValue({state:'ready',actorId:actor.actorId});d.execute.mockResolvedValue({status:'acknowledged',scope:'others'})})
+it('GET uses current verified actor and private no-store response',async()=>{const r=await GET(new Request('http://local/api/account/sessions'));expect(r.status).toBe(200);expect(r.headers.get('cache-control')).toContain('no-store');expect(r.headers.get('referrer-policy')).toBe('no-referrer');expect(d.read).toHaveBeenCalledWith(actor,expect.objectContaining({kind:'current'}))})
+it('rejects outside origins, actor injection and oversized bodies before execution',async()=>{for(const r of[request(input,'https://outside.invalid'),request({...input,actorId:'other'}),request({...input,private:'x'.repeat(5000)})])expect((await POST(r)).status).toBeGreaterThanOrEqual(400);expect(d.execute).not.toHaveBeenCalled()})
+it('provider uncertainty is returned without clearing cookies or pretending success',async()=>{d.execute.mockResolvedValue({status:'uncertain',scope:'local'});const r=await POST(request({...input,scope:'local'}));expect((await r.json()).status).toBe('uncertain');expect(d.clear).not.toHaveBeenCalled()})
+it('only acknowledged current-session revocation clears the browser auth cookies',async()=>{d.execute.mockResolvedValue({status:'acknowledged',scope:'local'});expect((await POST(request({...input,scope:'local'}))).status).toBe(200);expect(d.clear).toHaveBeenCalledTimes(1)})
+it('private transport details never become an API error',async()=>{d.execute.mockRejectedValue(new Error('PRIVATE-PROVIDER-PAYLOAD'));const r=await POST(request(input));expect(r.status).toBe(503);expect(JSON.stringify(await r.json())).not.toContain('PRIVATE')})

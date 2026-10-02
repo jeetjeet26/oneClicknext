@@ -38,8 +38,9 @@ def app():
 
 
 @pytest.fixture()
-def client(app):
-    return TestClient(app)
+def client(app, monkeypatch):
+    monkeypatch.setenv("DATA_ENGINE_API_KEY", "test-review-key")
+    return TestClient(app, headers={"Authorization": "Bearer test-review-key"})
 
 
 def _google_review_dict():
@@ -93,8 +94,25 @@ def test_main_app_registers_review_endpoints():
     assert "app.include_router(reviews_router)" in main_source
 
 
+@pytest.mark.parametrize('path,body', [
+    ('/scraper/google-reviews', {'place_id': 'p'}),
+    ('/scraper/google-reviews/full', {'place_id': 'p'}),
+    ('/scraper/google-reviews/search', {'property_name': 'Test', 'address': '123 Main St'}),
+    ('/scraper/yelp-reviews', {'business_id': 'b'}),
+    ('/scraper/yelp-reviews/from-url', {'url': 'https://www.yelp.com/biz/test'}),
+])
+def test_reviews_fail_closed_without_service_key(client, monkeypatch, path, body):
+    monkeypatch.delenv('DATA_ENGINE_API_KEY', raising=False)
+    with patch('scrapers.google_places.GooglePlacesScraper') as google, \
+            patch('scrapers.yelp.get_yelp_client') as yelp:
+        response = client.post(path, json=body)
+    assert response.status_code == 503
+    assert response.json()['detail'] == 'Data Engine authentication is not configured'
+    google.assert_not_called()
+    yelp.assert_not_called()
+
+
 def test_google_reviews_contract(client, monkeypatch):
-    monkeypatch.delenv("DATA_ENGINE_API_KEY", raising=False)
     fake_scraper = MagicMock()
     fake_scraper.get_place_reviews.return_value = [FakeGoogleReview()]
 
@@ -118,6 +136,7 @@ def test_google_reviews_contract(client, monkeypatch):
 
 def test_google_reviews_requires_key_when_configured(client, monkeypatch):
     monkeypatch.setenv("DATA_ENGINE_API_KEY", "secret-key")
+    client.headers.pop("Authorization", None)
 
     response = client.post("/scraper/google-reviews", json={"place_id": "p"})
     assert response.status_code == 401
@@ -141,7 +160,6 @@ def test_google_reviews_requires_key_when_configured(client, monkeypatch):
 
 
 def test_google_reviews_provider_error_is_typed(client, monkeypatch):
-    monkeypatch.delenv("DATA_ENGINE_API_KEY", raising=False)
     fake_scraper = MagicMock()
     fake_scraper.get_place_reviews.side_effect = RuntimeError("quota exceeded")
 
@@ -153,7 +171,6 @@ def test_google_reviews_provider_error_is_typed(client, monkeypatch):
 
 
 def test_google_reviews_missing_api_key_is_503(client, monkeypatch):
-    monkeypatch.delenv("DATA_ENGINE_API_KEY", raising=False)
     with patch(
         "scrapers.google_places.GooglePlacesScraper",
         side_effect=ValueError("Google Maps API key required"),
@@ -163,7 +180,6 @@ def test_google_reviews_missing_api_key_is_503(client, monkeypatch):
 
 
 def test_yelp_reviews_contract(client, monkeypatch):
-    monkeypatch.delenv("DATA_ENGINE_API_KEY", raising=False)
     fake_client = MagicMock()
     fake_client.get_business_reviews.return_value = [FakeYelpReview()]
 
@@ -182,14 +198,12 @@ def test_yelp_reviews_contract(client, monkeypatch):
 
 
 def test_yelp_reviews_unconfigured_is_503(client, monkeypatch):
-    monkeypatch.delenv("DATA_ENGINE_API_KEY", raising=False)
     with patch("scrapers.yelp.get_yelp_client", return_value=None):
         response = client.post("/scraper/yelp-reviews", json={"business_id": "b"})
     assert response.status_code == 503
 
 
 def test_yelp_reviews_from_url_contract(client, monkeypatch):
-    monkeypatch.delenv("DATA_ENGINE_API_KEY", raising=False)
     fake_client = MagicMock()
     fake_client.extract_business_id_from_url.return_value = "the-arbors-austin"
     fake_client.get_business_reviews.return_value = [FakeYelpReview()]
@@ -207,7 +221,6 @@ def test_yelp_reviews_from_url_contract(client, monkeypatch):
 
 
 def test_yelp_reviews_from_bad_url_reports_failure(client, monkeypatch):
-    monkeypatch.delenv("DATA_ENGINE_API_KEY", raising=False)
     fake_client = MagicMock()
     fake_client.extract_business_id_from_url.return_value = None
 
@@ -224,7 +237,6 @@ def test_yelp_reviews_from_bad_url_reports_failure(client, monkeypatch):
 
 
 def test_google_search_contract(client, monkeypatch):
-    monkeypatch.delenv("DATA_ENGINE_API_KEY", raising=False)
     fake_scraper = MagicMock()
     fake_scraper.get_reviews_for_property.return_value = {
         "success": True,

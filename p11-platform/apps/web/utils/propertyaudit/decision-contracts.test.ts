@@ -1,0 +1,12 @@
+import { describe, it, expect } from 'vitest';
+import { auditDecision, auditDecisionRead, pendingAuditDecision, auditQueryFields } from './decision-contracts';
+const id = 'ee760000-0000-4000-8000-000000000001', identity = { id, propertyId: id, expectedActorId: id }, hash = 'a'.repeat(64), fields = { text: 'Reviewed question', type: 'branded', geo: 'Fixture City', weight: 1, runCount: 1, isActive: true };
+describe('audit decision contracts', () => {
+    it('validates an exact reviewed question set', () => expect(auditDecision.safeParse({ ...identity, operation: 'query_create', queries: [fields], sourceKind: 'manual', sourceHash: hash, sourceEvidence: {} }).success).toBe(true));
+    it.each([{ weight: 0 }, { runCount: 0 }, { runCount: 1.5 }, { text: '' }, { text: '\u0000' }, { geo: 'a'.repeat(301) }, { isActive: 'true' }, { extra: 'unreviewed' }])('holds invalid or unknown query fields %o', patch => expect(auditQueryFields.safeParse({ ...fields, ...patch }).success).toBe(false));
+    it('holds duplicate or stale-shaped selections', () => { expect(auditDecision.safeParse({ ...identity, operation: 'query_archive', selection: [{ id, revision: 1 }, { id, revision: 1 }], reason: '' }).success).toBe(false); expect(auditDecision.safeParse({ ...identity, operation: 'query_edit', selection: [{ id, revision: 0 }], fields, reason: '' }).success).toBe(false); });
+    it('requires a reason when accepting evidence', () => expect(auditDecision.safeParse({ ...identity, operation: 'run_review', runId: id, revision: 1, sourceHash: hash, review: 'accepted_for_planning', reason: '' }).success).toBe(false));
+    it('requires exact response identities for recovery', () => { expect(pendingAuditDecision.safeParse({ id }).success).toBe(true); expect(pendingAuditDecision.safeParse({ id, payload: fields }).success).toBe(false); });
+    it.each(['run', 'crawl', 'invocation', 'command'])('requires an identity for %s', kind => { expect(auditDecisionRead.safeParse({ propertyId: id, kind }).success).toBe(false); expect(auditDecisionRead.safeParse({ propertyId: id, kind, id }).success).toBe(true); });
+    it('bounds repeats and selected providers', () => { const run = { ...identity, operation: 'run_request', sourceHash: hash, modelHash: hash, surfaces: ['chatgpt'], executionCount: 1, includeSiteCrawl: true }; expect(auditDecision.safeParse(run).success).toBe(true); expect(auditDecision.safeParse({ ...run, surfaces: ['chatgpt', 'chatgpt'] }).success).toBe(false); expect(auditDecision.safeParse({ ...run, executionCount: 6 }).success).toBe(false); });
+});

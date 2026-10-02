@@ -1,139 +1,54 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-
-const createServiceClientMock = vi.fn()
-const sendMessageMock = vi.fn()
-const startWorkflowMock = vi.fn()
-const trackEngagementEventMock = vi.fn()
-
-vi.mock('@/utils/supabase/admin', () => ({
-  createServiceClient: createServiceClientMock,
-}))
-
-vi.mock('./messaging', () => ({
-  sendMessage: sendMessageMock,
-}))
-
-vi.mock('./workflow-processor', () => ({
-  startWorkflow: startWorkflowMock,
-}))
-
-vi.mock('./engagement-tracker', () => ({
-  trackEngagementEvent: trackEngagementEventMock,
-}))
-
-describe('tour no-show service', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    vi.resetModules()
-    sendMessageMock.mockResolvedValue({
-      success: true,
-      messageId: 'provider-message-1',
-      channel: 'sms',
-    })
-    startWorkflowMock.mockResolvedValue({
-      success: true,
-      workflowId: 'workflow-1',
-    })
-    trackEngagementEventMock.mockReturnValue(Promise.resolve())
-  })
-
-  afterEach(() => {
-    vi.restoreAllMocks()
-  })
-
-  it('marks past scheduled tours as no-show and sends follow-up once', async () => {
-    const toursUpdatePayloads: Array<Record<string, unknown>> = []
-    const leadsUpdatePayloads: Array<Record<string, unknown>> = []
-
-    createServiceClientMock.mockReturnValue({
-      from: vi.fn((table: string) => {
-        if (table === 'tours') {
-          return {
-            select: vi.fn(() => ({
-              eq: vi.fn(() => ({
-                in: vi.fn().mockResolvedValue({
-                  data: [
-                    {
-                      id: 'tour-1',
-                      lead_id: 'lead-1',
-                      property_id: 'property-1',
-                      tour_date: '2020-01-01',
-                      tour_time: '10:00:00',
-                      tour_type: 'in_person',
-                      status: 'scheduled',
-                      noshow_followup_sent_at: null,
-                      leads: {
-                        id: 'lead-1',
-                        first_name: 'Jane',
-                        last_name: 'Doe',
-                        email: 'jane@example.com',
-                        phone: '5551112222',
-                        status: 'contacted',
-                      },
-                      properties: {
-                        id: 'property-1',
-                        name: 'The Beacon',
-                        address: { street: '123 Main St' },
-                      },
-                    },
-                  ],
-                  error: null,
-                }),
-              })),
-            })),
-            update: vi.fn((payload: Record<string, unknown>) => {
-              toursUpdatePayloads.push(payload)
-              return {
-                eq: vi.fn().mockResolvedValue({ error: null }),
-              }
-            }),
-          }
-        }
-
-        if (table === 'leads') {
-          return {
-            update: vi.fn((payload: Record<string, unknown>) => {
-              leadsUpdatePayloads.push(payload)
-              return {
-                eq: vi.fn().mockResolvedValue({ error: null }),
-              }
-            }),
-          }
-        }
-
-        throw new Error(`Unexpected table ${table}`)
-      }),
-    })
-
-    const { processTourNoShows } = await import('./tour-noshow')
-    const result = await processTourNoShows()
-
-    expect(result.processed).toBe(1)
-    expect(result.markedNoShow).toBe(1)
-    expect(result.followupsSent).toBe(1)
-    expect(result.failed).toBe(0)
-    expect(sendMessageMock).toHaveBeenCalledTimes(2)
-    expect(startWorkflowMock).toHaveBeenCalledWith('lead-1', 'property-1', 'tour_no_show')
-    expect(trackEngagementEventMock).toHaveBeenCalledWith({
-      leadId: 'lead-1',
-      propertyId: 'property-1',
-      eventType: 'tour_no_show',
-      metadata: { tour_id: 'tour-1' },
-    })
-    expect(toursUpdatePayloads).toContainEqual(
-      expect.objectContaining({
-        status: 'no_show',
-      })
-    )
-    expect(toursUpdatePayloads).toContainEqual(
-      expect.objectContaining({
-        noshow_followup_sent_at: expect.any(String),
-      })
-    )
-    expect(leadsUpdatePayloads).toContainEqual(
-      expect.objectContaining({
-        status: 'contacted',
-      })
-    )
-  })
+import {beforeEach, describe, expect, it, vi} from 'vitest'
+const mocks=vi.hoisted(()=>({rpc:vi.fn(),attempt:vi.fn(),list:vi.fn()}))
+vi.mock('@/utils/supabase/admin',()=>({createServiceClient:()=>({rpc:mocks.rpc})}))
+import {processTourNoShows,getNoShowStats,getNoShowReview} from './tour-noshow'
+import {createServiceClient} from '@/utils/supabase/admin'
+const tour={id:'one',leadId:'lead',propertyId:'property',source:'tours',scheduleVersion:2}
+const candidates={tours:[tour,{...tour,id:'two',source:'tour_bookings'}],needsTimezone:0,needsReview:0,backlog:0,deferred:0}
+describe('bounded no-show processing',()=>{
+ beforeEach(()=>{
+  vi.resetAllMocks()
+  mocks.rpc.mockImplementation((name:string,args:unknown)=>name==='process_tour_noshow_attempt'?mocks.attempt(args):mocks.list())
+  mocks.list.mockResolvedValue({data:candidates,error:null})
+  mocks.attempt.mockResolvedValue({data:{state:'applied',outcome:{followup_state:'configured'}},error:null})
+ })
+ it('covers both sources and passes the observed schedule version without sending',async()=>{
+  expect(await processTourNoShows()).toMatchObject({processed:2,markedNoShow:2,followupsQueued:2,followupsSent:0,failed:0})
+  expect(mocks.attempt).toHaveBeenCalledWith(expect.objectContaining({p_source:'tour_bookings',p_version:2}))
+ })
+ it('continues independent tours after an unconfirmed transaction',async()=>{
+  mocks.attempt.mockRejectedValueOnce(new Error('offline'))
+  const result=await processTourNoShows();expect(result).toMatchObject({processed:2,markedNoShow:1,failed:1})
+  expect(result.errors[0]).toContain('could not be confirmed')
+ })
+ it.each(['replayed','legacy','conflict','not_due','not_found','stale','skipped','upcoming'])('does not double count %s',async state=>{
+  mocks.attempt.mockResolvedValue({data:{state}});expect(await processTourNoShows()).toMatchObject({markedNoShow:0,followupsQueued:0,failed:0})
+ })
+ it('surfaces held backlog and retries without processing them again',async()=>{
+  mocks.list.mockResolvedValue({data:{...candidates,tours:[],needsTimezone:4,needsReview:2,backlog:7,deferred:3}})
+  expect(await processTourNoShows()).toMatchObject({processed:0,needsTimezone:4,needsReview:2,backlog:7,deferred:3})
+  expect(mocks.attempt).not.toHaveBeenCalled()
+ })
+ it.each([['backoff','deferred'],['review','needsReview'],['ambiguous_time','needsReview'],['needs_timezone','needsTimezone'],['backlog','backlog']])('reports %s separately',async(state,key)=>{
+  mocks.attempt.mockResolvedValue({data:{state}});expect(await processTourNoShows()).toMatchObject({[key]:2,markedNoShow:0})
+ })
+ it('requires an applied outcome receipt',async()=>{
+  mocks.attempt.mockResolvedValue({data:{state:'applied'}});expect(await processTourNoShows()).toMatchObject({markedNoShow:0,failed:2})
+ })
+ it('fails loudly when the candidate contract is unavailable',async()=>{
+  mocks.list.mockResolvedValue({data:null,error:{message:'offline'}})
+  await expect(processTourNoShows()).rejects.toThrow();expect(mocks.attempt).not.toHaveBeenCalled()
+ })
+ it('keeps review load failure distinct from no reviews',async()=>{
+  mocks.list.mockResolvedValue({data:null,error:{message:'offline'}})
+  await expect(getNoShowReview(createServiceClient(),'property','lead')).rejects.toThrow('Unable to load')
+ })
+ it('scopes readable review status to the authenticated property and lead',async()=>{
+  mocks.list.mockResolvedValue({data:[{...tour,automation:{state:'review',attempts:3}}]})
+  expect((await getNoShowReview(createServiceClient(),'property','lead')).get('tours/one')).toEqual({state:'review',attempts:3})
+  expect(mocks.rpc).toHaveBeenCalledWith('tour_noshow_queue',{p_property_id:'property',p_lead_id:'lead'})
+ })
+ it('does not show unavailable statistics as zero',async()=>{
+  mocks.list.mockResolvedValue({data:null,error:{message:'offline'}});await expect(getNoShowStats('property')).rejects.toThrow()
+ })
 })

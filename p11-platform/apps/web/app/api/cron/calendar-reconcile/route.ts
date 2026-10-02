@@ -45,6 +45,8 @@ export async function GET(request: NextRequest) {
     requestId: ctx.requestId,
   })
 
+  if(!run)return NextResponse.json({error:'Calendar run could not be recorded. No repairs were processed.'},{status:503,headers:ctx.responseHeaders})
+
   try {
     const { searchParams } = new URL(request.url)
     const targetedPropertyId = searchParams.get('propertyId')
@@ -92,10 +94,11 @@ export async function GET(request: NextRequest) {
 
     if (propertyTargets.length === 0) {
       ctx.logSuccess(200, { processed: 0, repaired: 0, created: 0, failed: 0 })
-      await finishCronJobRun(run, {
+      const saved=await finishCronJobRun(run, {
         status: 'success',
         summary: { processed: 0, repaired: 0, created: 0, failed: 0 },
       })
+      if(!saved)return NextResponse.json({error:'Calendar run result could not be saved.'},{status:503,headers:ctx.responseHeaders})
       return NextResponse.json(
         {
           success: true,
@@ -116,7 +119,7 @@ export async function GET(request: NextRequest) {
         logs.push({
           propertyId: target.propertyId,
           googleEmail: target.googleEmail,
-          status: 'success',
+          status: result.failed>0?'failed':result.skipped>0?'skipped':'success',
           activeBookings: result.activeBookings,
           created: result.created,
           repaired: result.repaired,
@@ -161,9 +164,9 @@ export async function GET(request: NextRequest) {
       repaired,
     })
 
-    await finishCronJobRun(run, {
-      status: failed > 0 ? 'failed' : 'success',
-      error: failed > 0 ? 'One or more calendar reconciliations failed' : null,
+    const saved=await finishCronJobRun(run, {
+      status: failed+skipped>0 ? (successful>0||created+repaired>0?'partial':'failed') : 'success',
+      error: failed+skipped>0 ? 'One or more calendar reconciliations need attention' : null,
       summary: {
         processed,
         successful,
@@ -174,9 +177,10 @@ export async function GET(request: NextRequest) {
       },
     })
 
+    if(!saved)return NextResponse.json({error:'Calendar run result could not be saved. Review before retrying.'},{status:503,headers:ctx.responseHeaders})
     return NextResponse.json(
       {
-        success: failed === 0,
+        success: failed === 0 && skipped === 0,
         processed,
         successful,
         skipped,

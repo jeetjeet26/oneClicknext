@@ -6,6 +6,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { syncLeadToCRM } from '@/utils/services/crm-sync'
+import {createAdminClient} from '@/utils/supabase/admin'
+import {publicIntegration} from '@/utils/crm/workspace'
+import { isDeliveryPaused, DELIVERY_PAUSED_MESSAGE } from '@/utils/services/delivery-guard'
 import { getDataEngineUrl } from '@/utils/services/runtime-config'
 
 // Data engine configuration
@@ -168,6 +171,16 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    if (['push-lead', 'bulk-sync', 'replay-dead-letter-now', 'validate-mapping'].includes(action) && isDeliveryPaused()) {
+      return NextResponse.json({ error: DELIVERY_PAUSED_MESSAGE, state: 'delivery_paused' }, { status: 423 })
+    }
+
+    if (typeof propertyId !== 'string' || !propertyId) return NextResponse.json({error:'A property is required for CRM operations.'},{status:400})
+
+    if (['push-lead','bulk-sync','replay-dead-letter-now','requeue-dead-letter','search-lead'].includes(action)) return NextResponse.json({error:'Use saved CRM transfer review and destination recovery. Legacy retries and direct writes are retired.'},{status:409})
+
+    if (['test-connection','discover-schema','record-correction'].includes(action)) return NextResponse.json({error:'Use saved CRM setup checks and versioned mapping review.'},{status:409})
+
     // Route to appropriate data-engine endpoint
     let endpoint: string
     let requestBody: Record<string, unknown>
@@ -224,15 +237,8 @@ export async function POST(request: NextRequest) {
         break
 
       case 'save-mapping':
-        endpoint = '/crm/save-mapping'
-        requestBody = {
-          property_id: propertyId,
-          crm_type: params.crmType,
-          credentials: params.credentials,
-          field_mapping: params.fieldMapping,
-          validated: params.validated || false,
-        }
-        break
+        return NextResponse.json({error:'Save mapping changes through the versioned CRM review workspace.'},{status:409})
+
 
       case 'record-correction':
         endpoint = '/crm/record-correction'
@@ -461,7 +467,6 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url)
     const action = searchParams.get('action')
-    const crmType = searchParams.get('crmType')
     const propertyId = searchParams.get('propertyId')
 
     if (!action) {
@@ -473,17 +478,7 @@ export async function GET(request: NextRequest) {
 
     switch (action) {
       case 'learned-patterns':
-        if (!crmType) {
-          return NextResponse.json(
-            { error: 'Missing crmType parameter' },
-            { status: 400 }
-          )
-        }
-        const patternsResult = await callDataEngine(`/crm/learned-patterns/${crmType}`, 'GET')
-        if (!patternsResult.success) {
-          return NextResponse.json({ error: patternsResult.error }, { status: 500 })
-        }
-        return NextResponse.json(patternsResult.data)
+        return NextResponse.json({error:'Use property-scoped saved field discovery and reviewed mappings.'},{status:409})
 
       case 'tourspark-schema':
         const schemaResult = await callDataEngine('/crm/tourspark-schema', 'GET')
@@ -507,7 +502,7 @@ export async function GET(request: NextRequest) {
         }
 
         // Get integration status from database
-        const { data: integration, error: integrationError } = await supabase
+        const { data: integration, error: integrationError } = await createAdminClient()
           .from('integration_credentials')
           .select('*')
           .eq('property_id', propertyId)
@@ -521,7 +516,7 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({
           success: true,
           configured: !!integration,
-          integration: integration || null,
+          integration: integration ? publicIntegration(integration) : null,
         })
 
       default:

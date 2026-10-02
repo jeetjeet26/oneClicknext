@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { brandId, brandRpc, brandReply } from '@/utils/brandforge/operations'
 import { start } from 'workflow/api'
 import { z } from 'zod'
 import { createClient } from '@/utils/supabase/server'
@@ -14,8 +15,10 @@ import { brandForgeWorkflow } from '@/workflows/brandforge'
 const workflowRequestSchema = z.discriminatedUnion('mode', [
   z.object({
     mode: z.literal('generated'),
-    propertyId: z.string().uuid(),
-    brandAssetId: z.string().uuid().optional(),
+    requestId: brandId,
+    revision: z.number().int().min(0),
+    propertyId: brandId,
+    brandAssetId: brandId.optional(),
     vertical: brandForgeVerticalSchema,
     creativeBrief: z.object({
       brandName: z.string().trim().min(1).max(200),
@@ -28,8 +31,10 @@ const workflowRequestSchema = z.discriminatedUnion('mode', [
   }),
   z.object({
     mode: z.literal('supplied'),
-    propertyId: z.string().uuid(),
-    brandAssetId: z.string().uuid().optional(),
+    requestId: brandId,
+    revision: z.number().int().min(0),
+    propertyId: brandId,
+    brandAssetId: brandId.optional(),
     vertical: brandForgeVerticalSchema,
     suppliedContract: brandForgeContractV1Schema,
   }),
@@ -77,83 +82,14 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    let brandAssetId = parsed.data.brandAssetId
-    if (brandAssetId) {
-      const { data: existing, error } = await supabase
-        .from('property_brand_assets')
-        .select('id')
-        .eq('id', brandAssetId)
-        .eq('property_id', parsed.data.propertyId)
-        .single()
-      if (error || !existing) {
-        return NextResponse.json(
-          { error: 'Brand asset not found' },
-          { status: 404, headers: ctx.responseHeaders }
-        )
-      }
-    } else {
-      const { data: existing } = await supabase
-        .from('property_brand_assets')
-        .select('id')
-        .eq('property_id', parsed.data.propertyId)
-        .maybeSingle()
-      brandAssetId = existing?.id
-    }
-
-    if (!brandAssetId) {
-      const { data: created, error } = await supabase
-        .from('property_brand_assets')
-        .insert({
-          property_id: parsed.data.propertyId,
-          generated_by: user.id,
-          generation_status: 'generating',
-          current_step: 1,
-          current_step_name: 'competitive_snapshot',
-          contract_version: '1.0',
-          brand_origin: parsed.data.mode === 'supplied'
-            ? parsed.data.suppliedContract.origin
-            : 'generated',
-          approval_status: 'draft',
-          source_manifest: {
-            workflow: {
-              mode: parsed.data.mode,
-              vertical: parsed.data.vertical,
-              requestedBy: user.id,
-            },
-          },
-        })
-        .select('id')
-        .single()
-      if (error || !created) {
-        throw new Error(`Unable to create BrandForge asset: ${error?.message || 'unknown error'}`)
-      }
-      brandAssetId = created.id
-    } else {
-      const { error } = await supabase
-        .from('property_brand_assets')
-        .update({
-          generation_status: 'generating',
-          current_step: 1,
-          current_step_name: 'competitive_snapshot',
-          draft_section: null,
-          approval_status: 'draft',
-          source_manifest: {
-            workflow: {
-              mode: parsed.data.mode,
-              vertical: parsed.data.vertical,
-              requestedBy: user.id,
-            },
-          },
-        })
-        .eq('id', brandAssetId)
-        .eq('property_id', parsed.data.propertyId)
-      if (error) {
-        throw new Error(`Unable to prepare BrandForge asset: ${error.message}`)
-      }
-    }
-
+    const { requestId, revision, ...requested } = parsed.data
+    const claim = await brandRpc('begin_brand_operation', { p_property_id: parsed.data.propertyId, p_brand_asset_id: parsed.data.brandAssetId || null, p_actor_id: user.id, p_request_id: requestId, p_revision: revision, p_kind: 'contract', p_input: requested })
+    if (claim.state !== 'claimed') return brandReply(claim)
+    const brandAssetId = String(claim.brandAssetId)
     const input = brandForgeWorkflowInputSchema.parse({
       ...parsed.data,
+      operationId: requestId,
+      operationToken: claim.claimToken,
       brandAssetId,
       orgId: access.orgId,
       requestedBy: user.id,
@@ -173,6 +109,7 @@ export async function POST(request: NextRequest) {
       status: 'generating',
       mode: input.mode,
       vertical: input.vertical,
+      requestId,
     }, { status: 202, headers: ctx.responseHeaders })
   } catch (error) {
     ctx.logError(500, error)

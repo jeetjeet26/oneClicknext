@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const createServiceClientMock = vi.fn()
+const recordMock=vi.fn()
 const getCalendarConfigMock = vi.fn()
 const getCalendarEventMock = vi.fn()
 const ensureCalendarWatchMock = vi.fn()
@@ -11,8 +12,8 @@ vi.mock('@/utils/supabase/admin', () => ({
 
 vi.mock('@/utils/services/google-calendar', () => ({
   buildTourEventDateTimes: vi.fn((_config, date: string, time: string) => ({
-    startLocalDateTime: `${date}T${time}:00`,
-    endLocalDateTime: `${date}T11:00:00`,
+    startInstant: `${date}T${time}:00`,
+    endInstant: `${date}T11:00:00`,
   })),
   ensureCalendarWatch: ensureCalendarWatchMock,
   getCalendarConfig: getCalendarConfigMock,
@@ -22,10 +23,11 @@ vi.mock('@/utils/services/google-calendar', () => ({
 describe('lumaleasing calendar mutations service', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    recordMock.mockResolvedValue({data:'recorded',error:null})
     ensureCalendarWatchMock.mockResolvedValue(null)
   })
 
-  it('cancels the local booking when the remote Google event is missing', async () => {
+  it('holds a missing remote event for review without cancelling the booking', async () => {
     getCalendarConfigMock.mockResolvedValue({
       id: 'calendar-1',
       property_id: 'property-1',
@@ -50,6 +52,7 @@ describe('lumaleasing calendar mutations service', () => {
     const leadUpdateMock = vi.fn().mockReturnValue({ eq: leadUpdateEqMock })
     const leadActivityInsertMock = vi.fn().mockResolvedValue({ error: null })
     createServiceClientMock.mockReturnValue({
+      rpc:recordMock,
       from: vi.fn((table: string) => {
         if (table === 'tour_bookings') {
           return {
@@ -127,38 +130,20 @@ describe('lumaleasing calendar mutations service', () => {
     expect(result).toEqual({
       propertyId: 'property-1',
       checked: 1,
+      skipped: 0,
       healthy: 0,
       drifted: 0,
       missing: 1,
       cancelled: 0,
     })
-    expect(bookingUpdateMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        status: 'cancelled',
-      })
-    )
-    expect(bookingUpdateEqMock).toHaveBeenCalledWith('id', 'booking-1')
-    expect(calendarEventUpdateMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sync_status: 'synced',
-      })
-    )
-    expect(calendarEventEqMock).toHaveBeenCalledWith('id', 'calendar-event-1')
-    expect(leadUpdateMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        status: 'contacted',
-      })
-    )
-    expect(leadUpdateEqMock).toHaveBeenCalledWith('id', 'lead-1')
-    expect(leadActivityInsertMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        lead_id: 'lead-1',
-        type: 'calendar_external_change_applied',
-      })
-    )
+    expect(bookingUpdateMock).not.toHaveBeenCalled()
+    expect(leadUpdateMock).not.toHaveBeenCalled()
+    expect(leadActivityInsertMock).not.toHaveBeenCalled()
+    expect(recordMock).toHaveBeenCalledWith('record_tour_calendar_observation',expect.objectContaining({p_status:'external_missing'}))
+
   })
 
-  it('updates local booking schedule when the remote Google event was rescheduled', async () => {
+  it('holds remote drift for review without bypassing local capacity', async () => {
     getCalendarConfigMock.mockResolvedValue({
       id: 'calendar-1',
       property_id: 'property-1',
@@ -186,6 +171,7 @@ describe('lumaleasing calendar mutations service', () => {
     const calendarEventUpdateMock = vi.fn().mockReturnValue({ eq: calendarEventEqMock })
     const leadActivityInsertMock = vi.fn().mockResolvedValue({ error: null })
     createServiceClientMock.mockReturnValue({
+      rpc:recordMock,
       from: vi.fn((table: string) => {
         if (table === 'tour_bookings') {
           return {
@@ -246,28 +232,15 @@ describe('lumaleasing calendar mutations service', () => {
     expect(result).toEqual({
       propertyId: 'property-1',
       checked: 1,
+      skipped: 0,
       healthy: 0,
       drifted: 1,
       missing: 0,
       cancelled: 0,
     })
-    expect(bookingUpdateMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        scheduled_date: '2026-04-02',
-        scheduled_time: '10:30:00',
-      })
-    )
-    expect(bookingUpdateEqMock).toHaveBeenCalledWith('id', 'booking-1')
-    expect(calendarEventUpdateMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sync_status: 'synced',
-      })
-    )
-    expect(leadActivityInsertMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        lead_id: 'lead-1',
-        type: 'calendar_external_change_applied',
-      })
-    )
+    expect(bookingUpdateMock).not.toHaveBeenCalled()
+    expect(leadActivityInsertMock).not.toHaveBeenCalled()
+    expect(recordMock).toHaveBeenCalledWith('record_tour_calendar_observation',expect.objectContaining({p_status:'external_drift'}))
+
   })
 })

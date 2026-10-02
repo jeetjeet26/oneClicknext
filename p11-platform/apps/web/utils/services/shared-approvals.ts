@@ -319,6 +319,10 @@ export async function recordSharedApprovalDecision(
     throw new SharedApprovalError('Approval candidate not found', 404)
   }
 
+  if (actionAttempt.action_type === 'forgestudio_messaging_brief') {
+    throw new SharedApprovalError('Review this draft handoff in the saved MarketVision brief. Earlier proposals cannot be executed.', 409)
+  }
+
   const now = new Date().toISOString()
   if (actionAttempt.proposal_decision_status !== 'proposed') {
     if (

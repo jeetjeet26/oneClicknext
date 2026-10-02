@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NextRequest } from 'next/server'
 
 const authGetUserMock = vi.fn()
@@ -32,7 +32,9 @@ function makeNextRequest(url: string, init?: RequestInit): NextRequest {
 }
 
 describe('lumaleasing calendar reconcile route', () => {
+  afterEach(()=>vi.unstubAllEnvs())
   beforeEach(() => {
+    vi.stubEnv('OUTBOUND_DELIVERY_PAUSED','false')
     vi.clearAllMocks()
     createClientMock.mockResolvedValue({
       auth: { getUser: authGetUserMock },
@@ -117,6 +119,7 @@ describe('lumaleasing calendar reconcile route', () => {
                       id: 'booking-1',
                       property_id: 'property-1',
                       lead_id: 'lead-1',
+                      schedule_version:1,
                       scheduled_date: '2026-04-01',
                       scheduled_time: '14:30:00',
                       special_requests: 'Show the pool',
@@ -169,6 +172,7 @@ describe('lumaleasing calendar reconcile route', () => {
       throw new Error(`Unexpected table ${table}`)
     })
     createServiceClientMock.mockReturnValue({
+      rpc:vi.fn(async(name:string)=>({data:name==='claim_tour_legacy_delivery'?{id:'claim',lease_token:'token'}:true,error:null})),
       from: serviceFromMock,
     })
 
@@ -262,6 +266,7 @@ describe('lumaleasing calendar reconcile route', () => {
                       id: 'booking-1',
                       property_id: 'property-1',
                       lead_id: 'lead-1',
+                      schedule_version:1,
                       scheduled_date: '2026-04-01',
                       scheduled_time: '14:30:00',
                       special_requests: null,
@@ -321,6 +326,7 @@ describe('lumaleasing calendar reconcile route', () => {
       throw new Error(`Unexpected table ${table}`)
     })
     createServiceClientMock.mockReturnValue({
+      rpc:vi.fn(async(name:string)=>({data:name==='claim_tour_legacy_delivery'?{id:'claim',lease_token:'token'}:true,error:null})),
       from: serviceFromMock,
     })
 

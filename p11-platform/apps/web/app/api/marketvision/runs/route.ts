@@ -1,54 +1,12 @@
-/**
- * MarketVision 360 - Durable run history
- * Lists MarketVision ingestion runs recorded in the shared job ledger so
- * operators can see what ran, when, and whether it finished, partially
- * completed, or failed.
- */
-
-import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/utils/supabase/server'
-import { validatePropertyAccess } from '@/utils/services/auth-guard'
-import { listMarketVisionRuns } from '@/utils/services/marketvision-jobs'
-
-export async function GET(req: NextRequest) {
-  try {
-    const supabase = await createClient()
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const searchParams = req.nextUrl.searchParams
-    const propertyId = searchParams.get('propertyId')
-    const limit = Math.min(parseInt(searchParams.get('limit') || '20', 10) || 20, 100)
-
-    if (!propertyId) {
-      return NextResponse.json({ error: 'propertyId required' }, { status: 400 })
-    }
-
-    const access = await validatePropertyAccess(user.id, propertyId)
-    if (!access.authorized) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-    }
-
-    const runs = await listMarketVisionRuns(propertyId, limit)
-
-    return NextResponse.json({
-      runs: runs.map((run) => ({
-        ...run,
-        // Derived result state: partial completion is visible, not generic success.
-        result:
-          run.lifecycleStatus === 'succeeded'
-            ? run.statusReason === 'completed_partial'
-              ? 'partial'
-              : 'succeeded'
-            : run.lifecycleStatus,
-      })),
-      total: runs.length,
-    })
-  } catch (error) {
-    console.error('MarketVision Runs GET Error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
-  }
-}
+import {NextRequest,NextResponse} from 'next/server'
+import {requireMarketOperator,marketError} from '@/utils/marketvision/decision-store'
+import {MonitoringQuery} from '@/utils/marketvision/monitoring-contract'
+import {readMarketMonitoring} from '@/utils/marketvision/monitoring-store'
+import {sourceExecutionStatus} from '@/utils/marketvision/source-store'
+import {extractionExecutionStatus} from '@/utils/marketvision/extraction-store'
+export async function GET(req:NextRequest){try{
+ const query=Object.fromEntries(req.nextUrl.searchParams),actorId=await requireMarketOperator(query.propertyId??''),parsed=MonitoringQuery.safeParse(query)
+ if(!parsed.success||[...req.nextUrl.searchParams.keys()].length!==Object.keys(query).length)return NextResponse.json({error:'Choose a saved-work filter and property.'},{status:400})
+ const data=await readMarketMonitoring({...parsed.data,actorId}),source=sourceExecutionStatus(),extraction=extractionExecutionStatus()
+ return NextResponse.json({...data,runtime:{sourcePaused:source.paused,extractionPaused:extraction.paused,extractionConfigured:extraction.configured,automaticMonitoring:false}},{headers:{'Cache-Control':'private, no-store'}})
+}catch(e){return marketError(e)}}

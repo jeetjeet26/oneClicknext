@@ -1,5 +1,6 @@
 'use client'
 
+import {SetupStatus} from './components/SetupStatus'
 import { OnboardingProvider, useOnboarding } from './components/OnboardingProvider'
 import { StepIndicator } from './components/StepIndicator'
 import {
@@ -13,7 +14,7 @@ import {
 } from './steps'
 
 function OnboardingContent() {
-  const { step } = useOnboarding()
+  const { step,workspace,pending,isLoading } = useOnboarding()
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex flex-col">
@@ -50,20 +51,24 @@ function OnboardingContent() {
       {/* Main content */}
       <div className="relative z-10 flex-1 flex items-center justify-center px-4 py-8">
         <div className="w-full max-w-2xl">
+          <SetupStatus/>
+          {workspace?.alreadyMember&&<section className="space-y-4 text-slate-300"><h1 className="text-2xl font-semibold text-white">Your account already has an organization</h1><p>Continue in the console to add or edit a property.</p><a className="inline-block rounded-lg bg-indigo-600 px-4 py-3 text-white" href="/dashboard">Open dashboard</a></section>}
+          {workspace&&!workspace.alreadyMember&&workspace.setup?.state!=='completed'&&<fieldset disabled={isLoading||!!pending} className="min-w-0">
           {step === 'organization' && <OrganizationStep />}
           {step === 'community' && <CommunityStep />}
           {step === 'contacts' && <ContactsStep />}
           {step === 'integrations' && <IntegrationsStep />}
           {step === 'knowledge' && <KnowledgeStep />}
           {step === 'review' && <ReviewStep />}
-          {step === 'complete' && <CompleteStep />}
+          </fieldset>}
+          {workspace?.setup?.state==='completed'&&<CompleteStep/>}
         </div>
       </div>
 
       {/* Footer */}
       <div className="relative z-10 pb-6 text-center">
         <p className="text-slate-600 text-sm">
-          P11 Platform • Intelligent Marketing for Multifamily
+          P11 Platform • Property operations and marketing
         </p>
       </div>
     </div>

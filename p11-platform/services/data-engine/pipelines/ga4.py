@@ -129,7 +129,7 @@ class GA4Client:
                 "pageviews": int(row.metric_values[3].value),
                 "bounce_rate": float(row.metric_values[4].value),
                 "avg_session_duration": float(row.metric_values[5].value),
-                "conversions": int(row.metric_values[6].value),
+                "conversions": float(row.metric_values[6].value),
             }
             data.append(record)
         
@@ -170,7 +170,7 @@ class GA4Client:
                 "channel": row.dimension_values[1].value,
                 "sessions": int(row.metric_values[0].value),
                 "users": int(row.metric_values[1].value),
-                "conversions": int(row.metric_values[2].value),
+                "conversions": float(row.metric_values[2].value),
                 "engaged_sessions": int(row.metric_values[3].value),
             }
             data.append(record)
@@ -229,6 +229,8 @@ def run_pipeline():
     
     # 4. Normalize data
     df = normalize_ga4_data(raw_data)
+    df['source_account_id'] = GA4_PROPERTY_ID.removeprefix('properties/')
+    df['currency_code'] = None
     
     # Add Property ID context (critical for multi-tenant)
     if PROPERTY_ID:
@@ -246,7 +248,7 @@ def run_pipeline():
         # Using 'upsert' for idempotency
         response = supabase.table('fact_marketing_performance').upsert(
             records, 
-            on_conflict="date, property_id, campaign_id"
+            on_conflict="date,property_id,channel_id,source_account_id,campaign_id"
         ).execute()
         
         print(f"✓ Successfully loaded {len(records)} rows to Supabase.")

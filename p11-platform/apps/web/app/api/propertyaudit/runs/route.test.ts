@@ -99,6 +99,9 @@ describe('propertyaudit runs route', () => {
     const builder: Record<string, unknown> = {}
     builder.eq = vi.fn(() => builder)
     builder.order = vi.fn(() => builder)
+    builder.is = vi.fn(() => builder)
+    builder.or = vi.fn(() => builder)
+    builder.lte = vi.fn(() => builder)
     builder.range = vi.fn(() => builder)
     builder.then = (resolve: (value: typeof queryResult) => unknown) =>
       Promise.resolve(resolve(queryResult))
@@ -119,7 +122,7 @@ describe('propertyaudit runs route', () => {
     )
 
     expect(response.status).toBe(200)
-    await expect(response.json()).resolves.toEqual({
+    await expect(response.json()).resolves.toMatchObject({
       runs: [],
       total: 0,
       summary: {
@@ -166,6 +169,9 @@ describe('propertyaudit runs route', () => {
     const builder: Record<string, unknown> = {}
     builder.eq = vi.fn(() => builder)
     builder.order = vi.fn(() => builder)
+    builder.is = vi.fn(() => builder)
+    builder.or = vi.fn(() => builder)
+    builder.lte = vi.fn(() => builder)
     builder.range = vi.fn(() => builder)
     builder.then = (resolve: (value: typeof queryResult) => unknown) =>
       Promise.resolve(resolve(queryResult))

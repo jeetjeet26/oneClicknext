@@ -28,18 +28,19 @@ export async function GET(request: NextRequest) {
 
   try {
     // Get user's profile to find their organization
-    const { data: profile } = await supabase
+    const { data: profile, error: profileError } = await supabase
       .from('profiles')
       .select('org_id')
       .eq('id', user.id)
       .single()
 
+    if (profileError) {
+      ctx.logError(500, profileError, { operation: 'load_property_organization' })
+      return serverError(profileError, ctx.responseHeaders)
+    }
     if (!profile?.org_id) {
-      ctx.logSuccess(200, { reason: 'no_org_found' })
-      return NextResponse.json(
-        { properties: [], message: 'No organization found' },
-        { headers: ctx.responseHeaders }
-      )
+      ctx.logSuccess(403, { reason: 'no_org_found' })
+      return forbidden(ctx.responseHeaders)
     }
 
     // Get all properties for the organization
@@ -101,171 +102,9 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST - Create a new property
-export async function POST(request: NextRequest) {
-  const ctx = createRequestContext(request, '/api/properties')
-  ctx.logStart()
-
-  const supabaseAuth = await createClient()
-  
-  const { data: { user }, error: authError } = await supabaseAuth.auth.getUser()
-  
-  if (authError || !user) {
-    ctx.logSuccess(401, { reason: 'unauthorized' })
-    return unauthorized(ctx.responseHeaders)
-  }
-
-  const supabase = createServiceClient()
-
-  try {
-    const body = await request.json()
-    const { name, address, settings } = body
-
-    if (!name) {
-      ctx.logSuccess(400, { reason: 'missing_property_name' })
-      return badRequest('Property name is required', ctx.responseHeaders)
-    }
-
-    // Get user's profile to find their organization
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('org_id, role')
-      .eq('id', user.id)
-      .single()
-
-    if (!profile?.org_id) {
-      ctx.logSuccess(400, { reason: 'no_org_found' })
-      return badRequest('No organization found', ctx.responseHeaders)
-    }
-
-    // Check if user has permission (admin or manager)
-    if (!['admin', 'manager'].includes(profile.role || '')) {
-      ctx.logSuccess(403, { reason: 'insufficient_permissions' })
-      return forbidden(ctx.responseHeaders)
-    }
-
-    // Create the property
-    const { data: property, error } = await supabase
-      .from('properties')
-      .insert({
-        name,
-        org_id: profile.org_id,
-        address: address || {},
-        settings: settings || {},
-      })
-      .select()
-      .single()
-
-    if (error) {
-      ctx.logError(500, error, { operation: 'create_property' })
-      return serverError(error, ctx.responseHeaders)
-    }
-
-    // Log audit event
-    await logAuditEvent({
-      action: 'create',
-      entityType: 'property',
-      entityId: property.id,
-      entityName: name,
-      details: { address: address?.city || address?.street },
-      request
-    })
-
-    ctx.logSuccess(201, { propertyId: property.id })
-
-    return NextResponse.json(
-      { property },
-      { status: 201, headers: ctx.responseHeaders }
-    )
-  } catch (error) {
-    ctx.logError(500, error, { operation: 'create_property' })
-    return serverError(error, ctx.responseHeaders)
-  }
-}
-
-// PATCH - Update a property
-export async function PATCH(request: NextRequest) {
-  const ctx = createRequestContext(request, '/api/properties')
-  ctx.logStart()
-
-  const supabaseAuth = await createClient()
-  
-  const { data: { user }, error: authError } = await supabaseAuth.auth.getUser()
-  
-  if (authError || !user) {
-    ctx.logSuccess(401, { reason: 'unauthorized' })
-    return unauthorized(ctx.responseHeaders)
-  }
-
-  const supabase = createServiceClient()
-
-  try {
-    const body = await request.json()
-    const { id, name, address, settings } = body
-
-    if (!id) {
-      ctx.logSuccess(400, { reason: 'missing_property_id' })
-      return badRequest('Property ID is required', ctx.responseHeaders)
-    }
-
-    // Get user's profile
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('org_id, role')
-      .eq('id', user.id)
-      .single()
-
-    if (!profile?.org_id) {
-      ctx.logSuccess(400, { reason: 'no_org_found' })
-      return badRequest('No organization found', ctx.responseHeaders)
-    }
-
-    // Check if user has permission
-    if (!['admin', 'manager'].includes(profile.role || '')) {
-      ctx.logSuccess(403, { reason: 'insufficient_permissions' })
-      return forbidden(ctx.responseHeaders)
-    }
-
-    // Update the property
-    const updateData: Record<string, unknown> = {}
-    if (name !== undefined) updateData.name = name
-    if (address !== undefined) updateData.address = address
-    if (settings !== undefined) updateData.settings = settings
-
-    const { data: property, error } = await supabase
-      .from('properties')
-      .update(updateData)
-      .eq('id', id)
-      .eq('org_id', profile.org_id) // Ensure property belongs to user's org
-      .select()
-      .single()
-
-    if (error) {
-      ctx.logError(500, error, { operation: 'update_property', propertyId: id })
-      return serverError(error, ctx.responseHeaders)
-    }
-
-    // Log audit event
-    await logAuditEvent({
-      action: 'update',
-      entityType: 'property',
-      entityId: id,
-      entityName: property?.name || 'Unknown Property',
-      details: { updated_fields: Object.keys(updateData) },
-      request
-    })
-
-    ctx.logSuccess(200, { propertyId: id, updatedFields: Object.keys(updateData) })
-
-    return NextResponse.json(
-      { property },
-      { headers: ctx.responseHeaders }
-    )
-  } catch (error) {
-    ctx.logError(500, error, { operation: 'update_property' })
-    return serverError(error, ctx.responseHeaders)
-  }
-}
+// Property creation and editing now require retained, versioned requests.
+export async function POST(){const{data:{user},error}=await(await createClient()).auth.getUser();return NextResponse.json({error:error||!user?'Unauthorized':'Use the guided property setup to create a recoverable property.'},{status:error||!user?401:410})}
+export async function PATCH(){const{data:{user},error}=await(await createClient()).auth.getUser();return NextResponse.json({error:error||!user?'Unauthorized':'Use the recorded property editor to review and save changes.'},{status:error||!user?401:410})}
 
 // DELETE - Delete a property
 export async function DELETE(request: NextRequest) {

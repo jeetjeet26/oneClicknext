@@ -1,6 +1,8 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { healthAlertDescription } from '@/utils/siteforge/health-alert-state'
+import { healthEvidenceState, summarizeHealthChecks } from '@/utils/siteforge/health-state'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -22,6 +24,8 @@ type Incident = {
   status: string
   summary: string
   created_at: string
+  owner_id?: string | null
+  evidence?: { notification?: { state?: string; failureCode?: string } }
 }
 
 type Operations = {
@@ -92,12 +96,16 @@ type Operations = {
 }
 
 type IncidentPayload = {
+  activeIncidentCount?: number | null
   incidents: Incident[]
   healthRuns: Array<{
     id: string
     status: string
     trigger_type: string
     started_at: string
+    completed_at?: string | null
+    checks?: Record<string, { state?: string; passed?: boolean; summary?: string }>
+    evidence?: { purpose?: string; error?: string }
   }>
   repairs: Array<{
     id: string
@@ -112,6 +120,13 @@ type PendingConfirmation =
   | null
 
 export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
+  return <SiteForgeOperationsContent key={websiteId} websiteId={websiteId} />
+}
+
+function SiteForgeOperationsContent({ websiteId }: { websiteId: string }) {
+  const requestVersion = useRef(0)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [refreshing, setRefreshing] = useState(true)
   const [operations, setOperations] = useState<Operations | null>(null)
   const [incidents, setIncidents] = useState<IncidentPayload | null>(null)
   const [rationale, setRationale] = useState('')
@@ -125,6 +140,10 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
     useState<PendingConfirmation>(null)
 
   const refresh = useCallback(async () => {
+    const version = ++requestVersion.current
+    setRefreshing(true)
+    setLoadError(null)
+    try {
     const [operationsResponse, incidentsResponse] = await Promise.all([
       fetch(`/api/siteforge/operations/${websiteId}`, { cache: 'no-store' }),
       fetch(`/api/siteforge/incidents?websiteId=${websiteId}`, {
@@ -139,6 +158,8 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
       throw new Error(operationsData.error || 'Operations unavailable')
     if (!incidentsResponse.ok)
       throw new Error(incidentsData.error || 'Incidents unavailable')
+    if (version !== requestVersion.current) return
+    if (!Array.isArray(incidentsData.incidents) || !Array.isArray(incidentsData.healthRuns) || !Array.isArray(incidentsData.repairs)) throw new Error('Monitoring history response is incomplete')
     setOperations(operationsData)
     setTargetDomain(
       current => current || operationsData.website.target_domain || ''
@@ -154,14 +175,25 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
       )
     }
     setIncidents(incidentsData)
+    } catch (error) {
+      if (version !== requestVersion.current) return
+      setLoadError(error instanceof Error ? error.message : 'Monitoring history unavailable')
+      setOperations(null)
+      setIncidents(null)
+      throw error
+    } finally {
+      if (version === requestVersion.current) setRefreshing(false)
+    }
   }, [websiteId])
 
   useEffect(() => {
+    const versionRef = requestVersion
     void refresh().catch((error) =>
       setMessage(
         error instanceof Error ? error.message : 'Operations unavailable'
       )
     )
+    return () => { versionRef.current++ }
   }, [refresh])
 
   useEffect(() => {
@@ -305,6 +337,30 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
     confirmLabel: 'Provision application',
   }
 
+  const latestHealth = incidents?.healthRuns[0]
+  const counts = summarizeHealthChecks(latestHealth?.checks || {})
+  const healthLabel = !latestHealth ? 'No recorded run'
+    : latestHealth.status === 'running' ? 'Checking…'
+      : latestHealth.status === 'failed' ? 'Check could not complete'
+        : counts.failed ? 'Needs attention'
+          : counts.unobservable || !counts.healthy ? 'Evidence incomplete'
+            : 'Verified checks passed'
+
+  if (!operations || !incidents) return (
+    <Card>
+      <CardHeader><CardTitle className="text-base">Production operations</CardTitle></CardHeader>
+      <CardContent className="space-y-3">
+        <p role={loadError ? 'alert' : 'status'}>
+          {loadError ? `Monitoring history unavailable. ${loadError}` : 'Loading monitoring history…'}
+        </p>
+        <p className="text-sm text-muted-foreground">{loadError ? 'Current incident counts and health have not been verified.' : 'Waiting for saved incident and health records.'}</p>
+        <Button variant="outline" disabled={refreshing} onClick={() => void refresh().catch(() => undefined)}>
+          {refreshing ? 'Loading…' : 'Retry loading history'}
+        </Button>
+      </CardContent>
+    </Card>
+  )
+
   return (
     <>
       <Card>
@@ -334,15 +390,43 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
           </div>
           <div className="rounded border p-3 text-sm">
             <p className="text-muted-foreground">Incidents</p>
-            <p className="font-medium">{activeIncidents.length} active</p>
+            <p className="font-medium">{incidents.activeIncidentCount ?? activeIncidents.length} active</p>
           </div>
           <div className="rounded border p-3 text-sm">
             <p className="text-muted-foreground">Latest health</p>
             <p className="font-medium">
-              {incidents?.healthRuns[0]?.status || 'No run'}
+              {healthLabel}
             </p>
           </div>
         </div>
+
+        <section className="space-y-2 rounded border p-4" aria-label="Monitoring evidence">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="font-medium">Monitoring evidence</p>
+            <Button size="sm" variant="outline" disabled={refreshing} onClick={() => void refresh().catch(() => undefined)}>
+              {refreshing ? 'Refreshing…' : 'Refresh history'}
+            </Button>
+          </div>
+          {latestHealth ? <>
+            <p className="text-sm text-muted-foreground">
+              Target: {latestHealth.evidence?.purpose || 'Unknown'} · Last check: {new Date(latestHealth.completed_at || latestHealth.started_at).toLocaleString()}
+            </p>
+            <p className="text-sm">{counts.healthy} verified · {counts.failed} failed · {counts.unobservable} unavailable · {counts.not_configured} not applicable</p>
+            {latestHealth.evidence?.error ? <p role="alert" className="text-sm">{latestHealth.evidence.error}</p> : null}
+            <p className="text-sm text-muted-foreground">Checks cover the homepage and up to 10 linked or declared pages. HTML checks exclude feeds. Form markup does not verify inquiry delivery.</p>
+            <details className="text-sm">
+              <summary className="cursor-pointer font-medium">Check details</summary>
+              <ul className="mt-3 space-y-3">
+                {Object.entries(latestHealth.checks || {}).map(([name, check]) => (
+                  <li key={name} className="break-words">
+                    <span className="font-medium">{name.replaceAll('_', ' ')}</span> · {({ healthy: 'Verified', failed: 'Failed', unobservable: 'Unavailable', not_configured: 'Not applicable' })[healthEvidenceState(check)]}
+                    <p className="text-muted-foreground">{check.summary || 'No check summary recorded.'}</p>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          </> : <p className="text-sm text-muted-foreground">No health run has been recorded. This does not establish that the website is healthy.</p>}
+        </section>
 
         <section
           className="space-y-3 rounded border p-4"
@@ -595,6 +679,7 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
         {activeIncidents.length ? (
           <div className="space-y-2">
             <p className="text-sm font-medium">Active incidents</p>
+            {(incidents.activeIncidentCount || 0) > activeIncidents.length ? <p className="text-sm text-muted-foreground">Showing the latest {activeIncidents.length} of {incidents.activeIncidentCount} active incidents. Older records remain saved.</p> : null}
             {activeIncidents.map((incident) => (
               <div
                 key={incident.id}
@@ -607,8 +692,12 @@ export function SiteForgeOperationsPanel({ websiteId }: { websiteId: string }) {
                 >
                   {incident.severity}
                 </Badge>
-                <span className="font-medium">{incident.category}</span>
-                <span className="min-w-[220px] flex-1 text-muted-foreground">
+                <span className="font-medium">{incident.category.replaceAll('_', ' ')}</span>
+                <span className="text-muted-foreground">{incident.owner_id ? 'Assigned' : 'Unassigned'} · {incident.status}</span>
+                {incident.evidence?.notification?.state ? <span className="basis-full text-xs text-muted-foreground">{
+                  healthAlertDescription(incident.evidence.notification)
+                }</span> : null}
+                <span className="min-w-0 basis-full break-words text-muted-foreground sm:basis-auto sm:flex-1">
                   {incident.summary}
                 </span>
                 <Button

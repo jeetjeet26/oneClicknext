@@ -6,11 +6,12 @@ import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import {
   addRevision,
   ContentStoreError,
-  recordRevisionModificationGovernance,
 } from '@/utils/forgestudio/content-store'
 import { revisionContentSchema } from '@/utils/forgestudio/content-contract'
 
 const createRevisionSchema = z.object({
+  requestId: z.string().uuid(),
+  expectedRevisionId: z.string().uuid(),
   content: revisionContentSchema,
   modificationReason: z.string().min(3).max(2000),
 })
@@ -101,14 +102,13 @@ export async function POST(
     }
 
     const revision = await addRevision(packageId, {
+      requestId: parsed.data.requestId,
+      expectedRevisionId: parsed.data.expectedRevisionId,
+      modificationReason: parsed.data.modificationReason,
       content: parsed.data.content,
       author: { kind: 'user', userId: user.id },
     })
-    await recordRevisionModificationGovernance({
-      revisionId: revision.id,
-      reviewerId: user.id,
-      reason: parsed.data.modificationReason,
-    })
+
 
     return NextResponse.json({ revision }, { status: 201 })
   } catch (error) {

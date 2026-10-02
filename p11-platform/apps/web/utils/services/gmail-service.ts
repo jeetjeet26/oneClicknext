@@ -1,3 +1,5 @@
+import {assertEmailReplyAccount} from './email-reply-binding'
+import { requireDeliveryEnabled } from './delivery-guard'
 /**
  * Gmail API Service
  * Handles OAuth token management, email sending via Gmail API,
@@ -5,9 +7,8 @@
  */
 
 import { createServiceClient } from '@/utils/supabase/admin'
-import { getMicrosoftTokenUrl } from '@/utils/services/integration-provider-config'
+import { renewEmailCredentials } from './email-credentials'
 
-const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 const GMAIL_API = 'https://gmail.googleapis.com/gmail/v1/users/me'
 const MICROSOFT_GRAPH_API = 'https://graph.microsoft.com/v1.0'
 
@@ -17,6 +18,9 @@ export interface GmailConfig {
   property_id: string
   profile_id: string
   provider?: 'google' | 'microsoft'
+  credential_version?: number
+  provider_subject?: string | null
+  tenant_id?: string | null
   google_email: string
   account_email?: string
   access_token: string
@@ -124,109 +128,11 @@ export interface ListMessagesOptions {
 export async function refreshAccessTokenIfNeeded(
   config: GmailConfig
 ): Promise<{ accessToken: string; expiresAt: string }> {
-  const expiresAt = new Date(config.token_expires_at)
-  const now = new Date()
-
-  // If token expires in less than 5 minutes, refresh it
-  if (expiresAt.getTime() - now.getTime() < 5 * 60 * 1000) {
-    console.log('[Gmail] Token expiring soon, refreshing...')
-    return await refreshAccessToken(config)
-  }
-
-  return {
-    accessToken: config.access_token,
-    expiresAt: config.token_expires_at,
-  }
+  return renewEmailCredentials(config)
 }
 
-/**
- * Refresh the access token using refresh token
- */
-async function refreshAccessToken(
-  config: GmailConfig
-): Promise<{ accessToken: string; expiresAt: string }> {
-  const supabase = createServiceClient()
-
-  try {
-    const isMicrosoft = config.provider === 'microsoft'
-    const response = await fetch(isMicrosoft ? getMicrosoftTokenUrl() : GOOGLE_TOKEN_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: new URLSearchParams({
-        client_id: isMicrosoft
-          ? process.env.MICROSOFT_CLIENT_ID || ''
-          : process.env.GOOGLE_CLIENT_ID || '',
-        client_secret: isMicrosoft
-          ? process.env.MICROSOFT_CLIENT_SECRET || ''
-          : process.env.GOOGLE_CLIENT_SECRET || '',
-        refresh_token: config.refresh_token,
-        grant_type: 'refresh_token',
-      }),
-    })
-
-    if (!response.ok) {
-      const errorText = await response.text()
-      console.error('[Gmail] Token refresh failed:', errorText)
-
-      // Check if refresh token is revoked
-      if (errorText.includes('invalid_grant')) {
-        await supabase
-          .from('email_configurations')
-          .update({
-            token_status: 'revoked',
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', config.id)
-
-        throw new Error('Gmail authorization revoked. Please reconnect.')
-      }
-
-      throw new Error('Failed to refresh token')
-    }
-
-    const tokens = await response.json()
-    const newExpiresAt = new Date(Date.now() + tokens.expires_in * 1000).toISOString()
-
-    // Update database with new token
-    await supabase
-      .from('email_configurations')
-      .update({
-        access_token: tokens.access_token,
-        token_expires_at: newExpiresAt,
-        token_status: 'healthy',
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', config.id)
-
-    // Log refresh for audit
-    await supabase
-      .from('email_token_refreshes')
-      .insert({
-        email_configuration_id: config.id,
-        refresh_status: 'success',
-        old_expires_at: config.token_expires_at,
-        new_expires_at: newExpiresAt,
-      })
-
-    return {
-      accessToken: tokens.access_token,
-      expiresAt: newExpiresAt,
-    }
-  } catch (error) {
-    // Log failed refresh
-    await supabase
-      .from('email_token_refreshes')
-      .insert({
-        email_configuration_id: config.id,
-        refresh_status: 'failed',
-        error_message: error instanceof Error ? error.message : 'Unknown error',
-        old_expires_at: config.token_expires_at,
-      })
-
-    throw error
-  }
+async function refreshAccessToken(config: GmailConfig) {
+  return renewEmailCredentials(config, true)
 }
 
 // ============================================================================
@@ -261,6 +167,9 @@ export async function getGmailConfig(propertyId: string): Promise<GmailConfig | 
 
   return {
     id: data.id,
+    credential_version: (data as typeof data & {credential_version?: number}).credential_version,
+    provider_subject: data.provider_subject,
+    tenant_id: data.tenant_id,
     property_id: data.property_id,
     profile_id: data.profile_id,
     provider: data.provider === 'microsoft' ? 'microsoft' : 'google',
@@ -295,8 +204,11 @@ export async function getGmailConfig(propertyId: string): Promise<GmailConfig | 
  */
 export async function sendEmail(
   config: GmailConfig,
-  message: EmailMessage
+  message: EmailMessage,
+  retried = false
 ): Promise<{ messageId: string; threadId: string }> {
+  requireDeliveryEnabled()
+  await assertEmailReplyAccount(config,message)
   // Ensure token is fresh
   const { accessToken } = await refreshAccessTokenIfNeeded(config)
 
@@ -330,12 +242,11 @@ export async function sendEmail(
       })
 
       if (!response.ok) {
-        const errorText = await response.text()
-        console.error('[MicrosoftMail] Send email failed:', errorText)
+        console.error('[MicrosoftMail] Send email failed:', response.status)
 
-        if (response.status === 401) {
+        if (response.status === 401 && !retried) {
           const { accessToken: newToken } = await refreshAccessToken(config)
-          return sendEmail({ ...config, access_token: newToken }, message)
+          return sendEmail({ ...config, access_token: newToken }, message, true)
         }
 
         throw new Error(`Microsoft Mail API error: ${response.status}`)
@@ -365,13 +276,12 @@ export async function sendEmail(
     })
 
     if (!response.ok) {
-      const errorText = await response.text()
-      console.error('[Gmail] Send email failed:', errorText)
+      console.error('[Gmail] Send email failed:', response.status)
 
       // Retry once if 401
-      if (response.status === 401) {
+      if (response.status === 401 && !retried) {
         const { accessToken: newToken } = await refreshAccessToken(config)
-        return sendEmail({ ...config, access_token: newToken }, message)
+        return sendEmail({ ...config, access_token: newToken }, message, true)
       }
 
       throw new Error(`Gmail API error: ${response.status}`)
@@ -399,7 +309,8 @@ export async function sendEmail(
  */
 export async function getThread(
   config: GmailConfig,
-  threadId: string
+  threadId: string,
+  retried = false
 ): Promise<ParsedEmail[]> {
   // Ensure token is fresh
   const { accessToken } = await refreshAccessTokenIfNeeded(config)
@@ -413,13 +324,12 @@ export async function getThread(
     })
 
     if (!response.ok) {
-      const errorText = await response.text()
-      console.error('[Gmail] Get thread failed:', errorText)
+      console.error('[Gmail] Get thread failed:', response.status)
 
       // Retry once if 401
-      if (response.status === 401) {
+      if (response.status === 401 && !retried) {
         const { accessToken: newToken } = await refreshAccessToken(config)
-        return getThread({ ...config, access_token: newToken }, threadId)
+        return getThread({ ...config, access_token: newToken }, threadId, true)
       }
 
       throw new Error(`Gmail API error: ${response.status}`)
@@ -444,7 +354,8 @@ export async function getThread(
  */
 export async function listRecentMessages(
   config: GmailConfig,
-  options: ListMessagesOptions = {}
+  options: ListMessagesOptions = {},
+  retried = false
 ): Promise<Array<{ id: string; threadId: string; snippet: string }>> {
   // Ensure token is fresh
   const { accessToken } = await refreshAccessTokenIfNeeded(config)
@@ -489,13 +400,12 @@ export async function listRecentMessages(
     )
 
     if (!response.ok) {
-      const errorText = await response.text()
-      console.error('[Gmail] List messages failed:', errorText)
+      console.error('[Gmail] List messages failed:', response.status)
 
       // Retry once if 401
-      if (response.status === 401) {
+      if (response.status === 401 && !retried) {
         const { accessToken: newToken } = await refreshAccessToken(config)
-        return listRecentMessages({ ...config, access_token: newToken }, options)
+        return listRecentMessages({ ...config, access_token: newToken }, options, true)
       }
 
       throw new Error(`Gmail API error: ${response.status}`)
@@ -520,7 +430,8 @@ export async function listRecentMessages(
  */
 export async function getMessage(
   config: GmailConfig,
-  messageId: string
+  messageId: string,
+  retried = false
 ): Promise<ParsedEmail> {
   // Ensure token is fresh
   const { accessToken } = await refreshAccessTokenIfNeeded(config)
@@ -534,13 +445,12 @@ export async function getMessage(
     })
 
     if (!response.ok) {
-      const errorText = await response.text()
-      console.error('[Gmail] Get message failed:', errorText)
+      console.error('[Gmail] Get message failed:', response.status)
 
       // Retry once if 401
-      if (response.status === 401) {
+      if (response.status === 401 && !retried) {
         const { accessToken: newToken } = await refreshAccessToken(config)
-        return getMessage({ ...config, access_token: newToken }, messageId)
+        return getMessage({ ...config, access_token: newToken }, messageId, true)
       }
 
       throw new Error(`Gmail API error: ${response.status}`)
@@ -785,7 +695,8 @@ async function persistInboundMessage({
  */
 export async function syncInbox(
   config: GmailConfig,
-  options: SyncInboxOptions = {}
+  options: SyncInboxOptions = {},
+  retried = false
 ): Promise<SyncResult> {
   const supabase = createServiceClient()
 
@@ -805,11 +716,10 @@ export async function syncInbox(
       )
 
       if (!response.ok) {
-        const errorText = await response.text()
-        console.error('[MicrosoftMail] Inbox sync failed:', errorText)
-        if (response.status === 401) {
+        console.error('[MicrosoftMail] Inbox sync failed:', response.status)
+        if (response.status === 401 && !retried) {
           const { accessToken: newToken } = await refreshAccessToken(config)
-          return syncInbox({ ...config, access_token: newToken }, options)
+          return syncInbox({ ...config, access_token: newToken }, options, true)
         }
         throw new Error(`Microsoft Mail API error: ${response.status}`)
       }
@@ -997,7 +907,7 @@ export async function syncInbox(
 /**
  * Set up Gmail push notifications via Cloud Pub/Sub
  */
-export async function setupWatch(config: GmailConfig): Promise<string> {
+export async function setupWatch(config: GmailConfig, retried = false): Promise<string> {
   if (config.provider === 'microsoft') {
     return config.watch_expiration || ''
   }
@@ -1022,13 +932,12 @@ export async function setupWatch(config: GmailConfig): Promise<string> {
     })
 
     if (!response.ok) {
-      const errorText = await response.text()
-      console.error('[Gmail] Setup watch failed:', errorText)
+      console.error('[Gmail] Setup watch failed:', response.status)
 
       // Retry once if 401
-      if (response.status === 401) {
+      if (response.status === 401 && !retried) {
         const { accessToken: newToken } = await refreshAccessToken(config)
-        return setupWatch({ ...config, access_token: newToken })
+        return setupWatch({ ...config, access_token: newToken }, true)
       }
 
       throw new Error(`Gmail API error: ${response.status}`)
@@ -1036,17 +945,27 @@ export async function setupWatch(config: GmailConfig): Promise<string> {
 
     const data = await response.json()
     const expiration = data.expiration
+    const expiryMs = typeof expiration === 'string' && /^\d+$/.test(expiration) ? Number(expiration) : NaN
+    if (!Number.isSafeInteger(expiryMs) || expiryMs <= Date.now()) throw new Error('Email watch expiry could not be confirmed.')
 
-    // Store watch expiration
-    await supabase
+    // A delayed watch response cannot restore metadata after removal/reconnection.
+    const savedWatch = await supabase
       .from('email_configurations')
       .update({
-        watch_expiration: new Date(parseInt(expiration)).toISOString(),
+        watch_expiration: new Date(expiryMs).toISOString(),
         updated_at: new Date().toISOString(),
       })
       .eq('id', config.id)
+      .eq('property_id', config.property_id)
+      .eq('credential_version', config.credential_version!)
+      .eq('sync_enabled', true)
+      .eq('token_status', 'healthy')
+      .select('id')
+      .maybeSingle()
 
-    console.log(`[Gmail] Watch set up with expiration: ${expiration}`)
+    if (savedWatch.error || !savedWatch.data) throw new Error('Email watch could not be saved. Reload the connection before trying again.')
+
+    console.log('[Gmail] Watch saved')
 
     return expiration
   } catch (error) {

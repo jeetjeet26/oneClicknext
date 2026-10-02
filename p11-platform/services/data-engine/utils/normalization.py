@@ -16,8 +16,10 @@ def normalize_meta_data(raw_data: List[Dict[str, Any]]) -> pd.DataFrame:
     # Expected Meta fields: 'campaign_name', 'spend', 'impressions', 'clicks', 'date_start'
     
     normalized = pd.DataFrame()
-    normalized['date'] = pd.to_datetime(df.get('date_start', ''))
-    normalized['channel_id'] = 'meta'
+    normalized['date'] = pd.to_datetime(df.get('date_start', '')).dt.strftime('%Y-%m-%d')
+    normalized['channel_id'] = 'meta_ads'
+    normalized['source_account_id'] = df['account_id'].astype(str)
+    normalized['currency_code'] = df['account_currency']
     normalized['campaign_name'] = df.get('campaign_name', 'Unknown')
     normalized['campaign_id'] = df.get('campaign_id', '')
     normalized['impressions'] = pd.to_numeric(df.get('impressions', 0))
@@ -26,7 +28,7 @@ def normalize_meta_data(raw_data: List[Dict[str, Any]]) -> pd.DataFrame:
     
     # Calculate conversions if actions exist (simplified)
     # In production, we'd parse the 'actions' list column
-    normalized['conversions'] = 0 
+    normalized['conversions'] = df['actions'].apply(lambda actions: sum(float(a['value']) for a in actions if a.get('action_type') in {'lead', 'purchase', 'complete_registration'})) if 'actions' in df else 0
     
     return normalized
 
@@ -54,7 +56,7 @@ def normalize_ga4_data(raw_data: List[Dict[str, Any]]) -> pd.DataFrame:
     normalized = pd.DataFrame()
     
     # Date handling - GA4 returns YYYYMMDD format
-    normalized['date'] = pd.to_datetime(df['date'], format='%Y%m%d')
+    normalized['date'] = pd.to_datetime(df['date'], format='%Y%m%d').dt.strftime('%Y-%m-%d')
     
     # Channel identification
     normalized['channel_id'] = 'ga4'
@@ -90,7 +92,7 @@ def normalize_ga4_data(raw_data: List[Dict[str, Any]]) -> pd.DataFrame:
     normalized['spend'] = 0.0
     
     # Conversions
-    normalized['conversions'] = pd.to_numeric(df.get('conversions', 0), errors='coerce').fillna(0).astype(int)
+    normalized['conversions'] = pd.to_numeric(df.get('conversions', 0), errors='raise').fillna(0)
     
     return normalized
 
@@ -122,7 +124,7 @@ def normalize_google_ads_data(raw_data: List[Dict[str, Any]]) -> pd.DataFrame:
     cost_col = df.get('cost', df.get('cost_micros', df.get('metrics.cost_micros', 0)))
     normalized['spend'] = pd.to_numeric(cost_col, errors='coerce').fillna(0) / 1_000_000
     
-    normalized['conversions'] = pd.to_numeric(df.get('conversions', df.get('metrics.conversions', 0)), errors='coerce').fillna(0).astype(int)
+    normalized['conversions'] = pd.to_numeric(df.get('conversions', df.get('metrics.conversions', 0)), errors='raise').fillna(0)
     
     return normalized
 

@@ -34,6 +34,7 @@ import {
   type PolicyClass,
 } from '@/utils/reviewflow/taxonomy'
 import {
+  POLICY_ENGINE_VERSION,
   checkResponseText,
   evaluateReviewPolicy,
   type PolicyEvaluation,
@@ -51,8 +52,9 @@ export class ReviewAiError extends Error {
 
 let cachedClient: OpenAI | null = null
 function getClient(): OpenAI {
+  if(process.env.OUTBOUND_DELIVERY_PAUSED==='true')throw new ReviewAiError('provider_unavailable','External model execution is paused.')
   if (!cachedClient) {
-    cachedClient = new OpenAI(getReviewflowAiClientConfig())
+    cachedClient = new OpenAI({...getReviewflowAiClientConfig(),maxRetries:0})
   }
   return cachedClient
 }
@@ -93,7 +95,7 @@ const analysisSchema = z.object({
       })
     )
     .max(6),
-})
+}).strict()
 
 export type ReviewAnalysisResult = z.infer<typeof analysisSchema> & {
   policy: PolicyEvaluation
@@ -136,108 +138,28 @@ function extractUsage(model: string, completion: OpenAI.Chat.Completions.ChatCom
   }
 }
 
-async function completeJson(input: {
-  model: string
-  systemPrompt: string
-  userPrompt: string
-  temperature: number
-  maxTokens: number
-}): Promise<{ raw: unknown; usage: AiUsage }> {
-  const client = getClient()
-  let lastError: Error | null = null
-
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    let completion: OpenAI.Chat.Completions.ChatCompletion
-    try {
-      completion = await client.chat.completions.create({
-        model: input.model,
-        messages: [
-          { role: 'system', content: input.systemPrompt },
-          { role: 'user', content: input.userPrompt },
-        ],
-        temperature: input.temperature,
-        max_tokens: input.maxTokens,
-        response_format: { type: 'json_object' },
-      })
-    } catch (error) {
-      throw new ReviewAiError(
-        'provider_unavailable',
-        `AI provider request failed: ${error instanceof Error ? error.message : 'Unknown error'}`
-      )
-    }
-
-    const content = completion.choices[0]?.message?.content
-    if (!content || !content.trim()) {
-      lastError = new Error('Model returned empty output')
-      continue
-    }
-
-    try {
-      return { raw: JSON.parse(content), usage: extractUsage(input.model, completion) }
-    } catch {
-      lastError = new Error('Model returned non-JSON output')
-    }
-  }
-
-  throw new ReviewAiError(
-    'invalid_output',
-    `Model output invalid after retries: ${lastError?.message || 'unknown parse failure'}`
-  )
+export type SavedAnalysisInput={source:{reviewText:string;rating:number|null;platform:string|null;reviewerName:string|null};model:string;systemPrompt:string;userPrompt:string;promptVersion:string;taxonomyVersion:string;policyVersion:string;providerBaseUrl:string;temperature:number;maxTokens:number}
+export type SavedAnalysisReceipt={status:'received'|'uncertain';content?:string;providerId?:string;usage?:AiUsage;errorCode?:string}
+export function prepareReviewAnalysis(source:SavedAnalysisInput['source']):SavedAnalysisInput{
+ return{source,model:REVIEWFLOW_FAST_MODEL,systemPrompt:ANALYSIS_SYSTEM_PROMPT,userPrompt:`Platform: ${source.platform||'unknown'}\nRating: ${source.rating===null?'not provided':`${source.rating}/5`}\n\n<review>\n${source.reviewText}\n</review>`,promptVersion:ANALYSIS_PROMPT_VERSION,taxonomyVersion:TAXONOMY_VERSION,policyVersion:POLICY_ENGINE_VERSION,providerBaseUrl:getReviewflowAiClientConfig().baseURL||'https://api.openai.com/v1',temperature:0.2,maxTokens:900}
 }
-
-export async function analyzeReview(input: {
-  reviewText: string
-  rating: number | null
-  platform?: string | null
-  reviewerName?: string | null
-}): Promise<ReviewAnalysisResult> {
-  const model = REVIEWFLOW_FAST_MODEL
-  const userPrompt = `Platform: ${input.platform || 'unknown'}
-Rating: ${typeof input.rating === 'number' ? `${input.rating}/5` : 'not provided'}
-
-<review>
-${input.reviewText}
-</review>`
-
-  const { raw, usage } = await completeJson({
-    model,
-    systemPrompt: ANALYSIS_SYSTEM_PROMPT,
-    userPrompt,
-    temperature: 0.2,
-    maxTokens: 900,
-  })
-
-  const parsed = analysisSchema.safeParse(raw)
-  if (!parsed.success) {
-    throw new ReviewAiError(
-      'invalid_output',
-      `Analysis output failed validation: ${parsed.error.issues
-        .slice(0, 3)
-        .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
-        .join('; ')}`
-    )
-  }
-
-  // Deterministic policy rules can only escalate the model's policy class.
-  const policy = evaluateReviewPolicy({
-    reviewText: input.reviewText,
-    modelPolicyClass: parsed.data.policyClass,
-    modelConfidence: parsed.data.confidence,
-    riskClass: parsed.data.riskClass,
-  })
-
-  return {
-    ...parsed.data,
-    policyClass: policy.policyClass,
-    policy,
-    provenance: {
-      model,
-      promptVersion: ANALYSIS_PROMPT_VERSION,
-      taxonomyVersion: TAXONOMY_VERSION,
-      policyVersion: policy.policyVersion,
-    },
-    usage,
-  }
+/** Called only after the durable model intent is acknowledged; no network or parse retries. */
+export async function executeSavedReviewAnalysis(input:SavedAnalysisInput):Promise<SavedAnalysisReceipt>{
+ if(process.env.OUTBOUND_DELIVERY_PAUSED==='true')throw new ReviewAiError('provider_unavailable','External model execution is paused.')
+ if(input.providerBaseUrl!==(getReviewflowAiClientConfig().baseURL||'https://api.openai.com/v1'))throw new ReviewAiError('provider_unavailable','Saved model provider configuration changed.')
+ const completion=await getClient().chat.completions.create({model:input.model,messages:[{role:'system',content:input.systemPrompt},{role:'user',content:input.userPrompt}],temperature:input.temperature,max_tokens:input.maxTokens,response_format:{type:'json_object'}},{maxRetries:0,timeout:90_000})
+ const content=completion.choices[0]?.message?.content??''
+ if(content.length>200_000)throw new ReviewAiError('invalid_output','Analysis result exceeded the saved result limit.')
+ return{status:'received',content,providerId:completion.id,usage:extractUsage(input.model,completion)}
+}
+export function parseSavedReviewAnalysis(input:SavedAnalysisInput,receipt:SavedAnalysisReceipt):ReviewAnalysisResult{
+ if(input.promptVersion!==ANALYSIS_PROMPT_VERSION||input.taxonomyVersion!==TAXONOMY_VERSION||input.policyVersion!==POLICY_ENGINE_VERSION)throw new ReviewAiError('invalid_output','The saved analysis contract requires its original parser.')
+ if(receipt.status!=='received'||typeof receipt.content!=='string')throw new ReviewAiError('invalid_output','No confirmed model result is saved.')
+ let output:unknown;try{output=JSON.parse(receipt.content)}catch{throw new ReviewAiError('invalid_output','The saved model result is not valid JSON.')}
+ const parsed=analysisSchema.safeParse(output);if(!parsed.success)throw new ReviewAiError('invalid_output','The saved analysis does not match the review contract.')
+ if(parsed.data.evidence.some(item=>!input.source.reviewText.includes(item.quote)))throw new ReviewAiError('invalid_output','Analysis quotations do not match the saved source.')
+ const policy=evaluateReviewPolicy({reviewText:input.source.reviewText,modelPolicyClass:parsed.data.policyClass,modelConfidence:parsed.data.confidence,riskClass:parsed.data.riskClass})
+ return{...parsed.data,policyClass:policy.policyClass,policy,provenance:{model:input.model,promptVersion:input.promptVersion,taxonomyVersion:input.taxonomyVersion,policyVersion:input.policyVersion},usage:receipt.usage??{model:input.model,promptTokens:null,completionTokens:null}}
 }
 
 // ---------------------------------------------------------------------------
@@ -280,7 +202,7 @@ const RESPONSE_TONE_INSTRUCTIONS: Record<ResponseTone, string> = {
   apologetic: 'Express sincere apology for any issues. Show accountability.',
 }
 
-export async function generateReviewResponse(input: {
+export type ReviewResponseInput = {
   reviewText: string
   rating: number | null
   sentiment: string | null
@@ -290,7 +212,9 @@ export async function generateReviewResponse(input: {
   grounding: ResponseGrounding
   policyClass?: PolicyClass | null
   isUrgent?: boolean
-}): Promise<GeneratedReviewResponse> {
+}
+export type SavedResponseInput = {source:ReviewResponseInput;model:string;systemPrompt:string;userPrompt:string;promptVersion:string;taxonomyVersion:string;policyVersion:string;providerBaseUrl:string;temperature:number;maxTokens:number}
+export function prepareSavedReviewResponse(input:ReviewResponseInput):SavedResponseInput {
   const sensitive =
     (input.policyClass && input.policyClass !== 'standard') ||
     input.isUrgent === true ||
@@ -315,7 +239,7 @@ ${input.grounding.brandVoice ? `- Brand voice: ${input.grounding.brandVoice}` : 
 ${input.grounding.propertyPersonality ? `- Property personality: ${input.grounding.propertyPersonality}` : ''}
 ${input.grounding.targetAudience ? `- Audience: ${input.grounding.targetAudience}` : ''}
 
-Approved facts you may reference (cite by listing them in usedFacts):
+Approved facts you may reference (usedFacts must contain only exact fact strings from this list, without source labels):
 ${factsBlock}
 
 Hard rules:
@@ -340,112 +264,23 @@ ${input.topics.length > 0 ? `Topics mentioned: ${input.topics.join(', ')}` : ''}
 ${input.reviewText}
 </review>`
 
-  const { raw, usage } = await completeJson({
-    model,
-    systemPrompt,
-    userPrompt,
-    temperature: 0.6,
-    maxTokens: 700,
-  })
-
-  const parsed = responseSchema.safeParse(raw)
-  if (!parsed.success) {
-    throw new ReviewAiError(
-      'invalid_output',
-      `Response output failed validation: ${parsed.error.issues
-        .slice(0, 3)
-        .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
-        .join('; ')}`
-    )
-  }
-
-  const policyCheck = checkResponseText(parsed.data.responseText)
-  if (!policyCheck.passed) {
-    throw new ReviewAiError(
-      'policy_violation',
-      `Generated response violated policy rules: ${policyCheck.violations
-        .map((violation) => violation.rule)
-        .join(', ')}`
-    )
-  }
-
-  return {
-    responseText: parsed.data.responseText,
-    usedFacts: parsed.data.usedFacts,
-    policyCheck,
-    provenance: {
-      model,
-      promptVersion: RESPONSE_PROMPT_VERSION,
-      taxonomyVersion: TAXONOMY_VERSION,
-    },
-    usage,
-  }
+  return {source:input,model,systemPrompt,userPrompt,promptVersion:RESPONSE_PROMPT_VERSION,taxonomyVersion:TAXONOMY_VERSION,policyVersion:POLICY_ENGINE_VERSION,providerBaseUrl:getReviewflowAiClientConfig().baseURL||'https://api.openai.com/v1',temperature:0.6,maxTokens:700}
 }
-
-// ---------------------------------------------------------------------------
-// Grounding assembly
-// ---------------------------------------------------------------------------
-
-type GroundingClient = {
-  from: ReturnType<typeof import('@/utils/supabase/admin').createServiceClient>['from']
+export async function executeSavedReviewResponse(input:SavedResponseInput):Promise<SavedAnalysisReceipt>{
+ if(process.env.OUTBOUND_DELIVERY_PAUSED==='true')throw new ReviewAiError('provider_unavailable','External model execution is paused.')
+ if(input.providerBaseUrl!==(getReviewflowAiClientConfig().baseURL||'https://api.openai.com/v1'))throw new ReviewAiError('provider_unavailable','Saved model provider configuration changed.')
+ const completion=await getClient().chat.completions.create({model:input.model,messages:[{role:'system',content:input.systemPrompt},{role:'user',content:input.userPrompt}],temperature:input.temperature,max_tokens:input.maxTokens,response_format:{type:'json_object'}},{maxRetries:0,timeout:90_000})
+ const content=completion.choices[0]?.message?.content??''
+ if(content.length>200_000)throw new ReviewAiError('invalid_output','Response exceeded its saved result limit.')
+ return{status:'received',content,providerId:completion.id,usage:extractUsage(input.model,completion)}
 }
-
-/**
- * Assemble grounding for a response proposal: property profile, brand voice,
- * ReviewFlow personality config, and source limitations. Facts are cited with
- * their source table so provenance is inspectable.
- */
-export async function buildResponseGrounding(
-  supabase: GroundingClient,
-  propertyId: string
-): Promise<ResponseGrounding> {
-  const [propertyResult, configResult, connectionsResult] = await Promise.all([
-    supabase
-      .from('properties')
-      .select('name, brand_voice, target_audience, website_url')
-      .eq('id', propertyId)
-      .maybeSingle(),
-    supabase
-      .from('reviewflow_config')
-      .select('property_personality, default_tone')
-      .eq('property_id', propertyId)
-      .maybeSingle(),
-    supabase
-      .from('review_platform_connections')
-      .select('platform, connection_type, limitation_note')
-      .eq('property_id', propertyId)
-      .eq('is_active', true),
-  ])
-
-  const property = propertyResult.data
-  const config = configResult.data
-  const connections = connectionsResult.data || []
-
-  const citedFacts: Array<{ source: string; fact: string }> = []
-  if (property?.name) {
-    citedFacts.push({ source: 'properties.name', fact: `Community name: ${property.name}` })
-  }
-  if (property?.website_url) {
-    citedFacts.push({
-      source: 'properties.website_url',
-      fact: `Community website: ${property.website_url}`,
-    })
-  }
-
-  const sourceLimitations = connections
-    .map((connection) =>
-      connection.limitation_note
-        ? `${connection.platform}: ${connection.limitation_note}`
-        : null
-    )
-    .filter((value): value is string => Boolean(value))
-
-  return {
-    propertyName: property?.name ?? null,
-    brandVoice: property?.brand_voice ?? null,
-    targetAudience: property?.target_audience ?? null,
-    propertyPersonality: config?.property_personality ?? null,
-    sourceLimitations,
-    citedFacts,
-  }
+export function parseSavedReviewResponse(input:SavedResponseInput,receipt:SavedAnalysisReceipt):GeneratedReviewResponse{
+ if(input.promptVersion!==RESPONSE_PROMPT_VERSION||input.taxonomyVersion!==TAXONOMY_VERSION||input.policyVersion!==POLICY_ENGINE_VERSION)throw new ReviewAiError('invalid_output','The saved response requires its original parser.')
+ if(receipt.status!=='received'||typeof receipt.content!=='string')throw new ReviewAiError('invalid_output','No confirmed response is saved.')
+ let raw:unknown;try{raw=JSON.parse(receipt.content)}catch{throw new ReviewAiError('invalid_output','The saved response is not valid JSON.')}
+ const parsed=responseSchema.strict().safeParse(raw);if(!parsed.success)throw new ReviewAiError('invalid_output','The saved response does not match its contract.')
+ if(parsed.data.refusalReason?.trim())throw new ReviewAiError('policy_violation','The model declined to provide a supported response.')
+ if(parsed.data.usedFacts.some(fact=>!input.source.grounding.citedFacts.some(saved=>saved.fact===fact)))throw new ReviewAiError('invalid_output','Response citations are not present in the saved property facts.')
+ const policyCheck=checkResponseText(parsed.data.responseText);if(!policyCheck.passed)throw new ReviewAiError('policy_violation','The response needs correction before review.')
+ return{responseText:parsed.data.responseText,usedFacts:parsed.data.usedFacts,policyCheck,provenance:{model:input.model,promptVersion:input.promptVersion,taxonomyVersion:input.taxonomyVersion},usage:receipt.usage??{model:input.model,promptTokens:null,completionTokens:null}}
 }

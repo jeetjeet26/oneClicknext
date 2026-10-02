@@ -89,7 +89,7 @@ describe('Gmail status route', () => {
       from: vi.fn(() => ({
         select: vi.fn(() => ({
           eq: vi.fn(() => ({
-            maybeSingle: vi.fn().mockResolvedValue({
+            is: vi.fn().mockReturnThis(), maybeSingle: vi.fn().mockResolvedValue({
               data: null,
               error: null,
             }),
@@ -109,7 +109,7 @@ describe('Gmail status route', () => {
     expect(response.headers.get('x-request-id')).toBeTruthy()
     await expect(response.json()).resolves.toMatchObject({
       connected: false,
-      message: 'Gmail not connected',
+      message: 'Email not connected',
       webhook_capability: {
         mode: 'unconfigured',
         ready: false,
@@ -186,11 +186,12 @@ describe('Gmail status route', () => {
           return {
             select: vi.fn(() => ({
               eq: vi.fn(() => ({
-                maybeSingle: vi.fn().mockResolvedValue({
+                is: vi.fn().mockReturnThis(), maybeSingle: vi.fn().mockResolvedValue({
                   data: {
                     id: 'config-1',
                     google_email: 'leasing@example.com',
-                    token_status: 'healthy',
+                    token_status: 'healthy', scopes: ['https://www.googleapis.com/auth/calendar','https://www.googleapis.com/auth/gmail.modify','User.Read','Calendars.ReadWrite','Mail.Send','Mail.Read'], provider_metadata: {scopeEvidence:'provider_response'},
+                    token_expires_at: '2026-03-12T14:00:00.000Z',
                     last_health_check_at: '2026-03-10T00:00:00.000Z',
                     last_sync_at: '2026-03-10T00:05:00.000Z',
                     sync_enabled: true,
@@ -228,7 +229,7 @@ describe('Gmail status route', () => {
     expect(json).toMatchObject({
       connected: true,
       email: 'leasing@example.com',
-      token_status: 'healthy',
+      token_status: 'healthy', permission_state: 'confirmed',
       sync_enabled: true,
       auto_reply_enabled: false,
       webhook_capability: {
@@ -262,4 +263,34 @@ describe('Gmail status route', () => {
       ],
     })
   })
+  async function status(row: Record<string,unknown> | null, error: unknown = null) {
+    authGetUserMock.mockResolvedValue({data:{user:{id:'user-1'}}})
+    createClientMock.mockResolvedValue({auth:{getUser:authGetUserMock}})
+    validatePropertyAccessMock.mockResolvedValue({authorized:true})
+    createServiceClientMock.mockReturnValue({from:(table:string)=>{
+      if(table==='email_configurations')return {select:()=>({eq:()=>({is: vi.fn().mockReturnThis(), maybeSingle:async()=>({data:row,error})})})}
+      const q={select:()=>q,eq:()=>q,in:()=>q,order:()=>q,limit:async()=>({data:[],error:null})};return q
+    }})
+    return (await import('./route')).GET(new Request('http://localhost/api/lumaleasing/email/status?propertyId=property-1') as NextRequest)
+  }
+  it.each([null,'invalid','2026-03-12T11:00:00Z'])('never reports healthy access with unavailable expiry %s',async token_expires_at=>{
+    const r=await status({id:'config-1',sync_enabled:true,token_status:'healthy',token_expires_at})
+    expect(await r.json()).toMatchObject({connected:false,state:'reconnect_required'})
+  })
+  it('reports a read failure as unavailable instead of a disconnected account',async()=>{
+    const r=await status(null,{message:'Database unavailable'});expect(r.status).toBe(500)
+  })
+  it('gives Outlook renewal guidance without Gmail watch warnings',async()=>{
+    const r=await status({id:'config-1',provider:'microsoft',sync_enabled:true,token_status:'refresh_unconfirmed',token_expires_at:'2099-01-01'})
+    const body=await r.json();expect(body).toMatchObject({connected:false,state:'reconnect_required',message:expect.stringContaining('could not be confirmed'),webhook_capability:{mode:'manual_check',ready:false}});expect(JSON.stringify(body)).not.toContain('missing_watch')
+  })
+
+})
+
+it.each(['google','microsoft'])('holds fresh %s credentials without verified permission evidence',async provider=>{
+ authGetUserMock.mockResolvedValue({data:{user:{id:'user-1'}}});createClientMock.mockResolvedValue({auth:{getUser:authGetUserMock}});validatePropertyAccessMock.mockResolvedValue({authorized:true})
+ const row={id:'connection-1',provider,google_email:'fixture@example.invalid',token_status:'healthy',sync_enabled:true,token_expires_at:'2099-01-01',scopes:['User.Read','Calendars.ReadWrite','Mail.Send','Mail.Read'],provider_metadata:{},timezone:'UTC'}
+ createServiceClientMock.mockReturnValue({from:(name:string)=>{const value=name==='email_configurations'?row:[];const q:Record<string,unknown>={then:(resolve:(x:unknown)=>void)=>resolve({data:value,error:null})};for(const method of ['select','eq','is','in','order','limit'])q[method]=()=>q;q.maybeSingle=async()=>({data:value,error:null});return q}})
+ const {GET}=await import('./route');const response=await GET(new Request('http://localhost/api/lumaleasing/email/status?propertyId=property-1') as NextRequest);const body=await response.json()
+ expect(response.status).toBe(200);expect(body).toMatchObject({state:'reconnect_required',connected:false,permission_state:'permissions_unconfirmed',webhook_capability:{ready:false}});expect(body.permission_message).toContain('Reconnect');expect(body).not.toHaveProperty('provider_metadata');expect(body).not.toHaveProperty('scopes')
 })

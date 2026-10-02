@@ -51,7 +51,7 @@
     },
     {
       "path": "/api/cron/scrape-competitors",
-      "schedule": "0 3 * * *"
+      "schedule": "0 * * * *"
     },
     {
       "path": "/api/cron/crm-sync",
@@ -71,7 +71,3 @@
     }
   ]
 }
-
-
-
-

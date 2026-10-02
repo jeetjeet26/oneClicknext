@@ -1,10 +1,10 @@
-import OpenAI from 'openai'
 import Anthropic from '@anthropic-ai/sdk'
+import OpenAI from 'openai'
+import { isClientHeadlineSurface,isDiscoveryQuery } from './client-headline'
+import { ensureOrderedEntities,findTrackedBrandPosition } from './entity-fallback'
+import { auditPublicSiteForProperty,type PublicSiteAudit } from './public-site-audit'
 import { generateRecommendations } from './recommendation-engine'
-import { auditPublicSiteForProperty, type PublicSiteAudit } from './public-site-audit'
-import { getGeoConfig, getSurfaceLabel, getSurfaceMeasurementNote } from './types'
-import { isClientHeadlineSurface, isDiscoveryQuery } from './client-headline'
-import { ensureOrderedEntities, findTrackedBrandPosition } from './entity-fallback'
+import { getGeoConfig,getSurfaceLabel,getSurfaceMeasurementNote } from './types'
 
 type QueryResult<T = unknown> = Promise<{ data: T; error: unknown }>
 
@@ -314,7 +314,6 @@ export async function buildPropertyReportData(
   let runsQuery = from(supabase, 'geo_runs')
     .select('id, surface, batch_id, model_name, status, started_at, finished_at, geo_scores(*)')
     .eq('property_id', propertyId)
-    .eq('status', 'completed')
     .order('started_at', { ascending: false })
 
   if (options.batchId) {
@@ -332,7 +331,9 @@ export async function buildPropertyReportData(
 
   const reportProperty = (property || null) as ReportProperty | null
   const reportQueries = (queries || []) as ReportQuery[]
-  const sourcedRuns = (runs || []) as ReportRun[]
+  const observedRuns = (runs || []) as ReportRun[]
+  const incompleteRuns = observedRuns.filter(run=>run.status!=='completed')
+  const sourcedRuns = observedRuns.filter(run=>run.status==='completed')
   const runIds = sourcedRuns.map((r) => r.id)
   let rawAnswers: ReportAnswer[] = []
   if (runIds.length > 0) {
@@ -376,6 +377,10 @@ export async function buildPropertyReportData(
     competitors,
     aiOverviewSummary
   })
+
+  if (incompleteRuns.length) {
+    insightsBlock.risks.unshift(`Incomplete audit coverage: ${incompleteRuns.length} of ${observedRuns.length} selected runs are unfinished or failed. Scores and recommendations use only the ${sourcedRuns.length} completed runs; missing answers are not measured absence.`)
+  }
 
   const narrative = await maybeGenerateNarrative({
     propertyName: reportProperty?.name || 'Property',

@@ -297,9 +297,10 @@ class LassoAdapter(BaseCRMAdapter):
                         "This key may not permit read/search API calls."
                     ),
                     api_version="public-registration",
+                    evidence_source="local_structure",
                 )
 
-            response = requests.get(
+            response = self.read_get(
                 f"{self.api_endpoint}/registrants/search",
                 headers=self._get_headers(),
                 params=self._scoped_params(
@@ -341,9 +342,10 @@ class LassoAdapter(BaseCRMAdapter):
     def get_schema(self) -> CRMSchema:
         """Return Lasso registrant fields plus project-specific questions."""
         fields = self._default_schema_fields()
+        evidence_source = "fallback"
 
         try:
-            response = requests.get(
+            response = self.read_get(
                 f"{self.api_endpoint}/projects/settings",
                 headers=self._get_headers(),
                 timeout=self.timeout,
@@ -351,6 +353,7 @@ class LassoAdapter(BaseCRMAdapter):
 
             if response.status_code == 200:
                 fields.extend(self._extract_question_fields(response.json()))
+                evidence_source = "provider_plus_defaults"
             else:
                 logger.warning(
                     "[Lasso] Project settings schema discovery failed: %s",
@@ -365,6 +368,7 @@ class LassoAdapter(BaseCRMAdapter):
             object_name="Registrant",
             object_label="Registrant",
             fields=fields,
+            evidence_source=evidence_source,
         )
 
     def search_lead(self, email: str, phone: Optional[str] = None) -> SearchResult:
@@ -390,7 +394,7 @@ class LassoAdapter(BaseCRMAdapter):
             return SearchResult(found=False, error=str(e))
 
     def _search_registrants(self, params: Dict[str, Any], match_type: str) -> SearchResult:
-        response = requests.get(
+        response = self.read_get(
             f"{self.api_endpoint}/registrants/search",
             headers=self._get_headers(),
             params=self._scoped_params(params),
@@ -428,6 +432,7 @@ class LassoAdapter(BaseCRMAdapter):
                 headers=self._get_headers(),
                 json=payload,
                 timeout=self.timeout,
+                allow_redirects=False,
             )
 
             if response.status_code in (200, 201, 202):
@@ -439,6 +444,7 @@ class LassoAdapter(BaseCRMAdapter):
                     success=True,
                     external_id=external_id,
                     raw_response=data,
+                    confirmation="confirmed" if external_id and response.status_code in (200, 201) else "accepted",
                 )
 
             return CreateResult(success=False, error=self._error_from_response(response))
@@ -460,6 +466,7 @@ class LassoAdapter(BaseCRMAdapter):
                 headers=self._get_headers(),
                 json={"sourceType": source_type},
                 timeout=self.timeout,
+                allow_redirects=False,
             )
             if response.status_code not in (200, 201, 204):
                 logger.warning(
@@ -482,14 +489,15 @@ class LassoAdapter(BaseCRMAdapter):
                 headers=self._get_headers(),
                 json={"note": note},
                 timeout=self.timeout,
+                allow_redirects=False,
             )
 
             if response.status_code in (200, 201, 202):
                 data = response.json() if response.text else {}
                 note_id = (
-                    self._extract_external_id(data) if isinstance(data, dict) else None
+                    next((str(data[key]) for key in ("noteId", "note_id", "id") if isinstance(data.get(key), (str, int)) and not isinstance(data.get(key), bool) and str(data[key]).strip()), None) if isinstance(data, dict) else None
                 )
-                return CreateResult(success=True, external_id=note_id, raw_response=data if isinstance(data, dict) else None)
+                return CreateResult(success=True, external_id=note_id, raw_response=data if isinstance(data, dict) else None, confirmation="confirmed" if note_id and response.status_code in (200, 201) else "accepted")
 
             return CreateResult(success=False, error=self._error_from_response(response))
 
@@ -597,7 +605,7 @@ class LassoAdapter(BaseCRMAdapter):
 
     def get_lead(self, external_id: str) -> Dict[str, Any]:
         """Get a Lasso registrant by ID."""
-        response = requests.get(
+        response = self.read_get(
             f"{self.api_endpoint}/registrants/{external_id}",
             headers=self._get_headers(),
             timeout=self.timeout,

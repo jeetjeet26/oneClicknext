@@ -11,6 +11,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 
 from utils.auth import verify_api_key
+from utils.delivery_guard import require_delivery_enabled
 from utils.supabase_client import get_supabase_client
 from jobs.crm_schema_agent import (
     CRMSchemaAgent,
@@ -113,10 +114,10 @@ def get_crm_adapter(crm_type: str, credentials: Dict[str, Any]):
         from connectors.crm_adapters.realpage_adapter import RealPageAdapter
         return RealPageAdapter(credentials)
     elif crm_type_lower == 'salesforce':
-        from connectors.crm_adapters.salesforce_adapter import SalesforceAdapter
+        from connectors.crm_adapters.verified_rest import SalesforceAdapter
         return SalesforceAdapter(credentials)
     elif crm_type_lower == 'hubspot':
-        from connectors.crm_adapters.hubspot_adapter import HubSpotAdapter
+        from connectors.crm_adapters.verified_rest import HubSpotAdapter
         return HubSpotAdapter(credentials)
     elif crm_type_lower == 'lasso':
         from connectors.crm_adapters.lasso_adapter import LassoAdapter
@@ -155,31 +156,7 @@ async def test_connection(
     request: TestConnectionRequest,
     api_key: str = Depends(verify_api_key)
 ):
-    """
-    Test CRM API connection with provided credentials.
-    Quick validation before running full discovery.
-    """
-    logger.info(f"[CRM] Testing connection for {request.crm_type}")
-    
-    try:
-        adapter = get_crm_adapter(request.crm_type, request.credentials)
-        result = adapter.test_connection()
-        
-        return {
-            "success": result.success,
-            "message": result.message,
-            "api_version": result.api_version,
-            "error": result.error
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"[CRM] Connection test failed: {e}")
-        return {
-            "success": False,
-            "message": "Connection test failed",
-            "error": str(e)
-        }
+    raise HTTPException(status_code=409, detail="Use the saved CRM setup and mapping review workflow.")
 
 
 @router.post("/discover-schema")
@@ -187,90 +164,7 @@ async def discover_schema(
     request: DiscoverSchemaRequest,
     api_key: str = Depends(verify_api_key)
 ):
-    """
-    AI-powered schema discovery and field mapping.
-    
-    1. Connects to CRM and introspects schema
-    2. Uses Claude to intelligently map fields
-    3. Returns mappings with confidence scores for user review
-    """
-    logger.info(f"[CRM] Starting schema discovery for {request.crm_type}, property {request.property_id}")
-    
-    try:
-        # Get CRM adapter and introspect schema
-        adapter = get_crm_adapter(request.crm_type, request.credentials)
-        
-        # Test connection first
-        conn_result = adapter.test_connection()
-        if not conn_result.success:
-            return {
-                "success": False,
-                "error": f"Connection failed: {conn_result.error}"
-            }
-        
-        # Get CRM schema
-        crm_schema = adapter.get_schema()
-        schema_dict = {
-            "crm_type": crm_schema.crm_type,
-            "api_version": crm_schema.api_version,
-            "objects": [{
-                "name": crm_schema.object_name,
-                "label": crm_schema.object_label,
-                "fields": [asdict(f) for f in crm_schema.fields]
-            }]
-        }
-        
-        # Get learned patterns for this CRM type
-        learned_patterns = await get_learned_patterns(request.crm_type)
-        
-        try:
-            # Run AI agent to generate mappings when configured.
-            agent = CRMSchemaAgent()
-            mapping_result = agent.discover_and_map(
-                crm_type=request.crm_type,
-                crm_schema=schema_dict,
-                learned_patterns=learned_patterns
-            )
-
-            if not mapping_result.success:
-                logger.warning(
-                    "[CRM] AI schema mapping failed, using fallback mappings: %s",
-                    mapping_result.error,
-                )
-                mappings = [asdict(m) for m in create_fallback_mappings(schema_dict)]
-                agent_reasoning = (
-                    "AI schema mapping was unavailable, so these mappings were generated "
-                    "from known CRM field names. Review them before saving."
-                )
-            else:
-                mappings = [asdict(m) for m in mapping_result.mappings]
-                agent_reasoning = mapping_result.agent_reasoning
-        except Exception as mapping_error:
-            logger.warning(
-                "[CRM] AI schema mapping unavailable, using fallback mappings: %s",
-                mapping_error,
-            )
-            mappings = [asdict(m) for m in create_fallback_mappings(schema_dict)]
-            agent_reasoning = (
-                "AI schema mapping was unavailable, so these mappings were generated "
-                "from known CRM field names. Review them before saving."
-            )
-        
-        logger.info(f"[CRM] Schema discovery complete: {len(mappings)} field mappings generated")
-        
-        return {
-            "success": True,
-            "schema": schema_dict,
-            "mappings": mappings,
-            "agent_reasoning": agent_reasoning,
-            "tourspark_schema": get_tourspark_schema()
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"[CRM] Schema discovery failed: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    raise HTTPException(status_code=409, detail="Use the saved CRM setup and mapping review workflow.")
 
 
 @router.post("/search-lead")
@@ -282,11 +176,13 @@ async def search_lead(
     Check if lead already exists in CRM by email/phone.
     Used for duplicate prevention before creating new leads.
     """
-    logger.info(f"[CRM] Searching for lead: {request.email}")
+    logger.info("[CRM] Searching scoped CRM records")
     
     try:
         adapter = get_crm_adapter(request.crm_type, request.credentials)
         result = adapter.search_lead(request.email, request.phone)
+        if result.error or (result.found and not result.external_id):
+            return {"success": False, "found": False, "error": "CRM duplicate check was not confirmed"}
         
         return {
             "success": True,
@@ -312,65 +208,8 @@ async def push_lead(
     request: PushLeadRequest,
     api_key: str = Depends(verify_api_key)
 ):
-    """
-    Push a lead to CRM.
-    
-    1. Applies field mapping to convert TourSpark data to CRM format
-    2. Checks if lead already exists (duplicate prevention)
-    3. Creates new lead or returns existing ID
-    """
-    logger.info(f"[CRM] Pushing lead {request.lead_id} to {request.crm_type}")
-    
-    try:
-        adapter = get_crm_adapter(request.crm_type, request.credentials)
-        
-        # Check for existing lead first
-        email = request.lead_data.get('email')
-        phone = request.lead_data.get('phone')
-        
-        if email:
-            search_result = adapter.search_lead(email, phone)
-            
-            if search_result.found:
-                logger.info(f"[CRM] Lead already exists: {search_result.external_id}")
-                return {
-                    "success": True,
-                    "action": "linked",
-                    "external_id": search_result.external_id,
-                    "message": f"Lead already exists in CRM (matched by {search_result.match_type})"
-                }
-        
-        # Apply field mapping
-        mapped_data = adapter.apply_mapping(request.lead_data, request.field_mapping)
-        
-        # Create new lead
-        create_result = adapter.create_lead(mapped_data)
-        
-        if create_result.success:
-            logger.info(f"[CRM] Lead created: {create_result.external_id}")
-            return {
-                "success": True,
-                "action": "created",
-                "external_id": create_result.external_id,
-                "message": "Lead created successfully in CRM"
-            }
-        else:
-            logger.error(f"[CRM] Lead creation failed: {create_result.error}")
-            return {
-                "success": False,
-                "action": "failed",
-                "error": create_result.error
-            }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"[CRM] Lead push failed: {e}", exc_info=True)
-        return {
-            "success": False,
-            "action": "failed",
-            "error": str(e)
-        }
+    require_delivery_enabled()
+    raise HTTPException(status_code=409, detail="Use a saved, approved CRM transfer identity. Direct lead, note and bulk writes are retired.")
 
 
 @router.post("/add-lead-note")
@@ -378,196 +217,21 @@ async def add_lead_note(
     request: AddLeadNoteRequest,
     api_key: str = Depends(verify_api_key)
 ):
-    """
-    Attach a note (e.g. conversation summary, tour booking) to an existing
-    CRM lead. Supported per-adapter; unsupported CRMs return
-    success=False with action "unsupported" so callers can skip gracefully.
-    """
-    logger.info(
-        f"[CRM] Adding note to lead {request.lead_id} "
-        f"({request.crm_type} external id {request.external_id})"
-    )
-
-    try:
-        adapter = get_crm_adapter(request.crm_type, request.credentials)
-        result = adapter.add_note(request.external_id, request.note)
-
-        if result.success:
-            return {
-                "success": True,
-                "action": "note_added",
-                "note_id": result.external_id,
-            }
-
-        unsupported = "not supported" in (result.error or "").lower()
-        return {
-            "success": False,
-            "action": "unsupported" if unsupported else "failed",
-            "error": result.error,
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"[CRM] Note push failed: {e}", exc_info=True)
-        return {
-            "success": False,
-            "action": "failed",
-            "error": str(e)
-        }
+    require_delivery_enabled()
+    raise HTTPException(status_code=409, detail="Use a saved, approved CRM transfer identity. Direct lead, note and bulk writes are retired.")
 
 
 @router.post("/validate-mapping")
-async def validate_mapping(
-    request: ValidateMappingRequest,
-    api_key: str = Depends(verify_api_key)
-):
-    """
-    Validate field mapping by creating a test record.
-    Creates, reads, and deletes a test lead to verify mapping works.
-    """
-    logger.info(f"[CRM] Validating mapping for {request.crm_type}")
-    
-    try:
-        adapter = get_crm_adapter(request.crm_type, request.credentials)
-
-        if (
-            request.crm_type.lower() == "lasso"
-            and request.credentials.get("client_id")
-            and request.credentials.get("project_id")
-        ):
-            conn_result = adapter.test_connection()
-            if not conn_result.success:
-                return {
-                    "valid": False,
-                    "step_failed": "connection",
-                    "errors": [conn_result.error],
-                    "warnings": [],
-                }
-
-            return {
-                "valid": True,
-                "errors": [],
-                "warnings": [
-                    "Lasso public registration keys are write-only; skipped create/read/delete test sync."
-                ],
-                "message": "Lasso public registration mapping accepted",
-            }
-        
-        # Create test lead data - only basic required fields to avoid picklist validation issues
-        test_data = {
-            "first_name": "TourSpark",
-            "last_name": "Test",
-            "email": f"tourspark.test.{request.property_id[:8]}@example.com",
-            "phone": "555-000-0000",
-        }
-        
-        # Apply mapping - only for fields present in test data
-        mapped_data = {}
-        for ts_field, crm_field in request.field_mapping.items():
-            if ts_field in test_data and test_data[ts_field]:
-                mapped_data[crm_field] = test_data[ts_field]
-        
-        # Step 1: Create test lead
-        create_result = adapter.create_lead(mapped_data)
-        
-        if not create_result.success:
-            return {
-                "valid": False,
-                "step_failed": "create",
-                "errors": [create_result.error],
-                "warnings": []
-            }
-        
-        test_id = create_result.external_id
-        logger.info(f"[CRM] Test lead created: {test_id}")
-        
-        # Step 2: Read it back
-        try:
-            read_data = adapter.get_lead(test_id)
-            if not read_data:
-                return {
-                    "valid": False,
-                    "step_failed": "read",
-                    "errors": ["Could not read test lead back from CRM"],
-                    "warnings": [],
-                    "test_id": test_id
-                }
-        except Exception as e:
-            return {
-                "valid": False,
-                "step_failed": "read",
-                "errors": [str(e)],
-                "warnings": [],
-                "test_id": test_id
-            }
-        
-        # Step 3: Delete test record
-        try:
-            deleted = adapter.delete_lead(test_id)
-            if not deleted:
-                logger.warning(f"[CRM] Could not delete test lead {test_id}")
-        except Exception as e:
-            logger.warning(f"[CRM] Error deleting test lead: {e}")
-        
-        logger.info(f"[CRM] Mapping validation successful")
-        
-        return {
-            "valid": True,
-            "test_id": test_id,
-            "errors": [],
-            "warnings": [],
-            "message": "Field mapping validated successfully"
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"[CRM] Mapping validation failed: {e}", exc_info=True)
-        return {
-            "valid": False,
-            "step_failed": "unknown",
-            "errors": [str(e)],
-            "warnings": []
-        }
+async def validate_mapping(request: ValidateMappingRequest, api_key: str = Depends(verify_api_key)):
+    """Creating a test record requires a saved, recoverable provider verification operation."""
+    require_delivery_enabled()
+    raise HTTPException(status_code=409, detail="A saved provider verification operation is required; local mapping review does not create CRM records.")
 
 
 @router.post("/save-mapping")
-async def save_mapping(
-    request: SaveMappingRequest,
-    api_key: str = Depends(verify_api_key)
-):
-    """
-    Save field mapping to database after user review.
-    Updates integration_credentials table.
-    """
-    logger.info(f"[CRM] Saving mapping for property {request.property_id}")
-    
-    try:
-        supabase = get_supabase_client()
-        mapping_validated_at = (
-            datetime.now(timezone.utc).isoformat() if request.validated else None
-        )
-        
-        # Upsert to integration_credentials (including credentials)
-        result = supabase.table('integration_credentials').upsert({
-            'property_id': request.property_id,
-            'platform': request.crm_type.lower(),
-            'credentials': request.credentials,
-            'field_mapping': request.field_mapping,
-            'mapping_validated': request.validated,
-            'mapping_validated_at': mapping_validated_at,
-            'status': 'connected' if request.validated else 'pending'
-        }, on_conflict='property_id,platform').execute()
-        
-        return {
-            "success": True,
-            "message": "Field mapping saved successfully"
-        }
-        
-    except Exception as e:
-        logger.error(f"[CRM] Save mapping failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+async def save_mapping(request: SaveMappingRequest, api_key: str = Depends(verify_api_key)):
+    """Legacy saves cannot assert provider readiness or bypass recorded review."""
+    raise HTTPException(status_code=409, detail="Use the versioned CRM mapping review workspace.")
 
 
 @router.get("/learned-patterns/{crm_type}")
@@ -575,18 +239,7 @@ async def get_learned_patterns_endpoint(
     crm_type: str,
     api_key: str = Depends(verify_api_key)
 ):
-    """
-    Get learned mapping patterns for a CRM type.
-    Shows what other properties have successfully mapped.
-    """
-    patterns = await get_learned_patterns(crm_type)
-    
-    return {
-        "success": True,
-        "crm_type": crm_type,
-        "patterns": patterns,
-        "count": len(patterns)
-    }
+    raise HTTPException(status_code=409, detail="Use property-scoped saved field discovery and reviewed mappings.")
 
 
 @router.get("/tourspark-schema")
@@ -614,34 +267,7 @@ async def record_mapping_correction(
     request: RecordCorrectionRequest,
     api_key: str = Depends(verify_api_key)
 ):
-    """
-    Record a user's mapping correction for the learning system.
-    This improves future AI suggestions.
-    """
-    logger.info(f"[CRM] Recording correction: {request.tourspark_field} -> {request.final_crm_field}")
-    
-    try:
-        supabase = get_supabase_client()
-        
-        # Call the database function to record the correction
-        supabase.rpc('record_mapping_correction', {
-            'p_crm_type': request.crm_type.lower(),
-            'p_tourspark_field': request.tourspark_field,
-            'p_suggested_crm_field': request.suggested_crm_field,
-            'p_final_crm_field': request.final_crm_field
-        }).execute()
-        
-        return {
-            "success": True,
-            "message": "Correction recorded for learning system"
-        }
-        
-    except Exception as e:
-        logger.error(f"[CRM] Record correction failed: {e}")
-        return {
-            "success": False,
-            "error": str(e)
-        }
+    raise HTTPException(status_code=409, detail="Use the saved CRM setup and mapping review workflow.")
 
 
 class CRMSyncStatsRequest(BaseModel):
@@ -757,148 +383,46 @@ async def bulk_sync_leads(
     background_tasks: BackgroundTasks,
     api_key: str = Depends(verify_api_key)
 ):
-    """
-    Bulk sync existing leads to CRM.
-    Runs in background and returns job tracking info.
-    """
-    logger.info(f"[CRM] Bulk sync requested for {len(request.lead_ids)} leads")
-    
-    try:
-        supabase = get_supabase_client()
-        
-        # Get CRM integration config
-        integration_result = supabase.table('integration_credentials').select(
-            'platform, credentials, field_mapping, mapping_validated'
-        ).eq('property_id', request.property_id).in_(
-            'platform', ['yardi', 'realpage', 'salesforce', 'hubspot', 'lasso']
-        ).eq('status', 'connected').single().execute()
-        
-        if not integration_result.data:
-            return {
-                "success": False,
-                "error": "No CRM integration configured for this property"
-            }
-        
-        integration = integration_result.data
-        
-        if not integration['mapping_validated']:
-            return {
-                "success": False,
-                "error": "CRM mapping not validated. Please validate first."
-            }
-        
-        # Get leads to sync
-        leads_result = supabase.table('leads').select(
-            'id, first_name, last_name, email, phone, source, status, move_in_date, bedrooms, notes, external_crm_id'
-        ).eq('property_id', request.property_id).in_('id', request.lead_ids).execute()
-        
-        leads = leads_result.data or []
-        
-        if not leads:
-            return {
-                "success": False,
-                "error": "No leads found to sync"
-            }
-        
-        # Process in background
-        async def process_bulk_sync():
-            adapter = get_crm_adapter(integration['platform'], integration['credentials'])
-            results = {
-                "created": 0,
-                "linked": 0,
-                "failed": 0,
-                "skipped": 0
-            }
-            
-            for lead in leads:
-                try:
-                    # Skip if already synced
-                    if lead.get('external_crm_id'):
-                        logger.info(f"[CRM] Lead {lead['id']} already synced, skipping")
-                        results["skipped"] += 1
-                        continue
-                    
-                    # Search for existing (even with no/invalid email, try phone)
-                    email = lead.get('email', '').strip()
-                    phone = lead.get('phone', '').strip() if lead.get('phone') else None
-                    
-                    logger.info(f"[CRM] Processing lead {lead['id']}: {lead.get('first_name')} {lead.get('last_name')} - email: '{email}', phone: '{phone}'")
-                    
-                    search_result = adapter.search_lead(email if email else '', phone)
-                    logger.info(f"[CRM] Search result: found={search_result.found}, id={search_result.external_id}")
-                    
-                    if search_result.found:
-                        # Link to existing
-                        supabase.table('leads').update({
-                            'external_crm_id': search_result.external_id,
-                            'crm_sync_status': 'linked',
-                            'crm_synced_at': 'now()',
-                        }).eq('id', lead['id']).execute()
-                        
-                        results["linked"] += 1
-                        logger.info(f"[CRM] Linked lead {lead['id']} to existing CRM record")
-                        continue
-                    
-                    # Create new lead in CRM
-                    lead_data = {
-                        'first_name': lead.get('first_name'),
-                        'last_name': lead.get('last_name'),
-                        'email': lead.get('email'),
-                        'phone': lead.get('phone'),
-                        'source': lead.get('source'),
-                        'status': lead.get('status'),
-                        'move_in_date': lead.get('move_in_date'),
-                        'bedrooms': lead.get('bedrooms'),
-                        'notes': lead.get('notes'),
-                    }
-                    
-                    # Apply mapping
-                    mapped_data = adapter.apply_mapping(lead_data, integration['field_mapping'])
-                    
-                    # Create in CRM
-                    create_result = adapter.create_lead(mapped_data)
-                    
-                    if create_result.success:
-                        supabase.table('leads').update({
-                            'external_crm_id': create_result.external_id,
-                            'crm_sync_status': 'created',
-                            'crm_synced_at': 'now()',
-                        }).eq('id', lead['id']).execute()
-                        
-                        results["created"] += 1
-                        logger.info(f"[CRM] Created lead {lead['id']} in CRM: {create_result.external_id}")
-                    else:
-                        supabase.table('leads').update({
-                            'crm_sync_status': 'failed',
-                            'crm_sync_error': create_result.error,
-                        }).eq('id', lead['id']).execute()
-                        
-                        results["failed"] += 1
-                        logger.error(f"[CRM] Failed to create lead {lead['id']}: {create_result.error}")
-                
-                except Exception as e:
-                    logger.error(f"[CRM] Error syncing lead {lead['id']}: {e}")
-                    results["failed"] += 1
-                    
-                    supabase.table('leads').update({
-                        'crm_sync_status': 'failed',
-                        'crm_sync_error': str(e),
-                    }).eq('id', lead['id']).execute()
-            
-            logger.info(f"[CRM] Bulk sync complete: {results}")
-        
-        background_tasks.add_task(process_bulk_sync)
-        
-        return {
-            "success": True,
-            "message": f"Bulk sync started for {len(leads)} leads",
-            "total": len(leads)
-        }
-        
-    except Exception as e:
-        logger.error(f"[CRM] Bulk sync failed: {e}")
-        return {
-            "success": False,
-            "error": str(e)
-        }
+    require_delivery_enabled()
+    raise HTTPException(status_code=409, detail="Use a saved, approved CRM transfer identity. Direct lead, note and bulk writes are retired.")
 
+
+class SavedSetupRequest(BaseModel):
+    operation_id: str = Field(..., pattern=r"^[0-9a-fA-F-]{36}$")
+
+@router.post("/setup-operation")
+async def saved_setup_operation(request: SavedSetupRequest, api_key: str = Depends(verify_api_key)):
+    from starlette.concurrency import run_in_threadpool
+    from jobs.crm_setup import run_setup_operation
+    return await run_in_threadpool(run_setup_operation, request.operation_id, get_crm_adapter)
+
+
+class SavedDeliveryRequest(BaseModel):
+    handoff_id: str = Field(..., pattern=r"^[0-9a-fA-F-]{36}$")
+
+@router.post("/delivery-operation")
+async def saved_delivery_operation(request: SavedDeliveryRequest, api_key: str = Depends(verify_api_key)):
+    require_delivery_enabled()
+    from starlette.concurrency import run_in_threadpool
+    from jobs.crm_delivery import run_crm_handoff
+    return await run_in_threadpool(run_crm_handoff, request.handoff_id, get_crm_adapter)
+
+
+class SavedReconciliationRequest(BaseModel):
+    check_id: str = Field(..., pattern=r"^[0-9a-fA-F-]{36}$")
+
+@router.post("/reconciliation-operation")
+async def saved_reconciliation_operation(request: SavedReconciliationRequest, api_key: str = Depends(verify_api_key)):
+    from starlette.concurrency import run_in_threadpool
+    from jobs.crm_reconciliation import run_crm_reconciliation
+    return await run_in_threadpool(run_crm_reconciliation, request.check_id, get_crm_adapter)
+
+
+class SavedQualificationRequest(BaseModel):
+    operation_id: str = Field(..., pattern=r"^[0-9a-fA-F-]{36}$")
+
+@router.post("/qualification-operation")
+async def saved_qualification_operation(request: SavedQualificationRequest, api_key: str = Depends(verify_api_key)):
+    from starlette.concurrency import run_in_threadpool
+    from jobs.crm_qualification import run_crm_qualification
+    return await run_in_threadpool(run_crm_qualification, request.operation_id, get_crm_adapter)

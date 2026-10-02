@@ -2,13 +2,14 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import {
-  X, Star, Clock, MessageCircle, Sparkles, Check,
-  Edit3, Send, Loader2, RefreshCw, Copy, AlertTriangle,
-  ShieldAlert, History, ExternalLink, Ban
+  X, Star, Clock, AlertTriangle, ShieldAlert
 } from 'lucide-react'
 import { SentimentBadge } from './SentimentBadge'
 import { PlatformIcon, PlatformName } from './PlatformIcon'
-import { ResponseGenerator } from './ResponseGenerator'
+import { ReviewCasePanel } from './ReviewCasePanel'
+import { ReviewAnalysisPanel } from './ReviewAnalysisPanel'
+import { ReviewResponsePanel } from './ReviewResponsePanel'
+import { ReviewTestimonialPanel } from './ReviewTestimonialPanel'
 import { format, formatDistanceToNow } from 'date-fns'
 
 interface ResponseRow {
@@ -54,6 +55,7 @@ interface Review {
   review_responses?: ResponseRow[]
   review_testimonial_approvals?: TestimonialApprovalRow[]
   reputation_cases?: Array<{
+    version: number
     id: string
     status: string
     priority: string | null
@@ -92,41 +94,20 @@ interface CaseAnalysis {
 }
 
 interface ReviewDetailDrawerProps {
+  propertyId: string
   review: Review
   onClose: () => void
   onUpdate?: () => void
 }
 
-export function ReviewDetailDrawer({ review: initialReview, onClose, onUpdate }: ReviewDetailDrawerProps) {
+export function ReviewDetailDrawer({ propertyId, review: initialReview, onClose, onUpdate }: ReviewDetailDrawerProps) {
   // The drawer owns its data: it re-fetches the review after every mutation so
   // it never renders stale list state.
   const [review, setReview] = useState<Review>(initialReview)
   const [caseEvents, setCaseEvents] = useState<CaseEvent[]>([])
   const [caseAnalysis, setCaseAnalysis] = useState<CaseAnalysis | null>(null)
-  const [showResponseGenerator, setShowResponseGenerator] = useState(false)
-  const [editingResponse, setEditingResponse] = useState<string | null>(null)
-  const [editedText, setEditedText] = useState('')
-  const [decisionReason, setDecisionReason] = useState('')
-  const [actionLoading, setActionLoading] = useState<string | null>(null)
-  const [copied, setCopied] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
-  const [manualPostRequired, setManualPostRequired] = useState(false)
-  const [providerDeepLink, setProviderDeepLink] = useState<string | null>(null)
-  const [providerPostId, setProviderPostId] = useState('')
-  const [providerPostUrl, setProviderPostUrl] = useState('')
-  const [providerNotes, setProviderNotes] = useState('')
-  const [showHistory, setShowHistory] = useState(false)
-  const [testimonialRightsBasis, setTestimonialRightsBasis] =
-    useState('direct_consent')
-  const [testimonialEvidenceNote, setTestimonialEvidenceNote] = useState('')
-  const [testimonialAttributionApproved, setTestimonialAttributionApproved] =
-    useState(false)
-  const [testimonialRevocationReason, setTestimonialRevocationReason] =
-    useState('')
-  const [testimonialLoading, setTestimonialLoading] = useState(false)
-
   const refreshReview = useCallback(async () => {
-    const propertyId = (initialReview as unknown as { property_id?: string }).property_id
     try {
       const [reviewRes, caseRes] = await Promise.all([
         propertyId
@@ -135,8 +116,10 @@ export function ReviewDetailDrawer({ review: initialReview, onClose, onUpdate }:
               { cache: 'no-store' }
             )
           : Promise.resolve(null),
-        fetch(`/api/reviewflow/cases?reviewId=${initialReview.id}`, { cache: 'no-store' }),
+        fetch(`/api/reviewflow/cases?propertyId=${propertyId}&reviewId=${initialReview.id}`, { cache: 'no-store' }),
       ])
+      if(!reviewRes?.ok||!caseRes.ok)throw new Error('The saved review or case could not be refreshed. Reload before making another decision.')
+      setActionError(null)
       if (reviewRes?.ok) {
         const data = await reviewRes.json()
         const fresh = Array.isArray(data.reviews) ? data.reviews[0] : null
@@ -150,201 +133,17 @@ export function ReviewDetailDrawer({ review: initialReview, onClose, onUpdate }:
           setReview((prev) => ({ ...prev, reputation_cases: [data.case] }))
         }
       }
-    } catch {
-      // Non-fatal: the drawer keeps rendering the last known state.
+    } catch(error) {
+      setActionError(error instanceof Error?error.message:'The saved review could not be refreshed.')
     }
-  }, [initialReview])
+  }, [initialReview,propertyId])
 
   useEffect(() => {
     setReview(initialReview)
     refreshReview()
   }, [initialReview, refreshReview])
 
-  const responses = (review.review_responses || [])
-    .slice()
-    .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
-  // Deterministic active response: newest non-superseded, non-rejected row.
-  const activeResponse =
-    responses.find((r) => !r.superseded_at && r.status !== 'rejected') || responses[0] || null
-  const historyResponses = responses.filter((r) => r.id !== activeResponse?.id)
   const reputationCase = review.reputation_cases?.[0] || null
-  const activeTestimonialApproval =
-    review.review_testimonial_approvals?.find(
-      approval => approval.status === 'active'
-    ) || null
-
-  const requiresRationale = !decisionReason.trim()
-
-  const applyMutation = async (payload: Record<string, unknown>, label: string) => {
-    setActionLoading(label)
-    setActionError(null)
-    try {
-      const res = await fetch('/api/reviewflow/respond', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (res.ok) {
-        setEditingResponse(null)
-        setDecisionReason('')
-        setManualPostRequired(false)
-        onUpdate?.()
-        await refreshReview()
-        return { ok: true as const, data }
-      }
-      return { ok: false as const, status: res.status, data }
-    } catch (error) {
-      return {
-        ok: false as const,
-        status: 0,
-        data: { error: error instanceof Error ? error.message : 'Request failed' },
-      }
-    } finally {
-      setActionLoading(null)
-    }
-  }
-
-  const handleApprove = async () => {
-    if (!activeResponse) return
-    const result = await applyMutation(
-      {
-        responseId: activeResponse.id,
-        action: 'approve',
-        decisionReason: decisionReason.trim(),
-        editedText: editingResponse ? editedText : undefined,
-      },
-      'approve'
-    )
-    if (!result.ok) {
-      setActionError((result.data as { error?: string }).error || 'Failed to approve response')
-    }
-  }
-
-  const handleReject = async () => {
-    if (!activeResponse) return
-    const result = await applyMutation(
-      {
-        responseId: activeResponse.id,
-        action: 'reject',
-        decisionReason: decisionReason.trim(),
-      },
-      'reject'
-    )
-    if (!result.ok) {
-      setActionError((result.data as { error?: string }).error || 'Failed to reject response')
-    }
-  }
-
-  const handlePost = async (manual: boolean) => {
-    if (!activeResponse) return
-    const payload: Record<string, unknown> = {
-      responseId: activeResponse.id,
-      action: 'post',
-    }
-    if (manual) {
-      payload.manualConfirmed = true
-      payload.providerPostId = providerPostId.trim() || undefined
-      payload.providerPostUrl = providerPostUrl.trim() || undefined
-      payload.providerNotes = providerNotes.trim() || undefined
-    }
-    const result = await applyMutation(payload, 'post')
-    if (!result.ok) {
-      const data = result.data as { error?: string; deepLink?: string | null }
-      if (result.status === 400 && !manual) {
-        // Provider posting is not available for this source; fall back to the
-        // structured manual-confirmation path.
-        setManualPostRequired(true)
-        setProviderDeepLink(data.deepLink || null)
-        setActionError(null)
-      } else {
-        setActionError(data.error || 'Failed to post response')
-        if (data.deepLink) setProviderDeepLink(data.deepLink)
-      }
-    }
-  }
-
-  const handleCopyResponse = async () => {
-    if (activeResponse) {
-      await navigator.clipboard.writeText(activeResponse.response_text)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    }
-  }
-
-  const handleApproveTestimonial = async () => {
-    setTestimonialLoading(true)
-    setActionError(null)
-    try {
-      const response = await fetch(
-        `/api/reviewflow/testimonials/${review.id}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            attributionApproved: testimonialAttributionApproved,
-            rightsBasis: testimonialRightsBasis,
-            evidenceNote: testimonialEvidenceNote.trim(),
-          }),
-        }
-      )
-      const data = await response.json().catch(() => ({}))
-      if (!response.ok) {
-        throw new Error(
-          (data as { error?: string }).error ||
-            'Failed to approve testimonial publication'
-        )
-      }
-      setTestimonialEvidenceNote('')
-      setTestimonialAttributionApproved(false)
-      onUpdate?.()
-      await refreshReview()
-    } catch (error) {
-      setActionError(
-        error instanceof Error
-          ? error.message
-          : 'Failed to approve testimonial publication'
-      )
-    } finally {
-      setTestimonialLoading(false)
-    }
-  }
-
-  const handleRevokeTestimonial = async () => {
-    setTestimonialLoading(true)
-    setActionError(null)
-    try {
-      const response = await fetch(
-        `/api/reviewflow/testimonials/${review.id}`,
-        {
-          method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            reason: testimonialRevocationReason.trim(),
-          }),
-        }
-      )
-      const data = await response.json().catch(() => ({}))
-      if (!response.ok) {
-        throw new Error(
-          (data as { error?: string }).error ||
-            'Failed to revoke testimonial publication'
-        )
-      }
-      setTestimonialRevocationReason('')
-      onUpdate?.()
-      await refreshReview()
-    } catch (error) {
-      setActionError(
-        error instanceof Error
-          ? error.message
-          : 'Failed to revoke testimonial publication'
-      )
-    } finally {
-      setTestimonialLoading(false)
-    }
-  }
-
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
       <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
@@ -375,6 +174,7 @@ export function ReviewDetailDrawer({ review: initialReview, onClose, onUpdate }:
             </div>
             <button
               onClick={onClose}
+              aria-label="Close review details"
               className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
             >
               <X className="w-5 h-5" />
@@ -396,6 +196,7 @@ export function ReviewDetailDrawer({ review: initialReview, onClose, onUpdate }:
 
         {/* Content */}
         <div className="p-6 space-y-6">
+          {actionError&&<div role="alert" className="text-sm text-red-600"><p>{actionError}</p><button className="mt-2 rounded-lg border px-3 py-2" onClick={()=>void refreshReview()}>Reload review</button></div>}
           {/* Case panel */}
           {reputationCase && (
             <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-4">
@@ -425,6 +226,8 @@ export function ReviewDetailDrawer({ review: initialReview, onClose, onUpdate }:
             </div>
           )}
 
+          <ReviewCasePanel propertyId={propertyId} reviewId={review.id} refreshVersion={reputationCase?.version} onSaved={()=>{void refreshReview();onUpdate?.()}}/>
+
           {/* Review Text (source evidence) */}
           <div>
             <h3 className="text-sm font-medium text-slate-500 dark:text-slate-400 mb-2">
@@ -437,121 +240,9 @@ export function ReviewDetailDrawer({ review: initialReview, onClose, onUpdate }:
             </div>
           </div>
 
-          <div>
-            <h3 className="text-sm font-medium text-slate-500 dark:text-slate-400 mb-2">
-              SiteForge Testimonial Publication
-            </h3>
-            <div className="bg-slate-50 dark:bg-slate-800 rounded-xl p-4 space-y-3">
-              {activeTestimonialApproval ? (
-                <>
-                  <div className="flex items-center gap-2 text-sm text-emerald-700 dark:text-emerald-300">
-                    <Check className="h-4 w-4" />
-                    Approved for attributed website publication
-                  </div>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Rights basis:{' '}
-                    {activeTestimonialApproval.rights_basis.replaceAll('_', ' ')}
-                    {' • '}
-                    approved{' '}
-                    {format(
-                      new Date(activeTestimonialApproval.approved_at),
-                      'MMM d, yyyy'
-                    )}
-                  </p>
-                  <textarea
-                    value={testimonialRevocationReason}
-                    onChange={event =>
-                      setTestimonialRevocationReason(event.target.value)
-                    }
-                    placeholder="Reason for revoking publication approval"
-                    className="w-full rounded-lg border border-slate-300 bg-white p-3 text-sm dark:border-slate-600 dark:bg-slate-900"
-                    rows={2}
-                  />
-                  <button
-                    type="button"
-                    onClick={handleRevokeTestimonial}
-                    disabled={
-                      testimonialLoading ||
-                      testimonialRevocationReason.trim().length < 3
-                    }
-                    className="inline-flex items-center gap-2 rounded-lg border border-red-300 px-3 py-2 text-sm font-medium text-red-700 disabled:opacity-50 dark:border-red-700 dark:text-red-300"
-                  >
-                    {testimonialLoading ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Ban className="h-4 w-4" />
-                    )}
-                    Revoke publication approval
-                  </button>
-                </>
-              ) : (
-                <>
-                  <p className="text-sm text-slate-600 dark:text-slate-300">
-                    Response approval does not grant testimonial publication
-                    rights. Record the separate rights basis before SiteForge
-                    can use this review.
-                  </p>
-                  <label className="block text-sm text-slate-600 dark:text-slate-300">
-                    Rights basis
-                    <select
-                      value={testimonialRightsBasis}
-                      onChange={event =>
-                        setTestimonialRightsBasis(event.target.value)
-                      }
-                      className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900"
-                    >
-                      <option value="direct_consent">Direct consent</option>
-                      <option value="platform_terms">Platform terms</option>
-                      <option value="property_license">Property license</option>
-                      <option value="other">Other documented basis</option>
-                    </select>
-                  </label>
-                  <label className="block text-sm text-slate-600 dark:text-slate-300">
-                    Evidence note
-                    <textarea
-                      value={testimonialEvidenceNote}
-                      onChange={event =>
-                        setTestimonialEvidenceNote(event.target.value)
-                      }
-                      placeholder="Where the consent or license evidence is retained"
-                      className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-3 dark:border-slate-600 dark:bg-slate-900"
-                      rows={2}
-                    />
-                  </label>
-                  <label className="flex items-start gap-2 text-sm text-slate-600 dark:text-slate-300">
-                    <input
-                      type="checkbox"
-                      checked={testimonialAttributionApproved}
-                      onChange={event =>
-                        setTestimonialAttributionApproved(event.target.checked)
-                      }
-                      className="mt-1"
-                    />
-                    The reviewer name and platform attribution are approved for
-                    public website display.
-                  </label>
-                  <button
-                    type="button"
-                    onClick={handleApproveTestimonial}
-                    disabled={
-                      testimonialLoading ||
-                      !testimonialAttributionApproved ||
-                      testimonialEvidenceNote.trim().length < 3
-                    }
-                    className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
-                  >
-                    {testimonialLoading ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Check className="h-4 w-4" />
-                    )}
-                    Approve for SiteForge
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
+          <ReviewTestimonialPanel propertyId={propertyId} reviewId={review.id} onSaved={()=>{void refreshReview();onUpdate?.()}}/>
 
+          <ReviewAnalysisPanel propertyId={propertyId} reviewId={review.id} onApplied={()=>{void refreshReview();onUpdate?.()}}/>
           {/* Classification */}
           {(review.sentiment || caseAnalysis) && (
             <div>
@@ -575,8 +266,8 @@ export function ReviewDetailDrawer({ review: initialReview, onClose, onUpdate }:
                   <div>
                     <span className="text-sm text-slate-600 dark:text-slate-400 block mb-1">Cited evidence</span>
                     <ul className="list-disc pl-5 text-sm text-slate-600 dark:text-slate-300 space-y-1">
-                      {(caseAnalysis.evidence as string[]).slice(0, 5).map((quote, i) => (
-                        <li key={i}>&ldquo;{quote}&rdquo;</li>
+                      {(caseAnalysis.evidence as Array<string|{quote:string;claim:string}>).slice(0, 5).map((evidence, i) => (
+                        <li key={i}>{typeof evidence==='string'?evidence:<><span className="font-medium">{evidence.claim}</span> — &ldquo;{evidence.quote}&rdquo;</>}</li>
                       ))}
                     </ul>
                   </div>
@@ -610,319 +301,7 @@ export function ReviewDetailDrawer({ review: initialReview, onClose, onUpdate }:
             </div>
           )}
 
-          {/* Response Section */}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-medium text-slate-500 dark:text-slate-400">
-                Public Response
-              </h3>
-              {!activeResponse && (
-                <button
-                  onClick={() => setShowResponseGenerator(true)}
-                  className="flex items-center gap-2 text-sm text-indigo-600 hover:text-indigo-700 font-medium"
-                >
-                  <Sparkles className="w-4 h-4" />
-                  Draft with AI
-                </button>
-              )}
-            </div>
-
-            {activeResponse ? (
-              <div className="bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 rounded-xl p-4">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2 text-sm text-indigo-600 dark:text-indigo-400">
-                    <MessageCircle className="w-4 h-4" />
-                    <span className="capitalize">{activeResponse.response_type.replace('_', ' ')}</span>
-                    <span>•</span>
-                    <span className="capitalize">{activeResponse.tone} tone</span>
-                  </div>
-                  <ResponseStatusBadge status={activeResponse.status} />
-                </div>
-
-                {editingResponse === activeResponse.id ? (
-                  <textarea
-                    value={editedText}
-                    onChange={(e) => setEditedText(e.target.value)}
-                    className="w-full h-40 p-3 border border-indigo-300 dark:border-indigo-700 rounded-lg bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:ring-2 focus:ring-indigo-500"
-                  />
-                ) : (
-                  <p className="text-slate-700 dark:text-slate-300 whitespace-pre-wrap">
-                    {activeResponse.response_text}
-                  </p>
-                )}
-
-                {actionError && (
-                  <div className="mt-3 rounded-lg bg-red-50 dark:bg-red-900/20 px-3 py-2 text-sm text-red-700 dark:text-red-300">
-                    {actionError}
-                  </div>
-                )}
-
-                {/* Draft decision flow: rationale is mandatory */}
-                {activeResponse.status === 'draft' && (
-                  <div className="mt-4 pt-4 border-t border-indigo-200 dark:border-indigo-800 space-y-3">
-                    <div>
-                      <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
-                        Decision rationale (required)
-                      </label>
-                      <textarea
-                        value={decisionReason}
-                        onChange={(e) => setDecisionReason(e.target.value)}
-                        placeholder="Why are you approving or rejecting this response?"
-                        className="w-full h-16 p-2 text-sm border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300"
-                      />
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <button
-                        onClick={handleApprove}
-                        disabled={actionLoading !== null || requiresRationale}
-                        className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-50"
-                      >
-                        {actionLoading === 'approve' ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <Check className="w-4 h-4" />
-                        )}
-                        {editingResponse === activeResponse.id ? 'Save & Approve' : 'Approve'}
-                      </button>
-                      <button
-                        onClick={handleReject}
-                        disabled={actionLoading !== null || requiresRationale}
-                        className="flex items-center gap-2 px-4 py-2 border border-red-200 text-red-600 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-50"
-                      >
-                        {actionLoading === 'reject' ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <Ban className="w-4 h-4" />
-                        )}
-                        Reject
-                      </button>
-                      {editingResponse === activeResponse.id ? (
-                        <button
-                          onClick={() => setEditingResponse(null)}
-                          className="px-4 py-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
-                        >
-                          Cancel Edit
-                        </button>
-                      ) : (
-                        <>
-                          <button
-                            onClick={() => {
-                              setEditingResponse(activeResponse.id)
-                              setEditedText(activeResponse.response_text)
-                            }}
-                            className="flex items-center gap-2 px-4 py-2 border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
-                          >
-                            <Edit3 className="w-4 h-4" />
-                            Modify
-                          </button>
-                          <button
-                            onClick={() => setShowResponseGenerator(true)}
-                            className="flex items-center gap-2 px-4 py-2 text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded-lg transition-colors"
-                          >
-                            <RefreshCw className="w-4 h-4" />
-                            Regenerate
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {/* Approved → post flow */}
-                {activeResponse.status === 'approved' && (
-                  <div className="mt-4 pt-4 border-t border-indigo-200 dark:border-indigo-800 space-y-3">
-                    {activeResponse.decision_reason && (
-                      <p className="text-xs text-slate-500">
-                        Approved: {activeResponse.decision_reason}
-                      </p>
-                    )}
-                    {!manualPostRequired ? (
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => handlePost(false)}
-                          disabled={actionLoading === 'post'}
-                          className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50"
-                        >
-                          {actionLoading === 'post' ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                          ) : (
-                            <Send className="w-4 h-4" />
-                          )}
-                          Post Response
-                        </button>
-                        <button
-                          onClick={handleCopyResponse}
-                          className="flex items-center gap-2 px-4 py-2 border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
-                        >
-                          {copied ? (
-                            <>
-                              <Check className="w-4 h-4 text-emerald-500" /> Copied!
-                            </>
-                          ) : (
-                            <>
-                              <Copy className="w-4 h-4" /> Copy
-                            </>
-                          )}
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="space-y-3">
-                        <div className="rounded-lg bg-slate-100 dark:bg-slate-800 px-3 py-2 text-xs text-slate-600 dark:text-slate-300">
-                          Direct posting is not available for this source. Copy the response, post it
-                          on the platform, then confirm here with evidence.
-                          {providerDeepLink && (
-                            <a
-                              href={providerDeepLink}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="ml-2 inline-flex items-center gap-1 text-indigo-600 underline"
-                            >
-                              Open platform <ExternalLink className="w-3 h-3" />
-                            </a>
-                          )}
-                        </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          <input
-                            value={providerPostUrl}
-                            onChange={(e) => setProviderPostUrl(e.target.value)}
-                            placeholder="Provider post URL"
-                            className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm"
-                          />
-                          <input
-                            value={providerPostId}
-                            onChange={(e) => setProviderPostId(e.target.value)}
-                            placeholder="Provider post ID"
-                            className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm"
-                          />
-                          <input
-                            value={providerNotes}
-                            onChange={(e) => setProviderNotes(e.target.value)}
-                            placeholder="Optional posting notes"
-                            className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm sm:col-span-2"
-                          />
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => handlePost(true)}
-                            disabled={actionLoading === 'post' || (!providerPostId.trim() && !providerPostUrl.trim())}
-                            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50"
-                          >
-                            {actionLoading === 'post' ? (
-                              <Loader2 className="w-4 h-4 animate-spin" />
-                            ) : (
-                              <Send className="w-4 h-4" />
-                            )}
-                            Confirm Posted
-                          </button>
-                          <button
-                            onClick={handleCopyResponse}
-                            className="flex items-center gap-2 px-4 py-2 border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
-                          >
-                            {copied ? (
-                              <>
-                                <Check className="w-4 h-4 text-emerald-500" /> Copied!
-                              </>
-                            ) : (
-                              <>
-                                <Copy className="w-4 h-4" /> Copy
-                              </>
-                            )}
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Posted evidence lives on the response row itself */}
-                {activeResponse.status === 'posted' && (
-                  <div className="mt-4 pt-4 border-t border-indigo-200 dark:border-indigo-800">
-                    <div className="flex items-center gap-2 text-emerald-600 mb-2">
-                      <Check className="w-5 h-5" />
-                      <span className="font-medium">
-                        Response posted
-                        {activeResponse.posting_mode
-                          ? ` (${activeResponse.posting_mode === 'provider_api' ? 'via provider API' : 'manually confirmed'})`
-                          : ''}
-                      </span>
-                    </div>
-                    <div className="space-y-1 text-xs text-slate-500">
-                      {activeResponse.posted_at && (
-                        <p>Posted {format(new Date(activeResponse.posted_at), 'MMM d, yyyy h:mm a')}</p>
-                      )}
-                      {activeResponse.platform_response_id && (
-                        <p>Provider response ID: {activeResponse.platform_response_id}</p>
-                      )}
-                      {activeResponse.provider_post_url && (
-                        <a
-                          href={activeResponse.provider_post_url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-1 text-indigo-600 underline"
-                        >
-                          Open provider post evidence <ExternalLink className="w-3 h-3" />
-                        </a>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {activeResponse.status === 'rejected' && activeResponse.decision_reason && (
-                  <p className="mt-3 text-xs text-red-600 dark:text-red-400">
-                    Rejected: {activeResponse.decision_reason}
-                  </p>
-                )}
-              </div>
-            ) : (
-              <div className="bg-slate-50 dark:bg-slate-800 rounded-xl p-8 text-center">
-                <MessageCircle className="w-10 h-10 text-slate-300 dark:text-slate-600 mx-auto mb-3" />
-                <p className="text-slate-500 dark:text-slate-400 mb-4">
-                  No draft yet
-                </p>
-                <button
-                  onClick={() => setShowResponseGenerator(true)}
-                  className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
-                >
-                  <Sparkles className="w-4 h-4" />
-                  Draft AI Response
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* Response version history */}
-          {historyResponses.length > 0 && (
-            <div>
-              <button
-                onClick={() => setShowHistory(!showHistory)}
-                className="flex items-center gap-2 text-sm font-medium text-slate-500 dark:text-slate-400 hover:text-slate-700"
-              >
-                <History className="w-4 h-4" />
-                Response history ({historyResponses.length})
-              </button>
-              {showHistory && (
-                <div className="mt-2 space-y-2">
-                  {historyResponses.map((r) => (
-                    <div key={r.id} className="rounded-lg border border-slate-200 dark:border-slate-700 p-3">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs text-slate-400">
-                          {format(new Date(r.created_at), 'MMM d, yyyy h:mm a')}
-                          {r.superseded_at ? ' • superseded' : ''}
-                        </span>
-                        <ResponseStatusBadge status={r.status} />
-                      </div>
-                      <p className="text-sm text-slate-600 dark:text-slate-300 line-clamp-3 whitespace-pre-wrap">
-                        {r.response_text}
-                      </p>
-                      {r.decision_reason && (
-                        <p className="mt-1 text-xs text-slate-400">Rationale: {r.decision_reason}</p>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
+          <ReviewResponsePanel propertyId={propertyId} reviewId={review.id} onSaved={()=>{void refreshReview();onUpdate?.()}}/>
 
           {/* Immutable case timeline */}
           {caseEvents.length > 0 && (
@@ -959,18 +338,6 @@ export function ReviewDetailDrawer({ review: initialReview, onClose, onUpdate }:
           )}
         </div>
 
-        {showResponseGenerator && (
-          <ResponseGenerator
-            reviewId={review.id}
-            defaultTone={review.sentiment === 'negative' ? 'empathetic' : 'professional'}
-            onGenerated={() => {
-              setShowResponseGenerator(false)
-              onUpdate?.()
-              refreshReview()
-            }}
-            onClose={() => setShowResponseGenerator(false)}
-          />
-        )}
       </div>
     </div>
   )

@@ -1,100 +1,16 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { z } from 'zod'
-import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/admin'
-import { validatePropertyAccess } from '@/utils/services/auth-guard'
-import { createRequestContext } from '@/utils/services/request-context'
-import {
-  approveOnboardingSnapshot,
-  buildOnboardingSnapshot,
-} from '@/utils/onboarding/repository'
-import { evaluateReadinessApproval } from '@/utils/onboarding/readiness-policy'
-
-const buildSchema = z.object({
-  propertyId: z.guid(),
-  enabledCapabilities: z.array(z.enum([
-    'crm',
-    'tours',
-    'chatbot',
-    'analytics',
-  ])).default([]),
-})
-
-async function getUser() {
-  const client = await createClient()
-  const { data: { user }, error } = await client.auth.getUser()
-  return error ? null : user
+import {NextResponse} from 'next/server'
+import {readinessCommand,readinessQuery} from '@/utils/readiness/contracts'
+import {ReadinessError,readinessActor,readReadiness,decideReadiness} from '@/utils/readiness/store'
+const headers={'Cache-Control':'private, no-store'}
+function failure(e:unknown){return NextResponse.json({error:e instanceof ReadinessError?e.message:'Readiness review is unavailable.'},{status:e instanceof ReadinessError?e.status:503,headers})}
+async function body(req:Request){
+ const limit=32768;if(Number(req.headers.get('content-length'))>limit)throw new ReadinessError('The readiness request exceeds the supported size.',413)
+ const reader=req.body?.getReader();if(!reader)throw new ReadinessError('Provide a readiness decision.',400)
+ const chunks:Uint8Array[]=[];let total=0
+ try{while(true){const{done,value}=await reader.read();if(done)break;total+=value.byteLength;if(total>limit){await reader.cancel();throw new ReadinessError('The readiness request exceeds the supported size.',413)}chunks.push(value)}}finally{reader.releaseLock()}
+ const bytes=new Uint8Array(total);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length}
+ try{return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes))}catch{throw new ReadinessError('Provide a valid readiness decision.',400)}
 }
-
-export async function GET(request: NextRequest) {
-  const ctx = createRequestContext(request, '/api/onboarding/readiness')
-  ctx.logStart()
-  const propertyId = request.nextUrl.searchParams.get('propertyId')
-  const parsed = z.guid().safeParse(propertyId)
-  const user = await getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: ctx.responseHeaders })
-  if (!parsed.success) return NextResponse.json({ error: 'Valid property ID required' }, { status: 400, headers: ctx.responseHeaders })
-  const access = await validatePropertyAccess(user.id, parsed.data)
-  if (!access.authorized) return NextResponse.json({ error: 'Forbidden' }, { status: 403, headers: ctx.responseHeaders })
-  const service = createServiceClient()
-  const { data, error } = await service
-    .from('property_onboarding_snapshots')
-    .select('*')
-    .eq('property_id', parsed.data)
-    .order('created_at', { ascending: false })
-    .limit(10)
-  if (error) {
-    ctx.logError(500, error)
-    return NextResponse.json({ error: 'Failed to load readiness' }, { status: 500, headers: ctx.responseHeaders })
-  }
-  ctx.logSuccess(200, { snapshotCount: data.length })
-  return NextResponse.json(
-    {
-      snapshots: data.map(snapshot => ({
-        ...snapshot,
-        approvalEligibility: evaluateReadinessApproval(snapshot),
-      })),
-    },
-    { headers: ctx.responseHeaders },
-  )
-}
-
-export async function POST(request: NextRequest) {
-  const ctx = createRequestContext(request, '/api/onboarding/readiness')
-  ctx.logStart()
-  const user = await getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: ctx.responseHeaders })
-  const parsed = buildSchema.safeParse(await request.json())
-  if (!parsed.success) return NextResponse.json({ error: 'Invalid readiness request' }, { status: 400, headers: ctx.responseHeaders })
-  const access = await validatePropertyAccess(user.id, parsed.data.propertyId)
-  if (!access.authorized || !access.orgId) return NextResponse.json({ error: 'Forbidden' }, { status: 403, headers: ctx.responseHeaders })
-  try {
-    const builtSnapshot = await buildOnboardingSnapshot({
-      ...parsed.data,
-      userId: user.id,
-      orgId: access.orgId,
-    })
-    const snapshot =
-      builtSnapshot.status === 'ready'
-        ? await approveOnboardingSnapshot({
-            orgId: access.orgId,
-            propertyId: parsed.data.propertyId,
-            snapshotId: builtSnapshot.id,
-            userId: user.id,
-          })
-        : builtSnapshot
-    ctx.logSuccess(201, { snapshotId: snapshot.id, status: snapshot.status })
-    return NextResponse.json(
-      {
-        snapshot: {
-          ...snapshot,
-          approvalEligibility: evaluateReadinessApproval(snapshot),
-        },
-      },
-      { status: 201, headers: ctx.responseHeaders },
-    )
-  } catch (error) {
-    ctx.logError(500, error)
-    return NextResponse.json({ error: error instanceof Error ? error.message : 'Readiness build failed' }, { status: 500, headers: ctx.responseHeaders })
-  }
-}
+export async function GET(req:Request){try{const actor=await readinessActor(),query=readinessQuery.safeParse(Object.fromEntries(new URL(req.url).searchParams));if(!query.success)throw new ReadinessError('Choose a saved property, readiness version or history page.',400);const{propertyId,...input}=query.data;return NextResponse.json(await readReadiness(actor,propertyId,input),{headers})}catch(e){return failure(e)}}
+export async function POST(req:Request){try{const actor=await readinessActor(),command=readinessCommand.safeParse(await body(req));if(!command.success)throw new ReadinessError(command.error.issues[0]?.message||'Review the readiness version and reason.',400);return NextResponse.json(await decideReadiness(actor,command.data),{headers})}catch(e){return failure(e)}}
+export async function PUT(){return NextResponse.json({error:'Use the reviewed readiness decision with its exact saved readiness version.'},{status:410,headers})}

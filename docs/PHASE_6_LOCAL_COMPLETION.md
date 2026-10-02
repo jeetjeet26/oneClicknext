@@ -1,0 +1,38 @@
+# Phase 6 local completion and outstanding acceptance
+
+**September 24 follow-through:** the previously held dedicated ReviewFlow response suite is now complete with [35 passing assertions and verified rollback](PHASE_5_REVIEWFLOW_RESPONSE_QUALIFICATION.md). The owner continued after the exact isolated-test approval request. This supersedes current pending-test language below; prior run counts and exclusions remain historical evidence. Real client/provider/host acceptance remains open.
+
+September 24, 2026. The remaining authorized Phase 6 development and local qualification are complete. This is the current closeout entry point. **Whole-platform production acceptance is still pending**, because the owner deferred real client/provider/host acceptance and the candidate has not been deployed or observed through its longest live schedule cycle. No MFA, training, autonomous execution or hosted change was introduced.
+
+The owner subsequently requested “Continue next phase.” [Phase 7 local observation development](PHASE_7_AGENCY_OBSERVATION.md) has started while all acceptance gates below remain open. The Phase 6 release bundle and qualification snapshots remain frozen; later additions require their own release qualification.
+
+## Completed development and qualification
+
+| Requirement | Evidence and result |
+|---|---|
+| Production schema, migration history and generated types | Verified production project and all 155 historical SQL hashes; 120 explicit pending migrations. Full canonical types come from the upgraded production schema. Fresh production capture: 2,858 catalog objects/155 migrations; zero new structural/history changes. Existing production/development differences remain documented. |
+| Repeatable upgrade path | New supported `scripts/platform/rehearsal.py` command, package entry points and offline CI checks. A brand-new `phase6_rehearsal_closeout_20260924` accepted all 120 pending migrations and all 113 eligible database suites. Its catalog exactly matches the qualified candidate; migration history remains empty. Legacy unknown account/currency and exact numeric values survived both upgrade and tests. |
+| Rehearsal integrity and recovery | Reviewed source hashes are rechecked before execution. Existing database/evidence targets, changed inputs, altered test gates, wrong projects, remote Docker endpoints, incomplete TAP and assertion failures are rejected. Actual existing-target refusal verified without resetting it. Failed trials stay available. The active local console database is preserved. |
+| Runtime and dependency qualification | Full prior web suite/build, canonical-schema TypeScript, critical product browser journeys, 447 backend checks and three offline MCP startup checks. Exact web/runtime pins and hashed Python locks remain. Runtime audits reported zero known vulnerabilities at the Phase 6 check. |
+| Recording and evaluation preparation | 426 semantic/display action mappings; frozen source/context/dataset contracts; client-level held-out synthetic splits; no automatic reward/training eligibility. Lineage/privacy and deletion/tombstone checks are qualified for their stated scope. Source references and synthetic metadata do not certify every production branch or model quality. |
+| Operations and alerts | Production failure causes diagnosed; explicit sender/setup rejections, incomplete manager lookups and missing/duplicate message receipts handled truthfully. Monitoring continues with held alerts and requires an exact saved completion. Follow-through passed 51 focused unit tests, three local database cases, two stored-incident browser journeys, types and lint. |
+| Recovery and performance | Separate database and WordPress restore drills, exact Storage API deletion and neighbor isolation, measured activity-query indexes, fixed function search paths and hostile-caller checks. Real host recovery targets remain an acceptance obligation. |
+| Tool reproducibility | All 71 offline platform-tool tests passed in pinned Python 3.11.16 with networking disabled. CI parses successfully and runs those tests on changes to the tooling. The reconstructed development reset is explicitly labeled separately from the production upgrade rehearsal. No hosted CI run or deployment was dispatched. |
+
+The new rehearsal took approximately 116 seconds of recorded local command time. This is a synthetic development measurement, not a production downtime estimate. The then-blocked `reviewflow_responses.test.sql` was excluded from that 113-suite run. Its later 35-assertion qualification is recorded above and is not retroactively added to that historical count. The command cannot turn its local success into whole-phase acceptance.
+
+## Acceptance still required
+
+1. **Dedicated test gate closed:** the original ReviewFlow response rollback suite now passes its separately authorized isolated trial. See the qualification linked above; the old 113-suite run and generic runner policy remain unchanged.
+2. **Reviewed coordinated release and real product acceptance:** apply the compatible schema/API/UI only under the release decision. Complete the Phase 5 client/provider/host journeys, destination receipts and recovery checks. The candidate's hosted email sender needs verification; competitor caller/service versions and review-sync timeouts need deployed-service validation. No held backlog should replay merely because configuration changes.
+3. **Existing-model quality baseline:** choose permitted tasks/provider/model and run the frozen evaluation with actual quality, cost, usage and intervention records. The source-contract baseline is prepared; provider quality is unmeasured. Training remains outside scope.
+4. **Client-specific retention and erasure:** obtain the client's exact retained-object/copy/provider/backup inventory, periods and holds; qualify the necessary scoped writer fencing and erasure against that inventory. The offline review/tombstone tools and Storage primitive do not implement or prove a generic whole-client purge. No retention period, client data selection or erasure authority was invented.
+5. **Live operating window:** after approved release, observe required schedules, useful outcomes, alerts and recoveries through the longest actual cycle, including calendar-month reporting. A synthetic clock or an old production job's success is not evidence for the new candidate.
+
+These are explicit acceptance dependencies, not an unfinished list of ordinary local fixes. Do not restart completed work from old chronological notes, claim the live gates passed, or enable Phase 7 while they remain open. If client-specific acceptance reveals another implementation gap, reopen that exact item with its evidence.
+
+## Release and evidence locations
+
+The exact schema bundle remains `work/phase6/release-qualified-bundle`: 155 historical plus 120 pending files, hash `3e80360782c08f81243da3eb244a5349c762bf1060eb60faaf074ce2bac000f6`. No new migration was added during closeout. The reviewed baseline descriptor, frozen plan, full runner logs, final candidate comparison and fresh production comparison are retained under `/Users/jasjitgill/Documents/Codex/2026-09-12/we-x20/work/phase6-closeout/`. The database is retained for inspection; the runner never resets an existing one.
+
+Read [platform qualification](PHASE_6_PLATFORM_QUALIFICATION.md), [operations/recovery](PHASE_6_OPERATIONS.md), [recording/retention](PHASE_6_RECORDING_RETENTION.md), [dependencies](PHASE_6_DEPENDENCIES.md), and [Phase 5 acceptance](PHASE_5_LOCAL_COMPLETION.md). Their practical limits remain in force. This closeout supersedes earlier “continue local qualification” wording without waiving any live acceptance gate.

@@ -1,3 +1,4 @@
+import { admitLumaRead } from '@/utils/services/luma-public-read'
 /**
  * LumaLeasing Tour Availability API
  * Returns available tour slots from Property Manager's Google Calendar
@@ -6,7 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { getCalendarConfig, fetchBusyTimes, generateAvailableSlots, type AvailableSlot } from '@/utils/services/google-calendar'
-import { addDays, startOfDay, endOfDay, format, isValid, parseISO } from 'date-fns'
+import {addCalendarDays, calendarDayRange, calendarToday, validCalendarDay} from '@/utils/services/calendar-time'
 import { createRequestContext } from '@/utils/services/request-context'
 import { getRateLimitKey, publicReadLimiter, rateLimitHeaders } from '@/utils/services/rate-limiter'
 import {
@@ -14,7 +15,6 @@ import {
   buildCorsHeaders,
   corsPreflightResponse,
   rateLimited,
-  serverError,
 } from '@/utils/services/api-helpers'
 
 function extractApiKey(req: NextRequest): string | null {
@@ -31,19 +31,6 @@ function extractApiKey(req: NextRequest): string | null {
 }
 
 const MAX_AVAILABILITY_RANGE_DAYS = 31
-
-function parseDateParam(value: string | null, fallback: Date, mode: 'start' | 'end'): Date {
-  if (!value) {
-    return fallback
-  }
-
-  const parsed = parseISO(value)
-  if (!isValid(parsed)) {
-    throw new Error(`Invalid ${mode}Date`)
-  }
-
-  return mode === 'start' ? startOfDay(parsed) : endOfDay(parsed)
-}
 
 export async function OPTIONS(req: NextRequest) {
   const origin = req.headers.get('origin')
@@ -104,6 +91,9 @@ export async function GET(req: NextRequest) {
       )
     }
 
+    const denied = await admitLumaRead(supabase,req,propertyId,responseHeaders)
+    if(denied) return denied
+
     // Get Google Calendar configuration
     const calendarConfig = await getCalendarConfig(propertyId)
 
@@ -132,59 +122,26 @@ export async function GET(req: NextRequest) {
       )
     }
 
-    // Default to the next 14 days, anchored from the requested start when provided.
-    let start: Date
-    let end: Date
-
-    try {
-      start = parseDateParam(startDate, startOfDay(new Date()), 'start')
-      end = parseDateParam(
-        endDate,
-        endOfDay(addDays(start, 14)),
-        'end'
-      )
-    } catch (dateError) {
-      ctx.logSuccess(400, {
-        reason: 'invalid_date_range',
-        error: dateError instanceof Error ? dateError.message : String(dateError),
-      })
+    if ((startDate && !validCalendarDay(startDate)) || (endDate && !validCalendarDay(endDate))) {
       return badRequest('Invalid startDate or endDate', responseHeaders)
     }
-
-    if (start > end) {
-      ctx.logSuccess(400, { reason: 'start_after_end' })
-      return badRequest('startDate must be on or before endDate', responseHeaders)
-    }
-
-    const rangeDays = Math.ceil((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000))
-    if (rangeDays > MAX_AVAILABILITY_RANGE_DAYS) {
-      ctx.logSuccess(400, { reason: 'range_too_large', rangeDays })
-      return badRequest(
-        `Date range cannot exceed ${MAX_AVAILABILITY_RANGE_DAYS} days`,
-        responseHeaders
-      )
-    }
-
-    // Fetch busy times from Google Calendar
-    const busyTimes = await fetchBusyTimes(calendarConfig, start, end)
-
-    // Generate available slots for each date
+    const first = startDate || calendarToday(calendarConfig.timezone)
+    const last = endDate || addCalendarDays(first, 13)
+    if (first > last) return badRequest('startDate must be on or before endDate', responseHeaders)
+    const rangeDays = (Date.parse(`${last}T00:00:00Z`) - Date.parse(`${first}T00:00:00Z`)) / 86400000 + 1
+    if (rangeDays > MAX_AVAILABILITY_RANGE_DAYS) return badRequest(`Date range cannot exceed ${MAX_AVAILABILITY_RANGE_DAYS} days`, responseHeaders)
+    const range = calendarDayRange(first, last, calendarConfig.timezone)
+    // Include padding on both sides so a neighboring event's buffer is respected.
+    const buffer = calendarConfig.buffer_minutes * 60000
+    const busyTimes = await fetchBusyTimes(calendarConfig, new Date(range.start.getTime() - buffer), new Date(range.end.getTime() + buffer))
     const slotsByDate: Record<string, AvailableSlot[]> = {}
     const availableDates: string[] = []
-
-    let currentDate = new Date(start)
-    while (currentDate <= end) {
-      const dateStr = format(currentDate, 'yyyy-MM-dd')
-      const slots = generateAvailableSlots(currentDate, calendarConfig, busyTimes)
-      
-      // Only include dates that have at least one available slot
-      const hasAvailability = slots.some(slot => slot.available)
-      if (hasAvailability) {
-        slotsByDate[dateStr] = slots
-        availableDates.push(dateStr)
+    for (let day = first; day <= last; day = addCalendarDays(day, 1)) {
+      const slots = generateAvailableSlots(day, calendarConfig, busyTimes)
+      if (slots.some(slot => slot.available)) {
+        slotsByDate[day] = slots
+        availableDates.push(day)
       }
-
-      currentDate = addDays(currentDate, 1)
     }
 
     ctx.logSuccess(200, {
@@ -204,20 +161,8 @@ export async function GET(req: NextRequest) {
   } catch (error) {
     ctx.logError(500, error, { operation: 'fetch_tour_availability' })
 
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-
-    // Check if it's a calendar authorization error
-    if (errorMessage.includes('revoked') || errorMessage.includes('expired')) {
-      return NextResponse.json(
-        { 
-          error: errorMessage,
-          fallback: true,
-          message: 'Calendar authorization expired. Please call to schedule your tour.' 
-        },
-        { status: 503, headers: responseHeaders }
-      )
-    }
-
-    return serverError(error, responseHeaders)
+    return NextResponse.json({error: 'Tour availability could not be verified', fallback: true,
+      message: 'Tour booking is temporarily unavailable. Please try again or contact the property.'},
+      {status: 503, headers: responseHeaders})
   }
 }

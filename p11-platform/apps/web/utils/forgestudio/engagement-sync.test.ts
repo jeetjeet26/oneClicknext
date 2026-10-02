@@ -1,40 +1,35 @@
-import { describe, expect, it } from 'vitest'
-import { calculatePublicationKpis } from './engagement-sync'
+import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest'
+const {rpc,from,fetchMetrics,adapter,decrypt}=vi.hoisted(()=>({rpc:vi.fn(),from:vi.fn(),fetchMetrics:vi.fn(),adapter:vi.fn(),decrypt:vi.fn()}))
+vi.mock('@/utils/supabase/admin',()=>({createServiceClient:()=>({rpc,from})}))
+vi.mock('@/utils/forgestudio/adapters',()=>({getAdapter:adapter}))
+vi.mock('@/utils/forgestudio/crypto',()=>({decryptSecret:decrypt}))
+import {normalizedMetrics,calculatePublicationKpis,processSavedMeasurement,requestPublicationMetrics,syncRecentPublicationMetrics,syncPublicationMetrics} from './engagement-sync'
+const run={id:'measurement',claim_token:'claim',snapshot:{publication:{platform:'facebook',remotePostId:'saved-post'}}},connection={id:'connection',property_id:'property',account_id:'account',platform:'facebook',access_token:'encrypted',page_id:'page',page_access_token:'page-encrypted'}
+beforeEach(()=>{vi.clearAllMocks();vi.stubEnv('OUTBOUND_DELIVERY_PAUSED','false');adapter.mockReturnValue({fetchMetrics});decrypt.mockReturnValue('fixture-token');fetchMetrics.mockResolvedValue({impressions:100,clicks:0,reactions:10,providerPayload:{private:'private-provider-evidence'}});rpc.mockImplementation(async(name)=>({data:name==='claim_forgestudio_measurement'?{state:'claimed',measurement:run,connection}:name==='finish_forgestudio_measurement'?{state:'saved',measurementState:'completed'}:{state:'saved',measurementId:'measurement'},error:null}))})
+afterEach(()=>vi.unstubAllEnvs())
+describe('truthful campaign measurements',()=>{
+ it('keeps missing values distinct from explicit zero',()=>{expect(normalizedMetrics({impressions:100,clicks:0})).toEqual({impressions:100,clicks:0,reach:null,reactions:null,comments:null,shares:null,saves:null,video_views:null,video_completions:null})})
+ it('computes rates only when every required numerator and denominator is known',()=>{expect(calculatePublicationKpis(normalizedMetrics({impressions:100,clicks:0,reactions:10}))).toEqual({engagement_rate:null,click_through_rate:0,video_completion_rate:null});expect(calculatePublicationKpis(normalizedMetrics({impressions:1000,clicks:50,reactions:70,comments:10,shares:15,saves:5,videoViews:400,videoCompletions:100}))).toEqual({engagement_rate:.1,click_through_rate:.05,video_completion_rate:.25});expect(calculatePublicationKpis(normalizedMetrics({impressions:0,clicks:0})).click_through_rate).toBeNull()})
+ it.each([-1,1.2,Infinity,NaN,1_000_000_000_001])('rejects invalid provider count %s',value=>{expect(()=>normalizedMetrics({clicks:value})).toThrow(/invalid metric/)})
+ it('saves the requested check without performing an immediate provider read',async()=>{await requestPublicationMetrics({requestId:'request',propertyId:'property',publicationId:'publication',actorId:'actor'});expect(fetchMetrics).not.toHaveBeenCalled();expect(rpc).toHaveBeenCalledWith('begin_forgestudio_measurement',expect.objectContaining({p_actor_id:'actor',p_id:'request'}))})
+ it('honors the local pause before any database claim or provider call',async()=>{vi.stubEnv('OUTBOUND_DELIVERY_PAUSED','true');expect(await processSavedMeasurement()).toBe('skipped');expect((await syncRecentPublicationMetrics()).paused).toBe(true);expect(rpc).not.toHaveBeenCalled();expect(fetchMetrics).not.toHaveBeenCalled()})
+ it('reads exactly the saved post and stores a sparse private observation',async()=>{expect(await processSavedMeasurement('measurement')).toBe('synced');expect(fetchMetrics).toHaveBeenCalledWith(expect.objectContaining({accountId:'account'}),'saved-post');expect(rpc).toHaveBeenLastCalledWith('finish_forgestudio_measurement',expect.objectContaining({p_claim_token:'claim',p_result:expect.objectContaining({status:'observed',definition:'provider_reported_snapshot.v1',metrics:expect.objectContaining({clicks:0,reach:null}),providerPayload:{private:'private-provider-evidence'}})}));expect(from).not.toHaveBeenCalled()})
+ it('holds changed destination evidence before making any provider call',async()=>{rpc.mockResolvedValue({data:{state:'held'},error:null});expect(await processSavedMeasurement()).toBe('held');expect(fetchMetrics).not.toHaveBeenCalled()})
+ it('records unsupported providers explicitly',async()=>{adapter.mockReturnValue({});rpc.mockImplementation(async name=>({data:name==='claim_forgestudio_measurement'?{state:'claimed',measurement:run,connection}:{state:'saved',measurementState:'unsupported'},error:null}));expect(await processSavedMeasurement()).toBe('unsupported');expect(rpc).toHaveBeenLastCalledWith('finish_forgestudio_measurement',expect.objectContaining({p_result:{status:'unsupported',code:'metrics_unsupported'}}))})
+ it('records read failure without replacing it with zero-valued metrics',async()=>{fetchMetrics.mockRejectedValue(new Error('Provider not available'));rpc.mockImplementation(async name=>({data:name==='claim_forgestudio_measurement'?{state:'claimed',measurement:run,connection}:{state:'saved',measurementState:'failed'},error:null}));expect(await processSavedMeasurement()).toBe('failed');expect(rpc).toHaveBeenLastCalledWith('finish_forgestudio_measurement',expect.objectContaining({p_result:{status:'failed',code:'provider_read_failed'}}))})
+ it('retries only the identical saved response after a lost database acknowledgement',async()=>{let lost=true;const original=rpc.getMockImplementation()!;rpc.mockImplementation(async(name,args)=>{if(name==='finish_forgestudio_measurement'&&lost){lost=false;return {data:null,error:{message:'response lost'}}}return original(name,args)});expect(await processSavedMeasurement()).toBe('synced');expect(fetchMetrics).toHaveBeenCalledTimes(1);const saves=rpc.mock.calls.filter(c=>c[0]==='finish_forgestudio_measurement');expect(saves).toHaveLength(2);expect(saves[0]).toEqual(saves[1])})
+ it('keeps a late result held if the saved destination changed during the read',async()=>{rpc.mockImplementation(async name=>({data:name==='claim_forgestudio_measurement'?{state:'claimed',measurement:run,connection}:{state:'saved',measurementState:'held'},error:null}));expect(await processSavedMeasurement()).toBe('held');expect(fetchMetrics).toHaveBeenCalledTimes(1)})
+})
 
-describe('ForgeStudio engagement outcomes', () => {
-  it('calculates normalized engagement, click, and completion rates', () => {
-    expect(calculatePublicationKpis({
-      impressions: 1000,
-      reach: 800,
-      clicks: 50,
-      reactions: 70,
-      comments: 10,
-      shares: 15,
-      saves: 5,
-      video_views: 400,
-      video_completions: 100,
-    })).toEqual({
-      engagement_rate: 0.1,
-      click_through_rate: 0.05,
-      video_completion_rate: 0.25,
-    })
-  })
-
-  it('does not invent rates when a denominator is unavailable', () => {
-    expect(calculatePublicationKpis({
-      impressions: 0,
-      reach: 0,
-      clicks: 0,
-      reactions: 0,
-      comments: 0,
-      shares: 0,
-      saves: 0,
-      video_views: 0,
-      video_completions: 0,
-    })).toEqual({
-      engagement_rate: null,
-      click_through_rate: null,
-      video_completion_rate: null,
-    })
-  })
+import type {Tables} from '@/types/supabase'
+it('processes the existing saved request when a published post already has a pending check',async()=>{
+ const original=rpc.getMockImplementation()!;rpc.mockImplementation(async(name,args)=>name==='begin_forgestudio_measurement'?{data:{state:'saved',measurementId:'existing-check',measurementState:'queued'},error:null}:original(name,args))
+ await syncPublicationMetrics({id:'publication',property_id:'property',status:'published',remote_post_id:'post'} as Tables<'social_publications'>)
+ expect(rpc).toHaveBeenCalledWith('claim_forgestudio_measurement',{p_id:'existing-check'})
+})
+it('keeps pending scheduled reads within the requested property and continues past a claimed row',async()=>{
+ const q={select:vi.fn(),or:vi.fn(),order:vi.fn(),limit:vi.fn(),eq:vi.fn(),then:vi.fn((resolve)=>resolve({data:[{id:'already-claimed'},{id:'queued'}],error:null}))};for(const key of ['select','or','order','limit','eq'] as const)q[key].mockReturnValue(q);from.mockReturnValue(q)
+ const original=rpc.getMockImplementation()!;rpc.mockImplementation(async(name,args)=>name==='due_forgestudio_measurements'?{data:[],error:null}:name==='claim_forgestudio_measurement'&&args.p_id==='already-claimed'?{data:{state:'empty'},error:null}:original(name,args))
+ expect(await syncRecentPublicationMetrics({propertyId:'selected-property',limit:50})).toEqual({synced:1,unsupported:0,failed:0,held:0})
+ expect(rpc).toHaveBeenCalledWith('due_forgestudio_measurements',{p_limit:10,p_property_id:'selected-property'});expect(q.eq).toHaveBeenCalledWith('property_id','selected-property');expect(q.order).toHaveBeenCalledWith('created_at',{ascending:true});expect(q.limit).toHaveBeenCalledWith(10);expect(fetchMetrics).toHaveBeenCalledTimes(1)
 })

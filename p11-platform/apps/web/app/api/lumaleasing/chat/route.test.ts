@@ -28,7 +28,22 @@ const openAiCtorMock = vi.fn(function MockOpenAI() {
 })
 
 vi.mock('@/utils/supabase/admin', () => ({
-  createServiceClient: createServiceClientMock,
+  createServiceClient: () => {
+    const client=createServiceClientMock()
+    const validation=validateBodyMock.mock.results.at(-1)?.value
+    if(validation?.data?.sessionId) return client
+    // Anonymous chat now always creates a durable session and conversation.
+    // Existing-session cases retain their explicit success/failure fixtures.
+    return {...client,from:(table:string)=>{
+      if(!['widget_sessions','conversations','messages'].includes(table)) return client.from(table)
+      const query:Record<string,unknown>={}
+      for(const method of ['insert','select','eq','order','limit','update']) query[method]=()=>query
+      query.single=async()=>({data:{id:table==='widget_sessions'?'anonymous-session':'anonymous-conversation',message_count:0},error:null})
+      query.maybeSingle=async()=>({data:null,error:null})
+      query.then=(resolve:(value:unknown)=>unknown)=>Promise.resolve({data:table==='messages'?[]:{id:'saved',message_count:0},error:null}).then(resolve)
+      return query
+    }}
+  },
 }))
 
 vi.mock('@/utils/services/validation', () => ({
@@ -82,6 +97,14 @@ vi.mock('@/utils/services/chatbot-context-editor', () => ({
 vi.mock('openai', () => ({
   default: openAiCtorMock,
 }))
+
+function conversationLookup(result: ReturnType<typeof vi.fn>) {
+  const query = { eq: vi.fn(), order: vi.fn(), limit: vi.fn(), maybeSingle: result }
+  query.eq.mockReturnValue(query)
+  query.order.mockReturnValue(query)
+  query.limit.mockReturnValue(query)
+  return query
+}
 
 describe('LumaLeasing chat route', () => {
   beforeEach(() => {
@@ -163,7 +186,7 @@ describe('LumaLeasing chat route', () => {
 
     const widgetSessionSelectSingle = vi
       .fn()
-      .mockResolvedValue({ data: { id: 'session-1', lead_id: null, message_count: 2 } })
+      .mockResolvedValue({ data: { id: 'session-1', last_activity_at: new Date().toISOString(), lead_id: null, message_count: 2 } })
 
     const conversationsSingle = vi
       .fn()
@@ -223,21 +246,13 @@ describe('LumaLeasing chat route', () => {
 
         if (table === 'conversations') {
           return {
-            select: vi.fn(() => ({
-              eq: vi.fn(() => ({
-                order: vi.fn(() => ({
-                  limit: vi.fn(() => ({
-                    single: conversationsSingle,
-                  })),
-                })),
-              })),
-            })),
+            select: vi.fn(() => conversationLookup(conversationsSingle)),
           }
         }
 
         if (table === 'messages') {
           return {
-            insert: vi.fn().mockResolvedValue({ error: null }),
+            insert: vi.fn(() => ({ select: vi.fn(() => ({ single: vi.fn().mockResolvedValue({ data: { id: 'saved-message' }, error: null }) })) })),
           }
         }
 
@@ -251,7 +266,7 @@ describe('LumaLeasing chat route', () => {
       widgetSessionSelectCalls += 1
       if (widgetSessionSelectCalls === 1) {
         return Promise.resolve({
-          data: { id: 'session-1', lead_id: null, message_count: 2 },
+          data: { id: 'session-1', last_activity_at: new Date().toISOString(), lead_id: null, message_count: 2 },
         })
       }
 
@@ -287,12 +302,12 @@ describe('LumaLeasing chat route', () => {
       isHumanMode: true,
       waitingForHuman: true,
     })
-    expect(openAiCtorMock).toHaveBeenCalledTimes(1)
+    expect(openAiCtorMock).not.toHaveBeenCalled()
     expect(openAiChatCreateMock).not.toHaveBeenCalled()
     expect(openAiEmbeddingsCreateMock).not.toHaveBeenCalled()
   })
 
-  it('returns 400 when the supplied session id does not belong to the property', async () => {
+  it('returns 404 when the supplied session id does not belong to the property', async () => {
     validateBodyMock.mockReturnValue({
       success: true,
       data: {
@@ -361,10 +376,10 @@ describe('LumaLeasing chat route', () => {
 
     const response = await POST(request)
 
-    expect(response.status).toBe(400)
+    expect(response.status).toBe(404)
     expect(response.headers.get('x-request-id')).toBeTruthy()
     await expect(response.json()).resolves.toEqual({
-      error: 'Invalid sessionId for this property',
+      error: 'Session not found', code: 'invalid_widget_session',
     })
     expect(openAiChatCreateMock).not.toHaveBeenCalled()
     expect(openAiEmbeddingsCreateMock).not.toHaveBeenCalled()
@@ -409,7 +424,7 @@ describe('LumaLeasing chat route', () => {
               eq: vi.fn(() => ({
                 eq: vi.fn(() => ({
                   maybeSingle: vi.fn().mockResolvedValue({
-                    data: { id: 'session-1', lead_id: null, message_count: 3 },
+                    data: { id: 'session-1', last_activity_at: new Date().toISOString(), lead_id: null, message_count: 3 },
                     error: null,
                   }),
                 })),
@@ -420,18 +435,7 @@ describe('LumaLeasing chat route', () => {
 
         if (table === 'conversations') {
           return {
-            select: vi.fn(() => ({
-              eq: vi.fn(() => ({
-                order: vi.fn(() => ({
-                  limit: vi.fn(() => ({
-                    single: vi.fn().mockResolvedValue({
-                      data: { id: 'conv-1', is_human_mode: false },
-                      error: null,
-                    }),
-                  })),
-                })),
-              })),
-            })),
+            select: vi.fn(() => conversationLookup(vi.fn().mockResolvedValue({ data: { id: 'conv-1', is_human_mode: false }, error: null }))),
           }
         }
 
@@ -649,11 +653,7 @@ describe('LumaLeasing chat route', () => {
         }),
       })
     )
-    expect(syncLeadToCRMMock).toHaveBeenCalledWith(
-      'property-1',
-      'lead-existing',
-      expect.objectContaining({ phone: '5551112222' })
-    )
+    expect(syncLeadToCRMMock).not.toHaveBeenCalled()
     expect(startWorkflowMock).not.toHaveBeenCalled()
   })
 
@@ -1264,7 +1264,7 @@ describe('LumaLeasing chat route', () => {
               eq: vi.fn(() => ({
                 eq: vi.fn(() => ({
                   maybeSingle: vi.fn().mockResolvedValue({
-                    data: { id: 'session-1', lead_id: null, message_count: 2 },
+                    data: { id: 'session-1', last_activity_at: new Date().toISOString(), lead_id: null, message_count: 2 },
                     error: null,
                   }),
                 })),
@@ -1289,7 +1289,7 @@ describe('LumaLeasing chat route', () => {
             insert: vi.fn(() => ({
               select: vi.fn(() => ({
                 single: vi.fn().mockResolvedValue({
-                  data: { id: 'session-1', lead_id: null, message_count: 2 },
+                  data: { id: 'session-1', last_activity_at: new Date().toISOString(), lead_id: null, message_count: 2 },
                   error: null,
                 }),
               })),
@@ -1299,18 +1299,7 @@ describe('LumaLeasing chat route', () => {
 
         if (table === 'conversations') {
           return {
-            select: vi.fn(() => ({
-              eq: vi.fn(() => ({
-                order: vi.fn(() => ({
-                  limit: vi.fn(() => ({
-                    single: vi.fn().mockResolvedValue({
-                      data: { id: 'conv-1', is_human_mode: false },
-                      error: null,
-                    }),
-                  })),
-                })),
-              })),
-            })),
+            select: vi.fn(() => conversationLookup(vi.fn().mockResolvedValue({ data: { id: 'conv-1', is_human_mode: false }, error: null }))),
             update: vi.fn(() => ({
               eq: vi.fn(() => ({
                 eq: vi.fn().mockResolvedValue({ error: null }),
@@ -1431,19 +1420,8 @@ describe('LumaLeasing chat route', () => {
         }),
       })
     )
-    expect(syncLeadToCRMMock).toHaveBeenCalledWith(
-      'property-1',
-      'lead-existing',
-      expect.objectContaining({
-        notes: 'Prospect asked for pricing details.',
-      })
-    )
-    expect(recordLeadNoteAndSyncToCRMMock).toHaveBeenCalledWith(
-      'property-1',
-      'lead-existing',
-      'Prospect asked for pricing details.',
-      { persistNote: false }
-    )
+    expect(syncLeadToCRMMock).not.toHaveBeenCalled()
+    expect(recordLeadNoteAndSyncToCRMMock).not.toHaveBeenCalled()
     expect(startWorkflowMock).not.toHaveBeenCalled()
     expect(openAiChatCreateMock.mock.calls[0][0].messages).toEqual(
       expect.arrayContaining([
@@ -1457,15 +1435,17 @@ describe('LumaLeasing chat route', () => {
         }),
       ])
     )
-    expect(trackEngagementEventMock).toHaveBeenCalledWith({
-      leadId: 'lead-existing',
-      propertyId: 'property-1',
-      eventType: 'chat_started',
-      metadata: {
-        conversation_id: 'conv-1',
-        source: 'lumaleasing_widget_conversion',
-        backfilled: true,
-      },
-    })
+    expect(trackEngagementEventMock).not.toHaveBeenCalled()
   })
 })
+
+// Route cases exercise validation and user-facing behavior. Durable admission,
+// atomic message writes and budgets have their own contract/real-DB suites.
+vi.mock('@/utils/services/luma-requests', () => ({
+  withLumaRequest: (req: NextRequest,_operation:string,handler:(req:NextRequest)=>Promise<Response>)=>handler(req),
+  linkLumaVisitorLead: vi.fn().mockResolvedValue(undefined),
+  saveLumaMessage: vi.fn().mockResolvedValue({saved:true,human:false,id:'message-saved',modeRevision:0}),
+}))
+vi.mock('@/utils/services/luma-ai-budget', () => ({
+  budgetedLumaCompletion: (openai:{chat:{completions:{create:(params:unknown)=>unknown}}},_db:unknown,_propertyId:string,params:unknown)=>openai.chat.completions.create(params),
+}))

@@ -40,7 +40,7 @@ const SCORE_COMPONENTS = [
     key: 'engagement',
     label: 'Engagement',
     icon: Activity,
-    description: 'Based on chat, email opens, replies, and interactions',
+    description: 'Recorded event weights plus user messages; capped at 30 points',
     color: 'text-purple-600',
     bgColor: 'bg-purple-100',
   },
@@ -48,7 +48,7 @@ const SCORE_COMPONENTS = [
     key: 'timing',
     label: 'Timing',
     icon: Clock,
-    description: 'Recency of lead and move-in date urgency',
+    description: 'Time since the lead was created; capped at 25 points',
     color: 'text-blue-600',
     bgColor: 'bg-blue-100',
   },
@@ -56,7 +56,7 @@ const SCORE_COMPONENTS = [
     key: 'source',
     label: 'Source Quality',
     icon: Share2,
-    description: 'Historical conversion rate by lead source',
+    description: 'Fixed source weights; capped at 20 points, not learned conversion rates',
     color: 'text-green-600',
     bgColor: 'bg-green-100',
   },
@@ -64,7 +64,7 @@ const SCORE_COMPONENTS = [
     key: 'completeness',
     label: 'Profile Completeness',
     icon: FileCheck,
-    description: 'Contact info, preferences, and requirements',
+    description: 'Presence of email, phone, first name and move-in date; up to 15 points',
     color: 'text-amber-600',
     bgColor: 'bg-amber-100',
   },
@@ -72,7 +72,7 @@ const SCORE_COMPONENTS = [
     key: 'behavior',
     label: 'Behavior Signals',
     icon: Brain,
-    description: 'Tour status, no-shows, and lead stage',
+    description: '10 points for a booked lead status or completed tour',
     color: 'text-rose-600',
     bgColor: 'bg-rose-100',
   },
@@ -124,10 +124,10 @@ export function ScoreBreakdown({
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-sm font-semibold text-gray-900 dark:text-white">
-              Lead Score Breakdown
+              Lead Score Breakdown · {totalScore} / 100
             </h3>
             <p className="text-xs text-gray-500 mt-0.5">
-              Scored {timeAgo} • Model {modelVersion}
+              Scored {timeAgo} • Rules {modelVersion}
             </p>
           </div>
           {onRescore && (
@@ -165,11 +165,11 @@ export function ScoreBreakdown({
                 </div>
               </div>
               <span className="text-sm font-bold text-gray-900 dark:text-white">
-                {scores[key]}
+                {scores[key]} / {{ engagement: 30, timing: 25, source: 20, completeness: 15, behavior: 10 }[key]}
               </span>
             </div>
             <ScoreBar
-              score={scores[key]}
+              score={scores[key] / ({ engagement: 30, timing: 25, source: 20, completeness: 15, behavior: 10 }[key] || 100) * 100}
               color={color.replace('text-', 'bg-')}
             />
           </div>

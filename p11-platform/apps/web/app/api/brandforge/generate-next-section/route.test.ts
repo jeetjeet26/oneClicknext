@@ -6,6 +6,7 @@ const createClientMock = vi.fn()
 const createAdminClientMock = vi.fn()
 const validatePropertyAccessMock = vi.fn()
 const fromMock = vi.fn()
+const rpcMock = vi.fn()
 
 vi.mock('@/utils/supabase/server', () => ({
   createClient: createClientMock,
@@ -23,11 +24,13 @@ describe('brandforge generate-next-section route', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     fromMock.mockReset()
+    rpcMock.mockImplementation(async (name: string, args: Record<string, unknown>) => ({error:null,data:name==='begin_brand_operation'?{state:'claimed',claimToken:'66666666-6666-4666-8666-666666666666'}:args.p_error?{state:'failed'}:{state:'applied',...(args.p_result as object)}}))
     createClientMock.mockResolvedValue({
       auth: { getUser: authGetUserMock },
     })
     createAdminClientMock.mockReturnValue({
       from: fromMock,
+      rpc: rpcMock,
     })
   })
 
@@ -38,7 +41,7 @@ describe('brandforge generate-next-section route', () => {
     const response = await POST(
       new Request('http://localhost/api/brandforge/generate-next-section', {
         method: 'POST',
-        body: JSON.stringify({ brandAssetId: 'brand-1' }),
+        body: JSON.stringify({ brandAssetId: '11111111-1111-4111-8111-111111111111', requestId: '55555555-5555-4555-8555-555555555555', revision: 1 }),
       }) as NextRequest
     )
 
@@ -62,7 +65,7 @@ describe('brandforge generate-next-section route', () => {
     const response = await POST(
       new Request('http://localhost/api/brandforge/generate-next-section', {
         method: 'POST',
-        body: JSON.stringify({ brandAssetId: 'brand-1' }),
+        body: JSON.stringify({ brandAssetId: '11111111-1111-4111-8111-111111111111', requestId: '55555555-5555-4555-8555-555555555555', revision: 1 }),
       }) as NextRequest
     )
 
@@ -72,7 +75,7 @@ describe('brandforge generate-next-section route', () => {
 
   it('fails closed when the generation provider is not configured', async () => {
     authGetUserMock.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
-    validatePropertyAccessMock.mockResolvedValue({ authorized: true })
+    validatePropertyAccessMock.mockResolvedValue({ authorized: true, orgId: 'org-1' })
 
     const originalGeminiKey = process.env.GOOGLE_GEMINI_API_KEY
     delete process.env.GOOGLE_GEMINI_API_KEY
@@ -96,17 +99,18 @@ describe('brandforge generate-next-section route', () => {
     const response = await POST(
       new Request('http://localhost/api/brandforge/generate-next-section', {
         method: 'POST',
-        body: JSON.stringify({ brandAssetId: 'brand-1' }),
+        body: JSON.stringify({ brandAssetId: '11111111-1111-4111-8111-111111111111', requestId: '55555555-5555-4555-8555-555555555555', revision: 1 }),
       }) as NextRequest
     )
 
     process.env.GOOGLE_GEMINI_API_KEY = originalGeminiKey
 
-    expect(response.status).toBe(500)
+    expect(response.status).toBe(503)
     await expect(response.json()).resolves.toMatchObject({
-      error: 'Generation failed',
-      details: 'Gemini is not configured for BrandForge section generation.',
+      state: 'failed',
+      error: expect.stringContaining('could not be confirmed'),
     })
     expect(updateMock).not.toHaveBeenCalled()
+    expect(rpcMock).toHaveBeenCalledWith('finish_brand_operation', expect.objectContaining({p_error:'generation_failed',p_updates:{}}))
   })
 })

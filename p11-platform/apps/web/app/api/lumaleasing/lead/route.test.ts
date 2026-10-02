@@ -190,15 +190,11 @@ describe('Luma lead capture route', () => {
     expect(json).toEqual({
       success: true,
       leadId: 'lead-1',
-      message: "Thanks, Jane! We've saved your information and will be in touch soon.",
+      message: "Thanks, Jane! We've saved your information for the property team.",
     })
     expect(upsertLeadByContactMock).toHaveBeenCalled()
     expect(auditLogMock).toHaveBeenCalled()
-    expect(startWorkflowMock).toHaveBeenCalledWith(
-      'lead-1',
-      'property-1',
-      'lead_created'
-    )
+    expect(startWorkflowMock).not.toHaveBeenCalled()
   })
 
   it('reuses an existing phone-only lead on retry instead of creating a duplicate', async () => {
@@ -280,7 +276,7 @@ describe('Luma lead capture route', () => {
     expect(json).toEqual({
       success: true,
       leadId: 'lead-existing',
-      message: "Thanks, Jane! We've saved your information and will be in touch soon.",
+      message: "Thanks, Jane! We've saved your information for the property team.",
     })
     expect(leadsInsertMock).not.toHaveBeenCalled()
     expect(upsertLeadByContactMock).toHaveBeenCalledWith(
@@ -291,11 +287,7 @@ describe('Luma lead capture route', () => {
         }),
       })
     )
-    expect(syncLeadToCRMMock).toHaveBeenCalledWith(
-      'property-1',
-      'lead-existing',
-      expect.objectContaining({ phone: '5551112222' })
-    )
+    expect(syncLeadToCRMMock).not.toHaveBeenCalled()
     expect(startWorkflowMock).not.toHaveBeenCalled()
   })
 
@@ -491,3 +483,14 @@ describe('Luma lead capture route', () => {
     })
   })
 })
+
+// Route cases exercise validation and user-facing behavior. Durable admission,
+// atomic message writes and budgets have their own contract/real-DB suites.
+vi.mock('@/utils/services/luma-requests', () => ({
+  linkLumaVisitorLead: vi.fn().mockResolvedValue(undefined),
+  withLumaRequest: (req: NextRequest,_operation:string,handler:(req:NextRequest)=>Promise<Response>)=>handler(req),
+  saveLumaMessage: vi.fn().mockResolvedValue({saved:true,human:false,id:'message-saved'}),
+}))
+vi.mock('@/utils/services/luma-ai-budget', () => ({
+  budgetedLumaCompletion: (openai:{chat:{completions:{create:(params:unknown)=>unknown}}},_db:unknown,_propertyId:string,params:unknown)=>openai.chat.completions.create(params),
+}))

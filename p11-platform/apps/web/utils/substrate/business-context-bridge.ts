@@ -1,3 +1,4 @@
+import {readMarketingFacts} from '@/utils/analytics/read-marketing-facts'
 import { subDays, format } from 'date-fns'
 import type { Database } from '@/types/supabase'
 import { deriveSharedLifecycleStatus } from '@/utils/substrate/shared-vocabulary'
@@ -5,6 +6,7 @@ import { deriveImportJobState } from '@/utils/marketvision/import-job-state'
 import { getPropertyTypeConfig } from '@/utils/property-types'
 
 type ServiceClient = {
+  rpc: ReturnType<typeof import('@/utils/supabase/admin').createServiceClient>['rpc']
   from: ReturnType<typeof import('@/utils/supabase/admin').createServiceClient>['from']
 }
 
@@ -172,11 +174,13 @@ export async function buildBusinessContextBridge(
       .from('email_configurations')
       .select('token_status, sync_enabled')
       .eq('property_id', propertyId)
+      .is('retired_at', null)
       .maybeSingle(),
     supabase
       .from('agent_calendars')
       .select('token_status, sync_enabled, calendar_id')
       .eq('property_id', propertyId)
+      .is('retired_at', null)
       .maybeSingle(),
     supabase
       .from('ad_account_connections')
@@ -189,12 +193,7 @@ export async function buildBusinessContextBridge(
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle(),
-    supabase
-      .from('fact_marketing_performance')
-      .select('spend, clicks, conversions, impressions')
-      .eq('property_id', propertyId)
-      .gte('date', thirtyDaysAgo)
-      .lte('date', today),
+    readMarketingFacts(supabase, {propertyId, startDate: thirtyDaysAgo, endDate: today}).then(data => ({data,error:null})),
     supabase
       .from('shared_jobs')
       .select('lifecycle_status, created_at')
@@ -214,7 +213,6 @@ export async function buildBusinessContextBridge(
   if (calendarConfigResult.error) throw new Error(calendarConfigResult.error.message)
   if (adConnectionsResult.error) throw new Error(adConnectionsResult.error.message)
   if (latestImportResult.error) throw new Error(latestImportResult.error.message)
-  if (marketingResult.error) throw new Error(marketingResult.error.message)
   if (sharedJobsResult.error) throw new Error(sharedJobsResult.error.message)
 
   const property = propertyResult.data as PropertyRow

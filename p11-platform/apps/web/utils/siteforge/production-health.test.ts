@@ -1,12 +1,23 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   createDefaultSiteForgeHealthProbes,
+  resolveHealthHost,
   declaredSiteForgePagePaths,
   recordedLaunchOperatorForHealthRestore,
   SITEFORGE_HEALTH_CHECKS,
 } from './production-health'
 
 describe('SiteForge production health probes', () => {
+  it('bounds an unresponsive DNS lookup so later websites can still be checked', async () => {
+    vi.useFakeTimers()
+    try {
+      const pending=resolveHealthHost('fixture.test',vi.fn().mockImplementation(()=>new Promise(()=>{})))
+      const rejected=expect(pending).rejects.toThrow('DNS lookup exceeded 15 seconds')
+      await vi.advanceTimersByTimeAsync(15_000);await rejected
+      expect(vi.getTimerCount()).toBe(0)
+    } finally { vi.useRealTimers() }
+  })
+
   it('defines every production safety check', () => {
     expect(SITEFORGE_HEALTH_CHECKS).toEqual(
       expect.arrayContaining([
@@ -54,7 +65,7 @@ describe('SiteForge production health probes', () => {
           <title>Example Apartments</title>
           <meta name="robots" content="noindex">
         </head>
-        <body data-siteforge-content-hash="${'b'.repeat(64)}">
+        <body data-siteforge-artifact-id="wrong-artifact" data-siteforge-content-hash="${'b'.repeat(64)}">
           <img class="logo" alt="Example logo">
           <a href="/privacy">Privacy</a>
           <a href="/fair-housing">Equal Housing</a>

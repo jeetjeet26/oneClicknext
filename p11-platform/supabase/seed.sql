@@ -234,6 +234,8 @@ insert into public.fact_marketing_performance (
   date,
   property_id,
   channel_id,
+  source_account_id,
+  currency_code,
   campaign_name,
   campaign_id,
   impressions,
@@ -247,6 +249,8 @@ values (
   '2026-03-01',
   '33333333-3333-3333-3333-333333333333',
   'google_ads',
+  '9999999999',
+  'USD',
   'Local Demo Search Campaign',
   'local-demo-search',
   12500,
@@ -256,7 +260,7 @@ values (
   'local-seed',
   '2026-03-12T00:00:00Z'
 )
-on conflict (date, property_id, campaign_id) do update
+on conflict (date, property_id, channel_id, source_account_id, campaign_id) do update
 set
   channel_id = excluded.channel_id,
   campaign_name = excluded.campaign_name,
@@ -429,7 +433,7 @@ insert into public.property_contacts (
 ) values (
   '44444444-4444-4444-8444-444444444401',
   '33333333-3333-3333-3333-333333333333',
-  'leasing',
+  'primary',
   'P11 Local Leasing',
   'leasing@p11.test',
   '+15125550100',

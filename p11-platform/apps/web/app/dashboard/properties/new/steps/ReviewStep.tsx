@@ -5,8 +5,11 @@ import {
   Users, Link2, FileText, AlertCircle, Edit2, Loader2
 } from 'lucide-react'
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { useAddProperty, INTEGRATION_CONFIG } from '../AddPropertyProvider'
+import {acknowledgeCreation}from '@/utils/property-setup/creation-client'
+import {savePropertySetup}from '@/utils/property-setup/client'
+import {creationProfile}from '@/utils/property-setup/creation-contracts'
 import { getPropertyTypeLabel } from '@/utils/property-types'
 
 interface SectionCardProps {
@@ -54,14 +57,13 @@ function SectionCard({ icon, title, isComplete, onEdit, children }: SectionCardP
 }
 
 export function ReviewStep() {
-  const router = useRouter()
-  const { formData, setStep, isLoading, setIsLoading, error, setError, setCreatedPropertyId, editMode, createdPropertyId } = useAddProperty()
+  const { setupHash,setupSnapshot,formData, setStep, setIsLoading, error, setError, setCreatedPropertyId, editMode, createdPropertyId } = useAddProperty()
   const { community, contacts, integrations, documents } = formData
   const [submitting, setSubmitting] = useState(false)
 
   const primaryContact = contacts.find(c => c.type === 'primary')
   const billingContact = contacts.find(c => c.type === 'billing')
-  const connectedIntegrations = integrations.filter(i => i.status === 'connected' || i.status === 'verified')
+  const connectedIntegrations = integrations
 
   const isCommunityComplete = !!community.name
   const isContactsComplete = primaryContact && primaryContact.name && primaryContact.email
@@ -77,58 +79,12 @@ export function ReviewStep() {
     setError(null)
 
     try {
-      const payload = {
-        community: {
-          name: community.name,
-          type: community.type || null,
-          address: community.address.street ? community.address : null,
-          websiteUrl: community.websiteUrl || null,
-          additionalUrls: community.additionalUrls.filter(url => url.trim()),
-          unitCount: community.unitCount ? parseInt(community.unitCount) : null,
-          yearBuilt: community.yearBuilt ? parseInt(community.yearBuilt) : null,
-          amenities: community.amenities,
-        },
-        contacts: contacts.map(c => ({
-          type: c.type,
-          name: c.name,
-          email: c.email,
-          phone: c.phone || null,
-          role: c.role || null,
-          billingAddress: c.billingAddress || null,
-          billingMethod: c.billingMethod || null,
-          specialInstructions: c.specialInstructions || null,
-          needsW9: c.needsW9 || false,
-        })),
-        integrations: integrations.map(i => ({
-          platform: i.platform,
-          status: i.status,
-          accountId: i.accountId || null,
-          accountName: i.accountName || null,
-          notes: i.notes || null,
-        })),
-        documentCount: documents.length,
-        existingPropertyId: !editMode.isEditing ? createdPropertyId : null,
-      }
-
-      // Use different endpoint for edit vs create
-      const url = editMode.isEditing 
-        ? `/api/properties/${editMode.propertyId}/update`
-        : '/api/properties/create'
-      
-      const response = await fetch(url, {
-        method: editMode.isEditing ? 'PUT' : 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
-
-      const data = await response.json()
-
-      if (!response.ok) {
-        throw new Error(data.error || `Failed to ${editMode.isEditing ? 'update' : 'add'} property`)
-      }
-
-      // Store the property ID
-      setCreatedPropertyId(data.property?.id || editMode.propertyId || null)
+      if(!createdPropertyId||!setupHash||!setupSnapshot)throw new Error('Return to property details and recover the saved property before finishing setup.')
+      const profile={...creationProfile(community),specialFeatures:setupSnapshot.profile.specialFeatures,brandVoice:setupSnapshot.profile.brandVoice,targetAudience:setupSnapshot.profile.targetAudience}
+      const result=await savePropertySetup(createdPropertyId,{expectedHash:setupHash,profile,contacts:contacts.map(c=>({id:c.id,type:c.type,name:c.name,email:c.email,phone:c.phone||'',role:c.role||'',billingAddress:c.billingAddress||{street:'',city:'',state:'',zip:''},billingMethod:c.billingMethod||'',specialInstructions:c.specialInstructions||'',needsW9:c.needsW9||false,isPrimary:c.isPrimary??c.type==='primary'})),connectionRequests:integrations.map(i=>({platform:i.platform,accountId:i.accountId||'',accountName:i.accountName||'',notes:i.notes||''})),reason:'Complete reviewed property setup'},true)
+      if(!result.id)throw new Error('The setup completion receipt could not be verified.')
+      setCreatedPropertyId(createdPropertyId)
+      acknowledgeCreation(createdPropertyId)
 
       // Success! Navigate to complete step
       setStep('complete')
@@ -147,21 +103,25 @@ export function ReviewStep() {
           <CheckCircle className="w-8 h-8 text-white" />
         </div>
         <h1 className="text-3xl font-bold text-white mb-3">
-          {editMode.isEditing ? 'Review & Save' : 'Review & Create'}
+          {editMode.isEditing ? 'Review & Save' : 'Review & Finish Setup'}
         </h1>
         <p className="text-slate-400 text-lg">
           {editMode.isEditing 
             ? 'Review your changes before saving'
-            : 'Double-check your information before adding this property'
+            : 'Review the details to finish setting up your saved property'
           }
         </p>
       </div>
 
       <div className="bg-slate-800/40 backdrop-blur-xl rounded-2xl border border-slate-700/50 shadow-2xl p-6 sm:p-8">
         {error && (
-          <div className="mb-6 bg-red-500/10 border border-red-500/30 text-red-400 px-4 py-3 rounded-lg text-sm flex items-center gap-2">
+          <div className="mb-6 bg-red-500/10 border border-red-500/30 text-red-400 px-4 py-3 rounded-lg text-sm space-y-2">
             <AlertCircle size={18} />
-            {error}
+            <p role="alert">{error}</p>
+            {createdPropertyId&&<div className="flex flex-wrap gap-3">
+              <Link className="underline" href={`/dashboard/properties/${createdPropertyId}/edit`} target="_blank" rel="noopener noreferrer">Inspect saved property and history</Link>
+              <button type="button" className="underline" onClick={()=>{if(window.confirm('Reload the saved property setup? Unsaved changes in this form will be discarded.'))window.location.assign('/dashboard/properties/new')}}>Reload saved setup</button>
+            </div>}
           </div>
         )}
 
@@ -178,7 +138,7 @@ export function ReviewStep() {
             {community.address.city && (
               <p>{community.address.city}, {community.address.state} {community.address.zip}</p>
             )}
-            {community.unitCount && <p>{community.unitCount} units</p>}
+            {community.unitCount !== '' && <p>{community.unitCount} units</p>}
             {community.websiteUrl && (
               <p className="truncate">{community.websiteUrl}</p>
             )}
@@ -213,19 +173,19 @@ export function ReviewStep() {
           {/* Integrations */}
           <SectionCard
             icon={<Link2 size={18} />}
-            title="Integrations"
+            title="Connection plans"
             isComplete={true}
             onEdit={() => setStep('integrations')}
           >
             {connectedIntegrations.length > 0 ? (
               connectedIntegrations.map(i => (
-                <p key={i.platform}><span className="text-emerald-400">✓</span> {INTEGRATION_CONFIG[i.platform].name}</p>
+                <p key={i.platform}>{INTEGRATION_CONFIG[i.platform].name} · Planned</p>
               ))
             ) : (
-              <p>No integrations configured yet</p>
+              <p>No connection plans selected yet</p>
             )}
             {integrations.length > connectedIntegrations.length && (
-              <p className="text-amber-400">{integrations.length - connectedIntegrations.length} pending setup</p>
+              <p className="text-amber-400">{integrations.length - connectedIntegrations.length} plans for later setup</p>
             )}
           </SectionCard>
 
@@ -259,10 +219,10 @@ export function ReviewStep() {
               </>
             ) : (
               <>
-                <li>• Your new community will be added to your organization</li>
-                <li>• Documents will be processed for AI training</li>
+                <li>• Your reviewed property details and contacts will be saved together</li>
+                <li>• Uploaded sources keep their own processing status; saving setup does not train a model</li>
                 <li>• You&apos;ll get a personalized onboarding checklist</li>
-                <li>• Our team can help with integrations</li>
+                <li>• Selected services remain plans until separately authorized and checked</li>
               </>
             )}
           </ul>

@@ -117,7 +117,7 @@ function extractListEntities(text: string, brandName: string, brandDomains: stri
     const match = line.match(/^\s*(?:#{1,6}\s*)?(?:(\d+)[.)]\s+|[-*]\s+)(?:\*\*|__)?\s*(.+)$/)
     if (!match) continue
     const explicitPosition = match[1] ? Number.parseInt(match[1], 10) : null
-    let raw = (match[2] || '').replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').replace(/\*\*|__|`/g, '')
+    const raw = (match[2] || '').replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').replace(/\*\*|__|`/g, '')
     const name = raw.split(/\s*[—–|:]\s*/)[0].replace(/\s+-\s+.*$/, '').trim()
     if (!isUsableListName(name)) continue
     const key = name.toLowerCase()

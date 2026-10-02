@@ -165,7 +165,7 @@ describe('GET /api/cron/publish-scheduled', () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 
-  it('returns 500 when CRON_SECRET is missing', async () => {
+  it('rejects execution when CRON_SECRET is missing', async () => {
     delete process.env.CRON_SECRET
 
     const { GET } = await import('./route')
@@ -175,9 +175,9 @@ describe('GET /api/cron/publish-scheduled', () => {
 
     const response = await GET(request)
 
-    expect(response.status).toBe(500)
+    expect(response.status).toBe(401)
     await expect(response.json()).resolves.toEqual({
-      error: 'CRON_SECRET is required for publish-scheduled cron execution',
+      error: 'Unauthorized',
     })
     expect(mockFrom).not.toHaveBeenCalled()
   })

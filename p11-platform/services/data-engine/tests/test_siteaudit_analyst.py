@@ -40,3 +40,19 @@ def test_validate_keeps_grounded_recommendations_only():
 
     assert [rec['title'] for rec in validated] == ['Fix missing neighborhood titles']
     assert validated[0]['grounding']['finding_ids'] == ['finding-1']
+
+
+def test_pagination_does_not_truncate_saved_evidence():
+    from siteaudit.analyst import _read_pages
+    from unittest.mock import Mock
+    query=Mock();query.range.return_value=query
+    query.execute.side_effect=[SimpleNamespace(data=[{'id':i} for i in range(500)]),SimpleNamespace(data=[{'id':i} for i in range(500,1000)]),SimpleNamespace(data=[{'id':i} for i in range(1000,1005)])]
+    assert len(_read_pages(query))==1005
+    assert query.range.call_args.args==(1000,1499)
+
+def test_proposed_page_replacements_require_observed_urls():
+    analyst=SiteAuditAnalyst.__new__(SiteAuditAnalyst)
+    result=analyst._validate({'recommendations':[{'title':'Fix observed page','narrative':'A concrete finding supports improving the observed page title for this community.',
+       'grounding':{'finding_ids':['finding']},'proposed_changes':[{'url':'https://example.com/observed','proposed':'Observed title'},{'url':'https://invented.invalid','proposed':'Invented title'}]}]},
+       {'findings':[{'id':'finding','affected_urls':['https://example.com/observed']}],'geo_signals':[],'pages':[]})
+    assert [change['url'] for change in result[0]['proposed_changes']]==['https://example.com/observed']

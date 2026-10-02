@@ -6,18 +6,20 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
+import { readMeasurements } from '@/utils/propertyaudit/read-measurements'
+import { measurementBatchStatus } from '@/utils/propertyaudit/measurement-source'
 import { isSupportedSurface } from '@/utils/propertyaudit/types'
 
 interface InsightCitation {
   domain: string
-  is_brand_domain: boolean | null
+  is_brand_domain?: boolean | null
 }
 
 interface InsightAnswer {
   id: string
   presence: boolean
   llm_rank: number | null
-  ordered_entities: unknown
+  ordered_entities?: unknown
   geo_citations: InsightCitation[] | null
 }
 
@@ -60,68 +62,14 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
-    // Get latest completed runs with batch info and cross-model analysis
-    let runsQuery = supabase
-      .from('geo_runs')
-      .select(`
-        id,
-        surface,
-        batch_id,
-        status,
-        started_at,
-        finished_at,
-        cross_model_analysis,
-        geo_answers (
-          id,
-          presence,
-          llm_rank,
-          ordered_entities,
-          geo_citations (
-            domain,
-            is_brand_domain
-          )
-        )
-      `)
-      .eq('property_id', propertyId)
-      .order('started_at', { ascending: false })
-      .limit(10)  // Get more to check batch status
-
-    if (surface && isSupportedSurface(surface)) {
-      runsQuery = runsQuery.eq('surface', surface)
-    }
-
-    const { data: allRuns, error: runsError } = await runsQuery
-    const typedRuns = (allRuns ?? []) as unknown as InsightRun[]
-    
-    // Check batch completion status
-    const latestBatchId = typedRuns[0]?.batch_id
-    let batchComplete = true
-    let batchStatus = 'complete'
-    
-    if (latestBatchId) {
-      const batchRuns = typedRuns.filter((run) => run.batch_id === latestBatchId)
-      const completedRuns = batchRuns.filter((run) => run.status === 'completed')
-      const runningRuns = batchRuns.filter((run) => run.status === 'running')
-      
-      if (runningRuns.length > 0) {
-        batchComplete = false
-        batchStatus = 'running'
-      } else if (completedRuns.length < batchRuns.length) {
-        batchComplete = false
-        batchStatus = 'partial'
-      }
-      
-      console.log(`[Insights] Batch ${latestBatchId}: ${completedRuns.length}/${batchRuns.length} complete`)
-    }
-    
-    // Only use completed runs for insights
-    const runs = typedRuns.filter((run) => run.status === 'completed')
-
-    if (runsError) {
-      console.error('Error fetching runs:', runsError)
-      return NextResponse.json({ error: 'Failed to fetch insights' }, { status: 500 })
-    }
-
+    if (surface && surface !== 'both' && !isSupportedSurface(surface)) return NextResponse.json({error:'Invalid surface'}, {status:400})
+    const source = await readMeasurements(user.id, propertyId, {kind:'batch'})
+    if (source.state !== 'ready') return NextResponse.json({error:'Audit measurements unavailable', state:source.state}, {status:source.state === 'forbidden' ? 403 : 409})
+    const typedRuns: InsightRun[] = source.runs.map(entry => ({...entry.run, geo_answers: entry.answers.map(a => ({...a.answer, geo_citations: a.citations}))}))
+    const latestBatchId = source.batchId
+    const batchStatus = measurementBatchStatus(typedRuns)
+    const batchComplete = batchStatus === 'completed'
+    const runs = typedRuns.filter(run => run.status === 'completed' && (!surface || surface === 'both' || run.surface === surface))
     // Aggregate competitor mentions
     const competitorMap = new Map<string, { 
       name: string
@@ -206,17 +154,19 @@ export async function GET(req: NextRequest) {
     // Calculate brand Share of Voice
     const totalCitations = domains.reduce((sum, d) => sum + d.count, 0)
     const brandCitations = domains.filter(d => d.isBrandDomain).reduce((sum, d) => sum + d.count, 0)
-    const brandSOV = totalCitations > 0 ? (brandCitations / totalCitations) * 100 : 0
+    const brandSOV = totalCitations > 0 ? (brandCitations / totalCitations) * 100 : null
 
     // Extract cross-model analysis from batch runs
     const crossModelAnalysis = typedRuns.find((run) => run.cross_model_analysis)?.cross_model_analysis || null
 
     return NextResponse.json({
+      scope: source.scope,
+      coverage: { runs: typedRuns.length, completedRuns: runs.length, retainedAnswers: runs.reduce((n,r) => n + (r.geo_answers?.length || 0),0) },
       competitors,
       domains,
       summary: {
         totalCompetitors: competitors.length,
-        brandSOV: brandSOV.toFixed(1),
+        brandSOV: brandSOV?.toFixed(1) ?? null,
         topCompetitor: competitors[0] || null
       },
       batchStatus: {
@@ -224,8 +174,8 @@ export async function GET(req: NextRequest) {
         status: batchStatus,
         batchId: latestBatchId,
         message: batchComplete 
-          ? 'All models complete - insights reflect full cross-model analysis'
-          : 'Some models still running - insights may be partial'
+          ? 'Selected batch complete; insights use its retained answers.'
+          : batchStatus === 'failed' ? 'Selected batch failed. No completed results are available.' : batchStatus === 'pending' ? 'No measured batch is available.' : 'Selected batch is incomplete; only completed results are included.'
       },
       // Cross-model analysis results (if available)
       crossModelAnalysis: crossModelAnalysis ? {

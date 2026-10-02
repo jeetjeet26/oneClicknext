@@ -199,3 +199,12 @@ describe('x weighted tweet length', () => {
     ).not.toThrow()
   })
 })
+
+
+describe('provider metric read failures',()=>{
+ it.each([instagramAdapter,facebookAdapter])('does not turn a failed insights request into an empty successful snapshot',async adapter=>{
+  const fetchMock=vi.fn(async(url:string)=>url.includes('/insights')?new Response(JSON.stringify({error:{message:'Insights unavailable'}}),{status:503,headers:{'Content-Type':'application/json'}}):new Response(JSON.stringify({like_count:0,comments_count:0}),{status:200,headers:{'Content-Type':'application/json'}}))
+  vi.stubGlobal('fetch',fetchMock)
+  try{await expect(adapter.fetchMetrics!(connection({platform:adapter.platform,pageId:'page',pageAccessToken:'token'}),'post')).rejects.toThrow(/Insights unavailable/);expect(fetchMock.mock.calls).toHaveLength(2)}finally{vi.unstubAllGlobals()}
+ })
+})

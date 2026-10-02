@@ -1,3 +1,4 @@
+import { CRM_PLATFORMS, publicIntegration } from '@/utils/crm/workspace'
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { createAdminClient } from '@/utils/supabase/admin'
@@ -55,12 +56,12 @@ function getReadinessFromCredentialState(
 ): IntegrationReadiness {
   const checkedAt = new Date().toISOString()
 
-  if (integration.platform === 'crm') {
+  if ((CRM_PLATFORMS as readonly string[]).includes(integration.platform)) {
     const blockers: string[] = []
     if (!hasUsableCredentials(integration.credentials)) {
       blockers.push('missing_credentials')
     }
-    if (!integration.mapping_validated) {
+    if (!integration.mapping_validated || !(integration as unknown as Record<string,unknown>).crm_validation_receipt_id) {
       blockers.push('mapping_not_validated')
     }
     return {
@@ -170,6 +171,7 @@ export async function GET(request: NextRequest) {
             .from('email_configurations')
             .select('token_status, sync_enabled')
             .eq('property_id', propertyId)
+      .is('retired_at', null)
             .maybeSingle()
         : Promise.resolve({ data: null, error: null }),
       platformSet.has('pms')
@@ -177,6 +179,7 @@ export async function GET(request: NextRequest) {
             .from('agent_calendars')
             .select('token_status, sync_enabled, calendar_id')
             .eq('property_id', propertyId)
+      .is('retired_at', null)
             .maybeSingle()
         : Promise.resolve({ data: null, error: null }),
       AD_ACCOUNT_PLATFORMS.some((platform) => platformSet.has(platform))
@@ -223,7 +226,7 @@ export async function GET(request: NextRequest) {
         adConnectionHealthByPlatform,
       })
       return {
-        ...integration,
+        ...publicIntegration(integration),
         status: deriveEffectiveStatus(integration.status, readiness),
         statusSource: readiness.mode,
         readiness,
@@ -249,6 +252,8 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json()
     const { propertyId, integration } = body
+
+    if (integration?.platform && (CRM_PLATFORMS as readonly string[]).includes(integration.platform)) return NextResponse.json({error:'Manage CRM credentials and readiness in CRM setup.'},{status:409})
 
     if (!propertyId || !integration?.platform) {
       return NextResponse.json({ error: 'propertyId and integration.platform are required' }, { status: 400 })
@@ -286,7 +291,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       integration: {
-        ...data,
+        ...publicIntegration(data),
         displayName: PLATFORM_DISPLAY_NAMES[data.platform] || data.platform,
       },
     })
@@ -316,13 +321,15 @@ export async function PUT(request: NextRequest) {
 
     const { data: existingIntegration, error: existingIntegrationError } = await adminClient
       .from('integration_credentials')
-      .select('id, property_id')
+      .select('id, property_id, platform')
       .eq('id', integrationId)
       .single()
 
     if (existingIntegrationError || !existingIntegration) {
       return NextResponse.json({ error: 'Integration not found' }, { status: 404 })
     }
+
+    if ((CRM_PLATFORMS as readonly string[]).includes(existingIntegration.platform)) return NextResponse.json({error:'Manage CRM credentials and readiness in CRM setup.'},{status:409})
 
     if (typeof existingIntegration.property_id !== 'string') {
       return NextResponse.json({ error: 'Integration not found' }, { status: 404 })
@@ -333,7 +340,7 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
-    const updates: Record<string, unknown> = {}
+    const updates: Database['public']['Tables']['integration_credentials']['Update'] = {}
     if (status !== undefined) updates.status = status
     if (notes !== undefined) updates.notes = notes
     if (accountId !== undefined) updates.account_id = accountId
@@ -359,7 +366,7 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({
       success: true,
       integration: {
-        ...data,
+        ...publicIntegration(data),
         displayName: PLATFORM_DISPLAY_NAMES[data.platform] || data.platform,
       },
     })

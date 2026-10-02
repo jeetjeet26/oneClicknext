@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NextRequest } from 'next/server'
 
+const readMeasurementsMock = vi.fn()
+vi.mock('@/utils/propertyaudit/read-measurements', () => ({readMeasurements:readMeasurementsMock}))
+
 const authGetUserMock = vi.fn()
 const createClientMock = vi.fn()
 const validatePropertyAccessMock = vi.fn()
@@ -148,6 +151,11 @@ describe('propertyaudit score route', () => {
         ])
       }),
     })
+
+    const client = await createClientMock()
+    const {data:runs} = await client.from('geo_runs')
+    const {data:answers} = await client.from('geo_answers')
+    readMeasurementsMock.mockResolvedValue({state:'ready',scope:'Latest two completed runs per surface',runs:runs.map((run: {id:string;geo_scores:unknown[]}) => ({run,job:{snapshot:{property:{name:'Epoca'},config:{}}}, scores:run.geo_scores, answers:answers.filter((a:{run_id:string})=>a.run_id === run.id).map((answer: {geo_citations:unknown[]})=>({answer,citations:answer.geo_citations})), items:answers.filter((a:{run_id:string})=>a.run_id === run.id).map((a:{id:string;geo_queries:unknown})=>({answerId:a.id,query:a.geo_queries}))}))})
 
     const { GET } = await import('./route')
     const response = await GET(

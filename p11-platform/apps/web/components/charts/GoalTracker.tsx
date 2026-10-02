@@ -1,619 +1,137 @@
-'use client'
-
-import { useState, useEffect, useCallback } from 'react'
-import { 
-  Target, 
-  Settings2, 
-  X, 
-  Check, 
-  TrendingUp, 
-  TrendingDown,
-  AlertTriangle,
-  Sparkles,
-  Loader2,
-  Edit2,
-  Trash2
-} from 'lucide-react'
-
-type MetricGoal = {
-  id: string
-  property_id: string
-  metric_key: string
-  goal_type: 'monthly' | 'quarterly' | 'yearly'
-  target_value: number
-  is_inverse: boolean
-  alert_threshold_percent: number
-  is_active: boolean
-}
-
-type GoalTrackerProps = {
-  propertyId: string
-  currentMetrics: {
-    spend: number
-    impressions: number
-    clicks: number
-    conversions: number
-    ctr: number
-    cpa: number
-  }
-}
-
-const METRIC_CONFIG: Record<string, { 
-  label: string
-  format: (v: number) => string
-  isInverse: boolean
-  icon: string
-  color: string
-}> = {
-  spend: { 
-    label: 'Ad Spend', 
-    format: (v) => `$${v.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`,
-    isInverse: false,
-    icon: '💰',
-    color: 'indigo'
-  },
-  impressions: { 
-    label: 'Impressions', 
-    format: (v) => v.toLocaleString('en-US'),
-    isInverse: false,
-    icon: '👁️',
-    color: 'blue'
-  },
-  clicks: { 
-    label: 'Clicks', 
-    format: (v) => v.toLocaleString('en-US'),
-    isInverse: false,
-    icon: '👆',
-    color: 'emerald'
-  },
-  conversions: { 
-    label: 'Conversions', 
-    format: (v) => v.toLocaleString('en-US'),
-    isInverse: false,
-    icon: '🎯',
-    color: 'purple'
-  },
-  ctr: { 
-    label: 'CTR', 
-    format: (v) => `${v.toFixed(2)}%`,
-    isInverse: false,
-    icon: '📊',
-    color: 'amber'
-  },
-  cpa: { 
-    label: 'CPA', 
-    format: (v) => `$${v.toFixed(2)}`,
-    isInverse: true, // Lower is better
-    icon: '💵',
-    color: 'rose'
-  },
-}
-
-function GoalProgressBar({ 
-  current, 
-  target, 
-  isInverse, 
-  alertThreshold 
-}: { 
-  current: number
-  target: number
-  isInverse: boolean
-  alertThreshold: number
-}) {
-  // For inverse metrics (CPA), calculate progress differently
-  // Lower than target = good, higher = bad
-  let progress: number
-  let isOnTrack: boolean
-  
-  if (isInverse) {
-    // For CPA: if current is lower than target, we're doing well
-    if (current <= 0) {
-      progress = 100
-      isOnTrack = true
-    } else if (target <= 0) {
-      progress = 0
-      isOnTrack = false
-    } else {
-      // Calculate how much "under" target we are
-      progress = Math.min(100, Math.max(0, ((target - current) / target) * 100 + 100))
-      isOnTrack = current <= target
+'use client';
+import { useEffect, useRef, useState } from 'react';
+import { goalValues, pendingGoal, type GoalValues, type MetricGoal } from '@/utils/analytics/goal-contracts';
+import { goalProgress, goalReportValue } from '@/utils/analytics/goal-comparison';
+const button = 'rounded-lg border border-border px-3 py-2 text-sm hover:bg-muted disabled:opacity-40';
+const field = 'mt-1 w-full rounded-lg border border-border bg-background px-3 py-2';
+const labels: Record<string, string> = { spend: 'Spend', impressions: 'Impressions', clicks: 'Clicks', conversions: 'Conversions', ctr: 'Click-through rate', cpa: 'Cost per conversion', daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly', quarterly: 'Quarterly', yearly: 'Yearly' };
+const initial: GoalValues = { metric: 'conversions', period: 'monthly', target: 100, direction: 'at_least', threshold: 80 };
+const key = (actor: string, property: string) => `p11.bi-goal.v1:${actor}:${property}`;
+type History = {
+    id: string;
+    operation: string;
+    created_at: string;
+    before_state: MetricGoal | null;
+    after_state: MetricGoal | null;
+    result: {
+        status: string;
+    };
+};
+type PageData<T> = {
+    items: T[];
+    count: number;
+    hash: string;
+    offset: number;
+};
+type Result = PageData<MetricGoal | History> & {
+    actorId: string;
+    propertyId: string;
+    id?: string;
+    canManage: boolean;
+    status?: string;
+};
+type Props = {
+    propertyId: string;
+    currentMetrics: Partial<Record<GoalValues['metric'], number | null>>;
+    reportRange?: {
+        start: string;
+        end: string;
+    };
+    filtered?: boolean;
+    coverageComplete?: boolean;
+};
+const format = (v: number) => Number.isFinite(v) ? v.toLocaleString('en-US', { maximumFractionDigits: 3 }) : 'Needs review';
+function description(g: MetricGoal) { return `${labels[g.goal_type] || g.goal_type} ${labels[g.metric_key] || g.metric_key}: ${g.is_inverse ? 'at most' : 'at least'} ${format(g.target_value)}${g.metric_key === 'ctr' ? '%' : ''}`; }
+export function GoalTracker(props: Props) { return <GoalManager key={props.propertyId} {...props}/>; }
+function GoalManager({ propertyId, currentMetrics, reportRange, filtered = false, coverageComplete = false }: Props) {
+    const controller = useRef<AbortController | null>(null), locked = useRef(false), form = useRef<HTMLFormElement>(null);
+    const [actor, setActor] = useState(''), [canManage, setCanManage] = useState(false), [goals, setGoals] = useState<PageData<MetricGoal> | null>(null), [history, setHistory] = useState<PageData<History> | null>(null), [busy, setBusy] = useState(false), [error, setError] = useState(''), [message, setMessage] = useState(''), [pending, setPending] = useState<{
+        id: string;
+    } | null>(null), [editing, setEditing] = useState<MetricGoal | null>(null), [values, setValues] = useState<GoalValues>(initial), [showForm, setShowForm] = useState(false);
+    async function request(params: Record<string, unknown>, method: 'GET' | 'POST' = 'GET', expectedActor = actor): Promise<Result> {
+        const q = new URLSearchParams(method === 'GET' ? Object.fromEntries(Object.entries({ ...params, propertyId }).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)])) : {});
+        const response = await fetch('/api/analytics/goals' + (method === 'GET' ? '?' + q : ''), { method, cache: 'no-store', signal: controller.current?.signal, ...(method === 'POST' ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...params, propertyId, expectedActorId: expectedActor }) } : {}) });
+        const result = await response.json();
+        if (!response.ok)
+            throw new Error(result.error || 'Goal history could not be confirmed.');
+        if (result.propertyId !== propertyId || params.id && result.id !== params.id || method === 'GET' && expectedActor && result.actorId !== expectedActor)
+            throw new Error('This goal response does not match the current account or request.');
+        return result;
     }
-  } else {
-    // For normal metrics: higher is better
-    progress = target > 0 ? Math.min(100, (current / target) * 100) : 0
-    isOnTrack = progress >= alertThreshold
-  }
-
-  const getStatusColor = () => {
-    if (isOnTrack) return 'bg-emerald-500'
-    if (progress >= alertThreshold * 0.5) return 'bg-amber-500'
-    return 'bg-red-500'
-  }
-
-  return (
-    <div className="relative">
-      <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-        <div 
-          className={`h-full ${getStatusColor()} transition-all duration-500 ease-out`}
-          style={{ width: `${Math.min(progress, 100)}%` }}
-        />
-      </div>
-      {/* Alert threshold marker */}
-      <div 
-        className="absolute top-0 h-2 w-0.5 bg-slate-400"
-        style={{ left: `${alertThreshold}%` }}
-        title={`${alertThreshold}% alert threshold`}
-      />
-    </div>
-  )
+    useEffect(() => {
+        const abort = new AbortController();
+        controller.current = abort;
+        void request({ kind: 'goals' }, 'GET', '').then(r => { if (abort.signal.aborted)
+            return; const raw = sessionStorage.getItem(key(r.actorId, propertyId)); if (raw) {
+            const p = pendingGoal.safeParse(JSON.parse(raw));
+            if (!p.success)
+                throw new Error('This browser has an unreadable goal request. Keep this tab and contact your administrator.');
+            setPending(p.data);
+        } setActor(r.actorId); setCanManage(r.canManage); setGoals(r as PageData<MetricGoal>); }).catch(e => { if (!abort.signal.aborted)
+            setError(e instanceof Error ? e.message : 'Goals unavailable.'); });
+        return () => abort.abort();
+        // Property-keyed lifetime fences requests when the selected property changes.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [propertyId]);
+    async function work(fn: () => Promise<void>) { if (locked.current)
+        return; locked.current = true; setBusy(true); setError(''); setMessage(''); try {
+        await fn();
+    }
+    catch (e) {
+        if (!controller.current?.signal.aborted)
+            setError(e instanceof Error ? e.message : 'Goal request could not be confirmed.');
+    }
+    finally {
+        locked.current = false;
+        if (!controller.current?.signal.aborted)
+            setBusy(false);
+    } }
+    function retain(p: {
+        id: string;
+    } | null) { try {
+        if (p)
+            sessionStorage.setItem(key(actor, propertyId), JSON.stringify(p));
+        else
+            sessionStorage.removeItem(key(actor, propertyId));
+    }
+    catch {
+        throw new Error('Allow browser storage to retain this goal request. Keep this tab open.');
+    } setPending(p); }
+    async function refresh(offset = 0, expectedHash?: string) { const r = await request({ kind: 'goals', offset, expectedHash }); setGoals(r as PageData<MetricGoal>); setCanManage(r.canManage); }
+    async function historyPage(offset = 0, expectedHash?: string) { setHistory(await request({ kind: 'history', offset, expectedHash }) as PageData<History>); }
+    async function settle(r: Result) { retain(null); setShowForm(false); setEditing(null); setMessage(r.status === 'cancelled_request' ? 'Unused goal request cancelled.' : `Goal decision confirmed: ${r.status}.`); await refresh(); if (history)
+        await historyPage(); }
+    async function decide(input: Record<string, unknown>) { const p = { id: crypto.randomUUID() }; retain(p); await settle(await request({ ...input, id: p.id }, 'POST')); }
+    const blocked = busy || !!pending || !actor, changeBlocked = blocked || !canManage;
+    const pages = (p: PageData<unknown>, load: (offset: number, hash: string) => void) => <div className="mt-4 flex flex-wrap items-center gap-3 text-xs"><span>{p.count ? `${p.offset + 1}–${Math.min(p.offset + 20, p.count)} of ${p.count}` : '0 records'}</span><button type="button" className={button} disabled={blocked || !p.offset} onClick={() => load(Math.max(0, p.offset - 20), p.hash)}>Previous page</button><button type="button" className={button} disabled={blocked || p.offset + 20 >= p.count} onClick={() => load(p.offset + 20, p.hash)}>Next page</button></div>;
+    function edit(g: MetricGoal | null) { setEditing(g); setValues(g ? { metric: g.metric_key, period: g.goal_type, target: g.target_value, direction: g.is_inverse ? 'at_most' : 'at_least', threshold: g.alert_threshold_percent } : initial); setShowForm(true); setMessage(''); }
+    return <section aria-label="Marketing goals" className="space-y-4 rounded-xl border border-border bg-background p-5 sm:p-6">
+ <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-semibold">Marketing goals</h2><p className="text-sm text-muted-foreground">Property targets and their recorded decisions.</p></div><div className="flex flex-wrap gap-2"><button className={button} disabled={blocked} onClick={() => void work(async () => { await refresh(); if (history)
+        await historyPage(); })}>Refresh goals</button><button className={button} disabled={blocked} onClick={() => void work(() => historyPage())}>Goal history</button><button className={button} disabled={changeBlocked} onClick={() => edit(null)}>Add goal</button></div></div>
+ <p className="text-sm text-muted-foreground">Comparisons need a complete calendar period, every date covered, and all channels and accounts. Weeks run Monday through Sunday in UTC. A goal is a target, not a verified business outcome.</p>
+ {error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-800">{error}</p>}{message && <p role="status" className="text-sm text-emerald-700">{message}</p>}
+ {pending && <section aria-label="Pending goal request" className="space-y-3 rounded-lg border border-amber-300 p-4"><p className="text-sm">A goal request needs confirmation before another change.</p><div className="flex flex-wrap gap-2"><button className={button} disabled={busy} onClick={() => void work(async () => settle(await request({ kind: 'command', id: pending.id })))}>Check goal request</button><button className={button} disabled={busy || !canManage} onClick={() => void work(async () => settle(await request({ operation: 'cancel_request', id: pending.id }, 'POST')))}>Cancel unused goal request</button></div></section>}
+ {!canManage && actor && <p className="text-sm text-muted-foreground">An administrator or manager can change these goals.</p>}
+ <section aria-label="Saved marketing goals" className="space-y-3">
+ {goals?.items.length === 0 && <p className="text-sm text-muted-foreground">No goals yet.</p>}
+ {goals?.items.map(g => {
+            const value = goalReportValue(currentMetrics[g.metric_key], g.goal_type, reportRange, filtered, coverageComplete), progress = g.is_active ? goalProgress(value, g.target_value, g.is_inverse, g.alert_threshold_percent) : null;
+            return <article key={g.id} aria-label={description(g)} className="rounded-xl border border-border p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-medium">{description(g)}</h3><p className="text-xs text-muted-foreground">{g.is_active ? 'Active' : 'Archived'} · Revision {g.revision} · Warning below {g.alert_threshold_percent}% of target performance</p></div><div className="flex gap-2">{g.is_active && <button className={button} disabled={changeBlocked} onClick={() => edit(g)}>Edit goal</button>}<button className={button} disabled={changeBlocked} onClick={() => void work(() => decide({ operation: g.is_active ? 'archive' : 'restore', goalId: g.id, expectedRevision: g.revision }))}>{g.is_active ? 'Archive goal' : 'Restore goal'}</button></div></div>
+ {g.is_active && <p className="mt-3 text-sm">{progress ? `Current value: ${format(value!)}${g.metric_key === 'ctr' ? '%' : ''} · ${progress.achieved ? 'Target met' : progress.warning ? 'Below warning threshold' : 'Target not yet met'}` : 'Comparison unavailable for this report. Choose the complete goal period with all channels and accounts and complete source coverage.'}</p>}
+ </article>;
+        })}
+ {goals && pages(goals, (offset, hash) => void work(() => refresh(offset, hash)))}
+ </section>
+ {showForm && <form ref={form} aria-label={editing ? 'Edit marketing goal' : 'New marketing goal'} onSubmit={e => { e.preventDefault(); void work(async () => { const parsed = goalValues.safeParse(values); if (!parsed.success)
+            throw new Error(parsed.error.issues[0]?.message || 'Review the target.'); await decide({ operation: 'save', goalId: editing?.id || crypto.randomUUID(), expectedRevision: editing?.revision || 0, ...parsed.data }); }); }} className="space-y-4 rounded-xl border border-border p-4">
+ <h3 className="font-semibold">{editing ? 'Edit marketing goal' : 'New marketing goal'}</h3><fieldset disabled={changeBlocked} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+ <label className="text-sm">Metric<select className={field} disabled={!!editing} value={values.metric} onChange={e => setValues({ ...values, metric: e.target.value as GoalValues['metric'] })}>{['spend', 'impressions', 'clicks', 'conversions', 'ctr', 'cpa'].map(v => <option key={v} value={v}>{labels[v]}</option>)}</select></label>
+ <label className="text-sm">Goal period<select className={field} disabled={!!editing} value={values.period} onChange={e => setValues({ ...values, period: e.target.value as GoalValues['period'] })}>{['daily', 'weekly', 'monthly', 'quarterly', 'yearly'].map(v => <option key={v} value={v}>{labels[v]}</option>)}</select></label>
+ <label className="text-sm">Direction<select className={field} value={values.direction} onChange={e => setValues({ ...values, direction: e.target.value as GoalValues['direction'] })}><option value="at_least">At least</option><option value="at_most">At most</option></select></label>
+ <label className="text-sm">Target<input required className={field} type="number" min="0.000001" max={values.metric === 'ctr' ? 100 : 1e12} step={['clicks', 'impressions'].includes(values.metric) ? '1' : 'any'} value={Number.isNaN(values.target) ? '' : values.target} onChange={e => setValues({ ...values, target: e.target.valueAsNumber })}/></label>
+ <label className="text-sm">Warning threshold (%)<input required className={field} type="number" min="1" max="100" step="1" value={Number.isNaN(values.threshold) ? '' : values.threshold} onChange={e => setValues({ ...values, threshold: e.target.valueAsNumber })}/></label>
+ </fieldset><p className="text-xs text-muted-foreground">For “at least,” performance is current value ÷ target. For “at most,” it is target ÷ current value; zero counts as meeting the target. Money targets use USD, matching the report definition. Mixed, non-USD or missing currencies cannot be compared.</p><div className="flex gap-2"><button className={button} disabled={changeBlocked} type="submit">Save goal</button><button type="button" className={button} disabled={busy || !!pending} onClick={() => setShowForm(false)}>Close goal editor</button></div>
+ </form>}
+ {history && <section aria-label="Goal decision history" className="space-y-3 border-t border-border pt-4"><h3 className="font-semibold">Goal decision history</h3><p className="text-xs text-muted-foreground">History begins with recorded decisions. Existing goals may have earlier changes that were not recorded.</p>{history.items.map(h => <article key={h.id} className="space-y-1 rounded-lg bg-muted p-3 text-sm"><p>{h.operation === 'cancel_request' ? 'Unused request cancelled' : h.operation === 'save' ? (h.before_state ? 'Goal edited' : 'Goal created') : h.operation === 'archive' ? 'Goal archived' : 'Goal restored'} · {new Date(h.created_at).toLocaleString()}</p>{h.before_state && <p>Before: {description(h.before_state)} · threshold {h.before_state.alert_threshold_percent}%</p>}{h.after_state && <p>After: {description(h.after_state)} · threshold {h.after_state.alert_threshold_percent}%</p>}</article>)}{!history.items.length && <p className="text-sm">No recorded goal decisions.</p>}{pages(history, (offset, hash) => void work(() => historyPage(offset, hash)))}</section>}
+ </section>;
 }
-
-function GoalCard({
-  goal,
-  currentValue,
-  onEdit,
-  onDelete
-}: {
-  goal: MetricGoal
-  currentValue: number
-  onEdit: () => void
-  onDelete: () => void
-}) {
-  const config = METRIC_CONFIG[goal.metric_key]
-  if (!config) return null
-
-  const progress = goal.is_inverse
-    ? (goal.target_value > 0 ? Math.max(0, ((goal.target_value - currentValue) / goal.target_value) * 100 + 100) : 0)
-    : (goal.target_value > 0 ? (currentValue / goal.target_value) * 100 : 0)
-  
-  const isOnTrack = goal.is_inverse 
-    ? currentValue <= goal.target_value
-    : progress >= goal.alert_threshold_percent
-
-  const isExceeding = goal.is_inverse
-    ? currentValue < goal.target_value * 0.8
-    : progress > 100
-
-  return (
-    <div className={`bg-white rounded-xl border ${isOnTrack ? 'border-slate-200' : 'border-amber-200 bg-amber-50/30'} p-4 transition-all hover:shadow-md`}>
-      <div className="flex items-start justify-between mb-3">
-        <div className="flex items-center gap-2">
-          <span className="text-xl">{config.icon}</span>
-          <div>
-            <h4 className="font-medium text-slate-900">{config.label}</h4>
-            <p className="text-xs text-slate-500 capitalize">{goal.goal_type} Goal</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-1">
-          <button 
-            onClick={onEdit}
-            className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors"
-          >
-            <Edit2 size={14} className="text-slate-400" />
-          </button>
-          <button 
-            onClick={onDelete}
-            className="p-1.5 hover:bg-red-100 rounded-lg transition-colors"
-          >
-            <Trash2 size={14} className="text-slate-400 hover:text-red-500" />
-          </button>
-        </div>
-      </div>
-
-      <div className="mb-3">
-        <div className="flex items-end justify-between mb-1">
-          <span className="text-2xl font-bold text-slate-900">
-            {config.format(currentValue)}
-          </span>
-          <span className="text-sm text-slate-500">
-            / {config.format(goal.target_value)}
-          </span>
-        </div>
-        <GoalProgressBar 
-          current={currentValue}
-          target={goal.target_value}
-          isInverse={goal.is_inverse}
-          alertThreshold={goal.alert_threshold_percent}
-        />
-      </div>
-
-      <div className="flex items-center justify-between">
-        <div className={`flex items-center gap-1 text-xs font-medium ${
-          isOnTrack ? 'text-emerald-600' : 'text-amber-600'
-        }`}>
-          {isExceeding ? (
-            <>
-              <Sparkles size={12} />
-              Exceeding goal!
-            </>
-          ) : isOnTrack ? (
-            <>
-              <TrendingUp size={12} />
-              On track
-            </>
-          ) : (
-            <>
-              <AlertTriangle size={12} />
-              Below target
-            </>
-          )}
-        </div>
-        <span className="text-xs text-slate-500">
-          {progress.toFixed(0)}% {goal.is_inverse ? 'efficiency' : 'complete'}
-        </span>
-      </div>
-    </div>
-  )
-}
-
-function EditGoalModal({
-  isOpen,
-  onClose,
-  onSave,
-  goal,
-  existingGoals
-}: {
-  isOpen: boolean
-  onClose: () => void
-  onSave: (data: { metricKey: string; targetValue: number; goalType: string; alertThreshold: number }) => void
-  goal?: MetricGoal
-  existingGoals: MetricGoal[]
-}) {
-  const [metricKey, setMetricKey] = useState(goal?.metric_key || '')
-  const [targetValue, setTargetValue] = useState(goal?.target_value?.toString() || '')
-  const [goalType, setGoalType] = useState(goal?.goal_type || 'monthly')
-  const [alertThreshold, setAlertThreshold] = useState(goal?.alert_threshold_percent || 80)
-  const [saving, setSaving] = useState(false)
-
-  // Get metrics that don't already have goals
-  const availableMetrics = Object.entries(METRIC_CONFIG).filter(([key]) => {
-    if (goal && goal.metric_key === key) return true // Allow editing current metric
-    return !existingGoals.some(g => g.metric_key === key && g.goal_type === goalType)
-  })
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setSaving(true)
-    try {
-      await onSave({
-        metricKey,
-        targetValue: parseFloat(targetValue),
-        goalType,
-        alertThreshold,
-      })
-      onClose()
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  if (!isOpen) return null
-
-  return (
-    <>
-      <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50" onClick={onClose} />
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md animate-in fade-in zoom-in-95">
-          <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
-            <h3 className="text-lg font-semibold text-slate-900 flex items-center gap-2">
-              <Target className="text-indigo-600" size={20} />
-              {goal ? 'Edit Goal' : 'Set New Goal'}
-            </h3>
-            <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-lg">
-              <X size={20} className="text-slate-500" />
-            </button>
-          </div>
-
-          <form onSubmit={handleSubmit} className="p-6 space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1.5">
-                Metric
-              </label>
-              <select
-                value={metricKey}
-                onChange={(e) => setMetricKey(e.target.value)}
-                required
-                disabled={!!goal}
-                className="w-full px-3 py-2.5 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 bg-white disabled:bg-slate-50"
-              >
-                <option value="">Select metric...</option>
-                {availableMetrics.map(([key, config]) => (
-                  <option key={key} value={key}>
-                    {config.icon} {config.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1.5">
-                  Target Value
-                </label>
-                <input
-                  type="number"
-                  value={targetValue}
-                  onChange={(e) => setTargetValue(e.target.value)}
-                  required
-                  min="0"
-                  step={metricKey === 'ctr' || metricKey === 'cpa' ? '0.01' : '1'}
-                  placeholder={metricKey === 'cpa' ? '50.00' : '1000'}
-                  className="w-full px-3 py-2.5 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1.5">
-                  Period
-                </label>
-                <select
-                  value={goalType}
-                  onChange={(e) => setGoalType(e.target.value as 'monthly' | 'quarterly' | 'yearly')}
-                  disabled={!!goal}
-                  className="w-full px-3 py-2.5 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 bg-white disabled:bg-slate-50"
-                >
-                  <option value="monthly">Monthly</option>
-                  <option value="quarterly">Quarterly</option>
-                  <option value="yearly">Yearly</option>
-                </select>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1.5">
-                Alert Threshold ({alertThreshold}%)
-              </label>
-              <input
-                type="range"
-                value={alertThreshold}
-                onChange={(e) => setAlertThreshold(parseInt(e.target.value))}
-                min="50"
-                max="100"
-                step="5"
-                className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
-              />
-              <p className="text-xs text-slate-500 mt-1">
-                Alert when performance drops below {alertThreshold}% of goal
-              </p>
-            </div>
-
-            {metricKey && METRIC_CONFIG[metricKey]?.isInverse && (
-              <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-800">
-                <strong>Note:</strong> For {METRIC_CONFIG[metricKey].label}, lower values are better. 
-                Setting a target of ${targetValue || '0'} means you want to keep costs at or below this amount.
-              </div>
-            )}
-
-            <div className="flex gap-3 pt-2">
-              <button
-                type="button"
-                onClick={onClose}
-                className="flex-1 px-4 py-2.5 border border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 font-medium"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={saving || !metricKey || !targetValue}
-                className="flex-1 px-4 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-medium disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                {saving ? (
-                  <><Loader2 size={16} className="animate-spin" /> Saving...</>
-                ) : (
-                  <><Check size={16} /> {goal ? 'Update Goal' : 'Create Goal'}</>
-                )}
-              </button>
-            </div>
-          </form>
-        </div>
-      </div>
-    </>
-  )
-}
-
-export function GoalTracker({ propertyId, currentMetrics }: GoalTrackerProps) {
-  const [goals, setGoals] = useState<MetricGoal[]>([])
-  const [loading, setLoading] = useState(true)
-  const [showModal, setShowModal] = useState(false)
-  const [editingGoal, setEditingGoal] = useState<MetricGoal | undefined>()
-  const [expanded, setExpanded] = useState(false)
-
-  const fetchGoals = useCallback(async () => {
-    if (!propertyId) return
-    
-    try {
-      const response = await fetch(`/api/analytics/goals?propertyId=${propertyId}`)
-      if (response.ok) {
-        const data = await response.json()
-        setGoals(data.goals || [])
-      }
-    } catch (error) {
-      console.error('Failed to fetch goals:', error)
-    } finally {
-      setLoading(false)
-    }
-  }, [propertyId])
-
-  useEffect(() => {
-    fetchGoals()
-  }, [fetchGoals])
-
-  const handleSaveGoal = async (data: { metricKey: string; targetValue: number; goalType: string; alertThreshold: number }) => {
-    try {
-      const response = await fetch('/api/analytics/goals', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          propertyId,
-          metricKey: data.metricKey,
-          goalType: data.goalType,
-          targetValue: data.targetValue,
-          alertThreshold: data.alertThreshold,
-          isInverse: METRIC_CONFIG[data.metricKey]?.isInverse || false,
-        }),
-      })
-
-      if (response.ok) {
-        fetchGoals()
-      }
-    } catch (error) {
-      console.error('Failed to save goal:', error)
-    }
-  }
-
-  const handleDeleteGoal = async (goalId: string) => {
-    if (!confirm('Are you sure you want to delete this goal?')) return
-
-    try {
-      const response = await fetch(`/api/analytics/goals?goalId=${goalId}`, {
-        method: 'DELETE',
-      })
-
-      if (response.ok) {
-        fetchGoals()
-      }
-    } catch (error) {
-      console.error('Failed to delete goal:', error)
-    }
-  }
-
-  const handleEditGoal = (goal: MetricGoal) => {
-    setEditingGoal(goal)
-    setShowModal(true)
-  }
-
-  // Count goals that are below threshold
-  const warningCount = goals.filter(goal => {
-    const currentValue = currentMetrics[goal.metric_key as keyof typeof currentMetrics] || 0
-    if (goal.is_inverse) {
-      return currentValue > goal.target_value
-    }
-    const progress = goal.target_value > 0 ? (currentValue / goal.target_value) * 100 : 0
-    return progress < goal.alert_threshold_percent
-  }).length
-
-  if (loading) {
-    return (
-      <div className="bg-white rounded-xl border border-slate-200 p-6">
-        <div className="flex items-center gap-2 text-slate-400">
-          <Loader2 size={20} className="animate-spin" />
-          Loading goals...
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-      {/* Header */}
-      <div className="w-full px-6 py-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
-        <div 
-          role="button"
-          tabIndex={0}
-          onClick={() => setExpanded(!expanded)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault()
-              setExpanded(!expanded)
-            }
-          }}
-          className="flex items-center gap-3 flex-1 cursor-pointer"
-        >
-          <div className="p-2 bg-indigo-100 rounded-lg">
-            <Target size={20} className="text-indigo-600" />
-          </div>
-          <div className="text-left">
-            <h3 className="text-lg font-semibold text-slate-900">Goal Tracking</h3>
-            <p className="text-sm text-slate-500">
-              {goals.length} active goal{goals.length !== 1 ? 's' : ''}
-              {warningCount > 0 && (
-                <span className="ml-2 inline-flex items-center gap-1 text-amber-600">
-                  <AlertTriangle size={12} />
-                  {warningCount} below target
-                </span>
-              )}
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => {
-              setEditingGoal(undefined)
-              setShowModal(true)
-            }}
-            className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-            title="Add new goal"
-          >
-            <Settings2 size={20} />
-          </button>
-          <div 
-            role="button"
-            tabIndex={0}
-            onClick={() => setExpanded(!expanded)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault()
-                setExpanded(!expanded)
-              }
-            }}
-            className={`transform transition-transform cursor-pointer p-1 hover:bg-slate-100 rounded ${expanded ? 'rotate-180' : ''}`}
-          >
-            <TrendingUp size={20} className="text-slate-400" />
-          </div>
-        </div>
-      </div>
-
-      {/* Expanded Content */}
-      {expanded && (
-        <div className="border-t border-slate-200 p-6">
-          {goals.length === 0 ? (
-            <div className="text-center py-8">
-              <div className="h-12 w-12 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                <Target size={24} className="text-slate-400" />
-              </div>
-              <p className="text-slate-600 font-medium mb-1">No goals set yet</p>
-              <p className="text-sm text-slate-500 mb-4">
-                Set targets for your marketing metrics to track performance
-              </p>
-              <button
-                onClick={() => {
-                  setEditingGoal(undefined)
-                  setShowModal(true)
-                }}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium"
-              >
-                <Target size={16} />
-                Set Your First Goal
-              </button>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {goals.map(goal => (
-                <GoalCard
-                  key={goal.id}
-                  goal={goal}
-                  currentValue={currentMetrics[goal.metric_key as keyof typeof currentMetrics] || 0}
-                  onEdit={() => handleEditGoal(goal)}
-                  onDelete={() => handleDeleteGoal(goal.id)}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Modal */}
-      <EditGoalModal
-        isOpen={showModal}
-        onClose={() => {
-          setShowModal(false)
-          setEditingGoal(undefined)
-        }}
-        onSave={handleSaveGoal}
-        goal={editingGoal}
-        existingGoals={goals}
-      />
-    </div>
-  )
-}
-

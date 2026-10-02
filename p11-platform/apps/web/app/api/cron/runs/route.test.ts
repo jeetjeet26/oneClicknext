@@ -22,7 +22,7 @@ describe('GET /api/cron/runs', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
-    process.env = { ...originalEnv }
+    process.env = { ...originalEnv, P11_OPERATIONS_ADMIN_IDS: 'user-1' }
     profileSingleMock.mockResolvedValue({
       data: { role: 'admin' },
       error: null,
@@ -84,7 +84,7 @@ describe('GET /api/cron/runs', () => {
     })
   })
 
-  it('returns 403 when authenticated user is not admin or manager', async () => {
+  it('returns 403 when authenticated user is not a platform administrator', async () => {
     authGetUserMock.mockResolvedValue({
       data: { user: { id: 'user-1' } },
       error: null,
@@ -107,7 +107,24 @@ describe('GET /api/cron/runs', () => {
     expect(listRecentCronJobRunsMock).not.toHaveBeenCalled()
   })
 
-  it('returns recent cron job runs for an authenticated user', async () => {
+  it.each(['', 'another-operator'])('does not expose cross-organization logs to an unlisted tenant admin (%s)', async (operators) => {
+    process.env.P11_OPERATIONS_ADMIN_IDS = operators
+    authGetUserMock.mockResolvedValue({data: {user: {id: 'user-1'}}, error: null})
+    const {GET} = await import('./route')
+    const response = await GET(new Request('http://localhost/api/cron/runs') as NextRequest)
+    expect(response.status).toBe(403)
+    expect(listRecentCronJobRunsMock).not.toHaveBeenCalled()
+  })
+
+  it('does not give an allowlisted manager platform access', async () => {
+    authGetUserMock.mockResolvedValue({data: {user: {id: 'user-1'}}, error: null})
+    profileSingleMock.mockResolvedValue({data: {role: 'manager'}, error: null})
+    const {GET} = await import('./route')
+    expect((await GET(new Request('http://localhost/api/cron/runs') as NextRequest)).status).toBe(403)
+    expect(listRecentCronJobRunsMock).not.toHaveBeenCalled()
+  })
+
+  it('returns recent cron job runs for an explicitly configured platform administrator', async () => {
     authGetUserMock.mockResolvedValue({
       data: { user: { id: 'user-1' } },
       error: null,

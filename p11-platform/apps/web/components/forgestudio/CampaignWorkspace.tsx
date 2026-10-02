@@ -1,7 +1,9 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { CheckCircle, Clock, FileEdit, Loader2, RefreshCw, XCircle } from 'lucide-react'
+import {SavedDraft} from './SavedDraft'
+import {GenerationRequests} from './GenerationRequests'
 import { BriefBuilder } from './BriefBuilder'
 import { ReviewStudio } from './ReviewStudio'
 
@@ -21,6 +23,8 @@ interface PackageSummary {
 
 interface CampaignWorkspaceProps {
   propertyId: string
+  initialAssetId?:string
+  initialBriefId?:string
 }
 
 const PACKAGE_STATUS: Record<string, { label: string; className: string; icon: typeof Clock }> = {
@@ -32,37 +36,46 @@ const PACKAGE_STATUS: Record<string, { label: string; className: string; icon: t
   archived: { label: 'Archived', className: 'bg-slate-100 text-slate-500', icon: XCircle },
 }
 
-export function CampaignWorkspace({ propertyId }: CampaignWorkspaceProps) {
+export function CampaignWorkspace({ propertyId,initialAssetId,initialBriefId }: CampaignWorkspaceProps) {
+  const controller=useRef<AbortController|null>(null)
+  const [generationRefresh,setGenerationRefresh]=useState(0)
+  const [error,setError]=useState<string|null>(null)
   const [packages, setPackages] = useState<PackageSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [openPackageId, setOpenPackageId] = useState<string | null>(null)
 
   const load = useCallback(async () => {
-    setLoading(true)
+    controller.current?.abort();const current=new AbortController();controller.current=current
+    setLoading(true);setError(null)
     try {
-      const res = await fetch(`/api/forgestudio/packages?propertyId=${propertyId}`)
+      const res = await fetch(`/api/forgestudio/packages?propertyId=${propertyId}`,{signal:current.signal})
       const data = await res.json()
-      if (res.ok) setPackages(data.packages || [])
-    } catch {
-      // Non-fatal; the list simply stays empty.
+      if(!res.ok)throw new Error(data.error||'Saved campaigns could not be loaded.')
+      if(!current.signal.aborted)setPackages(data.packages || [])
+    } catch(error) {
+      if(!current.signal.aborted){setError(error instanceof Error?error.message:'Saved campaigns could not be loaded.');setPackages([])}
     } finally {
-      setLoading(false)
+      if(!current.signal.aborted)setLoading(false)
     }
   }, [propertyId])
 
   useEffect(() => {
-    load()
+    void load();return()=>controller.current?.abort()
   }, [load])
 
   return (
     <div className="space-y-6">
-      <BriefBuilder
+      {initialBriefId&&<SavedDraft key={`${propertyId}:${initialBriefId}`} propertyId={propertyId} briefId={initialBriefId} onRequestChanged={()=>setGenerationRefresh(v=>v+1)} onGenerated={({packageId})=>{void load();setOpenPackageId(packageId)}}/>}
+      <BriefBuilder initialAssetId={initialAssetId}
         propertyId={propertyId}
+        onRequestChanged={()=>setGenerationRefresh(value=>value+1)}
         onGenerated={({ packageId }) => {
           load()
           setOpenPackageId(packageId)
         }}
       />
+
+      <GenerationRequests key={propertyId} propertyId={propertyId} refreshKey={generationRefresh} onGenerated={({packageId})=>{void load();setOpenPackageId(packageId)}}/>
 
       <div>
         <div className="flex items-center justify-between mb-3">
@@ -71,15 +84,16 @@ export function CampaignWorkspace({ propertyId }: CampaignWorkspaceProps) {
             onClick={load}
             className="flex items-center gap-2 px-3 py-1.5 text-sm text-slate-600 hover:text-slate-900 dark:text-slate-400"
           >
-            <RefreshCw className="w-4 h-4" /> Refresh
+            <RefreshCw className="w-4 h-4" /> Reload saved campaigns
           </button>
         </div>
 
+        {error&&<p role="alert" className="mb-3 rounded-lg border border-amber-300 p-3 text-sm">{error} Use Reload saved campaigns to recover.</p>}
         {loading ? (
           <div className="flex items-center justify-center py-10">
             <Loader2 className="w-7 h-7 animate-spin text-violet-600" />
           </div>
-        ) : packages.length === 0 ? (
+        ) : error ? null : packages.length === 0 ? (
           <p className="text-sm text-slate-500 bg-slate-50 dark:bg-slate-800/50 rounded-xl p-6 text-center">
             No campaigns yet — write a brief above to generate your first coordinated,
             channel-specific drafts.
@@ -134,7 +148,7 @@ export function CampaignWorkspace({ propertyId }: CampaignWorkspaceProps) {
       </div>
 
       {openPackageId && (
-        <ReviewStudio
+        <ReviewStudio key={openPackageId}
           propertyId={propertyId}
           packageId={openPackageId}
           onClose={() => setOpenPackageId(null)}

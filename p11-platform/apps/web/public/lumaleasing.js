@@ -119,13 +119,20 @@
   let visitorId = getVisitorId();
   let isHumanMode = false;
   let historyPollTimer = null;
-  let serverMessageCount = 0;
+  let serverHistorySignature = '';
+  let historyPollInFlight = false;
+  let historyRevision = 0;
+  let retainedHistory = [];
+  let earlierCursor = null;
+  let earlierBusy = false;
+  let earlierError = '';
 
   const HISTORY_POLL_INTERVAL_MS = 6000;
   
   // Calendar state
   let widgetMode = 'chat'; // 'chat' | 'calendar' | 'confirmation'
   let calendarData = null;
+  let tourAvailabilityLoading = false;
   let selectedDate = null;
   let selectedTime = null;
   let calendarViewDate = null;
@@ -1053,7 +1060,7 @@
           role="log"
           aria-live="polite"
           aria-relevant="additions"
-        >${messagesHtml}</div>
+        >${earlierCursor ? '<button type="button" id="ll-earlier" style="margin:8px;padding:8px" '+(earlierBusy?'disabled':'')+'>'+(earlierBusy?'Loading earlier messages…':'Load earlier messages')+'</button>' : ''}${earlierError ? '<p role="alert">'+escapeHtml(earlierError)+'</p>' : ''}${messagesHtml}</div>
         <div class="ll-input-area">
           <div class="ll-input-row">
             <input type="text" class="ll-input" id="ll-input" placeholder="Type a message..." ${isTyping ? 'disabled' : ''}>
@@ -1132,8 +1139,9 @@
   // Render month view
   function renderMonthView() {
     const gradient = `linear-gradient(135deg, ${config.primaryColor}, ${config.secondaryColor})`;
-    const today = new Date();
-    const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+    const todayParts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {timeZone: calendarData.timezone, year: 'numeric', month: '2-digit', day: '2-digit'}).formatToParts(new Date()).map(function(part) {return [part.type, part.value];}));
+    const todayLabel = todayParts.year + '-' + todayParts.month + '-' + todayParts.day;
+    const today = new Date(todayLabel + 'T12:00:00');
     const viewDate = calendarViewDate || today;
     const currentMonth = viewDate.getMonth();
     const currentYear = viewDate.getFullYear();
@@ -1164,11 +1172,10 @@
 
     // Add days of month
     for (let day = 1; day <= daysInMonth; day++) {
-      const dateObj = new Date(currentYear, currentMonth, day);
-      const dateStr = dateObj.toISOString().split('T')[0];
+      const dateStr = currentYear + '-' + String(currentMonth + 1).padStart(2, '0') + '-' + String(day).padStart(2, '0');
       const isAvailable = calendarData.availableDates.includes(dateStr);
-      const isPast = dateObj.getTime() < todayStart;
-      const isToday = dateObj.toDateString() === today.toDateString();
+      const isPast = dateStr < todayLabel;
+      const isToday = dateStr === todayLabel;
 
       let dayClass = 'll-calendar-day';
       if (isPast) dayClass += ' ll-calendar-day-past';
@@ -1179,7 +1186,7 @@
       const clickHandler = isAvailable ? `window.lumaleasing_selectDate('${dateStr}')` : '';
 
       calendarGrid += `
-        <div class="${dayClass}" ${clickHandler ? `onclick="${clickHandler}"` : ''}>
+        <div class="${dayClass}" ${clickHandler ? `role="button" tabindex="0" aria-label="${dateStr}" onclick="${clickHandler}" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();${clickHandler}}"` : ''}>
           ${day}
         </div>
       `;
@@ -1261,7 +1268,7 @@
         <div class="ll-calendar-content">
           <div class="ll-calendar-header">
             <h3>${formattedDate}</h3>
-            <p class="ll-calendar-subtitle">Choose your preferred time</p>
+            <p class="ll-calendar-subtitle">Times shown in ${escapeHtml(calendarData.timezone)}</p>
           </div>
           <div class="ll-time-slots">
             ${timeSlotsHtml}
@@ -1306,7 +1313,7 @@
               📅
             </div>
             <h3>${formattedDate}</h3>
-            <p class="ll-confirmation-time">${displayTime}</p>
+            <p class="ll-confirmation-time">${displayTime} · ${escapeHtml(calendarData.timezone)}</p>
           </div>
           <form id="ll-booking-form" class="ll-booking-form" onsubmit="return false;">
             <div class="ll-form-group">
@@ -1346,6 +1353,8 @@
   // Attach event listeners
   function attachEventListeners() {
     const input = document.getElementById('ll-input');
+    const earlier = document.getElementById('ll-earlier');
+    if(earlier)earlier.addEventListener('click',loadEarlierMessages);
     const send = document.getElementById('ll-send');
     const messagesContainer = document.getElementById('ll-messages');
 
@@ -1399,42 +1408,30 @@
     return Object.keys(info).length > 0 ? info : null;
   }
 
-  // Save lead to backend
-  async function saveLead(info) {
-    if (!info || !info.email) return null;
-    
+  async function requestIdentity(kind, body) {
+    const key = 'luma_request_' + config.apiKey + '_' + kind;
+    const encoded = new TextEncoder().encode(JSON.stringify(body));
+    const digest = await crypto.subtle.digest('SHA-256', encoded);
+    const signature = Array.from(new Uint8Array(digest)).map(function(byte) {return byte.toString(16).padStart(2,'0');}).join('');
     try {
-      const response = await fetch(getApiBase() + '/api/lumaleasing/lead', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-API-Key': config.apiKey,
-          'X-Visitor-ID': visitorId
-        },
-        body: JSON.stringify({
-          leadInfo: info,
-          sessionId: sessionId,
-          conversationId: conversationId
-        })
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        leadCaptured = true;
-        leadInfo = { ...leadInfo, ...info };
-        console.log('LumaLeasing: Lead captured', data.leadId);
-        return data.leadId;
-      }
-    } catch (error) {
-      console.error('LumaLeasing: Failed to save lead', error);
-    }
-    return null;
+      const prior = JSON.parse(sessionStorage.getItem(key) || 'null');
+      if (prior && prior.signature === signature && Date.now()-prior.createdAt < 172800000) return prior.id;
+      const id = crypto.randomUUID();
+      sessionStorage.setItem(key, JSON.stringify({id:id,signature:signature,createdAt:Date.now()}));
+      return id;
+    } catch { return crypto.randomUUID(); }
+  }
+  function finishRequest(kind) {
+    try { sessionStorage.removeItem('luma_request_' + config.apiKey + '_' + kind); } catch { /* storage unavailable */ }
   }
 
   // Start the tour scheduling flow: confirm in chat, fetch availability, and
   // switch to calendar mode (or surface an error message in chat). Triggered
   // by the visitor pressing the "Schedule a tour" button.
   async function startTourScheduling() {
+    if (tourAvailabilityLoading) return;
+    tourAvailabilityLoading = true;
+    const revision = historyRevision;
     // Remove any pending tour CTA bubbles; the flow is starting.
     messages = messages.filter(function (m) { return !m.tourCta; });
 
@@ -1447,12 +1444,15 @@
     renderWidget();
 
     const availability = await fetchTourAvailability();
+    tourAvailabilityLoading = false;
+    if (revision !== historyRevision) return;
 
     if (availability.error) {
       messages.push({
         id: (Date.now() + 1).toString(),
-        role: 'assistant',
+        role: 'system',
         content: availability.error,
+        tourCta: true,
         timestamp: new Date()
       });
       renderWidget();
@@ -1461,14 +1461,16 @@
 
     calendarData = availability;
     widgetMode = 'calendar';
-    calendarViewDate = new Date();
+    selectedDate = null;
+    selectedTime = null;
+    calendarViewDate = availability.availableDates.length ? new Date(availability.availableDates[0] + 'T12:00:00') : new Date();
     renderWidget();
   }
 
   // Fetch tour availability from Google Calendar
   async function fetchTourAvailability() {
     try {
-      const response = await fetch(getApiBase() + '/api/lumaleasing/tours/availability?startDate=' + new Date().toISOString().split('T')[0], {
+      const response = await fetch(getApiBase() + '/api/lumaleasing/tours/availability', {
         headers: {
           'X-API-Key': config.apiKey,
         }
@@ -1483,7 +1485,17 @@
         throw new Error('Failed to fetch availability');
       }
 
-      return await response.json();
+      const availability = await response.json();
+      if (!availability || availability.success !== true || typeof availability.timezone !== 'string' ||
+          !Array.isArray(availability.availableDates) || !availability.slotsByDate) throw new Error('Incomplete availability response');
+      new Intl.DateTimeFormat('en-US', {timeZone: availability.timezone}).format(new Date());
+      if (availability.availableDates.length > 31 || new Set(availability.availableDates).size !== availability.availableDates.length) throw new Error('Invalid availability range');
+      availability.availableDates.forEach(function(date) {
+        if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date) || new Date(date + 'T00:00:00Z').toISOString().slice(0, 10) !== date) throw new Error('Invalid availability date');
+        const slots = availability.slotsByDate[date];
+        if (!Array.isArray(slots) || !slots.length || slots.length > 288 || slots.some(function(slot) {return !slot || !/^([01]\d|2[0-3]):[0-5]\d$/.test(slot.time) || typeof slot.available !== 'boolean';})) throw new Error('Invalid availability slots');
+      });
+      return availability;
     } catch (error) {
       console.error('LumaLeasing: Failed to fetch tour availability', error);
       return { error: 'Unable to load calendar. Please try again or call us.', fallback: true };
@@ -1501,6 +1513,7 @@
           'X-Visitor-ID': visitorId
         },
         body: JSON.stringify({
+          requestId: await requestIdentity('tours', {date:date,time:time,contactInfo:contactInfo,sessionId:sessionId,conversationId:conversationId}),
           slotId: null, // Using direct date/time, not slot ID
           leadInfo: contactInfo,
           specialRequests: contactInfo.specialRequests,
@@ -1525,6 +1538,7 @@
       const data = await response.json();
       leadCaptured = true;
       tourBooked = true;
+      finishRequest('tours');
       leadInfo = { ...leadInfo, ...contactInfo };
 
       // Return to chat mode with success message
@@ -1532,7 +1546,7 @@
       messages.push({
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: data.message || 'Your tour is confirmed! We\'ve sent a confirmation email with calendar invite.',
+        content: data.message || 'Your tour is reserved. Calendar and email confirmation are pending.',
         timestamp: new Date()
       });
       
@@ -1547,9 +1561,11 @@
 
   // ─── Session restore & human-mode polling ────────────────────────────────
 
-  async function fetchSessionHistory() {
+  async function fetchSessionHistory(beforeId) {
+    const requestedSessionId = sessionId;
+    const requestedRevision = historyRevision;
     const response = await fetch(
-      getApiBase() + '/api/lumaleasing/session/history?sessionId=' + encodeURIComponent(sessionId),
+      getApiBase() + '/api/lumaleasing/session/history?sessionId=' + encodeURIComponent(requestedSessionId) + (beforeId?'&beforeId='+encodeURIComponent(beforeId):''),
       {
         headers: {
           'X-API-Key': config.apiKey,
@@ -1559,23 +1575,55 @@
     );
 
     if (!response.ok) {
-      return { ok: false, status: response.status };
+      return { ok: false, status: response.status, sessionId: requestedSessionId, revision: requestedRevision };
     }
 
     const data = await response.json();
-    return { ok: true, data: data };
+    return { ok: true, data: data, sessionId: requestedSessionId, revision: requestedRevision };
+  }
+
+  function historySignature(data) {
+    return JSON.stringify([data.conversationId, data.isHumanMode, data.leadCaptured, data.messages]);
+  }
+
+  function clearExpiredSession() {
+    historyRevision += 1;
+    stopHistoryPolling();
+    setStoredSessionId(null);
+    conversationId = null;
+    isHumanMode = false;
+    leadCaptured = false;
+    leadPromptShown = false;
+    tourBooked = false;
+    leadInfo = { firstName: '', lastName: '', email: '', phone: '' };
+    serverHistorySignature = '';
+    retainedHistory=[];earlierCursor=null;earlierError='';earlierBusy=false;
+    widgetMode = 'chat';
+    calendarData = null;
+    selectedDate = null;
+    selectedTime = null;
+    messages = messages.filter(function (message) { return message.id === 'welcome'; });
   }
 
   // Rebuild the visible transcript from the server copy (source of truth).
-  function applyServerHistory(data) {
-    conversationId = data.conversationId || conversationId;
+  function applyServerHistory(data, earlier) {
+    const sameConversation=conversationId===data.conversationId;
+    conversationId = data.conversationId || null;
     isHumanMode = !!data.isHumanMode;
-    if (data.leadCaptured) leadCaptured = true;
+    leadCaptured = !!data.leadCaptured;
 
-    const serverMessages = Array.isArray(data.messages) ? data.messages : [];
-    serverMessageCount = serverMessages.length;
+    const incoming = Array.isArray(data.messages) ? data.messages : [];
+    const overlap=retainedHistory.some(function(old){return incoming.some(function(row){return row.id===old.id;});});
+    if(!sameConversation||(!earlier&&!overlap)){retainedHistory=[];earlierCursor=data.nextBeforeId||null;}
+    if(earlier)earlierCursor=data.nextBeforeId||null;
+    const byId=new Map(retainedHistory.map(function(row){return[row.id,row];}));
+    incoming.forEach(function(row){byId.set(row.id,row);});
+    retainedHistory=Array.from(byId.values()).sort(function(a,b){const at=a.createdAt?new Date(a.createdAt).getTime():-Infinity,bt=b.createdAt?new Date(b.createdAt).getTime():-Infinity;return(at===bt?0:at<bt?-1:1)||a.id.localeCompare(b.id);});
+    const serverMessages=retainedHistory;
+    if(!earlier)serverHistorySignature=historySignature(data);
+    earlierError='';
 
-    if (serverMessages.length > 0) {
+    {
       const welcome = messages.find(function (m) { return m.id === 'welcome'; });
       messages = (welcome ? [welcome] : []).concat(serverMessages.map(function (m) {
         return {
@@ -1592,7 +1640,7 @@
         messages.push({
           id: 'waiting-for-human',
           role: 'system',
-          content: 'A team member will respond shortly. Thanks for your patience!',
+          content: 'Your message is saved for the team. You can leave contact details for a follow-up.',
           timestamp: new Date()
         });
       }
@@ -1609,16 +1657,33 @@
     else stopHistoryPolling();
   }
 
+  async function loadEarlierMessages(){
+    if(!earlierCursor||earlierBusy||isTyping||historyPollInFlight)return;
+    const cursor=earlierCursor,requestedConversation=conversationId,revision=historyRevision;
+    const input=document.getElementById('ll-input'),draft=input?input.value:'';
+    const container=document.getElementById('ll-messages'),height=container?container.scrollHeight:0,top=container?container.scrollTop:0;
+    earlierBusy=true;earlierError='';renderWidget();
+    if(document.getElementById('ll-input'))document.getElementById('ll-input').value=draft;
+    try{
+      const result=await fetchSessionHistory(cursor);
+      if(!config||result.sessionId!==sessionId||revision!==historyRevision||conversationId!==requestedConversation)return;
+      if(!result.ok)throw new Error(result.status===409?'Conversation changed. Reload the page to retrieve its current history.':'Earlier messages could not be loaded. Try again.');
+      if(result.data.conversationId!==requestedConversation)throw new Error('Conversation changed. Reload the page to retrieve its current history.');
+      applyServerHistory(result.data,true);
+    }catch(error){if(revision===historyRevision)earlierError=error.message||'Earlier messages could not be loaded. Try again.';}
+    finally{earlierBusy=false;if(config&&revision===historyRevision){const current=document.getElementById('ll-input'),currentDraft=current?current.value:draft;renderWidget();if(document.getElementById('ll-input'))document.getElementById('ll-input').value=currentDraft;const restored=document.getElementById('ll-messages');if(restored)restored.scrollTop=top+restored.scrollHeight-height;}}
+  }
+
   // Restore a returning visitor's transcript from the server on page load.
   async function restoreSession() {
     if (!sessionId || !config) return;
 
     try {
       const result = await fetchSessionHistory();
+      if (!config || result.sessionId !== sessionId || result.revision !== historyRevision) return;
       if (!result.ok) {
-        // Unknown or expired session — clear it and start fresh.
-        setStoredSessionId(null);
-        conversationId = null;
+        if (result.status === 404 || result.status === 410) clearExpiredSession();
+        // Rate limits, unavailable storage and revoked keys do not erase history.
         return;
       }
       applyServerHistory(result.data);
@@ -1642,17 +1707,23 @@
   }
 
   async function pollHistory() {
-    if (!sessionId || !config || !isOpen || isTyping) return;
+    if (!sessionId || !config || !isOpen || isTyping || historyPollInFlight || earlierBusy) return;
+    historyPollInFlight = true;
 
     try {
       const result = await fetchSessionHistory();
+      if (!config || result.sessionId !== sessionId || result.revision !== historyRevision) return;
       if (!result.ok) {
-        stopHistoryPolling();
+        if (result.status === 404 || result.status === 410) {
+          clearExpiredSession();
+          renderWidget();
+        } else if (result.status === 401 || result.status === 403) {
+          stopHistoryPolling();
+        }
         return;
       }
 
-      const serverMessages = Array.isArray(result.data.messages) ? result.data.messages : [];
-      if (serverMessages.length > serverMessageCount) {
+      if (historySignature(result.data) !== serverHistorySignature) {
         applyServerHistory(result.data);
       } else if (!result.data.isHumanMode) {
         isHumanMode = false;
@@ -1660,6 +1731,8 @@
       }
     } catch (error) {
       // Transient failure — keep polling.
+    } finally {
+      historyPollInFlight = false;
     }
   }
 
@@ -1668,6 +1741,7 @@
     const input = document.getElementById('ll-input');
     if (!input || !input.value.trim() || isTyping) return;
 
+    historyRevision += 1;
     const text = input.value.trim();
     input.value = '';
 
@@ -1693,7 +1767,7 @@
       Object.assign(leadInfo, extractedInfo);
       if (extractedInfo.email) {
         // Save lead immediately when we get an email
-        saveLead(leadInfo);
+        // Contact capture travels with this chat request and commits once.
       }
     }
 
@@ -1715,22 +1789,13 @@
         leadInfo: leadCaptured ? leadInfo : (extractedInfo || undefined)
       });
 
-      // Self-heal: a 400 means something in our stored state (a stale
-      // session ID or malformed lead info) is poisoning requests, and we
-      // would resend it with every message, wedging the chat for the rest
-      // of the visit. Drop that state and retry once with a clean request.
-      if (!result.ok && result.status === 400) {
-        console.warn('LumaLeasing: retrying with a fresh session after 400:', result.data && result.data.error);
-        setStoredSessionId(null);
-        conversationId = null;
+      // Only restart after the server confirms this session is unusable.
+      // Validation, rate-limit and storage failures must not fork conversations.
+      if (!result.ok && (result.status === 404 || result.status === 410) &&
+          result.data && ['invalid_widget_session', 'session_expired'].includes(result.data.code)) {
+        clearExpiredSession();
+        messages.push({ id: Date.now().toString(), role: 'user', content: text, timestamp: new Date() });
         result = await postChat({ messages: [{ role: 'user', content: text }] });
-        if (result.ok) {
-          // The old lead state was part of the poisoned payload; the server
-          // already has the lead and re-extracts contact info from the
-          // transcript, so it is safe to drop it here.
-          leadCaptured = false;
-          leadInfo = { firstName: '', lastName: '', email: '', phone: '' };
-        }
       }
 
       const data = result.data;
@@ -1738,6 +1803,7 @@
         throw new Error((data && data.error) || 'Chat request failed');
       }
 
+      finishRequest('chat');
       if (data.sessionId) setStoredSessionId(data.sessionId);
       if (data.conversationId) conversationId = data.conversationId;
 
@@ -1754,7 +1820,7 @@
         messages.push({
           id: (Date.now() + 2).toString(),
           role: 'system',
-          content: 'A team member will respond shortly. Thanks for your patience!',
+          content: 'Your message is saved for the team. You can leave contact details for a follow-up.',
           timestamp: new Date()
         });
         isHumanMode = true;
@@ -1803,6 +1869,7 @@
 
   // POST one chat request. Extracted so sendMessage can retry cleanly.
   async function postChat(body) {
+    body.requestId = await requestIdentity('chat', body);
     const response = await fetch(getApiBase() + '/api/lumaleasing/chat', {
       method: 'POST',
       headers: {
@@ -1843,16 +1910,8 @@
   // Programmatic only (no UI) — run `lumaleasing('reset')` from the console
   // or host page to un-wedge a stuck session without clearing site storage.
   function resetChat() {
-    stopHistoryPolling();
-    isHumanMode = false;
-    setStoredSessionId(null);
-    conversationId = null;
-    serverMessageCount = 0;
-    leadCaptured = false;
-    leadPromptShown = false;
-    tourBooked = false;
-    leadInfo = { firstName: '', lastName: '', email: '', phone: '' };
-    widgetMode = 'chat';
+    ['chat','lead','tours'].forEach(finishRequest);
+    clearExpiredSession();
 
     if (!config) return;
 
@@ -1867,12 +1926,14 @@
 
   // Destroy widget
   function destroyWidget() {
+    historyRevision += 1;
     stopHistoryPolling();
     const widget = document.getElementById('lumaleasing-widget');
     if (widget) widget.remove();
     const styles = document.getElementById('lumaleasing-styles');
     if (styles) styles.remove();
     config = null;
+    retainedHistory=[];earlierCursor=null;earlierError='';earlierBusy=false;
     messages = [];
   }
 

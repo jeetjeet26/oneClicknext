@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NextRequest } from 'next/server'
 
+const readMeasurementsMock = vi.fn()
+vi.mock('@/utils/propertyaudit/read-measurements', () => ({readMeasurements:readMeasurementsMock}))
+
 const authGetUserMock = vi.fn()
 const createClientMock = vi.fn()
 const validatePropertyAccessMock = vi.fn()
@@ -157,6 +160,7 @@ describe('propertyaudit query executions route', () => {
       }),
     })
 
+    readMeasurementsMock.mockResolvedValue({state:'ready', items:[], count:0, offset:0, nextOffset:null, hash:'fixture', scope:'Fixture page'})
     const { GET } = await import('./route')
     const response = await GET(
       makeNextRequest('http://localhost/api/propertyaudit/queries/query-1/executions'),
@@ -164,7 +168,7 @@ describe('propertyaudit query executions route', () => {
     )
 
     expect(response.status).toBe(200)
-    await expect(response.json()).resolves.toEqual({
+    await expect(response.json()).resolves.toMatchObject({
       success: true,
       queryId: 'query-1',
       executions: [],

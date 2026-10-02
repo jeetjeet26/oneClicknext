@@ -1,6 +1,6 @@
 /**
  * Tour No-Show Processing API Route
- * POST - Process no-shows and send follow-ups (called by CRON)
+ * POST - Record no-shows and queue eligible follow-ups (called by CRON)
  * GET - Get no-show statistics for a property
  */
 
@@ -8,7 +8,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { processTourNoShows, getNoShowStats } from '@/utils/services/tour-noshow'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
-import { finishCronJobRun, startCronJobRun } from '@/utils/services/cron-job-runs'
+import { confirmCronJobRun, finishCronJobRun, startCronJobRun, cronStatusFromOutcomes } from '@/utils/services/cron-job-runs'
 import {
   badRequest,
   forbidden,
@@ -20,7 +20,7 @@ import {
 import { createRequestContext } from '@/utils/services/request-context'
 
 /**
- * POST - Process tour no-shows and send follow-up messages
+ * POST - Record tour no-shows with bounded recovery; this route never sends messages
  * Called by CRON job hourly
  */
 export async function POST(request: NextRequest) {
@@ -39,7 +39,7 @@ export async function POST(request: NextRequest) {
   })
 
   try {
-    console.log('[TourNoShow] Starting no-show processing...')
+    if (!run) throw new Error('Unable to record no-show job start')
     const startTime = Date.now()
     
     const result = await processTourNoShows()
@@ -47,30 +47,22 @@ export async function POST(request: NextRequest) {
     const duration = Date.now() - startTime
     console.log(`[TourNoShow] Completed in ${duration}ms`)
 
-    ctx.logSuccess(200, {
-      processed: result.processed,
-      failed: result.failed,
-      durationMs: duration,
-    })
-
-    await finishCronJobRun(run, {
-      status: 'success',
-      summary: {
-        processed: result.processed,
-        markedNoShow: result.markedNoShow,
-        followupsSent: result.followupsSent,
-        failed: result.failed,
-      },
-    })
+    const unresolved = result.needsTimezone + result.needsSetup + result.deferred + (result.needsReview ?? 0) + (result.backlog ?? 0)
+    const status = cronStatusFromOutcomes({succeeded: result.markedNoShow,
+      failed: result.failed + unresolved, errors: result.errors})
+    await confirmCronJobRun(run, {status, summary: {...result}})
+    const httpStatus = status === 'failed' ? 503 : 200
+    ctx.logSuccess(httpStatus, {processed: result.processed, failed: result.failed, durationMs: duration, status})
 
     return NextResponse.json(
       {
-        success: true,
+        success: status === 'success',
+        status,
         ...result,
         duration_ms: duration,
         timestamp: new Date().toISOString(),
       },
-      { headers: ctx.responseHeaders }
+      { status: httpStatus, headers: ctx.responseHeaders }
     )
   } catch (error) {
     ctx.logError(500, error, { operation: 'process_tour_noshows' })

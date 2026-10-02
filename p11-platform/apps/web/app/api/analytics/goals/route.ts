@@ -1,203 +1,34 @@
-import { createClient } from '@/utils/supabase/server'
-import { validatePropertyAccess } from '@/utils/services/auth-guard'
-import { NextRequest, NextResponse } from 'next/server'
-
-export const dynamic = 'force-dynamic'
-
-// GET - Fetch goals for a property
-export async function GET(request: NextRequest) {
-  try {
-    const { searchParams } = new URL(request.url)
-    const propertyId = searchParams.get('propertyId')
-    
-    if (!propertyId) {
-      return NextResponse.json(
-        { error: 'Property ID is required' },
-        { status: 400 }
-      )
+import { NextResponse } from 'next/server';
+import { goalCommand, goalRead } from '@/utils/analytics/goal-contracts';
+import { goalActor, goalRpc, BiError } from '@/utils/analytics/goal-store';
+import { teamBody, requireTeamOrigin, teamHeaders as headers } from '@/utils/team/http';
+export const runtime = 'nodejs';
+function failure(e: unknown) { return NextResponse.json({ error: e instanceof BiError ? e.message : 'Goal history could not be confirmed. Check the request result before retrying.' }, { status: e instanceof BiError ? e.status : 503, headers }); }
+export async function GET(req: Request) {
+    try {
+        const parsed = goalRead.safeParse(Object.fromEntries(new URL(req.url).searchParams));
+        if (!parsed.success)
+            throw new BiError('Choose a property and valid goal history.', 400);
+        const { propertyId, ...input } = parsed.data, actorId = await goalActor(propertyId);
+        return NextResponse.json({ ...await goalRpc('read_bi_goals', { p_actor_id: actorId, p_property_id: propertyId, p_input: input }), actorId }, { headers });
     }
-
-    const supabase = await createClient()
-    
-    // Check authentication
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
+    catch (e) {
+        return failure(e);
     }
-
-    const access = await validatePropertyAccess(user.id, propertyId)
-    if (!access.authorized) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-    }
-
-    // Fetch goals for the property
-    const { data: goals, error } = await supabase
-      .from('metric_goals')
-      .select('*')
-      .eq('property_id', propertyId)
-      .eq('is_active', true)
-      .order('metric_key')
-
-    if (error) {
-      console.error('Error fetching goals:', error)
-      return NextResponse.json(
-        { error: 'Failed to fetch goals' },
-        { status: 500 }
-      )
-    }
-
-    return NextResponse.json({ goals: goals || [] })
-  } catch (error) {
-    console.error('Error in goals GET:', error)
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    )
-  }
 }
-
-// POST - Create or update a goal
-export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json()
-    const { propertyId, metricKey, goalType, targetValue, isInverse, alertThreshold } = body
-
-    if (!propertyId || !metricKey || targetValue === undefined) {
-      return NextResponse.json(
-        { error: 'Property ID, metric key, and target value are required' },
-        { status: 400 }
-      )
+export async function POST(req: Request) {
+    try {
+        requireTeamOrigin(req);
+        const parsed = goalCommand.safeParse(await teamBody(req, 4096));
+        if (!parsed.success)
+            throw new BiError('Review the metric, period, positive target and warning threshold.', 400);
+        const { propertyId, expectedActorId, id, ...input } = parsed.data, actorId = await goalActor(propertyId);
+        if (actorId !== expectedActorId)
+            throw new BiError('Your account changed. Reload before using this goal request.', 409);
+        return NextResponse.json(await goalRpc('decide_bi_goal', { p_id: id, p_actor_id: actorId, p_property_id: propertyId, p_input: input }), { headers });
     }
-
-    const validMetrics = ['spend', 'impressions', 'clicks', 'conversions', 'ctr', 'cpa']
-    if (!validMetrics.includes(metricKey)) {
-      return NextResponse.json(
-        { error: 'Invalid metric key' },
-        { status: 400 }
-      )
+    catch (e) {
+        return failure(e);
     }
-
-    const supabase = await createClient()
-    
-    // Check authentication
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
-    }
-
-    const access = await validatePropertyAccess(user.id, propertyId)
-    if (!access.authorized) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-    }
-
-    // Upsert the goal (create or update)
-    const { data: goal, error } = await supabase
-      .from('metric_goals')
-      .upsert({
-        property_id: propertyId,
-        metric_key: metricKey,
-        goal_type: goalType || 'monthly',
-        target_value: targetValue,
-        is_inverse: isInverse ?? (metricKey === 'cpa'),
-        alert_threshold_percent: alertThreshold ?? 80,
-        created_by: user.id,
-        updated_at: new Date().toISOString(),
-      }, {
-        onConflict: 'property_id,metric_key,goal_type'
-      })
-      .select()
-      .single()
-
-    if (error) {
-      console.error('Error saving goal:', error)
-      return NextResponse.json(
-        { error: 'Failed to save goal' },
-        { status: 500 }
-      )
-    }
-
-    return NextResponse.json({ goal, message: 'Goal saved successfully' })
-  } catch (error) {
-    console.error('Error in goals POST:', error)
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    )
-  }
 }
-
-// DELETE - Remove a goal
-export async function DELETE(request: NextRequest) {
-  try {
-    const { searchParams } = new URL(request.url)
-    const goalId = searchParams.get('goalId')
-    
-    if (!goalId) {
-      return NextResponse.json(
-        { error: 'Goal ID is required' },
-        { status: 400 }
-      )
-    }
-
-    const supabase = await createClient()
-    
-    // Check authentication
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
-    }
-
-    const { data: existingGoal, error: existingGoalError } = await supabase
-      .from('metric_goals')
-      .select('id, property_id')
-      .eq('id', goalId)
-      .single()
-
-    if (existingGoalError || !existingGoal) {
-      return NextResponse.json(
-        { error: 'Goal not found' },
-        { status: 404 }
-      )
-    }
-
-    const access = await validatePropertyAccess(user.id, existingGoal.property_id)
-    if (!access.authorized) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-    }
-
-    // Soft delete by setting is_active to false
-    const { error } = await supabase
-      .from('metric_goals')
-      .update({ 
-        is_active: false,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', goalId)
-
-    if (error) {
-      console.error('Error deleting goal:', error)
-      return NextResponse.json(
-        { error: 'Failed to delete goal' },
-        { status: 500 }
-      )
-    }
-
-    return NextResponse.json({ message: 'Goal deleted successfully' })
-  } catch (error) {
-    console.error('Error in goals DELETE:', error)
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    )
-  }
-}
-
+export async function DELETE() { return NextResponse.json({ error: 'Goals retain their history. Use Archive goal in the console.' }, { status: 410, headers }); }
