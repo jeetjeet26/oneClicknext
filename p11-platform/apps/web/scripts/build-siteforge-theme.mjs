@@ -386,6 +386,9 @@ export async function buildSiteForgeTheme({
   return { archivePath, archiveHash, manifest }
 }
 
+/**
+ * @param {{ signingKey?: string, gitSha?: string, outputDirectory?: string }} [options]
+ */
 export async function checkSiteForgeThemeArtifact({
   signingKey = process.env.SITEFORGE_THEME_SIGNING_KEY,
   gitSha,
