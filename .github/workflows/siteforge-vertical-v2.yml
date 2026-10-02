@@ -48,6 +48,8 @@ jobs:
       - run: npm run siteforge:artifacts:drift-check
         env:
           SITEFORGE_THEME_SIGNING_KEY: ${{ secrets.SITEFORGE_THEME_SIGNING_KEY }}
+          # ZIP timestamps use local calendar fields; match the retained packages.
+          TZ: America/Los_Angeles
       - run: npm run build
       - name: Validate Vertical V2 PHP blocks
         working-directory: .
