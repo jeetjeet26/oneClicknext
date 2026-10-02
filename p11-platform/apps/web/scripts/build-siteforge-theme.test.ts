@@ -210,6 +210,18 @@ describe('SiteForge theme package', () => {
       await expect(checkSiteForgeThemeArtifact(options)).resolves.toMatchObject({
         archiveHash: built.archiveHash,
       })
+      await expect(checkSiteForgeThemeArtifact({
+        signingKey: options.signingKey,
+        outputDirectory,
+      })).resolves.toMatchObject({ archiveHash: built.archiveHash })
+      await expect(checkSiteForgeThemeArtifact({
+        ...options,
+        signingKey: 'different-key',
+      })).rejects.toThrow(/artifact drift/)
+      await expect(checkSiteForgeThemeArtifact({
+        ...options,
+        gitSha: 'fedcba9876543210',
+      })).rejects.toThrow(/artifact drift/)
 
       await writeFile(built.archivePath, Buffer.from('PKdrift'))
       await expect(checkSiteForgeThemeArtifact(options)).rejects.toThrow(

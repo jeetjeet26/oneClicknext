@@ -11,7 +11,7 @@ import {
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { strToU8, zipSync } from 'fflate'
+import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
 
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const pluginDir = path.resolve(
@@ -235,6 +235,18 @@ export async function checkSiteForgeRuntimePluginArtifact({
     )
   }
 
+  let recordedGitSha
+  if (v3Enabled) {
+    const entries = unzipSync(new Uint8Array(checkedArchive))
+    const manifestBytes = entries[`oneclick-siteforge-runtime/${runtimePluginManifestFilename}`]
+    if (!manifestBytes) throw new Error('SiteForge runtime build manifest is missing')
+    const manifest = JSON.parse(strFromU8(manifestBytes))
+    if (typeof manifest.gitSha !== 'string' || !/^[a-f0-9]{40,64}$/i.test(manifest.gitSha)) {
+      throw new Error('SiteForge runtime build manifest has an invalid Git SHA')
+    }
+    recordedGitSha = manifest.gitSha
+  }
+
   const temporaryDirectory = await mkdtemp(
     path.join(tmpdir(), 'siteforge-runtime-check-')
   )
@@ -243,7 +255,7 @@ export async function checkSiteForgeRuntimePluginArtifact({
       sourceDirectory,
       outputDirectory: temporaryDirectory,
       v3Enabled,
-      gitSha,
+      gitSha: gitSha ?? recordedGitSha,
     })
     if (rebuilt.archiveHash !== checkedHash) {
       throw new Error(

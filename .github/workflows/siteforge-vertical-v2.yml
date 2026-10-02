@@ -46,6 +46,8 @@ jobs:
       - run: npm run check:schema-truth
       - run: npm run check:foundation
       - run: npm run siteforge:artifacts:drift-check
+        env:
+          SITEFORGE_THEME_SIGNING_KEY: ${{ secrets.SITEFORGE_THEME_SIGNING_KEY }}
       - run: npm run build
       - name: Validate Vertical V2 PHP blocks
         working-directory: .
