@@ -1,3 +1,4 @@
+import type { Database } from '@/types/supabase'
 /**
  * Workflow Templates API
  * Manage workflow definitions and templates
@@ -290,7 +291,7 @@ export async function PATCH(req: NextRequest) {
       return forbidden()
     }
 
-    const updateData: Record<string, unknown> = {
+    const updateData: Database['public']['Tables']['workflow_definitions']['Update'] = {
       updated_at: new Date().toISOString()
     }
 

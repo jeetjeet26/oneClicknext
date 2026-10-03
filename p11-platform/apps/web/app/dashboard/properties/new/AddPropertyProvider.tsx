@@ -1,6 +1,8 @@
 'use client'
 
-import { createContext, useContext, useState, useCallback, ReactNode, useEffect } from 'react'
+import { createContext, useContext, useState, useCallback, ReactNode } from 'react'
+import type {SetupSnapshot}from '@/utils/property-setup/contracts'
+import type {TemplateSelection}from '@/utils/property-setup/creation-contracts'
 import type { PropertyType } from '@/utils/property-types'
 
 // Types for Add Property flow (reuses onboarding types but skips org step)
@@ -116,6 +118,7 @@ export interface CommunityData {
 }
 
 export interface ContactData {
+  isPrimary?: boolean
   id: string
   type: ContactType
   name: string
@@ -187,6 +190,14 @@ export interface AddPropertyFormData {
 }
 
 export interface AddPropertyContextType {
+  setupHash:string
+  setSetupHash:(value:string)=>void
+  setupSnapshot:SetupSnapshot|null
+  setSetupSnapshot:(value:SetupSnapshot|null)=>void
+  creationTemplate:TemplateSelection|null
+  setCreationTemplate:(value:TemplateSelection|null)=>void
+  templatePending:boolean
+  setTemplatePending:(value:boolean)=>void
   step: AddPropertyStep
   setStep: (step: AddPropertyStep) => void
   formData: AddPropertyFormData
@@ -238,6 +249,10 @@ interface AddPropertyProviderProps {
 }
 
 export function AddPropertyProvider({ children, initialData, propertyId }: AddPropertyProviderProps) {
+  const[setupHash,setSetupHash]=useState('')
+  const[setupSnapshot,setSetupSnapshot]=useState<SetupSnapshot|null>(null)
+  const[creationTemplate,setCreationTemplate]=useState<TemplateSelection|null>(null)
+  const[templatePending,setTemplatePending]=useState(false)
   const [step, setStep] = useState<AddPropertyStep>('community')
   const [formData, setFormData] = useState<AddPropertyFormData>(initialData || initialFormData)
   const [isLoading, setIsLoading] = useState(false)
@@ -363,6 +378,7 @@ export function AddPropertyProvider({ children, initialData, propertyId }: AddPr
   }, [step])
 
   const value: AddPropertyContextType = {
+    setupHash,setSetupHash,setupSnapshot,setSetupSnapshot,creationTemplate,setCreationTemplate,templatePending,setTemplatePending,
     step,
     setStep,
     formData,

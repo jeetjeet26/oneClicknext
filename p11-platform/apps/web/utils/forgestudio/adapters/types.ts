@@ -142,7 +142,7 @@ export interface SocialAdapter {
   /**
    * After an ambiguous failure (e.g. timeout after send), look for a recent
    * post that matches this variant so retries never double-post.
-   * Returns the existing post if found, null when it is safe to retry.
+   * Candidate discovery only. A null result does not authorize a retry; the publication worker does not use this heuristic as proof.
    */
   reconcile?(
     connection: AdapterConnection,

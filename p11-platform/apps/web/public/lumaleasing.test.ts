@@ -150,7 +150,7 @@ describe('Acacia LumaLeasing widget regression contract', () => {
     )
     expect(widgetSource).toContain('window.LUMALEASING_API_BASE || loaderOrigin || window.location.origin')
     expect(widgetSource).toContain(acacia.widget.chatEndpoint)
-    expect(widgetSource).toContain(acacia.chatbot.handoff.leadEndpoint)
+    expect(widgetSource).toContain("requestIdentity('chat', body)")
     expect(widgetSource).toContain(
       acacia.chatbot.handoff.tourAvailabilityEndpoint
     )

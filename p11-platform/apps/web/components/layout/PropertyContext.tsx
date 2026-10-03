@@ -1,221 +1,156 @@
 'use client';
 
-import React, { createContext, useContext, useEffect, useMemo, useState, useCallback, useRef } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState, useCallback, useRef, type ReactNode } from 'react';
 import { usePathname } from 'next/navigation';
 
-type Property = {
-  id: string;
-  name: string;
-  city?: string;
-};
-
+type Property = { id: string; name: string; city?: string };
 type PropertyContextValue = {
   properties: Property[];
   currentProperty: Property;
   loading: boolean;
+  loadError: string | null;
+  hasLoadedProperties: boolean;
   isSwitchingProperty: boolean;
   switchingFromProperty: Property | null;
   switchingToProperty: Property | null;
   setProperty: (id: string) => void;
+  refreshProperties: (preferredId?: string) => Promise<boolean>;
 };
-
+type PropertyState = {
+  properties: Property[];
+  selectedId: string;
+  status: 'loading' | 'ready' | 'error';
+  error: string | null;
+};
 const PropertyContext = createContext<PropertyContextValue | null>(null);
-
-const DEFAULT_PROPERTY_ID =
-  process.env.NEXT_PUBLIC_DEFAULT_PROPERTY_ID ||
-  '123e4567-e89b-12d3-a456-426614174000';
-
-const DEFAULT_PROPERTIES: Property[] = [
-  { id: DEFAULT_PROPERTY_ID, name: 'The Reserve at Sandpoint', city: 'Sandpoint, ID' },
-  { id: '223e4567-e89b-12d3-a456-426614174000', name: 'Lakeside Flats', city: 'Austin, TX' },
-  { id: '323e4567-e89b-12d3-a456-426614174000', name: 'Parkview Commons', city: 'Seattle, WA' },
-];
-
+// The empty value carries no usable resource identity. Product pages wait at PropertyBoundary.
+const NO_PROPERTY: Property = { id: '', name: 'No property selected' };
 const STORAGE_KEY = 'p11_selected_property_id';
 const PROPERTY_SWITCH_MIN_DURATION_MS = 700;
 
-// Helper to detect property ID from URL path
 function extractPropertyIdFromPath(pathname: string): string | null {
-  // Match patterns like /dashboard/brandforge/[uuid] or /dashboard/properties/[uuid]
-  const patterns = [
-    /\/dashboard\/brandforge\/([a-f0-9-]{36})/i,
-    /\/dashboard\/properties\/([a-f0-9-]{36})/i,
-  ];
-  
-  for (const pattern of patterns) {
-    const match = pathname.match(pattern);
-    if (match?.[1]) {
-      return match[1];
-    }
+  return pathname.match(/\/dashboard\/(?:brandforge|properties)\/([a-f0-9-]{36})(?:\/|$)/i)?.[1] ?? null;
+}
+function storedSelection(): string | null {
+  try { return window.localStorage.getItem(STORAGE_KEY); } catch { return null; }
+}
+function parseProperties(data: unknown): Property[] {
+  if (!data || typeof data !== 'object' || !('properties' in data) || !Array.isArray(data.properties)) {
+    throw new Error('Invalid property response');
   }
-  return null;
+  const ids = new Set<string>();
+  return data.properties.map((value: unknown) => {
+    if (!value || typeof value !== 'object' || !('id' in value) || !('name' in value) ||
+        typeof value.id !== 'string' || !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(value.id) ||
+        typeof value.name !== 'string' || !value.name.trim() || ids.has(value.id)) {
+      throw new Error('Invalid property response');
+    }
+    ids.add(value.id);
+    const row = value as { id: string; name: string; settings?: { city?: unknown }; address?: { city?: unknown } };
+    const city = row.settings?.city ?? row.address?.city;
+    return { id: row.id, name: row.name, city: typeof city === 'string' ? city : undefined };
+  });
 }
 
-export function PropertyProvider({ children }: { children: React.ReactNode }) {
+export function PropertyProvider({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const [properties, setProperties] = useState<Property[]>(DEFAULT_PROPERTIES);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [selectedId, setSelectedIdState] = useState<string>(DEFAULT_PROPERTY_ID);
-  const [switchingProperties, setSwitchingProperties] = useState<{
-    from: Property | null;
-    to: Property | null;
-  } | null>(null);
-  
-  // Use ref to track initialization without causing re-renders
-  const initializedRef = useRef(false);
-  const lastPathnameRef = useRef<string | null>(null);
+  const [state, setState] = useState<PropertyState>({ properties: [], selectedId: '', status: 'loading', error: null });
+  const [switchingProperties, setSwitchingProperties] = useState<{ from: Property | null; to: Property } | null>(null);
+  const controllerRef = useRef<AbortController | null>(null);
+  const pathnameRef = useRef(pathname);
   const switchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Wrapper to persist selection to localStorage
-  const setSelectedId = useCallback((id: string) => {
-    setSelectedIdState((prev) => {
-      if (prev === id) return prev; // Prevent unnecessary updates
-      if (typeof window !== 'undefined') {
-        localStorage.setItem(STORAGE_KEY, id);
-      }
-      return id;
-    });
+  useEffect(() => { pathnameRef.current = pathname; }, [pathname]);
+
+  const refreshProperties = useCallback(async (preferredId?: string) => {
+    controllerRef.current?.abort();
+    const controller = new AbortController();
+    controllerRef.current = controller;
+    setState(previous => ({ ...previous, status: 'loading', error: null }));
+    try {
+      const response = await fetch('/api/properties', { signal: controller.signal, cache: 'no-store' });
+      if (!response.ok) throw new Error('Property request failed');
+      const properties = parseProperties(await response.json());
+      if (controller.signal.aborted) return false;
+      if (preferredId && !properties.some(property => property.id === preferredId)) throw new Error('Saved property not returned');
+      const urlId = extractPropertyIdFromPath(pathnameRef.current);
+      const storedId = storedSelection();
+      setState(previous => {
+        const selectedId = [preferredId, urlId, previous.selectedId, storedId]
+          .find(id => properties.some(property => property.id === id)) ?? properties[0]?.id ?? '';
+        return { properties, selectedId, status: 'ready', error: null };
+      });
+      return true;
+    } catch {
+      if (controller.signal.aborted) return false;
+      setState({ properties: [], selectedId: '', status: 'error', error: 'We couldn’t load your properties. Try again to continue.' });
+      return false;
+    }
   }, []);
+
+  useEffect(() => {
+    void refreshProperties();
+    return () => { controllerRef.current?.abort(); };
+  }, [refreshProperties]);
+
+  // A property URL wins on navigation, but a manual switch remains usable on that page.
+  useEffect(() => {
+    const id = extractPropertyIdFromPath(pathname);
+    if (id) setState(previous => previous.properties.some(property => property.id === id)
+      ? { ...previous, selectedId: id } : previous);
+  }, [pathname]);
+
+  useEffect(() => {
+    if (state.status !== 'ready') return;
+    try {
+      if (state.selectedId) window.localStorage.setItem(STORAGE_KEY, state.selectedId);
+      else window.localStorage.removeItem(STORAGE_KEY);
+    } catch { /* Selection still works when browser storage is unavailable. */ }
+  }, [state.selectedId, state.status]);
+
+  useEffect(() => () => { if (switchTimeoutRef.current) clearTimeout(switchTimeoutRef.current); }, []);
 
   const setProperty = useCallback((id: string) => {
-    if (selectedId === id) return;
-
-    const from = properties.find((property) => property.id === selectedId) || null;
-    const to = properties.find((property) => property.id === id) || null;
-
-    if (switchTimeoutRef.current) {
-      clearTimeout(switchTimeoutRef.current);
+    if (state.status !== 'ready' || state.selectedId === id) return;
+    const to = state.properties.find(property => property.id === id);
+    if (!to) return;
+    // A saved knowledge record belongs to the previous property. Remove its
+    // deep link before the boundary mounts the newly selected property's page.
+    if (pathnameRef.current === '/dashboard/community') {
+      const url = new URL(window.location.href);
+      for (const key of ['knowledgeGroup', 'knowledgeFile', 'knowledgeSource', 'knowledgeVersion',
+        'knowledgeExtraction', 'knowledgeCapture', 'assistantFactVersion', 'unitReview', 'unitVersion']) {
+        url.searchParams.delete(key);
+      }
+      window.history.replaceState(window.history.state, '', url);
     }
-
-    setSwitchingProperties({ from, to });
+    if (switchTimeoutRef.current) clearTimeout(switchTimeoutRef.current);
+    setSwitchingProperties({ from: state.properties.find(property => property.id === state.selectedId) ?? null, to });
     switchTimeoutRef.current = setTimeout(() => {
-      requestAnimationFrame(() => {
-        setSwitchingProperties(null);
-        switchTimeoutRef.current = null;
-      });
+      setSwitchingProperties(null);
+      switchTimeoutRef.current = null;
     }, PROPERTY_SWITCH_MIN_DURATION_MS);
+    setState(previous => ({ ...previous, selectedId: id }));
+  }, [state]);
 
-    if (typeof window !== 'undefined') {
-      localStorage.setItem(STORAGE_KEY, id);
-    }
-
-    setSelectedIdState(id);
-  }, [properties, selectedId]);
-
-  // Fetch properties (only on mount)
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      setLoading(true);
-      try {
-        const res = await fetch('/api/properties');
-        if (!res.ok) throw new Error('Failed to fetch properties');
-        const data = await res.json();
-        const fetched: Property[] = data.properties?.map((p: { id: string; name: string; settings?: { city?: string }; address?: { city?: string } }) => ({
-          id: p.id,
-          name: p.name,
-          city: p.settings?.city ?? p.address?.city,
-        })) ?? [];
-        if (!cancelled && fetched.length) {
-          setProperties(fetched);
-        }
-      } catch (err) {
-        console.error('Property load error, using defaults', err);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-    load();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (switchTimeoutRef.current) {
-        clearTimeout(switchTimeoutRef.current);
-      }
-    };
-  }, []);
-
-  // Initialize property selection once when properties are loaded
-  useEffect(() => {
-    // Wait until we have real properties from the API
-    if (properties === DEFAULT_PROPERTIES || properties.length === 0) return;
-    
-    // Only run initialization once
-    if (initializedRef.current) return;
-    initializedRef.current = true;
-    
-    // Priority 1: Check if there's a property ID in the URL
-    const urlPropertyId = extractPropertyIdFromPath(pathname);
-    if (urlPropertyId) {
-      const existsInList = properties.some((p) => p.id === urlPropertyId);
-      if (existsInList) {
-        setSelectedId(urlPropertyId);
-        return;
-      }
-    }
-    
-    // Priority 2: Check localStorage
-    const storedId = typeof window !== 'undefined' ? localStorage.getItem(STORAGE_KEY) : null;
-    if (storedId) {
-      const existsInList = properties.some((p) => p.id === storedId);
-      if (existsInList) {
-        setSelectedId(storedId);
-        return;
-      }
-    }
-    
-    // Priority 3: Use first property if current selection is invalid
-    const currentExists = properties.some((p) => p.id === selectedId);
-    if (!currentExists) {
-      setSelectedId(properties[0].id);
-    }
-  }, [properties, pathname, selectedId, setSelectedId]);
-
-  // Sync with URL changes when navigating to property-specific pages
-  useEffect(() => {
-    // Only after initialization
-    if (!initializedRef.current) return;
-    
-    // Skip if pathname hasn't changed
-    if (pathname === lastPathnameRef.current) return;
-    lastPathnameRef.current = pathname;
-    
-    const urlPropertyId = extractPropertyIdFromPath(pathname);
-    if (urlPropertyId && urlPropertyId !== selectedId) {
-      const existsInList = properties.some((p) => p.id === urlPropertyId);
-      if (existsInList) {
-        setSelectedId(urlPropertyId);
-      }
-    }
-  }, [pathname, properties, selectedId, setSelectedId]);
-
-  const contextValue = useMemo<PropertyContextValue>(() => {
-    const fallback = properties[0];
-    const current = properties.find((p) => p.id === selectedId) || fallback;
-    return {
-      properties,
-      currentProperty: current,
-      loading,
-      isSwitchingProperty: switchingProperties !== null,
-      switchingFromProperty: switchingProperties?.from || null,
-      switchingToProperty: switchingProperties?.to || null,
-      setProperty,
-    };
-  }, [properties, selectedId, loading, switchingProperties, setProperty]);
+  const contextValue = useMemo<PropertyContextValue>(() => ({
+    properties: state.status === 'ready' ? state.properties : [],
+    currentProperty: state.status === 'ready' ? state.properties.find(property => property.id === state.selectedId) ?? NO_PROPERTY : NO_PROPERTY,
+    loading: state.status === 'loading',
+    loadError: state.error,
+    hasLoadedProperties: state.status === 'ready',
+    isSwitchingProperty: switchingProperties !== null,
+    switchingFromProperty: switchingProperties?.from ?? null,
+    switchingToProperty: switchingProperties?.to ?? null,
+    setProperty,
+    refreshProperties,
+  }), [state, switchingProperties, setProperty, refreshProperties]);
 
   return <PropertyContext.Provider value={contextValue}>{children}</PropertyContext.Provider>;
 }
 
 export function usePropertyContext() {
-  const ctx = useContext(PropertyContext);
-  if (!ctx) {
-    throw new Error('usePropertyContext must be used within PropertyProvider');
-  }
-  return ctx;
+  const context = useContext(PropertyContext);
+  if (!context) throw new Error('usePropertyContext must be used within PropertyProvider');
+  return context;
 }
-
-

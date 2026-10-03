@@ -1,141 +1,24 @@
-import type { NextRequest } from 'next/server'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-
-const {
-  authGetUser,
-  createClient,
-  createServiceClient,
-  validatePropertyManagerAccess,
-  from,
-} = vi.hoisted(() => ({
-  authGetUser: vi.fn(),
-  createClient: vi.fn(),
-  createServiceClient: vi.fn(),
-  validatePropertyManagerAccess: vi.fn(),
-  from: vi.fn(),
-}))
-
-vi.mock('@/utils/supabase/server', () => ({ createClient }))
-vi.mock('@/utils/supabase/admin', () => ({ createServiceClient }))
-vi.mock('@/utils/services/auth-guard', () => ({
-  validatePropertyManagerAccess,
-}))
-
-const reviewId = '11111111-1111-4111-8111-111111111111'
-const propertyId = '22222222-2222-4222-8222-222222222222'
-
-function request(method: 'POST' | 'DELETE', body: unknown): NextRequest {
-  return new Request(
-    `http://localhost/api/reviewflow/testimonials/${reviewId}`,
-    {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    }
-  ) as NextRequest
-}
-
-function builder(result: unknown) {
-  const value: Record<string, ReturnType<typeof vi.fn>> = {}
-  for (const method of ['select', 'eq', 'insert', 'update']) {
-    value[method] = vi.fn(() => value)
-  }
-  value.single = vi.fn().mockResolvedValue(result)
-  value.maybeSingle = vi.fn().mockResolvedValue(result)
-  return value
-}
-
-const reviewResult = {
-  data: {
-    id: reviewId,
-    property_id: propertyId,
-    reviewer_name: 'A Resident',
-    review_text: 'A thoughtful place to live.',
-    rating: 5,
-    platform: 'google',
-    review_date: '2026-08-01T12:00:00.000Z',
-    content_fingerprint: null,
-  },
-  error: null,
-}
-
-describe('ReviewFlow testimonial publication route', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    createClient.mockResolvedValue({ auth: { getUser: authGetUser } })
-    createServiceClient.mockReturnValue({ from })
-    authGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } })
-    validatePropertyManagerAccess.mockResolvedValue({ authorized: true })
-  })
-
-  it('requires explicit attribution and rights evidence', async () => {
-    const { POST } = await import('./route')
-    const response = await POST(request('POST', {}), {
-      params: Promise.resolve({ reviewId }),
-    })
-
-    expect(response.status).toBe(400)
-    expect(from).not.toHaveBeenCalled()
-  })
-
-  it('stores an immutable approved-content snapshot', async () => {
-    const reviewBuilder = builder(reviewResult)
-    const approvalBuilder = builder({
-      data: { id: '33333333-3333-4333-8333-333333333333' },
-      error: null,
-    })
-    from
-      .mockReturnValueOnce(reviewBuilder)
-      .mockReturnValueOnce(approvalBuilder)
-
-    const { POST } = await import('./route')
-    const response = await POST(
-      request('POST', {
-        attributionApproved: true,
-        rightsBasis: 'direct_consent',
-        evidenceNote: 'Written consent retained by property management.',
-      }),
-      { params: Promise.resolve({ reviewId }) }
-    )
-
-    expect(response.status).toBe(201)
-    expect(approvalBuilder.insert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        review_id: reviewId,
-        property_id: propertyId,
-        reviewer_name_snapshot: 'A Resident',
-        review_text_snapshot: 'A thoughtful place to live.',
-        attribution_approved: true,
-        rights_basis: 'direct_consent',
-        approved_by: 'user-1',
-        content_fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
-      })
-    )
-  })
-
-  it('revokes the active approval with an auditable reason', async () => {
-    const reviewBuilder = builder(reviewResult)
-    const approvalBuilder = builder({
-      data: { id: '33333333-3333-4333-8333-333333333333' },
-      error: null,
-    })
-    from
-      .mockReturnValueOnce(reviewBuilder)
-      .mockReturnValueOnce(approvalBuilder)
-
-    const { DELETE } = await import('./route')
-    const response = await DELETE(
-      request('DELETE', { reason: 'Resident withdrew publication consent.' }),
-      { params: Promise.resolve({ reviewId }) }
-    )
-
-    expect(response.status).toBe(200)
-    expect(approvalBuilder.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        status: 'revoked',
-        revoked_by: 'user-1',
-        revocation_reason: 'Resident withdrew publication consent.',
-      })
-    )
-  })
+import {beforeEach,describe,expect,it,vi} from 'vitest'
+import {NextRequest} from 'next/server'
+const {operator,role,rpc,from}=vi.hoisted(()=>({operator:vi.fn(),role:vi.fn(),rpc:vi.fn(),from:vi.fn()}))
+vi.mock('@/utils/reviewflow/access',async()=>({...await vi.importActual('@/utils/reviewflow/access'),requireReviewOperator:operator,loadProfileRole:role}))
+vi.mock('@/utils/reviewflow/analysis-store',async()=>({...await vi.importActual('@/utils/reviewflow/analysis-store'),reviewRpc:rpc}))
+vi.mock('@/utils/supabase/admin',()=>({createServiceClient:()=>({from})}))
+import {ReviewStoreError} from '@/utils/reviewflow/analysis-store'
+import {GET,POST,DELETE} from './route'
+const propertyId='33333333-3333-3333-3333-333333333333',reviewId='55555555-5555-5555-5555-555555555555',requestId='66666666-6666-6666-6666-666666666666',context={params:Promise.resolve({reviewId})}
+const approve={propertyId,requestId,action:'approve',sourceVersion:1,sourceHash:'a'.repeat(64),attributionApproved:true,rightsBasis:'direct_consent',evidenceNote:'Consent retained in property record',usageScope:['website'],expiresAt:null,reason:'Reviewed exact permission'}
+const revoke={propertyId,requestId,action:'revoke',approvalId:reviewId,expectedVersion:1,reason:'Permission withdrawn'}
+const req=(body?:unknown,extra='')=>new NextRequest(`http://localhost/api/reviewflow/testimonials/${reviewId}?propertyId=${propertyId}${extra}`,body?{method:'POST',body:JSON.stringify(body)}:undefined)
+function chain(data:unknown,error:unknown=null){const result={data,error},q={select:vi.fn(),eq:vi.fn(),order:vi.fn(),limit:vi.fn(),or:vi.fn(),maybeSingle:vi.fn().mockResolvedValue(result),then:vi.fn()};for(const m of ['select','eq','order','limit','or'] as const)q[m].mockReturnValue(q);q.then.mockImplementation((r:(v:unknown)=>unknown)=>Promise.resolve(result).then(r));return q}
+beforeEach(()=>{vi.resetAllMocks();operator.mockResolvedValue('actor');role.mockResolvedValue('manager');rpc.mockResolvedValue({state:'ready',source:{sourceVersion:1},activeApproval:null});from.mockReturnValue(chain([]))})
+describe('exact testimonial permission API',()=>{
+ it('requires current sign-in and property access before any rights read or mutation',async()=>{for(const status of [401,403]){operator.mockRejectedValue(new ReviewStoreError('Unavailable',status));expect((await GET(req(),context)).status).toBe(status);expect((await POST(req(approve),context)).status).toBe(status)}expect(rpc).not.toHaveBeenCalled();expect(from).not.toHaveBeenCalled()})
+ it('rejects old unversioned requests and unreviewed extra fields',async()=>{for(const body of [{attributionApproved:true,rightsBasis:'direct_consent',evidenceNote:'Old request'},{...approve,sourceVersion:undefined},{...approve,usageScope:[]},{...approve,usageScope:['website','website']},{...approve,publish:true}])expect((await POST(req(body),context)).status).toBe(400);expect((await DELETE(req(approve),context)).status).toBe(400);expect(rpc).not.toHaveBeenCalled()})
+ it('keeps ordinary members read-only for both approval and revocation',async()=>{role.mockResolvedValue('member');expect((await POST(req(approve),context)).status).toBe(403);expect((await DELETE(req(revoke),context)).status).toBe(403);expect(rpc).not.toHaveBeenCalled()})
+ it('saves only the reviewed source, scope and stable decision identity',async()=>{rpc.mockResolvedValue({state:'saved',approvalId:requestId});expect((await POST(req(approve),context)).status).toBe(200);const {propertyId:_p,requestId:_r,...input}=approve;void _p;void _r;expect(rpc).toHaveBeenCalledWith('decide_reviewflow_testimonial',{p_id:requestId,p_property_id:propertyId,p_actor_id:'actor',p_input:{...input,reviewId}})})
+ it('retries the same revocation without demanding a complete current source',async()=>{rpc.mockResolvedValue({state:'replayed',publishedContentChanged:false});expect(await(await DELETE(req(revoke),context)).json()).toEqual({result:{state:'replayed',publishedContentChanged:false}});expect(rpc.mock.calls[0][1].p_input).toEqual({action:'revoke',approvalId:reviewId,expectedVersion:1,reason:'Permission withdrawn',reviewId})})
+ it('surfaces stale scope and database membership changes as actionable failures',async()=>{for(const [state,status] of [['invalid_expiry',400],['stale_source',409],['stale_approval',409],['active_approval',409],['manager_required',403],['forbidden',403],['not_found',404]] as const){rpc.mockResolvedValue({state});expect((await POST(req(approve),context)).status).toBe(status)}})
+ it('pages complete permission history inside the chosen property and review',async()=>{const q=chain(Array.from({length:21},(_,i)=>({id:`permission-${i}`})));from.mockReturnValue(q);const r=await(await GET(req(),context)).json();expect(r.history).toHaveLength(20);expect(r.nextCursor).toBe('permission-19');expect(q.eq).toHaveBeenCalledWith('property_id',propertyId);expect(q.eq).toHaveBeenCalledWith('review_id',reviewId);expect(rpc).toHaveBeenCalledWith('read_reviewflow_testimonial_source',{p_property_id:propertyId,p_actor_id:'actor',p_review_id:reviewId})})
+ it('rejects foreign history cursors and preserves read failures',async()=>{from.mockReturnValue(chain(null));expect((await GET(req(undefined,`&cursor=${requestId}`),context)).status).toBe(409);from.mockReturnValue(chain(null,{message:'private permission details'}));const r=await GET(req(),context);expect(r.status).toBe(503);expect(await r.text()).not.toContain('private permission');rpc.mockResolvedValue({state:'forbidden'});expect((await GET(req(),context)).status).toBe(403)})
 })

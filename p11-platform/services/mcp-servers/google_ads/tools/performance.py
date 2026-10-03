@@ -99,6 +99,54 @@ async def get_campaign_performance(
     
     return campaigns
 
+async def get_daily_campaign_performance(customer_id: str, date_range: DateRange, reference_time=None) -> dict[str, Any]:
+    """Read every campaign/day using the SDK pager, without a campaign limit."""
+    import asyncio
+    from decimal import Decimal
+    from shared.daily_reports import ReportValidationError, DATE_RANGES, account_id, reporting_window
+
+    clean_id = account_id(customer_id, 'google_ads')
+    if date_range not in DATE_RANGES:
+        raise ReportValidationError('Unsupported date range')
+
+    def fetch():
+        client = get_client()
+        service = client.get_service('GoogleAdsService')
+        # login_customer_id is configured on the client, not a search() argument.
+        accounts = list(service.search(customer_id=clean_id, query="""
+            SELECT customer.id, customer.currency_code, customer.time_zone
+            FROM customer
+        """, timeout=60))
+        if len(accounts) != 1 or str(accounts[0].customer.id) != clean_id:
+            raise ReportValidationError('Google Ads returned an unexpected account')
+        account = accounts[0].customer
+        start, end = reporting_window(date_range, account.time_zone, reference_time)
+        query = f"""
+            SELECT customer.id, customer.currency_code, campaign.id, campaign.name,
+                   segments.date, metrics.impressions, metrics.clicks,
+                   metrics.cost_micros, metrics.conversions
+            FROM campaign
+            WHERE segments.date BETWEEN '{start}' AND '{end}'
+            ORDER BY segments.date ASC, campaign.id ASC
+        """
+        rows = []
+        # Iterating the SearchPager consumes subsequent pages as well.
+        for row in service.search(customer_id=clean_id, query=query, timeout=60):
+            rows.append({
+                'account_id': str(row.customer.id), 'currency': row.customer.currency_code,
+                'date': row.segments.date, 'date_stop': row.segments.date,
+                'campaign_id': str(row.campaign.id), 'campaign_name': row.campaign.name,
+                'spend': str(Decimal(row.metrics.cost_micros) / Decimal(1_000_000)),
+                'impressions': row.metrics.impressions, 'clicks': row.metrics.clicks,
+                'conversions': row.metrics.conversions,
+            })
+        return {'account_id': clean_id, 'currency': account.currency_code,
+                'timezone': account.time_zone, 'start_date': start, 'end_date': end, 'rows': rows}
+
+    # The official Google Ads client is synchronous; keep status requests responsive.
+    return await asyncio.to_thread(fetch)
+
+
 async def get_ad_performance(
     customer_id: str,
     campaign_id: Optional[str] = None,

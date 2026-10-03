@@ -1,5 +1,7 @@
 # P11 Console (Next.js App)
 
+> **Current direction (September 12, 2026):** SiteForge is the personal Codex skill used in each client project. The console prepares client briefs and retains earlier website records; the application generator and runtime documentation below describe the retained earlier implementation. See the [current full implementation plan](../../../docs/P11_IMPLEMENTATION_PLAN.md) for the amended delivery contract, evidence and remaining product work.
+
 The unified dashboard for P11 Autonomous Agency products. Built with Next.js 16 (App Router), React 19, Tailwind CSS 4, Supabase, and OpenAI.
 
 ## 🚀 Quickstart

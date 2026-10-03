@@ -1,4 +1,6 @@
+import { admitLumaRead } from '@/utils/services/luma-public-read'
 import { NextRequest, NextResponse } from 'next/server';
+import { isWidgetSessionExpired } from '@/utils/services/widget-session';
 import { createServiceClient } from '@/utils/supabase/admin';
 import { getRateLimitKey, publicReadLimiter, rateLimitHeaders } from '@/utils/services/rate-limiter';
 import {
@@ -21,12 +23,6 @@ import { createRequestContext } from '@/utils/services/request-context';
  * Auth: property API key (X-API-Key) + the widget session id. The session
  * must belong to the property resolved from the API key.
  */
-
-/** Sessions idle longer than this are treated as expired (48 hours). */
-const SESSION_MAX_IDLE_MS = 48 * 60 * 60 * 1000;
-
-/** Hard cap on transcript size returned to the widget. */
-const MAX_MESSAGES = 200;
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -51,7 +47,7 @@ export async function GET(req: NextRequest) {
   const ctx = createRequestContext(req, '/api/lumaleasing/session/history');
   ctx.logStart();
   const corsHeaders = buildCorsHeaders(req.headers.get('origin'), 'GET, OPTIONS');
-  const responseHeaders = { ...corsHeaders, ...ctx.responseHeaders };
+  const responseHeaders = { ...corsHeaders, ...ctx.responseHeaders, 'Cache-Control': 'no-store' };
 
   try {
     const rlKey = getRateLimitKey(req, 'lumaleasing-history');
@@ -70,6 +66,8 @@ export async function GET(req: NextRequest) {
       );
     }
 
+    const beforeId = new URL(req.url).searchParams.get('beforeId');
+    if(beforeId!==null&&!UUID_PATTERN.test(beforeId))return badRequest('Valid earlier-message cursor required',responseHeaders);
     const sessionId = new URL(req.url).searchParams.get('sessionId')?.trim() || '';
     if (!UUID_PATTERN.test(sessionId)) {
       ctx.logSuccess(400, { reason: 'invalid_session_id' });
@@ -103,13 +101,18 @@ export async function GET(req: NextRequest) {
 
     const propertyId = config.property_id;
 
+    const denied = await admitLumaRead(supabase,req,propertyId,responseHeaders)
+    if(denied) return denied
+
     // 2. Load the session and confirm it belongs to this property.
-    const { data: session } = await supabase
+    const { data: session, error: sessionError } = await supabase
       .from('widget_sessions')
-      .select('id, lead_id, started_at, last_activity_at')
+      .select('*')
       .eq('id', sessionId)
       .eq('property_id', propertyId)
-      .single();
+      .maybeSingle();
+
+    if (sessionError) throw sessionError;
 
     if (!session) {
       ctx.logSuccess(404, { reason: 'session_not_found', sessionId });
@@ -117,20 +120,23 @@ export async function GET(req: NextRequest) {
     }
 
     // 3. Enforce session freshness so stale chats don't resurrect.
-    const lastActivity = session.last_activity_at || session.started_at;
-    if (lastActivity && Date.now() - new Date(lastActivity).getTime() > SESSION_MAX_IDLE_MS) {
+    if (isWidgetSessionExpired(session)) {
       ctx.logSuccess(410, { reason: 'session_expired', sessionId });
       return safeError('Session expired', 410, undefined, responseHeaders);
     }
 
     // 4. Find the latest conversation for this session (mirrors chat route).
-    const { data: conversation } = await supabase
+    const { data: conversation, error: conversationError } = await supabase
       .from('conversations')
       .select('id, is_human_mode')
       .eq('widget_session_id', sessionId)
-      .order('created_at', { ascending: false })
+      .eq('property_id', propertyId)
+      .order('created_at', { ascending: false, nullsFirst: false })
+      .order('id', { ascending: false })
       .limit(1)
-      .single();
+      .maybeSingle();
+
+    if (conversationError) throw conversationError;
 
     if (!conversation) {
       ctx.logSuccess(200, { sessionId, hasConversation: false });
@@ -141,32 +147,17 @@ export async function GET(req: NextRequest) {
           isHumanMode: false,
           leadCaptured: Boolean(session.lead_id),
           messages: [],
+          hasEarlierMessages: false,
+          nextBeforeId: null,
         },
         { headers: responseHeaders }
       );
     }
 
-    // 5. Load the transcript.
-    const { data: messageRows, error: messagesError } = await supabase
-      .from('messages')
-      .select('id, role, content, created_at')
-      .eq('conversation_id', conversation.id)
-      .order('created_at', { ascending: true })
-      .limit(MAX_MESSAGES);
-
-    if (messagesError) {
-      ctx.logError(500, messagesError, { operation: 'fetch_session_history', sessionId });
-      return serverError(messagesError, responseHeaders);
-    }
-
-    const messages = (messageRows || [])
-      .filter((m) => typeof m.content === 'string' && m.content.length > 0)
-      .map((m) => ({
-        id: m.id,
-        role: m.role || 'assistant',
-        content: m.content,
-        createdAt: m.created_at,
-      }));
+    const {data: page,error: messagesError}=await(supabase as unknown as{rpc:(name:string,args:Record<string,unknown>)=>Promise<{data:{state:string;messages:Array<{id:string;role:string;content:string;createdAt:string|null}>;hasEarlierMessages:boolean;nextBeforeId:string|null}|null;error:unknown}>}).rpc('read_luma_visitor_messages',{p_property_id:propertyId,p_conversation_id:conversation.id,p_before_id:beforeId});
+    if(messagesError||!page)return serverError(messagesError||new Error('Transcript read unavailable'),responseHeaders);
+    if(page.state!=='ready')return safeError('Conversation changed. Reload its history.',409,undefined,responseHeaders);
+    const {messages,hasEarlierMessages,nextBeforeId}=page;
 
     ctx.logSuccess(200, {
       sessionId,
@@ -182,6 +173,8 @@ export async function GET(req: NextRequest) {
         isHumanMode: Boolean(conversation.is_human_mode),
         leadCaptured: Boolean(session.lead_id),
         messages,
+        hasEarlierMessages,
+        nextBeforeId,
       },
       { headers: responseHeaders }
     );

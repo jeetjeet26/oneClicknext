@@ -68,10 +68,10 @@ describe('api helpers', () => {
   })
 
   describe('validateCronAuth', () => {
-    it('returns null when CRON_SECRET is unset (allows local dev)', () => {
+    it('rejects cron requests when CRON_SECRET is unset', () => {
       delete process.env.CRON_SECRET
       const req = new Request('http://localhost/api/cron/test', { headers: {} })
-      expect(validateCronAuth(req)).toBeNull()
+      expect(validateCronAuth(req)?.status).toBe(401)
     })
 
     it('returns null when Bearer token matches CRON_SECRET', () => {

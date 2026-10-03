@@ -1,3 +1,4 @@
+import {currentApprovedReadiness} from '@/utils/readiness/publication'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database, Json, Tables } from '@/types/supabase'
 import { createServiceClient } from '@/utils/supabase/admin'
@@ -110,38 +111,14 @@ export async function loadCurrentBriefSources(
   input: { orgId: string; propertyId: string },
   client: ServiceClient = createServiceClient()
 ): Promise<SiteForgeBriefSourceIdentity> {
-  const { data: onboarding, error } = await client
-    .from('property_onboarding_snapshots')
-    .select(
-      'id, org_id, property_id, content_hash, brand_asset_id, brand_contract_hash, unresolved_conflicts'
-    )
-    .eq('org_id', input.orgId)
-    .eq('property_id', input.propertyId)
-    .eq('status', 'approved')
-    .order('approved_at', { ascending: false })
-    .limit(1)
-    .maybeSingle()
-  if (error || !onboarding) {
+  const onboarding=await currentApprovedReadiness(input.propertyId,client)
+  if (!onboarding || onboarding.org_id!==input.orgId || !onboarding.brand_asset_id || !onboarding.brand_contract_hash) {
     throw new SiteForgeBriefError(
       'Approve an onboarding snapshot before creating a SiteForge brief',
       409
     )
   }
-  if (
-    Array.isArray(onboarding.unresolved_conflicts) &&
-    onboarding.unresolved_conflicts.length > 0
-  ) {
-    throw new SiteForgeBriefError(
-      'Approved onboarding snapshot contains unresolved conflicts',
-      409
-    )
-  }
-  if (!onboarding.brand_asset_id || !onboarding.brand_contract_hash) {
-    throw new SiteForgeBriefError(
-      'Approved onboarding snapshot is missing a pinned BrandForge identity',
-      409
-    )
-  }
+  // Native publication qualification already requires explicit review of manager warnings.
 
   const { data: brand, error: brandError } = await client
     .from('property_brand_assets')

@@ -1,3 +1,6 @@
+import {z} from 'zod'
+import {createServiceClient} from '@/utils/supabase/admin'
+import {actionHistoryDb} from '@/utils/actions/history'
 import { createClient } from '@/utils/supabase/server'
 import { NextRequest, NextResponse } from 'next/server'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
@@ -218,8 +221,9 @@ export async function PATCH(
     }
 
     const { id: leadId } = await params
-    const body = await request.json()
-    const { action } = body
+    const parsed=z.object({action:z.enum(['pause','resume','stop']),workflowId:z.string().uuid(),requestId:z.string().uuid()}).safeParse(await request.json().catch(()=>null))
+    if(!parsed.success)return badRequest('Choose a workflow and a valid action',ctx.responseHeaders)
+    const {action,workflowId,requestId}=parsed.data
 
     const { data: lead, error: leadError } = await supabase
       .from('leads')
@@ -248,38 +252,11 @@ export async function PATCH(
       return badRequest('Invalid action', ctx.responseHeaders)
     }
 
-    const statusMap: Record<string, string> = {
-      pause: 'paused',
-      resume: 'active',
-      stop: 'stopped',
-    }
-
-    const updateData: Record<string, unknown> = {
-      status: statusMap[action],
-      processing_started_at: null,
-      processing_expires_at: null,
-      updated_at: new Date().toISOString(),
-    }
-
-    if (action === 'resume') {
-      // Recalculate next action time when resuming
-      updateData.next_action_at = new Date().toISOString()
-    } else {
-      updateData.next_action_at = null
-    }
-
-    const { data: workflow, error } = await supabase
-      .from('lead_workflows')
-      .update(updateData)
-      .eq('lead_id', leadId)
-      .eq('status', action === 'resume' ? 'paused' : 'active')
-      .select()
-      .single()
-
-    if (error) {
-      ctx.logError(500, error, { operation: 'update_lead_workflow', leadId, action })
-      return serverError(error, ctx.responseHeaders)
-    }
+    const saved=await actionHistoryDb(createServiceClient()).rpc('control_recorded_workflow',{p_property_id:lead.property_id,p_lead_id:leadId,p_workflow_id:workflowId,p_actor_id:user.id,p_action:action,p_request_id:requestId})
+    if(saved.error||!saved.data)throw new Error('Workflow change was not confirmed')
+    const result=saved.data as {state:string;workflow?:{id:string}}
+    if(result.state!=='applied')return NextResponse.json({error:result.state==='timing_review'?'This older pause has no saved due time. Stop it and review its follow-up schedule.':'This workflow changed. Refresh and try again.'},{status:result.state==='forbidden'?403:result.state==='not_found'?404:409,headers:ctx.responseHeaders})
+    const workflow=result.workflow
 
     ctx.logSuccess(200, { leadId, action, workflowId: workflow?.id || null })
     return NextResponse.json({ workflow }, { headers: ctx.responseHeaders })

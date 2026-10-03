@@ -141,16 +141,19 @@ def format_provider_sources(search_sources: Optional[List[Dict[str, Any]]]) -> s
 
 async def analyze_with_delegate(context: Dict[str, Any], natural_text: str, search_sources: Optional[List[Dict[str, Any]]] = None):
     analyzer = choose_analyzer()
-    analyzed = await analyzer.analyze_response({
-        "naturalResponse": natural_text,
-        "brandName": context["brandName"],
-        "queryText": context["queryText"],
-        "brandDomains": context.get("brandDomains", []),
-        "competitors": context.get("competitors", []),
-        "expectedCity": context.get("propertyLocation", {}).get("city"),
-        "expectedState": context.get("propertyLocation", {}).get("state"),
-        "searchSources": search_sources or [],
-    })
+    try:
+        analyzed = await analyzer.analyze_response({
+            "naturalResponse": natural_text,
+            "brandName": context["brandName"],
+            "queryText": context["queryText"],
+            "brandDomains": context.get("brandDomains", []),
+            "competitors": context.get("competitors", []),
+            "expectedCity": context.get("propertyLocation", {}).get("city"),
+            "expectedState": context.get("propertyLocation", {}).get("state"),
+            "searchSources": search_sources or [],
+        })
+    finally:
+        await analyzer.client.close()
     return analyzed
 
 
@@ -212,6 +215,7 @@ class GeminiNaturalConnector:
             },
             "contents": [{"role": "user", "parts": [{"text": query_text}]}],
             "generationConfig": {
+                "maxOutputTokens":4000,
                 "temperature": 0,
                 "topP": 1,
                 **gemini_thinking_config(self.model),
@@ -220,7 +224,7 @@ class GeminiNaturalConnector:
         if self.enable_web_search:
             payload["tools"] = [gemini_grounding_tool(self.model)]
 
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(timeout=45.0) as client:
             try:
                 response = await post_gemini_with_retry(client, url, payload)
             except Exception as error:
@@ -291,6 +295,7 @@ class PerplexityNaturalConnector:
             "model": self.model,
             "temperature": 0,
             "top_p": 1,
+            "max_tokens":4000,
             "messages": [
                 {
                     "role": "system",
@@ -299,7 +304,7 @@ class PerplexityNaturalConnector:
                 {"role": "user", "content": query_text},
             ],
         }
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(timeout=45.0) as client:
             response = await client.post(
                 "https://api.perplexity.ai/chat/completions",
                 headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},

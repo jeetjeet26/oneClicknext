@@ -38,6 +38,11 @@ function mockServiceClientWithQueues(queues: Record<string, unknown[]>) {
     Object.entries(queues).map(([table, results]) => [table, [...results]])
   )
   createServiceClientMock.mockReturnValue({
+    rpc: vi.fn(async (name: string) => {
+      expect(name).toBe('read_marketing_facts')
+      const result = remaining.fact_marketing_performance.shift() as {data?:unknown[];error?:unknown}
+      return {data: result.error ? null : {rows:result.data, row_count:result.data?.length, complete:true},error:result.error||null}
+    }),
     from: vi.fn((table: string) => {
       const queue = remaining[table]
       if (!queue || queue.length === 0) {
@@ -166,4 +171,12 @@ describe('dashboard overview metrics', () => {
     expect(json.metrics.aiResponseRate.value).toBeNull()
     expect(json.summary.ctr).toBe(2.5)
   })
+  it('does not turn unavailable marketing sources into zero totals', async () => {
+    mockServiceClientWithQueues({fact_marketing_performance:[{error:{code:'57014',message:'Source unavailable'}},{data:[]}]})
+    const {GET}=await import('./route')
+    const response=await GET(new Request('http://localhost/api/dashboard/overview?propertyId=property-1') as NextRequest)
+    expect(response.status).toBe(500)
+    expect(await response.json()).not.toHaveProperty('metrics')
+  })
+
 })

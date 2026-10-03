@@ -3,21 +3,36 @@
 import { CheckCircle2, Sparkles, ArrowRight, Building2 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useAddProperty } from '../AddPropertyProvider'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
+import { usePropertyContext } from '@/components/layout/PropertyContext'
 
 export function CompleteStep() {
   const router = useRouter()
   const { formData, createdPropertyId, editMode } = useAddProperty()
 
-  // Auto-redirect after 3 seconds
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      router.push('/dashboard/community')
-      router.refresh()
-    }, 3000)
+  const { refreshProperties } = usePropertyContext()
+  const [contextStatus, setContextStatus] = useState<'loading' | 'ready' | 'error'>('loading')
+  const propertyId = createdPropertyId ?? editMode.propertyId
 
+  useEffect(() => {
+    let active = true
+    void refreshProperties(propertyId || undefined).then(ok => {
+      if (active) setContextStatus(ok ? 'ready' : 'error')
+    })
+    return () => { active = false }
+  }, [propertyId, refreshProperties])
+
+  useEffect(() => {
+    if (contextStatus !== 'ready') return
+    const timer = setTimeout(() => router.push('/dashboard/community'), 3000)
     return () => clearTimeout(timer)
-  }, [router])
+  }, [contextStatus, router])
+
+  async function retryContext() {
+    setContextStatus('loading')
+    const ok = await refreshProperties(propertyId || undefined)
+    setContextStatus(ok ? 'ready' : 'error')
+  }
 
   return (
     <div className="animate-in fade-in slide-in-from-bottom-4 duration-700">
@@ -42,7 +57,7 @@ export function CompleteStep() {
         <p className="text-slate-400 text-lg mb-8 max-w-md mx-auto">
           {editMode.isEditing 
             ? 'Your property changes have been saved successfully.'
-            : 'Your new community has been added to your organization and is ready to go.'
+            : 'Your new community has been saved to your organization.'
           }
         </p>
 
@@ -54,7 +69,7 @@ export function CompleteStep() {
           </div>
           <div className="px-4 py-2 bg-slate-800/60 rounded-xl border border-slate-700">
             <p className="text-2xl font-bold text-cyan-400">{formData.integrations.filter(i => i.status === 'connected').length}</p>
-            <p className="text-xs text-slate-500">Integrations</p>
+            <p className="text-xs text-slate-500">Connection plans</p>
           </div>
           <div className="px-4 py-2 bg-slate-800/60 rounded-xl border border-slate-700">
             <p className="text-2xl font-bold text-rose-400">{formData.documents.length}</p>
@@ -75,7 +90,7 @@ export function CompleteStep() {
             </li>
             <li className="flex items-start gap-2">
               <span className="text-emerald-400 mt-0.5">✓</span>
-              Upload additional documents for AI training
+              Upload documents for grounded property answers
             </li>
             <li className="flex items-start gap-2">
               <span className="text-emerald-400 mt-0.5">✓</span>
@@ -91,29 +106,33 @@ export function CompleteStep() {
         {/* Action buttons */}
         <div className="flex flex-col sm:flex-row gap-3 justify-center">
           <button
+            disabled={contextStatus !== 'ready'}
             onClick={() => {
               router.push('/dashboard/community')
-              router.refresh()
             }}
-            className="flex items-center justify-center gap-2 px-6 py-3.5 bg-slate-700/50 text-slate-300 font-medium rounded-xl hover:bg-slate-700 transition-all"
+            className="disabled:cursor-not-allowed disabled:opacity-50 flex items-center justify-center gap-2 px-6 py-3.5 bg-slate-700/50 text-slate-300 font-medium rounded-xl hover:bg-slate-700 transition-all"
           >
             <Building2 size={18} />
             Back to Property
           </button>
           <button
+            disabled={contextStatus !== 'ready'}
             onClick={() => {
               router.push('/dashboard')
-              router.refresh()
             }}
-            className="flex items-center justify-center gap-2 px-8 py-3.5 bg-gradient-to-r from-emerald-500 to-cyan-600 text-white font-semibold rounded-xl shadow-lg shadow-emerald-500/25 hover:shadow-emerald-500/40 transition-all"
+            className="disabled:cursor-not-allowed disabled:opacity-50 flex items-center justify-center gap-2 px-8 py-3.5 bg-gradient-to-r from-emerald-500 to-cyan-600 text-white font-semibold rounded-xl shadow-lg shadow-emerald-500/25 hover:shadow-emerald-500/40 transition-all"
           >
             Go to Dashboard
             <ArrowRight size={18} />
           </button>
         </div>
 
-        <p className="text-slate-500 text-sm mt-6">
-          Redirecting to property page in a few seconds...
+        {contextStatus === 'error' && <div role="alert" className="mt-6 text-amber-300">
+          <p>We couldn’t load the saved property. Your changes do not need to be submitted again.</p>
+          <button type="button" onClick={() => void retryContext()} className="mt-2 underline">Retry loading saved property</button>
+        </div>}
+        <p role="status" className="text-slate-500 text-sm mt-6">
+          {contextStatus === 'ready' ? 'Opening your property in a few seconds…' : contextStatus === 'loading' ? 'Loading your saved property…' : 'Your property is saved. Reload its details to continue.'}
         </p>
       </div>
     </div>

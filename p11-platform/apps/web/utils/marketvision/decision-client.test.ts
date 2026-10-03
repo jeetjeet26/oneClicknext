@@ -1,0 +1,11 @@
+import {beforeEach,afterEach,it,expect,vi} from 'vitest'
+import {webcrypto} from 'node:crypto'
+import {sendMarketDecision,marketNumber} from './decision-client'
+beforeEach(()=>{const data=new Map<string,string>();vi.stubGlobal('crypto',webcrypto);vi.stubGlobal('sessionStorage',{getItem:(k:string)=>data.get(k)??null,setItem:(k:string,v:string)=>data.set(k,v),removeItem:(k:string)=>data.delete(k)})})
+afterEach(()=>vi.unstubAllGlobals())
+it('a retry after a lost response keeps the same identity',async()=>{const calls:string[]=[];vi.stubGlobal('fetch',vi.fn(async(_p,init)=>{calls.push(init.body);if(calls.length===1)throw new Error('lost');return new Response(JSON.stringify({result:{state:'replayed'}}))}));await expect(sendMarketDecision('/route','PUT',{reason:'Reviewed',version:1})).rejects.toThrow('lost');await sendMarketDecision('/route','PUT',{reason:'Reviewed',version:1});expect(JSON.parse(calls[0]).requestId).toBe(JSON.parse(calls[1]).requestId)})
+it('a changed reviewed version is a new decision',async()=>{const ids:string[]=[];vi.stubGlobal('fetch',vi.fn(async(_p,init)=>{ids.push(JSON.parse(init.body).requestId);return new Response(JSON.stringify({result:{state:'saved'}}))}));await sendMarketDecision('/route','PUT',{version:1});await sendMarketDecision('/route','PUT',{version:2});expect(ids[0]).not.toBe(ids[1])})
+it('cannot claim success from unreadable successful transport',async()=>{vi.stubGlobal('fetch',vi.fn(async()=>new Response('not json')));await expect(sendMarketDecision('/route','PUT',{})).rejects.toThrow()})
+it('does not coerce blanks to zero or partially parse broken numbers',()=>{expect(marketNumber('')).toBeNull();expect(marketNumber('0')).toBe(0);expect(Number.isNaN(marketNumber('123x'))).toBe(true)})
+
+it('a confirmed explicit new-report intent may get a new identity without changing ordinary retries',async()=>{const ids:string[]=[];vi.stubGlobal('fetch',vi.fn(async(_p,init)=>{ids.push(JSON.parse(init.body).requestId);return new Response(JSON.stringify({result:{state:'ready'}}))}));await sendMarketDecision('/brief','POST',{reason:'Review'},['ready'],true);await sendMarketDecision('/brief','POST',{reason:'Review'},['ready'],true);expect(ids[0]).not.toBe(ids[1])})

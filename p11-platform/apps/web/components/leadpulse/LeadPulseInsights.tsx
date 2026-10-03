@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   BarChart3,
   TrendingUp,
@@ -73,7 +73,10 @@ export function LeadPulseInsights({ propertyId }: LeadPulseInsightsProps) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const fetchInsights = async () => {
+  const pending = useRef<AbortController | null>(null)
+  const fetchInsights = useCallback(async () => {
+    pending.current?.abort()
+    const controller = new AbortController(); pending.current = controller
     try {
       setLoading(true)
       setError(null)
@@ -82,23 +85,25 @@ export function LeadPulseInsights({ propertyId }: LeadPulseInsightsProps) {
       if (propertyId) params.set('propertyId', propertyId)
       params.set('days', '30')
 
-      const res = await fetch(`/api/leadpulse/insights?${params}`)
+      const res = await fetch(`/api/leadpulse/insights?${params}`, {signal:controller.signal})
       const data = await res.json()
 
       if (!res.ok) throw new Error(data.error || 'Failed to fetch insights')
 
-      setInsights(data.insights)
+      if (!controller.signal.aborted) setInsights(data.insights)
     } catch (err) {
+      if (controller.signal.aborted) return
       console.error('Error fetching insights:', err)
       setError(err instanceof Error ? err.message : 'Unknown error')
     } finally {
-      setLoading(false)
+      if (!controller.signal.aborted) setLoading(false)
     }
-  }
+  }, [propertyId])
 
   useEffect(() => {
-    fetchInsights()
-  }, [propertyId])
+    void fetchInsights()
+    return () => pending.current?.abort()
+  }, [fetchInsights])
 
   if (loading) {
     return (
@@ -265,9 +270,10 @@ export function LeadPulseInsights({ propertyId }: LeadPulseInsightsProps) {
       {insights.recentTrend.length > 0 && (
         <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
           <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-6">
-            Score Trend (Last 14 Days)
+            Saved score trend (last 14 days)
           </h3>
           <div className="h-40">
+            <p className="mb-3 text-xs text-gray-500">One saved score per lead per UTC day. Only leads scored that day are included; this is not a conversion trend.</p>
             <SimpleTrendChart data={insights.recentTrend} />
           </div>
         </div>

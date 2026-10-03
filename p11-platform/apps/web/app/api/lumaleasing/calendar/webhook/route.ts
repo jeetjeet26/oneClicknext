@@ -1,3 +1,4 @@
+import type { Database } from '@/types/supabase'
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { createRequestContext } from '@/utils/services/request-context'
@@ -122,7 +123,7 @@ export async function POST(request: NextRequest) {
       return acknowledge(ctx.responseHeaders)
     }
 
-    const watchMetadataUpdate: Record<string, string | number> = {
+    const watchMetadataUpdate: Database['public']['Tables']['agent_calendars']['Update'] = {
       updated_at: new Date().toISOString(),
     }
     if (watchExpiration) {

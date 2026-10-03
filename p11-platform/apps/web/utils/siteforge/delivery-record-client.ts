@@ -1,0 +1,6 @@
+export function decodeDeliveryText(bytes:ArrayBuffer){try{return new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(bytes)}catch{throw new Error('This file is not valid UTF-8 text. Save a text copy before importing it.')}}
+export async function saveDeliveryDecision(input:Record<string,unknown>){
+ const path='/api/siteforge/delivery-records',digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(input))),hash=Array.from(new Uint8Array(digest),v=>v.toString(16).padStart(2,'0')).join(''),key=`p11.site-delivery.${hash}`
+ let requestId:string;try{requestId=sessionStorage.getItem(key)||crypto.randomUUID();sessionStorage.setItem(key,requestId)}catch{throw new Error('Browser recovery storage is unavailable. Enable it before saving delivery evidence.')}
+ const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...input,requestId}),signal:AbortSignal.timeout(15000)}),data=await response.json().catch(()=>({error:'The response could not be read. Retry the same decision.'}));if(!response.ok||!['saved','replayed'].includes(data.result?.state))throw new Error(data.error||'The delivery decision could not be confirmed. Retry the same values or review history.');try{sessionStorage.removeItem(key)}catch{/* A confirmed decision is safe to replay. */}return data.result
+}

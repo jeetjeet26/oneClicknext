@@ -1,9 +1,9 @@
 """
-Competitor Intake enrichment router.
+Retired competitor intake enrichment router.
 
-Client-provided text is treated as seed/provenance only. Canonical competitor
-fields are populated from online evidence such as an authoritative website or
-Google Places result.
+New intake uses the saved console preview and atomic review contract. Legacy
+helpers remain for historical compatibility; dispatch and coordinator entry
+points are fenced before any provider work.
 """
 
 import logging
@@ -592,62 +592,9 @@ async def _process_candidate(supabase, property_id: str, batch_id: str, candidat
 
 
 async def _process_batch(batch_id: str, property_id: str) -> None:
-    supabase = get_supabase_client()
-    supabase.table("competitor_intake_batches").update({
-        "status": "processing",
-        "updated_at": _utc_now(),
-    }).eq("id", batch_id).eq("property_id", property_id).execute()
-
-    candidates_result = (
-        supabase.table("competitor_intake_candidates")
-        .select("*")
-        .eq("batch_id", batch_id)
-        .eq("property_id", property_id)
-        .execute()
-    )
-    candidates = candidates_result.data or []
-
-    completed = 0
-    failed = 0
-    for candidate in candidates:
-        if await _process_candidate(supabase, property_id, batch_id, candidate):
-            completed += 1
-        else:
-            failed += 1
-
-    final_status = "completed" if completed > 0 and failed == 0 else "failed" if completed == 0 else "completed"
-    supabase.table("competitor_intake_batches").update({
-        "status": final_status,
-        "completed_at": _utc_now(),
-        "error_message": None if completed > 0 else "No competitor candidates were enriched successfully",
-        "updated_at": _utc_now(),
-    }).eq("id", batch_id).eq("property_id", property_id).execute()
+    raise RuntimeError("Automatic competitor intake is retired; review the saved console preview")
 
 
 @router.post("/enrich")
 async def enrich_competitor_intake(request: EnrichIntakeRequest, background_tasks: BackgroundTasks):
-    try:
-        supabase = get_supabase_client()
-        batch_result = (
-            supabase.table("competitor_intake_batches")
-            .select("id, property_id")
-            .eq("id", request.batch_id)
-            .eq("property_id", request.property_id)
-            .single()
-            .execute()
-        )
-        if not batch_result.data:
-            raise HTTPException(status_code=404, detail="Intake batch not found")
-
-        background_tasks.add_task(_process_batch, request.batch_id, request.property_id)
-        return {
-            "success": True,
-            "status": "processing",
-            "batch_id": request.batch_id,
-            "property_id": request.property_id,
-        }
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.exception("Failed to start competitor intake enrichment")
-        raise HTTPException(status_code=500, detail=str(exc))
+    raise HTTPException(status_code=410, detail="Automatic competitor enrichment is retired. Save and review competitor intake in the console.")

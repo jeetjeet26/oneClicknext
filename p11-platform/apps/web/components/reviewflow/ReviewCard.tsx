@@ -1,6 +1,5 @@
 'use client'
 
-import { useState } from 'react'
 import { Star, MessageCircle, Clock, ChevronRight, Sparkles } from 'lucide-react'
 import { SentimentBadge } from './SentimentBadge'
 import { PlatformIcon } from './PlatformIcon'
@@ -144,7 +143,7 @@ export function ReviewCard({ review, onClick, onGenerateResponse, compact = fals
             className="flex items-center gap-2 text-sm text-indigo-600 hover:text-indigo-700 font-medium mt-4"
           >
             <Sparkles className="w-4 h-4" />
-            Generate AI Response
+            Review response
           </button>
         )
       )}

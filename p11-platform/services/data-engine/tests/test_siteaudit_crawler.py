@@ -93,6 +93,8 @@ def fixture_site():
 async def test_crawl_fixture_site_end_to_end(fixture_site, monkeypatch):
     # The crawler blocks private hosts by design; allow the local fixture.
     monkeypatch.setattr(crawler_module, "is_safe_public_url", lambda url: True)
+    import httpx
+    monkeypatch.setattr(crawler_module, "PublicAsyncClient", httpx.AsyncClient)
 
     crawler = SiteCrawler(seed_url=f"{fixture_site}/", page_cap=20, concurrency=2)
     context = await crawler.crawl()

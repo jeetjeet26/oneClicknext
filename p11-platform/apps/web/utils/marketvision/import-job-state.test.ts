@@ -31,3 +31,13 @@ describe('import job state derivation', () => {
     })
   })
 })
+
+
+describe('unconfirmed and active warning states', () => {
+  it('does not mark an active warning terminal', () => {
+    expect(normalizeImportJobRecord({ status: 'running', error_message: 'One channel failed' })).toMatchObject({ import_state: 'running', has_warnings: true, is_terminal: false })
+  })
+  it.each([null, '', 'unrecognized'])('keeps unknown status %s explicit', status => {
+    expect(normalizeImportJobRecord({ status, error_message: null })).toMatchObject({ import_state: 'unknown', is_terminal: false })
+  })
+})

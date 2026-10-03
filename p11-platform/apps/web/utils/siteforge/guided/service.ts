@@ -1037,18 +1037,7 @@ export function createSiteForgeGuidedService(
         },
         deps.client,
       );
-      let approvedReadiness = readiness;
-      if (readiness.status === "ready") {
-        approvedReadiness = await deps.approveReadiness(
-          {
-            orgId: state.orgId,
-            propertyId: state.propertyId,
-            snapshotId: readiness.id,
-            userId,
-          },
-          deps.client,
-        );
-      }
+      const approvedReadiness = readiness;
       if (approvedReadiness.status !== "approved") {
         throw new GuidedJourneyError(
           "Property readiness has items that need review before SiteForge can recommend a build.",

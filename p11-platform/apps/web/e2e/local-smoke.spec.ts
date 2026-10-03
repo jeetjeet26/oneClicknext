@@ -42,6 +42,21 @@ async function loginWithUser(
   await expect(page).not.toHaveURL(/\/auth\/login/)
 }
 
+async function saveAndApproveFixtureLegal(page: Page, init: {method: string; body: Record<string, unknown>}) {
+  const b = init.body, propertyId = String(b.propertyId)
+  const current = await callAuthedApi(page, `/api/onboarding/legal?propertyId=${propertyId}`)
+  if (!current.ok) return current
+  const documents = Object.fromEntries(Object.entries({privacy_policy:b.privacyPolicy,terms:b.terms,accessibility:b.accessibility,fair_housing:b.fairHousing,pricing_disclaimer:b.pricingDisclaimer,analytics_consent:b.analyticsConsent,communications_consent:b.communicationsConsent}))
+  const requestId = await page.evaluate(() => crypto.randomUUID())
+  const saved = await callAuthedApi(page, '/api/onboarding/legal', {method:'POST',body:{propertyId,requestId,operation:'save',expectedStateHash:(current.data as {stateHash:string}).stateHash,sourceVersionId:null,draft:{jurisdiction:b.jurisdiction,legalEntityName:b.legalEntityName,effectiveAt:b.effectiveAt,documents,sourceReferences:b.sourceReferences},reason:'Retain exact supplied local smoke legal fixture'}})
+  if (!saved.ok) return saved
+  const versionId = (saved.data as {versionId:string}).versionId
+  const detail = await callAuthedApi(page, `/api/onboarding/legal?propertyId=${propertyId}&kind=version&versionId=${versionId}`)
+  if (!detail.ok) return detail
+  const exact = detail.data as {stateHash:string;versionHash:string}
+  return callAuthedApi(page, '/api/onboarding/legal', {method:'POST',body:{propertyId,requestId:await page.evaluate(() => crypto.randomUUID()),operation:'approve',versionId,versionHash:exact.versionHash,expectedStateHash:exact.stateHash,confirmed:true,reason:'Approve the exact saved local smoke legal fixture'}})
+}
+
 async function callAuthedApi(
   page: Page,
   url: string,
@@ -180,24 +195,11 @@ async function resolvePropertyIdForSmoke(
     }
 
     if (onboardingData.needsOnboarding) {
-      const onboardingResponse = await callAuthedApi(page, '/api/onboarding', {
-        method: 'POST',
-        body: {
-          organization: { name: 'P11 Smoke Org' },
-          property: {
-            name: 'P11 Smoke Property',
-            type: 'multifamily',
-            address: { city: 'Austin', state: 'TX' },
-          },
-          contacts: [
-            {
-              type: 'primary',
-              name: 'Local Smoke Admin',
-              email: seededUser.email,
-            },
-          ],
-        },
-      })
+      const profile={name:'P11 Smoke Property',propertyType:'multifamily',address:{street:'',city:'Austin',state:'TX',zip:''},websiteUrl:'',additionalUrls:[],unitCount:null,yearBuilt:null,amenities:[],specialFeatures:[],brandVoice:'',targetAudience:''}
+      const saved=await callAuthedApi(page,'/api/onboarding',{method:'POST',body:{requestId:crypto.randomUUID(),operation:'save',expectedRevision:0,draft:{organization:{name:'P11 Smoke Org',type:'',legalName:''},profile,contacts:[{id:crypto.randomUUID(),type:'primary',name:'Local Smoke Admin',email:seededUser.email,phone:'',role:'',billingAddress:{street:'',city:'',state:'',zip:''},billingMethod:'',specialInstructions:'',needsW9:false,isPrimary:true}],connectionRequests:[],step:'review'},reason:'Prepare reviewed local smoke setup'}})
+      expect(saved.ok).toBeTruthy()
+      const receipt=saved.data as {revision:number;draftHash:string}
+      const onboardingResponse=await callAuthedApi(page,'/api/onboarding',{method:'POST',body:{requestId:crypto.randomUUID(),operation:'complete',expectedRevision:receipt.revision,draftHash:receipt.draftHash,confirmed:true,reason:'Complete reviewed local smoke setup'}})
       expect(onboardingResponse.ok).toBeTruthy()
     } else {
       const createPropertyResponse = await callAuthedApi(
@@ -205,7 +207,7 @@ async function resolvePropertyIdForSmoke(
         '/api/properties',
         {
           method: 'POST',
-          body: { name: 'P11 Smoke Property' },
+          body: {requestId:crypto.randomUUID(),profile:{name:'P11 Smoke Property',propertyType:null,address:{street:'',city:'',state:'',zip:''},websiteUrl:'',additionalUrls:[],unitCount:null,yearBuilt:null,amenities:[],specialFeatures:[],brandVoice:'',targetAudience:''},template:null},
         }
       )
       expect(createPropertyResponse.ok).toBeTruthy()
@@ -478,46 +480,16 @@ async function createApprovedSiteForgeGeneration(
     `Floor-plan inventory confirmation failed: ${JSON.stringify(inventoryConfirmation)}`
   ).toBeTruthy()
 
-  const readinessResponse = await callAuthedApi(
-    page,
-    '/api/onboarding/readiness',
-    {
-      method: 'POST',
-      body: { propertyId },
-    }
-  )
-  expect(
-    readinessResponse.ok,
-    `SiteForge readiness build failed: ${JSON.stringify(readinessResponse)}`
-  ).toBeTruthy()
-  const readiness = readinessResponse.data as {
-    snapshot?: {
-      id?: string
-      status?: string
-      unresolved_conflicts?: unknown[]
-    }
-  }
-  if (readiness.snapshot?.status !== 'approved') {
-    expect(
-      readiness.snapshot?.status,
-      `SiteForge readiness is blocked: ${JSON.stringify(readiness.snapshot)}`
-    ).toBe('ready')
-    const readinessApproval = await callAuthedApi(
-      page,
-      `/api/onboarding/readiness/${readiness.snapshot?.id}/approve`,
-      {
-        method: 'POST',
-        body: {
-          propertyId,
-          rationale:
-            'Local smoke approves the evidence-backed onboarding snapshot.',
-        },
-      }
-    )
-    expect(
-      readinessApproval.ok,
-      `SiteForge readiness approval failed: ${JSON.stringify(readinessApproval)}`
-    ).toBeTruthy()
+  const readinessResponse = await callAuthedApi(page,'/api/onboarding/readiness',{method:'POST',body:{propertyId,requestId:crypto.randomUUID(),operation:'build',enabledCapabilities:[],reason:'Build complete local smoke readiness evidence'}})
+  expect(readinessResponse.ok,`Readiness build failed: ${JSON.stringify(readinessResponse)}`).toBeTruthy()
+  const readinessResult=readinessResponse.data as {snapshotId:string}
+  const savedCheck=await callAuthedApi(page,`/api/onboarding/readiness?propertyId=${propertyId}&kind=snapshot&snapshotId=${readinessResult.snapshotId}`,{method:'GET'})
+  expect(savedCheck.ok).toBeTruthy()
+  const readiness=savedCheck.data as {snapshot:{id:string;status:string};snapshotHash:string;sourceHash:string;eligibility:{canApprove:boolean;requiresManagerOverride:boolean}}
+  if(readiness.snapshot.status!=='approved'){
+    expect(readiness.eligibility.canApprove,`Readiness needs review: ${JSON.stringify(readiness)}`).toBe(true)
+    const approval=await callAuthedApi(page,'/api/onboarding/readiness',{method:'POST',body:{propertyId,requestId:crypto.randomUUID(),operation:'approve',snapshotId:readiness.snapshot.id,snapshotHash:readiness.snapshotHash,sourceHash:readiness.sourceHash,confirmed:true,allowManagerOverride:readiness.eligibility.requiresManagerOverride,reason:'Local smoke reviews this exact current readiness evidence'}})
+    expect(approval.ok,`Readiness approval failed: ${JSON.stringify(approval)}`).toBeTruthy()
   }
 
   const projectResponse = await callAuthedApi(
@@ -2549,21 +2521,21 @@ test.describe('local smoke flows', () => {
     }
   })
 
-  test('siteforge new website opens guided conversation without the legacy asset modal', async ({
-    page,
-  }) => {
+  test('siteforge entry prepares a Codex brief without creating a generator project', async ({ page }) => {
     await login(page)
+    const mutations: string[] = []
+    page.on('request', request => {
+      if (request.method() !== 'GET' && request.url().includes('/api/siteforge/')) {
+        mutations.push(request.url())
+      }
+    })
     await page.goto('/dashboard/siteforge')
-    await page.getByRole('button', { name: 'Start New Website' }).click()
-
-    await expect(page).toHaveURL(/\/dashboard\/siteforge\/[0-9a-f-]+$/i)
-    await expect(
-      page.getByRole('heading', { name: 'Build your property website' })
-    ).toBeVisible()
-    await expect(page.getByText('Conversation', { exact: true }).first()).toBeVisible()
-    await expect(
-      page.getByRole('heading', { name: /Add Property Assets/i })
-    ).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Copy brief for Codex' })).toBeDisabled()
+    await page.getByLabel('What would you like to build or change?').fill('Revise the gallery only.')
+    await page.getByText('Preview the brief', { exact: true }).click()
+    await expect(page.getByLabel('Prepared Codex brief')).toHaveValue(/Revise the gallery only\./)
+    await expect(page).toHaveURL(/\/dashboard\/siteforge$/)
+    expect(mutations).toEqual([])
   })
 
   test('siteforge guided shell remains readable in light and dark themes', async ({
@@ -3925,7 +3897,7 @@ test.describe('local smoke flows', () => {
     expect(statusData.brandAsset?.approvedSections).toBe(12)
     expect(typeof statusData.brandAsset?.pdfUrl).toBe('string')
 
-    const legalResponse = await callAuthedApi(page, '/api/onboarding/legal', {
+    const legalResponse = await saveAndApproveFixtureLegal(page, {
       method: 'PUT',
       body: {
         propertyId,
@@ -3970,6 +3942,7 @@ test.describe('local smoke flows', () => {
         const form = new FormData()
         form.set('propertyId', targetPropertyId)
         form.set('role', 'primary_logo')
+        form.set('requestId', crypto.randomUUID())
         form.set('rightsStatus', 'owned')
         form.set('altText', 'Existing Brand logo')
         form.set(
@@ -3989,6 +3962,8 @@ test.describe('local smoke flows', () => {
           body: JSON.stringify({
             propertyId: targetPropertyId,
             assetId: uploadBody.asset.id,
+            requestId: crypto.randomUUID(),
+            revision: uploadBody.asset.governance_revision,
             approvalStatus: 'approved',
             rightsStatus: 'owned',
             rightsMetadata: { operatorConfirmed: true },
@@ -4099,6 +4074,7 @@ test.describe('local smoke flows', () => {
         body: {
           propertyId,
           importId: preview?.id,
+          requestId: crypto.randomUUID(),
           contract: preview?.extracted_contract,
           resolutions: {},
         },
@@ -4108,7 +4084,7 @@ test.describe('local smoke flows', () => {
       confirmResponse.ok,
       `Existing brand confirmation failed: ${JSON.stringify(confirmResponse)}`
     ).toBe(true)
-    const legalResponse = await callAuthedApi(page, '/api/onboarding/legal', {
+    const legalResponse = await saveAndApproveFixtureLegal(page, {
       method: 'PUT',
       body: {
         propertyId,

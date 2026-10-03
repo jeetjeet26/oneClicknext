@@ -1,5 +1,7 @@
 'use client'
 
+import {loadSocialConnections} from '@/utils/forgestudio/connections-client'
+
 import { useState, useEffect, useCallback } from 'react'
 import { DraftCard } from './DraftCard'
 import { AssetPickerModal } from './AssetPickerModal'
@@ -15,27 +17,7 @@ import {
   Archive
 } from 'lucide-react'
 
-interface ContentAsset {
-  id: string
-  name: string
-  description: string | null
-  asset_type: 'image' | 'video' | 'gif' | 'audio'
-  file_url: string
-  thumbnail_url: string | null
-  file_size_bytes: number | null
-  width: number | null
-  height: number | null
-  duration_seconds: number | null
-  format: string | null
-  is_ai_generated: boolean
-  generation_provider: string | null
-  generation_prompt: string | null
-  tags: string[]
-  folder: string | null
-  is_favorite: boolean
-  usage_count: number
-  created_at: string
-}
+type ContentAsset=import('@/utils/forgestudio/asset-library').LibraryAsset
 
 interface ContentDraft {
   id: string
@@ -189,11 +171,10 @@ export function DraftList({ propertyId, onEditDraft, refreshTrigger }: DraftList
       if (!draft) return
 
       // Fetch connections for this property
-      const connRes = await fetch(`/api/forgestudio/social/connections?propertyId=${propertyId}`)
-      const connData = await connRes.json()
+      const connData = await loadSocialConnections(propertyId)
       
       const activeConnections = (connData.connections || [])
-        .filter((c: { is_active: boolean; platform: string }) => c.is_active && c.platform === draft.platform)
+        .filter((c) => c.is_active===true && c.platform === draft.platform)
 
       if (activeConnections.length === 0) {
         alert(`No active ${draft.platform} connection found. Please connect your account in the Connections tab.`)

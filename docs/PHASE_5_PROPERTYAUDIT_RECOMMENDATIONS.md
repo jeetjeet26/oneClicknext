@@ -1,0 +1,19 @@
+# PropertyAudit saved recommendation generation and review
+
+September 23, 2026. This increment is locally qualified. Whole PropertyAudit and Phase 5 remain open.
+
+Recommendations now have an exact retained source, configured model, provider request, actual response and separately reviewed result. The worker retains raw output before parsing or validating it. An uncertain invocation is held for review; automatic provider fallback and unrecorded replacement paths are retired. Lost receipt acknowledgments retry persistence with the same identity. Saved-response recovery makes no new model call, and records the actual parser version used.
+
+The source includes complete stored crawl pages, findings, original measurement question variants and individual observations. The bounded model prompt discloses selected versus available findings, pages and question versions, missing original question evidence and synthetic measurements. Repeated measurements and changed prompt wording remain distinct. Proposed current website copy comes from the captured page rather than a model claim. Unsupported proposals are counted, and generated text remains a suggestion requiring review.
+
+Operators can prepare work, inspect source and output, stop, discard, apply an exact preview, recover a saved response and explicitly request a linked retry. Application checks current permission and unchanged source, then commits the replacement and action record atomically while preserving earlier recommendations. Complete paged source/history views and ID-only browser recovery are included. A current manager can explicitly take responsibility for recovering an existing response after the original requester loses access; both actors retain their actual attribution. Automatic analysis inherits a recorded audit request that explicitly included the crawl, and checks current authorization before calling a provider. Human and system actions remain distinct and training-ineligible.
+
+## Qualification
+
+- 34 application cases across four suites passed, including strict origin/account/model/source checks, reviewed decisions, read scoping and retirement of unrecorded analysis execution.
+- 54 Python cases across six suites passed, covering complete-source prompt selection, question versions and repeated observations, actual parameter capture, retained raw output before validation, malformed/ungrounded responses, no fallback or repeat after uncertainty, lost receipt acknowledgments and existing measurement/crawl recovery.
+- 166 assertions passed in the recommendation rollback suite: 91 inherited controls plus 75 recommendation checks, including automatic authority, late responses, current-role withdrawal, recorded manager recovery and atomic approval rollback. The selected regression passed 3,061 assertions across 53 serial rollback suites; counts include shared fixture coverage.
+- All 30 connected browser journeys passed: eight controls, six reports, three measurement reads, six evaluations and seven recommendations. Recommendation journeys cover preview/application, lost request and approval replies, unused cancellation, stop/late receipt/linked retry, stale-source discard, complete history and permission withdrawal. Desktop/mobile views were inspected.
+- Full application types, targeted lint and schema stamp passed. One existing page effect dependency warning remains. All 614 checked native function bodies match saved migrations; selected fixtures/orphans and migration-history entries are zero. Advisors remain at 1,333 existing findings with no additions.
+
+Only local synthetic receipts were used. No real model/provider calls, hosted writes, outgoing delivery, training or autonomous activation occurred. Login remains email/password only. Finish remaining crawl/measurement worker qualification and every open holistic product gate; real provider/client acceptance remains deferred.

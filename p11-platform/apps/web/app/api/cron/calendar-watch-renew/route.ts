@@ -10,6 +10,9 @@ import {
 } from '@/utils/services/google-calendar'
 
 type CalendarConfigRow = {
+  credential_version?:number
+  provider_subject?:string|null
+  tenant_id?:string|null
   id: string
   property_id: string | null
   provider: string | null
@@ -53,6 +56,9 @@ function toCalendarConfig(config: CalendarConfigRow): CalendarConfig | null {
 
   return {
     id: config.id,
+    credential_version:config.credential_version,
+    provider_subject:config.provider_subject,
+    tenant_id:config.tenant_id,
     property_id: config.property_id,
     provider: config.provider === 'microsoft' ? 'microsoft' : 'google',
     google_email: config.google_email || config.account_email || '',

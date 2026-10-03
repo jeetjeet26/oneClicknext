@@ -174,4 +174,14 @@ describe('shared dispatcher', () => {
     expect(firstEqMock).toHaveBeenCalledWith('id', 'action-1')
     expect(secondEqMock).toHaveBeenCalledWith('property_id', 'property-1')
   })
+  it.each(['marketvision.proposal','marketvision.handoff'])('does not resume or replay %s outside exact draft approval', async domain=>{
+    fromMock.mockReturnValue({select:()=>({eq:()=>({single:async()=>({data:{id:'attempt',job_id:'job',org_id:'org',property_id:'property',action_type:'forgestudio_messaging_brief',proposal_decision_status:'approved',execution_status:'failed',shared_jobs:{id:'job',domain}},error:null})})})})
+    const {resumeSharedActionAttempt,isSharedActionDispatchRegistered}=await import('./shared-dispatcher')
+    expect(isSharedActionDispatchRegistered(domain,'forgestudio_messaging_brief')).toBe(false)
+    await expect(resumeSharedActionAttempt('attempt','resume')).rejects.toMatchObject({statusCode:501})
+    await expect(resumeSharedActionAttempt('attempt','replay')).rejects.toMatchObject({statusCode:501})
+    expect(executeExistingSharedJobMock).not.toHaveBeenCalled()
+    expect(global.fetch).not.toHaveBeenCalled()
+  })
+
 })

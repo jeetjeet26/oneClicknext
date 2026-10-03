@@ -11,7 +11,11 @@
     "supabase:env:local": "node ./scripts/write-local-supabase-env.mjs",
     "test:db:vertical": "npx supabase test db supabase/tests/vertical_platform_v2.test.sql",
     "local:start": "bash ./scripts/local-dev.sh",
-    "smoke:local": "cd ./apps/web && npm run test:smoke"
+    "smoke:local": "cd ./apps/web && npm run test:smoke",
+    "qualify:platform:tools": "python3 -m unittest discover -s scripts/platform -v",
+    "qualify:upgrade": "python3 scripts/platform/rehearsal.py",
+    "evaluate:agency:proposals": "python3 scripts/platform/proposals.py",
+    "review:agency:demand": "python3 scripts/platform/scale.py"
   },
   "keywords": [],
   "author": "",

@@ -174,7 +174,7 @@ function generatedContract(
   }
   return normalizeBrandForgeContract(source, {
     origin: 'generated',
-    approvalStatus: 'approved',
+    approvalStatus: 'reviewing',
     confidence: snapshot.evidence.length > 0 ? 0.85 : 0.65,
   })
 }
@@ -190,7 +190,7 @@ export function applyCompetitiveWebsiteExpression(
     ...section,
     _meta: {
       ...section._meta,
-      approval: { status: 'approved' },
+      approval: { status: 'reviewing' },
     },
   })
   return normalizeBrandForgeContract({
@@ -219,6 +219,7 @@ export function applyCompetitiveWebsiteExpression(
       ],
       _meta: {
         ...contract.implementation._meta,
+        approval: { status: 'reviewing' },
         provenance: {
           ...contract.implementation._meta.provenance,
           examples: provenance,
@@ -227,7 +228,7 @@ export function applyCompetitiveWebsiteExpression(
     },
   }, {
     origin: contract.origin,
-    approvalStatus: 'approved',
+    approvalStatus: 'reviewing',
     confidence: contract.implementation._meta.confidence,
   })
 }

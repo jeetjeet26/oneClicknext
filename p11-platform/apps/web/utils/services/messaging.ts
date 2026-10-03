@@ -1,3 +1,4 @@
+import { DELIVERY_PAUSED_MESSAGE,isDeliveryPaused } from './delivery-guard'
 /**
  * TourSpark Messaging Service
  * Handles SMS (Telnyx) and Email (Resend) sending
@@ -128,6 +129,7 @@ export async function sendSMS(
   body: string,
   from?: string
 ): Promise<MessageResult> {
+  if (isDeliveryPaused()) return { success: false, error: DELIVERY_PAUSED_MESSAGE, channel: 'sms' }
   const apiKey = process.env.TELNYX_API_KEY
   const fromNumber = from || process.env.TELNYX_PHONE_NUMBER
 
@@ -169,6 +171,7 @@ export async function sendSMS(
     }
 
     const messageId = data?.data?.id
+    if (!messageId) return { success: false, error: 'SMS acceptance was not confirmed. Review delivery before retrying.', channel: 'sms' }
     console.log(`[SMS] Sent to ${to}: ${messageId}`)
 
     return {
@@ -204,10 +207,13 @@ export async function sendEmail(
   body: string,
   from?: string,
   html?: string,
-  attachments?: EmailAttachment[]
+  attachments?: EmailAttachment[],
+  idempotencyKey?: string
 ): Promise<MessageResult> {
+  if (isDeliveryPaused()) return { success: false, error: DELIVERY_PAUSED_MESSAGE, channel: 'email' }
   const client = getResendClient()
-  const fromEmail = from || process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev'
+  const fromEmail = from || process.env.RESEND_FROM_EMAIL
+  if (!fromEmail) return { success: false, error: 'Email sender is not configured', channel: 'email' }
 
   // Validate inputs
   if (!to || !subject || !body) {
@@ -243,7 +249,7 @@ export async function sendEmail(
       text: body,
       ...(html && { html }),
       ...(resendAttachments?.length && { attachments: resendAttachments }),
-    })
+    }, idempotencyKey ? { idempotencyKey } : undefined)
 
     const resendResult = result as ResendSendResultShape
     const resendError = getResendErrorMessage(resendResult)
@@ -257,6 +263,7 @@ export async function sendEmail(
     }
 
     const messageId = getResendMessageId(resendResult)
+    if (!messageId) return { success: false, error: 'Email acceptance was not confirmed. Review delivery before retrying.', channel: 'email' }
     console.log(`[Email] Sent to ${to}: ${messageId}`)
 
     return {
@@ -305,8 +312,9 @@ export async function sendMessage(options: SendMessageOptions): Promise<MessageR
  * Check if messaging is configured
  */
 export function isMessagingConfigured(): { sms: boolean; email: boolean } {
+  if (isDeliveryPaused()) return { sms: false, email: false }
   return {
     sms: !!(process.env.TELNYX_API_KEY && process.env.TELNYX_PHONE_NUMBER),
-    email: !!process.env.RESEND_API_KEY,
+    email: !!(process.env.RESEND_API_KEY && process.env.RESEND_FROM_EMAIL),
   }
 }

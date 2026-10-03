@@ -1,0 +1,6 @@
+import {afterEach,expect,it,vi} from 'vitest'
+import {loadSocialConnections} from './connections-client'
+afterEach(()=>vi.unstubAllGlobals())
+it('loads subsequent account pages before returning a complete destination list',async()=>{const fetchMock=vi.fn().mockResolvedValueOnce(Response.json({connections:[{id:'one'}],nextCursor:'cursor-one'})).mockResolvedValueOnce(Response.json({connections:[{id:'two'}],nextCursor:null}));vi.stubGlobal('fetch',fetchMock);expect((await loadSocialConnections('property')).connections.map(c=>c.id)).toEqual(['one','two']);expect(fetchMock.mock.calls[1][0]).toContain('cursor=cursor-one')})
+it('rejects a partial destination list when a later page fails',async()=>{vi.stubGlobal('fetch',vi.fn().mockResolvedValueOnce(Response.json({connections:[{id:'one'}],nextCursor:'cursor-one'})).mockResolvedValueOnce(Response.json({error:'Second page unavailable'},{status:503})));await expect(loadSocialConnections('property')).rejects.toThrow('Second page unavailable')})
+it('rejects a repeated cursor instead of looping or claiming complete accounts',async()=>{vi.stubGlobal('fetch',vi.fn().mockImplementation(()=>Promise.resolve(Response.json({connections:[],nextCursor:'repeated'}))));await expect(loadSocialConnections('property')).rejects.toThrow('incomplete')})

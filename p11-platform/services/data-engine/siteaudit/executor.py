@@ -15,7 +15,6 @@ from urllib.parse import urlparse
 
 from supabase import Client
 
-from siteaudit.analyst import SiteAuditAnalyst
 from siteaudit.crawler import DEFAULT_PAGE_CAP, SiteCrawler
 from siteaudit.detectors import run_detectors
 from siteaudit.findings import sync_findings
@@ -51,6 +50,7 @@ def recover_stale_crawls(supabase: Client, stale_after_seconds: Optional[int] = 
         supabase.table("geo_site_crawls")
         .select("id, status, last_updated_at, started_at, pages_crawled")
         .eq("status", "running")
+        .is_("operator_request_id", "null")
         .execute()
     )
     recovered = 0
@@ -85,20 +85,26 @@ class SiteAuditExecutor:
             "last_updated_at": _utc_now().isoformat(),
             "error_message": None,
             "finished_at": None,
-        }).eq("id", crawl_id).eq("status", "queued").execute()
+        }).eq("id", crawl_id).eq("status", "queued").is_("operator_request_id", "null").execute()
         if response.data:
             return response.data[0]
         return None
 
     def claim_resumable_crawl(self, crawl_id: str) -> Optional[Dict[str, Any]]:
-        """Claim a failed crawl that has checkpoint state, for resume."""
-        response = self.supabase.table("geo_site_crawls").update({
+        """Check the saved checkpoint before changing the legacy failed crawl's state."""
+        current = self.supabase.table("geo_site_crawls").select("id,crawl_state,last_updated_at").eq("id", crawl_id).eq("status", "failed").is_("operator_request_id", "null").limit(1).execute().data or []
+        if not current or not isinstance(current[0].get("crawl_state"), dict) or "frontier" not in current[0]["crawl_state"]:
+            return None
+        query = self.supabase.table("geo_site_crawls").update({
             "status": "running",
             "last_updated_at": _utc_now().isoformat(),
             "error_message": None,
             "finished_at": None,
-        }).eq("id", crawl_id).eq("status", "failed").execute()
-        if response.data and (response.data[0].get("crawl_state") or {}).get("frontier"):
+        }).eq("id", crawl_id).eq("status", "failed").is_("operator_request_id", "null")
+        revision = current[0].get("last_updated_at")
+        query = query.eq("last_updated_at", revision) if revision else query.is_("last_updated_at", "null")
+        response = query.execute()
+        if response.data:
             return response.data[0]
         return None
 
@@ -114,14 +120,14 @@ class SiteAuditExecutor:
 
     def _load_existing_pages(self, crawl_id: str) -> List[PageRecord]:
         """Rebuild in-memory PageRecords from previously checkpointed rows (resume)."""
-        response = (
-            self.supabase.table("geo_crawl_pages")
-            .select("*")
-            .eq("crawl_id", crawl_id)
-            .execute()
-        )
+        rows = []
+        while True:
+            batch = (self.supabase.table("geo_crawl_pages").select("*").eq("crawl_id", crawl_id).order("id").range(len(rows), len(rows) + 499).execute().data or [])
+            rows.extend(batch)
+            if len(batch) < 500:
+                break
         pages: List[PageRecord] = []
-        for row in response.data or []:
+        for row in rows:
             pages.append(PageRecord(
                 url=row["url"],
                 final_url=row.get("final_url"),
@@ -190,7 +196,7 @@ class SiteAuditExecutor:
             batch_id = crawl.get("batch_id")
 
             resume_state = crawl.get("crawl_state") or {}
-            resume_pages = self._load_existing_pages(crawl_id) if resume_state.get("frontier") else []
+            resume_pages = self._load_existing_pages(crawl_id) if "frontier" in resume_state else []
 
             async def checkpoint(state: Dict[str, Any], pages: List[PageRecord]) -> None:
                 # Persist newly crawled pages and the frontier so a restart can resume.
@@ -241,19 +247,13 @@ class SiteAuditExecutor:
             findings = run_detectors(context)
             sync_result = sync_findings(self.supabase, property_id, crawl_id, findings)
 
-            # LLM analysis layer
-            analyst_result: Dict[str, Any] = {"success": False, "error": "disabled"}
-            if self.analyst_enabled:
-                analyst = SiteAuditAnalyst(self.supabase)
-                analyst_result = await analyst.generate(property_id, crawl_id, batch_id)
-
+            # Legacy technical captures do not establish authority for an AI invocation.
+            analyst_result: Dict[str, Any] = {"success": False, "error": "reviewed_request_required"}
             crawl_update = {
                 "status": "completed",
                 "finished_at": _utc_now().isoformat(),
                 "last_updated_at": _utc_now().isoformat(),
             }
-            if not analyst_result.get("success"):
-                crawl_update["error_message"] = f"analyst:{analyst_result.get('error') or 'failed'}"[:2000]
 
             self.supabase.table("geo_site_crawls").update(crawl_update).eq("id", crawl_id).execute()
 

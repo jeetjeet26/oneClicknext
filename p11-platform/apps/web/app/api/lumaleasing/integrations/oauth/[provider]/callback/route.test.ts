@@ -1,38 +1,39 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { NextRequest } from 'next/server'
-
-vi.mock('@/utils/supabase/admin', () => ({
-  createServiceClient: vi.fn(),
-}))
-
-vi.mock('@/utils/services/google-calendar', () => ({
-  getCalendarConfig: vi.fn(),
-  ensureCalendarWatch: vi.fn(),
-}))
-
-describe('integration OAuth callback route', () => {
-  beforeEach(() => {
-    vi.resetModules()
-    vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://app.example.com')
-  })
-
-  afterEach(() => {
-    vi.restoreAllMocks()
-    vi.unstubAllEnvs()
-  })
-
-  it('redirects invalid callbacks without creating a connection', async () => {
-    const { GET } = await import('./route')
-    const request = new Request(
-      'http://localhost/api/lumaleasing/integrations/oauth/google/callback?error=access_denied'
-    ) as NextRequest
-
-    const response = await GET(request, { params: Promise.resolve({ provider: 'google' }) })
-    const location = new URL(response.headers.get('location') as string)
-
-    expect(response.status).toBe(307)
-    expect(location.origin).toBe('https://app.example.com')
-    expect(location.pathname).toBe('/dashboard/lumaleasing')
-    expect(location.searchParams.get('error')).toBe('access_denied')
-  })
+import {afterEach,beforeEach,expect,it,vi} from 'vitest'
+import {NextRequest} from 'next/server'
+const d=vi.hoisted(()=>({operation:vi.fn(),close:vi.fn(),fetch:vi.fn()}))
+vi.mock('@/utils/services/integration-authorization',()=>({authorizationOperation:d.operation,closeAuthorizationOutcome:d.close}))
+vi.mock('@/utils/services/google-calendar',()=>({getCalendarConfig:vi.fn(),ensureCalendarWatch:vi.fn()}))
+import {createSignedIntegrationOAuthState} from '@/utils/services/integration-oauth-state'
+import {GET} from './route'
+const payload={requestId:'request',redirectUri:'https://app.example.com/callback',provider:'google' as const,propertyId:'property',capabilities:['calendar' as const],authSource:'external_invite' as const,inviteId:'invite',tokenHash:'private-invite-hash'}
+const saved={state:'saved',requestId:'request',calendarId:'calendar',timezoneSetupRequired:true}
+const signed=(overrides={})=>createSignedIntegrationOAuthState({...payload,...overrides})
+async function invoke(query:Record<string,string|undefined>,provider='google'){
+ const response=await GET(new NextRequest('http://localhost/callback?'+new URLSearchParams(Object.entries(query).filter((entry):entry is [string,string]=>typeof entry[1]==='string'))),{params:Promise.resolve({provider})})
+ return new URL(response.headers.get('location')!)
+}
+beforeEach(()=>{
+ vi.resetAllMocks();vi.stubEnv('NEXT_PUBLIC_SITE_URL','https://app.example.com');vi.stubEnv('INTEGRATION_OAUTH_STATE_SECRET','fixture');vi.stubEnv('GOOGLE_CLIENT_ID','fixture');vi.stubEnv('GOOGLE_CLIENT_SECRET','fixture');vi.stubGlobal('fetch',d.fetch)
+ d.operation.mockResolvedValue({state:'claimed',claimToken:'owner'})
+ d.close.mockImplementation(async(_state,reason)=>({state:reason,requestId:'request',actionEventId:'request'}))
+ d.fetch.mockImplementation(async(input:RequestInfo|URL)=>String(input).includes('/token')?Response.json({access_token:'private-token',refresh_token:'private-refresh',token_type:'Bearer',expires_in:3600,scope:'https://www.googleapis.com/auth/calendar'}):String(input).includes('/userinfo')?Response.json({email:'private@example.invalid',id:'subject'}):Response.json({value:null}))
 })
+afterEach(()=>{vi.unstubAllEnvs();vi.unstubAllGlobals();vi.restoreAllMocks()})
+it.each([{error:'access_denied'}, {state:'forged',error:'access_denied'}, {state:'forged',code:'private-code'}])('does not attribute an unsigned callback %#',async query=>{
+ const url=await invoke(query);expect(url.searchParams.get('error')).toBe('invalid_callback');expect(url.pathname).toBe('/dashboard/lumaleasing');expect(d.close).not.toHaveBeenCalled();expect(d.operation).not.toHaveBeenCalled();expect(d.fetch).not.toHaveBeenCalled()
+})
+it('checks the provider even on a signed cancellation',async()=>{const url=await invoke({state:signed(),error:'access_denied'},'microsoft');expect(url.searchParams.get('error')).toBe('provider_mismatch');expect(d.close).not.toHaveBeenCalled();expect(d.fetch).not.toHaveBeenCalled()})
+it('records a signed external cancellation and returns public recovery without a provider call',async()=>{const url=await invoke({state:signed(),error:'access_denied',error_description:'private-provider-text'});expect(url.pathname).toBe('/lumaleasing/integrations/success');expect(url.searchParams.get('error')).toBe('authorization_denied');expect(d.close).toHaveBeenCalledWith(expect.objectContaining({requestId:'request'}),'authorization_denied',undefined);expect(d.operation).not.toHaveBeenCalled();expect(d.fetch).not.toHaveBeenCalled();expect(url.href).not.toContain('private')})
+it('bounds provider errors to a registered outcome',async()=>{expect((await invoke({state:signed(),error:'arbitrary-secret-error'})).searchParams.get('error')).toBe('provider_error');expect(d.close.mock.calls[0][1]).toBe('provider_error')})
+it('closes a signed callback missing its code',async()=>{expect((await invoke({state:signed()})).searchParams.get('error')).toBe('invalid_callback');expect(d.close).toHaveBeenCalled();expect(d.fetch).not.toHaveBeenCalled()})
+it('uses expired signed state only to close, never exchange',async()=>{expect((await invoke({state:signed({timestamp:Date.now()-16*60000}),code:'private-code'})).searchParams.get('error')).toBe('expired_state');expect(d.close.mock.calls[0][1]).toBe('expired_state');expect(d.operation).not.toHaveBeenCalled();expect(d.fetch).not.toHaveBeenCalled()})
+it('does not close or exchange when another worker already owns the request',async()=>{d.operation.mockResolvedValue({state:'authorization_unconfirmed'});expect((await invoke({state:signed(),code:'private-code'})).searchParams.get('error')).toBe('authorization_unconfirmed');expect(d.close).not.toHaveBeenCalled();expect(d.fetch).not.toHaveBeenCalled()})
+it('leaves an uncertain claim for expiry without claiming ownership',async()=>{d.operation.mockRejectedValue(new Error('lost claim acknowledgement'));expect((await invoke({state:signed(),code:'private-code'})).searchParams.get('error')).toBe('authorization_unconfirmed');expect(d.close).not.toHaveBeenCalled();expect(d.fetch).not.toHaveBeenCalled()})
+it('records rejected token exchange once, with the owner and without raw errors',async()=>{d.fetch.mockResolvedValue(new Response('private-provider-body',{status:400}));expect((await invoke({state:signed(),code:'private-code'})).searchParams.get('error')).toBe('provider_exchange_failed');expect(d.close).toHaveBeenCalledWith(expect.anything(),'provider_exchange_failed','owner');expect(d.fetch).toHaveBeenCalledTimes(1)})
+it('does not retry an ambiguous provider exchange',async()=>{d.fetch.mockRejectedValue(new Error('private network detail'));expect((await invoke({state:signed(),code:'private-code'})).searchParams.get('error')).toBe('authorization_unconfirmed');expect(d.fetch).toHaveBeenCalledTimes(1);expect(d.close).toHaveBeenCalledWith(expect.anything(),'authorization_unconfirmed','owner')})
+it('records partial permission before fetching account details',async()=>{d.fetch.mockResolvedValue(Response.json({access_token:'private',refresh_token:'private',token_type:'Bearer',expires_in:3600,scope:'openid email'}));expect((await invoke({state:signed(),code:'private-code'})).searchParams.get('error')).toBe('permissions_incomplete');expect(d.fetch).toHaveBeenCalledTimes(1);expect(d.close.mock.calls[0][1]).toBe('permissions_incomplete')})
+it('records unconfirmed account identity',async()=>{d.fetch.mockResolvedValueOnce(Response.json({access_token:'private',refresh_token:'private',token_type:'Bearer',expires_in:3600,scope:'https://www.googleapis.com/auth/calendar'})).mockResolvedValueOnce(new Response('private-error',{status:503}));expect((await invoke({state:signed(),code:'private-code'})).searchParams.get('error')).toBe('account_unconfirmed');expect(d.close.mock.calls[0][1]).toBe('account_unconfirmed')})
+it('recovers a committed save after both save acknowledgements are lost',async()=>{d.operation.mockResolvedValueOnce({state:'claimed',claimToken:'owner'}).mockRejectedValueOnce(new Error('lost save'));d.close.mockResolvedValue({...saved,state:'replayed'});const url=await invoke({state:signed(),code:'private-code'});expect(url.searchParams.get('success')).toBe('calendar_setup_required');expect(d.close).toHaveBeenCalledWith(expect.anything(),'authorization_save_unconfirmed','owner')})
+it('does not present a cancellation as recorded when evidence cannot be saved',async()=>{d.close.mockRejectedValue(new Error('database unavailable'));expect((await invoke({state:signed(),error:'access_denied'})).searchParams.get('error')).toBe('authorization_outcome_unconfirmed');expect(d.fetch).not.toHaveBeenCalled()})
+it('does not overwrite successful authorization with delayed denial',async()=>{d.close.mockResolvedValue({...saved,state:'replayed'});expect((await invoke({state:signed(),error:'access_denied'})).searchParams.get('success')).toBe('calendar_setup_required');expect(d.operation).not.toHaveBeenCalled();expect(d.fetch).not.toHaveBeenCalled()})
+it('returns success after a confirmed save without a failure record',async()=>{d.operation.mockResolvedValueOnce({state:'claimed',claimToken:'owner'}).mockResolvedValueOnce(saved);expect((await invoke({state:signed(),code:'private-code'})).searchParams.get('success')).toBe('calendar_setup_required');expect(d.close).not.toHaveBeenCalled()})

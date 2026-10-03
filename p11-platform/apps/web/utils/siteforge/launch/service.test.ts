@@ -268,7 +268,7 @@ describe('SiteForge first-launch restore verification', () => {
     })
   })
 
-  it('creates an executable operator restore request for a first launch', async () => {
+  it.each([{source:'production_failure' as const,owner:false},{source:'production_health' as const,owner:false},{source:'production_health' as const,owner:true}])('creates an operator request without monitoring mutations ($source, owner=$owner)', async ({source,owner}) => {
     const release = {
       id: identity.releaseId,
       org_id: 'org-1',
@@ -278,13 +278,15 @@ describe('SiteForge first-launch restore verification', () => {
       artifact_content_hash: identity.contentHash,
       state: 'promoted',
       created_by: 'launch-operator',
-      approved_by: 'independent-reviewer',
+      approved_by: owner ? 'launch-operator' : 'independent-reviewer',
+      legal_rights_snapshot: owner ? { mode: 'owner_one_button' } : {},
       backup_id: 'cloudways-restore-point',
       rollback_artifact_id: null,
       rollback_content_hash: null,
     }
     const insertedDrills: Array<Record<string, unknown>> = []
     const insertedActions: Array<Record<string, unknown>> = []
+    const incidentWrites: Array<Record<string, unknown>> = []
     const chain = (result: unknown) => {
       const value: Record<string, unknown> = {}
       for (const method of [
@@ -329,8 +331,9 @@ describe('SiteForge first-launch restore verification', () => {
         }
         if (table === 'siteforge_incidents') {
           return {
-            select: vi.fn(() => chain({ data: null, error: null })),
-            insert: vi.fn(() => chain({ data: null, error: null })),
+            select: vi.fn(() => chain({ data: owner ? { id: 'existing-incident', updated_at: '2026-09-15T00:00:00Z' } : null, error: null })),
+            insert: vi.fn((values:Record<string,unknown>) => { incidentWrites.push(values); return chain({data:{id:'incident'},error:null}) }),
+            update: vi.fn((values:Record<string,unknown>) => { incidentWrites.push(values); return chain({data:{id:'existing-incident'},error:null}) }),
           }
         }
         if (table === 'shared_jobs') {
@@ -376,7 +379,7 @@ describe('SiteForge first-launch restore verification', () => {
           propertyId: release.property_id,
           rationale: 'Public certification failed',
           actorId: release.created_by,
-          source: 'production_failure',
+          source,
         },
         client as never
       )
@@ -407,5 +410,11 @@ describe('SiteForge first-launch restore verification', () => {
         rollbackContentHash: null,
       },
     })
+    if (source==='production_health') {
+      expect(client.from.mock.calls.some(([table])=>table==='property_websites')).toBe(false)
+      expect(incidentWrites[0].evidence).toMatchObject({protectionApplied:false,protectionRequiresOperator:true})
+    }
+    expect(incidentWrites[0]).not.toHaveProperty('status')
+
   })
 })

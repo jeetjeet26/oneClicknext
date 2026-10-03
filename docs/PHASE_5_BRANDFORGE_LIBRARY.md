@@ -1,0 +1,13 @@
+# Phase 5 — complete BrandForge asset review
+
+September 24, 2026. Supported local asset controls are qualified; client/provider acceptance remains deferred.
+
+BrandForge now has a property-specific asset library reachable from both its saved book and completion screen. It lists logos, fonts and other media with complete keyset paging, literal name search, visible read failures and current-version reload. Counts state their read time. Private rights and permission notes remain scoped to the property. Version history is independently paged.
+
+A manager can review existing rights, preserve an unchanged expiry exactly, approve permitted usage or withdraw approval with a reason. The existing native BrandForge decision transaction retains original versions and safe shared action evidence. Changed revisions, restricted/expired permissions and cross-property requests cannot approve a file. Decisions recover after a missed reply, including reload, using the recorded request and actual actor; recovery distinguishes the original saved review revision from current asset state. No raw license notes enter shared activity.
+
+Uploads, replacement, archive and restoration use the existing shared ForgeStudio file controls for the same explicit property. BrandForge keeps its stricter usage review. Archived assets cannot be approved here; restored and replacement assets need review. Existing imported books keep their exact saved sources, while new imports recheck current permissions. Physical file erasure and original package binary retention are separate retention work, not claimed by archive or approval withdrawal.
+
+Verification: 20 application cases across the affected asset API/store suites; full application types; clean lint for new and affected maintained modules; all twelve distinct connected browser journeys pass after narrowing one test selector and rerunning the affected journey. Browser coverage includes all 1,005 assets, original private version review, lost committed reply across reload, withdrawal, stale/restricted/cross-property holds, shared archive/replacement/recovery, brand imports and the assistant handoff. The mobile review was inspected. The older brand-book page received only a navigation link; its unrelated existing lint debt was not expanded. No new schema migration. All 672 saved native function bodies match; selected fixtures/history entries are zero and the existing 1,333 advisor findings are unchanged.
+
+No hosted mutation, actual external provider/model call, delivery, deployment or training occurred. Email/password login remains unchanged. This closes the supported asset-library remainder; it does not certify live acceptance or the entire Phase 5 gate.

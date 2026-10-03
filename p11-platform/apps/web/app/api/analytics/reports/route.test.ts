@@ -1,0 +1,22 @@
+import{beforeEach,describe,it,expect,vi}from'vitest'
+const mocked=vi.hoisted(()=>({actor:vi.fn(),rpc:vi.fn(),current:vi.fn()}))
+vi.mock('@/utils/analytics/report-store',async()=>{const{InventoryError}=await import('@/utils/knowledge/inventory');return{BiError:InventoryError,biActor:mocked.actor,biRpc:mocked.rpc,currentBiReport:mocked.current}})
+import{GET,POST}from'./route'
+import{InventoryError}from'@/utils/knowledge/inventory'
+const propertyId='33333333-3333-3333-3333-333333333333',actor='11111111-1111-1111-1111-111111111111',id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+const post=(body:unknown,origin='http://localhost')=>new Request('http://localhost/api/analytics/reports',{method:'POST',headers:{origin,'content-type':'application/json'},body:JSON.stringify(body)})
+beforeEach(()=>{vi.clearAllMocks();mocked.actor.mockResolvedValue(actor);mocked.rpc.mockResolvedValue({state:'saved',propertyId,id,status:'cancelled'});mocked.current.mockResolvedValue({propertyId,actorId:actor})})
+describe('scoped report API',()=>{
+ it('rejects a cross-origin mutation before reading credentials',async()=>{expect((await POST(post({operation:'cancel',propertyId,id,expectedActorId:actor},'https://other.test'))).status).toBe(403);expect(mocked.rpc).not.toHaveBeenCalled();expect(mocked.actor).not.toHaveBeenCalled()})
+ it('requires authentication for reads',async()=>{mocked.actor.mockRejectedValue(new InventoryError('Sign in.',401));expect((await GET(new Request(`http://localhost/api/analytics/reports?propertyId=${propertyId}&kind=history`))).status).toBe(401);expect(mocked.rpc).not.toHaveBeenCalled()})
+ it('holds pending request after account changes',async()=>{expect((await POST(post({operation:'cancel',propertyId,id,expectedActorId:id}))).status).toBe(409);expect(mocked.rpc).not.toHaveBeenCalled()})
+ it('calls exact owner-scoped cancellation and disables caching',async()=>{const r=await POST(post({operation:'cancel',propertyId,id,expectedActorId:actor}));expect(r.status).toBe(200);expect(mocked.rpc).toHaveBeenCalledWith('cancel_bi_report',{p_id:id,p_actor_id:actor,p_property_id:propertyId});expect(r.headers.get('cache-control')).toContain('no-store')})
+ it('binds source filters without accepting client metrics',async()=>{const filters={startDate:'2026-08-01',endDate:'2026-08-31',compare:true,channel:null,account:null};expect((await POST(post({operation:'save',propertyId,id,expectedActorId:actor,filters,label:'Review',sourceHash:'a'.repeat(64)}))).status).toBe(200);expect(mocked.rpc).toHaveBeenCalledWith('save_bi_report',expect.objectContaining({p_input:{filters,label:'Review',sourceHash:'a'.repeat(64)}}))})
+ it('only records allowed browser outcome',async()=>{expect((await POST(post({operation:'observe',propertyId,id,expectedActorId:actor,outcome:'delivered'}))).status).toBe(400);expect(mocked.rpc).not.toHaveBeenCalled()})
+ it('returns current actor for history recovery even without live metrics',async()=>{const r=await GET(new Request(`http://localhost/api/analytics/reports?propertyId=${propertyId}&kind=history`));expect(await r.json()).toMatchObject({actorId:actor});expect(mocked.current).not.toHaveBeenCalled()})
+ it('rejects invalid dates before executing source query',async()=>{expect((await GET(new Request(`http://localhost/api/analytics/reports?propertyId=${propertyId}&startDate=2026-02-30&endDate=2026-08-01`))).status).toBe(400);expect(mocked.current).not.toHaveBeenCalled()})
+ it('preserves empty legacy account filter',async()=>{expect((await GET(new Request(`http://localhost/api/analytics/reports?propertyId=${propertyId}&startDate=2026-08-01&endDate=2026-08-31&account=&compare=true`))).status).toBe(200);expect(mocked.current).toHaveBeenCalledWith(actor,propertyId,expect.objectContaining({account:'',compare:true}))})
+ it('bounds command body',async()=>{expect((await POST(post({content:'x'.repeat(9000)}))).status).toBe(413);expect(mocked.rpc).not.toHaveBeenCalled()})
+ it('requires report reference for exports history',async()=>{expect((await GET(new Request(`http://localhost/api/analytics/reports?propertyId=${propertyId}&kind=exports`))).status).toBe(400);expect(mocked.rpc).not.toHaveBeenCalled()})
+ it('does not expose internal exception details',async()=>{mocked.rpc.mockRejectedValue(new Error('PRIVATE_DATABASE_DATA'));const r=await POST(post({operation:'cancel',propertyId,id,expectedActorId:actor}));expect(r.status).toBe(503);expect(await r.text()).not.toContain('PRIVATE_DATABASE_DATA')})
+})

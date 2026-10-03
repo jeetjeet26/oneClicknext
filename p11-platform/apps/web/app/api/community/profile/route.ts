@@ -2,9 +2,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { createAdminClient } from '@/utils/supabase/admin'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
-import { normalizePublicWebsiteUrl } from '@/utils/services/public-url'
-import { assertValidPropertyType } from '@/utils/property-types'
-import { editPropertyChatbotContext } from '@/utils/services/chatbot-context-editor'
 
 export async function GET(request: NextRequest) {
   try {
@@ -72,97 +69,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-export async function PUT(request: NextRequest) {
-  try {
-    const supabase = await createClient()
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const body = await request.json()
-    const { propertyId, ...updates } = body
-
-    if (!propertyId) {
-      return NextResponse.json({ error: 'propertyId is required' }, { status: 400 })
-    }
-
-    let propertyType: string | null
-    try {
-      propertyType = assertValidPropertyType(updates.communityType || updates.propertyType || null)
-    } catch {
-      return NextResponse.json({ error: 'Invalid property type' }, { status: 400 })
-    }
-
-    const access = await validatePropertyAccess(user.id, propertyId)
-    if (!access.authorized) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-    }
-
-    const adminClient = createAdminClient()
-
-    // Update property directly (profile data is now on properties table)
-    const { data, error } = await adminClient
-      .from('properties')
-      .update({
-        property_type: propertyType,
-        website_url: normalizePublicWebsiteUrl(updates.websiteUrl),
-        unit_count: updates.unitCount || null,
-        year_built: updates.yearBuilt || null,
-        amenities: updates.amenities || [],
-        pet_policy: updates.petPolicy || {},
-        parking_info: updates.parkingInfo || {},
-        special_features: updates.specialFeatures || [],
-        brand_voice: updates.brandVoice || null,
-        target_audience: updates.targetAudience || null,
-        office_hours: updates.officeHours || {},
-        social_media: updates.socialMedia || {},
-      })
-      .eq('id', propertyId)
-      .select()
-      .single()
-
-    if (error) {
-      console.error('Error updating property:', error)
-      return NextResponse.json({ error: 'Failed to update property' }, { status: 500 })
-    }
-
-    try {
-      const contextResult = await editPropertyChatbotContext(adminClient, propertyId, {
-        changeSummary: 'Community profile details changed.',
-        mode: 'source_change',
-      })
-      if (!contextResult.success) {
-        console.error('Chatbot context edit failed after community profile update:', contextResult.error)
-      }
-    } catch (contextError) {
-      console.error('Chatbot context edit failed after community profile update:', contextError)
-    }
-
-    // Return in the expected profile format for backward compatibility
-    const profile = {
-      id: data.id,
-      property_id: data.id,
-      legal_name: data.name,
-      community_type: data.property_type,
-      website_url: data.website_url,
-      unit_count: data.unit_count,
-      year_built: data.year_built,
-      amenities: data.amenities || [],
-      pet_policy: data.pet_policy || {},
-      parking_info: data.parking_info || {},
-      special_features: data.special_features || [],
-      brand_voice: data.brand_voice,
-      target_audience: data.target_audience,
-      office_hours: data.office_hours || {},
-      social_media: data.social_media || {},
-      intake_completed_at: data.onboarding_completed_at,
-    }
-
-    return NextResponse.json({ success: true, profile })
-  } catch (error) {
-    console.error('Property profile update error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
-  }
+export async function PUT() {
+ const {data:{user},error}=await(await createClient()).auth.getUser()
+ return NextResponse.json({error:error||!user?'Unauthorized':'Open Edit Profile to save a versioned property change.'},{status:error||!user?401:410,headers:{'Cache-Control':'private, no-store'}})
 }

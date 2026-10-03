@@ -12,8 +12,6 @@ import json
 import logging
 import os
 import re
-import uuid
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from supabase import Client
@@ -38,10 +36,6 @@ competitors in the provided data.
 - Use the property's actual name, location, and page URLs from the data. Do not invent URLs or facts."""
 
 
-def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
 def openai_completion_token_param(model: str, limit: int = 16000) -> Dict[str, int]:
     """GPT-5+ rejects max_tokens; older chat models still require it."""
     if re.search(r"^gpt-[34](?!\.)", model or "", flags=re.I):
@@ -61,6 +55,15 @@ def extract_claude_text(response: Any) -> str:
     return "\n".join(parts).strip()
 
 
+def _read_pages(query):
+    rows = []
+    offset = 0
+    while True:
+        page = query.range(offset,offset+499).execute().data or []
+        rows.extend(page)
+        if len(page)<500: return rows
+        offset += 500
+
 class SiteAuditAnalyst:
     def __init__(self, supabase: Client):
         self.supabase = supabase
@@ -73,114 +76,6 @@ class SiteAuditAnalyst:
     # Context assembly
     # ------------------------------------------------------------------
 
-    def build_context(self, property_id: str, crawl_id: str, batch_id: Optional[str]) -> Dict[str, Any]:
-        property_response = (
-            self.supabase.table("properties")
-            .select("name, website_url, address, property_type")
-            .eq("id", property_id)
-            .single()
-            .execute()
-        )
-        property_data = property_response.data or {}
-
-        findings_response = (
-            self.supabase.table("geo_site_findings")
-            .select("id, category, detector, severity, title, description, occurrences, affected_urls, affected_url_count, evidence, status")
-            .eq("property_id", property_id)
-            .neq("status", "wont_fix")
-            .is_("fixed_at", "null")
-            .order("severity")
-            .limit(MAX_FINDINGS_IN_PROMPT)
-            .execute()
-        )
-        findings = findings_response.data or []
-
-        pages_response = (
-            self.supabase.table("geo_crawl_pages")
-            .select("url, status_code, title, meta_description, h1s, h2s, word_count, page_type, inlink_count, crawl_depth")
-            .eq("crawl_id", crawl_id)
-            .eq("status_code", 200)
-            .order("inlink_count", desc=True)
-            .limit(MAX_PAGES_IN_PROMPT)
-            .execute()
-        )
-        pages = pages_response.data or []
-
-        # GEO run signals for the batch (presence/rank/SOV per query and surface)
-        geo_signals: List[Dict[str, Any]] = []
-        competitors: List[Dict[str, Any]] = []
-        if batch_id:
-            runs_response = (
-                self.supabase.table("geo_runs")
-                .select("id, surface, geo_scores(overall_score, visibility_pct, avg_llm_rank, avg_sov)")
-                .eq("batch_id", batch_id)
-                .eq("status", "completed")
-                .execute()
-            )
-            runs = runs_response.data or []
-            run_ids = [run["id"] for run in runs]
-            surface_by_run = {run["id"]: run["surface"] for run in runs}
-            if run_ids:
-                answers_response = (
-                    self.supabase.table("geo_answers")
-                    .select("run_id, query_id, presence, llm_rank, sov, ordered_entities")
-                    .in_("run_id", run_ids)
-                    .execute()
-                )
-                answers = answers_response.data or []
-                queries_response = (
-                    self.supabase.table("geo_queries")
-                    .select("id, text, type")
-                    .eq("property_id", property_id)
-                    .eq("is_active", True)
-                    .execute()
-                )
-                queries = {q["id"]: q for q in (queries_response.data or [])}
-
-                by_query: Dict[str, Dict[str, Any]] = {}
-                competitor_mentions: Dict[str, List[int]] = {}
-                for answer in answers:
-                    query = queries.get(answer["query_id"])
-                    if not query:
-                        continue
-                    entry = by_query.setdefault(answer["query_id"], {
-                        "prompt": query["text"],
-                        "type": query["type"],
-                        "surfaces": {},
-                    })
-                    surface = surface_by_run.get(answer["run_id"], "unknown")
-                    entry["surfaces"][surface] = {
-                        "present": bool(answer.get("presence")),
-                        "rank": answer.get("llm_rank"),
-                        "sov": answer.get("sov"),
-                    }
-                    for entity in (answer.get("ordered_entities") or [])[:5]:
-                        name = entity.get("name")
-                        position = entity.get("position")
-                        if name and isinstance(position, int):
-                            competitor_mentions.setdefault(name, []).append(position)
-
-                geo_signals = list(by_query.values())[:MAX_QUERIES_IN_PROMPT]
-                brand = (property_data.get("name") or "").lower()
-                competitors = [
-                    {"name": name, "mentions": len(positions), "avg_rank": round(sum(positions) / len(positions), 1)}
-                    for name, positions in sorted(competitor_mentions.items(), key=lambda kv: -len(kv[1]))
-                    if name.lower() != brand
-                ][:10]
-
-        return {
-            "property": {
-                "name": property_data.get("name"),
-                "website_url": property_data.get("website_url"),
-                "address": property_data.get("address"),
-                "property_type": property_data.get("property_type"),
-            },
-            "findings": findings,
-            "pages": pages,
-            "geo_signals": geo_signals,
-            "competitors": competitors,
-        }
-
     # ------------------------------------------------------------------
     # Prompt + generation
     # ------------------------------------------------------------------
@@ -191,7 +86,7 @@ class SiteAuditAnalyst:
 ## Property
 {json.dumps(context["property"], indent=2, default=str)}
 
-## Open technical findings (from a full-site crawl; each has an id you must cite in grounding)
+## Open technical findings (from the retained crawl scope; each has an id you must cite in grounding)
 {json.dumps(context["findings"], indent=2, default=str)}
 
 ## Crawled pages (current titles, descriptions, H1s — use these to write proposed replacements)
@@ -235,118 +130,8 @@ Requirements:
 - At least one recommendation must address the weakest AI visibility prompts with a specific owned-page content plan (exact H2s to add, questions to answer).
 - Do not include any recommendation without grounding."""
 
-    async def generate(self, property_id: str, crawl_id: str, batch_id: Optional[str]) -> Dict[str, Any]:
-        context = self.build_context(property_id, crawl_id, batch_id)
-        if not context["findings"] and not context["geo_signals"]:
-            logger.info("[SiteAudit] No findings or GEO signals for property %s; skipping analyst", property_id)
-            return {"success": False, "error": "no_input_data"}
-
-        payload: Optional[Dict[str, Any]] = None
-        model_used: Optional[str] = None
-        prompt = self._build_user_prompt(context)
-
-        try:
-            payload = self._generate_openai(prompt)
-            model_used = self.openai_model
-        except Exception as error:
-            logger.warning("[SiteAudit] OpenAI analyst failed (%s); trying Claude", error)
-            try:
-                payload = self._generate_claude(prompt)
-                model_used = self.claude_model
-            except Exception as claude_error:
-                logger.error("[SiteAudit] Both analyst providers failed: %s", claude_error)
-                return {"success": False, "error": str(claude_error)}
-
-        recommendations = self._validate(payload, context)
-        if not recommendations:
-            return {"success": False, "error": "no_valid_recommendations"}
-
-        generation_id = str(uuid.uuid4())
-        now = _utc_now_iso()
-
-        # Mark prior generations stale, keep them for history.
-        self.supabase.table("geo_recommendations").update({
-            "is_current": False,
-            "updated_at": now,
-        }).eq("property_id", property_id).eq("is_current", True).execute()
-
-        rows = []
-        for rec in recommendations:
-            rows.append({
-                "property_id": property_id,
-                "batch_id": batch_id,
-                "crawl_id": crawl_id,
-                "generation_id": generation_id,
-                "is_current": True,
-                "type": rec["type"],
-                "priority": rec["priority"],
-                "owner": rec.get("owner"),
-                "title": rec["title"],
-                "narrative": rec["narrative"],
-                "proposed_changes": rec.get("proposed_changes", []),
-                "grounding": rec.get("grounding", {}),
-                "status": "todo",
-                "model_used": model_used,
-            })
-        self.supabase.table("geo_recommendations").insert(rows).execute()
-
-        logger.info(
-            "[SiteAudit] Persisted %s recommendations (generation %s) for property %s",
-            len(rows), generation_id, property_id,
-        )
-        return {"success": True, "generation_id": generation_id, "count": len(rows), "model_used": model_used}
-
-    # ------------------------------------------------------------------
-    # Providers
-    # ------------------------------------------------------------------
-
-    def _generate_openai(self, prompt: str) -> Dict[str, Any]:
-        import openai
-
-        if not self.openai_api_key:
-            raise ValueError("OPENAI_API_KEY not configured")
-        client = openai.OpenAI(api_key=self.openai_api_key)
-        params = {
-            "model": self.openai_model,
-            "messages": [
-                {"role": "system", "content": ANALYST_SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
-            "response_format": {"type": "json_object"},
-            **openai_completion_token_param(self.openai_model),
-        }
-        if re.search(r"^gpt-[34]", self.openai_model or "", flags=re.I):
-            params["temperature"] = 0.3
-        response = client.chat.completions.create(**params)
-        content = response.choices[0].message.content or ""
-        finish_reason = getattr(response.choices[0], "finish_reason", None)
-        if finish_reason == "length":
-            logger.warning("[SiteAudit] OpenAI analyst hit the completion-token cap")
-        return json.loads(content)
-
-    def _generate_claude(self, prompt: str) -> Dict[str, Any]:
-        import anthropic
-
-        if not self.anthropic_api_key:
-            raise ValueError("ANTHROPIC_API_KEY not configured")
-        client = anthropic.Anthropic(api_key=self.anthropic_api_key)
-        response = client.messages.create(
-            model=self.claude_model,
-            max_tokens=16000,
-            system=ANALYST_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        content = extract_claude_text(response)
-        if not content:
-            block_types = [getattr(block, "type", type(block).__name__) for block in (response.content or [])]
-            raise ValueError(f"Claude analyst returned no text content (blocks={block_types})")
-        try:
-            return json.loads(content)
-        except json.JSONDecodeError:
-            match = re.search(r"\{[\s\S]*\}", content)
-            if match:
-                return json.loads(match.group(0))
-            raise ValueError("Could not parse JSON from Claude response")
+    async def generate(self, property_id: str, crawl_id: str, batch_id: Optional[str], lease_token: Optional[str] = None) -> Dict[str, Any]:
+        raise RuntimeError('Use a recorded recommendation request and retained provider receipt')
 
     # ------------------------------------------------------------------
     # Validation: enforce grounding so nothing generic slips through
@@ -361,6 +146,9 @@ Requirements:
 
         valid_finding_ids = {f["id"] for f in context["findings"]}
         valid_prompts = {s["prompt"] for s in context["geo_signals"]}
+        valid_urls = {page.get('url') for page in context.get('pages',[]) if page.get('url')}
+        for finding in context['findings']:
+            valid_urls.update(url for url in (finding.get('affected_urls') or []) if isinstance(url,str))
         valid_types = {"technical_fix", "content_proposal", "strategic", "citation"}
         valid_priorities = {"high", "medium", "low"}
         valid_owners = {"web_developer", "content", "seo", "partnerships"}
@@ -375,22 +163,30 @@ Requirements:
                 continue
 
             grounding = rec.get("grounding") or {}
-            finding_ids = [fid for fid in (grounding.get("finding_ids") or []) if fid in valid_finding_ids]
-            query_evidence = [q for q in (grounding.get("query_evidence") or []) if q in valid_prompts]
+            if not isinstance(grounding, dict):
+                continue
+            finding_ids = [fid for fid in (grounding.get("finding_ids") or []) if isinstance(fid, str) and fid in valid_finding_ids]
+            query_evidence = [q for q in (grounding.get("query_evidence") or []) if isinstance(q, str) and q in valid_prompts]
             if not finding_ids and not query_evidence:
                 logger.warning("[SiteAudit] Dropping ungrounded recommendation: %s", title[:80])
                 continue
 
+            pages_by_url = {page.get('url'): page for page in context.get('pages', [])}
             proposed_changes = []
             for change in rec.get("proposed_changes") or []:
                 if not isinstance(change, dict):
                     continue
-                if not change.get("url") or not change.get("proposed"):
+                if change.get("url") not in valid_urls or not change.get("proposed"):
                     continue
+                field = change.get('field') if change.get('field') in ('title', 'meta_description', 'h1', 'answer_block', 'other') else 'other'
+                observed = pages_by_url.get(change['url'], {})
+                current = observed.get({'title': 'title', 'meta_description': 'meta_description', 'h1': 'h1s'}.get(field, ''))
+                if isinstance(current, list):
+                    current = '\n'.join(str(value) for value in current)
                 proposed_changes.append({
                     "url": str(change["url"])[:1000],
-                    "field": str(change.get("field") or "other")[:50],
-                    "current": (str(change["current"])[:500] if change.get("current") is not None else None),
+                    "field": field,
+                    "current": str(current) if current is not None else None,
                     "proposed": str(change["proposed"])[:2000],
                     "rationale": str(change.get("rationale") or "")[:500],
                 })

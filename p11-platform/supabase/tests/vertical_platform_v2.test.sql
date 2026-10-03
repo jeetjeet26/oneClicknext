@@ -3,7 +3,9 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(35);
+-- Production retired client-review launch confirmations on 2026-08-19.
+-- Retained vertical identity, conversion and launch-policy contracts remain covered.
+select plan(32);
 
 select has_column(
   'public',
@@ -68,11 +70,6 @@ select has_table(
   'siteforge_launch_policies',
   'launch policies table exists'
 );
-select has_table(
-  'public',
-  'siteforge_launch_confirmations',
-  'launch confirmations table exists'
-);
 
 select ok(
   (select relrowsecurity from pg_class where oid = 'public.property_subject_relationships'::regclass),
@@ -118,10 +115,6 @@ select ok(
   (select relrowsecurity from pg_class where oid = 'public.siteforge_launch_policies'::regclass),
   'launch policies enforce RLS'
 );
-select ok(
-  (select relrowsecurity from pg_class where oid = 'public.siteforge_launch_confirmations'::regclass),
-  'launch confirmations enforce RLS'
-);
 
 select has_column(
   'public',
@@ -157,16 +150,6 @@ select ok(
       and not tgisinternal
   ),
   'vertical profile versions are append-only'
-);
-select ok(
-  exists (
-    select 1
-    from pg_trigger
-    where tgrelid = 'public.siteforge_launch_confirmations'::regclass
-      and tgname = 'siteforge_launch_confirmations_immutable'
-      and not tgisinternal
-  ),
-  'launch confirmations are append-only'
 );
 select ok(
   exists (

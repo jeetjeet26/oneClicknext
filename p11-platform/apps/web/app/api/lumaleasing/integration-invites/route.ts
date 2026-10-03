@@ -7,11 +7,11 @@ import {
   createIntegrationAuthInvite,
   buildExternalIntegrationLink,
 } from '@/utils/services/integration-auth-invites'
-import {
-  normalizeCapabilities,
-  normalizeProvider,
-} from '@/utils/services/integration-provider-config'
+import {z} from 'zod'
 import { createRequestContext } from '@/utils/services/request-context'
+
+const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const input=z.object({propertyId:z.string().regex(uuid),requestId:z.string().regex(uuid),provider:z.enum(['google','microsoft']),capabilities:z.array(z.enum(['calendar','email'])).min(1).max(2)}).strict()
 
 export async function GET(request: NextRequest) {
   const ctx = createRequestContext(request, '/api/lumaleasing/integration-invites')
@@ -20,7 +20,7 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
     const propertyId = searchParams.get('propertyId')
-    if (!propertyId) {
+    if (!propertyId || !uuid.test(propertyId)) {
       ctx.logSuccess(400, { reason: 'missing_property_id' })
       return badRequest('Property ID required', ctx.responseHeaders)
     }
@@ -38,21 +38,30 @@ export async function GET(request: NextRequest) {
       return forbidden(ctx.responseHeaders)
     }
 
+    let cursor:{createdAt:string;id:string}|null=null
+    try {
+      const encoded=searchParams.get('cursor')
+      if(encoded){
+        if(encoded.length>512)throw new Error('Cursor too long')
+        cursor=JSON.parse(Buffer.from(encoded,'base64url').toString())
+        if(!cursor||typeof cursor.id!=='string'||!uuid.test(cursor.id)||typeof cursor.createdAt!=='string'||!/^\d{4}-\d{2}-\d{2}T[\d:.]+(?:Z|[+-]\d{2}:\d{2})$/.test(cursor.createdAt)||!Number.isFinite(Date.parse(cursor.createdAt)))throw new Error('Invalid cursor')
+      }
+    }catch{return badRequest('Invalid authorization-link page.',ctx.responseHeaders)}
     const serviceSupabase = createServiceClient()
-    const { data, error } = await serviceSupabase
-      .from('integration_auth_invites')
-      .select('id, property_id, provider, requested_capabilities, token_preview, expires_at, consumed_at, revoked_at, created_at')
-      .eq('property_id', propertyId)
-      .order('created_at', { ascending: false })
-      .limit(25)
-
+    let query=serviceSupabase.from('integration_auth_invites')
+      .select('id, property_id, provider, requested_capabilities, expires_at, consumed_at, revoked_at, created_at, created_by_profile_id, metadata')
+      .eq('property_id',propertyId).order('created_at',{ascending:false}).order('id',{ascending:false}).limit(26)
+    if(cursor)query=query.or(`created_at.lt.${cursor.createdAt},and(created_at.eq.${cursor.createdAt},id.lt.${cursor.id})`)
+    const {data,error}=await query
     if (error) {
       ctx.logError(500, error, { operation: 'list_integration_invites', propertyId })
       return serverError(error, ctx.responseHeaders)
     }
 
     ctx.logSuccess(200, { propertyId, count: data?.length || 0 })
-    return NextResponse.json({ invites: data || [] }, { headers: ctx.responseHeaders })
+    const rows=(data||[]).slice(0,25),last=rows.at(-1)
+    const invites=rows.map(({metadata,created_by_profile_id,...row})=>({...row,recoverable:created_by_profile_id===user.id&&!!metadata&&typeof metadata==='object'&&!Array.isArray(metadata)&&metadata.issuedVia==='recorded_v1',state:row.consumed_at?'used':row.revoked_at?'revoked':Date.parse(row.expires_at)<=Date.now()?'expired':'pending'}))
+    return NextResponse.json({invites,nextCursor:(data?.length||0)>25&&last?Buffer.from(JSON.stringify({createdAt:last.created_at,id:last.id})).toString('base64url'):null},{headers:ctx.responseHeaders})
   } catch (error) {
     ctx.logError(500, error, { operation: 'list_integration_invites' })
     return serverError(error, ctx.responseHeaders)
@@ -64,23 +73,9 @@ export async function POST(request: NextRequest) {
   ctx.logStart()
 
   try {
-    const body = await request.json().catch(() => ({}))
-    const propertyId = typeof body.propertyId === 'string' ? body.propertyId : null
-    const provider = normalizeProvider(body.provider)
-    const capabilities = normalizeCapabilities(body.capabilities)
-
-    if (!propertyId) {
-      ctx.logSuccess(400, { reason: 'missing_property_id' })
-      return badRequest('Property ID required', ctx.responseHeaders)
-    }
-    if (!provider) {
-      ctx.logSuccess(400, { reason: 'invalid_provider' })
-      return badRequest('Provider must be google or microsoft', ctx.responseHeaders)
-    }
-    if (capabilities.length === 0) {
-      ctx.logSuccess(400, { reason: 'missing_capabilities' })
-      return badRequest('At least one capability is required', ctx.responseHeaders)
-    }
+    const parsed=input.safeParse(await request.json().catch(()=>null))
+    if(!parsed.success)return badRequest('A property, provider, capabilities and saved request identity are required.',ctx.responseHeaders)
+    const {propertyId,provider,capabilities,requestId}=parsed.data
 
     const supabase = await createClient()
     const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -96,16 +91,18 @@ export async function POST(request: NextRequest) {
     }
 
     const result = await createIntegrationAuthInvite({
+      requestId,
       propertyId,
       provider,
       capabilities,
       createdByProfileId: user.id,
-      expiresAt: typeof body.expiresAt === 'string' ? body.expiresAt : undefined,
     })
 
     ctx.logSuccess(201, { propertyId, provider, capabilities })
     return NextResponse.json(
       {
+        actionEventId: result.actionEventId,
+        replayed: result.replayed,
         invite: result.invite,
         token: result.token,
         url: result.url,

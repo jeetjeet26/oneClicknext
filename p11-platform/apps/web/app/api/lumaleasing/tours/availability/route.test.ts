@@ -1,3 +1,4 @@
+vi.mock('@/utils/services/luma-public-read',()=>({admitLumaRead:vi.fn().mockResolvedValue(null)}))
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NextRequest } from 'next/server'
 

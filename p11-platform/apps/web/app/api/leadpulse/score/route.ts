@@ -1,56 +1,8 @@
-/**
- * LeadPulse Score API
- * Calculate and retrieve lead scores
- */
-
-import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/utils/supabase/server'
+import { NextRequest } from 'next/server'
+import { z } from 'zod'
 import { createServiceClient } from '@/utils/supabase/admin'
-import { validatePropertyAccess } from '@/utils/services/auth-guard'
-import {
-  badRequest,
-  forbidden,
-  notFound,
-  serverError,
-  unauthorized,
-} from '@/utils/services/api-helpers'
-import { createRequestContext } from '@/utils/services/request-context'
-import {
-  leadPulseScoreRequestSchema,
-  validateBody,
-} from '@/utils/services/validation'
-
-function chunkArray<T>(items: T[], size: number): T[][] {
-  const chunks: T[][] = []
-  for (let i = 0; i < items.length; i += size) {
-    chunks.push(items.slice(i, i + size))
-  }
-  return chunks
-}
-
-type ScoreRpcResult = { leadId: string; scoreId: unknown; error: unknown }
-
-function summarizeScoreResults(
-  results: PromiseSettledResult<ScoreRpcResult>[]
-): { successful: number; failed: number } {
-  let successful = 0
-  let failed = 0
-
-  for (const result of results) {
-    if (result.status === 'rejected') {
-      failed += 1
-      continue
-    }
-
-    if (result.value.error) {
-      failed += 1
-    } else {
-      successful += 1
-    }
-  }
-
-  return { successful, failed }
-}
+import { leadPulseScoreRequestSchema } from '@/utils/services/validation'
+import { leadpulseRpc, leadpulseScope, leadpulseUser, reply, resultReply, unconfirmed } from '@/utils/leadpulse/server'
 
 export interface LeadScore {
   id: string
@@ -73,6 +25,8 @@ export interface LeadScore {
     nextActionAt: string | null
     lastActionAt: string | null
   }
+  provenance?: Record<string, unknown>
+  workflowFactors?: ScoreFactor[]
   scoredAt: string
   modelVersion: string
 }
@@ -220,350 +174,53 @@ function workflowOutcomeFactors(workflowOutcomes: WorkflowOutcomes | null): Scor
   return factors
 }
 
-async function getLeadPropertyId(
-  leadId: string
-): Promise<{ propertyId: string | null; exists: boolean }> {
-  const serviceClient = createServiceClient()
-  const { data: lead, error } = await serviceClient
-    .from('leads')
-    .select('property_id')
-    .eq('id', leadId)
-    .single()
 
-  if (error || !lead) {
-    return { propertyId: null, exists: false }
-  }
-
-  return { propertyId: lead.property_id, exists: true }
+async function scoreResponse(propertyId: string, userId: string, leadId: string, scoreId?: string) {
+  const saved = await leadpulseRpc('read_leadpulse_score', { p_property_id: propertyId, p_actor_id: userId, p_lead_id: leadId, p_score_id: scoreId || null })
+  if (saved.state !== 'saved') return saved
+  const workflow = await getWorkflowOutcomesForLead(leadId)
+  return { ...saved, score: { ...formatScore(saved.score as Record<string, unknown>, workflow), provenance: saved.provenance } }
 }
-
-// GET: Retrieve score for a lead
 export async function GET(req: NextRequest) {
-  const ctx = createRequestContext(req, '/api/leadpulse/score')
-  ctx.logStart()
-
   try {
-    const supabase = await createClient()
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-    if (authError || !user) {
-      ctx.logSuccess(401, { reason: 'unauthorized' })
-      return unauthorized(ctx.responseHeaders)
-    }
-
-    const searchParams = req.nextUrl.searchParams
-    const leadId = searchParams.get('leadId')
-
-    if (!leadId) {
-      ctx.logSuccess(400, { reason: 'missing_lead_id' })
-      return badRequest('leadId required', ctx.responseHeaders)
-    }
-
-    const { propertyId, exists } = await getLeadPropertyId(leadId)
-    if (!exists || !propertyId) {
-      ctx.logSuccess(404, { reason: 'lead_not_found', leadId })
-      return notFound('Lead', ctx.responseHeaders)
-    }
-
-    const access = await validatePropertyAccess(user.id, propertyId)
-    if (!access.authorized) {
-      ctx.logSuccess(403, { reason: 'forbidden', leadId, propertyId })
-      return forbidden(ctx.responseHeaders)
-    }
-
-    // Get latest score for this lead
-    const { data: score, error } = await supabase
-      .from('lead_scores')
-      .select('*')
-      .eq('lead_id', leadId)
-      .order('scored_at', { ascending: false })
-      .limit(1)
-      .single()
-
-    if (error && error.code !== 'PGRST116') {
-      ctx.logError(500, error, { operation: 'fetch_lead_score', leadId })
-      return serverError(error, ctx.responseHeaders)
-    }
-
-    if (!score) {
-      // No existing score, calculate one
-      const serviceClient = createServiceClient()
-      
-      const { data: newScoreId, error: scoreError } = await serviceClient
-        .rpc('score_lead', { p_lead_id: leadId })
-
-      if (scoreError) {
-        ctx.logError(500, scoreError, { operation: 'calculate_lead_score', leadId })
-        return serverError(scoreError, ctx.responseHeaders)
-      }
-
-      // Fetch the newly created score
-      const { data: newScore, error: fetchError } = await serviceClient
-        .from('lead_scores')
-        .select('*')
-        .eq('id', newScoreId)
-        .single()
-
-      if (fetchError || !newScore) {
-        ctx.logError(500, fetchError || 'Missing calculated score', {
-          operation: 'fetch_calculated_lead_score',
-          leadId,
-        })
-        return serverError(fetchError || 'Missing calculated score', ctx.responseHeaders)
-      }
-
-      const workflowOutcomes = await getWorkflowOutcomesForLead(leadId)
-
-      ctx.logSuccess(200, { leadId, isNew: true, hasWorkflowOutcomes: Boolean(workflowOutcomes) })
-
-      return NextResponse.json(
-        {
-          score: formatScore(newScore, workflowOutcomes),
-          isNew: true,
-        },
-        { headers: ctx.responseHeaders }
-      )
-    }
-
-    const workflowOutcomes = await getWorkflowOutcomesForLead(leadId)
-
-    ctx.logSuccess(200, { leadId, isNew: false, hasWorkflowOutcomes: Boolean(workflowOutcomes) })
-
-    return NextResponse.json(
-      {
-        score: formatScore(score, workflowOutcomes),
-        isNew: false,
-      },
-      { headers: ctx.responseHeaders }
-    )
-  } catch (error) {
-    ctx.logError(500, error, { operation: 'fetch_lead_score' })
-    return serverError(error, ctx.responseHeaders)
-  }
+    const user = await leadpulseUser(); if (!user) return reply({ error: 'Unauthorized' }, 401)
+    const leadId = req.nextUrl.searchParams.get('leadId')
+    if (!leadId) return reply({ error: 'leadId required' }, 400)
+    const scope = await leadpulseScope(user.id, { leadId }); if (scope.response) return scope.response
+    return resultReply(await scoreResponse(scope.propertyId!, user.id, leadId))
+  } catch { return unconfirmed() }
 }
-
-// POST: Recalculate score for a lead (or batch)
 export async function POST(req: NextRequest) {
-  const ctx = createRequestContext(req, '/api/leadpulse/score')
-  ctx.logStart()
-
   try {
-    const supabase = await createClient()
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-    if (authError || !user) {
-      ctx.logSuccess(401, { reason: 'unauthorized' })
-      return unauthorized(ctx.responseHeaders)
+    const user = await leadpulseUser(); if (!user) return reply({ error: 'Unauthorized' }, 401)
+    const parsed = leadPulseScoreRequestSchema.safeParse(await req.json().catch(() => null))
+    if (!parsed.success) return reply({ error: 'A stable request identity and one scoring target are required.' }, 400)
+    const input = parsed.data
+    const scope = await leadpulseScope(user.id, input); if (scope.response) return scope.response
+    const batch = await leadpulseRpc('run_lead_score_batch', { p_property_id: scope.propertyId, p_actor_id: user.id, p_request_id: input.requestId, p_lead_ids: input.leadId ? [input.leadId] : input.leadIds || null, p_retry_batch_id: input.retryBatchId || null })
+    if (!['running', 'completed', 'cancelled'].includes(String(batch.state))) return resultReply(batch)
+    let score: unknown = null
+    if (input.leadId && typeof batch.scoreId === 'string') {
+      const saved = await scoreResponse(scope.propertyId!, user.id, input.leadId, batch.scoreId)
+      if (saved.state !== 'saved' || !saved.score) return unconfirmed()
+      score = saved.score
     }
-
-    const validation = validateBody(await req.json(), leadPulseScoreRequestSchema)
-    if (!validation.success) {
-      ctx.logSuccess(400, { reason: 'validation_failed' })
-      return badRequest(validation.error, ctx.responseHeaders)
-    }
-    const { leadId, leadIds, propertyId: assertedPropertyId } = validation.data
-
-    const serviceClient = createServiceClient()
-
-    // Single lead scoring
-    if (leadId) {
-      const { propertyId: leadPropertyId, exists } = await getLeadPropertyId(leadId)
-      if (!exists || !leadPropertyId) {
-        ctx.logSuccess(404, { reason: 'lead_not_found', leadId })
-        return notFound('Lead', ctx.responseHeaders)
-      }
-
-      if (assertedPropertyId && assertedPropertyId !== leadPropertyId) {
-        ctx.logSuccess(400, {
-          reason: 'property_lead_mismatch',
-          assertedPropertyId,
-          leadPropertyId,
-          leadId,
-        })
-        return badRequest('propertyId does not match lead', ctx.responseHeaders)
-      }
-
-      const access = await validatePropertyAccess(user.id, leadPropertyId)
-      if (!access.authorized) {
-        ctx.logSuccess(403, { reason: 'forbidden', leadId, propertyId: leadPropertyId })
-        return forbidden(ctx.responseHeaders)
-      }
-
-      const { data: scoreId, error } = await serviceClient
-        .rpc('score_lead', { p_lead_id: leadId })
-
-      if (error) {
-        ctx.logError(500, error, { operation: 'score_single_lead', leadId })
-        return serverError(error, ctx.responseHeaders)
-      }
-
-      // Fetch the score
-      const { data: score } = await serviceClient
-        .from('lead_scores')
-        .select('*')
-        .eq('id', scoreId)
-        .single()
-
-      const workflowOutcomes = await getWorkflowOutcomesForLead(leadId)
-
-      ctx.logSuccess(200, { leadId, scoreId: scoreId || null, hasWorkflowOutcomes: Boolean(workflowOutcomes) })
-
-      return NextResponse.json(
-        {
-          success: true,
-          score: score ? formatScore(score, workflowOutcomes) : null,
-        },
-        { headers: ctx.responseHeaders }
-      )
-    }
-
-    // Batch scoring
-    if (leadIds && Array.isArray(leadIds)) {
-      const { data: leadsForBatch, error: batchLeadError } = await serviceClient
-        .from('leads')
-        .select('id, property_id')
-        .in('id', leadIds)
-
-      if (batchLeadError) {
-        ctx.logError(500, batchLeadError, { operation: 'resolve_batch_leads' })
-        return serverError(batchLeadError, ctx.responseHeaders)
-      }
-
-      const resolvedLeads = leadsForBatch || []
-      if (resolvedLeads.length !== leadIds.length) {
-        ctx.logSuccess(404, { reason: 'batch_lead_not_found' })
-        return notFound('Lead', ctx.responseHeaders)
-      }
-      if (resolvedLeads.some(lead => !lead.property_id)) {
-        ctx.logSuccess(404, { reason: 'property_not_found', batch: true })
-        return notFound('Property', ctx.responseHeaders)
-      }
-
-      if (
-        assertedPropertyId &&
-        resolvedLeads.some(lead => lead.property_id !== assertedPropertyId)
-      ) {
-        ctx.logSuccess(400, {
-          reason: 'property_lead_mismatch',
-          assertedPropertyId,
-          batch: true,
-        })
-        return badRequest('propertyId does not match every lead', ctx.responseHeaders)
-      }
-
-      const uniquePropertyIds = [
-        ...new Set(
-          resolvedLeads
-            .map(lead => lead.property_id)
-            .filter((id): id is string => Boolean(id))
-        ),
-      ]
-      if (uniquePropertyIds.length === 0) {
-        ctx.logSuccess(404, { reason: 'property_not_found', batch: true })
-        return notFound('Property', ctx.responseHeaders)
-      }
-      for (const propertyId of uniquePropertyIds) {
-        const access = await validatePropertyAccess(user.id, propertyId)
-        if (!access.authorized) {
-          ctx.logSuccess(403, { reason: 'forbidden', propertyId, batch: true })
-          return forbidden(ctx.responseHeaders)
-        }
-      }
-
-      const results: PromiseSettledResult<{ leadId: string; scoreId: unknown; error: unknown }>[] = []
-      for (const chunk of chunkArray(leadIds, 50)) {
-        const chunkResults = await Promise.allSettled(
-          chunk.map(async (id: string) => {
-            const { data: scoreId, error } = await serviceClient
-              .rpc('score_lead', { p_lead_id: id })
-            return { leadId: id, scoreId, error }
-          })
-        )
-        results.push(...chunkResults)
-      }
-
-      const { successful, failed } = summarizeScoreResults(results)
-
-      ctx.logSuccess(200, {
-        batch: true,
-        processed: leadIds.length,
-        successful,
-        failed,
-      })
-
-      return NextResponse.json(
-        {
-          success: true,
-          processed: leadIds.length,
-          successful,
-          failed,
-        },
-        { headers: ctx.responseHeaders }
-      )
-    }
-
-    // Score all leads for a property
-    if (assertedPropertyId) {
-      const access = await validatePropertyAccess(user.id, assertedPropertyId)
-      if (!access.authorized) {
-        ctx.logSuccess(403, { reason: 'forbidden', propertyId: assertedPropertyId, propertyBatch: true })
-        return forbidden(ctx.responseHeaders)
-      }
-
-      // Get all leads for property
-      const { data: leads, error: leadsError } = await serviceClient
-        .from('leads')
-        .select('id')
-        .eq('property_id', assertedPropertyId)
-        .order('created_at', { ascending: false })
-        .limit(500) // Safety limit
-
-      if (leadsError) {
-        ctx.logError(500, leadsError, { operation: 'fetch_property_leads', propertyId: assertedPropertyId })
-        return serverError(leadsError, ctx.responseHeaders)
-      }
-
-      const results: PromiseSettledResult<{ leadId: string; scoreId: unknown; error: unknown }>[] = []
-      for (const chunk of chunkArray(leads, 50)) {
-        const chunkResults = await Promise.allSettled(
-          chunk.map(async (lead) => {
-            const { data: scoreId, error } = await serviceClient
-              .rpc('score_lead', { p_lead_id: lead.id })
-            return { leadId: lead.id, scoreId, error }
-          })
-        )
-        results.push(...chunkResults)
-      }
-
-      const { successful, failed } = summarizeScoreResults(results)
-
-      ctx.logSuccess(200, {
-        propertyId: assertedPropertyId,
-        processed: leads.length,
-        successful,
-        failed,
-      })
-
-      return NextResponse.json(
-        {
-          success: true,
-          processed: leads.length,
-          successful,
-          failed,
-        },
-        { headers: ctx.responseHeaders }
-      )
-    }
-
-    ctx.logSuccess(400, { reason: 'missing_scoring_target' })
-    return badRequest('leadId, leadIds, or propertyId required', ctx.responseHeaders)
-  } catch (error) {
-    ctx.logError(500, error, { operation: 'score_leads' })
-    return serverError(error, ctx.responseHeaders)
-  }
+    return reply({ ...batch, score, success: batch.state === 'completed' && batch.failed === 0 })
+  } catch { return unconfirmed() }
 }
-
-// Format score for API response
+const controlSchema = z.object({ propertyId: z.string().min(1).max(100), batchId: z.string().uuid(), requestId: z.string().uuid(), action: z.enum(['continue', 'cancel']) }).strict()
+export async function PATCH(req: NextRequest) {
+  try {
+    const user = await leadpulseUser(); if (!user) return reply({ error: 'Unauthorized' }, 401)
+    const parsed = controlSchema.safeParse(await req.json().catch(() => null))
+    if (!parsed.success) return reply({ error: 'A saved scoring run and decision identity are required.' }, 400)
+    const { propertyId, batchId, requestId, action } = parsed.data
+    const scope = await leadpulseScope(user.id, { propertyId }); if (scope.response) return scope.response
+    return resultReply(await leadpulseRpc(action === 'continue' ? 'continue_lead_score_batch' : 'cancel_lead_score_batch', {
+      p_property_id: propertyId, p_actor_id: user.id, p_batch_id: batchId, ...(action === 'cancel' ? { p_request_id: requestId } : {}),
+    }))
+  } catch { return unconfirmed() }
+}
 function formatScore(score: Record<string, unknown>, workflowOutcomes: WorkflowOutcomes | null): LeadScore {
   const baseFactors = (score.factors as ScoreFactor[]) || []
   const explanationFactors = workflowOutcomeFactors(workflowOutcomes)
@@ -577,36 +234,10 @@ function formatScore(score: Record<string, unknown>, workflowOutcomes: WorkflowO
     completenessScore: score.completeness_score as number,
     behaviorScore: score.behavior_score as number,
     scoreBucket: score.score_bucket as 'hot' | 'warm' | 'cold' | 'unqualified',
-    factors: [...baseFactors, ...explanationFactors],
+    factors: baseFactors,
+    workflowFactors: explanationFactors,
     workflowOutcomes: workflowOutcomes || undefined,
     scoredAt: score.scored_at as string,
     modelVersion: score.model_version as string,
   }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

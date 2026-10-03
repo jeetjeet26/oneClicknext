@@ -6,19 +6,19 @@
  * ledger-backed history of what actually ran (including partial outcomes).
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import {sendMarketDecision} from '@/utils/marketvision/decision-client'
+import {MarketRunHistory} from './MarketRunHistory'
+import {MarketDecisionHistory} from './MarketDecisionHistory'
 import {
-  AlertCircle,
-  CheckCircle,
-  Clock,
   Loader2,
-  RotateCcw,
   Save,
   Settings,
-  XCircle,
 } from 'lucide-react'
 
 interface MonitoringConfig {
+  id: string
+  version: number
   is_enabled: boolean
   scrape_frequency: string
   radius_miles: number | null
@@ -29,137 +29,41 @@ interface MonitoringConfig {
   last_error: string | null
 }
 
-interface RunRecord {
-  id: string
-  runType: string
-  lifecycleStatus: string
-  statusReason: string | null
-  errorMessage: string | null
-  startedAt: string | null
-  finishedAt: string | null
-  result: string
-}
+interface MonitoringPanelProps {propertyId:string;openRequestId?:string}
 
-interface MonitoringPanelProps {
-  propertyId: string
-}
-
-const RUN_TYPE_LABELS: Record<string, string> = {
-  discovery: 'Discovery',
-  observation_refresh: 'Observation refresh',
-  brand_extraction: 'Brand extraction',
-  embedding: 'Embedding',
-  change_detection: 'Change detection',
-  brief_generation: 'Brief generation',
-}
-
-/** Maps a durable run type back to the request that re-triggers it. */
-function retryRequestFor(runType: string, propertyId: string): { url: string; body: Record<string, unknown> } | null {
-  switch (runType) {
-    case 'discovery':
-      return { url: '/api/marketvision/scrape', body: { action: 'discover', propertyId } }
-    case 'observation_refresh':
-      return { url: '/api/marketvision/scrape', body: { action: 'refresh', propertyId } }
-    case 'brand_extraction':
-      return { url: '/api/marketvision/brand-intelligence', body: { propertyId, forceRefresh: false } }
-    case 'brief_generation':
-      return { url: '/api/marketvision/brief', body: { propertyId } }
-    default:
-      return null
-  }
-}
-
-function runBadge(result: string) {
-  switch (result) {
-    case 'succeeded':
-      return (
-        <span className="inline-flex items-center gap-1 text-xs text-emerald-700 bg-emerald-50 dark:bg-emerald-900/30 dark:text-emerald-300 px-2 py-0.5 rounded-full">
-          <CheckCircle className="w-3 h-3" /> succeeded
-        </span>
-      )
-    case 'partial':
-      return (
-        <span className="inline-flex items-center gap-1 text-xs text-amber-700 bg-amber-50 dark:bg-amber-900/30 dark:text-amber-300 px-2 py-0.5 rounded-full">
-          <AlertCircle className="w-3 h-3" /> partial
-        </span>
-      )
-    case 'failed':
-      return (
-        <span className="inline-flex items-center gap-1 text-xs text-red-700 bg-red-50 dark:bg-red-900/30 dark:text-red-300 px-2 py-0.5 rounded-full">
-          <XCircle className="w-3 h-3" /> failed
-        </span>
-      )
-    default:
-      return (
-        <span className="inline-flex items-center gap-1 text-xs text-blue-700 bg-blue-50 dark:bg-blue-900/30 dark:text-blue-300 px-2 py-0.5 rounded-full">
-          <Clock className="w-3 h-3" /> {result}
-        </span>
-      )
-  }
-}
-
-export function MonitoringPanel({ propertyId }: MonitoringPanelProps) {
+export function MonitoringPanel({ propertyId,openRequestId }: MonitoringPanelProps) {
+  const controller=useRef<AbortController|null>(null)
+  const [ready,setReady]=useState(false)
+  const [canManage,setCanManage]=useState(false)
+  const [reason,setReason]=useState('')
+  const [historyVersion,setHistoryVersion]=useState(0)
   const [config, setConfig] = useState<MonitoringConfig | null>(null)
-  const [runs, setRuns] = useState<RunRecord[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
-  const [retryingRunId, setRetryingRunId] = useState<string | null>(null)
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
   const [form, setForm] = useState({
-    isEnabled: true,
-    scrapeFrequency: 'daily',
+    isEnabled: false,
+    scrapeFrequency: 'manual',
     radiusMiles: 3,
     maxCompetitors: 20,
-    autoAdd: true,
+    autoAdd: false,
   })
 
-  const load = useCallback(async () => {
-    setIsLoading(true)
-    try {
-      const [configRes, runsRes] = await Promise.all([
-        fetch(`/api/marketvision/config?propertyId=${propertyId}`),
-        fetch(`/api/marketvision/runs?propertyId=${propertyId}&limit=20`),
-      ])
-
-      if (configRes.ok) {
-        const data = await configRes.json()
-        setConfig(data.config)
-        if (data.config) {
-          setForm({
-            isEnabled: data.config.is_enabled ?? true,
-            scrapeFrequency: data.config.scrape_frequency ?? 'daily',
-            radiusMiles: data.config.radius_miles ?? 3,
-            maxCompetitors: data.config.max_competitors ?? 20,
-            autoAdd: data.config.auto_add ?? true,
-          })
-        }
-      }
-      if (runsRes.ok) {
-        const data = await runsRes.json()
-        setRuns(data.runs || [])
-      }
-    } finally {
-      setIsLoading(false)
-    }
-  }, [propertyId])
-
-  useEffect(() => {
-    load()
-  }, [load])
+  const load=useCallback(async()=>{
+    controller.current?.abort();const c=new AbortController();controller.current=c;setIsLoading(true);setReady(false)
+    try{const response=await fetch(`/api/marketvision/config?propertyId=${propertyId}`,{signal:c.signal,cache:'no-store'}),data=await response.json();if(!response.ok)throw new Error(data.error||'Monitoring settings could not be loaded.');if(c.signal.aborted)return;setConfig(data.config);setCanManage(data.canManage);setForm({isEnabled:data.config?.is_enabled??false,scrapeFrequency:data.config?.scrape_frequency??'manual',radiusMiles:data.config?.radius_miles??3,maxCompetitors:data.config?.max_competitors??20,autoAdd:data.config?.auto_add??false});setReady(true)}catch(e){if(!c.signal.aborted){setConfig(null);setMessage({type:'error',text:e instanceof Error?e.message:'Monitoring settings could not be loaded.'})}}finally{if(!c.signal.aborted)setIsLoading(false)}
+  },[propertyId])
+  useEffect(()=>{void load();return()=>controller.current?.abort()},[load])
 
   const save = async () => {
     setIsSaving(true)
     setMessage(null)
     try {
-      const res = await fetch('/api/marketvision/config', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ propertyId, ...form }),
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Failed to save settings')
-      setConfig(data.config)
+      await sendMarketDecision('/api/marketvision/config','PUT',{propertyId,expectedVersion:config?.version??0,reason,values:{is_enabled:form.isEnabled,scrape_frequency:form.scrapeFrequency,radius_miles:form.radiusMiles,max_competitors:form.maxCompetitors,auto_add:form.autoAdd}})
+      setHistoryVersion(v=>v+1)
+      setReason('')
+      await load()
       setMessage({ type: 'success', text: 'Monitoring settings saved' })
     } catch (err) {
       setMessage({
@@ -168,36 +72,6 @@ export function MonitoringPanel({ propertyId }: MonitoringPanelProps) {
       })
     } finally {
       setIsSaving(false)
-    }
-  }
-
-  const retryRun = async (run: RunRecord) => {
-    const request = retryRequestFor(run.runType, propertyId)
-    if (!request) return
-    setRetryingRunId(run.id)
-    setMessage(null)
-    try {
-      const res = await fetch(request.url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(request.body),
-      })
-      const data = await res.json()
-      if (res.status === 409) {
-        setMessage({ type: 'error', text: 'A run of this type is already in progress' })
-      } else if (!res.ok) {
-        throw new Error(data.error || 'Retry failed')
-      } else {
-        setMessage({ type: 'success', text: 'Retry started — refresh to see the new run' })
-      }
-      await load()
-    } catch (err) {
-      setMessage({
-        type: 'error',
-        text: err instanceof Error ? err.message : 'Retry failed',
-      })
-    } finally {
-      setRetryingRunId(null)
     }
   }
 
@@ -217,6 +91,7 @@ export function MonitoringPanel({ propertyId }: MonitoringPanelProps) {
           <Settings className="w-5 h-5 text-gray-500" /> Monitoring settings
         </h3>
 
+        <fieldset disabled={!ready||!canManage||isSaving} className="space-y-4">
         <label className="flex items-center gap-3 cursor-pointer">
           <input
             type="checkbox"
@@ -225,7 +100,7 @@ export function MonitoringPanel({ propertyId }: MonitoringPanelProps) {
             className="rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
           />
           <span className="text-sm text-gray-700 dark:text-gray-300">
-            Monitoring enabled for this property
+            Prefer scheduled monitoring when activated
           </span>
         </label>
 
@@ -234,7 +109,7 @@ export function MonitoringPanel({ propertyId }: MonitoringPanelProps) {
             Refresh cadence
           </label>
           <select
-            value={form.scrapeFrequency}
+            aria-label="Refresh cadence" value={form.scrapeFrequency}
             onChange={(e) => setForm((f) => ({ ...f, scrapeFrequency: e.target.value }))}
             className="w-full px-3 py-2 border border-gray-200 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-sm"
           >
@@ -250,10 +125,10 @@ export function MonitoringPanel({ propertyId }: MonitoringPanelProps) {
           </label>
           <input
             type="range"
-            min="1"
-            max="10"
-            value={form.radiusMiles}
-            onChange={(e) => setForm((f) => ({ ...f, radiusMiles: parseInt(e.target.value) }))}
+            min="0.5"
+            max="25" step="0.5"
+            aria-label="Discovery radius" value={form.radiusMiles}
+            onChange={(e) => setForm((f) => ({ ...f, radiusMiles: Number(e.target.value) }))}
             className="w-full"
           />
         </div>
@@ -263,10 +138,11 @@ export function MonitoringPanel({ propertyId }: MonitoringPanelProps) {
             Maximum competitors tracked
           </label>
           <select
-            value={form.maxCompetitors}
+            aria-label="Maximum competitors tracked" value={form.maxCompetitors}
             onChange={(e) => setForm((f) => ({ ...f, maxCompetitors: parseInt(e.target.value) }))}
             className="w-full px-3 py-2 border border-gray-200 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-sm"
           >
+            {![10,20,30,50].includes(form.maxCompetitors)&&<option value={form.maxCompetitors}>{form.maxCompetitors}</option>}
             <option value={10}>10</option>
             <option value={20}>20</option>
             <option value={30}>30</option>
@@ -282,10 +158,15 @@ export function MonitoringPanel({ propertyId }: MonitoringPanelProps) {
             className="rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
           />
           <span className="text-sm text-gray-700 dark:text-gray-300">
-            Automatically add discovered competitors
+            Prefer adding reviewed discoveries when activated
           </span>
         </label>
 
+        <label className="block text-sm">Reason for settings change<textarea minLength={3} maxLength={2000} value={reason} onChange={e=>setReason(e.target.value)} className="block w-full border rounded p-2 mt-1" /></label>
+        </fieldset>
+        {!canManage&&ready&&<p className="text-sm text-gray-500">A property manager can change these settings.</p>}
+        <p className="text-sm text-gray-500">Saving preferences does not start a source refresh. Provider access and worker readiness are checked separately.</p>
+        <button disabled={isSaving} onClick={()=>{setReason('');setMessage(null);void load()}} className="text-sm underline">Reload monitoring</button>
         {message && (
           <p
             className={`text-sm ${message.type === 'success' ? 'text-emerald-600' : 'text-red-600'}`}
@@ -296,7 +177,7 @@ export function MonitoringPanel({ propertyId }: MonitoringPanelProps) {
 
         <button
           onClick={save}
-          disabled={isSaving}
+          disabled={isSaving||!ready||!canManage||reason.trim().length<3}
           className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-50 text-sm"
         >
           {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
@@ -305,7 +186,7 @@ export function MonitoringPanel({ propertyId }: MonitoringPanelProps) {
 
         {config?.last_run_at && (
           <p className="text-xs text-gray-500">
-            Last source refresh: {new Date(config.last_run_at).toLocaleString()}
+            Earlier recorded refresh: {new Date(config.last_run_at).toLocaleString()}
             {typeof config.error_count === 'number' && config.error_count > 0 && (
               <span className="text-amber-600"> · {config.error_count} source errors</span>
             )}
@@ -313,55 +194,8 @@ export function MonitoringPanel({ propertyId }: MonitoringPanelProps) {
         )}
       </section>
 
-      {/* Run history */}
-      <section className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
-        <h3 className="font-semibold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
-          <Clock className="w-5 h-5 text-gray-500" /> Run history
-        </h3>
-        {runs.length === 0 ? (
-          <p className="text-sm text-gray-500">
-            No durable runs recorded yet. Batch refreshes, discovery, and brief generation will
-            appear here with their real outcomes.
-          </p>
-        ) : (
-          <ul className="divide-y divide-gray-100 dark:divide-gray-700">
-            {runs.map((run) => (
-              <li key={run.id} className="py-3 flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-gray-900 dark:text-white">
-                    {RUN_TYPE_LABELS[run.runType] || run.runType}
-                  </p>
-                  <p className="text-xs text-gray-500">
-                    {run.startedAt ? new Date(run.startedAt).toLocaleString() : 'queued'}
-                    {run.errorMessage && (
-                      <span className="text-red-500"> · {run.errorMessage}</span>
-                    )}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  {(run.result === 'failed' || run.result === 'partial') &&
-                    retryRequestFor(run.runType, propertyId) && (
-                      <button
-                        onClick={() => retryRun(run)}
-                        disabled={retryingRunId !== null}
-                        className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-700 disabled:opacity-50"
-                        title="Retry this run"
-                      >
-                        {retryingRunId === run.id ? (
-                          <Loader2 className="w-3 h-3 animate-spin" />
-                        ) : (
-                          <RotateCcw className="w-3 h-3" />
-                        )}
-                        Retry
-                      </button>
-                    )}
-                  {runBadge(run.result)}
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+      <div className="lg:col-span-2"><MarketRunHistory key={`${propertyId}:${openRequestId??''}`} propertyId={propertyId} openRequestId={openRequestId}/></div>
+      <div className="lg:col-span-2"><MarketDecisionHistory key={historyVersion} propertyId={propertyId} /></div>
     </div>
   )
 }

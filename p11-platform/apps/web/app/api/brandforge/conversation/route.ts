@@ -63,98 +63,46 @@ When conversation is complete and user confirms, extract structured JSON with:
 Stay conversational, ask follow-up questions, and build on previous answers.
 `
 
+import { z } from 'zod'
+import { createAdminClient } from '@/utils/supabase/admin'
+import { brandId, brandHeaders, brandRpc, brandReply } from '@/utils/brandforge/operations'
+const conversationRequest = z.object({ propertyId: brandId, brandAssetId: brandId.optional(), requestId: brandId, revision: z.number().int().min(0), action: z.enum(['start','message']), message: z.string().trim().max(8000).optional(), competitiveContext: z.record(z.string(),z.unknown()).optional(), researchId: brandId.optional() }).strict()
 export async function POST(req: NextRequest) {
-  try {
-    const supabase = await createClient()
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const { 
-      propertyId, 
-      brandAssetId, 
-      action, 
-      message, 
-      conversationHistory: initialHistory = [],
-      competitiveContext 
-    } = await req.json()
-    
-    let conversationHistory = normalizeConversationHistory(initialHistory)
-
-    if (!propertyId) {
-      return NextResponse.json({ error: 'propertyId required' }, { status: 400 })
-    }
-
-    const access = await validatePropertyAccess(user.id, propertyId)
-    if (!access.authorized) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-    }
-
-    // Get or create brand asset
-    let brand
-    if (brandAssetId) {
-      const { data } = await supabase
-        .from('property_brand_assets')
-        .select('*')
-        .eq('id', brandAssetId)
-        .single()
-      brand = data
-    } else if (action === 'start') {
-      // First check if brand already exists for this property
-      const { data: existingBrand } = await supabase
-        .from('property_brand_assets')
-        .select('*')
-        .eq('property_id', propertyId)
-        .single()
-      
-      if (existingBrand) {
-        // Use existing brand and restore conversation
-        brand = existingBrand
-        if (existingBrand.gemini_conversation_history) {
-          conversationHistory = normalizeConversationHistory(existingBrand.gemini_conversation_history)
-        }
-      } else {
-        // Create new brand asset
-        const { data, error } = await supabase
-          .from('property_brand_assets')
-          .insert({
-            property_id: propertyId,
-            generated_by: user.id,
-            generation_status: 'conversation',
-            competitive_analysis: competitiveContext
-          })
-          .select()
-          .single()
-        
-        if (error) {
-          console.error('Failed to create brand asset:', error)
-          return NextResponse.json({ error: 'Failed to create brand asset', details: error.message }, { status: 500 })
-        }
-        brand = data
-      }
-    }
-
-    if (!brand) {
-      return NextResponse.json({ error: 'Brand asset not found' }, { status: 404 })
-    }
-
-    if (!brand.property_id) {
-      return NextResponse.json({ error: 'Brand asset missing property' }, { status: 400 })
-    }
-
-    const brandAccess = await validatePropertyAccess(user.id, brand.property_id)
-    if (!brandAccess.authorized) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-    }
-
+ let claim: { id: string; token: string } | null = null
+ let terminalState: string | undefined
+ try {
+  const auth = await createClient()
+  const { data: { user }, error } = await auth.auth.getUser()
+  if (error || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: brandHeaders })
+  const parsed = conversationRequest.safeParse(await req.json().catch(() => null))
+  if (!parsed.success || (parsed.data.action === 'message' && !parsed.data.message)) return NextResponse.json({ error: 'Invalid brief request' }, { status: 400, headers: brandHeaders })
+  const { propertyId, brandAssetId, requestId, revision, action, message, competitiveContext, researchId } = parsed.data
+  const access = await validatePropertyAccess(user.id, propertyId)
+  if (!access.authorized) return NextResponse.json({ error: 'Forbidden' }, { status: 403, headers: brandHeaders })
+  const admin = createAdminClient()
+  const { data: existing } = await admin.from('property_brand_assets').select('*').eq('property_id', propertyId).maybeSingle()
+  if (brandAssetId && existing?.id !== brandAssetId) return NextResponse.json({ error: 'Brand not found' }, { status: 404, headers: brandHeaders })
+  if (action === 'start' && existing && Array.isArray(existing.gemini_conversation_history) && existing.gemini_conversation_history.length) {
+   return NextResponse.json({ brandAssetId: existing.id, revision: (existing as unknown as { revision: number }).revision, conversationHistory: normalizeConversationHistory(existing.gemini_conversation_history), status: existing.generation_status === 'conversation' ? 'in_progress' : 'ready_to_generate' }, { headers: brandHeaders })
+  }
+  let researchContext = competitiveContext
+  if (researchId) {
+    const {data:research,error:researchError} = await admin.from('brand_research_runs').select('result').eq('id',researchId).eq('property_id',propertyId).eq('state','succeeded').single()
+    if(researchError || !research)return NextResponse.json({error:'The selected saved research is unavailable for this property.'},{status:409,headers:brandHeaders})
+    researchContext = (research as unknown as {result:Record<string,unknown>}).result
+  }
+  const started = await brandRpc('begin_brand_operation', { p_property_id: propertyId, p_brand_asset_id: brandAssetId || existing?.id || null, p_actor_id: user.id, p_request_id: requestId, p_revision: revision, p_kind: 'brief', p_input: { action, message: message || null, competitiveContext: researchContext || null, researchId: researchId || null } })
+  if (started.state !== 'claimed') return brandReply(started)
+  claim = { id: requestId, token: String(started.claimToken) }
+  const brand = existing || { id: String(started.brandAssetId) }
+  const conversationHistory = normalizeConversationHistory(existing?.gemini_conversation_history)
     // Build system context
-    const contextPrompt = competitiveContext ? `
+    const effectiveContext = (existing?.competitive_analysis || researchContext) as Record<string, unknown> | null
+    const contextPrompt = effectiveContext ? `
 Current Market Context:
-- Competitors analyzed: ${competitiveContext.competitorCount}
-- Market gaps: ${competitiveContext.marketGaps?.join(', ')}
-- Dominant positioning: ${competitiveContext.competitors?.slice(0, 3).map((c: { brandVoice?: string }) => c.brandVoice).join(', ')}
+- Competitors analyzed: ${effectiveContext.competitorCount}
+- Market gaps: ${(Array.isArray(effectiveContext.marketGaps) ? effectiveContext.marketGaps : []).join(', ')}
+- Dominant positioning: ${(Array.isArray(effectiveContext.competitors) ? effectiveContext.competitors : []).slice(0, 3).map((c: { brandVoice?: string }) => c.brandVoice).join(', ')}
     ` : ''
 
     const systemPrompt = BRAND_STRATEGIST_SYSTEM_PROMPT + contextPrompt
@@ -164,6 +112,8 @@ Current Market Context:
 
     // Helper function to call Gemini 3
     async function callGemini3(prompt: string, history?: ConversationMessage[]) {
+      const active = await brandRpc('check_brand_operation', { p_request_id: requestId, p_claim_token: claim!.token })
+      if (active.state !== 'active') throw new Error('Brand request is no longer active')
       const model = genAI.getGenerativeModel({ 
         model: 'gemini-3-pro-preview', // Gemini 3 Pro
         systemInstruction: systemPrompt
@@ -186,6 +136,8 @@ Current Market Context:
 
     // Helper function to call OpenAI (fallback)
     async function callOpenAI(messages: { role: 'system' | 'user' | 'assistant', content: string }[]) {
+      const active = await brandRpc('check_brand_operation', { p_request_id: requestId, p_claim_token: claim!.token })
+      if (active.state !== 'active') throw new Error('Brand request is no longer active')
       const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
       const completion = await openai.chat.completions.create({
         model: 'gpt-4o',
@@ -241,7 +193,7 @@ Current Market Context:
       }
 
       if (!aiResponse) {
-        aiResponse = "I understand. Let me help you refine that further. Could you tell me more about your target audience?"
+        throw new Error('The brand provider returned an empty response')
       }
 
       conversationHistory.push({
@@ -262,6 +214,8 @@ Current Market Context:
       }
     }
 
+    if (!aiResponse.trim()) throw new Error('The brand provider returned an empty response')
+
     // Update brand asset
     const updates: Record<string, unknown> = {
       gemini_conversation_history: conversationHistory
@@ -274,26 +228,15 @@ Current Market Context:
       updates.current_step_name = 'introduction'
     }
 
-    await supabase
-      .from('property_brand_assets')
-      .update(updates as never)
-      .eq('id', brand.id)
-
-    return NextResponse.json({
-      brandAssetId: brand.id,
-      message: aiResponse,
-      conversationHistory,
-      extractedData,
-      status: extractedData?.conversationComplete ? 'ready_to_generate' : 'in_progress'
-    })
-
-  } catch (error) {
-    console.error('BrandForge Conversation Error:', error)
-    return NextResponse.json({ 
-      error: 'Conversation failed', 
-      details: error instanceof Error ? error.message : 'Unknown error' 
-    }, { status: 500 })
-  }
+    if (!extractedData?.conversationComplete) updates.generation_status = 'conversation'
+    if (researchContext && !existing?.competitive_analysis) updates.competitive_analysis = researchContext
+    return brandReply(await brandRpc('finish_brand_operation', { p_request_id: claim.id, p_claim_token: claim.token, p_updates: updates, p_result: { brandAssetId: brand.id, message: aiResponse, conversationHistory, extractedData, status: extractedData?.conversationComplete ? 'ready_to_generate' : 'in_progress' } }))
+ } catch {
+  if (claim) try {
+   const result = await brandRpc('finish_brand_operation', { p_request_id: claim.id, p_claim_token: claim.token, p_updates: {}, p_result: {}, p_error: 'generation_failed' })
+   if (result.state === 'replayed') return brandReply(result)
+   if (result.state === 'failed' || result.state === 'cancelled') terminalState = String(result.state)
+  } catch { /* Keep the unconfirmed request for operator review. */ }
+  return NextResponse.json({ ...(terminalState ? { state: terminalState } : {}), error: 'The brief response could not be saved. Reload to check the saved conversation before retrying.' }, { status: 503, headers: brandHeaders })
+ }
 }
-
-

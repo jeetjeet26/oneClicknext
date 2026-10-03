@@ -33,7 +33,7 @@ import {
   type ForgeStudioTextTier,
 } from '@/utils/forgestudio/model-policy'
 
-export const GENERATION_PROMPT_VERSION = 'forgestudio.generation.v1'
+export const GENERATION_PROMPT_VERSION = 'forgestudio.generation.v2'
 
 export class GenerationClaimError extends Error {
   unsupportedClaims: ContentClaim[]
@@ -187,7 +187,7 @@ export function buildGenerationPrompt(input: {
       const mediaNote = MEDIA_REQUIRED_PLATFORMS.includes(platform)
         ? ' Media is REQUIRED — select one of the provided assets.'
         : ''
-      return `- key=${platform}:${contentFormat}:${sequenceIndex + 1}; platform=${platform}; format=${contentFormat}; sequence=${sequenceIndex}; caption ≤ ${PLATFORM_CAPTION_LIMITS[platform]} chars including hashtags; ≤ ${PLATFORM_HASHTAG_LIMITS[platform]} hashtags.${mediaNote}${objective ? ` Objective: ${objective}` : ''}`
+      return `- key=${platform}:${contentFormat}:${sequenceIndex + 1}; platform=${platform}; format=${contentFormat}; sequence=${sequenceIndex}; caption ≤ ${Math.min(PLATFORM_CAPTION_LIMITS[platform],bundle.channelSettings?.maxCaptionLength??PLATFORM_CAPTION_LIMITS[platform])} chars including hashtags; ≤ ${bundle.channelSettings?.includeHashtags===false?0:PLATFORM_HASHTAG_LIMITS[platform]} hashtags.${mediaNote}${objective ? ` Objective: ${objective}` : ''}`
     })
     .join('\n')
 
@@ -211,6 +211,8 @@ HARD RULES:
 7. A source may support a public factual claim only when its allowed uses include "claim" and it is neither stale nor conflicted.
 8. Advisory market/performance signals may guide topic, timing, or format but must never be restated as facts about the property or competitors.
 9. Do not use demographic personas, protected-class proxies, neighborhood safety language, or exclusionary audience language.
+${bundle.channelSettings?.includeHashtags===false?'Do not put hashtags in captions or the hashtags array.':''}
+${bundle.channelSettings?.includeCta===false?'Do not include a call-to-action in the caption. Set callToAction to null.':'Calls-to-action may be used when appropriate; include their text in the caption itself.'}
 10. Produce exactly one variant for every requested format-plan key. Carousels need ordered assets and slide overlays; stories/reels/videos need safe areas, storyboard frames, subtitles, and thumbnail guidance.`
 
   const prompt = `OBJECTIVE: ${input.objective}
@@ -257,7 +259,7 @@ export type GenerationResult = {
  * Generate revision content for a brief from a trusted context bundle.
  * Fails closed (GenerationClaimError) when sensitive claims lack citations.
  */
-export async function generateRevisionContent(input: {
+export type GenerationInput = {
   bundle: TrustedContextBundle
   objective: string
   topic?: string | null
@@ -269,7 +271,10 @@ export async function generateRevisionContent(input: {
   tier?: ForgeStudioTextTier
   /** Test seam: inject a deterministic model. */
   model?: Parameters<typeof generateText>[0]['model']
-}): Promise<GenerationResult> {
+  onResult?: (result:{output:GenerationOutput;metadata:GenerationResult['metadata']})=>Promise<void>
+}
+
+export async function generateRevisionContent(input: GenerationInput): Promise<GenerationResult> {
   const { system, prompt } = buildGenerationPrompt(input)
   const tier = input.tier ?? 'quality'
   const model = input.model ?? resolveModel(tier)
@@ -286,7 +291,7 @@ export async function generateRevisionContent(input: {
     system,
     prompt,
     temperature: 0.7,
-    maxRetries: 2,
+    maxRetries: 0,
     abortSignal: AbortSignal.timeout(120_000),
     ...(typeof model === 'string'
       ? { providerOptions: { gateway: gatewayOptions } }
@@ -294,6 +299,31 @@ export async function generateRevisionContent(input: {
   })
 
   const output = result.output
+  const metadata:GenerationResult['metadata'] = {
+      model:
+        typeof model === 'string'
+          ? model
+          : (model as { modelId?: string }).modelId ?? resolveForgeStudioTextModel(tier),
+      promptVersion: GENERATION_PROMPT_VERSION,
+      contractVersion: CONTENT_CONTRACT_VERSION,
+      contextHash: input.bundle.contextHash,
+      modelPolicyVersion: FORGESTUDIO_MODEL_POLICY_VERSION,
+      tier,
+      usage: {
+        inputTokens: result.usage?.inputTokens,
+        outputTokens: result.usage?.outputTokens,
+        totalTokens: result.usage?.totalTokens,
+      },
+      finishReason: String(result.finishReason ?? 'unknown'),
+      warnings: result.warnings ?? [],
+      providerMetadata: (result.providerMetadata ?? {}) as Record<string, unknown>,
+      generationId: result.response?.headers?.['x-vercel-ai-gateway-generation-id'],
+    }
+  await input.onResult?.({output,metadata})
+  return materializeGeneration(input,output,metadata)
+}
+
+export function materializeGeneration(input:GenerationInput,output:GenerationOutput,metadata:GenerationResult['metadata']):GenerationResult {
   const validSourceIds = new Set(
     input.bundle.sources
       .filter((source) =>
@@ -383,6 +413,15 @@ export async function generateRevisionContent(input: {
       }
     })
 
+  for(const variant of variants){
+    const settings=input.bundle.channelSettings
+    if(!settings)continue // Recovered older requests keep their original generation contract.
+    if(!settings.includeHashtags&&(variant.hashtags.length>0||/(^|\s)#[\p{L}\p{N}_]+/u.test(variant.caption)))throw new Error('Generated hashtags conflict with the saved studio preferences. Review the saved output before continuing.')
+    if(!settings.includeCta&&variant.callToAction?.trim())throw new Error('Generated call-to-action conflicts with the saved studio preferences. Review the saved output before continuing.')
+    const hashtags=variant.hashtags.length?'\n\n'+variant.hashtags.map(tag=>'#'+tag).join(' '):''
+    if((variant.caption+hashtags).length>Math.min(settings.maxCaptionLength,PLATFORM_CAPTION_LIMITS[variant.platform]))throw new Error('Generated caption exceeds the saved studio limit. Review the saved output before continuing.')
+  }
+
   const expectedVariantKeys = input.formatPlan.flatMap((plan) =>
     Array.from(
       { length: plan.quantity },
@@ -403,27 +442,5 @@ export async function generateRevisionContent(input: {
     claims,
   }
 
-  return {
-    content,
-    metadata: {
-      model:
-        typeof model === 'string'
-          ? model
-          : (model as { modelId?: string }).modelId ?? resolveForgeStudioTextModel(tier),
-      promptVersion: GENERATION_PROMPT_VERSION,
-      contractVersion: CONTENT_CONTRACT_VERSION,
-      contextHash: input.bundle.contextHash,
-      modelPolicyVersion: FORGESTUDIO_MODEL_POLICY_VERSION,
-      tier,
-      usage: {
-        inputTokens: result.usage?.inputTokens,
-        outputTokens: result.usage?.outputTokens,
-        totalTokens: result.usage?.totalTokens,
-      },
-      finishReason: String(result.finishReason ?? 'unknown'),
-      warnings: result.warnings ?? [],
-      providerMetadata: (result.providerMetadata ?? {}) as Record<string, unknown>,
-      generationId: result.response?.headers?.['x-vercel-ai-gateway-generation-id'],
-    },
-  }
+  return {content,metadata}
 }

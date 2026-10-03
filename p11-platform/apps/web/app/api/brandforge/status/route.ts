@@ -60,7 +60,11 @@ function getSectionTitle(step: number | null, slug: string | null) {
 }
 
 function countApprovedSections(brandAsset: Record<string, unknown>) {
-  return BRAND_SECTIONS.filter((section) => brandAsset[section.column] !== null).length
+  return BRAND_SECTIONS.filter((section) => {
+    if (brandAsset.approval_status !== 'approved' && section.step >= Number(brandAsset.current_step || 1)) return false
+    const value = asRecord(brandAsset[section.column])
+    return value && (value.status === 'approved' || asRecord(asRecord(value._meta)?.approval)?.status === 'approved')
+  }).length
 }
 
 function buildWarnings(brandAsset: Record<string, unknown>) {
@@ -263,8 +267,7 @@ export async function GET(req: NextRequest) {
     const currentSectionTitle = getSectionTitle(draftSection?.step ?? currentStep, draftSection?.name ?? currentStepName)
     const hasExport = Boolean(brandAsset.brand_book_pdf_url)
     const isComplete =
-      brandAsset.generation_status === 'complete'
-      || brandAsset.approval_status === 'approved'
+      brandAsset.approval_status === 'approved'
     const warnings = buildWarnings(brandRecord)
     const phase = buildPhase(asString(brandAsset.generation_status), isComplete, hasExport, Boolean(draftSection))
     const lastActivityAt =
@@ -284,6 +287,7 @@ export async function GET(req: NextRequest) {
       exists: true,
       brandAsset: {
         id: brandAsset.id,
+        revision: brandRecord.revision,
         currentStep,
         currentStepName,
         currentSectionTitle,

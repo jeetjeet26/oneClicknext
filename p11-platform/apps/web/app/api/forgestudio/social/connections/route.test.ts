@@ -43,7 +43,7 @@ describe('forgestudio social connections route', () => {
     const { GET } = await import('./route')
     const response = await GET(
       new Request(
-        'http://localhost/api/forgestudio/social/connections?propertyId=property-1'
+        'http://localhost/api/forgestudio/social/connections?propertyId=33333333-3333-4333-8333-333333333333'
       ) as NextRequest
     )
 
@@ -62,7 +62,7 @@ describe('forgestudio social connections route', () => {
     const { GET } = await import('./route')
     const response = await GET(
       new Request(
-        'http://localhost/api/forgestudio/social/connections?propertyId=property-1'
+        'http://localhost/api/forgestudio/social/connections?propertyId=33333333-3333-4333-8333-333333333333'
       ) as NextRequest
     )
 
@@ -71,75 +71,5 @@ describe('forgestudio social connections route', () => {
     expect(mockFrom).not.toHaveBeenCalled()
   })
 
-  it('DELETE returns 403 when connection property access is denied', async () => {
-    authGetUserMock.mockResolvedValue({
-      data: { user: { id: 'user-1' } },
-      error: null,
-    })
-    validatePropertyAccessMock.mockResolvedValue({ authorized: false })
-
-    const deleteEqMock = vi.fn()
-    mockFrom.mockImplementation((table: string) => {
-      if (table !== 'social_connections') {
-        throw new Error(`Unexpected table ${table}`)
-      }
-      return {
-        select: vi.fn(() => ({
-          eq: vi.fn(() => ({
-            single: vi.fn().mockResolvedValue({
-              data: { id: 'conn-1', property_id: 'property-1' },
-              error: null,
-            }),
-          })),
-        })),
-        delete: vi.fn(() => ({
-          eq: deleteEqMock,
-        })),
-      }
-    })
-
-    const { DELETE } = await import('./route')
-    const response = await DELETE(
-      new Request(
-        'http://localhost/api/forgestudio/social/connections?connectionId=conn-1'
-      ) as NextRequest
-    )
-
-    expect(response.status).toBe(403)
-    await expect(response.json()).resolves.toEqual({ error: 'Forbidden' })
-    expect(deleteEqMock).not.toHaveBeenCalled()
-  })
-
-  it('DELETE returns 404 when connection does not exist', async () => {
-    authGetUserMock.mockResolvedValue({
-      data: { user: { id: 'user-1' } },
-      error: null,
-    })
-
-    mockFrom.mockImplementation((table: string) => {
-      if (table !== 'social_connections') {
-        throw new Error(`Unexpected table ${table}`)
-      }
-      return {
-        select: vi.fn(() => ({
-          eq: vi.fn(() => ({
-            single: vi.fn().mockResolvedValue({
-              data: null,
-              error: { message: 'not found' },
-            }),
-          })),
-        })),
-      }
-    })
-
-    const { DELETE } = await import('./route')
-    const response = await DELETE(
-      new Request(
-        'http://localhost/api/forgestudio/social/connections?connectionId=missing'
-      ) as NextRequest
-    )
-
-    expect(response.status).toBe(404)
-    await expect(response.json()).resolves.toEqual({ error: 'Connection not found' })
-  })
+  it('retires unversioned deletion before any account lookup',async()=>{authGetUserMock.mockResolvedValue({data:{user:{id:'user-1'}},error:null});const {DELETE}=await import('./route');expect((await DELETE(new Request('http://localhost/api/forgestudio/social/connections?connectionId=old') as NextRequest)).status).toBe(400);expect(mockFrom).not.toHaveBeenCalled()})
 })

@@ -1,152 +1,59 @@
 'use client'
-
-import { useEffect, useState } from 'react'
-
-type IntakeCandidate = {
-  id: string
-  seedName: string
-  seedLocation: string | null
-  enrichmentStatus: string
-  competitorId: string | null
-  errorMessage: string | null
+import {useEffect,useRef,useState} from 'react'
+import Link from 'next/link'
+import {sendMarketDecision} from '@/utils/marketvision/decision-client'
+import {IntakeCandidateDecision,type CandidateChoice,type IntakeDetailData,type IntakeHistoryData} from '@/utils/marketvision/intake-contracts'
+import {PROPERTY_TYPE_CONFIGS} from '@/utils/property-types'
+import {marketDate} from './MarketEvidence'
+const endpoint='/api/competitors/intake'
+const button='rounded border bg-white px-3 py-2 text-sm disabled:opacity-50'
+const field='mt-1 block w-full rounded border bg-white p-2 text-sm disabled:bg-slate-50'
+type Props={propertyId:string;openRequestId?:string;onComplete?:()=>void}
+type Legacy={id:string;created_at:string;status:string;rawText:string;trust:string;candidates:Array<{id:string;name:string;sourceText:string;status:string;reportedClaims:Record<string,unknown>}>}
+const label=(state:string)=>state==='preview_ready'?'Awaiting review':state==='applied'?'Review applied':state==='stopped'?'Stopped':`Earlier status: ${state}`
+export function CompetitorIntakePanel(props:Props){return <IntakeWorkspace key={`${props.propertyId}:${props.openRequestId??''}`} {...props}/>}
+function IntakeWorkspace({propertyId,openRequestId,onComplete}:Props){
+ const [rawText,setRawText]=useState(''),[reason,setReason]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState(''),[readError,setReadError]=useState(''),[selected,setSelected]=useState(openRequestId),[view,setView]=useState<'saved'|'legacy'>('saved'),[cursor,setCursor]=useState<string|undefined>(),[reload,setReload]=useState(0),[loaded,setLoaded]=useState(''),[history,setHistory]=useState<IntakeHistoryData|null>(null),[detail,setDetail]=useState<IntakeDetailData|null>(null),[legacy,setLegacy]=useState<Legacy|null>(null)
+ const live=useRef(true),key=JSON.stringify([propertyId,selected,view,cursor,reload]),loading=key!==loaded
+ useEffect(()=>{live.current=true;return()=>{live.current=false}},[])
+ useEffect(()=>{const c=new AbortController();const read=async(extra:Record<string,string>)=>{const res=await fetch(`${endpoint}?${new URLSearchParams({propertyId,view,...extra})}`,{signal:AbortSignal.any([c.signal,AbortSignal.timeout(15000)]),cache:'no-store'}),body=await res.json();if(!res.ok)throw new Error(body.error||'Intake history could not be loaded.');return body}
+  void Promise.all([read(cursor?{cursor}:{}),selected?read({requestId:selected}):Promise.resolve(null)]).then(([page,record])=>{if(c.signal.aborted)return;setReadError('');setHistory(old=>cursor&&old?{...page,intakes:[...old.intakes,...page.intakes]}:page);setDetail(record?.intake?record:null);setLegacy(view==='legacy'?record?.legacy??null:null)}).catch(e=>{if(!c.signal.aborted){setHistory(null);setDetail(null);setLegacy(null);setReadError(e instanceof Error?e.message:'Intake could not be loaded.')}}).finally(()=>{if(!c.signal.aborted)setLoaded(key)})
+  return()=>c.abort()
+ },[propertyId,selected,view,cursor,reload,key])
+ const refresh=()=>{setCursor(undefined);setReload(n=>n+1)}
+ async function prepare(){setBusy(true);setError('');try{const data=await sendMarketDecision(endpoint,'POST',{propertyId,rawText,reason},['preview_ready','applied','stopped'],true);if(!live.current)return;setSelected(data.result.requestId);setView('saved');refresh()}catch(e){if(live.current)setError(e instanceof Error?e.message:'Preview could not be confirmed.')}finally{if(live.current)setBusy(false)}}
+ return <section aria-label="Saved competitor intake" className="space-y-5 rounded-xl border bg-white p-4 sm:p-6">
+  <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="text-lg font-semibold">Review competitor notes</h3><button className={button} disabled={busy||loading} onClick={refresh}>Reload intake</button></div>
+  <p className="text-sm text-slate-600">Save the original notes, review each suggested identity, then choose which competitors to add. Prices, promotions and brand claims stay unverified in the saved notes. Intake does not fetch websites, extract prices or publish knowledge.</p>
+  <details open={!selected&&view==='saved'} className="rounded border p-3"><summary className="font-medium">Prepare a new preview</summary><div className="mt-3 space-y-3"><label className="block text-sm">Competitor notes<textarea className={field} rows={7} maxLength={100000} value={rawText} onChange={e=>setRawText(e.target.value)} disabled={busy}/></label><p className="text-xs text-slate-600">One competitor per paragraph, separated by a blank line. Up to 50 candidates per preview. Unsaved edits remain in this page only.</p><label className="block text-sm">Reason for intake<textarea className={field} maxLength={2000} value={reason} onChange={e=>setReason(e.target.value)} disabled={busy}/></label><button className={button} disabled={busy||rawText.trim().length<20||reason.trim().length<3} onClick={()=>void prepare()}>{busy?'Saving…':'Save review preview'}</button></div></details>
+  {error&&<p role="alert" className="rounded bg-red-50 p-3 text-red-700">{error}</p>}{loading&&<p role="status">Loading saved intake…</p>}{readError&&!loading&&<p role="alert" className="rounded bg-red-50 p-3 text-red-700">{readError}</p>}
+  <label className="block text-sm">Intake history<select aria-label="Intake history" className="ml-2 max-w-full rounded border p-2" value={view} disabled={loading||busy} onChange={e=>{setView(e.target.value as typeof view);setSelected(undefined);setCursor(undefined)}}><option value="saved">Reviewed intake workflow</option><option value="legacy">Earlier imports · read only</option></select></label>
+  {history&&!loading&&!readError&&<><p className="text-sm">{history.total} saved intake records{view==='legacy'?'. Earlier enrichment statuses are unverified historical records.':''}.</p><ul className="grid gap-2 sm:grid-cols-2">{history.intakes.map(r=><li key={r.id}><button className={`${button} w-full text-left`} disabled={busy} onClick={()=>{setSelected(r.id);setCursor(undefined)}}>{label(r.state)} · {marketDate(r.created_at)}{r.candidate_count!==undefined?` · ${r.candidate_count} candidates`:''}<span className="sr-only"> · {r.id}</span></button></li>)}</ul>{history.nextCursor&&<button disabled={busy} className={button} onClick={()=>setCursor(history.nextCursor!)}>Older intake records</button>}</>}
+  {selected&&<button className={button} disabled={busy} onClick={()=>setSelected(undefined)}>Close intake details</button>}
+  {detail&&!loading&&<IntakeReview key={`${detail.intake.id}:${detail.intake.version}:${reload}`} detail={detail} propertyId={propertyId} onDone={()=>{refresh();onComplete?.()}} onBusy={setBusy}/>}
+  {legacy&&!loading&&<article aria-label="Earlier intake details" className="space-y-3 rounded border bg-amber-50 p-4"><h4 className="font-semibold">Earlier import · read only</h4><p className="text-sm">Recorded status: {legacy.status}. The earlier enrichment process is retired. This status does not verify provider evidence, saved prices or knowledge quality.</p><details><summary>Original notes</summary><pre className="mt-2 whitespace-pre-wrap break-words text-sm">{legacy.rawText}</pre></details><ul className="space-y-3">{legacy.candidates.map(c=><li key={c.id}><p className="font-medium">{c.name} · {c.status}</p><p className="whitespace-pre-wrap break-words text-sm">{c.sourceText}</p></li>)}</ul></article>}
+ </section>
 }
-
-type IntakeBatch = {
-  id: string
-  status: string
-  errorMessage: string | null
-}
-
-type CompetitorIntakePanelProps = {
-  propertyId: string
-  onComplete?: () => void
-}
-
-export function CompetitorIntakePanel({ propertyId, onComplete }: CompetitorIntakePanelProps) {
-  const [rawText, setRawText] = useState('')
-  const [batch, setBatch] = useState<IntakeBatch | null>(null)
-  const [candidates, setCandidates] = useState<IntakeCandidate[]>([])
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (!batch || batch.status === 'completed' || batch.status === 'failed' || batch.status === 'cancelled') {
-      return
-    }
-
-    const intervalId = window.setInterval(async () => {
-      try {
-        const response = await fetch(
-          `/api/competitors/intake?propertyId=${propertyId}&batchId=${batch.id}`
-        )
-        const data = await response.json()
-        if (!response.ok) return
-
-        setBatch(data.batch)
-        setCandidates(data.candidates || [])
-        if (data.batch?.status === 'completed') {
-          onComplete?.()
-        }
-      } catch (pollError) {
-        console.error('Failed to poll competitor intake batch:', pollError)
-      }
-    }, 3000)
-
-    return () => window.clearInterval(intervalId)
-  }, [batch, propertyId, onComplete])
-
-  const submitIntake = async () => {
-    setIsSubmitting(true)
-    setError(null)
-
-    try {
-      const response = await fetch('/api/competitors/intake', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ propertyId, rawText }),
-      })
-      const data = await response.json()
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to submit competitor intake')
-      }
-
-      setBatch(data.batch)
-      setCandidates(data.candidates || [])
-      setRawText('')
-    } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : 'Failed to submit competitor intake')
-    } finally {
-      setIsSubmitting(false)
-    }
+function IntakeReview({detail,propertyId,onDone,onBusy}:{detail:IntakeDetailData;propertyId:string;onDone:()=>void;onBusy:(value:boolean)=>void}){
+ const {intake}=detail,[choices,setChoices]=useState(()=>intake.preview.map(c=>({id:c.id,selected:false,propertyType:'',name:c.name,location:c.location??'',url:c.url??''}))),[reason,setReason]=useState(''),[ack,setAck]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),live=useRef(true)
+ useEffect(()=>{live.current=true;return()=>{live.current=false}},[])
+ const count=choices.filter(c=>c.selected).length
+ const reviewed=Array.isArray(detail.decision?.input.candidates)?detail.decision.input.candidates.flatMap(c=>{const parsed=IntakeCandidateDecision.safeParse(c);return parsed.success?[parsed.data]:[]}):[]
+ async function decide(action:'apply'|'stop'){
+  setError('');let candidates:CandidateChoice[]=[]
+  if(action==='apply'){
+   const parsed=choices.map(c=>IntakeCandidateDecision.safeParse(c.selected?{id:c.id,action:'add',propertyType:c.propertyType,name:c.name,location:c.location.trim()||null,url:c.url.trim()||null}:{id:c.id,action:'skip'}))
+   if(parsed.some(p=>!p.success)){setError('Review every selected name, property type and complete HTTP or HTTPS source address. Names can contain up to 200 characters.');return}
+   candidates=parsed.map(p=>p.data!)
   }
-
-  const completedCount = candidates.filter(candidate => candidate.enrichmentStatus === 'completed').length
-
-  return (
-    <div className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-4">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h3 className="text-sm font-semibold text-gray-900">Client-Provided Competitor Intake</h3>
-          <p className="mt-1 text-sm text-gray-600">
-            Paste client notes here. The notes are stored as search seeds only; online enrichment fills the canonical cards and vector KB.
-          </p>
-        </div>
-        {batch && (
-          <span className="rounded-full bg-white px-3 py-1 text-xs font-medium text-indigo-700">
-            {batch.status}
-          </span>
-        )}
-      </div>
-
-      <textarea
-        value={rawText}
-        onChange={event => setRawText(event.target.value)}
-        rows={5}
-        placeholder="Paste competitor names, locations, URLs, and client notes..."
-        className="mt-4 w-full rounded-lg border border-gray-200 bg-white p-3 text-sm text-gray-900 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
-      />
-
-      {error && (
-        <p className="mt-2 rounded-lg border border-red-100 bg-red-50 p-2 text-sm text-red-700">{error}</p>
-      )}
-
-      <div className="mt-3 flex items-center justify-between">
-        <p className="text-xs text-gray-500">
-          {candidates.length > 0
-            ? `${completedCount} of ${candidates.length} competitors enriched`
-            : 'Competitor knowledge will be scoped to this property.'}
-        </p>
-        <button
-          type="button"
-          onClick={submitIntake}
-          disabled={isSubmitting || rawText.trim().length < 20}
-          className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {isSubmitting ? 'Submitting...' : 'Submit For Enrichment'}
-        </button>
-      </div>
-
-      {candidates.length > 0 && (
-        <div className="mt-4 divide-y divide-indigo-100 rounded-lg bg-white">
-          {candidates.map(candidate => (
-            <div key={candidate.id} className="flex items-center justify-between gap-4 p-3">
-              <div>
-                <p className="text-sm font-medium text-gray-900">{candidate.seedName}</p>
-                {candidate.seedLocation && (
-                  <p className="text-xs text-gray-500">{candidate.seedLocation}</p>
-                )}
-                {candidate.errorMessage && (
-                  <p className="mt-1 text-xs text-red-600">{candidate.errorMessage}</p>
-                )}
-              </div>
-              <span className="rounded-full bg-gray-100 px-2 py-1 text-xs font-medium text-gray-600">
-                {candidate.enrichmentStatus}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  )
+  setBusy(true);onBusy(true)
+  try{await sendMarketDecision(endpoint,'PUT',{propertyId,intakeId:intake.id,expectedVersion:intake.version,previewHash:intake.preview_hash,action,reason,...(action==='apply'?{acknowledgeUnverified:ack,candidates}:{})});if(live.current)onDone()}catch(e){if(live.current)setError(e instanceof Error?e.message:'Intake decision could not be confirmed.')}finally{if(live.current){setBusy(false);onBusy(false)}}
+ }
+ const edit=(id:string,patch:Partial<typeof choices[number]>)=>setChoices(old=>old.map(c=>c.id===id?{...c,...patch}:c))
+ return <article aria-label="Saved intake details" className="space-y-4 rounded-xl border p-4">
+  <h4 className="font-semibold">{label(intake.state)}</h4><p className="text-sm text-slate-600">Saved {marketDate(intake.created_at)} · {intake.preview.length} original candidates.</p>
+  <details><summary>Original intake notes and reason</summary><p className="mt-2 text-sm">{intake.input.reason}</p><pre className="mt-2 whitespace-pre-wrap break-words text-sm">{intake.input.rawText}</pre></details>
+  {intake.state==='preview_ready'?<><p className="text-sm">Select identities to add. Correct suggestions before approving. Existing competitors, including archived records, must be skipped or reviewed separately; this import cannot overwrite them.</p><div className="space-y-4">{choices.map((c,index)=>{const source=intake.preview[index],matches=detail.existing.filter(e=>e.name.trim().toLowerCase()===c.name.trim().toLowerCase());return <fieldset key={c.id} className="min-w-0 space-y-3 rounded border p-3" disabled={busy}><legend className="px-1 text-sm font-semibold">Candidate {index+1}</legend><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={c.selected} onChange={e=>edit(c.id,{selected:e.target.checked})}/>Add candidate {index+1}</label><label className="block text-sm">Name {index+1}<input className={field} value={c.name} onChange={e=>edit(c.id,{name:e.target.value})} disabled={!c.selected}/></label><label className="block text-sm">Property type {index+1}<select className={field} value={c.propertyType} onChange={e=>edit(c.id,{propertyType:e.target.value})} disabled={!c.selected}><option value="">Choose a property type</option>{PROPERTY_TYPE_CONFIGS.map(t=><option key={t.value} value={t.value}>{t.label}</option>)}</select></label><label className="block text-sm">Location {index+1}<input className={field} maxLength={2000} value={c.location} onChange={e=>edit(c.id,{location:e.target.value})} disabled={!c.selected}/></label><label className="block text-sm">Source address {index+1}<input className={field} value={c.url} onChange={e=>edit(c.id,{url:e.target.value})} disabled={!c.selected}/></label>{matches.length>0&&<p className="text-sm text-amber-900">Already saved: {matches.map(m=>`${m.name}${m.isActive?'':' (archived)'}`).join(', ')}. Skip or review a distinct identity.</p>}<details><summary className="text-sm">Original candidate evidence {index+1}</summary><p className="mt-2 whitespace-pre-wrap break-words text-sm">{source.sourceText}</p><p className="mt-2 text-xs text-slate-600">Reported claims are not independently verified and will not become prices or approved brand knowledge.</p></details></fieldset>})}</div><label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={ack} onChange={e=>setAck(e.target.checked)} disabled={busy}/>I reviewed the selected identities and understand their source claims are unverified.</label><label className="block text-sm">Reason for intake decision<textarea className={field} value={reason} maxLength={2000} onChange={e=>setReason(e.target.value)} disabled={busy}/></label><p className="text-sm">This decision adds {count} competitors and skips {choices.length-count}. Review edits are saved with the final decision.</p><div className="flex flex-wrap gap-2"><button className={button} disabled={busy||!ack||reason.trim().length<3} onClick={()=>void decide('apply')}>Apply reviewed intake</button><button className={button} disabled={busy||reason.trim().length<3} onClick={()=>void decide('stop')}>Stop intake</button></div></>:<><p className="text-sm">{intake.state==='applied'?`${intake.result?.created.length??0} competitor identities added; ${intake.result?.skipped.length??0} candidates skipped. Prices and brand knowledge were not changed.`:'This intake was stopped. It created no competitor records.'}</p>{detail.decision&&<details><summary>Recorded review and corrections</summary><p className="mt-2 text-sm">Reviewed {marketDate(detail.decision.createdAt)} · {String(detail.decision.input.reason??'')}</p><ul className="mt-3 space-y-3 text-sm">{reviewed.map((c,index)=><li key={c.id}>{c.action==='skip'?`Candidate ${intake.preview.find(p=>p.id===c.id)?.ordinal??index+1}: skipped`:<><p className="font-medium">{c.name}</p><p>{PROPERTY_TYPE_CONFIGS.find(t=>t.value===c.propertyType)?.label} · {c.location||'Location not supplied'}</p><p className="break-words">{c.url||'Source address not supplied'}</p></>}</li>)}</ul></details>}<Link href="/dashboard/marketvision?tab=competitors" className="inline-block text-sm text-indigo-700">Review saved competitors</Link></>}
+  {error&&<p role="alert" className="rounded bg-red-50 p-3 text-red-700">{error}</p>}
+ </article>
 }

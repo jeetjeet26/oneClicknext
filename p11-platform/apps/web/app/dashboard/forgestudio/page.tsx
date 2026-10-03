@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
+import {PublicationResults} from '@/components/forgestudio/PublicationResults'
 import { useSearchParams } from 'next/navigation'
 import { usePropertyContext } from '@/components/layout/PropertyContext'
 import {
@@ -21,27 +22,32 @@ import {
   Megaphone
 } from 'lucide-react'
 
-type TabId = 'campaigns' | 'assets' | 'schedule' | 'connections' | 'settings'
+type TabId = 'campaigns' | 'assets' | 'schedule' | 'results' | 'connections' | 'settings'
 
-const TAB_IDS: TabId[] = ['campaigns', 'assets', 'schedule', 'connections', 'settings']
+const TAB_IDS: TabId[] = ['campaigns', 'assets', 'schedule', 'results', 'connections', 'settings']
 
 export default function ForgeStudioPage() {
   const { currentProperty } = usePropertyContext()
   const searchParams = useSearchParams()
-  const [activeTab, setActiveTab] = useState<TabId>('campaigns')
+  const routeKey=searchParams.toString()
+  const candidateAsset=searchParams.get('assetId')||''
+  const initialAssetId=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(candidateAsset)?candidateAsset:undefined
+  const candidateBrief=searchParams.get('briefId')||''
+  const initialBriefId=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(candidateBrief)?candidateBrief:undefined
+  const requestedTab=searchParams.get('tab')
+  const routeTab=TAB_IDS.includes(requestedTab as TabId)?requestedTab as TabId:'campaigns'
+  const [selectedTab,setSelectedTab]=useState<{route:string;tab:TabId}|null>(null)
+  const activeTab=selectedTab?.route===routeKey?selectedTab.tab:routeTab
+  const setActiveTab=(tab:TabId)=>setSelectedTab({route:routeKey,tab})
   const [refreshKey, setRefreshKey] = useState(0)
 
-  useEffect(() => {
-    const requestedTab = searchParams.get('tab')
-    if (requestedTab && TAB_IDS.includes(requestedTab as TabId)) {
-      setActiveTab(requestedTab as TabId)
-    }
-  }, [searchParams])
+
 
   const tabs = [
     { id: 'campaigns' as TabId, label: 'Campaigns', icon: Megaphone },
     { id: 'assets' as TabId, label: 'Assets', icon: ImageIcon },
     { id: 'schedule' as TabId, label: 'Schedule', icon: Calendar },
+    { id: 'results' as TabId, label: 'Results', icon: ShieldCheck },
     { id: 'connections' as TabId, label: 'Connections', icon: Link2 },
     { id: 'settings' as TabId, label: 'Settings', icon: Settings }
   ]
@@ -51,15 +57,15 @@ export default function ForgeStudioPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <div className="h-14 w-14 rounded-2xl bg-gradient-to-br from-violet-500 via-purple-500 to-fuchsia-500 flex items-center justify-center text-white shadow-xl shadow-violet-500/30">
+          <div className="h-14 w-14 rounded-2xl bg-[#eaf0f2] flex items-center justify-center text-[#476d79]">
             <Sparkles className="w-7 h-7" />
           </div>
           <div>
             <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">
-              <span className="text-slate-900 dark:text-slate-900">ForgeStudio AI</span>
+              <span className="text-slate-900 dark:text-slate-100">ForgeStudio AI</span>
             </h1>
             <p className="text-slate-700 dark:text-slate-300">
-              Content operating system for {currentProperty.name}
+              Create, review and publish content for {currentProperty.name}
             </p>
           </div>
         </div>
@@ -76,39 +82,39 @@ export default function ForgeStudioPage() {
 
       {/* Feature Highlights */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-gradient-to-br from-violet-500 to-purple-600 rounded-xl p-5 text-white">
+        <div className="console-panel p-5">
           <div className="flex items-center gap-3 mb-3">
-            <div className="p-2 bg-white/20 rounded-lg">
+            <div className="p-2 bg-[#eef3f4] text-[#567985] rounded-lg">
               <Sparkles className="w-5 h-5" />
             </div>
-            <h3 className="font-semibold">Grounded AI Drafts</h3>
+            <h3 className="font-semibold">Content built around your property</h3>
           </div>
-          <p className="text-sm text-white/80">
+          <p className="text-sm text-slate-500 leading-relaxed">
             Channel-specific copy generated only from your property facts, brand system, and assets
           </p>
         </div>
 
-        <div className="bg-gradient-to-br from-amber-500 to-orange-600 rounded-xl p-5 text-white">
+        <div className="console-panel p-5">
           <div className="flex items-center gap-3 mb-3">
-            <div className="p-2 bg-white/20 rounded-lg">
+            <div className="p-2 bg-[#eef3f4] text-[#567985] rounded-lg">
               <ShieldCheck className="w-5 h-5" />
             </div>
-            <h3 className="font-semibold">You Approve Everything</h3>
+            <h3 className="font-semibold">Review before publishing</h3>
           </div>
-          <p className="text-sm text-white/80">
+          <p className="text-sm text-slate-500 leading-relaxed">
             Nothing is scheduled or posted until you approve the exact revision
           </p>
         </div>
 
-        <div className="bg-gradient-to-br from-emerald-500 to-teal-600 rounded-xl p-5 text-white">
+        <div className="console-panel p-5">
           <div className="flex items-center gap-3 mb-3">
-            <div className="p-2 bg-white/20 rounded-lg">
+            <div className="p-2 bg-[#eef3f4] text-[#567985] rounded-lg">
               <Calendar className="w-5 h-5" />
             </div>
-            <h3 className="font-semibold">Reliable Publishing</h3>
+            <h3 className="font-semibold">A clear publishing schedule</h3>
           </div>
-          <p className="text-sm text-white/80">
-            Scheduled posts publish once, with full attempt history and retry visibility
+          <p className="text-sm text-slate-500 leading-relaxed">
+            Scheduled posts retain their approved content, saved results, and recovery history
           </p>
         </div>
       </div>
@@ -138,23 +144,25 @@ export default function ForgeStudioPage() {
 
       {/* Tab Content */}
       {activeTab === 'campaigns' && (
-        <CampaignWorkspace propertyId={currentProperty.id} />
+        <CampaignWorkspace initialBriefId={initialBriefId} key={`${currentProperty.id}:${initialAssetId??''}`} propertyId={currentProperty.id} initialAssetId={initialAssetId} />
       )}
 
       {activeTab === 'assets' && (
-        <AssetGallery propertyId={currentProperty.id} />
+        <AssetGallery key={currentProperty.id} propertyId={currentProperty.id} />
       )}
 
       {activeTab === 'schedule' && (
-        <PublicationCalendar propertyId={currentProperty.id} refreshTrigger={refreshKey} />
+        <PublicationCalendar key={currentProperty.id} propertyId={currentProperty.id} refreshTrigger={refreshKey} />
       )}
 
+      {activeTab === 'results' && <PublicationResults key={currentProperty.id} propertyId={currentProperty.id}/>}
+
       {activeTab === 'connections' && (
-        <SocialConnections propertyId={currentProperty.id} />
+        <SocialConnections key={currentProperty.id} propertyId={currentProperty.id} />
       )}
 
       {activeTab === 'settings' && (
-        <ForgeStudioConfig propertyId={currentProperty.id} />
+        <ForgeStudioConfig key={currentProperty.id} propertyId={currentProperty.id} />
       )}
     </div>
   )

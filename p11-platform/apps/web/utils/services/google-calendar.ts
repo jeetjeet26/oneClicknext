@@ -1,18 +1,24 @@
+import { calendarDateTimeInstant, validCalendarDay } from './calendar-time'
+import { normalizeTimezoneToIana, resolveCalendarTimezone } from './timezone'
+import { requireDeliveryEnabled } from './delivery-guard'
 /**
  * Google Calendar API Utility
  * Handles token refresh, API calls, and availability generation
  */
 
-import crypto from 'crypto'
+import {renewCalendarCredentials} from './calendar-credentials'
 import { createServiceClient } from '@/utils/supabase/admin'
-import { getMicrosoftTokenUrl } from '@/utils/services/integration-provider-config'
+import crypto from 'crypto'
 
-const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 const GOOGLE_CALENDAR_API = 'https://www.googleapis.com/calendar/v3'
 const MICROSOFT_GRAPH_API = 'https://graph.microsoft.com/v1.0'
 const DEFAULT_CALENDAR_WATCH_TTL_SECONDS = 60 * 60 * 24 * 7
 
 interface CalendarConfigRow {
+  credential_version?:number
+  provider_subject?:string|null
+  tenant_id?:string|null
+  properties?: {settings?: {timezone?: string} | null} | null
   id: string
   property_id: string | null
   provider: string | null
@@ -35,6 +41,9 @@ interface CalendarConfigRow {
 }
 
 export interface CalendarConfig {
+  credential_version?:number
+  provider_subject?:string|null
+  tenant_id?:string|null
   id: string
   property_id: string
   provider?: 'google' | 'microsoft'
@@ -101,12 +110,12 @@ export function buildTourEventDateTimes(
   config: Pick<CalendarConfig, 'tour_duration_minutes' | 'timezone'>,
   tourDate: string,
   tourTime: string
-): { startLocalDateTime: string; endLocalDateTime: string } {
+): { startLocalDateTime: string; endLocalDateTime: string; startInstant: string; endInstant: string } {
   const start = zonedLocalDateTimeToDate(tourDate, tourTime, config.timezone)
   const end = new Date(start.getTime() + config.tour_duration_minutes * 60 * 1000)
   const endFormatter = new Intl.DateTimeFormat('en-CA', {
     timeZone: config.timezone,
-    hour12: false,
+    hourCycle: 'h23',
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -122,6 +131,8 @@ export function buildTourEventDateTimes(
   ) as Record<'year' | 'month' | 'day' | 'hour' | 'minute' | 'second', string>
 
   return {
+    startInstant: start.toISOString(),
+    endInstant: end.toISOString(),
     startLocalDateTime: localDateTimeString(tourDate, tourTime),
     endLocalDateTime:
       `${endLookup.year}-${endLookup.month}-${endLookup.day}` +
@@ -129,51 +140,10 @@ export function buildTourEventDateTimes(
   }
 }
 
-function getTimeZoneOffsetMs(timeZone: string, date: Date): number {
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    hour12: false,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  })
-
-  const parts = formatter.formatToParts(date)
-  const lookup = Object.fromEntries(
-    parts
-      .filter((part) => part.type !== 'literal')
-      .map((part) => [part.type, Number(part.value)])
-  ) as Record<'year' | 'month' | 'day' | 'hour' | 'minute' | 'second', number>
-
-  const utcFromParts = Date.UTC(
-    lookup.year,
-    lookup.month - 1,
-    lookup.day,
-    lookup.hour,
-    lookup.minute,
-    lookup.second
-  )
-
-  return utcFromParts - date.getTime()
-}
-
-function zonedLocalDateTimeToDate(
-  date: string,
-  time: string,
-  timeZone: string
-): Date {
-  const [year, month, day] = date.split('-').map(Number)
-  const [hours, minutes] = normalizeTimeString(time).split(':').map(Number)
-  const utcGuess = Date.UTC(year, month - 1, day, hours, minutes, 0)
-
-  let adjusted = utcGuess - getTimeZoneOffsetMs(timeZone, new Date(utcGuess))
-  const secondOffset = getTimeZoneOffsetMs(timeZone, new Date(adjusted))
-  adjusted = utcGuess - secondOffset
-
-  return new Date(adjusted)
+function zonedLocalDateTimeToDate(date: string, time: string, timeZone: string): Date {
+  const instant = calendarDateTimeInstant(localDateTimeString(date, time), timeZone)
+  if (!instant) throw new Error('Tour time or timezone is invalid or ambiguous')
+  return new Date(instant)
 }
 
 function normalizeCalendarConfig(config: CalendarConfigRow): CalendarConfig | null {
@@ -184,11 +154,16 @@ function normalizeCalendarConfig(config: CalendarConfigRow): CalendarConfig | nu
     !config.refresh_token ||
     !config.token_expires_at
   ) {
-    return null
+    throw new Error('Calendar connection is incomplete')
   }
+  const timezone = resolveCalendarTimezone(config.properties?.settings, config.timezone)
+  if (!timezone) throw new Error('Calendar timezone needs configuration')
 
   return {
     id: config.id,
+    credential_version:config.credential_version,
+    provider_subject:config.provider_subject,
+    tenant_id:config.tenant_id,
     property_id: config.property_id,
     provider: config.provider === 'microsoft' ? 'microsoft' : 'google',
     google_email: config.google_email || config.account_email || '',
@@ -199,9 +174,9 @@ function normalizeCalendarConfig(config: CalendarConfigRow): CalendarConfig | nu
     token_expires_at: config.token_expires_at,
     working_hours: config.working_hours || DEFAULT_WORKING_HOURS,
     tour_duration_minutes: config.tour_duration_minutes || 30,
-    buffer_minutes: config.buffer_minutes || 15,
-    timezone: config.timezone || 'America/Chicago',
-    token_status: config.token_status || 'healthy',
+    buffer_minutes: config.buffer_minutes ?? 15,
+    timezone,
+    token_status: config.token_status || 'unknown',
     provider_metadata: config.provider_metadata || {},
     watch_channel_id: config.watch_channel_id || null,
     watch_last_message_number: config.watch_last_message_number ?? null,
@@ -253,7 +228,8 @@ export function shouldRenewCalendarWatch(
 }
 
 export async function setupCalendarWatch(
-  config: CalendarConfig
+  config: CalendarConfig,
+  retried = false
 ): Promise<CalendarWatchRegistration | null> {
   if (config.provider !== 'google') {
     return null
@@ -273,6 +249,7 @@ export async function setupCalendarWatch(
       `${GOOGLE_CALENDAR_API}/calendars/${encodeURIComponent(config.calendar_id)}/events/watch`,
       {
         method: 'POST',
+        signal: AbortSignal.timeout(20_000),
         headers: {
           Authorization: `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
@@ -289,12 +266,11 @@ export async function setupCalendarWatch(
     )
 
     if (!response.ok) {
-      const errorText = await response.text()
-      console.error('[GoogleCalendar] Setup watch failed:', errorText)
+      console.error('[GoogleCalendar] Setup watch failed:', response.status)
 
-      if (response.status === 401) {
-        const { accessToken: newToken } = await refreshAccessToken(config)
-        return setupCalendarWatch({ ...config, access_token: newToken })
+      if (response.status === 401 && !retried) {
+        const { accessToken: newToken, expiresAt: newExpiresAt } = await refreshAccessToken(config)
+        return setupCalendarWatch({ ...config, access_token: newToken, token_expires_at: newExpiresAt },true)
       }
 
       throw new Error(`Google Calendar watch error: ${response.status}`)
@@ -310,7 +286,9 @@ export async function setupCalendarWatch(
         ? new Date(Number(data.expiration)).toISOString()
         : null
 
-    const { error } = await supabase
+    if (!expiration || !Number.isFinite(Date.parse(expiration)) || Date.parse(expiration)<=Date.now()) throw new Error('Calendar watch expiry could not be confirmed.')
+
+    const { data: savedWatch, error } = await supabase
       .from('agent_calendars')
       .update({
         watch_channel_id: channelId,
@@ -320,9 +298,15 @@ export async function setupCalendarWatch(
         updated_at: new Date().toISOString(),
       })
       .eq('id', config.id)
+      .eq('property_id', config.property_id)
+      .eq('credential_version', config.credential_version!)
+      .eq('sync_enabled', true)
+      .is('retired_at', null)
+      .select('id')
+      .maybeSingle()
 
-    if (error) {
-      throw error
+    if (error || !savedWatch) {
+      throw new Error('Calendar watch could not be saved because the connection changed or is unavailable.')
     }
 
     return {
@@ -361,282 +345,111 @@ export async function ensureCalendarWatch(
 export async function refreshAccessTokenIfNeeded(
   config: CalendarConfig
 ): Promise<{ accessToken: string; expiresAt: string }> {
-  const expiresAt = new Date(config.token_expires_at)
-  const now = new Date()
-
-  // If token expires in less than 5 minutes, refresh it
-  if (expiresAt.getTime() - now.getTime() < 5 * 60 * 1000) {
-    console.log('[GoogleCalendar] Token expiring soon, refreshing...')
-    return await refreshAccessToken(config)
-  }
-
-  return {
-    accessToken: config.access_token,
-    expiresAt: config.token_expires_at,
-  }
+  return renewCalendarCredentials(config)
 }
 
 /**
  * Refresh the access token using refresh token
  */
-async function refreshAccessToken(
-  config: CalendarConfig
-): Promise<{ accessToken: string; expiresAt: string }> {
-  const supabase = createServiceClient()
-
-  try {
-    const isMicrosoft = config.provider === 'microsoft'
-    const response = await fetch(isMicrosoft ? getMicrosoftTokenUrl() : GOOGLE_TOKEN_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: new URLSearchParams({
-        client_id: isMicrosoft
-          ? process.env.MICROSOFT_CLIENT_ID || ''
-          : process.env.GOOGLE_CLIENT_ID || '',
-        client_secret: isMicrosoft
-          ? process.env.MICROSOFT_CLIENT_SECRET || ''
-          : process.env.GOOGLE_CLIENT_SECRET || '',
-        refresh_token: config.refresh_token,
-        grant_type: 'refresh_token',
-      }),
-    })
-
-    if (!response.ok) {
-      const errorText = await response.text()
-      console.error('[GoogleCalendar] Token refresh failed:', errorText)
-
-      // Check if refresh token is revoked
-      if (errorText.includes('invalid_grant')) {
-        await supabase
-          .from('agent_calendars')
-          .update({
-            token_status: 'revoked',
-            health_check_error: 'Refresh token revoked by user',
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', config.id)
-
-        throw new Error('Calendar authorization revoked. Please reconnect.')
-      }
-
-      throw new Error('Failed to refresh token')
-    }
-
-    const tokens = await response.json()
-    const newExpiresAt = new Date(Date.now() + tokens.expires_in * 1000).toISOString()
-
-    // Update database with new token
-    await supabase
-      .from('agent_calendars')
-      .update({
-        access_token: tokens.access_token,
-        token_expires_at: newExpiresAt,
-        token_status: 'healthy',
-        last_health_check_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', config.id)
-
-    // Log refresh for audit
-    await supabase
-      .from('calendar_token_refreshes')
-      .insert({
-        agent_calendar_id: config.id,
-        refresh_status: 'success',
-        old_expires_at: config.token_expires_at,
-        new_expires_at: newExpiresAt,
-      })
-
-    return {
-      accessToken: tokens.access_token,
-      expiresAt: newExpiresAt,
-    }
-  } catch (error) {
-    // Log failed refresh
-    await supabase
-      .from('calendar_token_refreshes')
-      .insert({
-        agent_calendar_id: config.id,
-        refresh_status: 'failed',
-        error_message: error instanceof Error ? error.message : 'Unknown error',
-        old_expires_at: config.token_expires_at,
-      })
-
-    throw error
-  }
+async function refreshAccessToken(config:CalendarConfig):Promise<{accessToken:string;expiresAt:string}> {
+  return renewCalendarCredentials(config,true)
 }
 
 /**
  * Fetch busy times from Google Calendar
  */
+function busyInterval(startValue: unknown, endValue: unknown, startZone?: string, endZone?: string): BusyTime {
+  const start = calendarDateTimeInstant(startValue, startZone)
+  const end = calendarDateTimeInstant(endValue, endZone)
+  if (!start || !end || Date.parse(start) >= Date.parse(end)) throw new Error('Calendar returned an invalid busy interval')
+  return {start, end}
+}
+
 export async function fetchBusyTimes(
   config: CalendarConfig,
   startDate: Date,
-  endDate: Date
+  endDate: Date,
+  refreshed = false
 ): Promise<BusyTime[]> {
-  // Ensure token is fresh
-  const { accessToken } = await refreshAccessTokenIfNeeded(config)
-
-  if (config.provider === 'microsoft') {
-    const response = await fetch(`${MICROSOFT_GRAPH_API}/me/calendar/getSchedule`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        schedules: [config.account_email || config.google_email],
-        startTime: {
-          dateTime: startDate.toISOString(),
-          timeZone: 'UTC',
-        },
-        endTime: {
-          dateTime: endDate.toISOString(),
-          timeZone: 'UTC',
-        },
-        availabilityViewInterval: config.tour_duration_minutes,
-      }),
-    })
-
-    if (!response.ok) {
-      const errorText = await response.text()
-      console.error('[MicrosoftCalendar] getSchedule API error:', errorText)
-
-      if (response.status === 401) {
-        const { accessToken: newToken } = await refreshAccessToken(config)
-        return fetchBusyTimes({ ...config, access_token: newToken }, startDate, endDate)
-      }
-
-      throw new Error(`Microsoft Calendar API error: ${response.status}`)
-    }
-
-    const data = await response.json()
-    const schedule = Array.isArray(data?.value) ? data.value[0] : null
-
-    // A per-mailbox error means we could not read the schedule; treating it
-    // as "fully free" would let visitors double-book, so fail loudly instead.
-    if (schedule?.error) {
-      const message = schedule.error?.message || JSON.stringify(schedule.error)
-      console.error('[MicrosoftCalendar] getSchedule mailbox error:', message)
-      throw new Error(`Microsoft Calendar schedule error: ${message}`)
-    }
-
-    // Graph returns dateTime strings without a timezone designator (we request
-    // UTC), e.g. "2026-07-24T17:30:00.0000000". Append "Z" so parsing does not
-    // depend on the server's local timezone.
-    const toUtcIso = (value: string | undefined): string => {
-      if (!value) return ''
-      return /(z|[+-]\d{2}:?\d{2})$/i.test(value) ? value : `${value}Z`
-    }
-
-    const items = Array.isArray(schedule?.scheduleItems) ? schedule.scheduleItems : []
-    return items
-      .filter((item: { status?: string }) => item.status !== 'free')
-      .map((item: { start?: { dateTime?: string }, end?: { dateTime?: string } }) => ({
-        start: toUtcIso(item.start?.dateTime),
-        end: toUtcIso(item.end?.dateTime),
-      }))
-      .filter((item: BusyTime) => item.start && item.end)
+  if (!Number.isFinite(startDate.getTime()) || !Number.isFinite(endDate.getTime()) || startDate >= endDate) {
+    throw new Error('Invalid availability interval')
   }
-
-  // Call Google Calendar freebusy API
-  const response = await fetch(`${GOOGLE_CALENDAR_API}/freeBusy`, {
+  const {accessToken} = await refreshAccessTokenIfNeeded(config)
+  const microsoft = config.provider === 'microsoft'
+  const mailbox = config.account_email || config.google_email
+  const response = await fetch(microsoft ? `${MICROSOFT_GRAPH_API}/me/calendar/getSchedule` : `${GOOGLE_CALENDAR_API}/freeBusy`, {
     method: 'POST',
+    signal: AbortSignal.timeout(20000),
     headers: {
-      'Authorization': `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json',
+      ...(microsoft ? {Prefer: 'outlook.timezone="UTC"'} : {}),
     },
-    body: JSON.stringify({
-      timeMin: startDate.toISOString(),
-      timeMax: endDate.toISOString(),
-      items: [{ id: config.calendar_id }],
-      timeZone: config.timezone,
-    }),
+    body: JSON.stringify(microsoft ? {
+      schedules: [mailbox],
+      startTime: {dateTime: startDate.toISOString(), timeZone: 'UTC'},
+      endTime: {dateTime: endDate.toISOString(), timeZone: 'UTC'},
+      availabilityViewInterval: 30,
+    } : {timeMin: startDate.toISOString(), timeMax: endDate.toISOString(), items: [{id: config.calendar_id}], timeZone: 'UTC'}),
   })
-
   if (!response.ok) {
-    const errorText = await response.text()
-    console.error('[GoogleCalendar] Freebusy API error:', errorText)
-    
-    // If 401, token might be invalid
-    if (response.status === 401) {
-      // Try refreshing and retry once
-      const { accessToken: newToken } = await refreshAccessToken(config)
-      return fetchBusyTimes({ ...config, access_token: newToken }, startDate, endDate)
+    if (response.status === 401 && !refreshed) {
+      const fresh = await refreshAccessToken(config)
+      return fetchBusyTimes({...config, access_token: fresh.accessToken, token_expires_at: fresh.expiresAt}, startDate, endDate, true)
     }
-    
-    throw new Error(`Calendar API error: ${response.status}`)
+    throw new Error(`Calendar availability read failed: ${response.status}`)
   }
-
   const data = await response.json()
-  const busyTimes: BusyTime[] = data.calendars[config.calendar_id]?.busy || []
-
-  return busyTimes
+  if (microsoft) {
+    const schedules = Array.isArray(data?.value) ? data.value.filter((row: {scheduleId?: string}) =>
+      typeof row?.scheduleId === 'string' && row.scheduleId.toLowerCase() === mailbox.toLowerCase()) : []
+    if (schedules.length !== 1 || schedules[0].error || !Array.isArray(schedules[0].scheduleItems)) {
+      throw new Error('Calendar returned incomplete mailbox availability')
+    }
+    return schedules[0].scheduleItems.flatMap((item: {status?: string; start?: {dateTime?: string; timeZone?: string}; end?: {dateTime?: string; timeZone?: string}}) => {
+      if (!item || !['free', 'tentative', 'busy', 'oof', 'workingElsewhere', 'unknown'].includes(item.status || '')) {
+        throw new Error('Calendar returned an unknown availability state')
+      }
+      // Conservative policy: only explicitly free events release the time.
+      if (item.status === 'free') return []
+      return [busyInterval(item.start?.dateTime, item.end?.dateTime, item.start?.timeZone, item.end?.timeZone)]
+    })
+  }
+  const calendar = data?.calendars?.[config.calendar_id]
+  if (!calendar || (calendar.errors && (!Array.isArray(calendar.errors) || calendar.errors.length)) || !Array.isArray(calendar.busy)) {
+    throw new Error('Calendar returned incomplete availability')
+  }
+  return calendar.busy.map((item: {start?: string; end?: string}) => busyInterval(item?.start, item?.end))
 }
 
-/**
- * Generate available time slots based on working hours and busy times
- */
+/** Slots use explicit property date labels and elapsed durations, independent of server timezone. */
 export function generateAvailableSlots(
-  date: Date,
+  date: string,
   config: CalendarConfig,
-  busyTimes: BusyTime[]
+  busyTimes: BusyTime[],
+  now = new Date()
 ): AvailableSlot[] {
-  const dateStr = [
-    date.getFullYear(),
-    (date.getMonth() + 1).toString().padStart(2, '0'),
-    date.getDate().toString().padStart(2, '0'),
-  ].join('-')
-  const dayOfWeek = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'][date.getDay()]
-  const workingHours = config.working_hours[dayOfWeek]
-
-  if (!workingHours || !workingHours.enabled) {
-    return [] // Not a working day
+  if (!validCalendarDay(date) || !normalizeTimezoneToIana(config.timezone)) throw new Error('Calendar date or timezone needs review')
+  const duration = config.tour_duration_minutes, buffer = config.buffer_minutes
+  if (!Number.isInteger(duration) || duration < 5 || duration > 240 || !Number.isInteger(buffer) || buffer < 0 || buffer > 240) {
+    throw new Error('Tour duration or buffer needs configuration')
   }
-
+  const dayOfWeek = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'][new Date(`${date}T00:00:00Z`).getUTCDay()]
+  const hours = config.working_hours[dayOfWeek]
+  if (!hours || !hours.enabled) return []
+  const minutes = (value: string) => /^([01]\d|2[0-3]):[0-5]\d$/.test(value) ? Number(value.slice(0, 2)) * 60 + Number(value.slice(3)) : NaN
+  const first = minutes(hours.start), last = minutes(hours.end)
+  if (!Number.isFinite(first) || !Number.isFinite(last) || last <= first) throw new Error('Working hours need configuration')
+  const busy = busyTimes.map(item => busyInterval(item.start, item.end)).map(item => ({start: Date.parse(item.start), end: Date.parse(item.end)}))
   const slots: AvailableSlot[] = []
-  const [startHour, startMin] = workingHours.start.split(':').map(Number)
-  const [endHour, endMin] = workingHours.end.split(':').map(Number)
-
-  // Generate 30-minute slots (or tour_duration_minutes)
-  const slotDuration = config.tour_duration_minutes
-  let currentMinutes = startHour * 60 + startMin
-
-  const endMinutes = endHour * 60 + endMin
-  
-  while (currentMinutes + slotDuration <= endMinutes) {
-    const hour = Math.floor(currentMinutes / 60)
-    const minute = currentMinutes % 60
-    const timeStr = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`
-    
-    // Check if this slot conflicts with busy times
-    const slotStart = zonedLocalDateTimeToDate(dateStr, timeStr, config.timezone)
-    
-    const slotEnd = new Date(slotStart)
-    slotEnd.setMinutes(slotEnd.getMinutes() + slotDuration + config.buffer_minutes)
-
-    const isAvailable = !busyTimes.some(busy => {
-      const busyStart = new Date(busy.start)
-      const busyEnd = new Date(busy.end)
-      
-      // Check for overlap
-      return (
-        (slotStart >= busyStart && slotStart < busyEnd) ||
-        (slotEnd > busyStart && slotEnd <= busyEnd) ||
-        (slotStart <= busyStart && slotEnd >= busyEnd)
-      )
-    })
-
-    slots.push({
-      time: timeStr,
-      available: isAvailable,
-    })
-
-    currentMinutes += slotDuration
+  for (let at = first; at + duration <= last; at += duration) {
+    const time = `${String(Math.floor(at / 60)).padStart(2, '0')}:${String(at % 60).padStart(2, '0')}`
+    const start = calendarDateTimeInstant(`${date}T${time}:00`, config.timezone)
+    const startMs = start ? Date.parse(start) : NaN
+    const endMs = startMs + duration * 60000
+    const closing = calendarDateTimeInstant(`${date}T${hours.end}:00`, config.timezone)
+    slots.push({time, available: Boolean(start && closing) && startMs > now.getTime() && endMs <= Date.parse(closing!) &&
+      !busy.some(item => startMs < item.end + buffer * 60000 && endMs + buffer * 60000 > item.start)})
   }
-
   return slots
 }
 
@@ -646,6 +459,7 @@ export function generateAvailableSlots(
 export async function createCalendarEvent(
   config: CalendarConfig,
   tourDetails: {
+    requestId?: string
     propertyName: string
     prospectName: string
     prospectEmail: string
@@ -654,16 +468,23 @@ export async function createCalendarEvent(
     tourTime: string // HH:MM
     specialRequests?: string
     propertyAddress?: string
-  }
+  },
+  refreshed = false
 ): Promise<{ eventId: string; htmlLink: string }> {
+  requireDeliveryEnabled()
+  const rawIdentity = tourDetails.requestId?.replace(/-/g, '')
+  const eventIdentity = rawIdentity ? (/^[0-9a-f]{32}$/.test(rawIdentity) ? rawIdentity : crypto.createHash('sha256').update(tourDetails.requestId!).digest('hex')) : undefined
   // Ensure token is fresh
   const { accessToken } = await refreshAccessTokenIfNeeded(config)
 
-  const { startLocalDateTime, endLocalDateTime } = buildTourEventDateTimes(
+  const { startInstant, endInstant } = buildTourEventDateTimes(
     config,
     tourDetails.tourDate,
     tourDetails.tourTime
   )
+  const eventStart = config.provider === 'microsoft' ? startInstant.slice(0, -1) : startInstant
+  const eventEnd = config.provider === 'microsoft' ? endInstant.slice(0, -1) : endInstant
+  const eventZone = config.provider === 'microsoft' ? 'UTC' : config.timezone
 
   // Format description
   let description = `Property Tour with ${tourDetails.prospectName}\n\n`
@@ -679,11 +500,13 @@ export async function createCalendarEvent(
     const createOnlineMeeting = config.provider_metadata?.teams_meeting_enabled === true
     const response = await fetch(`${MICROSOFT_GRAPH_API}/me/calendar/events`, {
       method: 'POST',
+      signal: AbortSignal.timeout(20000),
       headers: {
         Authorization: `Bearer ${accessToken}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
+        ...(tourDetails.requestId ? {transactionId:tourDetails.requestId} : {}),
         subject: `Tour - ${tourDetails.propertyName}`,
         body: {
           contentType: 'text',
@@ -693,12 +516,12 @@ export async function createCalendarEvent(
           displayName: tourDetails.propertyAddress || '',
         },
         start: {
-          dateTime: startLocalDateTime,
-          timeZone: config.timezone,
+          dateTime: eventStart,
+          timeZone: eventZone,
         },
         end: {
-          dateTime: endLocalDateTime,
-          timeZone: config.timezone,
+          dateTime: eventEnd,
+          timeZone: eventZone,
         },
         attendees: [
           {
@@ -719,15 +542,16 @@ export async function createCalendarEvent(
       const errorText = await response.text()
       console.error('[MicrosoftCalendar] Event creation failed:', errorText)
 
-      if (response.status === 401) {
-        const { accessToken: newToken } = await refreshAccessToken(config)
-        return createCalendarEvent({ ...config, access_token: newToken }, tourDetails)
+      if (response.status === 401 && !refreshed) {
+        const { accessToken: newToken, expiresAt: newExpiresAt } = await refreshAccessToken(config)
+        return createCalendarEvent({ ...config, access_token: newToken, token_expires_at: newExpiresAt }, tourDetails, true)
       }
 
       throw new Error(`Failed to create Microsoft calendar event: ${response.status}`)
     }
 
     const event = await response.json()
+    if (!event.id) throw new Error('Calendar acceptance was not confirmed')
     return {
       eventId: event.id,
       htmlLink: event.webLink || event.onlineMeeting?.joinUrl || '',
@@ -735,23 +559,25 @@ export async function createCalendarEvent(
   }
 
   // Create event
-  const response = await fetch(`${GOOGLE_CALENDAR_API}/calendars/${config.calendar_id}/events`, {
+  const response = await fetch(`${GOOGLE_CALENDAR_API}/calendars/${encodeURIComponent(config.calendar_id)}/events`, {
     method: 'POST',
+    signal: AbortSignal.timeout(20000),
     headers: {
       'Authorization': `Bearer ${accessToken}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
+      ...(tourDetails.requestId ? {id:eventIdentity} : {}),
       summary: `Tour - ${tourDetails.propertyName}`,
       description,
       location: tourDetails.propertyAddress || '',
       start: {
-        dateTime: startLocalDateTime,
-        timeZone: config.timezone,
+        dateTime: eventStart,
+        timeZone: eventZone,
       },
       end: {
-        dateTime: endLocalDateTime,
-        timeZone: config.timezone,
+        dateTime: eventEnd,
+        timeZone: eventZone,
       },
       attendees: [
         { email: tourDetails.prospectEmail }
@@ -768,14 +594,22 @@ export async function createCalendarEvent(
     }),
   })
 
+  if (response.status === 409 && tourDetails.requestId) {
+    const lookup = await fetch(`${GOOGLE_CALENDAR_API}/calendars/${encodeURIComponent(config.calendar_id)}/events/${eventIdentity}`, {
+      headers:{Authorization:`Bearer ${accessToken}`},signal:AbortSignal.timeout(15000)})
+    if (!lookup.ok) throw new Error('Could not reconcile existing calendar event')
+    const existing = await lookup.json()
+    if (existing.id !== eventIdentity || existing.status==='cancelled' || calendarDateTimeInstant(existing.start?.dateTime, existing.start?.timeZone) !== startInstant || calendarDateTimeInstant(existing.end?.dateTime, existing.end?.timeZone) !== endInstant) throw new Error('Existing calendar event needs review')
+    return {eventId:existing.id,htmlLink:existing.htmlLink || ''}
+  }
   if (!response.ok) {
     const errorText = await response.text()
     console.error('[GoogleCalendar] Event creation failed:', errorText)
     
     // Retry once if 401
-    if (response.status === 401) {
-      const { accessToken: newToken } = await refreshAccessToken(config)
-      return createCalendarEvent({ ...config, access_token: newToken }, tourDetails)
+    if (response.status === 401 && !refreshed) {
+      const { accessToken: newToken, expiresAt: newExpiresAt } = await refreshAccessToken(config)
+      return createCalendarEvent({ ...config, access_token: newToken, token_expires_at: newExpiresAt }, tourDetails, true)
     }
     
     throw new Error(`Failed to create calendar event: ${response.status}`)
@@ -783,6 +617,7 @@ export async function createCalendarEvent(
 
   const event = await response.json()
   
+  if (!event.id) throw new Error('Calendar acceptance was not confirmed')
   return {
     eventId: event.id,
     htmlLink: event.htmlLink,
@@ -804,15 +639,20 @@ export async function updateCalendarEvent(
     tourTime: string // HH:MM
     specialRequests?: string
     propertyAddress?: string
-  }
+  },
+  refreshed = false
 ): Promise<{ eventId: string; htmlLink: string }> {
+  requireDeliveryEnabled()
   const { accessToken } = await refreshAccessTokenIfNeeded(config)
 
-  const { startLocalDateTime, endLocalDateTime } = buildTourEventDateTimes(
+  const { startInstant, endInstant } = buildTourEventDateTimes(
     config,
     tourDetails.tourDate,
     tourDetails.tourTime
   )
+  const eventStart = config.provider === 'microsoft' ? startInstant.slice(0, -1) : startInstant
+  const eventEnd = config.provider === 'microsoft' ? endInstant.slice(0, -1) : endInstant
+  const eventZone = config.provider === 'microsoft' ? 'UTC' : config.timezone
 
   let description = `Property Tour with ${tourDetails.prospectName}\n\n`
   description += `Contact: ${tourDetails.prospectEmail}`
@@ -824,8 +664,9 @@ export async function updateCalendarEvent(
   }
 
   if (config.provider === 'microsoft') {
-    const response = await fetch(`${MICROSOFT_GRAPH_API}/me/events/${googleEventId}`, {
+    const response = await fetch(`${MICROSOFT_GRAPH_API}/me/events/${encodeURIComponent(googleEventId)}`, {
       method: 'PATCH',
+      signal: AbortSignal.timeout(20000),
       headers: {
         Authorization: `Bearer ${accessToken}`,
         'Content-Type': 'application/json',
@@ -840,12 +681,12 @@ export async function updateCalendarEvent(
           displayName: tourDetails.propertyAddress || '',
         },
         start: {
-          dateTime: startLocalDateTime,
-          timeZone: config.timezone,
+          dateTime: eventStart,
+          timeZone: eventZone,
         },
         end: {
-          dateTime: endLocalDateTime,
-          timeZone: config.timezone,
+          dateTime: eventEnd,
+          timeZone: eventZone,
         },
         attendees: [
           {
@@ -863,15 +704,16 @@ export async function updateCalendarEvent(
       const errorText = await response.text()
       console.error('[MicrosoftCalendar] Event update failed:', errorText)
 
-      if (response.status === 401) {
-        const { accessToken: newToken } = await refreshAccessToken(config)
-        return updateCalendarEvent({ ...config, access_token: newToken }, googleEventId, tourDetails)
+      if (response.status === 401 && !refreshed) {
+        const { accessToken: newToken, expiresAt: newExpiresAt } = await refreshAccessToken(config)
+        return updateCalendarEvent({ ...config, access_token: newToken, token_expires_at: newExpiresAt }, googleEventId, tourDetails, true)
       }
 
       throw new Error(`Failed to update Microsoft calendar event: ${response.status}`)
     }
 
     const event = await response.json()
+    if (event.id !== googleEventId) throw new Error('Calendar update acceptance was not confirmed')
     return {
       eventId: event.id || googleEventId,
       htmlLink: event.webLink || event.onlineMeeting?.joinUrl || '',
@@ -879,9 +721,10 @@ export async function updateCalendarEvent(
   }
 
   const response = await fetch(
-    `${GOOGLE_CALENDAR_API}/calendars/${config.calendar_id}/events/${googleEventId}`,
+    `${GOOGLE_CALENDAR_API}/calendars/${encodeURIComponent(config.calendar_id)}/events/${encodeURIComponent(googleEventId)}`,
     {
       method: 'PATCH',
+      signal: AbortSignal.timeout(20000),
       headers: {
         Authorization: `Bearer ${accessToken}`,
         'Content-Type': 'application/json',
@@ -891,12 +734,12 @@ export async function updateCalendarEvent(
         description,
         location: tourDetails.propertyAddress || '',
         start: {
-          dateTime: startLocalDateTime,
-          timeZone: config.timezone,
+          dateTime: eventStart,
+          timeZone: eventZone,
         },
         end: {
-          dateTime: endLocalDateTime,
-          timeZone: config.timezone,
+          dateTime: eventEnd,
+          timeZone: eventZone,
         },
         attendees: [{ email: tourDetails.prospectEmail }],
         guestsCanModify: false,
@@ -909,15 +752,16 @@ export async function updateCalendarEvent(
     const errorText = await response.text()
     console.error('[GoogleCalendar] Event update failed:', errorText)
 
-    if (response.status === 401) {
-      const { accessToken: newToken } = await refreshAccessToken(config)
-      return updateCalendarEvent({ ...config, access_token: newToken }, googleEventId, tourDetails)
+    if (response.status === 401 && !refreshed) {
+      const { accessToken: newToken, expiresAt: newExpiresAt } = await refreshAccessToken(config)
+      return updateCalendarEvent({ ...config, access_token: newToken, token_expires_at: newExpiresAt }, googleEventId, tourDetails, true)
     }
 
     throw new Error(`Failed to update calendar event: ${response.status}`)
   }
 
   const event = await response.json()
+  if (event.id !== googleEventId) throw new Error('Calendar update acceptance was not confirmed')
   return {
     eventId: event.id,
     htmlLink: event.htmlLink,
@@ -926,15 +770,18 @@ export async function updateCalendarEvent(
 
 export async function getCalendarEvent(
   config: CalendarConfig,
-  googleEventId: string
+  googleEventId: string,
+  refreshed = false
 ): Promise<RemoteCalendarEvent | null> {
   const { accessToken } = await refreshAccessTokenIfNeeded(config)
 
   if (config.provider === 'microsoft') {
-    const response = await fetch(`${MICROSOFT_GRAPH_API}/me/events/${googleEventId}`, {
+    const response = await fetch(`${MICROSOFT_GRAPH_API}/me/events/${encodeURIComponent(googleEventId)}`, {
       method: 'GET',
+      signal: AbortSignal.timeout(20000),
       headers: {
         Authorization: `Bearer ${accessToken}`,
+        Prefer: 'outlook.timezone="UTC"',
       },
     })
 
@@ -946,9 +793,9 @@ export async function getCalendarEvent(
       const errorText = await response.text()
       console.error('[MicrosoftCalendar] Event fetch failed:', errorText)
 
-      if (response.status === 401) {
-        const { accessToken: newToken } = await refreshAccessToken(config)
-        return getCalendarEvent({ ...config, access_token: newToken }, googleEventId)
+      if (response.status === 401 && !refreshed) {
+        const { accessToken: newToken, expiresAt: newExpiresAt } = await refreshAccessToken(config)
+        return getCalendarEvent({ ...config, access_token: newToken, token_expires_at: newExpiresAt }, googleEventId, true)
       }
 
       throw new Error(`Failed to fetch Microsoft calendar event: ${response.status}`)
@@ -959,16 +806,17 @@ export async function getCalendarEvent(
       id: typeof event.id === 'string' ? event.id : googleEventId,
       status: typeof event.isCancelled === 'boolean' && event.isCancelled ? 'cancelled' : 'confirmed',
       startDateTime:
-        typeof event.start?.dateTime === 'string' ? event.start.dateTime : null,
+        calendarDateTimeInstant(event.start?.dateTime,event.start?.timeZone),
       endDateTime:
-        typeof event.end?.dateTime === 'string' ? event.end.dateTime : null,
+        calendarDateTimeInstant(event.end?.dateTime,event.end?.timeZone),
     }
   }
 
   const response = await fetch(
-    `${GOOGLE_CALENDAR_API}/calendars/${config.calendar_id}/events/${googleEventId}`,
+    `${GOOGLE_CALENDAR_API}/calendars/${encodeURIComponent(config.calendar_id)}/events/${encodeURIComponent(googleEventId)}`,
     {
       method: 'GET',
+      signal: AbortSignal.timeout(20000),
       headers: {
         Authorization: `Bearer ${accessToken}`,
       },
@@ -983,9 +831,9 @@ export async function getCalendarEvent(
     const errorText = await response.text()
     console.error('[GoogleCalendar] Event fetch failed:', errorText)
 
-    if (response.status === 401) {
-      const { accessToken: newToken } = await refreshAccessToken(config)
-      return getCalendarEvent({ ...config, access_token: newToken }, googleEventId)
+    if (response.status === 401 && !refreshed) {
+      const { accessToken: newToken, expiresAt: newExpiresAt } = await refreshAccessToken(config)
+      return getCalendarEvent({ ...config, access_token: newToken, token_expires_at: newExpiresAt }, googleEventId, true)
     }
 
     throw new Error(`Failed to fetch calendar event: ${response.status}`)
@@ -996,9 +844,9 @@ export async function getCalendarEvent(
     id: typeof event.id === 'string' ? event.id : googleEventId,
     status: typeof event.status === 'string' ? event.status : null,
     startDateTime:
-      typeof event.start?.dateTime === 'string' ? event.start.dateTime : null,
+      calendarDateTimeInstant(event.start?.dateTime,event.start?.timeZone),
     endDateTime:
-      typeof event.end?.dateTime === 'string' ? event.end.dateTime : null,
+      calendarDateTimeInstant(event.end?.dateTime,event.end?.timeZone),
   }
 }
 
@@ -1007,13 +855,16 @@ export async function getCalendarEvent(
  */
 export async function cancelCalendarEvent(
   config: CalendarConfig,
-  googleEventId: string
+  googleEventId: string,
+  refreshed = false
 ): Promise<void> {
+  requireDeliveryEnabled()
   const { accessToken } = await refreshAccessTokenIfNeeded(config)
 
   if (config.provider === 'microsoft') {
-    const response = await fetch(`${MICROSOFT_GRAPH_API}/me/events/${googleEventId}`, {
+    const response = await fetch(`${MICROSOFT_GRAPH_API}/me/events/${encodeURIComponent(googleEventId)}`, {
       method: 'DELETE',
+      signal: AbortSignal.timeout(20000),
       headers: {
         Authorization: `Bearer ${accessToken}`,
       },
@@ -1026,9 +877,9 @@ export async function cancelCalendarEvent(
     const errorText = await response.text()
     console.error('[MicrosoftCalendar] Event delete failed:', errorText)
 
-    if (response.status === 401) {
-      const { accessToken: newToken } = await refreshAccessToken(config)
-      await cancelCalendarEvent({ ...config, access_token: newToken }, googleEventId)
+    if (response.status === 401 && !refreshed) {
+      const { accessToken: newToken, expiresAt: newExpiresAt } = await refreshAccessToken(config)
+      await cancelCalendarEvent({ ...config, access_token: newToken, token_expires_at: newExpiresAt }, googleEventId, true)
       return
     }
 
@@ -1036,9 +887,10 @@ export async function cancelCalendarEvent(
   }
 
   const response = await fetch(
-    `${GOOGLE_CALENDAR_API}/calendars/${config.calendar_id}/events/${googleEventId}`,
+    `${GOOGLE_CALENDAR_API}/calendars/${encodeURIComponent(config.calendar_id)}/events/${encodeURIComponent(googleEventId)}`,
     {
       method: 'DELETE',
+      signal: AbortSignal.timeout(20000),
       headers: {
         Authorization: `Bearer ${accessToken}`,
       },
@@ -1052,9 +904,9 @@ export async function cancelCalendarEvent(
   const errorText = await response.text()
   console.error('[GoogleCalendar] Event delete failed:', errorText)
 
-  if (response.status === 401) {
-    const { accessToken: newToken } = await refreshAccessToken(config)
-    await cancelCalendarEvent({ ...config, access_token: newToken }, googleEventId)
+  if (response.status === 401 && !refreshed) {
+    const { accessToken: newToken, expiresAt: newExpiresAt } = await refreshAccessToken(config)
+    await cancelCalendarEvent({ ...config, access_token: newToken, token_expires_at: newExpiresAt }, googleEventId, true)
     return
   }
 
@@ -1069,14 +921,13 @@ export async function getCalendarConfig(propertyId: string): Promise<CalendarCon
 
   const { data, error } = await supabase
     .from('agent_calendars')
-    .select('*')
+    .select('*, properties(settings)')
     .eq('property_id', propertyId)
     .eq('sync_enabled', true)
-    .single()
+    .maybeSingle()
 
-  if (error || !data) {
-    return null
-  }
+  if (error) throw new Error('Calendar configuration could not be read')
+  if (!data) return null
 
   return normalizeCalendarConfig(data as CalendarConfigRow)
 }

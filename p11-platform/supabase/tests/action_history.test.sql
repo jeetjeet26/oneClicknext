@@ -1,0 +1,65 @@
+begin;
+create temp table checks(label text);
+create function pg_temp.check(passed boolean,label text) returns void language plpgsql as $$begin if passed is not true then raise exception 'FAIL: %',label;end if;insert into checks values(label);end$$;
+create function pg_temp.fixture() returns jsonb language plpgsql as $$
+declare p uuid:=gen_random_uuid();l uuid:=gen_random_uuid();w uuid:=gen_random_uuid();definition uuid:=gen_random_uuid();template uuid:=gen_random_uuid();begin
+ insert into public.properties(id,name,org_id,settings) values(p,'Follow-up SQL fixture','22222222-2222-2222-2222-222222222222','{"timezone":"UTC","tour_booking_url":"https://example.invalid/tours"}');
+ insert into public.leads(id,property_id,first_name,email,phone,status)values(l,p,'Followup','followup@example.invalid','+15550000000','new');
+ insert into public.follow_up_templates(id,property_id,slug,name,channel,body,subject,is_active)values(template,p,'fixture','Fixture','email','Hi {first_name}','Fixture subject',true);
+ insert into public.workflow_definitions(id,property_id,name,trigger_on,steps,exit_conditions,is_active)values(definition,p,'Fixture','lead_created','[{"id":0,"delay_hours":0,"action":"email","template_slug":"fixture"},{"id":1,"delay_hours":24,"action":"wait"}]','["leased","lost"]',true);
+ insert into public.lead_workflows(id,lead_id,workflow_id,current_step,status,next_action_at)values(w,l,definition,0,'active',now()-interval '1 minute');
+ return jsonb_build_object('p',p,'l',l,'w',w,'definition',definition,'template',template);
+end$$;
+create function pg_temp.fail_selected_event() returns trigger language plpgsql as $$begin
+ if new.id::text=current_setting('p11.test.fail_event',true) then raise exception 'Fixture event store failure';end if;return new;
+end$$;
+create trigger fixture_event_failure before insert on public.shared_action_events for each row execute function pg_temp.fail_selected_event();
+DO $$
+declare f jsonb;p uuid;l uuid;w uuid;actor uuid;event_id uuid:=gen_random_uuid();episode uuid:=gen_random_uuid();request_uuid uuid;result jsonb;d jsonb;delivery uuid;token uuid;input jsonb;other jsonb;before_count bigint;
+begin
+ select id into actor from public.profiles where org_id='22222222-2222-2222-2222-222222222222' order by id limit 1;
+ f:=pg_temp.fixture();p:=(f->>'p')::uuid;l:=(f->>'l')::uuid;w:=(f->>'w')::uuid;
+ result:=public.append_shared_action_event(event_id,episode,p,gen_random_uuid(),'tourspark','console.page.viewed','browser_observed','observed','{"path":"/dashboard/leads"}',null,null,'{"observed":true}');
+ perform pg_temp.check(result->>'state'='forbidden','event actor must belong to property');
+ result:=public.append_shared_action_event(event_id,episode,p,actor,'tourspark','console.page.viewed','browser_observed','observed','{"path":"/dashboard/leads"}',null,null,'{"observed":true}');
+ perform pg_temp.check(result->>'state'='recorded','page observation persisted');
+ perform pg_temp.check(public.append_shared_action_event(event_id,episode,p,actor,'tourspark','console.page.viewed','browser_observed','observed','{"path":"/dashboard/leads"}',null,null,'{"observed":true}')->>'state'='replayed','lost observation response replays without duplicate');
+ perform pg_temp.check(public.append_shared_action_event(event_id,episode,p,actor,'tourspark','console.page.viewed','browser_observed','observed','{"path":"/dashboard"}',null,null,'{"observed":true}')->>'state'='request_conflict','event identity cannot change its observation');
+ begin perform public.append_shared_action_event(gen_random_uuid(),episode,p,actor,'tourspark','workflow.pause','browser_observed','succeeded','{}',null,null,'{}');raise exception 'FAIL: forged completion accepted';exception when others then if sqlerrm like 'FAIL:%' then raise;end if;insert into checks values('browser observation cannot assert completed mutation');end;
+ begin perform public.append_shared_action_event(gen_random_uuid(),episode,p,actor,'tourspark','console.page.viewed','browser_observed','observed','{"path":"/dashboard/leads","token":"fixture-secret"}',null,null,'{}');raise exception 'FAIL: extra payload accepted';exception when others then if sqlerrm like 'FAIL:%' then raise;end if;insert into checks values('observation payload rejects arbitrary fields');end;
+ begin update public.shared_action_events set phase='succeeded' where id=event_id;raise exception 'FAIL: event changed';exception when sqlstate '55000' then insert into checks values('event immutable');end;
+ begin delete from public.shared_action_events where id=event_id;raise exception 'FAIL: event deleted';exception when sqlstate '55000' then insert into checks values('ordinary event deletion denied');end;
+ perform pg_temp.check((select not training_eligible from public.shared_action_events where id=event_id),'recording does not authorize training');
+ other:=pg_temp.fixture();
+ perform pg_temp.check(public.append_shared_action_event(gen_random_uuid(),episode,(other->>'p')::uuid,actor,'platform','console.page.viewed','browser_observed','observed','{"path":"/dashboard"}',null,null,'{}')->>'state'='episode_conflict','task episode cannot cross property boundaries');
+ perform pg_temp.check(public.append_shared_action_event(gen_random_uuid(),gen_random_uuid(),p,actor,'tourspark','workflow.pause','server_confirmed','succeeded','{}',null,null,'{}',jsonb_build_object('jobId',gen_random_uuid()))->>'state'='link_conflict','operational references must match stored scope');
+ request_uuid:=gen_random_uuid();result:=public.control_recorded_workflow(p,l,w,actor,'pause',request_uuid);
+ perform pg_temp.check(result->>'state'='applied','recorded pause applied');
+ perform pg_temp.check((select before_state->>'status'='active' and after_state->>'status'='paused' from public.shared_action_events where id=request_uuid),'confirmed before and after captured');
+ perform pg_temp.check(public.control_recorded_workflow(p,l,w,actor,'pause',request_uuid)->>'replayed'='true','control retry uses action receipt');
+ perform pg_temp.check((select count(*)=1 from public.shared_action_events where id=request_uuid),'control retry does not duplicate event');
+ perform pg_temp.check(public.control_recorded_workflow(p,l,w,actor,'stop',request_uuid)->>'state'='request_conflict','control request cannot change intent');
+ perform public.control_recorded_workflow(p,l,w,actor,'resume',gen_random_uuid());
+ perform public.control_recorded_workflow(p,l,w,actor,'pause',request_uuid);
+ perform pg_temp.check((select status='active' from public.lead_workflows where id=w),'old pause retry cannot reverse a later resume');
+ perform pg_temp.check((select count(distinct episode_id)=1 from public.shared_action_events where property_id=p and evidence='server_confirmed'),'workflow actions share a scoped human task episode');
+ request_uuid:=gen_random_uuid();perform set_config('p11.test.fail_event',request_uuid::text,true);
+ begin perform public.control_recorded_workflow(p,l,w,actor,'pause',request_uuid);raise exception 'FAIL: event failure ignored';exception when others then if sqlerrm like 'FAIL:%' then raise;end if;insert into checks values('unavailable action record rolls back business mutation');end;
+ perform pg_temp.check((select status='active' from public.lead_workflows where id=w),'failed event transaction leaves workflow unchanged');
+ perform set_config('p11.test.fail_event','',true);
+ d:=public.prepare_workflow_delivery(w);delivery:=(d->>'id')::uuid;token:=(d->>'lease_token')::uuid;
+ perform public.start_workflow_delivery(delivery,token,'fixture','fixture','fixture@example.invalid');perform public.finish_workflow_delivery(delivery,token,null);
+ request_uuid:=gen_random_uuid();input:='{"resolution":"accepted","providerId":"fixture-acceptance","reason":"Local provider fixture checked"}';
+ result:=public.review_recorded_workflow_delivery(p,l,delivery,actor,request_uuid,input);
+ perform pg_temp.check(result->>'state'='applied','recorded review saved');
+ perform pg_temp.check((select before_state->>'state'='review' and after_state->>'state'='accepted' and e.result->>'outcomeEvidence'='operator_review' from public.shared_action_events e where e.id=request_uuid),'review records decision evidence, not invented provider verification');
+ perform pg_temp.check(public.review_recorded_workflow_delivery(p,l,delivery,actor,request_uuid,input)->>'state'='replayed','review retry retains event identity');
+ perform pg_temp.check((select count(*)=1 from public.shared_action_events where id=request_uuid),'review retry saves only one event');
+ perform pg_temp.check((select request->>'reviewRequestId'=request_uuid::text from public.shared_action_events where id=request_uuid),'event links to full review evidence');
+ perform pg_temp.check((select count(distinct episode_id)=1 from public.shared_action_events where property_id=p and evidence='server_confirmed'),'controls and reviews remain in same task episode');
+ perform pg_temp.check(not has_table_privilege('authenticated','public.shared_action_events','insert'),'browser role cannot forge event records');
+ perform pg_temp.check(not has_table_privilege('authenticated','public.shared_action_events','select'),'history reads use authenticated property-scoped API');
+ perform pg_temp.check(not has_function_privilege('authenticated','public.append_shared_action_event(uuid,uuid,uuid,uuid,text,text,text,text,jsonb,jsonb,jsonb,jsonb,jsonb)','execute'),'recording RPC is service-only');
+end$$;
+select count(*) as assertions from checks;
+rollback;

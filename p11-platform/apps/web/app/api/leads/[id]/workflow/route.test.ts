@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NextRequest } from 'next/server'
 
+const rpcMock=vi.fn()
+vi.mock('@/utils/supabase/admin',()=>({createServiceClient:()=>({rpc:rpcMock})}))
 const authGetUserMock = vi.fn()
 const createClientMock = vi.fn()
 const validatePropertyAccessMock = vi.fn()
@@ -134,5 +136,14 @@ describe('Lead workflow route', () => {
         recent_issues: [],
       },
     })
+  })
+  it.each(['pause','resume','stop'])('scopes %s to the selected workflow and authenticated actor',async action=>{
+    authGetUserMock.mockResolvedValue({data:{user:{id:'user-1'}},error:null})
+    createClientMock.mockResolvedValue({auth:{getUser:authGetUserMock},from:()=>({select:()=>({eq:()=>({single:async()=>({data:{property_id:'property-1'}})})})})})
+    rpcMock.mockResolvedValue({data:{state:'applied',workflow:{id:'11111111-1111-4111-8111-111111111111'}}})
+    const {PATCH}=await import('./route')
+    const response=await PATCH(new Request('http://localhost/api/leads/lead-1/workflow',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({requestId:'22222222-2222-4222-8222-222222222222',action,workflowId:'11111111-1111-4111-8111-111111111111'})}) as NextRequest,{params:Promise.resolve({id:'lead-1'})})
+    expect(response.status).toBe(200)
+    expect(rpcMock).toHaveBeenCalledWith('control_recorded_workflow',{p_property_id:'property-1',p_lead_id:'lead-1',p_workflow_id:'11111111-1111-4111-8111-111111111111',p_actor_id:'user-1',p_action:action,p_request_id:'22222222-2222-4222-8222-222222222222'})
   })
 })

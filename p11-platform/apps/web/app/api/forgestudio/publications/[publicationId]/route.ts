@@ -12,10 +12,12 @@ import {
 
 const patchSchema = z.union([
   z.object({
+    requestId:z.string().uuid(),expectedUpdatedAt:z.string().datetime({offset:true}),
     action: z.literal('reschedule'),
     scheduledFor: z.string().datetime({ offset: true }),
   }),
   z.object({
+    requestId:z.string().uuid(),expectedUpdatedAt:z.string().datetime({offset:true}),
     action: z.literal('cancel'),
   }),
   z.object({
@@ -60,7 +62,7 @@ export async function GET(
     if ('response' in authorized) return authorized.response
 
     const supabase = createServiceClient()
-    const [publicationResult, attemptsResult, metricsResult, attributionResult] = await Promise.all([
+    const [publicationResult, attemptsResult, metricsResult, attributionResult, receiptsResult, jobResult] = await Promise.all([
       supabase
         .from('social_publications')
         .select(`
@@ -77,26 +79,33 @@ export async function GET(
         .order('attempt_number', { ascending: false }),
       supabase
         .from('social_publication_metrics')
-        .select('*')
+        .select('id,metric_date,observed_at')
         .eq('publication_id', publicationId)
         .order('metric_date', { ascending: false })
         .limit(30),
       supabase
         .from('social_attribution_events')
-        .select('id, event_type, occurred_at, attribution_window_days, metadata')
+        .select('id,event_type,occurred_at,attribution_window_days,evidence_kind,event_state')
         .eq('publication_id', publicationId)
         .order('occurred_at', { ascending: false })
         .limit(100),
+      supabase.from('forgestudio_publication_receipts').select('id,kind,evidence,created_at').eq('publication_id',publicationId).order('created_at',{ascending:true}),
+      supabase.from('shared_jobs').select('lifecycle_status,lease_expires_at,status_reason').eq('subject_id',publicationId).eq('domain','forgestudio.publication').maybeSingle(),
     ])
 
     if (publicationResult.error || !publicationResult.data) {
       return NextResponse.json({ error: 'Publication not found' }, { status: 404 })
     }
 
+    if(attemptsResult.error||metricsResult.error||attributionResult.error||receiptsResult.error||jobResult.error)return NextResponse.json({error:'Publication evidence could not be loaded. Reload before making a decision.'},{status:503})
     return NextResponse.json({
+      receipts:receiptsResult.data??[],
+      job:jobResult.data,
       publication: publicationResult.data,
       attempts: attemptsResult.data ?? [],
-      metrics: metricsResult.data ?? [],
+      legacyMetricRecords: metricsResult.data ?? [],
+      metrics: [],
+      metricsQualification: 'Use Results for reviewed measurement evidence; earlier daily records are unqualified.',
       attributionEvents: attributionResult.data ?? [],
     })
   } catch (error) {
@@ -131,10 +140,10 @@ export async function PATCH(
     if ('response' in authorized) return authorized.response
 
     const publication = parsed.data.action === 'cancel'
-      ? await cancelPublication(publicationId)
+      ? await cancelPublication(publicationId,{requestId:parsed.data.requestId,actorId:user.id,expectedUpdatedAt:parsed.data.expectedUpdatedAt})
       : parsed.data.action === 'retry'
         ? await retryPublication(publicationId)
-        : await reschedulePublication(publicationId, parsed.data.scheduledFor)
+        : await reschedulePublication(publicationId, parsed.data.scheduledFor,{requestId:parsed.data.requestId,actorId:user.id,expectedUpdatedAt:parsed.data.expectedUpdatedAt})
 
     return NextResponse.json({ publication })
   } catch (error) {

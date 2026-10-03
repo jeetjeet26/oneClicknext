@@ -1,0 +1,25 @@
+import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest'
+import {NextRequest} from 'next/server'
+const m=vi.hoisted(()=>({auth:vi.fn(),rpc:vi.fn(),fetch:vi.fn()}))
+vi.mock('@/utils/supabase/server',()=>({createClient:async()=>({auth:{getUser:m.auth}})}))
+vi.mock('@/utils/crm/workspace',()=>({crmRpc:m.rpc}))
+import {GET,POST} from './route'
+const property='33333333-3333-3333-3333-333333333333',id='df9e624c-df84-4974-bc6c-1032c748e844'
+const prepare={action:'prepare',propertyId:property,requestId:id,leadIds:[property]},approve={action:'approve',propertyId:property,requestId:id,batchId:id,manifestHash:'a'.repeat(64)}
+const req=(body:unknown)=>new NextRequest('http://localhost/api/crm/batches',{method:'POST',body:JSON.stringify(body)})
+beforeEach(()=>{vi.resetAllMocks();vi.stubGlobal('fetch',m.fetch);vi.stubEnv('OUTBOUND_DELIVERY_PAUSED','false');m.auth.mockResolvedValue({data:{user:{id:'actor'}},error:null});m.rpc.mockResolvedValue({state:'saved',batchId:id})})
+afterEach(()=>{vi.unstubAllEnvs();vi.unstubAllGlobals()})
+describe('saved CRM batch boundary',()=>{
+ it('requires authentication for reads and writes',async()=>{m.auth.mockResolvedValue({data:{user:null},error:null});expect((await GET(new NextRequest('http://localhost/api/crm/batches?propertyId='+property))).status).toBe(401);expect((await POST(req(prepare))).status).toBe(401);expect(m.rpc).not.toHaveBeenCalled()})
+ it.each([{actorId:'forged'},{credentials:{secret:'private'}},{origin:'workflow'},{payload:{email:'forged'}}])('rejects client authority and payload %j',async extra=>{expect((await POST(req({...prepare,...extra}))).status).toBe(400);expect(m.rpc).not.toHaveBeenCalled()})
+ it.each([[],[property,property],Array.from({length:101},(_,i)=>`${String(i).padStart(8,'0')}-3333-3333-3333-333333333333`)])('rejects empty, duplicate or excessive selection',async leadIds=>{expect((await POST(req({...prepare,leadIds}))).status).toBe(400);expect(m.rpc).not.toHaveBeenCalled()})
+ it('saves only lead identities under authenticated actor while paused',async()=>{vi.stubEnv('OUTBOUND_DELIVERY_PAUSED','true');expect((await POST(req(prepare))).status).toBe(200);expect(m.rpc).toHaveBeenCalledWith('prepare_crm_bulk',{p_property_id:property,p_actor_id:'actor',p_request_id:id,p_lead_ids:[property]});expect(m.fetch).not.toHaveBeenCalled()})
+ it('blocks approval before durable command when outbound is paused',async()=>{vi.stubEnv('OUTBOUND_DELIVERY_PAUSED','true');expect((await POST(req(approve))).status).toBe(423);expect(m.rpc).not.toHaveBeenCalled();expect(m.fetch).not.toHaveBeenCalled()})
+ it('records exact approval without bypassing durable worker queue',async()=>{m.rpc.mockResolvedValue({state:'applied'});expect((await POST(req(approve))).status).toBe(200);expect(m.rpc).toHaveBeenCalledWith('command_crm_bulk',{p_property_id:property,p_actor_id:'actor',p_request_id:id,p_batch_id:id,p_kind:'approve',p_manifest_hash:'a'.repeat(64)});expect(m.fetch).not.toHaveBeenCalled()})
+ it('allows stopping saved remaining work while paused',async()=>{vi.stubEnv('OUTBOUND_DELIVERY_PAUSED','true');m.rpc.mockResolvedValue({state:'applied'});expect((await POST(req({...approve,action:'stop'}))).status).toBe(200);expect(m.rpc.mock.calls[0][1].p_kind).toBe('stop')})
+ it.each(['stale_source','stale_configuration','request_conflict','batch_changed','preview_conflict','owner_required','nothing_to_approve','stopped'])('reports %s without dispatch',async state=>{m.rpc.mockResolvedValue({state});expect((await POST(req(approve))).status).toBe(409);expect(m.fetch).not.toHaveBeenCalled()})
+ it('passes literal paginated search to property-scoped read',async()=>{const response=await GET(new NextRequest('http://localhost/api/crm/batches?'+new URLSearchParams({propertyId:property,view:'leads',search:',email.neq.null',page:'2'})));expect(response.status).toBe(200);expect(response.headers.get('cache-control')).toBe('no-store');expect(m.rpc).toHaveBeenCalledWith('search_crm_bulk_leads',{p_property_id:property,p_actor_id:'actor',p_search:',email.neq.null',p_page:2})})
+ it('exposes approval ownership only from current authenticated actor',async()=>{m.rpc.mockResolvedValue({state:'saved',actorId:'someone-else'});const response=await GET(new NextRequest('http://localhost/api/crm/batches?propertyId='+property+'&batchId='+id));expect((await response.json()).canApproveOwnBatch).toBe(false);expect(m.rpc.mock.calls[0][1]).toEqual({p_property_id:property,p_actor_id:'actor',p_batch_id:id,p_page:1})})
+ it.each(['page=0','page=1.5','page=no','view=unknown','batchId=bad','search='+ 'a'.repeat(201)])('rejects invalid read %s',async query=>{expect((await GET(new NextRequest('http://localhost/api/crm/batches?propertyId='+property+'&'+query))).status).toBe(400);expect(m.rpc).not.toHaveBeenCalled()})
+ it('does not leak private failures',async()=>{m.rpc.mockRejectedValue(new Error('private secret'));const response=await POST(req(prepare));expect(response.status).toBe(503);expect(JSON.stringify(await response.json())).not.toContain('private secret')})
+})

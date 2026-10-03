@@ -144,12 +144,13 @@ describe('GET /api/cron/gmail-sync', () => {
       totalNewMessages: 2,
       totalUpdatedThreads: 2,
       watchRenewed: 1,
-      tokenHealthChecks: 1,
+      credentialChecks: 1,
     })
-    expect(emailConfigUpdateEq).toHaveBeenCalledWith('id', 'config-1')
+    expect(emailConfigUpdateEq).not.toHaveBeenCalled()
+    expect(refreshAccessTokenIfNeededMock).toHaveBeenCalledTimes(1)
   })
 
-  it('stores supported health-check fields when sync detects a revoked token', async () => {
+  it('reports sync failure without guessing revocation or overwriting connection health', async () => {
     Object.assign(process.env, {
       NODE_ENV: 'production',
       CRON_SECRET: 'expected-secret',
@@ -217,17 +218,13 @@ describe('GET /api/cron/gmail-sync', () => {
     expect(response.status).toBe(200)
     expect(response.headers.get('x-request-id')).toBeTruthy()
     expect(json).toMatchObject({
-      success: true,
+      success: false,
       processed: 1,
       synced: 0,
       failed: 1,
     })
-    expect(updatePayloads).toContainEqual(
-      expect.objectContaining({
-        token_status: 'revoked',
-        health_check_error: '401 revoked',
-      })
-    )
+    expect(updatePayloads).toHaveLength(0)
+    expect(finishCronJobRunMock).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({status: 'failed'}))
     expect(updatePayloads.some((payload) => 'last_sync_error' in payload)).toBe(false)
   })
 })

@@ -54,31 +54,13 @@ export async function getSocialAppCredentials(
   propertyId: string,
   platform: SocialConfigPlatform
 ): Promise<SocialCredentials | null> {
-  try {
-    const supabase = createServiceClient()
-    const { data, error } = await supabase
-      .from('social_auth_configs')
-      .select('app_id, app_secret_encrypted, redirect_uri')
-      .eq('property_id', propertyId)
-      .eq('platform', platform)
-      .maybeSingle()
-
-    if (error) {
-      console.error('[social-config] failed to load social_auth_configs row', {
-        propertyId,
-        platform,
-        error,
-      })
-    } else if (data) {
-      return {
-        appId: data.app_id,
-        appSecret: decryptSecret(data.app_secret_encrypted),
-        redirectUri: data.redirect_uri,
-        source: 'database',
-      }
-    }
-  } catch (error) {
-    console.error('[social-config] credential lookup failed', { propertyId, platform, error })
+  const {data,error}=await createServiceClient().from('social_auth_configs')
+    .select('app_id,app_secret_encrypted,redirect_uri,is_configured')
+    .eq('property_id',propertyId).eq('platform',platform).maybeSingle()
+  if(error)throw new Error('The saved app credentials could not be loaded. No fallback account was used.')
+  if(data){
+    if(data.is_configured!==true)return null
+    return {appId:data.app_id,appSecret:decryptSecret(data.app_secret_encrypted),redirectUri:data.redirect_uri,source:'database'}
   }
 
   const fallback = ENV_FALLBACKS[platform]
@@ -108,3 +90,5 @@ export async function getTikTokCredentials(propertyId: string): Promise<SocialCr
 export async function getXCredentials(propertyId: string): Promise<SocialCredentials | null> {
   return getSocialAppCredentials(propertyId, 'x')
 }
+
+export function hasEnvironmentSocialConfig(platform:SocialConfigPlatform){const fallback=ENV_FALLBACKS[platform];return Boolean(readEnv(fallback.id)&&readEnv(fallback.secret))}

@@ -1,7 +1,5 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest } from 'next/server'
 import { createClient as createSupabaseClient } from '@supabase/supabase-js'
-import { createClient as createServerClient } from '@/utils/supabase/server'
-import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { GoogleAuth } from 'google-auth-library'
 import path from 'path'
 
@@ -85,7 +83,8 @@ async function generateImage(
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${accessToken.token}`
     },
-    body: JSON.stringify(requestBody)
+    body: JSON.stringify(requestBody),
+    redirect: 'error', signal: AbortSignal.timeout(45_000)
   })
 
   if (!response.ok) {
@@ -136,49 +135,16 @@ async function uploadToStorage(
   return publicUrl
 }
 
+import { z } from 'zod'
+import { brandId, runBrandCommand } from '@/utils/brandforge/operations'
+import { prepareBrandRevision } from '@/utils/brandforge/revisions'
 export async function POST(request: NextRequest) {
-  try {
-    const authClient = await createServerClient()
-    const { data: { user }, error: authError } = await authClient.auth.getUser()
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const body = await request.json()
-    const {
-      brandAssetId,
-      propertyId,
-      type, // 'logo' | 'moodboard' | 'photo_examples'
-      brandData // The brand strategy data from conversation
-    } = body
-
-    const safeBrandData: BrandData = asRecord(brandData) ?? {}
-
-    if (!brandAssetId || !propertyId || !type) {
-      return NextResponse.json(
-        { error: 'Missing required fields: brandAssetId, propertyId, type' },
-        { status: 400 }
-      )
-    }
-
-    const access = await validatePropertyAccess(user.id, propertyId)
-    if (!access.authorized) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-    }
-
-    const results: { type: string; url: string; prompt: string }[] = []
-    const folder = `${propertyId}/brand`
-
-    const { data: brandAsset } = await supabase
-      .from('property_brand_assets')
-      .select('id, property_id')
-      .eq('id', brandAssetId)
-      .single()
-
-    if (!brandAsset || brandAsset.property_id !== propertyId) {
-      return NextResponse.json({ error: 'Brand asset not found for property' }, { status: 404 })
-    }
-
+ return runBrandCommand(request, 'visuals', { propertyId: brandId, type: z.enum(['logo','moodboard','photo_examples']) }, async ({ body: { propertyId, type }, brand, assertActive }) => {
+  if (propertyId !== brand.property_id) throw new Error('Property mismatch')
+  const safeBrandData: BrandData = brand
+  const results: { type: string; url: string; prompt: string }[] = []
+  const changed: Record<string, unknown> = {}
+  const folder = `${propertyId}/brand`
     if (type === 'logo') {
       // Generate logo based on brand data
       // Generate 2 variations at a time to stay within quota
@@ -194,6 +160,7 @@ export async function POST(request: NextRequest) {
             await new Promise(resolve => setTimeout(resolve, 2000))
           }
           
+          await assertActive()
           const images = await generateImage(logoPrompt, {
             aspectRatio: '1:1',
             sampleCount: 2, // 2 variations per batch
@@ -224,19 +191,7 @@ export async function POST(request: NextRequest) {
       }
 
       if (logoUrls.length > 0) {
-        // Update brand asset with logo URLs (first one as primary)
-        await supabase
-          .from('property_brand_assets')
-          .update({
-            section_6_logo: {
-              ...(asRecord(safeBrandData.section_6_logo) ?? {}),
-              logoUrl: logoUrls[0], // Primary logo
-              logoVariations: logoUrls, // All variations
-              generatedAt: new Date().toISOString()
-            },
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', brandAssetId)
+        changed.section_6_logo = { ...(asRecord(safeBrandData.section_6_logo) ?? {}), logoUrl: logoUrls[0], logoVariations: logoUrls, variants: logoUrls.map((url, index) => ({ role: index === 0 ? 'primary' : 'secondary', url, alt: 'Generated logo candidate' })), generatedAt: new Date().toISOString() }
       }
     }
 
@@ -253,6 +208,7 @@ export async function POST(request: NextRequest) {
             await new Promise(resolve => setTimeout(resolve, 2000))
           }
           
+          await assertActive()
           const images = await generateImage(moodPrompts[i], {
             aspectRatio: '16:9',
             negativePrompt: 'text, words, letters, watermark, signature, low quality, cartoon, anime, illustration, drawing'
@@ -280,18 +236,7 @@ export async function POST(request: NextRequest) {
 
       // Update brand asset with moodboard URLs
       if (moodboardUrls.length > 0) {
-        await supabase
-          .from('property_brand_assets')
-          .update({
-            vision_board_url: moodboardUrls[0], // Primary mood board
-            section_9_design_elements: {
-              ...(asRecord(safeBrandData.section_9_design_elements) ?? {}),
-              moodboardUrls,
-              generatedAt: new Date().toISOString()
-            },
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', brandAssetId)
+        changed.section_9_design_elements = { ...(asRecord(safeBrandData.section_9_design_elements) ?? {}), moodboardUrls, generatedAt: new Date().toISOString() }
       }
     }
 
@@ -302,6 +247,7 @@ export async function POST(request: NextRequest) {
 
       for (let i = 0; i < yepPrompts.length; i++) {
         try {
+          await assertActive()
           const images = await generateImage(yepPrompts[i], {
             aspectRatio: '4:3',
             negativePrompt: 'text, words, watermark, low quality, artificial, staged, stock photo look'
@@ -324,33 +270,14 @@ export async function POST(request: NextRequest) {
 
       // Update brand asset
       if (yepUrls.length > 0) {
-        await supabase
-          .from('property_brand_assets')
-          .update({
-            section_10_photo_yep: {
-              ...(asRecord(safeBrandData.section_10_photo_yep) ?? {}),
-              generatedPhotos: yepUrls,
-              generatedAt: new Date().toISOString()
-            },
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', brandAssetId)
+        changed.section_10_photo_yep = { ...(asRecord(safeBrandData.section_10_photo_yep) ?? {}), generatedPhotos: yepUrls, generatedAt: new Date().toISOString() }
       }
     }
 
-    return NextResponse.json({
-      success: true,
-      generatedCount: results.length,
-      results
-    })
-
-  } catch (error) {
-    console.error('BrandForge image generation error:', error)
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Image generation failed' },
-      { status: 500 }
-    )
-  }
+  if (!results.length) throw new Error('No visual candidate was generated')
+  const step = type === 'logo' ? 6 : type === 'moodboard' ? 9 : 10
+  return { updates: prepareBrandRevision(brand, step, changed), result: { generatedCount: results.length, results, readyForReview: true, step } }
+ })
 }
 
 // Build logo prompt from brand data

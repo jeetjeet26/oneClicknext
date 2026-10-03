@@ -1,0 +1,45 @@
+{
+  "policy": "p11-demand-review-v1",
+  "source": "synthetic",
+  "programId": "7ab0093c811e66787a8be6ea7d5f550b49f321e50472ddcc2ce74054c8941bd1",
+  "frozenAt": "2026-08-01T00:00:00Z",
+  "period": {
+    "start": "2026-08-02",
+    "end": "2026-08-31"
+  },
+  "comparison": {
+    "baselineKind": "general_ai_assistant",
+    "contractHash": "9cbd358b0235b3e9ae53cb67a196a8d1efc60d32d4bb8bf3770c6bcdefe6e3a5"
+  },
+  "currency": "USD",
+  "minorUnitDigits": 2,
+  "cohort": [
+    {
+      "pilotId": "9307ee3840564f0c4d4201d56838cf0ac62fcb04b76005294db82625d4b6e8a7",
+      "clientId": "0426edc5034cbd6b79a3b07041e44160331130720dbfc4d88e988862405cc3d7",
+      "products": [
+        "siteforge",
+        "lumaleasing"
+      ],
+      "taskIds": [
+        "79a011d9738cbd12ada2ba6b79007332494ae26e3afe6d4d4dfb04d1af9f4675",
+        "445d75888db4d1fc7d18fadf2306428f4d26db4e091ece99d95b016f7def099e"
+      ],
+      "scopeHash": "2e543a502d97d3080df6611378d8c52c36b93c71e7bf0d78b19a12451f142601",
+      "permissionHash": "dd6076d8bad9e17f86a4d5bf4c341fefea560e1b79e13e5d819d357ada282172"
+    }
+  ],
+  "rules": {
+    "adoptedBy": "622f06cbcd2e7e61637e17212e714e6c721d2dd5a9f7bc1aec911b65b34edcf5",
+    "adoptedAt": "2026-08-01T00:00:00Z",
+    "decisionHash": "0807ce842aee519403b764131eee1dc3a4848c949a635ffabbf343abab61198e",
+    "minimumPaidPilots": 1,
+    "minimumRenewedPilots": 1,
+    "minimumTasksPerPilot": 2,
+    "minimumHumanSavingPercent": 50,
+    "minimumContributionPercent": 60,
+    "minimumDeliveryLower95Percent": 99,
+    "minimumDeliverySample": 100
+  },
+  "contentHash": "87c37835022b57728bcbb015b72227628ac65913aeabcc6f8567a2e46dd5c36f"
+}

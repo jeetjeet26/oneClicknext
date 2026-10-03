@@ -80,3 +80,12 @@ export function normalizeTimezoneToIana(value: string | null | undefined): strin
 
   return isValidIanaTimezone(trimmed) ? trimmed : null
 }
+
+/** An explicitly configured property zone takes precedence, even when invalid. */
+export function resolveCalendarTimezone(settings: unknown, providerTimezone: unknown): string | null {
+  const configured = settings && typeof settings === 'object' && 'timezone' in settings
+    ? settings.timezone : null
+  const value = configured === null || configured === undefined || configured === ''
+    ? providerTimezone : configured
+  return normalizeTimezoneToIana(typeof value === 'string' ? value : null)
+}

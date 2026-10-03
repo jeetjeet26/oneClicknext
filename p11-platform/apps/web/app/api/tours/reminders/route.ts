@@ -8,7 +8,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { processTourReminders, getPendingRemindersCount } from '@/utils/services/tour-reminders'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
-import { finishCronJobRun, startCronJobRun } from '@/utils/services/cron-job-runs'
+import { finishCronJobRun, startCronJobRun, cronStatusFromOutcomes } from '@/utils/services/cron-job-runs'
 import {
   badRequest,
   forbidden,
@@ -37,6 +37,8 @@ export async function POST(request: NextRequest) {
     requestId: ctx.requestId,
   })
 
+  if(!run)return NextResponse.json({error:'Reminder run could not be recorded. No reminders were processed.'},{status:503,headers:ctx.responseHeaders})
+
   try {
     const startTime = Date.now()
     
@@ -49,19 +51,25 @@ export async function POST(request: NextRequest) {
       ...result,
     })
 
-    await finishCronJobRun(run, {
-      status: 'success',
+    const saved=await finishCronJobRun(run, {
+      status: cronStatusFromOutcomes({succeeded:result.acceptedChannels || result.reminders24h+result.reminders1h+(result.confirmations??0),failed:result.failed,errors:result.errors}),
       summary: {
         processed: result.processed,
+        confirmations:result.confirmations??0,
         reminders24h: result.reminders24h,
         reminders1h: result.reminders1h,
         failed: result.failed,
+        acceptedChannels:result.acceptedChannels,
+        review:result.review,
+        errors:result.errors,
       },
     })
 
+    if(!saved)return NextResponse.json({error:'Reminder result could not be saved. Review the run before retrying.',success:false},{status:503,headers:ctx.responseHeaders})
+
     return NextResponse.json(
       {
-        success: true,
+        success: result.failed===0 && result.errors.length===0,
         ...result,
         duration_ms: duration,
         timestamp: new Date().toISOString(),

@@ -15,7 +15,7 @@ import { format, parseISO } from 'date-fns'
 
 type DataPoint = {
   date: string
-  [key: string]: string | number
+  [key: string]: string | number | null
 }
 
 type PerformanceChartProps = {
@@ -105,8 +105,8 @@ export function PerformanceChart({
             itemStyle={{ color: '#fff' }}
             formatter={(value) => {
               const numeric =
-                typeof value === 'number' ? value : Number(value ?? 0)
-              return [numeric.toLocaleString(), ''] as [string, '']
+                value==null?null:typeof value === 'number' ? value : Number(value)
+              return [numeric===null?'Not available':numeric.toLocaleString(), ''] as [string, '']
             }}
             labelFormatter={(label) => label}
           />

@@ -2278,9 +2278,12 @@ export async function requestLaunchRestore(
     promotedContentHash: release.artifact_content_hash,
   })
 
+  const monitoringOnly = input.source === 'production_health'
   let protectionApplied = false
   let protectionError: string | null = null
-  try {
+  // Monitoring may finish after another observation. It records an operator
+  // request; it cannot reuse a historical launch approval to mutate the live site.
+  if (!monitoringOnly) try {
     await protectLaunchProduction(release, client)
     protectionApplied = true
   } catch (error) {
@@ -2295,7 +2298,6 @@ export async function requestLaunchRestore(
     artifact_id: release.artifact_id,
     dedupe_key: `restore-request:${release.id}`,
     severity: 'critical',
-    status: 'open',
     category: 'restore_required',
     title: 'SiteForge production restore requires an operator',
     summary: input.rationale.trim(),
@@ -2305,6 +2307,7 @@ export async function requestLaunchRestore(
       requestId: input.requestId || null,
       protectionApplied,
       protectionError,
+      protectionRequiresOperator: monitoringOnly,
       backupId: release.backup_id,
       restoreMode: restoreExpectation.mode,
       rollbackArtifactId: restoreExpectation.expectedArtifactId,
@@ -2315,7 +2318,7 @@ export async function requestLaunchRestore(
   }
   const { data: existingIncident, error: incidentLookupError } = await client
     .from('siteforge_incidents')
-    .select('id')
+    .select('id, updated_at')
     .eq('website_id', release.website_id)
     .eq('dedupe_key', incidentValues.dedupe_key)
     .neq('status', 'resolved')
@@ -2330,11 +2333,16 @@ export async function requestLaunchRestore(
     ? await client
         .from('siteforge_incidents')
         .update(incidentValues)
-        .eq('id', existingIncident.id)
-    : await client.from('siteforge_incidents').insert(incidentValues)
-  if (incidentResult.error && incidentResult.error.code !== '23505') {
+        .eq('id', existingIncident.id).eq('updated_at', existingIncident.updated_at).neq('status', 'resolved')
+        .select('id').maybeSingle()
+    : await client.from('siteforge_incidents').insert(incidentValues).select('id').single()
+  if (incidentResult.error?.code === '23505') {
+    const concurrent = await client.from('siteforge_incidents').select('id').eq('website_id',release.website_id)
+      .eq('dedupe_key',incidentValues.dedupe_key).neq('status','resolved').maybeSingle()
+    if (concurrent.error || !concurrent.data) throw new SiteForgeLaunchError('Concurrent restore request could not be confirmed',500)
+  } else if (incidentResult.error || !incidentResult.data) {
     throw new SiteForgeLaunchError(
-      `Production was protected but the restore incident could not be persisted: ${incidentResult.error.message}`,
+      `Production was protected but the restore incident could not be persisted: ${incidentResult.error?.message || 'The incident changed; repeat verification'}`,
       500
     )
   }
@@ -2552,7 +2560,7 @@ export async function requestLaunchRestore(
     }
   }
 
-  if (hasOwnerOneButtonAuthority(release, input.actorId)) {
+  if (!monitoringOnly && hasOwnerOneButtonAuthority(release, input.actorId)) {
     const bindingHash = String(
       asRecord(release.legal_rights_snapshot).launchBindingHash || ''
     )
@@ -2603,8 +2611,9 @@ export async function requestLaunchRestore(
     release,
     manualRequired: true as const,
     requiredConfirmation: 'restore' as const,
-    dashboardAction:
-      'Production is protected/noindex. A launch manager must restore the recorded backup in Cloudways and submit the exact completed operation ID.',
+    dashboardAction: protectionApplied
+      ? 'Production is protected/noindex. A launch manager must restore the recorded backup in Cloudways and submit the exact completed operation ID.'
+      : 'Review the latest checks before restoring the recorded backup in Cloudways. No production protection or restore was performed by this request.',
     protectionApplied,
     protectionError,
   }

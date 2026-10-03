@@ -12,6 +12,17 @@ export function toSharedLifecycleFromCronStatus(
 
 type CronRunSummary = Record<string, unknown>
 
+export function cronStatusFromOutcomes(result: {
+  succeeded: number
+  failed: number
+  errors?: string[]
+}): 'success' | 'partial' | 'failed' {
+  if (result.failed > 0 || (result.errors?.length ?? 0) > 0) {
+    return result.succeeded > 0 ? 'partial' : 'failed'
+  }
+  return 'success'
+}
+
 export type CronRunHandle = {
   id: string
   jobName: string
@@ -74,8 +85,8 @@ export async function startCronJobRun({
 export async function finishCronJobRun(
   run: CronRunHandle | null,
   { status, summary, error }: FinishCronJobRunInput
-): Promise<void> {
-  if (!run) return
+): Promise<boolean> {
+  if (!run) return false
 
   try {
     const supabase = createServiceClient()
@@ -87,24 +98,27 @@ export async function finishCronJobRun(
       summary: toJson(summary),
     }
 
-    const { error: updateError } = await supabase
+    const { data: saved, error: updateError } = await supabase
       .from('cron_job_runs')
       .update(update)
-      .eq('id', run.id)
+      .eq('id', run.id).eq('status','running').select('id').maybeSingle()
 
-    if (updateError) {
+    if (updateError || !saved) {
       console.error('[cron_job_runs] failed to finish run', {
         runId: run.id,
         jobName: run.jobName,
         error: updateError,
       })
+      return false
     }
+    return true
   } catch (finishError) {
     console.error('[cron_job_runs] failed to finalize run', {
       runId: run.id,
       jobName: run.jobName,
       error: finishError,
     })
+    return false
   }
 }
 
@@ -142,4 +156,8 @@ export async function listRecentCronJobRuns({
   }
 
   return data ?? []
+}
+
+export async function confirmCronJobRun(run:CronRunHandle|null,input:FinishCronJobRunInput):Promise<void> {
+  if(!await finishCronJobRun(run,input)) throw new Error('Scheduled result could not be saved')
 }

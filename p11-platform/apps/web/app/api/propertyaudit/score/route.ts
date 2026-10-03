@@ -6,6 +6,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
+import { readMeasurements } from '@/utils/propertyaudit/read-measurements'
+import { capturedAnswers, comparableMeasurements } from '@/utils/propertyaudit/measurement-source'
 import { getScoreBucket } from '@/utils/propertyaudit/evaluator'
 import {
   CLIENT_HEADLINE_SURFACES,
@@ -13,7 +15,7 @@ import {
   isClientHeadlineSurface,
   type ClientHeadline,
 } from '@/utils/propertyaudit/client-headline'
-import { aggregateAnswersByQuery, backfillReportAnswers, type ReportAnswer, type ReportQuery } from '@/utils/propertyaudit/reporting'
+import { aggregateAnswersByQuery, type ReportAnswer, type ReportQuery } from '@/utils/propertyaudit/reporting'
 import { getSurfaceLabel, isSupportedSurface, type Surface } from '@/utils/propertyaudit/types'
 
 export interface GeoScoreSummary {
@@ -72,7 +74,7 @@ type GeoScoreRow = {
   avg_llm_rank: number | null
   avg_link_rank: number | null
   avg_sov: number | null
-  breakdown: unknown
+  breakdown?: unknown
 }
 
 type GeoRunWithScores = {
@@ -107,75 +109,20 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
-    const { data: latestRuns, error: runsError } = await supabase
-      .from('geo_runs')
-      .select(`
-        id,
-        surface,
-        started_at,
-        geo_scores (
-          overall_score,
-          visibility_pct,
-          avg_llm_rank,
-          avg_link_rank,
-          avg_sov,
-          breakdown
-        )
-      `)
-      .eq('property_id', propertyId)
-      .eq('status', 'completed')
-      .order('started_at', { ascending: false })
-      .limit(40)
-
-    if (runsError) {
-      console.error('Error fetching runs:', runsError)
-      return NextResponse.json({ error: 'Failed to fetch scores' }, { status: 500 })
-    }
-
+    const source = await readMeasurements(user.id, propertyId, {kind: 'summary'})
+    if (source.state !== 'ready') return NextResponse.json({error: 'Audit measurements are unavailable', state: source.state}, {status: source.state === 'forbidden' ? 403 : 409})
     const latestRunsBySurface = new Map<Surface, GeoRunWithScores>()
     const previousRunsBySurface = new Map<Surface, GeoRunWithScores>()
-    for (const run of (latestRuns || []) as GeoRunWithScores[]) {
+    for (const entry of source.runs) {
+      const run = {...entry.run, geo_scores: entry.scores}
       const surface = run.surface
-      if (typeof surface !== 'string' || !isClientHeadlineSurface(surface) || !isSupportedSurface(surface)) {
-        continue
-      }
-      if (!latestRunsBySurface.has(surface)) {
-        latestRunsBySurface.set(surface, run)
-      } else if (!previousRunsBySurface.has(surface)) {
-        previousRunsBySurface.set(surface, run)
-      }
+      if (!isClientHeadlineSurface(surface) || !isSupportedSurface(surface)) continue
+      if (!latestRunsBySurface.has(surface)) latestRunsBySurface.set(surface, run)
+      else if (!previousRunsBySurface.has(surface)) previousRunsBySurface.set(surface, run)
     }
-
-    const latestRunIds = Array.from(latestRunsBySurface.values()).map(run => run.id)
-    const previousRunIds = Array.from(previousRunsBySurface.values()).map(run => run.id)
-    const allRunIds = [...latestRunIds, ...previousRunIds]
-
-    const [{ data: queryRows }, { data: propertyRow }] = await Promise.all([
-      supabase
-        .from('geo_queries')
-        .select('id, text, type, weight, run_count')
-        .eq('property_id', propertyId),
-      supabase
-        .from('properties')
-        .select('name')
-        .eq('id', propertyId)
-        .single(),
-    ])
-
-    const queries = (queryRows || []) as ReportQuery[]
-
-    let rawAnswers: Array<ReportAnswer & { run_id?: string }> = []
-    if (allRunIds.length > 0) {
-      const { data: answerRows } = await supabase
-        .from('geo_answers')
-        .select('id, run_id, query_id, presence, llm_rank, link_rank, sov, flags, created_at, answer_summary, natural_response, ordered_entities, geo_queries (id, text, type, weight), geo_citations (url, domain, is_brand_domain)')
-        .in('run_id', allRunIds)
-      rawAnswers = backfillReportAnswers(
-        (answerRows || []) as Array<ReportAnswer & { run_id?: string }>,
-        propertyRow?.name || ''
-      ) as Array<ReportAnswer & { run_id?: string }>
-    }
-
+    const latestRunIds = [...latestRunsBySurface.values()].map(run => run.id)
+    const { answers: rawAnswers, queries } = capturedAnswers(source.runs)
+    const comparable = comparableMeasurements(source.runs.filter(r => latestRunIds.includes(r.run.id)), source.runs.filter(r => [...previousRunsBySurface.values()].some(p => p.id === r.run.id)))
     const latestHeadline = buildHeadlineForRuns(latestRunsBySurface, rawAnswers, queries)
     if (!latestHeadline || latestRunIds.length === 0) {
       return NextResponse.json({
@@ -246,10 +193,10 @@ export async function GET(req: NextRequest) {
       surfaceSummaries,
       breakdown: latestHeadline.breakdown,
       lastRunAt,
-      trend: buildHeadlineTrend(latestHeadline, previousHeadline),
+      trend: comparable ? buildHeadlineTrend(latestHeadline, previousHeadline) : null,
     }
 
-    return NextResponse.json({ score: summary }, { headers: NO_STORE_HEADERS })
+    return NextResponse.json({ score: summary, scope: source.scope, comparisonAvailable: comparable, coverage: source.runs.filter(r => latestRunIds.includes(r.run.id)).map(r => ({ runId: r.run.id, surface: r.run.surface, capturedExecutions: r.items.length || null, retainedAnswers: r.answers.length, originalContextRetained: Boolean(r.job && r.items.length) })) }, { headers: NO_STORE_HEADERS })
   } catch (error) {
     console.error('PropertyAudit Score GET Error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
@@ -264,7 +211,7 @@ function averageNullable(values: Array<number | null | undefined>): number | nul
 
 function buildHeadlineForRuns(
   runsBySurface: Map<Surface, GeoRunWithScores>,
-  rawAnswers: Array<ReportAnswer & { run_id?: string }>,
+  rawAnswers: ReportAnswer[],
   queries: ReportQuery[]
 ): ClientHeadline | null {
   const collapsedBySurface = Array.from(runsBySurface.entries()).map(([surface, run]) => {

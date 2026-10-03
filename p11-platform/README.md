@@ -1,5 +1,7 @@
 # P11 Platform - The Autonomous Marketing Agency
 
+> **Current direction (September 12, 2026):** SiteForge is the personal Codex skill used in each client project. The console prepares client briefs and retains earlier website records; the application generator and runtime documentation below describe the retained earlier implementation. See the [current full implementation plan](../docs/P11_IMPLEMENTATION_PLAN.md) for the amended delivery contract, evidence and remaining product work.
+
 > **"The One-Click Agency"** - AI-powered marketing automation for multifamily real estate
 
 **Status:** Local-first hardened; provider-backed validation still in progress | **Version:** 1.0 | **Last Updated:** Mar 18, 2026

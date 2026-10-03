@@ -3,14 +3,12 @@ Site audit job router.
 Exposes full-site crawl execution endpoints used by the Next.js app.
 """
 
-import asyncio
 import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from siteaudit.analyst import SiteAuditAnalyst
 from siteaudit.executor import SiteAuditExecutor
 from siteaudit.migration_manifest import build_migration_manifest
 from utils.auth import verify_api_key
@@ -52,77 +50,12 @@ def _get_crawl_or_404(crawl_id: str) -> dict:
     return result.data
 
 
-def _execute_siteaudit_job(crawl_id: str, claimed_crawl: dict):
-    """Run the crawl off the request event loop (same pattern as PropertyAudit)."""
-
-    async def runner():
-        supabase = get_supabase_client()
-        executor = SiteAuditExecutor(supabase)
-        try:
-            await executor.execute_crawl(crawl_id, claimed_crawl=claimed_crawl)
-        except Exception as error:
-            logger.exception("[SiteAudit] Background crawl failed for %s: %s", crawl_id, error)
-
-    asyncio.run(runner())
-
-
-def _execute_analyze_job(crawl_id: str, property_id: str, batch_id: Optional[str]):
-    """Write grounded recommendations off the request loop so Render cannot time out the LLM."""
-
-    async def runner():
-        supabase = get_supabase_client()
-        try:
-            supabase.table("geo_site_crawls").update({
-                "error_message": "analyst:running",
-            }).eq("id", crawl_id).execute()
-            result = await SiteAuditAnalyst(supabase).generate(property_id, crawl_id, batch_id)
-            message = "" if result.get("success") else f"analyst:{result.get('error') or 'failed'}"[:2000]
-            supabase.table("geo_site_crawls").update({
-                "error_message": message or None,
-            }).eq("id", crawl_id).execute()
-            logger.info(
-                "[SiteAudit] Background analyst for crawl %s: %s",
-                crawl_id,
-                result.get("success"),
-            )
-        except Exception as error:
-            logger.exception("[SiteAudit] Background analyst failed for %s: %s", crawl_id, error)
-            supabase.table("geo_site_crawls").update({
-                "error_message": f"analyst:{error}"[:2000],
-            }).eq("id", crawl_id).execute()
-
-    asyncio.run(runner())
-
-
 @router.post("/run")
 async def run_siteaudit(
     request: CrawlRequest,
     _: str = Depends(verify_api_key),
 ):
-    supabase = get_supabase_client()
-    executor = SiteAuditExecutor(supabase)
-
-    claimed = executor.claim_queued_crawl(request.crawl_id)
-    if not claimed and request.resume:
-        claimed = executor.claim_resumable_crawl(request.crawl_id)
-
-    if not claimed:
-        crawl = _get_crawl_or_404(request.crawl_id)
-        raise HTTPException(
-            status_code=409,
-            detail=f"Crawl {request.crawl_id} is not queued (status={crawl.get('status')})",
-        )
-
-    asyncio.create_task(
-        asyncio.to_thread(_execute_siteaudit_job, request.crawl_id, claimed)
-    )
-
-    return {
-        "success": True,
-        "accepted": True,
-        "crawl_id": request.crawl_id,
-        "status": "running",
-    }
+    raise HTTPException(status_code=410, detail="Use the console's recorded audit request and durable crawl worker")
 
 
 @router.post("/analyze")
@@ -130,26 +63,7 @@ async def analyze_siteaudit(
     request: AnalyzeRequest,
     _: str = Depends(verify_api_key),
 ):
-    crawl = _get_crawl_or_404(request.crawl_id)
-    if crawl.get("status") != "completed":
-        raise HTTPException(
-            status_code=409,
-            detail=f"Crawl {request.crawl_id} is not completed",
-        )
-    asyncio.create_task(
-        asyncio.to_thread(
-            _execute_analyze_job,
-            request.crawl_id,
-            crawl["property_id"],
-            crawl.get("batch_id"),
-        )
-    )
-    return {
-        "success": True,
-        "accepted": True,
-        "crawl_id": request.crawl_id,
-        "status": "running",
-    }
+    raise HTTPException(status_code=410, detail="Use the console's saved recommendation request and review flow")
 
 
 @router.get("/status/{crawl_id}")

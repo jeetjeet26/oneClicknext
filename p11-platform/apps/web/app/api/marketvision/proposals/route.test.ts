@@ -87,81 +87,14 @@ describe('marketvision proposals route', () => {
     expect(createProposalMock).not.toHaveBeenCalled()
   })
 
-  it('POST rejects unknown proposal types', async () => {
-    authGetUserMock.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
-    const { POST } = await import('./route')
-    const response = await POST(
-      makeNextRequest('http://localhost/api/marketvision/proposals', {
-        method: 'POST',
-        body: JSON.stringify({ ...validBody, proposalType: 'auto_price_change' }),
-      }),
-    )
-    expect(response.status).toBe(400)
+  it('POST retires browser-supplied recommendations without creating work', async () => {
+    authGetUserMock.mockResolvedValue({data:{user:{id:'user-1'}},error:null})
+    validatePropertyAccessMock.mockResolvedValue({authorized:true})
+    const {POST}=await import('./route')
+    const response=await POST(makeNextRequest('http://localhost/api/marketvision/proposals',{method:'POST',body:JSON.stringify(validBody)}))
+    expect(response.status).toBe(410)
     expect(createProposalMock).not.toHaveBeenCalled()
-  })
-
-  it('POST creates a proposal frozen to the property org', async () => {
-    authGetUserMock.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
-    validatePropertyAccessMock.mockResolvedValue({ authorized: true })
-    fromMock.mockReturnValue({
-      select: vi.fn().mockReturnValue({
-        eq: vi.fn().mockReturnValue({
-          single: vi.fn().mockResolvedValue({ data: { org_id: 'org-1' }, error: null }),
-        }),
-      }),
-    })
-    createProposalMock.mockResolvedValue({
-      sharedJobId: 'job-1',
-      actionAttemptId: 'attempt-1',
-      proposalType: 'forgestudio_messaging_brief',
-    })
-
-    const { POST } = await import('./route')
-    const response = await POST(
-      makeNextRequest('http://localhost/api/marketvision/proposals', {
-        method: 'POST',
-        body: JSON.stringify(validBody),
-      }),
-    )
-
-    expect(response.status).toBe(201)
-    expect(createProposalMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        orgId: 'org-1',
-        propertyId: 'property-1',
-        requestedBy: 'user-1',
-        proposalType: 'forgestudio_messaging_brief',
-      }),
-    )
-    const json = await response.json()
-    expect(json.proposal.actionAttemptId).toBe('attempt-1')
-  })
-
-  it('POST surfaces duplicate proposals as 409', async () => {
-    authGetUserMock.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
-    validatePropertyAccessMock.mockResolvedValue({ authorized: true })
-    fromMock.mockReturnValue({
-      select: vi.fn().mockReturnValue({
-        eq: vi.fn().mockReturnValue({
-          single: vi.fn().mockResolvedValue({ data: { org_id: 'org-1' }, error: null }),
-        }),
-      }),
-    })
-    const { MarketVisionProposalError } = await import(
-      '@/utils/services/marketvision-proposals'
-    )
-    createProposalMock.mockRejectedValue(
-      new MarketVisionProposalError('A proposal for this recommendation already exists', 409),
-    )
-
-    const { POST } = await import('./route')
-    const response = await POST(
-      makeNextRequest('http://localhost/api/marketvision/proposals', {
-        method: 'POST',
-        body: JSON.stringify(validBody),
-      }),
-    )
-    expect(response.status).toBe(409)
+    expect(fromMock).not.toHaveBeenCalled()
   })
 
   it('GET lists proposals for an authorized property', async () => {

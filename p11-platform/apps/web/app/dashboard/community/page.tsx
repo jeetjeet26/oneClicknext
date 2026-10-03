@@ -1,6 +1,7 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import Link from 'next/link'
+import { useState, useEffect, useCallback, useRef, type ComponentProps } from 'react'
 import { usePropertyContext } from '@/components/layout/PropertyContext'
 import {
   PropertyProfileCard,
@@ -14,7 +15,6 @@ import {
 import { BrandIdentitySection } from '@/components/community/BrandIdentitySection'
 import { SiteForgeReadinessCard } from '@/components/community/SiteForgeReadinessCard'
 import { OnboardingTruthEditor } from '@/components/community/OnboardingTruthEditor'
-import { DocumentUploader } from '@/components/luma/DocumentUploader'
 import {
   Building2,
   BookOpen,
@@ -40,54 +40,51 @@ async function extractFetchError(response: Response, fallback: string): Promise<
 }
 
 export default function PropertyDashboardPage() {
-  const { currentProperty, properties } = usePropertyContext()
+  const { currentProperty } = usePropertyContext()
   const [activeTab, setActiveTab] = useState<Tab>('overview')
+  useEffect(() => {
+    const query = new URLSearchParams(window.location.search)
+    if (['knowledgeGroup', 'knowledgeFile', 'knowledgeSource', 'assistantFactVersion', 'unitReview', 'knowledgeCapture'].some(key => query.has(key))) setActiveTab('knowledge')
+  }, [])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   
   // Data states
-  const [profile, setProfile] = useState<any>(null)
-  const [property, setProperty] = useState<any>(null)
-  const [contacts, setContacts] = useState<any[]>([])
-  const [integrations, setIntegrations] = useState<any[]>([])
+  const [profile, setProfile] = useState<ComponentProps<typeof PropertyProfileCard>['profile']>(null)
+  const [property, setProperty] = useState<ComponentProps<typeof PropertyProfileCard>['property'] | null>(null)
+  const [contacts, setContacts] = useState<ComponentProps<typeof ContactsManager>['contacts']>([])
+  const [integrations, setIntegrations] = useState<ComponentProps<typeof IntegrationStatusList>['integrations']>([])
   const [knowledgeData, setKnowledgeData] = useState<{
-    sources: any[]
+    sources: ComponentProps<typeof KnowledgeSourcesList>['sources']
+    sourceCount?: number
+    hasWebsiteSources?: boolean
     documentsCount: number
     uniqueDocuments: number
     categories: Record<string, number>
     insights: string[]
-  }>({ sources: [], documentsCount: 0, uniqueDocuments: 0, categories: {}, insights: [] })
-  const [tasksData, setTasksData] = useState<{
-    tasks: any[]
-    stats: {
-      total: number
-      completed: number
-      inProgress: number
-      pending: number
-      blocked: number
-      progress: number
-    }
-  }>({ tasks: [], stats: { total: 0, completed: 0, inProgress: 0, pending: 0, blocked: 0, progress: 0 } })
-  const [propertyUnits, setPropertyUnits] = useState<any[]>([])
+  } | null>(null)
+  const [propertyUnits, setPropertyUnits] = useState<ComponentProps<typeof PropertyUnitsCard>['units']>([])
   
-  // Modal states
-  const [showUploadModal, setShowUploadModal] = useState(false)
+  const requestRef = useRef<AbortController | null>(null)
 
   const fetchData = useCallback(async () => {
+    requestRef.current?.abort()
     if (!currentProperty?.id) return
+    const controller = new AbortController()
+    requestRef.current = controller
     
     setLoading(true)
     setError(null)
+    setKnowledgeData(null)
 
     try {
       // Fetch all data in parallel
-      const [profileRes, contactsRes, integrationsRes, knowledgeRes, tasksRes, unitsRes] = await Promise.all([
-        fetch(`/api/community/profile?propertyId=${currentProperty.id}`),
-        fetch(`/api/community/contacts?propertyId=${currentProperty.id}`),
-        fetch(`/api/community/integrations?propertyId=${currentProperty.id}`),
-        fetch(`/api/community/knowledge-sources?propertyId=${currentProperty.id}`),
-        fetch(`/api/community/tasks?propertyId=${currentProperty.id}`),
-        fetch(`/api/properties/${currentProperty.id}/units`),
+      const [profileRes, contactsRes, integrationsRes, knowledgeRes, unitsRes] = await Promise.all([
+        fetch(`/api/community/profile?propertyId=${currentProperty.id}`, { signal: controller.signal, cache: 'no-store' }),
+        fetch(`/api/community/contacts?propertyId=${currentProperty.id}`, { signal: controller.signal, cache: 'no-store' }),
+        fetch(`/api/community/integrations?propertyId=${currentProperty.id}`, { signal: controller.signal, cache: 'no-store' }),
+        fetch(`/api/community/knowledge-sources?propertyId=${currentProperty.id}`, { signal: controller.signal, cache: 'no-store' }),
+        fetch(`/api/properties/${currentProperty.id}/units`, { signal: controller.signal, cache: 'no-store' }),
       ])
 
       const failures: string[] = []
@@ -103,49 +100,40 @@ export default function PropertyDashboardPage() {
       if (!knowledgeRes.ok) {
         failures.push(`knowledge: ${await extractFetchError(knowledgeRes, 'Failed to fetch knowledge sources')}`)
       }
-      if (!tasksRes.ok) {
-        failures.push(`tasks: ${await extractFetchError(tasksRes, 'Failed to fetch onboarding tasks')}`)
-      }
       if (!unitsRes.ok) {
         failures.push(`units: ${await extractFetchError(unitsRes, 'Failed to fetch property units')}`)
       }
 
-      if (failures.length > 0) {
-        setError(`Some data could not be loaded: ${failures.join('; ')}`)
-      }
 
-      const [profileData, contactsData, integrationsData, knowledgeDataRes, tasksDataRes, unitsData] = await Promise.all([
+      const [profileData, contactsData, integrationsData, knowledgeDataRes, unitsData] = await Promise.all([
         profileRes.ok ? profileRes.json() : Promise.resolve(null),
         contactsRes.ok ? contactsRes.json() : Promise.resolve(null),
         integrationsRes.ok ? integrationsRes.json() : Promise.resolve(null),
         knowledgeRes.ok ? knowledgeRes.json() : Promise.resolve(null),
-        tasksRes.ok ? tasksRes.json() : Promise.resolve(null),
         unitsRes.ok ? unitsRes.json() : Promise.resolve(null),
       ])
 
+      if (controller.signal.aborted) return
+      if (failures.length) setError(`Some data could not be loaded: ${failures.join('; ')}`)
       setProfile(profileData?.profile ?? null)
       setProperty(profileData?.property || currentProperty)
       setContacts(contactsData?.contacts || [])
       setIntegrations(integrationsData?.integrations || [])
-      setKnowledgeData(knowledgeDataRes ?? { sources: [], documentsCount: 0, uniqueDocuments: 0, categories: {}, insights: [] })
-      setTasksData(tasksDataRes ?? { tasks: [], stats: { total: 0, completed: 0, inProgress: 0, pending: 0, blocked: 0, progress: 0 } })
+      setKnowledgeData(knowledgeDataRes)
       setPropertyUnits(unitsData?.units || [])
     } catch (err) {
+      if (controller.signal.aborted) return
       console.error('Error fetching community data:', err)
       setError(err instanceof Error ? err.message : 'Failed to load data')
     } finally {
-      setLoading(false)
+      if (!controller.signal.aborted) setLoading(false)
     }
-  }, [currentProperty?.id])
+  }, [currentProperty])
 
   useEffect(() => {
-    fetchData()
+    void fetchData()
+    return () => requestRef.current?.abort()
   }, [fetchData])
-
-  const handleAddSuccess = (newProperty: any) => {
-    // Refresh the property list
-    window.location.reload()
-  }
 
   const tabs = [
     { id: 'overview' as Tab, label: 'Overview', icon: Building2 },
@@ -172,29 +160,30 @@ export default function PropertyDashboardPage() {
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
             Refresh
           </button>
-          <button
-            onClick={() => window.location.href = '/dashboard/properties/new'}
+          <Link
+            href="/dashboard/properties/new"
             className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm font-medium"
           >
             <Plus size={16} />
             Add Property
-          </button>
+          </Link>
         </div>
       </div>
 
       {/* Tabs */}
-      <div className="bg-white rounded-xl border border-slate-200 p-1 flex gap-1">
+      <div aria-label="Property sections" className="bg-white rounded-xl border border-slate-200 p-1 flex gap-1 overflow-x-auto">
         {tabs.map(tab => (
           <button
             key={tab.id}
+            aria-pressed={activeTab === tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors flex-1 justify-center ${
+            className={`flex items-center gap-2 px-2 sm:px-4 py-2.5 rounded-lg whitespace-nowrap text-sm font-medium transition-colors flex-1 justify-center ${
               activeTab === tab.id
                 ? 'bg-indigo-600 text-white'
                 : 'text-slate-600 hover:bg-slate-100'
             }`}
           >
-            <tab.icon size={18} />
+            <tab.icon size={18} aria-hidden="true" className="hidden sm:block shrink-0" />
             {tab.label}
           </button>
         ))}
@@ -202,18 +191,19 @@ export default function PropertyDashboardPage() {
 
       {/* Error State */}
       {error && (
-        <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-3">
+        <div role="alert" className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-3">
           <AlertCircle className="h-5 w-5 text-red-500 flex-shrink-0 mt-0.5" />
           <div>
             <p className="font-medium text-red-800">Error loading data</p>
-            <p className="text-sm text-red-700 mt-1">{error}</p>
+            <p className="text-sm text-red-700 mt-1 break-words">{error}</p>
+            <button type="button" onClick={() => void fetchData()} disabled={loading} className="mt-3 rounded-lg border border-red-300 px-3 py-2 text-sm font-medium text-red-800 focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-50">Retry loading data</button>
           </div>
         </div>
       )}
 
       {/* Loading State */}
       {loading && (
-        <div className="flex items-center justify-center py-12">
+        <div role="status" aria-label="Loading property data" className="flex items-center justify-center py-12">
           <Loader2 className="h-8 w-8 text-indigo-500 animate-spin" />
         </div>
       )}
@@ -227,7 +217,7 @@ export default function PropertyDashboardPage() {
               {/* Property Profile Card */}
               <PropertyProfileCard
                 profile={profile}
-                property={property || currentProperty}
+                property={property || {...currentProperty,address:null}}
                 onUpdate={() => fetchData()}
               />
 
@@ -270,18 +260,18 @@ export default function PropertyDashboardPage() {
                     View All →
                   </button>
                 </div>
-                <div className="grid grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 min-[420px]:grid-cols-3 gap-4">
                   <div className="bg-white rounded-lg p-4 text-center">
-                    <p className="text-2xl font-bold text-indigo-600">{knowledgeData.documentsCount}</p>
+                    <p className="text-2xl font-bold text-indigo-600">{knowledgeData?.documentsCount ?? 'Unavailable'}</p>
                     <p className="text-xs text-slate-500">Total Chunks</p>
                   </div>
                   <div className="bg-white rounded-lg p-4 text-center">
-                    <p className="text-2xl font-bold text-indigo-600">{knowledgeData.sources.length}</p>
+                    <p className="text-2xl font-bold text-indigo-600">{knowledgeData?.sourceCount ?? 'Unavailable'}</p>
                     <p className="text-xs text-slate-500">Sources</p>
                   </div>
                   <div className="bg-white rounded-lg p-4 text-center">
-                    <p className="text-2xl font-bold text-indigo-600">{knowledgeData.insights.length}</p>
-                    <p className="text-xs text-slate-500">Insights</p>
+                    <p className="text-2xl font-bold text-indigo-600">{knowledgeData?.uniqueDocuments ?? 'Unavailable'}</p>
+                    <p className="text-xs text-slate-500">Material groups</p>
                   </div>
                 </div>
               </div>
@@ -294,14 +284,14 @@ export default function PropertyDashboardPage() {
               <ChatbotContextStatusCard propertyId={currentProperty?.id || ''} />
 
               <KnowledgeSourcesList
-                sources={knowledgeData.sources}
-                documentsCount={knowledgeData.documentsCount}
-                uniqueDocuments={knowledgeData.uniqueDocuments}
-                categories={knowledgeData.categories}
-                insights={knowledgeData.insights}
+                sources={knowledgeData?.sources ?? []}
+                hasWebsiteSources={knowledgeData?.hasWebsiteSources}
+                documentsCount={knowledgeData?.documentsCount ?? 0}
+                uniqueDocuments={knowledgeData?.uniqueDocuments ?? 0}
+                categories={knowledgeData?.categories ?? {}}
+                insights={knowledgeData?.insights ?? []}
                 propertyId={currentProperty?.id || ''}
                 onRefresh={() => fetchData()}
-                onUploadClick={() => setShowUploadModal(true)}
               />
 
               {/* Property Units & Pricing */}
@@ -310,30 +300,7 @@ export default function PropertyDashboardPage() {
                 propertyId={currentProperty?.id || ''}
               />
 
-              {/* Upload Section */}
-              {showUploadModal && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
-                  <div className="bg-white rounded-xl shadow-2xl w-full max-w-md">
-                    <div className="p-6">
-                      <div className="flex items-center justify-between mb-4">
-                        <h3 className="font-semibold text-slate-900">Upload Document</h3>
-                        <button
-                          onClick={() => setShowUploadModal(false)}
-                          className="text-slate-400 hover:text-slate-600"
-                        >
-                          ×
-                        </button>
-                      </div>
-                      <DocumentUploader
-                        onUploadComplete={() => {
-                          fetchData()
-                          setShowUploadModal(false)
-                        }}
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
+
             </div>
           )}
 
@@ -343,9 +310,8 @@ export default function PropertyDashboardPage() {
               <OnboardingTruthEditor propertyId={currentProperty?.id || ''} />
               <SiteForgeReadinessCard propertyId={currentProperty?.id || ''} />
               <OnboardingChecklist
-                tasks={tasksData.tasks}
-                stats={tasksData.stats}
-                onRefresh={() => fetchData()}
+                key={currentProperty?.id}
+                propertyId={currentProperty?.id || ''}
               />
             </div>
           )}

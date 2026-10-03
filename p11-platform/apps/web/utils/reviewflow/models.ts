@@ -17,8 +17,8 @@ export const REVIEWFLOW_FAST_MODEL = process.env.REVIEWFLOW_FAST_MODEL || 'gpt-4
 export const REVIEWFLOW_REASONING_MODEL = process.env.REVIEWFLOW_REASONING_MODEL || 'gpt-4o'
 
 /** Prompt versions recorded alongside every persisted analysis/response. */
-export const ANALYSIS_PROMPT_VERSION = 'analysis-v2'
-export const RESPONSE_PROMPT_VERSION = 'response-v2'
+export const ANALYSIS_PROMPT_VERSION = 'analysis-v3'
+export const RESPONSE_PROMPT_VERSION = 'response-v3'
 
 export function getReviewflowAiClientConfig(): { apiKey: string | undefined; baseURL?: string } {
   const baseURL = process.env.REVIEWFLOW_AI_BASE_URL?.trim()

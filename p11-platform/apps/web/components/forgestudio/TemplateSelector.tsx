@@ -1,7 +1,8 @@
 'use client'
+import {Instagram,Facebook,Linkedin} from '@/components/ui/BrandIcons'
 
 import { useState, useEffect } from 'react'
-import { FileText, Sparkles, Instagram, Facebook, Linkedin, Video, Mail, Loader2 } from 'lucide-react'
+import { FileText, Sparkles, Video, Mail, Loader2 } from 'lucide-react'
 
 interface Template {
   id: string

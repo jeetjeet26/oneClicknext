@@ -1,195 +1,21 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { NextRequest } from 'next/server'
-
-const authGetUserMock = vi.fn()
-const createClientMock = vi.fn()
-const validatePropertyAccessMock = vi.fn()
-const serviceFromMock = vi.fn()
-
-vi.mock('@/utils/supabase/server', () => ({
-  createClient: createClientMock,
-}))
-
-vi.mock('@/utils/supabase/admin', () => ({
-  createServiceClient: () => ({ from: serviceFromMock }),
-}))
-
-vi.mock('@/utils/services/auth-guard', () => ({
-  validatePropertyAccess: validatePropertyAccessMock,
-}))
-
-/** Chainable query mock resolving to the provided result at any await point. */
-function chainResult(result: { data: unknown; error: unknown }) {
-  const chain: Record<string, unknown> = {}
-  const self = () => chain
-  for (const method of ['select', 'eq', 'neq', 'is', 'in', 'gte', 'lt', 'order', 'limit']) {
-    chain[method] = vi.fn(self)
-  }
-  chain.then = (resolve: (value: unknown) => unknown) => Promise.resolve(result).then(resolve)
-  return chain
-}
-
-describe('reviewflow insights route', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    serviceFromMock.mockReset()
-    createClientMock.mockResolvedValue({
-      auth: { getUser: authGetUserMock },
-    })
-  })
-
-  it('returns 400 without propertyId', async () => {
-    const { GET } = await import('./route')
-    const response = await GET(
-      new Request('http://localhost/api/reviewflow/insights') as NextRequest
-    )
-    expect(response.status).toBe(400)
-  })
-
-  it('returns 401 when unauthenticated', async () => {
-    authGetUserMock.mockResolvedValue({ data: { user: null }, error: null })
-
-    const { GET } = await import('./route')
-    const response = await GET(
-      new Request('http://localhost/api/reviewflow/insights?propertyId=p1') as NextRequest
-    )
-    expect(response.status).toBe(401)
-  })
-
-  it('returns 403 when property access is denied', async () => {
-    authGetUserMock.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
-    validatePropertyAccessMock.mockResolvedValue({ authorized: false })
-
-    const { GET } = await import('./route')
-    const response = await GET(
-      new Request('http://localhost/api/reviewflow/insights?propertyId=p1') as NextRequest
-    )
-    expect(response.status).toBe(403)
-  })
-
-  it('returns issue clusters with recommendation-only interventions', async () => {
-    authGetUserMock.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
-    validatePropertyAccessMock.mockResolvedValue({ authorized: true })
-
-    const now = Date.now()
-    const daysAgo = (days: number) => new Date(now - days * 24 * 60 * 60 * 1000).toISOString()
-
-    serviceFromMock.mockImplementation((table: string) => {
-      if (table === 'reviews') {
-        return chainResult({
-          data: [
-            {
-              id: 'review-1',
-              rating: 1,
-              sentiment: 'negative',
-              review_text: 'Maintenance never fixed my leaking sink.',
-              review_date: daysAgo(5),
-              created_at: daysAgo(5),
-              is_urgent: false,
-            },
-            {
-              id: 'review-2',
-              rating: 2,
-              sentiment: 'negative',
-              review_text: 'Work orders take weeks to be addressed.',
-              review_date: daysAgo(10),
-              created_at: daysAgo(10),
-              is_urgent: false,
-            },
-            {
-              id: 'review-3',
-              rating: 5,
-              sentiment: 'positive',
-              review_text: 'Great pool and gym!',
-              review_date: daysAgo(3),
-              created_at: daysAgo(3),
-              is_urgent: false,
-            },
-          ],
-          error: null,
-        })
-      }
-      if (table === 'reputation_cases') {
-        return chainResult({
-          data: [
-            {
-              id: 'case-1',
-              review_id: 'review-1',
-              status: 'triaged',
-              priority: 'high',
-              issue_domains: ['maintenance'],
-              reopened_count: 1,
-              created_at: daysAgo(5),
-              resolved_at: null,
-            },
-          ],
-          error: null,
-        })
-      }
-      if (table === 'review_analyses') {
-        return chainResult({
-          data: [
-            {
-              review_id: 'review-1',
-              issue_domains: ['maintenance'],
-              severity: 'high',
-              journey_stage: 'residency',
-              created_at: daysAgo(5),
-            },
-            {
-              review_id: 'review-2',
-              issue_domains: ['maintenance'],
-              severity: 'medium',
-              journey_stage: 'residency',
-              created_at: daysAgo(10),
-            },
-            {
-              review_id: 'review-3',
-              issue_domains: ['amenities'],
-              severity: null,
-              journey_stage: 'residency',
-              created_at: daysAgo(3),
-            },
-          ],
-          error: null,
-        })
-      }
-      throw new Error(`Unexpected table ${table}`)
-    })
-
-    const { GET } = await import('./route')
-    const response = await GET(
-      new Request('http://localhost/api/reviewflow/insights?propertyId=p1&days=90') as NextRequest
-    )
-
-    expect(response.status).toBe(200)
-    const json = await response.json()
-    expect(json.windowDays).toBe(90)
-    expect(json.totalReviews).toBe(3)
-    expect(json.classifiedReviews).toBe(3)
-    expect(json.attributionLimits).toContain('never matched')
-
-    const maintenance = json.clusters.find(
-      (c: { issueDomain: string }) => c.issueDomain === 'maintenance'
-    )
-    expect(maintenance).toBeTruthy()
-    expect(maintenance.reviewCount).toBe(2)
-    expect(maintenance.negativeCount).toBe(2)
-    expect(maintenance.openCases).toBe(1)
-    expect(maintenance.reopenedCases).toBe(1)
-    // 2 negative reviews → recommendation with evidence and measurement window.
-    expect(maintenance.recommendation).toMatchObject({
-      interventionType: 'internal_followup',
-      suggestedOwnerRole: 'maintenance_lead',
-    })
-    expect(maintenance.recommendation.measurement.windowDays).toBeGreaterThan(0)
-    expect(maintenance.evidence.length).toBeGreaterThan(0)
-    expect(maintenance.evidence[0].reviewId).toBeTruthy()
-
-    // Single positive amenities review is not enough signal for a recommendation.
-    const amenities = json.clusters.find(
-      (c: { issueDomain: string }) => c.issueDomain === 'amenities'
-    )
-    expect(amenities.recommendation).toBeNull()
-  })
+import {beforeEach,describe,expect,it,vi} from 'vitest'
+import {NextRequest} from 'next/server'
+const {operator,from,preview,save}=vi.hoisted(()=>({operator:vi.fn(),from:vi.fn(),preview:vi.fn(),save:vi.fn()}))
+vi.mock('@/utils/supabase/admin',()=>({createServiceClient:()=>({from})}))
+vi.mock('@/utils/reviewflow/access',async()=>({...await vi.importActual('@/utils/reviewflow/access'),requireReviewOperator:operator}))
+vi.mock('@/utils/reviewflow/insights-store',()=>({readInsightPreview:preview,saveInsightReport:save}))
+import {ReviewStoreError} from '@/utils/reviewflow/analysis-store'
+import {GET,POST} from './route'
+const propertyId='33333333-3333-3333-3333-333333333333',requestId='55555555-5555-4555-8555-555555555555',base={propertyId,requestId,windowDays:90,asOf:'2026-09-18T00:00:00.000Z',sourceHash:'a'.repeat(64),reason:'Reviewed complete source'}
+function req(body?:unknown,query=`propertyId=${propertyId}`){return new NextRequest('http://localhost/api/reviewflow/insights?'+query,body?{method:'POST',body:JSON.stringify(body)}:undefined)}
+function chain(data:unknown,error:unknown=null){const result={data,error},q={select:vi.fn(),eq:vi.fn(),order:vi.fn(),limit:vi.fn(),or:vi.fn(),single:vi.fn().mockResolvedValue({data:{org_id:'org'},error:null}),maybeSingle:vi.fn().mockResolvedValue(result),then:vi.fn()};for(const k of ['select','eq','order','limit','or'] as const)q[k].mockReturnValue(q);q.then.mockImplementation((r:(v:unknown)=>unknown)=>Promise.resolve(result).then(r));return q}
+beforeEach(()=>{vi.clearAllMocks();operator.mockResolvedValue('operator');preview.mockResolvedValue({totalReviews:1200,classifiedReviews:1100});save.mockResolvedValue({state:'saved',reportId:requestId});from.mockReturnValue(chain([]))})
+describe('complete insight reports API',()=>{
+ it('rejects invalid windows and unreviewed client-supplied results',async()=>{for(const days of ['0','1000','90days'])expect((await GET(req(undefined,`propertyId=${propertyId}&days=${days}`))).status).toBe(400);for(const body of [{...base,result:{}},{...base,sourceHash:undefined}])expect((await POST(req(body))).status).toBe(400);expect(save).not.toHaveBeenCalled()})
+ it('requires access before reading any report or saving a decision',async()=>{for(const status of [401,403]){operator.mockRejectedValue(new ReviewStoreError('Unavailable',status));expect((await GET(req())).status).toBe(status);expect((await POST(req(base))).status).toBe(status)}expect(preview).not.toHaveBeenCalled();expect(from).not.toHaveBeenCalled();expect(save).not.toHaveBeenCalled()})
+ it('returns complete snapshot results without a silent row cap',async()=>{expect(await (await GET(req())).json()).toEqual({totalReviews:1200,classifiedReviews:1100});expect(preview).toHaveBeenCalledWith(propertyId,'operator',90)})
+ it('passes only the reviewed identity to server-side computation',async()=>{expect((await POST(req(base))).status).toBe(200);const {propertyId: _p,requestId: _r,...input}=base;void _p;void _r;expect(save).toHaveBeenCalledWith(requestId,propertyId,'operator',input)})
+ it('pages safe report history under current property and organization',async()=>{const q=chain(Array.from({length:31},(_,i)=>({id:`report-${i}`})));from.mockReturnValue(q);const body=await (await GET(req(undefined,`propertyId=${propertyId}&history=true`))).json();expect(body.reports).toHaveLength(30);expect(body.nextCursor).toBe('report-29');expect(q.eq).toHaveBeenCalledWith('property_id',propertyId);expect(q.eq).toHaveBeenCalledWith('org_id','org');expect(q.select.mock.calls[0][0]).not.toContain('source_snapshot')})
+ it('returns the original stored result and rejects absent or foreign report identities',async()=>{const saved={id:requestId,result:{totalReviews:12}};from.mockReturnValue(chain(saved));expect(await (await GET(req(undefined,`propertyId=${propertyId}&reportId=${requestId}`))).json()).toEqual({report:saved});from.mockReturnValue(chain(null));expect((await GET(req(undefined,`propertyId=${propertyId}&reportId=${requestId}`))).status).toBe(404);expect((await GET(req(undefined,`propertyId=${propertyId}&history=true&cursor=${requestId}`))).status).toBe(409)})
+ it('preserves failed reads instead of returning incomplete insights',async()=>{preview.mockRejectedValue(new ReviewStoreError('The review result could not be confirmed.'));expect((await GET(req())).status).toBe(503);from.mockReturnValue(chain(null,{message:'private DB details'}));const r=await GET(req(undefined,`propertyId=${propertyId}&history=true`));expect(r.status).toBe(503);expect(await r.text()).not.toContain('private')})
 })

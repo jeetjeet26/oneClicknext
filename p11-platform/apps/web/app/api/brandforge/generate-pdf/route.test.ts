@@ -6,6 +6,7 @@ const createClientMock = vi.fn()
 const createAdminClientMock = vi.fn()
 const validatePropertyAccessMock = vi.fn()
 const fromMock = vi.fn()
+const rpcMock = vi.fn()
 const uploadMock = vi.fn()
 const getPublicUrlMock = vi.fn()
 
@@ -25,6 +26,7 @@ describe('brandforge generate-pdf route', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     fromMock.mockReset()
+    rpcMock.mockImplementation(async (name: string, args: Record<string, unknown>) => ({error:null,data:name==='begin_brand_operation'?{state:'claimed',claimToken:'66666666-6666-4666-8666-666666666666'}:args.p_error?{state:'failed'}:{state:'applied',...(args.p_result as object)}}))
     uploadMock.mockReset()
     getPublicUrlMock.mockReset()
     createClientMock.mockResolvedValue({
@@ -32,6 +34,7 @@ describe('brandforge generate-pdf route', () => {
     })
     createAdminClientMock.mockReturnValue({
       from: fromMock,
+      rpc: rpcMock,
       storage: {
         from: vi.fn(() => ({
           upload: uploadMock,
@@ -48,7 +51,7 @@ describe('brandforge generate-pdf route', () => {
     const response = await POST(
       new Request('http://localhost/api/brandforge/generate-pdf', {
         method: 'POST',
-        body: JSON.stringify({ brandAssetId: 'brand-1' }),
+        body: JSON.stringify({ brandAssetId: '11111111-1111-4111-8111-111111111111', requestId: '55555555-5555-4555-8555-555555555555', revision: 1 }),
       }) as NextRequest
     )
 
@@ -72,7 +75,7 @@ describe('brandforge generate-pdf route', () => {
     const response = await POST(
       new Request('http://localhost/api/brandforge/generate-pdf', {
         method: 'POST',
-        body: JSON.stringify({ brandAssetId: 'brand-1' }),
+        body: JSON.stringify({ brandAssetId: '11111111-1111-4111-8111-111111111111', requestId: '55555555-5555-4555-8555-555555555555', revision: 1 }),
       }) as NextRequest
     )
 
@@ -82,12 +85,13 @@ describe('brandforge generate-pdf route', () => {
 
   it('uploads a real PDF export artifact', async () => {
     authGetUserMock.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
-    validatePropertyAccessMock.mockResolvedValue({ authorized: true })
+    validatePropertyAccessMock.mockResolvedValue({ authorized: true, orgId: 'org-1' })
     uploadMock.mockResolvedValue({ error: null })
     getPublicUrlMock.mockReturnValue({ data: { publicUrl: 'https://cdn.test/brand-book.pdf' } })
 
     const brandRow = {
-      id: 'brand-1',
+      id: '11111111-1111-4111-8111-111111111111',
+      revision: 1,
       property_id: 'property-1',
       generation_status: 'complete',
       approval_status: 'approved',
@@ -141,19 +145,19 @@ describe('brandforge generate-pdf route', () => {
     const response = await POST(
       new Request('http://localhost/api/brandforge/generate-pdf', {
         method: 'POST',
-        body: JSON.stringify({ brandAssetId: 'brand-1' }),
+        body: JSON.stringify({ brandAssetId: '11111111-1111-4111-8111-111111111111', requestId: '55555555-5555-4555-8555-555555555555', revision: 1 }),
       }) as NextRequest
     )
 
     expect(response.status).toBe(200)
     expect(uploadMock).toHaveBeenCalledTimes(1)
     const [uploadedPath, uploadedPayload, uploadOptions] = uploadMock.mock.calls[0]
-    expect(uploadedPath).toContain('.pdf')
+    expect(uploadedPath).toContain('-r1-55555555-5555-4555-8555-555555555555.pdf')
     expect(uploadedPayload).toBeInstanceOf(Uint8Array)
-    expect(uploadOptions).toMatchObject({ contentType: 'application/pdf', upsert: true })
+    expect(uploadOptions).toMatchObject({ contentType: 'application/pdf', upsert: false })
     await expect(response.json()).resolves.toEqual(
       expect.objectContaining({
-        success: true,
+        state: 'applied',
         pdfUrl: 'https://cdn.test/brand-book.pdf',
         exportFormat: 'pdf',
       })

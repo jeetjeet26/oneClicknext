@@ -1,95 +1,19 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { NextRequest } from 'next/server'
-
-const authGetUserMock = vi.fn()
-const createClientMock = vi.fn()
-const validatePropertyAccessMock = vi.fn()
-const listMarketVisionRunsMock = vi.fn()
-
-vi.mock('@/utils/supabase/server', () => ({
-  createClient: createClientMock,
-}))
-
-vi.mock('@/utils/services/auth-guard', () => ({
-  validatePropertyAccess: validatePropertyAccessMock,
-}))
-
-vi.mock('@/utils/services/marketvision-jobs', () => ({
-  listMarketVisionRuns: listMarketVisionRunsMock,
-}))
-
-function makeNextRequest(url: string): NextRequest {
-  const request = new Request(url) as NextRequest
-  Object.defineProperty(request, 'nextUrl', {
-    value: new URL(url),
-    configurable: true,
-  })
-  return request
-}
-
-describe('marketvision runs route', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    createClientMock.mockResolvedValue({
-      auth: { getUser: authGetUserMock },
-    })
-  })
-
-  it('GET returns 401 when unauthenticated', async () => {
-    authGetUserMock.mockResolvedValue({ data: { user: null }, error: null })
-    const { GET } = await import('./route')
-    const response = await GET(
-      makeNextRequest('http://localhost/api/marketvision/runs?propertyId=property-1'),
-    )
-    expect(response.status).toBe(401)
-  })
-
-  it('GET returns 403 when property access is denied', async () => {
-    authGetUserMock.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
-    validatePropertyAccessMock.mockResolvedValue({ authorized: false })
-    const { GET } = await import('./route')
-    const response = await GET(
-      makeNextRequest('http://localhost/api/marketvision/runs?propertyId=property-1'),
-    )
-    expect(response.status).toBe(403)
-  })
-
-  it('GET derives partial results from completed_partial status reason', async () => {
-    authGetUserMock.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
-    validatePropertyAccessMock.mockResolvedValue({ authorized: true })
-    listMarketVisionRunsMock.mockResolvedValue([
-      {
-        id: 'run-1',
-        runType: 'observation_refresh',
-        lifecycleStatus: 'succeeded',
-        statusReason: 'completed_partial',
-        errorMessage: null,
-        queuedAt: null,
-        startedAt: null,
-        finishedAt: null,
-        payload: {},
-      },
-      {
-        id: 'run-2',
-        runType: 'discovery',
-        lifecycleStatus: 'failed',
-        statusReason: 'execution_failed',
-        errorMessage: 'provider down',
-        queuedAt: null,
-        startedAt: null,
-        finishedAt: null,
-        payload: {},
-      },
-    ])
-
-    const { GET } = await import('./route')
-    const response = await GET(
-      makeNextRequest('http://localhost/api/marketvision/runs?propertyId=property-1'),
-    )
-
-    expect(response.status).toBe(200)
-    const json = await response.json()
-    expect(json.runs[0].result).toBe('partial')
-    expect(json.runs[1].result).toBe('failed')
-  })
+import {beforeEach,describe,it,expect,vi} from 'vitest'
+import {NextRequest} from 'next/server'
+const m=vi.hoisted(()=>({auth:vi.fn(),read:vi.fn(),source:vi.fn(),extraction:vi.fn()}))
+vi.mock('@/utils/marketvision/decision-store',async original=>({...await original<typeof import('@/utils/marketvision/decision-store')>(),requireMarketOperator:m.auth}))
+vi.mock('@/utils/marketvision/monitoring-store',()=>({readMarketMonitoring:m.read}))
+vi.mock('@/utils/marketvision/source-store',()=>({sourceExecutionStatus:m.source}))
+vi.mock('@/utils/marketvision/extraction-store',()=>({extractionExecutionStatus:m.extraction}))
+import {GET} from './route'
+import {MarketStoreError} from '@/utils/marketvision/decision-store'
+const id='11111111-1111-1111-1111-111111111111',read=(query=`propertyId=${id}`)=>GET(new NextRequest(`http://localhost/?${query}`))
+describe('complete market monitoring reads',()=>{
+ beforeEach(()=>{vi.clearAllMocks();m.auth.mockResolvedValue('actor');m.read.mockResolvedValue({state:'ready',runs:[],counts:{all:0},workers:[]});m.source.mockReturnValue({paused:true});m.extraction.mockReturnValue({paused:true,configured:true})})
+ it.each([401,403])('requires current property authorization %s',async status=>{m.auth.mockRejectedValue(new MarketStoreError('Unavailable',status));expect((await read()).status).toBe(status);expect(m.read).not.toHaveBeenCalled()})
+ it('states runtime availability separately from automatic activation',async()=>{const r=await read();expect(r.status).toBe(200);expect(r.headers.get('cache-control')).toBe('private, no-store');expect((await r.json()).runtime).toEqual({sourcePaused:true,extractionPaused:true,extractionConfigured:true,automaticMonitoring:false});expect(m.read).toHaveBeenCalledWith({propertyId:id,actorId:'actor',filter:'all'})})
+ it('preserves a saved cursor and filter',async()=>{await read(`propertyId=${id}&filter=attention&cursor=${id}`);expect(m.read).toHaveBeenCalledWith({propertyId:id,actorId:'actor',filter:'attention',cursor:id})})
+ it('opens original request identity',async()=>{await read(`propertyId=${id}&requestId=${id}`);expect(m.read).toHaveBeenCalledWith({propertyId:id,actorId:'actor',filter:'all',requestId:id})})
+ it.each([`propertyId=${id}&propertyId=${id}`,`propertyId=${id}&limit=2000`,`propertyId=${id}&filter=invalid`,`propertyId=${id}&requestId=${id}&cursor=${id}`])('rejects ambiguous or unbounded reads %s',async query=>{expect((await read(query)).status).toBe(400);expect(m.read).not.toHaveBeenCalled()})
+ it('surfaces unavailable history instead of an empty success',async()=>{m.read.mockRejectedValue(new MarketStoreError('Read failed'));expect((await read()).status).toBe(503)})
 })

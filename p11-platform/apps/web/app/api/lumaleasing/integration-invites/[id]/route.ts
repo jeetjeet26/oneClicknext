@@ -1,58 +1,21 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/admin'
-import { forbidden, notFound, serverError, unauthorized } from '@/utils/services/api-helpers'
-import { validatePropertyAccess } from '@/utils/services/auth-guard'
-import { createRequestContext } from '@/utils/services/request-context'
-
-export async function DELETE(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const ctx = createRequestContext(request, '/api/lumaleasing/integration-invites/[id]')
-  ctx.logStart()
-
-  try {
-    const { id } = await params
-    const serviceSupabase = createServiceClient()
-    const { data: invite, error: inviteError } = await serviceSupabase
-      .from('integration_auth_invites')
-      .select('id, property_id')
-      .eq('id', id)
-      .maybeSingle()
-
-    if (inviteError || !invite) {
-      ctx.logSuccess(404, { reason: 'invite_not_found', inviteId: id })
-      return notFound('Invite', ctx.responseHeaders)
-    }
-
-    const supabase = await createClient()
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) {
-      ctx.logSuccess(401, { reason: 'unauthorized' })
-      return unauthorized(ctx.responseHeaders)
-    }
-
-    const access = await validatePropertyAccess(user.id, invite.property_id)
-    if (!access.authorized) {
-      ctx.logSuccess(403, { reason: 'forbidden', propertyId: invite.property_id, userId: user.id })
-      return forbidden(ctx.responseHeaders)
-    }
-
-    const { error: updateError } = await serviceSupabase
-      .from('integration_auth_invites')
-      .update({ revoked_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-      .eq('id', id)
-
-    if (updateError) {
-      ctx.logError(500, updateError, { operation: 'revoke_integration_invite', inviteId: id })
-      return serverError(updateError, ctx.responseHeaders)
-    }
-
-    ctx.logSuccess(200, { inviteId: id, propertyId: invite.property_id })
-    return NextResponse.json({ success: true }, { headers: ctx.responseHeaders })
-  } catch (error) {
-    ctx.logError(500, error, { operation: 'revoke_integration_invite' })
-    return serverError(error, ctx.responseHeaders)
-  }
+import {NextRequest,NextResponse} from 'next/server'
+import {createClient} from '@/utils/supabase/server'
+import {badRequest,forbidden,serverError,unauthorized} from '@/utils/services/api-helpers'
+import {validatePropertyAccess} from '@/utils/services/auth-guard'
+import {createRequestContext} from '@/utils/services/request-context'
+import {revokeIntegrationAuthInvite} from '@/utils/services/integration-auth-invites'
+const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+export async function DELETE(request:NextRequest,{params}:{params:Promise<{id:string}>}) {
+ const ctx=createRequestContext(request,'/api/lumaleasing/integration-invites/[id]');ctx.logStart()
+ try {
+  const client=await createClient(),{data:{user},error}=await client.auth.getUser()
+  if(error||!user)return unauthorized(ctx.responseHeaders)
+  const {id}=await params,body=await request.json().catch(()=>null)
+  if(!uuid.test(id)||!body||typeof body.propertyId!=='string'||!uuid.test(body.propertyId)||typeof body.requestId!=='string'||!uuid.test(body.requestId))return badRequest('A property and saved request identity are required.',ctx.responseHeaders)
+  const access=await validatePropertyAccess(user.id,body.propertyId)
+  if(!access.authorized)return forbidden(ctx.responseHeaders)
+  const result=await revokeIntegrationAuthInvite({propertyId:body.propertyId,actorId:user.id,inviteId:id,requestId:body.requestId})
+  ctx.logSuccess(200,{propertyId:body.propertyId,inviteId:id,state:result.state})
+  return NextResponse.json({...result,success:result.state==='revoked',...(result.state==='already_used'?{error:'This link was already used. Remove the connected account separately if needed.'}:{})},{status:result.state==='already_used'?409:200,headers:ctx.responseHeaders})
+ }catch(error){ctx.logError(500,error,{operation:'revoke_integration_invite'});return serverError(error,ctx.responseHeaders)}
 }

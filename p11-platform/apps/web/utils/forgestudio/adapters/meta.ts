@@ -40,7 +40,7 @@ async function graphRequest<T>(
   }
   let response: Response
   try {
-    response = await fetch(url.toString(), init)
+    response = await fetch(url.toString(), {...init,signal:init.signal??(init.method==='POST'?undefined:AbortSignal.timeout(20_000))})
   } catch (error) {
     throw toAdapterError(error, init.method === 'POST' ? 'after_send' : 'before_send')
   }
@@ -207,7 +207,7 @@ export const instagramAdapter: SocialAdapter = {
           metric: 'reach,saved,shares,views,total_interactions',
           access_token: token,
         },
-      }).catch(() => ({ data: [] })),
+      }),
     ])
     return {
       reach: insightValue(insights, 'reach'),
@@ -323,7 +323,7 @@ export const facebookAdapter: SocialAdapter = {
           metric: 'post_impressions,post_clicks,post_video_views',
           access_token: token,
         },
-      }).catch(() => ({ data: [] })),
+      }),
     ])
     return {
       impressions: insightValue(insights, 'post_impressions'),

@@ -6,6 +6,7 @@ const createClientMock = vi.fn()
 const validatePropertyAccessMock = vi.fn()
 const fromMock = vi.fn()
 const startMock = vi.fn()
+const rpcMock = vi.fn()
 
 vi.mock('@/utils/supabase/server', () => ({
   createClient: createClientMock,
@@ -13,6 +14,7 @@ vi.mock('@/utils/supabase/server', () => ({
 vi.mock('@/utils/services/auth-guard', () => ({
   validatePropertyAccess: validatePropertyAccessMock,
 }))
+vi.mock('@/utils/brandforge/operations', async () => ({ ...(await vi.importActual<typeof import('@/utils/brandforge/operations')>('@/utils/brandforge/operations')), brandRpc:rpcMock }))
 vi.mock('workflow/api', () => ({
   start: startMock,
 }))
@@ -61,6 +63,7 @@ describe('BrandForge workflow route', () => {
       orgId,
     })
     startMock.mockResolvedValue({ runId: 'wrun_123' })
+    rpcMock.mockResolvedValue({state:'claimed',brandAssetId,claimToken:'66666666-6666-4666-8666-666666666666'})
 
     const propertySingle = vi.fn().mockResolvedValue({
       data: { id: propertyId, org_id: orgId },
@@ -93,6 +96,7 @@ describe('BrandForge workflow route', () => {
     const response = await POST(new Request('http://localhost/api/brandforge/workflow', {
       method: 'POST',
       body: JSON.stringify({
+        requestId: '55555555-5555-4555-8555-555555555555', revision: 1,
         mode: 'generated',
         propertyId,
         brandAssetId,
@@ -112,6 +116,7 @@ describe('BrandForge workflow route', () => {
       mode: 'generated',
       vertical: 'for_sale_community',
     })
+    expect(rpcMock).toHaveBeenCalledWith('begin_brand_operation', expect.objectContaining({p_kind:'contract',p_revision:1}))
     expect(startMock).toHaveBeenCalledOnce()
     expect(startMock.mock.calls[0]?.[1]?.[0]).toMatchObject({
       mode: 'generated',

@@ -1,0 +1,32 @@
+BEGIN;
+create temp table checks(label text);
+create function pg_temp.check(ok boolean,label text) returns void language plpgsql as $$begin if ok is distinct from true then raise exception 'FAIL: %',label;end if;insert into checks values(label);end$$;
+create function pg_temp.fixture() returns jsonb language plpgsql as $$declare p uuid:=gen_random_uuid();b uuid:=gen_random_uuid();actor uuid;begin
+ select id into actor from public.profiles where org_id='22222222-2222-2222-2222-222222222222' and role='admin' limit 1;
+ insert into public.properties(id,org_id,name)values(p,'22222222-2222-2222-2222-222222222222','Brand revision SQL fixture');
+ insert into public.property_brand_assets(id,property_id,generated_by,generation_status,current_step,current_step_name,draft_section,approval_status)values(b,p,actor,'reviewing',1,'introduction','{"step":1,"name":"introduction","data":{"content":"Original draft"},"version":1}','reviewing');
+ return jsonb_build_object('p',p,'b',b,'actor',actor);
+end$$;
+create function pg_temp.begin_op(f jsonb,k text,request_id uuid,rev bigint default 1,input jsonb default '{}') returns jsonb language sql as $$select public.begin_brand_operation((f->>'p')::uuid,(f->>'b')::uuid,(f->>'actor')::uuid,request_id,rev,k,input)$$;
+create function pg_temp.prepare_facts(f jsonb,id uuid)returns jsonb language sql as $$select public.save_assistant_fact_draft(id,(f->>'p')::uuid,(f->>'actor')::uuid,jsonb_build_object('operation','prepare','expectedDraftId',v->'workspace'->'latest_version_id','expectedSourceHash',v->>'sourceHash','expectedContextHash',v->>'contextHash','markdown',null,'reason','Review complete published brand source'))from(select public.read_assistant_facts((f->>'p')::uuid,(f->>'actor')::uuid)v)x$$;
+create function pg_temp.publish_facts(f jsonb)returns jsonb language sql as $$select public.release_assistant_facts(gen_random_uuid(),(f->>'p')::uuid,(f->>'actor')::uuid,jsonb_build_object('operation','publish','versionId',v->'selected'->>'id','expectedDraftId',v->'workspace'->'latest_version_id','expectedActiveId',v->'workspace'->'active_version_id','expectedReleaseId',v->'workspace'->'last_release_id','expectedContextHash',v->>'contextHash','markdownHash',v->'selected'->>'markdown_hash','confirmed',true,'reason','Approve exact brand facts for Luma'))from(select public.read_assistant_facts((f->>'p')::uuid,(f->>'actor')::uuid)v)x$$;
+DO $$declare f jsonb;original_facts uuid:=gen_random_uuid();new_facts uuid:=gen_random_uuid();decision uuid:=gen_random_uuid();claim jsonb;result jsonb;docs jsonb;begin
+ f:=pg_temp.fixture();update public.property_brand_assets set draft_section=null,approval_status='approved',approved_by=(f->>'actor')::uuid,approved_at=now(),generation_status='complete'where id=(f->>'b')::uuid;
+ insert into public.documents(property_id,content,metadata)values((f->>'p')::uuid,'Earlier approved brand promise','{"type":"brand_book"}');
+ perform pg_temp.check(pg_temp.prepare_facts(f,original_facts)->>'state'='saved','old complete facts prepared');
+ perform pg_temp.check(pg_temp.publish_facts(f)->>'published'='true','old facts explicitly published');
+ perform pg_temp.check(position('Earlier approved brand promise'in public.read_serving_assistant_facts((f->>'p')::uuid)->>'contextMarkdown')>0,'old current brand reaches Luma');
+ docs:=jsonb_build_array(jsonb_build_object('id',gen_random_uuid(),'content','New approved brand promise for the courtyard','metadata','{}'::jsonb,'embedding',to_jsonb(array_fill(0.01::float8,array[1536]))));
+ claim:=pg_temp.begin_op(f,'publish',decision,2);result:=public.finish_brand_operation(decision,(claim->>'claimToken')::uuid,'{}',jsonb_build_object('knowledgeReceipt',jsonb_build_object('documents',docs,'sourceName','Published courtyard brand')));
+ perform pg_temp.check(result->>'state'='applied','reviewed brand knowledge publication commits');
+ perform pg_temp.check(public.read_serving_assistant_facts((f->>'p')::uuid)->>'state'='withheld','brand publication withholds earlier assistant facts');
+ perform pg_temp.check(pg_temp.prepare_facts(f,new_facts)->>'state'='saved','complete replacement facts draft retained');
+ perform pg_temp.check((select position('New approved brand promise for the courtyard'in markdown)>0 and position('Earlier approved brand promise'in markdown)=0 from public.assistant_fact_versions where id=new_facts),'actual published brand text reaches new draft');
+ perform pg_temp.check(public.read_serving_assistant_facts((f->>'p')::uuid)->>'state'='withheld','draft preparation does not silently publish');
+ perform pg_temp.check(pg_temp.publish_facts(f)->>'published'='true','exact brand facts explicitly approved');
+ perform pg_temp.check(position('New approved brand promise for the courtyard'in public.read_serving_assistant_facts((f->>'p')::uuid)->>'contextMarkdown')>0,'new exact approved facts reach Luma');
+ perform pg_temp.check((select position('Earlier approved brand promise'in markdown)>0 from public.assistant_fact_versions where id=original_facts),'previous facts remain in immutable history');
+ perform pg_temp.check((select count(*)=2 from public.shared_action_events where property_id=(f->>'p')::uuid and action='knowledge.facts.published'and not training_eligible),'explicit facts publications have separate non-training evidence');
+end$$;
+select count(*)as passed_assertions from checks;
+ROLLBACK;

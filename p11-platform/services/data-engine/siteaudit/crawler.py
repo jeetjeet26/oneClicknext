@@ -21,6 +21,8 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Set, Tuple
 from urllib.parse import urljoin, urlparse
 
 import httpx
+from utils.public_http import PublicAsyncClient
+from utils.url_safety import is_safe_public_url
 
 from siteaudit.models import CrawlContext, PageRecord
 from siteaudit.migration_manifest import (
@@ -44,23 +46,6 @@ USER_AGENT = (
 )
 
 
-def is_safe_public_url(url: str) -> bool:
-    try:
-        parsed = urlparse(url)
-    except ValueError:
-        return False
-    if parsed.scheme not in ("http", "https"):
-        return False
-    host = (parsed.hostname or "").lower()
-    if not host or host == "localhost" or host.endswith(".localhost"):
-        return False
-    try:
-        address = ipaddress.ip_address(host)
-        return not (address.is_private or address.is_loopback or address.is_link_local or address.is_reserved)
-    except ValueError:
-        return True  # hostname, not an IP literal
-
-
 def normalize_seed(raw: str) -> Optional[str]:
     value = (raw or "").strip()
     if not value:
@@ -82,6 +67,7 @@ class SiteCrawler:
         checkpoint: Optional[Callable[[Dict[str, Any], List[PageRecord]], Awaitable[None]]] = None,
         resume_state: Optional[Dict[str, Any]] = None,
         resume_pages: Optional[List[PageRecord]] = None,
+        checkpoint_required: bool = False,
     ):
         normalized = normalize_seed(seed_url)
         if not normalized:
@@ -92,6 +78,7 @@ class SiteCrawler:
         self.page_cap = max(1, page_cap)
         self.concurrency = max(1, concurrency)
         self.checkpoint = checkpoint
+        self.checkpoint_required = checkpoint_required
         self._resume_state = resume_state or {}
         self._resume_pages = resume_pages or []
 
@@ -108,6 +95,7 @@ class SiteCrawler:
         self._frontier: List[Tuple[str, int]] = []  # (url, depth)
         self._enqueued: Set[str] = set()
         self._pages_since_checkpoint = 0
+        self._frontier_limit_reached = bool(self._resume_state.get("frontier_limit_reached"))
 
     # ------------------------------------------------------------------
     # Discovery files
@@ -193,6 +181,9 @@ class SiteCrawler:
     def _enqueue(self, url: str, depth: int) -> None:
         if url in self._enqueued:
             return
+        if len(self._enqueued) >= self.page_cap:
+            self._frontier_limit_reached = True
+            return
         parsed = urlparse(url)
         if parsed.query:
             self.parameter_urls_discovered += 1
@@ -208,7 +199,7 @@ class SiteCrawler:
             "Accept-Language": "en-US,en;q=0.5",
         }
 
-        async with httpx.AsyncClient(
+        async with PublicAsyncClient(
             limits=limits, timeout=timeout, headers=headers, follow_redirects=False
         ) as client:
             await self._load_discovery_files(client)
@@ -270,13 +261,16 @@ class SiteCrawler:
 
     async def _run_checkpoint(self, final: bool = False) -> None:
         state = {
-            "frontier": [[url, depth] for url, depth in self._frontier[:2000]],
+            "frontier": [[url, depth] for url, depth in self._frontier],
             "pages_crawled": len(self._pages),
+            "frontier_limit_reached": self._frontier_limit_reached,
             "final": final,
         }
         try:
             await self.checkpoint(state, list(self._pages.values()))
         except Exception as error:
+            if self.checkpoint_required:
+                raise
             logger.warning("[SiteAudit] Checkpoint failed: %s", error)
 
     async def _fetch_page(
@@ -443,5 +437,5 @@ class SiteCrawler:
             llms_txt_reachable=self.llms_txt_reachable,
             llms_txt_preview=self.llms_txt_preview,
             parameter_urls_discovered=self.parameter_urls_discovered,
-            page_cap_reached=len(self._pages) >= self.page_cap,
+            page_cap_reached=len(self._pages) >= self.page_cap or self._frontier_limit_reached,
         )

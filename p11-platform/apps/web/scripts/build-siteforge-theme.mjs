@@ -13,7 +13,7 @@ import {
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { strToU8, zipSync } from 'fflate'
+import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
 
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 export const themeDir = path.resolve(
@@ -386,21 +386,33 @@ export async function buildSiteForgeTheme({
   return { archivePath, archiveHash, manifest }
 }
 
+/**
+ * @param {{ signingKey?: string, gitSha?: string, outputDirectory?: string }} [options]
+ */
 export async function checkSiteForgeThemeArtifact({
   signingKey = process.env.SITEFORGE_THEME_SIGNING_KEY,
-  gitSha = process.env.VERCEL_GIT_COMMIT_SHA,
+  gitSha,
   outputDirectory = outputDir,
 } = {}) {
   const checked = await verifyRuntimeArtifact('oneclick-siteforge.zip', {
     runtimeAssetsDir: outputDirectory,
   })
+  // Reproduce the package's recorded build, not an unrelated console commit.
+  // The signed rebuild still verifies every source byte and the manifest.
+  const entries = unzipSync(new Uint8Array(await readFile(checked.archivePath)))
+  const manifestBytes = entries['oneclick-siteforge/build-manifest.json']
+  if (!manifestBytes) throw new Error('SiteForge theme build manifest is missing')
+  const manifest = JSON.parse(strFromU8(manifestBytes))
+  if (typeof manifest.gitSha !== 'string' || !/^[a-f0-9]{16,64}$/i.test(manifest.gitSha)) {
+    throw new Error('SiteForge theme build manifest has an invalid Git SHA')
+  }
   const temporaryDirectory = await mkdtemp(
     path.join(tmpdir(), 'siteforge-theme-check-')
   )
   try {
     const rebuilt = await buildSiteForgeTheme({
       signingKey,
-      gitSha,
+      gitSha: gitSha ?? manifest.gitSha,
       outputDirectory: temporaryDirectory,
     })
     if (rebuilt.archiveHash !== checked.archiveHash) {

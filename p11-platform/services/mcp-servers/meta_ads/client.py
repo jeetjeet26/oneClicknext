@@ -139,6 +139,55 @@ class MetaAdsClient:
         })
         return result.get("data", [])
     
+    async def get_daily_campaign_insights(self, account_id: str, date_range: str, reference_time=None) -> dict[str, Any]:
+        """Read a complete daily report; an incomplete page sequence is an error."""
+        from shared.daily_reports import ReportValidationError, DATE_RANGES, account_id as clean_account, reporting_window
+
+        acct = clean_account(account_id, 'meta_ads')
+        if date_range not in DATE_RANGES:
+            raise ReportValidationError('Unsupported date range')
+        account = await self._get(f'/act_{acct}', {
+            'fields': 'account_id,currency,timezone_name',
+        })
+        if not isinstance(account, dict) or str(account.get('account_id')) != acct:
+            raise ReportValidationError('Meta returned an unexpected account')
+        start, end = reporting_window(date_range, account.get('timezone_name'), reference_time)
+        params = {
+            'level': 'campaign', 'time_increment': 1,
+            'time_range': json.dumps({'since': start, 'until': end}),
+            'fields': 'account_id,account_currency,campaign_id,campaign_name,date_start,date_stop,impressions,clicks,spend,actions',
+            'limit': 100,
+        }
+        rows, cursors = [], set()
+        while True:
+            # Reuse the known account endpoint; never follow a token-bearing next URL.
+            page = await self._get(f'/act_{acct}/insights', dict(params))
+            if not isinstance(page, dict) or 'error' in page or not isinstance(page.get('data'), list):
+                raise ReportValidationError('Meta daily report page was not confirmed')
+            for row in page['data']:
+                if not isinstance(row, dict):
+                    raise ReportValidationError('Meta daily report contains an invalid row')
+                rows.append({
+                    'account_id': row.get('account_id'), 'currency': row.get('account_currency'),
+                    'date': row.get('date_start'), 'date_stop': row.get('date_stop'),
+                    'campaign_id': row.get('campaign_id'), 'campaign_name': row.get('campaign_name'),
+                    'spend': row.get('spend'), 'impressions': row.get('impressions'),
+                    'clicks': row.get('clicks'), 'actions': row.get('actions', []),
+                })
+            paging = page.get('paging', {})
+            if not isinstance(paging, dict):
+                raise ReportValidationError('Meta daily report pagination was not confirmed')
+            if not paging.get('next'):
+                break
+            cursor_data = paging.get('cursors', {})
+            after = cursor_data.get('after') if isinstance(cursor_data, dict) else None
+            if not isinstance(after, str) or not after or after in cursors:
+                raise ReportValidationError('Meta daily report pagination did not advance')
+            cursors.add(after)
+            params['after'] = after
+        return {'account_id': acct, 'currency': account.get('currency'),
+                'timezone': account.get('timezone_name'), 'start_date': start, 'end_date': end, 'rows': rows}
+
     # ========== ADSET MANAGEMENT ==========
     
     async def get_adsets(

@@ -1,3 +1,4 @@
+import {requireCurrentReadiness} from '@/utils/readiness/publication'
 import { createServiceClient } from '@/utils/supabase/admin'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database, Json, TablesInsert } from '@/types/supabase'
@@ -389,6 +390,7 @@ export async function loadApprovedSiteForgeGenerationContext(
   ) {
     generationConflict('Pinned onboarding snapshot is unavailable or changed')
   }
+  await requireCurrentReadiness(website.property_id,onboarding.id,onboarding.content_hash,supabase)
 
   const { data: brandRow, error: brandError } = await supabase
     .from('property_brand_assets')

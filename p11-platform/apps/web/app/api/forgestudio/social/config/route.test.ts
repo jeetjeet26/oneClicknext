@@ -71,7 +71,7 @@ describe('forgestudio social config route', () => {
         body: JSON.stringify({
           propertyId: PROPERTY_ID,
           platform: 'meta',
-          appId: 'app-id',
+          requestId:'55555555-5555-4555-8555-555555555555',expectedVersion:0,action:'save',appId: 'app-id',
           appSecret: 'app-secret',
         }),
       }) as NextRequest
@@ -110,22 +110,5 @@ describe('forgestudio social config route', () => {
     expect(mockFrom).not.toHaveBeenCalled()
   })
 
-  it('DELETE returns 403 when property access is denied', async () => {
-    authGetUserMock.mockResolvedValue({
-      data: { user: { id: 'user-1' } },
-      error: null,
-    })
-    validatePropertyManagerAccessMock.mockResolvedValue({ authorized: false })
-
-    const { DELETE } = await import('./route')
-    const response = await DELETE(
-      new Request(
-        `http://localhost/api/forgestudio/social/config?propertyId=${PROPERTY_ID}&platform=meta`
-      ) as NextRequest
-    )
-
-    expect(response.status).toBe(403)
-    await expect(response.json()).resolves.toEqual({ error: 'Forbidden' })
-    expect(mockFrom).not.toHaveBeenCalled()
-  })
+  it('retires unversioned deletion without accessing credentials',async()=>{const {DELETE}=await import('./route');expect((await DELETE()).status).toBe(409);expect(mockFrom).not.toHaveBeenCalled()})
 })

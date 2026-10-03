@@ -80,6 +80,7 @@ export default function BrandForgeCreatePage({
 
         {/* BrandForge Wizard */}
         <BrandForgeWizard
+          key={propertyId}
           propertyId={propertyId}
           propertyAddress={property.address || {}}
           propertyType={property.property_type || 'multifamily'}

@@ -1,0 +1,9 @@
+import { describe, it, expect } from 'vitest';
+import { generateAuditQueryProposal } from './query-proposal';
+import type { AuditContext } from './use-audit-decisions';
+const source: AuditContext = { hash: 'a'.repeat(64), queryCount: 0, queries: [], property: { id: 'fixture', name: 'Fixture House', address: { city: 'Austin', state: 'TX', neighborhood: 'North Austin' }, website_url: null, property_type: 'multifamily', amenities: ['pool', 'fitness center'], special_features: ['rooftop'] }, configuration: null, brand: { id: 'brand', unique_selling_points: ['Private outdoor space'] }, competitors: [{ id: 'one', name: 'Comparison One' }, { id: 'two', name: 'Comparison Two' }] };
+describe('reviewable property question proposals', () => {
+    it('retains property and competitor source while producing deterministic bounded questions', () => { const a = generateAuditQueryProposal(source), b = generateAuditQueryProposal(source); expect(a).toEqual(b); expect(a.length).toBeGreaterThan(10); expect(a.length).toBeLessThanOrEqual(100); expect(new Set(a.map(q => q.text.toLowerCase())).size).toBe(a.length); expect(a.some(q => q.text.includes('Comparison One'))).toBe(true); expect(a.some(q => q.text.includes('Comparison Two'))).toBe(true); expect(source.queries).toEqual([]); });
+    it('keeps actual seed themes in a proposal without persisting them', () => { const a = generateAuditQueryProposal(source, [{ keyword: 'pet friendly homes North Austin', score: 2, metrics: { impressions: 40 } }]); expect(a.some(q => q.text.toLowerCase().includes('pet friendly homes'))).toBe(true); });
+    it('uses for-sale language when the property vertical is for-sale', () => { const a = generateAuditQueryProposal({ ...source, property: { ...source.property, property_type: 'condo' } }); expect(a.every(q => !q.text.toLowerCase().includes('apartments'))).toBe(true); });
+});

@@ -9,7 +9,6 @@ import os
 import logging
 from typing import Dict, Any, Optional
 import anthropic
-from tenacity import retry, stop_after_attempt, wait_exponential
 
 logger = logging.getLogger(__name__)
 
@@ -143,10 +142,9 @@ class ClaudeConnector:
         if not self.api_key:
             raise ValueError("ANTHROPIC_API_KEY not set")
         
-        self.client = anthropic.Anthropic(api_key=self.api_key)
+        self.client = anthropic.AsyncAnthropic(api_key=self.api_key,timeout=45,max_retries=0)
         self.model = os.environ.get('GEO_CLAUDE_MODEL', 'claude-sonnet-5')
     
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     async def invoke(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """
         Invoke Claude with full feature set.
@@ -164,7 +162,7 @@ class ClaudeConnector:
         prompt = build_prompt(context)
         
         try:
-            response = self.client.messages.create(
+            response = await self.client.messages.create(
                 model=self.model,
                 max_tokens=2000,
                 messages=[

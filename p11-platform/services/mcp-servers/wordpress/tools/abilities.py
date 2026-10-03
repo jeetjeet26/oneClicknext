@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 import json
 
 from ..config import get_template_credentials, CACHE_DURATION_SECONDS
-from ...shared.supabase_client import get_supabase_client
+from shared.supabase_client import get_supabase as get_supabase_client
 
 # In-memory cache (in production, use Redis)
 _capabilities_cache: Dict[str, tuple[Dict[str, Any], datetime]] = {}

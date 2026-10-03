@@ -1,3 +1,4 @@
+vi.mock('@/utils/readiness/publication',()=>({requireCurrentReadiness:vi.fn().mockResolvedValue({status:'approved'})}))
 import { describe, expect, it, vi } from 'vitest'
 import {
   brandContractToStorageSections,

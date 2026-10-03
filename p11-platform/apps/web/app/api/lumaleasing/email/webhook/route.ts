@@ -32,6 +32,9 @@ interface MessageData {
 
 interface EmailConfigRow {
   id: string
+  credential_version?: number
+  provider_subject?: string | null
+  tenant_id?: string | null
   property_id: string | null
   profile_id: string | null
   provider: string | null
@@ -94,6 +97,9 @@ function toGmailConfig(config: EmailConfigRow): GmailConfig | null {
 
   return {
     id: config.id,
+    credential_version: config.credential_version,
+    provider_subject: config.provider_subject,
+    tenant_id: config.tenant_id,
     property_id: config.property_id,
     profile_id: config.profile_id,
     provider: config.provider === 'microsoft' ? 'microsoft' : 'google',

@@ -137,7 +137,7 @@ export async function backfillSiteForgeArtifactHashes(
     for (const [ownerColumn, artifactColumn, hashColumn] of guardedProjections) {
       const { data: updated, error: projectionError } = await client
         .from('property_websites')
-        .update({ [hashColumn]: canonicalHash })
+        .update({ [hashColumn]: canonicalHash } as Pick<Database['public']['Tables']['property_websites']['Update'], typeof hashColumn>)
         .eq('id', artifact.website_id)
         .eq(ownerColumn, artifact.id)
         .eq(artifactColumn, artifact.id)

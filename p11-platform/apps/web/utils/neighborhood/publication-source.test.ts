@@ -1,0 +1,5 @@
+import {it,expect,vi} from 'vitest'
+import {loadNeighborhoodPublicationSource} from './publication-source'
+const property='property',org='organization',items=[{id:'point',distance_miles:0}]
+it('reads complete native sources and passes an exact pinned snapshot',async()=>{const db={rpc:vi.fn().mockResolvedValue({data:{state:'ready',propertyId:property,items,total:1020,contentHash:'hash'},error:null})};expect(await loadNeighborhoodPublicationSource(db,property,org,items)).toEqual({items,total:1020,contentHash:'hash'});expect(db.rpc).toHaveBeenCalledWith('read_neighborhood_publication_source',{p_property_id:property,p_org_id:org,p_expected:items})})
+it.each([{data:{state:'source_changed'},error:null},{data:{state:'scope_changed'},error:null},{data:null,error:new Error('private backend detail')},{data:{state:'ready',propertyId:'wrong',items,total:1,contentHash:'hash'},error:null}])('holds changed unavailable or misbound sources',async result=>{await expect(loadNeighborhoodPublicationSource({rpc:vi.fn().mockResolvedValue(result)},property,org)).rejects.toThrow('Rebuild and review')})

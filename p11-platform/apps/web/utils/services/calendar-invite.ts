@@ -9,6 +9,9 @@ export interface CalendarEventDetails {
   startDate: string // ISO date: '2025-12-15'
   startTime: string // 24h format: '14:00'
   durationMinutes: number
+  startsAt?: string // Explicit instant; preferred when the property timezone is known.
+  uid?: string
+  timestamp?: string
   
   // Optional
   description?: string
@@ -27,20 +30,21 @@ export interface CalendarEventDetails {
  * Follows the iCalendar specification (RFC 5545)
  */
 export function generateICSContent(event: CalendarEventDetails): string {
-  const uid = generateUID()
-  const now = formatDateTimeUTC(new Date())
+  const uid = event.uid || generateUID()
+  const now = formatDateTimeUTC(event.timestamp ? new Date(event.timestamp) : new Date())
   
   // Parse start date and time
   const [year, month, day] = event.startDate.split('-').map(Number)
   const [hours, minutes] = event.startTime.split(':').map(Number)
   
   // Create start datetime
-  const startDateTime = new Date(year, month - 1, day, hours, minutes, 0)
+  const startDateTime = event.startsAt ? new Date(event.startsAt) : new Date(year, month - 1, day, hours, minutes, 0)
   const endDateTime = new Date(startDateTime.getTime() + event.durationMinutes * 60 * 1000)
   
   // Format for iCal (YYYYMMDDTHHMMSS)
-  const dtStart = formatDateTimeLocal(startDateTime)
-  const dtEnd = formatDateTimeLocal(endDateTime)
+  if(Number.isNaN(startDateTime.getTime()))throw new Error("Invalid calendar instant")
+  const dtStart = event.startsAt ? formatDateTimeUTC(startDateTime) : formatDateTimeLocal(startDateTime)
+  const dtEnd = event.startsAt ? formatDateTimeUTC(endDateTime) : formatDateTimeLocal(endDateTime)
   
   // Build the .ics content
   const lines: string[] = [
@@ -96,6 +100,8 @@ export function generateICSContent(event: CalendarEventDetails): string {
  * Generate a .ics file for a tour booking
  */
 export function generateTourICS(options: {
+  startsAt?: string
+  uid?: string
   propertyName: string
   propertyAddress?: string
   tourDate: string // '2025-12-15'
@@ -146,6 +152,7 @@ export function generateTourICS(options: {
   description += '\\n\\nQuestions? Reply to the confirmation email or call the leasing office.'
   
   return generateICSContent({
+    startsAt: options.startsAt, uid: options.uid,
     title: `Tour: ${propertyName}`,
     startDate: tourDate,
     startTime: time24h,
@@ -257,6 +264,8 @@ export interface CalendarLinks {
 }
 
 export interface TourCalendarOptions {
+  startsAt?: string
+  uid?: string
   propertyName: string
   propertyAddress?: string
   tourDate: string // '2025-12-15'
@@ -284,7 +293,7 @@ export function generateCalendarLinks(options: TourCalendarOptions): CalendarLin
   const [year, month, day] = tourDate.split('-').map(Number)
 
   // Create start and end datetimes
-  const startDateTime = new Date(year, month - 1, day, hours, minutes, 0)
+  const startDateTime = options.startsAt ? new Date(options.startsAt) : new Date(year, month - 1, day, hours, minutes, 0)
   const endDateTime = new Date(startDateTime.getTime() + durationMinutes * 60 * 1000)
 
   const title = `Tour: ${propertyName}`
@@ -311,6 +320,7 @@ export function generateCalendarLinks(options: TourCalendarOptions): CalendarLin
   // Generate .ics content for download
   const icsContent = generateICSContent({
     title,
+    startsAt:options.startsAt,uid:options.uid,
     startDate: tourDate,
     startTime: time24h,
     durationMinutes,
@@ -445,6 +455,8 @@ function generateYahooCalendarLink(
  * This is the main function to call from the API route
  */
 export function generateTourCalendarResponse(options: {
+  startsAt?: string
+  uid?: string
   propertyName: string
   propertyAddress?: string
   tourDate: string
@@ -466,6 +478,7 @@ export function generateTourCalendarResponse(options: {
 
   // Generate calendar links for response
   const calendarLinks = generateCalendarLinks({
+    startsAt: options.startsAt, uid: options.uid,
     propertyName: options.propertyName,
     propertyAddress: options.propertyAddress,
     tourDate: options.tourDate,

@@ -1,6 +1,12 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import {loadSocialConnections} from '@/utils/forgestudio/connections-client'
+
+import {SourceReview} from './SourceReview'
+import {revisionContentSchema} from '@/utils/forgestudio/content-contract'
+import {PublicationRecovery} from './PublicationRecovery'
+import {savedEditorialRequest} from '@/utils/forgestudio/client'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle,
   BookOpenCheck,
@@ -22,6 +28,7 @@ interface Variant {
   caption: string
   hashtags: string[]
   call_to_action: string | null
+  link_url: string | null
   asset_ids: string[]
   media_urls: string[]
   alt_text: string | null
@@ -48,6 +55,7 @@ interface Variant {
 interface Revision {
   id: string
   revision_number: number
+  content_hash: string
   approval_status: 'pending' | 'approved' | 'denied' | 'superseded'
   authored_by_kind: 'llm' | 'user'
   approved_at: string | null
@@ -65,11 +73,13 @@ interface Revision {
 }
 
 interface Publication {
+  connection_id:string
   id: string
   variant_id: string
   platform: string
   status: string
   scheduled_for: string
+  updated_at:string
   remote_post_url: string | null
   last_error: string | null
 }
@@ -77,9 +87,9 @@ interface Publication {
 interface Connection {
   id: string
   platform: string
-  account_name: string
+  account_name: string | null
   account_username: string | null
-  is_active: boolean
+  is_active: boolean | null
 }
 
 interface PackageDetail {
@@ -115,6 +125,8 @@ function channelKey(platform: string): string {
 }
 
 export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: ReviewStudioProps) {
+  const [sourcesReady,setSourcesReady]=useState(false)
+  const [sourceEdits,setSourceEdits]=useState(false)
   const [detail, setDetail] = useState<PackageDetail | null>(null)
   const [connections, setConnections] = useState<Connection[]>([])
   const [loading, setLoading] = useState(true)
@@ -127,6 +139,7 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
   const [reviewNote, setReviewNote] = useState('')
   const [reviewing, setReviewing] = useState<'approved' | 'denied' | null>(null)
 
+  const controller=useRef<AbortController|null>(null)
   const [scheduleAt, setScheduleAt] = useState('')
   const [scheduleTargets, setScheduleTargets] = useState<string[]>([])
   const [experimentKey, setExperimentKey] = useState('')
@@ -134,34 +147,35 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
   const [scheduling, setScheduling] = useState(false)
 
   const load = useCallback(async () => {
+    controller.current?.abort();const current=new AbortController();controller.current=current
     setLoading(true)
     setError(null)
     try {
-      const [packagesRes, connectionsRes] = await Promise.all([
-        fetch(`/api/forgestudio/packages?propertyId=${propertyId}`),
-        fetch(`/api/forgestudio/social/connections?propertyId=${propertyId}`),
+      const [packagesRes, connectionsData] = await Promise.all([
+        fetch(`/api/forgestudio/packages?propertyId=${propertyId}`,{signal:current.signal}),
+        loadSocialConnections(propertyId,current.signal),
       ])
       const packagesData = await packagesRes.json()
-      const connectionsData = await connectionsRes.json()
       if (!packagesRes.ok) throw new Error(packagesData.error || 'Failed to load package')
 
       const pkg = (packagesData.packages || []).find(
         (item: PackageDetail) => item.id === packageId
       )
       if (!pkg) throw new Error('Package not found')
+      if(current.signal.aborted)return
       setDetail(pkg)
       setConnections(
         (connectionsData.connections || []).filter((conn: Connection) => conn.is_active)
       )
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load')
+      if(!current.signal.aborted){setError(err instanceof Error ? err.message : 'Failed to load');setDetail(null)}
     } finally {
-      setLoading(false)
+      if(!current.signal.aborted)setLoading(false)
     }
   }, [propertyId, packageId])
 
   useEffect(() => {
-    load()
+    void load();return()=>controller.current?.abort()
   }, [load])
 
   const revision = detail?.currentRevision ?? null
@@ -200,16 +214,9 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
     return variant && caption !== variant.caption
   })
 
-  const saveEditsAsNewRevision = async () => {
-    if (!detail || !revision) return
-    if (!reviewNote.trim()) {
-      setError('Describe why the content was modified before saving a new revision.')
-      return
-    }
-    setSaving(true)
-    setError(null)
-    try {
-      const content = {
+  function editableContent(){
+    if(!detail||!revision)throw new Error('Reload the revision')
+    return revisionContentSchema.parse({
         conceptSummary:
           (revision.content.conceptSummary as string) || detail.concept_summary || 'Updated concept',
         variants: detail.variants.map((variant) => ({
@@ -219,7 +226,7 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
           caption: editedCaptions[variant.id] ?? variant.caption,
           hashtags: variant.hashtags,
           callToAction: variant.call_to_action,
-          linkUrl: null,
+          linkUrl: variant.link_url,
           assetIds: variant.asset_ids,
           mediaUrls: variant.media_urls,
           altText: variant.alt_text,
@@ -232,17 +239,28 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
           thumbnailAssetId: variant.thumbnail_asset_id,
         })),
         claims: revision.claims,
-      }
+      })
+  }
+
+  const saveEditsAsNewRevision = async () => {
+    if (!detail || !revision) return
+    if (!reviewNote.trim()) {
+      setError('Describe why the content was modified before saving a new revision.')
+      return
+    }
+    setSaving(true)
+    setError(null)
+    try {
+      const content = editableContent()
+      const request=await savedEditorialRequest('revision-'+packageId,{content,modificationReason:reviewNote.trim(),expectedRevisionId:revision.id})
       const res = await fetch(`/api/forgestudio/packages/${packageId}/revisions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          content,
-          modificationReason: reviewNote.trim(),
-        }),
+        body: JSON.stringify(request.body),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Failed to save revision')
+      request.acknowledge()
       setEditedCaptions({})
       setEditingVariantId(null)
       setReviewNote('')
@@ -264,13 +282,15 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
     setReviewing(decision)
     setError(null)
     try {
+      const request=await savedEditorialRequest('review-'+revision.id,{contentHash:revision.content_hash,decision,note:reviewNote.trim()})
       const res = await fetch(`/api/forgestudio/revisions/${revision.id}/approval`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ decision, note: reviewNote.trim() }),
+        body: JSON.stringify(request.body),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Review failed')
+      request.acknowledge()
       await load()
       onChanged()
     } catch (err) {
@@ -287,11 +307,8 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
     try {
       const scheduledFor = new Date(scheduleAt).toISOString()
       const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
-      const res = await fetch('/api/forgestudio/publications', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          revisionId: revision.id,
+      const request=await savedEditorialRequest('schedule',{
+          revisionId: revision.id,contentHash:revision.content_hash,
           destinations: scheduleTargets.map((target) => {
             const [connectionId, variantId] = target.split(':')
             return {
@@ -302,11 +319,12 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
               experimentKey: experimentKey.trim() || undefined,
               experimentGroup: experimentKey.trim() ? experimentGroup : undefined,
             }
-          }),
-        }),
+          })
       })
+      const res=await fetch('/api/forgestudio/publications',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(request.body)})
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Scheduling failed')
+      request.acknowledge()
       setScheduleAt('')
       setScheduleTargets([])
       await load()
@@ -320,17 +338,21 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
 
   const updatePublication = async (
     publicationId: string,
-    action: 'retry' | 'cancel'
+    action: 'cancel'
   ) => {
     setError(null)
     try {
+      const publication=detail?.publications.find(p=>p.id===publicationId)
+      if(!publication)throw new Error('Reload the saved publication before changing it.')
+      const request=await savedEditorialRequest('publication-'+publicationId,{action,expectedUpdatedAt:publication.updated_at})
       const response = await fetch(`/api/forgestudio/publications/${publicationId}`, {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ action }),
+        body: JSON.stringify(request.body),
       })
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || `Failed to ${action} publication`)
+      request.acknowledge()
       await load()
       onChanged()
     } catch (err) {
@@ -339,7 +361,7 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/50 flex items-start justify-center overflow-y-auto p-4 md:p-8">
+    <div role="dialog" aria-label="Review Studio" aria-modal="true" className="fixed inset-0 z-50 bg-black/50 flex items-start justify-center overflow-y-auto p-4 md:p-8">
       <div className="bg-white dark:bg-slate-800 rounded-2xl w-full max-w-5xl shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between p-5 border-b border-slate-200 dark:border-slate-700">
@@ -362,14 +384,15 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
               </p>
             )}
           </div>
-          <button onClick={onClose} className="p-2 text-slate-400 hover:text-slate-600">
+          <button aria-label="Close review" onClick={onClose} className="p-2 text-slate-400 hover:text-slate-600">
             <X className="w-5 h-5" />
           </button>
         </div>
 
         <div className="p-5 space-y-5">
+          <button className="rounded-lg border px-3 py-2 text-sm" disabled={loading||saving||reviewing!==null||scheduling} onClick={()=>{setEditedCaptions({});setEditingVariantId(null);void load()}}>Reload saved revision</button>
           {error && (
-            <div className="bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/30 rounded-lg p-3 text-sm text-red-700 dark:text-red-300">
+            <div role="alert" className="bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/30 rounded-lg p-3 text-sm text-red-700 dark:text-red-300">
               {error}
             </div>
           )}
@@ -394,7 +417,7 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
                   {unsupportedClaims.length === 0 ? (
                     <span className="flex items-center gap-1 text-green-600">
                       <BookOpenCheck className="w-3.5 h-3.5" />
-                      All sensitive claims cite a trusted source
+                      Sensitive claim citations are present
                     </span>
                   ) : (
                     <span className="flex items-center gap-1 text-red-600">
@@ -405,6 +428,7 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
                 </div>
               </div>
 
+              <SourceReview propertyId={propertyId} onDraftChanged={setSourceEdits} key={revision.id} packageId={packageId} revisionId={revision.id} content={editableContent()} onStatus={setSourcesReady} onSaved={()=>{setEditedCaptions({});setEditingVariantId(null);setReviewNote('');void load();onChanged()}}/>
               {/* Claims with citations */}
               {revision.claims.length > 0 && (
                 <div>
@@ -467,8 +491,8 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
                             {variant.content_format} · {variant.variant_key}
                           </span>
                         </span>
-                        {isPending && (
-                          <button
+                        {(isPending||isApproved||revision.approval_status==='denied') && (
+                          <button aria-label={`Edit ${variant.platform} caption`}
                             onClick={() =>
                               setEditingVariantId(isEditing ? null : variant.id)
                             }
@@ -488,7 +512,7 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
                       )}
 
                       {isEditing ? (
-                        <textarea
+                        <textarea aria-label={`${variant.platform} caption`}
                           value={caption}
                           onChange={(event) =>
                             setEditedCaptions((prev) => ({
@@ -536,15 +560,16 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
               </div>
 
               {/* Save edits → new revision */}
+              {hasEdits && <label className="block text-sm">Reason for this revision<input value={reviewNote} onChange={event=>setReviewNote(event.target.value)} maxLength={2000} className="mt-1 block w-full rounded-lg border bg-transparent px-3 py-2"/></label>}
               {hasEdits && (
-                <div className="flex items-center justify-between bg-violet-50 dark:bg-violet-500/10 border border-violet-200 dark:border-violet-500/30 rounded-lg p-3">
+                <div className="flex flex-wrap gap-3 items-center justify-between bg-violet-50 dark:bg-violet-500/10 border border-violet-200 dark:border-violet-500/30 rounded-lg p-3">
                   <p className="text-sm text-violet-800 dark:text-violet-200">
                     Saving edits creates a new revision — prior approvals and schedules for the old
                     text are superseded automatically.
                   </p>
                   <button
                     onClick={saveEditsAsNewRevision}
-                    disabled={saving}
+                    disabled={saving||reviewNote.trim().length<3}
                     className="flex items-center gap-1.5 px-4 py-2 bg-violet-600 text-white rounded-lg text-sm hover:bg-violet-700 flex-shrink-0"
                   >
                     {saving ? (
@@ -573,7 +598,7 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
                     <button
                       onClick={() => submitReview('approved')}
                       disabled={
-                        reviewing !== null ||
+                        reviewing !== null || !sourcesReady || sourceEdits ||
                         unsupportedClaims.length > 0 ||
                         validationIssues.length > 0 ||
                         !reviewNote.trim()
@@ -633,7 +658,7 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
                               const selected = scheduleTargets.includes(target)
                               const alreadyScheduled = detail.publications.some(
                                 (publication) =>
-                                  publication.variant_id === variant.id &&
+                                  publication.variant_id === variant.id && publication.connection_id===connection.id &&
                                   !['cancelled', 'failed'].includes(publication.status)
                               )
                               return (
@@ -668,14 +693,14 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
                   </div>
                   <div className="flex items-center gap-2">
                     <input
-                      type="datetime-local"
+                      aria-label="Publication schedule time" type="datetime-local"
                       value={scheduleAt}
                       onChange={(event) => setScheduleAt(event.target.value)}
                       className="px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-sm"
                     />
                     <button
                       onClick={submitSchedule}
-                      disabled={scheduling || !scheduleAt || scheduleTargets.length === 0}
+                      disabled={scheduling || !sourcesReady || sourceEdits || !scheduleAt || scheduleTargets.length === 0}
                       className="flex items-center gap-1.5 px-4 py-2 bg-violet-600 text-white rounded-lg text-sm hover:bg-violet-700 disabled:opacity-50"
                     >
                       {scheduling ? (
@@ -729,15 +754,7 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
                           {new Date(publication.scheduled_for).toLocaleString()}
                         </span>
                         <div className="flex items-center gap-2">
-                          {publication.status === 'failed' && (
-                            <button
-                              type="button"
-                              onClick={() => updatePublication(publication.id, 'retry')}
-                              className="text-xs text-violet-600 hover:underline"
-                            >
-                              Retry
-                            </button>
-                          )}
+                          {['failed','reconciling','publishing'].includes(publication.status)&&<details className="max-w-md"><summary className="cursor-pointer text-xs text-amber-700">Review saved evidence</summary><PublicationRecovery publicationId={publication.id} onSaved={()=>void load()}/></details>}
                           {['scheduled', 'queued'].includes(publication.status) && (
                             <button
                               type="button"

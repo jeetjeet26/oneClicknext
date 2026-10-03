@@ -43,6 +43,7 @@ describe('POST /api/forgestudio/attribution', () => {
     const response = await POST(request({
       trackingToken: '11111111-1111-4111-8111-111111111111',
       eventType: 'tour_booked',
+      occurredAt: '2026-09-17T12:00:00Z',
       anonymousSubject: 'provider-neutral-subject-123',
       metadata: {
         sourceSystem: 'crm',
@@ -53,6 +54,7 @@ describe('POST /api/forgestudio/attribution', () => {
     expect(response.status).toBe(201)
     expect(recordMock).toHaveBeenCalledWith(expect.objectContaining({
       eventType: 'tour_booked',
+      occurredAt: '2026-09-17T12:00:00Z',
       anonymousSubject: 'provider-neutral-subject-123',
     }))
   })

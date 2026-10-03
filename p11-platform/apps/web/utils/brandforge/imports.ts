@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+import { brandRpc } from './operations'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { isSafePublicHttpUrl } from '@/utils/services/url-safety'
 import {
@@ -6,7 +8,7 @@ import {
   normalizeBrandForgeContract,
 } from './normalize'
 import type { BrandForgeContractV1 } from './contracts'
-import type { Json, TablesInsert } from '@/types/supabase'
+import type { Json } from '@/types/supabase'
 
 type JsonRecord = Record<string, unknown>
 
@@ -22,6 +24,7 @@ export type BrandImportInput = {
   idempotencyKey: string
   websiteUrl?: string
   documentIds?: string[]
+  sourceIds?: string[]
   manual?: JsonRecord
 }
 
@@ -106,7 +109,19 @@ async function fetchWebsite(url: string): Promise<string> {
   if (!contentType.includes('text/html')) throw new Error('Website did not return HTML')
   const declaredLength = Number(response.headers.get('content-length') || 0)
   if (declaredLength > 2_000_000) throw new Error('Website response is too large')
-  return (await response.text()).slice(0, 2_000_000)
+  if (!response.body) throw new Error('Website did not return content')
+  const reader = response.body.getReader(), chunks: Uint8Array[] = []
+  let size = 0
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      size += value.byteLength
+      if (size > 2_000_000) throw new Error('Website response is too large')
+      chunks.push(value)
+    }
+  } finally { await reader.cancel(); reader.releaseLock() }
+  return Buffer.concat(chunks).toString('utf8')
 }
 
 function findConflicts(sourceCandidates: Array<{ source: string; value: JsonRecord }>): BrandConflict[] {
@@ -123,6 +138,16 @@ function findConflicts(sourceCandidates: Array<{ source: string; value: JsonReco
 
 export async function createBrandImportPreview(input: BrandImportInput) {
   const client = createServiceClient()
+  const inputHash = createHash('sha256').update(JSON.stringify(input)).digest('hex')
+  const { data: prior, error: priorError } = await client.from('property_brand_imports').select('*').eq('property_id', input.propertyId).eq('idempotency_key', input.idempotencyKey).maybeSingle()
+  if (priorError) throw new Error('Brand preview could not be loaded')
+  if (prior) {
+    if (prior.created_by !== input.userId || record(prior.extraction_report).inputHash !== inputHash) throw new Error('This preview request changed. Start a new preview.')
+    return prior
+  }
+  const { data: currentBrand, error: brandReadError } = await client.from('property_brand_assets').select('*').eq('property_id', input.propertyId).maybeSingle()
+  if (brandReadError) throw new Error('Saved brand could not be loaded')
+  const baseRevision = currentBrand ? Number(record(currentBrand).revision) : 0
   const candidates: Array<{ source: string; value: JsonRecord }> = []
   const sourceManifest: JsonRecord[] = []
 
@@ -132,7 +157,7 @@ export async function createBrandImportPreview(input: BrandImportInput) {
       .select('id, content, metadata, original_file_name')
       .eq('property_id', input.propertyId)
       .in('id', input.documentIds)
-    if (error) throw new Error(`Failed to load brand documents: ${error.message}`)
+    if (error || new Set(documents?.map(document => document.id)).size !== new Set(input.documentIds).size) throw new Error('Every brand document must belong to this property and still be available.')
     const combined = (documents || []).map(document => document.content).join('\n\n')
     const colors = unique(
       [...combined.matchAll(/#[0-9a-f]{6}\b/gi)].map(match => match[0].toUpperCase()),
@@ -156,6 +181,17 @@ export async function createBrandImportPreview(input: BrandImportInput) {
       sourceId: document.id,
       identity: document.original_file_name || 'brand-package',
     })))
+  }
+
+  if (input.sourceIds?.length) {
+    // This private table is intentionally unavailable to browser clients and retrieval.
+    const { data: sources, error } = await client.from('brand_import_sources').select('*').eq('property_id', input.propertyId).in('id', input.sourceIds)
+    const rows = (sources || []) as unknown as Array<{ id: string; name: string; content: string; content_hash: string }>
+    if (error || new Set(rows.map(source => source.id)).size !== new Set(input.sourceIds).size) throw new Error('Every brand source must belong to this property and still be available.')
+    const combined = rows.map(source => source.content).join('\n\n')
+    const colors = unique([...combined.matchAll(/#[0-9a-f]{6}\b/gi)].map(match => match[0].toUpperCase())).slice(0, 12)
+    candidates.push({ source: 'package', value: { introduction: { content: combined.slice(0, 5000) }, colors: { roles: colors.map((hex, index) => ({ role: index === 0 ? 'primary' : index === 1 ? 'secondary' : 'accent', name: `Package color ${index + 1}`, hex, usage: 'Extracted from uploaded brand package' })) } } })
+    sourceManifest.push(...rows.map(source => ({ sourceType: 'brand_import_source', sourceId: source.id, identity: source.name, contentHash: source.content_hash })))
   }
 
   if (input.websiteUrl) {
@@ -194,35 +230,25 @@ export async function createBrandImportPreview(input: BrandImportInput) {
   })
   const contentHash = hashBrandForgeContract(contract)
 
-  const { data, error } = await client
-    .from('property_brand_imports')
-    .upsert({
-      org_id: input.orgId,
-      property_id: input.propertyId,
-      status: 'needs_review',
-      source_type: input.sourceType,
-      source_identity: input.websiteUrl || input.documentIds?.join(',') || 'manual',
-      idempotency_key: input.idempotencyKey,
-      source_manifest: toJson(sourceManifest),
-      extracted_contract: toJson(contract),
-      conflicts: toJson(conflicts),
-      extraction_report: toJson({
-        sourceCount: candidates.length,
-        requiresHumanApproval: true,
-      }),
-      content_hash: contentHash,
-      created_by: input.userId,
-    }, { onConflict: 'org_id,property_id,idempotency_key' })
-    .select('*')
-    .single()
-  if (error) throw new Error(`Failed to persist import preview: ${error.message}`)
-  return data
+  const saved = await brandRpc('save_brand_import_preview', {
+    p_property_id: input.propertyId, p_actor_id: input.userId, p_idempotency_key: input.idempotencyKey,
+    p_input_hash: inputHash, p_base_revision: baseRevision,
+    p_payload: {
+      source_type: input.sourceType, source_identity: input.websiteUrl || input.sourceIds?.join(',') || input.documentIds?.join(',') || 'manual',
+      source_manifest: sourceManifest, extracted_contract: contract, conflicts,
+      extraction_report: { sourceCount: candidates.length, requiresHumanApproval: true }, content_hash: contentHash,
+    },
+  })
+  if (!['applied', 'replayed'].includes(String(saved.state))) throw new Error(saved.state === 'stale' ? 'The saved brand changed while this preview was prepared. Reload and prepare a new preview.' : 'This preview could not be saved. Reload to review the current request.')
+  return saved.preview as NonNullable<typeof prior>
+
 }
 
 export async function confirmBrandImport(input: {
   importId: string
   propertyId: string
   userId: string
+  requestId: string
   contract?: JsonRecord
   resolutions?: Record<string, unknown>
 }): Promise<{ brandAssetId: string; contract: BrandForgeContractV1; contractHash: string }> {
@@ -234,7 +260,8 @@ export async function confirmBrandImport(input: {
     .eq('property_id', input.propertyId)
     .single()
   if (error || !importRow) throw new Error('Brand import not found')
-  if (importRow.status === 'confirmed') throw new Error('Brand import is already confirmed')
+  const report = record(importRow.extraction_report)
+  if (!Number.isInteger(report.baseRevision)) throw new Error('Create a new preview before approving this brand')
 
   const conflicts = Array.isArray(importRow.conflicts) ? importRow.conflicts : []
   const unresolved = conflicts.filter(conflict => {
@@ -251,9 +278,14 @@ export async function confirmBrandImport(input: {
   const corrected = {
     ...extracted,
     ...(input.contract || {}),
+    ...Object.fromEntries(Object.entries(input.resolutions || {}).filter(([key]) => ['identity','logos','typography','colors'].includes(key))),
   }
   const approvedAt = new Date().toISOString()
-  const contract = normalizeBrandForgeContract(corrected, {
+  const approvedContent = Object.fromEntries(Object.entries(corrected).map(([key, value]) => {
+    const section = record(value)
+    return [key, value && typeof value === 'object' && !Array.isArray(value) ? { ...section, _meta: { ...record(section._meta), approval: { status: 'approved', approvedBy: input.userId, approvedAt } } } : value]
+  }))
+  const contract = normalizeBrandForgeContract(approvedContent, {
     origin: importRow.source_type === 'hybrid' ? 'hybrid' : 'imported',
     approvalStatus: 'approved',
     approvedBy: input.userId,
@@ -293,19 +325,10 @@ export async function confirmBrandImport(input: {
     )
     const blocked = referencedAssetIds.filter(id => !approvedIds.has(id))
     if (blocked.length) throw new Error(`Brand references unapproved or rights-blocked assets: ${blocked.join(', ')}`)
-    const { error: curationError } = await client
-      .from('content_assets')
-      .update({ curation_status: 'approved' })
-      .eq('property_id', input.propertyId)
-      .in('id', referencedAssetIds)
-    if (curationError) {
-      throw new Error(`Failed to curate approved brand assets: ${curationError.message}`)
-    }
+
   }
 
-  const brandInsert: TablesInsert<'property_brand_assets'> = {
-      property_id: input.propertyId,
-      generated_by: input.userId,
+  const brandInsert = {
       generation_status: 'complete',
       current_step: 12,
       current_step_name: 'implementation',
@@ -330,28 +353,21 @@ export async function confirmBrandImport(input: {
       section_11_photo_nope: toJson(sections.section_11_photo_nope),
       section_12_implementation: toJson(sections.section_12_implementation),
     }
-  const { data: brand, error: brandError } = await client
-    .from('property_brand_assets')
-    .upsert(brandInsert, { onConflict: 'property_id' })
-    .select('id')
-    .single()
-  if (brandError || !brand) throw new Error(`Failed to approve imported brand: ${brandError?.message}`)
-
-  const { error: confirmError } = await client
-    .from('property_brand_imports')
-    .update({
-      status: 'confirmed',
-      extracted_contract: toJson(contract),
-      content_hash: contractHash,
-      conflicts: toJson(conflicts.map(conflict => ({
-        ...record(conflict),
-        resolution: input.resolutions?.[String(record(conflict).field)],
-      }))),
-      confirmed_by: input.userId,
-      confirmed_at: approvedAt,
+  const claim = await brandRpc('begin_brand_operation', { p_property_id: input.propertyId, p_brand_asset_id: report.brandAssetId || null, p_actor_id: input.userId, p_request_id: input.requestId, p_revision: report.baseRevision, p_kind: 'import', p_input: { importId: input.importId, contract: input.contract || null, resolutions: input.resolutions || null } })
+  if (claim.state === 'replayed') return { brandAssetId: String(claim.brandAssetId), contract: claim.contract as BrandForgeContractV1, contractHash: String(claim.contractHash) }
+  if (claim.state !== 'claimed') throw new Error(claim.state === 'stale' ? 'The saved brand changed. Create a new preview before approval.' : 'This brand request needs review before approval. Reload the saved brand.')
+  try {
+    const result = await brandRpc('finish_brand_operation', {
+      p_request_id: input.requestId, p_claim_token: claim.claimToken, p_updates: brandInsert,
+      p_result: { contract, contractHash, importReceipt: { id: input.importId, updatedAt: importRow.updated_at, assetIds: referencedAssetIds, conflicts: conflicts.map(conflict => ({ ...record(conflict), resolution: input.resolutions?.[String(record(conflict).field)] })) } },
     })
-    .eq('id', input.importId)
-  if (confirmError) throw new Error(`Failed to confirm brand import: ${confirmError.message}`)
-
-  return { brandAssetId: brand.id, contract, contractHash }
+    if (!['applied','replayed'].includes(String(result.state))) throw new Error('The brand approval could not be saved. Reload the preview.')
+    return { brandAssetId: String(result.brandAssetId), contract: result.contract as BrandForgeContractV1, contractHash: String(result.contractHash) }
+  } catch (error) {
+    try {
+      const recovered = await brandRpc('finish_brand_operation', { p_request_id: input.requestId, p_claim_token: claim.claimToken, p_updates: {}, p_result: {}, p_error: 'save_failed' })
+      if (recovered.state === 'replayed') return { brandAssetId: String(recovered.brandAssetId), contract: recovered.contract as BrandForgeContractV1, contractHash: String(recovered.contractHash) }
+    } catch { /* Keep an unconfirmed request for explicit review. */ }
+    throw error
+  }
 }

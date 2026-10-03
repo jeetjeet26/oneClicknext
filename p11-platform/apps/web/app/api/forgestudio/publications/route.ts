@@ -6,12 +6,14 @@ import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { ContentStoreError, schedulePublications } from '@/utils/forgestudio/content-store'
 
 const scheduleSchema = z.object({
+  requestId:z.string().uuid(),
+  contentHash:z.string().regex(/^[0-9a-f]{64}$/),
   revisionId: z.string().uuid(),
   destinations: z.array(z.object({
     connectionId: z.string().uuid(),
-    variantId: z.string().uuid().optional(),
+    variantId: z.string().uuid(),
     scheduledFor: z.string().datetime({ offset: true }),
-    timezone: z.string().max(100).optional(),
+    timezone: z.string().min(1).max(100),
     experimentKey: z.string().min(1).max(200).optional(),
     experimentGroup: z.enum(['control', 'treatment']).optional(),
   })).min(1).max(20),
@@ -30,6 +32,10 @@ export async function GET(request: NextRequest) {
     const propertyId = searchParams.get('propertyId')
     const from = searchParams.get('from')
     const to = searchParams.get('to')
+    const cursor=searchParams.get('cursor')
+    let after:{at:string;id:string}|null=null
+    if(cursor){try{after=z.object({at:z.string().datetime({offset:true}),id:z.string().uuid()}).parse(JSON.parse(Buffer.from(cursor,'base64url').toString('utf8')))}catch{return NextResponse.json({error:'Invalid publication page. Reload the schedule.'},{status:400})}}
+    if([from,to].some(value=>value&&!z.string().datetime({offset:true}).safeParse(value).success))return NextResponse.json({error:'Choose valid schedule dates.'},{status:400})
     if (!propertyId) {
       return NextResponse.json({ error: 'Property ID required' }, { status: 400 })
     }
@@ -49,8 +55,10 @@ export async function GET(request: NextRequest) {
       `)
       .eq('property_id', propertyId)
       .order('scheduled_for', { ascending: true })
-      .limit(200)
+      .order('id',{ascending:true})
+      .limit(101)
 
+    if(after)query=query.or(`scheduled_for.gt.${after.at},and(scheduled_for.eq.${after.at},id.gt.${after.id})`)
     if (from) query = query.gte('scheduled_for', from)
     if (to) query = query.lte('scheduled_for', to)
 
@@ -60,7 +68,9 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to list publications' }, { status: 500 })
     }
 
-    return NextResponse.json({ publications: data ?? [] })
+    const publications=(data??[]).slice(0,100),last=publications.at(-1)
+    const nextCursor=(data??[]).length>100&&last?Buffer.from(JSON.stringify({at:last.scheduled_for,id:last.id})).toString('base64url'):null
+    return NextResponse.json({publications,nextCursor})
   } catch (error) {
     console.error('Publications GET error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
@@ -102,6 +112,8 @@ export async function POST(request: NextRequest) {
     }
 
     const publications = await schedulePublications({
+      requestId:parsed.data.requestId,
+      contentHash:parsed.data.contentHash,
       revisionId: parsed.data.revisionId,
       destinations: parsed.data.destinations,
       createdBy: user.id,

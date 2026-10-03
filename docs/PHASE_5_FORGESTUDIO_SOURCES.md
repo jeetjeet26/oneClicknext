@@ -1,0 +1,17 @@
+# Phase 5: ForgeStudio source review and freshness
+
+September 17, 2026. Local qualification only; Phase 5 remains open.
+
+Saved campaign context now retains a private immutable manifest of its exact property, policy, onboarding, brand, inventory, neighborhood, testimonial, knowledge and selected asset records. The snapshot transaction verifies the values against scoped database rows and canonicalizes typed values, including timestamps. Selected source rows remain stable through that transaction. Existing historical context remains unchanged and requires refresh where verified evidence is missing.
+
+Approval, scheduling and the final worker intent transaction recheck claim citations, source kind and permitted use, current source values, inventory dates, active testimonial permissions, policy/property changes and attached media identity. Changes cannot silently reuse an earlier approval. Source-read failures are explicit. The testimonial query now uses the actual `active` database status; the old `approved` query omitted valid approvals. Future-effective inventory is topic-only until effective.
+
+The Sources panel compares saved and current evidence and lets the operator correct claim wording/citations, retain current caption edits and explicitly choose the current files for selected library assets. A refresh saves a new pending revision and exact context with a reason and an atomic `studio.sources.refreshed` action. A preview fingerprint holds further changes until the operator reloads them. Lost responses recover the same revision without duplicate snapshots or a new model call. Refresh reads previously selected knowledge documents directly by ID; it does not request embeddings or generation. Failed history persistence rolls back the complete change.
+
+Rights, curation and expiry remain visible advisory metadata under the repo's existing solo-operator policy. Revoked asset approval, duplicate identity, missing assets and changed media remain execution holds. Source/version matching is not a semantic truth verifier or a guarantee that a remote file URL still serves identical bytes. The operator must review the wording; broader media lifecycle and provider acceptance remain open.
+
+Campaign status now derives from the current revision's publications. Cancelling the last pending publication returns the approved badge; a conflicting late provider acknowledgement puts the campaign back into review instead of leaving a false published badge.
+
+Verified locally: **240 service/API cases across 40 suites; 188 rollback database assertions; 11 connected browser journeys**, including lost refresh replies, changed-preview holds, failed reads and real local database evidence. Mobile source comparison was visually inspected. Full TypeScript and schema synchronization passed; changed-file lint has no errors and retains one existing image warning. **130 function bodies** match the prepared migrations; local database advisor warnings/errors remain at the unchanged 1,333-key baseline. No model, embedding or provider was called; no real publication, activation, deployment, hosted write, training/export, commit or push occurred.
+
+Migration: `20260917201115_phase_five_forgestudio_sources.sql`, applied locally without a migration-history stamp. Remaining work is tracked in `P11_PRODUCT_READINESS.md`: asset/media lifecycle, measured outcomes, interactions/system records and all other open product gates.

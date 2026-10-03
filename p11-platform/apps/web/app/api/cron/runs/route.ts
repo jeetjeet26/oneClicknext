@@ -35,7 +35,10 @@ export async function GET(request: NextRequest) {
     return serverError(profileError, ctx.responseHeaders)
   }
 
-  if (!['admin', 'manager'].includes(profile.role || '')) {
+  // This ledger contains cross-organization service summaries. Tenant roles alone
+  // cannot authorize reading it; platform operators are configured server-side.
+  const operators = (process.env.P11_OPERATIONS_ADMIN_IDS || '').split(',').map(id => id.trim()).filter(Boolean)
+  if (profile.role !== 'admin' || !operators.includes(user.id)) {
     ctx.logSuccess(403, { reason: 'insufficient_role_for_cron_runs', userId: user.id })
     return forbidden(ctx.responseHeaders)
   }

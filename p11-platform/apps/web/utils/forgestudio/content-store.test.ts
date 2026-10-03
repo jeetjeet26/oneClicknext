@@ -36,22 +36,15 @@ function createBuilder(table: string) {
   return builder
 }
 
+const rpcMock=vi.fn()
 const fromMock = vi.fn((table: string) => createBuilder(table))
 
 vi.mock('@/utils/supabase/admin', () => ({
-  createServiceClient: () => ({ from: fromMock }),
+  createServiceClient: () => ({ from: fromMock, rpc: rpcMock }),
 }))
 
 function setResponses(table: string, responses: QueryResponse[]) {
   tableResponses[table] = responses
-}
-
-function insertsFor(table: string) {
-  return callLog.filter((entry) => entry.table === table && entry.method === 'insert')
-}
-
-function updatesFor(table: string) {
-  return callLog.filter((entry) => entry.table === table && entry.method === 'update')
 }
 
 const REVISION_ID = '11111111-1111-4111-8111-111111111111'
@@ -71,354 +64,50 @@ const validContent = {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  rpcMock.mockReset()
   for (const key of Object.keys(tableResponses)) delete tableResponses[key]
   callLog.length = 0
 })
 
-describe('setRevisionApproval', () => {
-  it('rejects revisions that are not pending', async () => {
-    setResponses('social_content_revisions', [
-      { data: { id: REVISION_ID, package_id: PACKAGE_ID, approval_status: 'superseded', claims: [] }, error: null },
-    ])
-    const { setRevisionApproval, ContentStoreError } = await import('./content-store')
-    await expect(
-      setRevisionApproval({ revisionId: REVISION_ID, decision: 'approved', reviewerId: 'user-1' })
-    ).rejects.toThrowError(ContentStoreError)
-  })
-
-  it('fails closed when sensitive claims lack citations', async () => {
-    setResponses('social_content_revisions', [
-      {
-        data: {
-          id: REVISION_ID,
-          package_id: PACKAGE_ID,
-          org_id: 'org-1',
-          property_id: 'prop-1',
-          context_snapshot_id: 'snapshot-1',
-          approval_status: 'pending',
-          claims: [{ text: 'Rents from $999', type: 'pricing', citations: [] }],
-        },
-        error: null,
-      },
-    ])
-    const { setRevisionApproval } = await import('./content-store')
-    await expect(
-      setRevisionApproval({ revisionId: REVISION_ID, decision: 'approved', reviewerId: 'user-1' })
-    ).rejects.toThrow(/lack citations/)
-  })
-
-  it('approves a pending revision with supported claims and updates the package', async () => {
-    const approvedRow = { id: REVISION_ID, approval_status: 'approved' }
-    setResponses('social_content_revisions', [
-      {
-        data: {
-          id: REVISION_ID,
-          package_id: PACKAGE_ID,
-          org_id: 'org-1',
-          property_id: 'prop-1',
-          context_snapshot_id: 'snapshot-1',
-          approval_status: 'pending',
-          claims: [
-            {
-              text: 'One month free',
-              type: 'concession',
-              citations: [{ sourceType: 'structured_offer', sourceId: 'offer-1' }],
-            },
-          ],
-        },
-        error: null,
-      },
-      { data: approvedRow, error: null },
-      { data: { ...approvedRow, shared_action_attempt_id: 'action-1' }, error: null },
-    ])
-    setResponses('social_content_variants', [{
-      data: [{
-        platform: 'facebook',
-        caption: 'One month free.',
-        hashtags: [],
-        call_to_action: null,
-        link_url: null,
-        asset_ids: [],
-        media_urls: [],
-        alt_text: null,
-        content_format: 'text',
-        platform_options: {},
-      }],
-      error: null,
-    }])
-    setResponses('shared_jobs', [{ data: { id: 'approval-job-1' }, error: null }])
-    setResponses('shared_action_attempts', [{ data: { id: 'action-1' }, error: null }])
-    setResponses('shared_approvals', [{ data: null, error: null }])
-    setResponses('shared_policy_decisions', [{ data: null, error: null }])
-    setResponses('social_content_packages', [{ data: null, error: null }])
-
-    const { setRevisionApproval } = await import('./content-store')
-    const result = await setRevisionApproval({
-      revisionId: REVISION_ID,
-      decision: 'approved',
-      reviewerId: 'user-1',
-    })
-
-    expect(result).toEqual({ ...approvedRow, shared_action_attempt_id: 'action-1' })
-    const packageUpdates = updatesFor('social_content_packages')
-    expect(packageUpdates).toHaveLength(1)
-    expect(packageUpdates[0].args[0]).toMatchObject({ status: 'approved' })
-  })
-
-  it('allows denial without citation checks', async () => {
-    const deniedRow = { id: REVISION_ID, approval_status: 'denied' }
-    setResponses('social_content_revisions', [
-      {
-        data: {
-          id: REVISION_ID,
-          package_id: PACKAGE_ID,
-          org_id: 'org-1',
-          property_id: 'prop-1',
-          context_snapshot_id: 'snapshot-1',
-          approval_status: 'pending',
-          claims: [{ text: 'Rents from $999', type: 'pricing', citations: [] }],
-        },
-        error: null,
-      },
-      { data: deniedRow, error: null },
-      { data: { ...deniedRow, shared_action_attempt_id: 'action-2' }, error: null },
-    ])
-    setResponses('shared_jobs', [{ data: { id: 'approval-job-2' }, error: null }])
-    setResponses('shared_action_attempts', [{ data: { id: 'action-2' }, error: null }])
-    setResponses('shared_approvals', [{ data: null, error: null }])
-    setResponses('shared_policy_decisions', [{ data: null, error: null }])
-    setResponses('social_content_packages', [{ data: null, error: null }])
-
-    const { setRevisionApproval } = await import('./content-store')
-    const result = await setRevisionApproval({
-      revisionId: REVISION_ID,
-      decision: 'denied',
-      reviewerId: 'user-1',
-      note: 'Pricing is stale',
-    })
-    expect(result).toEqual({ ...deniedRow, shared_action_attempt_id: 'action-2' })
-  })
+describe('atomic editorial service',()=>{
+ it('binds validation, actor and exact loaded revision to one private transaction',async()=>{
+  setResponses('social_content_packages',[{data:{property_id:'property-1'},error:null}]);rpcMock.mockResolvedValue({data:{state:'saved',revision:{id:'new-revision'}},error:null})
+  const {addRevision}=await import('./content-store')
+  expect(await addRevision(PACKAGE_ID,{requestId:CONNECTION_ID,expectedRevisionId:REVISION_ID,modificationReason:'Improve copy',content:validContent as never,author:{kind:'user',userId:'operator'}})).toEqual({id:'new-revision'})
+  expect(rpcMock).toHaveBeenCalledWith('save_forgestudio_revision',expect.objectContaining({p_id:CONNECTION_ID,p_actor_id:'operator',p_property_id:'property-1',p_payload:expect.objectContaining({expectedRevisionId:REVISION_ID,reason:'Improve copy',validation:[[]]})}))
+  expect(callLog.filter(x=>['insert','update','delete'].includes(x.method))).toHaveLength(0)
+ })
+ it('never supersedes content before the transaction and surfaces an uncertain save',async()=>{
+  setResponses('social_content_packages',[{data:{property_id:'property-1'},error:null}]);rpcMock.mockResolvedValue({data:null,error:{message:'connection lost'}})
+  const {addRevision}=await import('./content-store');await expect(addRevision(PACKAGE_ID,{requestId:CONNECTION_ID,expectedRevisionId:REVISION_ID,modificationReason:'Improve copy',content:validContent as never,author:{kind:'user',userId:'operator'}})).rejects.toThrow(/could not be confirmed/)
+  expect(callLog.filter(x=>['insert','update','delete'].includes(x.method))).toHaveLength(0)
+ })
+ it('recovers an approval reply using the same immutable review identity',async()=>{
+  setResponses('social_content_revisions',[{data:{property_id:'property-1',content:validContent,content_hash:'a'.repeat(64)},error:null}]);rpcMock.mockResolvedValue({data:{state:'replayed',revision:{id:REVISION_ID,approval_status:'approved'}},error:null})
+  const {setRevisionApproval}=await import('./content-store');expect((await setRevisionApproval({requestId:CONNECTION_ID,revisionId:REVISION_ID,contentHash:'a'.repeat(64),decision:'approved',reviewerId:'operator',note:'Exact review'})).approval_status).toBe('approved')
+  expect(rpcMock).toHaveBeenCalledWith('review_forgestudio_revision',expect.objectContaining({p_payload:{revisionId:REVISION_ID,contentHash:'a'.repeat(64),decision:'approved',note:'Exact review'}}))
+ })
+ it.each(['stale_revision','publication_in_progress','forbidden','request_conflict'])('keeps %s holds without compensation writes',async state=>{
+  setResponses('social_content_packages',[{data:{property_id:'property-1'},error:null}]);rpcMock.mockResolvedValue({data:{state},error:null});const {addRevision}=await import('./content-store');await expect(addRevision(PACKAGE_ID,{expectedRevisionId:REVISION_ID,modificationReason:'Improve copy',content:validContent as never,author:{kind:'user',userId:'operator'}})).rejects.toThrow();expect(callLog.filter(x=>x.method==='update')).toHaveLength(0)
+ })
+ it('rejects unsupported claims and invalid channel content before recording approval',async()=>{
+  const bad={...validContent,claims:[{type:'pricing',text:'Special price',citations:[]}]};setResponses('social_content_revisions',[{data:{property_id:'property-1',content:bad},error:null}]);const {setRevisionApproval}=await import('./content-store');await expect(setRevisionApproval({revisionId:REVISION_ID,contentHash:'a'.repeat(64),decision:'approved',reviewerId:'operator',note:'Exact review'})).rejects.toThrow(/unsupported claims/);expect(rpcMock).not.toHaveBeenCalled()
+ })
 })
 
-describe('schedulePublications', () => {
-  const approvedRevision = {
-    id: REVISION_ID,
-    package_id: PACKAGE_ID,
-    org_id: 'org-1',
-    property_id: 'prop-1',
-    approval_status: 'approved',
-    approved_by: 'manager-1',
-    approval_note: 'Approved for this campaign',
-    context_snapshot_id: 'snapshot-1',
-  }
-
-  it('rejects unapproved revisions', async () => {
-    setResponses('social_content_revisions', [
-      { data: { ...approvedRevision, approval_status: 'pending' }, error: null },
-    ])
-    const { schedulePublications } = await import('./content-store')
-    await expect(
-      schedulePublications({
-        revisionId: REVISION_ID,
-        destinations: [{ connectionId: CONNECTION_ID, scheduledFor: '2026-08-01T17:00:00Z' }],
-        createdBy: 'user-1',
-      })
-    ).rejects.toThrow(/Only approved revisions/)
-  })
-
-  it('rejects revisions that are no longer current', async () => {
-    setResponses('social_content_revisions', [{ data: approvedRevision, error: null }])
-    setResponses('social_content_packages', [
-      { data: { current_revision_id: 'some-other-revision' }, error: null },
-    ])
-    const { schedulePublications } = await import('./content-store')
-    await expect(
-      schedulePublications({
-        revisionId: REVISION_ID,
-        destinations: [{ connectionId: CONNECTION_ID, scheduledFor: '2026-08-01T17:00:00Z' }],
-        createdBy: 'user-1',
-      })
-    ).rejects.toThrow(/current revision/)
-  })
-
-  it('creates a queued shared job and a publication per destination', async () => {
-    const publicationRow = {
-      id: 'pub-1',
-      revision_id: REVISION_ID,
-      connection_id: CONNECTION_ID,
-      status: 'scheduled',
-    }
-    setResponses('social_content_revisions', [{ data: approvedRevision, error: null }])
-    setResponses('social_content_packages', [
-      { data: { current_revision_id: REVISION_ID }, error: null },
-      { data: null, error: null },
-    ])
-    setResponses('social_content_variants', [
-      { data: [{ id: 'variant-1', platform: 'facebook' }], error: null },
-    ])
-    setResponses('social_connections', [
-      {
-        data: [{ id: CONNECTION_ID, platform: 'facebook', is_active: true, property_id: 'prop-1' }],
-        error: null,
-      },
-    ])
-    setResponses('shared_jobs', [
-      { data: { id: 'job-1' }, error: null },
-      { data: null, error: null },
-    ])
-    setResponses('shared_action_attempts', [{ data: { id: 'publish-action-1' }, error: null }])
-    setResponses('shared_approvals', [{ data: null, error: null }])
-    setResponses('shared_policy_decisions', [{ data: null, error: null }])
-    setResponses('social_publications', [{ data: publicationRow, error: null }])
-
-    const { schedulePublications } = await import('./content-store')
-    const result = await schedulePublications({
-      revisionId: REVISION_ID,
-      destinations: [{ connectionId: CONNECTION_ID, scheduledFor: '2026-08-01T17:00:00Z' }],
-      createdBy: 'user-1',
-    })
-
-    expect(result).toEqual([publicationRow])
-
-    const jobInserts = insertsFor('shared_jobs')
-    expect(jobInserts).toHaveLength(1)
-    expect(jobInserts[0].args[0]).toMatchObject({
-      domain: 'forgestudio.publication',
-      lifecycle_status: 'queued',
-      dedupe_key: `publication:${REVISION_ID}:variant-1:${CONNECTION_ID}`,
-    })
-
-    const publicationInserts = insertsFor('social_publications')
-    expect(publicationInserts).toHaveLength(1)
-    expect(publicationInserts[0].args[0]).toMatchObject({
-      revision_id: REVISION_ID,
-      connection_id: CONNECTION_ID,
-      variant_id: 'variant-1',
-      shared_job_id: 'job-1',
-      status: 'scheduled',
-    })
-  })
-
-  it('maps duplicate scheduling to a 409 conflict', async () => {
-    setResponses('social_content_revisions', [{ data: approvedRevision, error: null }])
-    setResponses('social_content_packages', [
-      { data: { current_revision_id: REVISION_ID }, error: null },
-    ])
-    setResponses('social_content_variants', [
-      { data: [{ id: 'variant-1', platform: 'facebook' }], error: null },
-    ])
-    setResponses('social_connections', [
-      {
-        data: [{ id: CONNECTION_ID, platform: 'facebook', is_active: true, property_id: 'prop-1' }],
-        error: null,
-      },
-    ])
-    setResponses('shared_jobs', [
-      { data: null, error: { code: '23505', message: 'duplicate key value' } },
-    ])
-
-    const { schedulePublications, ContentStoreError } = await import('./content-store')
-    const promise = schedulePublications({
-      revisionId: REVISION_ID,
-      destinations: [{ connectionId: CONNECTION_ID, scheduledFor: '2026-08-01T17:00:00Z' }],
-      createdBy: 'user-1',
-    })
-    await expect(promise).rejects.toThrowError(ContentStoreError)
-    await promise.catch((error) => {
-      expect((error as InstanceType<typeof ContentStoreError>).statusCode).toBe(409)
-    })
-  })
-
-  it('rejects destinations that are inactive or belong to another property', async () => {
-    setResponses('social_content_revisions', [{ data: approvedRevision, error: null }])
-    setResponses('social_content_packages', [
-      { data: { current_revision_id: REVISION_ID }, error: null },
-    ])
-    setResponses('social_content_variants', [
-      { data: [{ id: 'variant-1', platform: 'facebook' }], error: null },
-    ])
-    setResponses('social_connections', [{ data: [], error: null }])
-
-    const { schedulePublications } = await import('./content-store')
-    await expect(
-      schedulePublications({
-        revisionId: REVISION_ID,
-        destinations: [{ connectionId: CONNECTION_ID, scheduledFor: '2026-08-01T17:00:00Z' }],
-        createdBy: 'user-1',
-      })
-    ).rejects.toThrow(/invalid, inactive/)
-  })
-})
-
-describe('addRevision', () => {
-  it('supersedes prior revisions and cancels their scheduled publications', async () => {
-    const newRevision = { id: 'rev-3', revision_number: 3 }
-    setResponses('social_content_packages', [
-      { data: { id: PACKAGE_ID, org_id: 'org-1', property_id: 'prop-1' }, error: null },
-      { data: null, error: null },
-    ])
-    setResponses('social_content_revisions', [
-      { data: { revision_number: 2 }, error: null },
-      { data: [{ id: 'rev-2' }], error: null },
-      { data: newRevision, error: null },
-    ])
-    setResponses('social_publications', [
-      { data: [{ id: 'pub-1', shared_job_id: 'job-1' }], error: null },
-    ])
-    setResponses('shared_jobs', [{ data: null, error: null }])
-    setResponses('social_content_variants', [{ data: null, error: null }])
-
-    const { addRevision } = await import('./content-store')
-    const result = await addRevision(PACKAGE_ID, {
-      content: validContent as never,
-      author: { kind: 'user', userId: 'user-1' },
-    })
-
-    expect(result).toEqual(newRevision)
-
-    const revisionInserts = insertsFor('social_content_revisions')
-    expect(revisionInserts).toHaveLength(1)
-    expect(revisionInserts[0].args[0]).toMatchObject({
-      revision_number: 3,
-      approval_status: 'pending',
-      authored_by_kind: 'user',
-      authored_by: 'user-1',
-    })
-
-    const supersedeUpdates = updatesFor('social_content_revisions')
-    expect(supersedeUpdates).toHaveLength(1)
-    expect(supersedeUpdates[0].args[0]).toMatchObject({ approval_status: 'superseded' })
-
-    const publicationUpdates = updatesFor('social_publications')
-    expect(publicationUpdates).toHaveLength(1)
-    expect(publicationUpdates[0].args[0]).toMatchObject({ status: 'cancelled' })
-
-    const jobUpdates = updatesFor('shared_jobs')
-    expect(jobUpdates).toHaveLength(1)
-    expect(jobUpdates[0].args[0]).toMatchObject({ lifecycle_status: 'cancelled' })
-  })
-})
-
-describe('cancelPublication', () => {
-  it('cancels a scheduled publication and its queued job', async () => {
-    const cancelledRow = { id: 'pub-1', status: 'cancelled', shared_job_id: 'job-1' }
-    setResponses('social_publications', [{ data: cancelledRow, error: null }])
-    setResponses('shared_jobs', [{ data: null, error: null }])
-
-    const { cancelPublication } = await import('./content-store')
-    const result = await cancelPublication('pub-1')
-    expect(result).toEqual(cancelledRow)
-
-    const jobUpdates = updatesFor('shared_jobs')
-    expect(jobUpdates).toHaveLength(1)
-    expect(jobUpdates[0].args[0]).toMatchObject({ lifecycle_status: 'cancelled' })
-  })
-
-  it('refuses to cancel a publication that is already publishing', async () => {
-    setResponses('social_publications', [
-      { data: null, error: { message: 'No rows found', code: 'PGRST116' } },
-    ])
-    const { cancelPublication } = await import('./content-store')
-    await expect(cancelPublication('pub-1')).rejects.toThrow(/cannot be cancelled/)
-  })
+describe('atomic publication controls',()=>{
+ const input={requestId:PACKAGE_ID,revisionId:REVISION_ID,contentHash:'a'.repeat(64),createdBy:'operator',destinations:[{connectionId:CONNECTION_ID,variantId:REVISION_ID,scheduledFor:'2027-01-01T12:00:00Z',timezone:'America/Los_Angeles'}]}
+ it.each(['saved','replayed'])('returns the complete %s schedule without direct row writes',async state=>{
+  setResponses('social_content_revisions',[{data:{property_id:'property'},error:null}]);rpcMock.mockResolvedValue({data:{state,publications:[{id:'one'},{id:'two'}]},error:null})
+  const {schedulePublications}=await import('./content-store');expect(await schedulePublications(input)).toEqual([{id:'one'},{id:'two'}]);expect(rpcMock).toHaveBeenCalledWith('schedule_forgestudio_publications',{p_id:PACKAGE_ID,p_property_id:'property',p_actor_id:'operator',p_payload:{revisionId:REVISION_ID,contentHash:input.contentHash,destinations:input.destinations}});expect(callLog.filter(x=>['insert','update','delete'].includes(x.method))).toHaveLength(0)
+ })
+ it.each(['stale_revision','connection_unavailable','variant_unavailable','already_scheduled','schedule_time_required','timezone_required','approval_access_changed'])('surfaces %s without partial writes',async state=>{
+  setResponses('social_content_revisions',[{data:{property_id:'property'},error:null}]);rpcMock.mockResolvedValue({data:{state},error:null});const {schedulePublications}=await import('./content-store');await expect(schedulePublications(input)).rejects.toThrow();expect(callLog.filter(x=>['insert','update','delete'].includes(x.method))).toHaveLength(0)
+ })
+ it('binds cancellation to the version opened and recovers a lost reply',async()=>{
+  setResponses('social_publications',[{data:{property_id:'property'},error:null}]);rpcMock.mockResolvedValue({data:{state:'replayed',publication:{id:'pub',status:'cancelled'}},error:null});const {cancelPublication}=await import('./content-store');expect(await cancelPublication('pub',{requestId:PACKAGE_ID,actorId:'operator',expectedUpdatedAt:'2026-09-17T00:00:00Z'})).toMatchObject({status:'cancelled'});expect(rpcMock).toHaveBeenCalledWith('control_forgestudio_publication',expect.objectContaining({p_payload:{action:'cancel',publicationId:'pub',expectedUpdatedAt:'2026-09-17T00:00:00Z'}}))
+ })
+ it('never turns a blanket retry into another provider attempt',async()=>{
+  const {retryPublication}=await import('./content-store');await expect(retryPublication('pub')).rejects.toThrow(/uncertain post cannot be resent/);expect(rpcMock).not.toHaveBeenCalled();expect(fromMock).not.toHaveBeenCalled()
+ })
 })

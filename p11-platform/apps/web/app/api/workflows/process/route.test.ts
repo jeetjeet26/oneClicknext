@@ -1,90 +1,57 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NextRequest } from 'next/server'
 
-const processWorkflowsMock = vi.fn()
-const startCronJobRunMock = vi.fn()
-const finishCronJobRunMock = vi.fn()
-
-vi.mock('@/utils/services/workflow-processor', () => ({
-  processWorkflows: processWorkflowsMock,
+const mocks = vi.hoisted(() => ({ process: vi.fn(), start: vi.fn(), finish: vi.fn() }))
+vi.mock('@/utils/services/workflow-processor', () => ({ processWorkflows: mocks.process }))
+vi.mock('@/utils/services/cron-job-runs', async importOriginal => ({
+  ...await importOriginal<typeof import('@/utils/services/cron-job-runs')>(),
+  startCronJobRun: mocks.start, finishCronJobRun: mocks.finish, confirmCronJobRun: mocks.finish,
 }))
+import { GET } from './route'
 
-vi.mock('@/utils/services/cron-job-runs', () => ({
-  startCronJobRun: startCronJobRunMock,
-  finishCronJobRun: finishCronJobRunMock,
-}))
+function request(secret = 'expected-secret') {
+  return new Request('http://localhost/api/workflows/process', {
+    headers: { authorization: `Bearer ${secret}` },
+  }) as NextRequest
+}
 
-describe('GET /api/workflows/process', () => {
-  const originalEnv = { ...process.env }
-
+describe('workflow run reporting', () => {
   beforeEach(() => {
-    vi.clearAllMocks()
-    process.env = { ...originalEnv }
-    startCronJobRunMock.mockResolvedValue({
-      id: 'run-1',
-      jobName: 'workflows-process',
-      startedAtMs: 0,
-    })
-    finishCronJobRunMock.mockResolvedValue(undefined)
+    vi.resetAllMocks()
+    mocks.start.mockResolvedValue({ id: 'run-1' })
+    vi.stubEnv('NODE_ENV', 'production')
+    vi.stubEnv('CRON_SECRET', 'expected-secret')
   })
 
-  afterEach(() => {
-    process.env = originalEnv
-  })
+  afterEach(() => vi.unstubAllEnvs())
 
-  it('returns 401 when the cron secret is invalid in production mode', async () => {
-    Object.assign(process.env, {
-      NODE_ENV: 'production',
-      CRON_SECRET: 'expected-secret',
-    })
-
-    const { GET } = await import('./route')
-
-    const request = new Request('http://localhost/api/workflows/process', {
-      method: 'GET',
-      headers: {
-        authorization: 'Bearer wrong-secret',
-      },
-    }) as NextRequest
-
-    const response = await GET(request)
-
+  it('rejects invalid cron credentials before processing or recording a run', async () => {
+    const response = await GET(request('wrong-secret'))
     expect(response.status).toBe(401)
-    await expect(response.json()).resolves.toEqual({ error: 'Unauthorized' })
+    expect(await response.json()).toEqual({ error: 'Unauthorized' })
+    expect(mocks.process).not.toHaveBeenCalled()
+    expect(mocks.start).not.toHaveBeenCalled()
   })
 
-  it('returns workflow processing results when the cron secret is valid', async () => {
-    Object.assign(process.env, {
-      NODE_ENV: 'production',
-      CRON_SECRET: 'expected-secret',
-    })
-    processWorkflowsMock.mockResolvedValue({
-      processed: 3,
-      succeeded: 3,
-      failed: 0,
-      errors: [],
-    })
+  it('records a failure if processing throws', async () => {
+    mocks.process.mockRejectedValue(new Error('Test processing failure'))
+    expect((await GET(request())).status).toBe(500)
+    expect(mocks.finish).toHaveBeenCalledWith({ id: 'run-1' }, expect.objectContaining({ status: 'failed' }))
+  })
 
-    const { GET } = await import('./route')
-
-    const request = new Request('http://localhost/api/workflows/process', {
-      method: 'GET',
-      headers: {
-        authorization: 'Bearer expected-secret',
-      },
-    }) as NextRequest
-
-    const response = await GET(request)
-    const json = await response.json()
-
-    expect(response.status).toBe(200)
+  it.each([
+    { succeeded: 0, failed: 2, errors: ['Provider unavailable'], status: 'failed', http: 503 },
+    { succeeded: 1, failed: 1, errors: ['One action failed'], status: 'partial', http: 200 },
+    { succeeded: 0, failed: 0, errors: ['Could not fetch workflows'], status: 'failed', http: 503 },
+    { succeeded: 2, failed: 0, errors: [], status: 'success', http: 200 },
+    { succeeded: 0, failed: 0, errors: [], status: 'success', http: 200 },
+  ])('reports $status for $succeeded succeeded / $failed failed', async outcome => {
+    mocks.process.mockResolvedValue({ processed: outcome.succeeded + outcome.failed,
+      succeeded: outcome.succeeded, failed: outcome.failed, errors: outcome.errors })
+    const response = await GET(request())
+    expect(response.status).toBe(outcome.http)
     expect(response.headers.get('x-request-id')).toBeTruthy()
-    expect(json).toMatchObject({
-      success: true,
-      processed: 3,
-      succeeded: 3,
-      failed: 0,
-      errors: [],
-    })
+    expect(await response.json()).toMatchObject({ success: outcome.status === 'success', status: outcome.status })
+    expect(mocks.finish).toHaveBeenCalledWith({ id: 'run-1' }, expect.objectContaining({ status: outcome.status }))
   })
 })

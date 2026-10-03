@@ -1,459 +1,67 @@
 'use client'
-
-import { useState, useEffect } from 'react'
-import { useSearchParams } from 'next/navigation'
-import {
-  Instagram,
-  Facebook,
-  Linkedin,
-  Twitter,
-  Plus,
-  Unplug,
-  RefreshCw,
-  AlertTriangle,
-  CheckCircle,
-  ExternalLink,
-  Loader2,
-  Clock,
-  Settings,
-  Music2
-} from 'lucide-react'
-import { InstagramSetupModal } from './InstagramSetupModal'
-import { PlatformSetupModal } from './PlatformSetupModal'
-
-interface SocialConnection {
-  id: string
-  platform: string
-  account_id: string
-  account_name: string
-  account_username: string
-  account_avatar_url: string | null
-  is_active: boolean
-  scopes: string[]
-  token_expires_at: string | null
-  last_used_at: string | null
-  last_error: string | null
-  created_at: string
-  needs_refresh: boolean
+import {useCallback,useEffect,useRef,useState} from 'react'
+import {useSearchParams} from 'next/navigation'
+import {socialJson,type SavedSocialConnection} from '@/utils/forgestudio/connections-client'
+import {SocialAppSetup} from './SocialAppSetup'
+const platforms=[{id:'instagram',name:'Instagram',config:'meta'},{id:'facebook',name:'Facebook',config:'meta'},{id:'linkedin',name:'LinkedIn',config:'linkedin'},{id:'tiktok',name:'TikTok',config:'tiktok'},{id:'x',name:'X',config:'x'}]
+type Authorization={id:string;platform:string;state:string;version:number;createdAt:string;expiresAt:string;reason:string|null;accounts:Array<{accountId:string;accountName:string|null;accountUsername:string|null;scopes:string[];expiresAt:string|null;expiryKnown:boolean}>}
+type Renewal={id:string;connection_id:string;connection_version:number;platform:string;state:string;reason:string|null;created_at:string;finished_at:string|null}
+type RenewalPage={renewals:Renewal[];nextCursor:string|null}
+type Decision={url:string;method:string;body:Record<string,unknown>}
+type ConnectionPage={connections:SavedSocialConnection[];nextCursor:string|null;authorizationPaused:boolean;credentialStorageAvailable:boolean}
+type AuthorizationPage={authorizations:Authorization[];nextCursor:string|null}
+const stateLabels:Record<string,string>={pending:'Awaiting provider consent',exchanging:'Exchange started; result not yet confirmed',review_required:'Choose accounts to connect',completed:'Account review saved',cancelled:'Cancelled',failed:'Authorization failed',held:'New authorization required'}
+const button='rounded-lg border px-3 py-2 text-sm disabled:opacity-50'
+export function SocialConnections({propertyId}:{propertyId:string}){return <Connections key={propertyId} propertyId={propertyId}/>}
+function Connections({propertyId}:{propertyId:string}){
+ const query=useSearchParams(),[connections,setConnections]=useState<SavedSocialConnection[]>([]),[authorizations,setAuthorizations]=useState<Authorization[]>([]),[cursor,setCursor]=useState<string|null>(null),[authCursor,setAuthCursor]=useState<string|null>(null),[paused,setPaused]=useState(true),[loading,setLoading]=useState(true),[error,setError]=useState(''),[historyError,setHistoryError]=useState(''),[message,setMessage]=useState(''),[setup,setSetup]=useState<string|null>(null),[busy,setBusy]=useState(false),[pending,setPending]=useState<Decision|null>(null),[reason,setReason]=useState(''),[selected,setSelected]=useState<Record<string,string[]>>({})
+ const [renewals,setRenewals]=useState<Renewal[]>([]),[renewalCursor,setRenewalCursor]=useState<string|null>(null),[renewalError,setRenewalError]=useState(''),[secureStorage,setSecureStorage]=useState(false)
+ const mounted=useRef(true),controller=useRef<AbortController|null>(null),starts=useRef<Record<string,string>>({})
+ const reload=useCallback(async()=>{
+  controller.current?.abort();const c=new AbortController();controller.current=c;setLoading(true);setError('');setHistoryError('');setRenewalError('')
+  const results=await Promise.allSettled([socialJson<ConnectionPage>(`/api/forgestudio/social/connections?propertyId=${propertyId}`,{signal:c.signal}),socialJson<AuthorizationPage>(`/api/forgestudio/social/authorizations?propertyId=${propertyId}`,{signal:c.signal}),socialJson<RenewalPage>(`/api/forgestudio/social/renewal?propertyId=${propertyId}`,{signal:c.signal})]);if(c.signal.aborted)return
+  const [accounts,requests,accessHistory]=results
+  if(accounts.status==='fulfilled'){setConnections(accounts.value.connections);setCursor(accounts.value.nextCursor);setPaused(accounts.value.authorizationPaused);setSecureStorage(accounts.value.credentialStorageAvailable)}else{setConnections([]);setCursor(null);setPaused(true);setError(accounts.reason instanceof Error?accounts.reason.message:'Accounts could not be loaded.')}
+  if(requests.status==='fulfilled'){setAuthorizations(requests.value.authorizations);setAuthCursor(requests.value.nextCursor)}else{setAuthorizations([]);setAuthCursor(null);setHistoryError(requests.reason instanceof Error?requests.reason.message:'Authorization history could not be loaded.')}
+  if(accessHistory.status==='fulfilled'){setRenewals(accessHistory.value.renewals);setRenewalCursor(accessHistory.value.nextCursor)}else{setRenewals([]);setRenewalCursor(null);setRenewalError(accessHistory.reason instanceof Error?accessHistory.reason.message:'Renewal history could not be loaded.')}
+  setLoading(false)
+ },[propertyId])
+ useEffect(()=>{mounted.current=true;void reload();return()=>{mounted.current=false;controller.current?.abort()}},[reload])
+ useEffect(()=>{if(query.get('propertyId')&&query.get('propertyId')!==propertyId)return;const required=query.get('setup_required'),platform=platforms.find(p=>p.id===required);if(platform)setSetup(platform.config)},[query,propertyId])
+ async function more(kind:'accounts'|'requests'|'renewals'){
+  setBusy(true);setError('');try{if(kind==='accounts'){const data=await socialJson<ConnectionPage>(`/api/forgestudio/social/connections?propertyId=${propertyId}&cursor=${cursor}`);if(mounted.current){setConnections(prev=>[...prev,...data.connections.filter(row=>!prev.some(p=>p.id===row.id))]);setCursor(data.nextCursor)}}else if(kind==='renewals'){const data=await socialJson<RenewalPage>(`/api/forgestudio/social/renewal?propertyId=${propertyId}&cursor=${renewalCursor}`);if(mounted.current){setRenewals(prev=>[...prev,...data.renewals.filter(row=>!prev.some(p=>p.id===row.id))]);setRenewalCursor(data.nextCursor)}}else{const data=await socialJson<AuthorizationPage>(`/api/forgestudio/social/authorizations?propertyId=${propertyId}&cursor=${authCursor}`);if(mounted.current){setAuthorizations(prev=>[...prev,...data.authorizations.filter(row=>!prev.some(p=>p.id===row.id))]);setAuthCursor(data.nextCursor)}}}catch(e){if(mounted.current)setError(e instanceof Error?e.message:'More history could not be loaded.')}finally{if(mounted.current)setBusy(false)}
+ }
+ async function decide(decision:Decision){
+  if(busy)return;setPending(decision);setBusy(true);setError('');setMessage('')
+  try{const result=await socialJson<Record<string,unknown>>(decision.url,{method:decision.method,headers:{'Content-Type':'application/json'},body:JSON.stringify(decision.body)});if(mounted.current){setPending(null);setReason('');setSelected({});setMessage(decision.url.endsWith('/renewal')?(result.renewalState==='completed'||result.state==='completed'?'Renewed access saved. No publication was started.':result.renewalState==='held'||result.state==='held'?String(result.reason||'Renewal needs fresh authorization.'):'Renewal has started, but its result is not confirmed. Reload its saved history before continuing.'):decision.method==='DELETE'?`Account disconnected locally. ${result.cancelledCount??0} queued publications cancelled; ${result.inFlightCount??0} already-started publications still require review. Provider consent remains separate.`:decision.body.action==='apply'?'Selected accounts connected. No publication was started.':'Authorization cancelled. Provider consent remains separate.');await reload()}}catch(e){if(mounted.current)setError(e instanceof Error?e.message:'Decision could not be confirmed. Retry the same decision.')}finally{if(mounted.current)setBusy(false)}
+ }
+ function authorize(platform:string){starts.current[platform]??=crypto.randomUUID();window.location.assign(`/api/forgestudio/social/connect/${platform}?propertyId=${propertyId}&requestId=${starts.current[platform]}`)}
+ function review(a:Authorization,action:'apply'|'cancel'){void decide({url:'/api/forgestudio/social/authorizations',method:'POST',body:{propertyId,requestId:crypto.randomUUID(),authorizationId:a.id,expectedVersion:a.version,action,reason,...action==='apply'?{accountIds:selected[a.id]??[]}:{}}})}
+ const locked=busy||loading||!!pending
+ const callbackProperty=query.get('propertyId'),callbackStatus=query.get('status'),callbackError=query.get('error')
+ return <div className="space-y-6">
+  <div className="flex flex-wrap items-start justify-between gap-4"><div><h2 className="text-lg font-semibold">Connected accounts</h2><p className="mt-1 max-w-3xl text-sm text-slate-500">Review the accounts for this property. Disconnecting preserves campaign history and stops queued publications that have not started.</p></div><button className={button} disabled={busy||loading} onClick={()=>{setPending(null);setSelected({});void reload()}}>Reload connections</button></div>
+  {callbackProperty&&callbackProperty!==propertyId?<p role="status" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">The returned authorization belongs to another property. Select that property to review its saved request.</p>:(callbackError||callbackStatus)&&<p role="status" className="rounded-lg bg-slate-100 p-3 text-sm text-slate-700">{callbackError||stateLabels[callbackStatus??'']||'Review saved authorization history below.'}</p>}
+  {paused&&<p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">External authorization and delivery are paused in this environment. Saved accounts and decisions remain available for review.</p>}
+  {!loading&&!secureStorage&&<p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Secure credential storage must be configured on this server before authorizing or renewing accounts.</p>}
+  {error&&<p role="alert" className="text-sm text-red-600">{error}</p>}{message&&<p role="status" className="text-sm text-emerald-700">{message}</p>}
+  <div><label htmlFor="social-decision-reason" className="block text-sm font-medium">Reason for account decision</label><textarea id="social-decision-reason" value={reason} onChange={e=>setReason(e.target.value)} disabled={locked} maxLength={2000} placeholder="Why are you connecting, renewing, disconnecting or cancelling?" className="mt-1 w-full rounded-lg border bg-transparent p-3"/></div>
+  {pending&&<div className="flex flex-wrap items-center gap-3 rounded-lg border border-amber-300 p-3 text-sm"><p>The last decision is unconfirmed. Retry it or reload the saved state.</p><button className={button} disabled={busy} onClick={()=>void decide(pending)}>Retry same account decision</button></div>}
+  {loading?<p role="status">Loading saved accounts…</p>:<div className="grid gap-4 md:grid-cols-2">{platforms.map(platform=><section key={platform.id} aria-label={`${platform.name} accounts`} className="space-y-3 rounded-xl border p-4"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold">{platform.name}</h3><button className={button} disabled={locked} onClick={()=>setSetup(platform.config)}>App setup</button></div>
+   {connections.filter(c=>c.platform===platform.id).map(c=><article key={c.id} className="space-y-2 rounded-lg bg-slate-50 p-3 dark:bg-slate-800"><p className="break-words font-medium">{c.account_name||c.account_username||c.account_id}</p><p className="break-all text-xs text-slate-500">Account: {c.account_id}</p><p className="text-sm">{c.disconnected_at?'Disconnected locally':c.renewal_state==='held'?'Access renewal unconfirmed — authorize again':c.renewal_state==='exchanging'?'Access renewal started — awaiting a saved result':!c.is_active?'Inactive':!c.permission_evidence?'Existing account — permission evidence needs fresh authorization':c.token_expires_at&&Date.parse(c.token_expires_at)<=Date.now()?(c.can_renew?'Saved access expired — renew access below':'Saved access expired — authorize again'):c.needs_refresh?'Authorization renewal recommended':'Active account with saved grant evidence'}</p>{c.token_expires_at&&<p className="text-xs text-slate-500">Saved access expiry: {new Date(c.token_expires_at).toLocaleString()}</p>}{c.can_renew&&<button className={button} disabled={locked||paused||!secureStorage||reason.trim().length<3} onClick={()=>void decide({url:'/api/forgestudio/social/renewal',method:'POST',body:{propertyId,requestId:crypto.randomUUID(),connectionId:c.id,expectedVersion:c.security_version,reason}})}>Renew saved access for {c.account_name||c.account_id}</button>}{!c.disconnected_at&&<button className={button} disabled={locked||reason.trim().length<3} onClick={()=>void decide({url:'/api/forgestudio/social/connections',method:'DELETE',body:{propertyId,requestId:crypto.randomUUID(),connectionId:c.id,expectedVersion:c.security_version,reason}})}>Disconnect {c.account_name||c.account_id}</button>}</article>)}
+   {!connections.some(c=>c.platform===platform.id)&&<p className="text-sm text-slate-500">No accounts on this page.</p>}
+   <button className={`${button} w-full`} disabled={locked||paused||!secureStorage} onClick={()=>authorize(platform.id)}>Authorize or renew {platform.name}</button>
+  </section>)}</div>}
+  {cursor&&<button className={button} disabled={locked} onClick={()=>void more('accounts')}>Load more accounts</button>}
+  <section className="space-y-4"><div><h3 className="font-semibold">Authorization history</h3><p className="text-sm text-slate-500">Provider consent is saved for review first. Choose the exact accounts for this property. An interrupted exchange requires fresh consent; it is never automatically repeated.</p></div>
+   {historyError&&<p role="alert" className="text-sm text-red-600">{historyError}</p>}
+   {authorizations.map(a=><article key={a.id} aria-label={`${platforms.find(p=>p.id===a.platform)?.name??a.platform} authorization ${a.id}`} className="space-y-3 rounded-xl border p-4"><div className="flex flex-wrap justify-between gap-2"><h4 className="font-medium">{platforms.find(p=>p.id===a.platform)?.name??a.platform} — {stateLabels[a.state]||'Review needed'}</h4><span className="text-xs text-slate-500">{new Date(a.createdAt).toLocaleString()}</span></div>{a.state==='pending'&&<p className="text-xs text-slate-500">Consent link expires {new Date(a.expiresAt).toLocaleString()}.</p>}{a.reason&&<p className="text-sm text-slate-500">{a.reason.replaceAll('_',' ')}</p>}
+    {a.state==='review_required'&&a.accounts.map(account=><label key={account.accountId} className="flex items-start gap-3 rounded-lg bg-slate-50 p-3 text-sm dark:bg-slate-800"><input type="checkbox" className="mt-1" disabled={locked||!account.expiryKnown} checked={(selected[a.id]??[]).includes(account.accountId)} onChange={e=>setSelected(prev=>({...prev,[a.id]:e.target.checked?[...prev[a.id]??[],account.accountId]:(prev[a.id]??[]).filter(id=>id!==account.accountId)}))}/><span className="min-w-0"><span className="block break-words font-medium">{account.accountName||account.accountUsername||account.accountId}</span><span className="block break-all text-xs">Account: {account.accountId}</span><span className="mt-1 block break-words text-xs text-slate-500">{account.scopes.length?`Granted: ${account.scopes.join(', ')}`:'Permission evidence missing. Start fresh authorization.'}</span><span className="block text-xs text-slate-500">{account.expiryKnown&&account.expiresAt?`Access expires ${new Date(account.expiresAt).toLocaleString()}`:'Expiry is unconfirmed. Start fresh authorization.'}</span></span></label>)}
+    <div className="flex flex-wrap gap-3">{a.state==='review_required'&&<button className={button} disabled={locked||reason.trim().length<3||!selected[a.id]?.length} onClick={()=>review(a,'apply')}>Connect selected accounts</button>}{['pending','exchanging','review_required'].includes(a.state)&&<button className={button} disabled={locked||reason.trim().length<3} onClick={()=>review(a,'cancel')}>Cancel authorization</button>}</div>
+   </article>)}
+   {!loading&&!historyError&&!authorizations.length&&<p className="text-sm text-slate-500">No saved authorization requests.</p>}{authCursor&&<button className={button} disabled={locked} onClick={()=>void more('requests')}>Load more authorization history</button>}
+  </section>
+  <section aria-label="Access renewal history" className="space-y-3"><h3 className="font-semibold">Access renewal history</h3><p className="text-sm text-slate-500">Renewal uses saved consent. An unconfirmed exchange is held for fresh authorization; an earlier token is never automatically retried.</p>{renewalError&&<p role="alert" className="text-sm text-red-600">{renewalError}</p>}{renewals.map(r=><article key={r.id} className="space-y-1 rounded-lg border p-3 text-sm"><p className="font-medium">{platforms.find(p=>p.id===r.platform)?.name??r.platform} — {r.state==='completed'?'Renewed access saved':r.state==='held'?'New authorization required':Date.parse(r.created_at)<Date.now()-15*60_000?'Unconfirmed renewal — authorize again':'Renewal started; result unconfirmed'}</p><p className="break-all text-xs text-slate-500">Account record: {r.connection_id}</p><p className="text-xs text-slate-500">{new Date(r.created_at).toLocaleString()}</p>{r.reason&&<p>{r.reason}</p>}</article>)}{!loading&&!renewalError&&!renewals.length&&<p className="text-sm text-slate-500">No saved access renewal requests.</p>}{renewalCursor&&<button className={button} disabled={locked} onClick={()=>void more('renewals')}>Load more access renewal history</button>}</section>
+  {setup&&<SocialAppSetup propertyId={propertyId} platform={setup} onClose={()=>setSetup(null)} onConfigured={()=>void reload()}/>}
+ </div>
 }
-
-interface SocialConnectionsProps {
-  propertyId: string
-}
-
-interface PlatformConfig {
-  hasConfig: boolean
-  configSource: 'database' | 'environment' | null
-}
-
-const PLATFORMS = [
-  {
-    id: 'instagram',
-    name: 'Instagram',
-    icon: Instagram,
-    color: 'from-pink-500 to-purple-600',
-    bgColor: 'bg-gradient-to-r from-pink-500 to-purple-600',
-    textColor: 'text-pink-600',
-    description: 'Post photos and reels to Instagram',
-    available: true,
-    configPlatform: 'meta' // Instagram uses Meta credentials
-  },
-  {
-    id: 'facebook',
-    name: 'Facebook',
-    icon: Facebook,
-    color: 'from-blue-600 to-blue-700',
-    bgColor: 'bg-blue-600',
-    textColor: 'text-blue-600',
-    description: 'Post to your Facebook Page',
-    available: true,
-    configPlatform: 'meta' // Facebook uses Meta credentials
-  },
-  {
-    id: 'linkedin',
-    name: 'LinkedIn',
-    icon: Linkedin,
-    color: 'from-blue-700 to-blue-800',
-    bgColor: 'bg-blue-700',
-    textColor: 'text-blue-700',
-    description: 'Share updates on LinkedIn',
-    available: true,
-    configPlatform: 'linkedin'
-  },
-  {
-    id: 'tiktok',
-    name: 'TikTok',
-    icon: Music2,
-    color: 'from-slate-900 to-rose-600',
-    bgColor: 'bg-slate-900',
-    textColor: 'text-slate-900',
-    description: 'Post videos and photo carousels to TikTok',
-    available: true,
-    configPlatform: 'tiktok'
-  },
-  {
-    id: 'x',
-    name: 'X (Twitter)',
-    icon: Twitter,
-    color: 'from-slate-700 to-slate-900',
-    bgColor: 'bg-slate-800',
-    textColor: 'text-slate-700',
-    description: 'Post to your X audience',
-    available: true,
-    configPlatform: 'x'
-  }
-]
-
-const CONFIG_PLATFORMS = ['meta', 'linkedin', 'tiktok', 'x'] as const
-
-export function SocialConnections({ propertyId }: SocialConnectionsProps) {
-  const searchParams = useSearchParams()
-  const [connections, setConnections] = useState<SocialConnection[]>([])
-  const [loading, setLoading] = useState(true)
-  const [connecting, setConnecting] = useState<string | null>(null)
-  const [disconnecting, setDisconnecting] = useState<string | null>(null)
-  const [showSetupModal, setShowSetupModal] = useState<string | null>(null)
-  const [platformConfigs, setPlatformConfigs] = useState<Record<string, PlatformConfig>>({})
-  const [error, setError] = useState<string | null>(null)
-
-  // Check URL params for setup_required or errors
-  useEffect(() => {
-    const setupRequired = searchParams.get('setup_required')
-    const urlError = searchParams.get('error')
-    
-    if (setupRequired && PLATFORMS.some(p => p.id === setupRequired)) {
-      setShowSetupModal(setupRequired)
-    }
-    if (urlError) {
-      setError(decodeURIComponent(urlError))
-      // Clear error after 5 seconds
-      setTimeout(() => setError(null), 5000)
-    }
-  }, [searchParams])
-
-  useEffect(() => {
-    fetchConnections()
-    checkPlatformConfigs()
-  }, [propertyId])
-
-  const fetchConnections = async () => {
-    try {
-      const res = await fetch(`/api/forgestudio/social/connections?propertyId=${propertyId}`)
-      const data = await res.json()
-      setConnections(data.connections || [])
-    } catch (error) {
-      console.error('Error fetching connections:', error)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const checkPlatformConfigs = async () => {
-    await Promise.all(
-      CONFIG_PLATFORMS.map(async (configPlatform) => {
-        try {
-          const res = await fetch(
-            `/api/forgestudio/social/config?propertyId=${propertyId}&platform=${configPlatform}`
-          )
-          const data = await res.json()
-          setPlatformConfigs(prev => ({
-            ...prev,
-            [configPlatform]: { hasConfig: data.hasConfig, configSource: data.configSource }
-          }))
-        } catch (error) {
-          console.error(`Error checking ${configPlatform} config:`, error)
-        }
-      })
-    )
-  }
-
-  const handleConnect = async (platformId: string) => {
-    const platform = PLATFORMS.find(p => p.id === platformId)
-    if (!platform) return
-
-    // Check if we have credentials for this platform
-    const configPlatform = platform.configPlatform
-    const config = platformConfigs[configPlatform]
-
-    if (!config?.hasConfig) {
-      // Show setup modal
-      setShowSetupModal(platformId)
-      return
-    }
-
-    setConnecting(platformId)
-    // Redirect to OAuth flow
-    window.location.href = `/api/forgestudio/social/connect/${platformId}?propertyId=${propertyId}`
-  }
-
-  const handleSetupComplete = () => {
-    setShowSetupModal(null)
-    checkPlatformConfigs()
-  }
-
-  const handleDisconnect = async (connectionId: string) => {
-    if (!confirm('Are you sure you want to disconnect this account?')) return
-
-    setDisconnecting(connectionId)
-    try {
-      await fetch(`/api/forgestudio/social/connections?connectionId=${connectionId}`, {
-        method: 'DELETE'
-      })
-      fetchConnections()
-    } catch (error) {
-      console.error('Error disconnecting:', error)
-    } finally {
-      setDisconnecting(null)
-    }
-  }
-
-  const getConnectionForPlatform = (platformId: string) => {
-    return connections.find(c => c.platform === platformId)
-  }
-
-  const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric'
-    })
-  }
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <Loader2 className="w-8 h-8 animate-spin text-violet-600" />
-      </div>
-    )
-  }
-
-  return (
-    <div className="space-y-6">
-      {/* Setup Modals */}
-      {(showSetupModal === 'instagram' || showSetupModal === 'facebook') && (
-        <InstagramSetupModal
-          propertyId={propertyId}
-          onClose={() => setShowSetupModal(null)}
-          onConfigured={handleSetupComplete}
-        />
-      )}
-      {(showSetupModal === 'linkedin' || showSetupModal === 'tiktok' || showSetupModal === 'x') && (
-        <PlatformSetupModal
-          propertyId={propertyId}
-          platformId={showSetupModal}
-          onClose={() => setShowSetupModal(null)}
-          onConfigured={handleSetupComplete}
-        />
-      )}
-
-      {/* Error Banner */}
-      {error && (
-        <div className="bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/30 rounded-xl p-4 flex items-start gap-3">
-          <AlertTriangle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
-          <div className="flex-1">
-            <p className="text-sm font-medium text-red-800 dark:text-red-200">Connection Error</p>
-            <p className="text-sm text-red-700 dark:text-red-300 mt-0.5">{error}</p>
-          </div>
-          <button
-            onClick={() => setError(null)}
-            className="text-red-500 hover:text-red-700"
-          >
-            ×
-          </button>
-        </div>
-      )}
-
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="text-lg font-semibold text-slate-900 dark:text-white">
-            Connected Accounts
-          </h3>
-          <p className="text-sm text-slate-500">
-            Connect your social media accounts to publish content directly
-          </p>
-        </div>
-        <button
-          onClick={fetchConnections}
-          className="flex items-center gap-2 px-3 py-1.5 text-sm text-slate-600 hover:text-slate-900 dark:text-slate-400"
-        >
-          <RefreshCw className="w-4 h-4" />
-          Refresh
-        </button>
-      </div>
-
-      {/* Platforms Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {PLATFORMS.map((platform) => {
-          const Icon = platform.icon
-          const connection = getConnectionForPlatform(platform.id)
-          const isConnected = !!connection
-          const isConnecting = connecting === platform.id
-          const isDisconnecting = disconnecting === connection?.id
-
-          return (
-            <div
-              key={platform.id}
-              className={`bg-white dark:bg-slate-800 rounded-xl border ${
-                isConnected
-                  ? 'border-green-200 dark:border-green-500/30'
-                  : 'border-slate-200 dark:border-slate-700'
-              } p-5`}
-            >
-              <div className="flex items-start gap-4">
-                {/* Platform Icon */}
-                <div className={`p-3 rounded-xl ${platform.bgColor} text-white`}>
-                  <Icon className="w-6 h-6" />
-                </div>
-
-                {/* Info */}
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <h4 className="font-semibold text-slate-900 dark:text-white">
-                      {platform.name}
-                    </h4>
-                    {isConnected && (
-                      <CheckCircle className="w-4 h-4 text-green-500" />
-                    )}
-                    {!platform.available && (
-                      <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-700 text-slate-500 text-xs rounded-full">
-                        Coming Soon
-                      </span>
-                    )}
-                  </div>
-
-                  {isConnected ? (
-                    <div className="mt-2 space-y-2">
-                      {/* Connected Account Info */}
-                      <div className="flex items-center gap-2">
-                        {connection.account_avatar_url && (
-                          <img
-                            src={connection.account_avatar_url}
-                            alt={connection.account_name}
-                            className="w-6 h-6 rounded-full"
-                          />
-                        )}
-                        <span className="text-sm text-slate-700 dark:text-slate-300">
-                          @{connection.account_username || connection.account_name}
-                        </span>
-                      </div>
-
-                      {/* Status */}
-                      <div className="flex items-center gap-3 text-xs">
-                        {connection.needs_refresh && (
-                          <span className="flex items-center gap-1 text-amber-600">
-                            <AlertTriangle className="w-3 h-3" />
-                            Token expiring soon
-                          </span>
-                        )}
-                        {connection.last_error && (
-                          <span className="flex items-center gap-1 text-red-600">
-                            <AlertTriangle className="w-3 h-3" />
-                            Error
-                          </span>
-                        )}
-                        {connection.last_used_at && (
-                          <span className="flex items-center gap-1 text-slate-500">
-                            <Clock className="w-3 h-3" />
-                            Used {formatDate(connection.last_used_at)}
-                          </span>
-                        )}
-                      </div>
-
-                      {/* Actions */}
-                      <div className="flex items-center gap-2 mt-3">
-                        {connection.needs_refresh && (
-                          <button
-                            onClick={() => handleConnect(platform.id)}
-                            className="flex items-center gap-1 px-3 py-1.5 text-xs bg-amber-100 text-amber-700 rounded-lg hover:bg-amber-200"
-                          >
-                            <RefreshCw className="w-3 h-3" />
-                            Reconnect
-                          </button>
-                        )}
-                        <button
-                          onClick={() => handleDisconnect(connection.id)}
-                          disabled={isDisconnecting}
-                          className="flex items-center gap-1 px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg"
-                        >
-                          {isDisconnecting ? (
-                            <Loader2 className="w-3 h-3 animate-spin" />
-                          ) : (
-                            <Unplug className="w-3 h-3" />
-                          )}
-                          Disconnect
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="mt-2">
-                      <p className="text-sm text-slate-500 mb-3">
-                        {platform.description}
-                      </p>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => handleConnect(platform.id)}
-                          disabled={!platform.available || isConnecting}
-                          className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-all ${
-                            platform.available
-                              ? `bg-gradient-to-r ${platform.color} text-white hover:opacity-90`
-                              : 'bg-slate-100 dark:bg-slate-700 text-slate-400 cursor-not-allowed'
-                          }`}
-                        >
-                          {isConnecting ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                          ) : (
-                            <Plus className="w-4 h-4" />
-                          )}
-                          {isConnecting ? 'Connecting...' : 'Connect'}
-                        </button>
-                        {platform.available && platformConfigs[platform.configPlatform]?.hasConfig && (
-                          <button
-                            onClick={() => setShowSetupModal(platform.id)}
-                            className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
-                            title="Update credentials"
-                          >
-                            <Settings className="w-4 h-4" />
-                          </button>
-                        )}
-                      </div>
-                      {platform.available && !platformConfigs[platform.configPlatform]?.hasConfig && (
-                        <p className="text-xs text-amber-600 dark:text-amber-400 mt-2 flex items-center gap-1">
-                          <AlertTriangle className="w-3 h-3" />
-                          Setup required - click Connect to configure
-                        </p>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          )
-        })}
-      </div>
-
-      {/* Help Section */}
-      <div className="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-5">
-        <h4 className="font-medium text-slate-900 dark:text-white mb-2">
-          📱 How to Connect Instagram
-        </h4>
-        <ol className="text-sm text-slate-600 dark:text-slate-400 space-y-2 list-decimal list-inside">
-          <li>Your Instagram must be a <strong>Business</strong> or <strong>Creator</strong> account</li>
-          <li>Your Instagram must be connected to a <strong>Facebook Page</strong></li>
-          <li>Click "Connect" and authorize access through Facebook</li>
-          <li>Once connected, you can publish content directly from ForgeStudio!</li>
-        </ol>
-        <a
-          href="https://help.instagram.com/502981923235522"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-1 text-sm text-violet-600 hover:text-violet-700 mt-3"
-        >
-          Learn how to set up Instagram Business
-          <ExternalLink className="w-3 h-3" />
-        </a>
-      </div>
-    </div>
-  )
-}
-

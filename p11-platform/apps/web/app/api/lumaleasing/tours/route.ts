@@ -1,38 +1,28 @@
-// New tour booking write paths must go through `bookLumaLeasingTour`
-// in `utils/services/lumaleasing-tour-booking.ts`. This file's POST handler
-// retains its inline logic only because it is the public widget entry
-// point with rich availability/slot semantics; the shared service is now
-// the canonical write surface used by chat extraction and any future
-// LumaLeasing booking surface so they stay in lockstep on validation,
-// calendar sync, and confirmation email behavior.
-
-import { NextRequest, NextResponse } from 'next/server';
-import { createServiceClient } from '@/utils/supabase/admin';
-import { generateTourCalendarResponse } from '@/utils/services/calendar-invite';
-import { sendEmail, EmailAttachment } from '@/utils/services/messaging';
+import { admitLumaRead } from '@/utils/services/luma-public-read'
 import {
-  getCalendarConfig,
-  createCalendarEvent,
-  fetchBusyTimes,
-  generateAvailableSlots,
-} from '@/utils/services/google-calendar';
-import { startWorkflow } from '@/utils/services/workflow-processor';
-import { trackEngagementEvent } from '@/utils/services/engagement-tracker';
-import { recordLeadNoteAndSyncToCRM, syncLeadToCRM } from '@/utils/services/crm-sync';
-import { upsertLeadByContact } from '@/utils/services/lead-upsert';
-import { tourLimiter, getRateLimitKey, rateLimitHeaders } from '@/utils/services/rate-limiter';
-import {
-  badRequest,
-  buildCorsHeaders,
-  corsPreflightResponse,
-  serverError,
-  rateLimited,
+badRequest,
+buildCorsHeaders,
+corsPreflightResponse,
+rateLimited,
+serverError,
 } from '@/utils/services/api-helpers';
-import { auditLog, getRequestIp } from '@/utils/services/audit-logger';
-import { createRequestContext } from '@/utils/services/request-context';
+import { auditLog,getRequestIp } from '@/utils/services/audit-logger';
+import {
+fetchBusyTimes,
+generateAvailableSlots,
+getCalendarConfig
+} from '@/utils/services/google-calendar';
+import { upsertLeadByContact } from '@/utils/services/lead-upsert';
+import { withLumaRequest } from '@/utils/services/luma-requests';
+import { bookLumaLeasingTour } from '@/utils/services/lumaleasing-tour-booking';
 import { formatPropertyAddress } from '@/utils/services/property-address';
-import { tourBookingSchema, validateBody } from '@/utils/services/validation';
-import { endOfDay, parseISO, startOfDay } from 'date-fns';
+import { getRateLimitKey,rateLimitHeaders,tourLimiter } from '@/utils/services/rate-limiter';
+import { createRequestContext } from '@/utils/services/request-context';
+import { tourBookingSchema,validateBody } from '@/utils/services/validation';
+import { isWidgetSessionExpired } from '@/utils/services/widget-session';
+import { createServiceClient } from '@/utils/supabase/admin';
+import {calendarDateTimeInstant, calendarDayRange} from '@/utils/services/calendar-time';
+import { NextRequest,NextResponse } from 'next/server';
 
 type TourSlotRow = {
   id: string
@@ -138,6 +128,9 @@ export async function GET(req: NextRequest) {
 
     const propertyId = config.property_id
 
+    const denied = await admitLumaRead(supabase,req,propertyId,responseHeaders)
+    if(denied) return denied
+
     // Default to next 14 days
     const start = startDate || new Date().toISOString().split('T')[0];
     const end = endDate || new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
@@ -200,6 +193,10 @@ export async function GET(req: NextRequest) {
 
 // POST - Book a tour
 export async function POST(req: NextRequest) {
+  return withLumaRequest(req, 'tours', handlePost)
+}
+
+async function handlePost(req: NextRequest) {
   const ctx = createRequestContext(req, '/api/lumaleasing/tours')
   ctx.logStart()
   const origin = req.headers.get('origin')
@@ -287,7 +284,43 @@ export async function POST(req: NextRequest) {
     }
 
     const propertyId = config.property_id
-    const configuredTourDuration = config.tour_duration_minutes || 30
+    let validatedConversationId: string | null = null;
+    if (sessionId) {
+      const { data: session, error: sessionError } = await supabase
+        .from('widget_sessions')
+        .select('*')
+        .eq('id', sessionId)
+        .eq('property_id', propertyId)
+        .maybeSingle()
+
+      if (sessionError) throw sessionError;
+      if (!session) {
+        ctx.logSuccess(400, { reason: 'invalid_session_id', sessionId, propertyId })
+        return badRequest('Invalid sessionId for this property', responseHeaders)
+      }
+      if (isWidgetSessionExpired(session)) {
+        return NextResponse.json({ error: 'Session expired', code: 'session_expired' }, { status: 410, headers: responseHeaders });
+      }
+    }
+
+    if (conversationId) {
+      const { data: conversation, error: conversationError } = await supabase
+        .from('conversations')
+        .select('id, widget_session_id')
+        .eq('id', conversationId)
+        .eq('property_id', propertyId)
+        .maybeSingle()
+
+      if (conversationError) throw conversationError;
+      if (!conversation || (sessionId && conversation.widget_session_id !== sessionId)) {
+        ctx.logSuccess(400, { reason: 'invalid_conversation_id', conversationId, propertyId })
+        return badRequest('Invalid conversationId for this property', responseHeaders)
+      }
+
+      validatedConversationId = conversation.id
+    }
+
+    let configuredTourDuration = config.tour_duration_minutes || 30
 
     // Extract property info
     const propertyData = config.properties ? (Array.isArray(config.properties) ? config.properties[0] : config.properties) : null
@@ -304,7 +337,6 @@ export async function POST(req: NextRequest) {
     let slot: TourSlotRow | null = null;
     let bookingDate = effectiveTourDate;
     let bookingTime = effectiveTourTime;
-    let validatedConversationId: string | null = null;
     
     if (slotId) {
       // Slot-based booking (legacy method)
@@ -336,16 +368,6 @@ export async function POST(req: NextRequest) {
         return badRequest('Either slotId or tourDate+tourTime are required', responseHeaders)
       }
 
-      // Validate date is not in the past
-      const tourDateTime = new Date(`${bookingDate}T${bookingTime}:00`);
-      if (tourDateTime < new Date()) {
-        ctx.logSuccess(400, { reason: 'tour_in_past', bookingDate, bookingTime })
-        return NextResponse.json(
-          { error: 'Cannot book tours in the past' },
-          { status: 400, headers: responseHeaders }
-        );
-      }
-
       const calendarConfig = await getCalendarConfig(propertyId)
       if (!calendarConfig) {
         ctx.logSuccess(503, { reason: 'calendar_not_connected', propertyId, mode: 'post' })
@@ -371,17 +393,13 @@ export async function POST(req: NextRequest) {
         )
       }
 
-      const targetDate = parseISO(bookingDate)
-      const busyTimes = await fetchBusyTimes(
-        calendarConfig,
-        startOfDay(targetDate),
-        endOfDay(targetDate)
-      )
-      const availableSlots = generateAvailableSlots(
-        startOfDay(targetDate),
-        calendarConfig,
-        busyTimes
-      )
+      const instant = calendarDateTimeInstant(`${bookingDate}T${bookingTime}:00`, calendarConfig.timezone)
+      if (!instant || Date.parse(instant) <= Date.now()) return badRequest('Tour time is in the past, invalid or ambiguous', responseHeaders)
+      configuredTourDuration = calendarConfig.tour_duration_minutes
+      const range = calendarDayRange(bookingDate, bookingDate, calendarConfig.timezone)
+      const padding = calendarConfig.buffer_minutes * 60000
+      const busyTimes = await fetchBusyTimes(calendarConfig, new Date(range.start.getTime() - padding), new Date(range.end.getTime() + padding))
+      const availableSlots = generateAvailableSlots(bookingDate, calendarConfig, busyTimes)
       const selectedSlot = availableSlots.find(
         (availableSlot) => availableSlot.time === bookingTime
       )
@@ -398,36 +416,6 @@ export async function POST(req: NextRequest) {
           { status: 409, headers: responseHeaders }
         )
       }
-    }
-
-    if (sessionId) {
-      const { data: session } = await supabase
-        .from('widget_sessions')
-        .select('id')
-        .eq('id', sessionId)
-        .eq('property_id', propertyId)
-        .maybeSingle()
-
-      if (!session) {
-        ctx.logSuccess(400, { reason: 'invalid_session_id', sessionId, propertyId })
-        return badRequest('Invalid sessionId for this property', responseHeaders)
-      }
-    }
-
-    if (conversationId) {
-      const { data: conversation } = await supabase
-        .from('conversations')
-        .select('id')
-        .eq('id', conversationId)
-        .eq('property_id', propertyId)
-        .maybeSingle()
-
-      if (!conversation) {
-        ctx.logSuccess(400, { reason: 'invalid_conversation_id', conversationId, propertyId })
-        return badRequest('Invalid conversationId for this property', responseHeaders)
-      }
-
-      validatedConversationId = conversation.id
     }
 
     const repeatIntent = [
@@ -470,420 +458,25 @@ export async function POST(req: NextRequest) {
     });
     const leadId = leadResult.leadId;
 
-    syncLeadToCRM(propertyId, leadId, {
-      first_name: leadInfo.first_name || undefined,
-      last_name: leadInfo.last_name || undefined,
-      email: leadInfo.email,
-      phone: leadInfo.phone || undefined,
-      source: 'LumaLeasing Tour Booking',
-      status: 'tour_booked',
-      notes: repeatIntent,
-    }).catch(e =>
-      console.error('[LumaLeasing Tours] CRM lead re-sync failed (non-blocking):', e)
-    );
-
-    if (!leadResult.isExisting) {
-      startWorkflow(leadId, propertyId, 'lead_created').catch(e =>
-        console.error('[LumaLeasing Tours] Workflow start failed (non-blocking):', e)
-      )
-    }
-
-    if (!leadId) {
-      ctx.logError(500, 'Failed to create lead', { operation: 'book_tour' })
-      return NextResponse.json(
-        { error: 'Failed to create lead' },
-        { status: 500, headers: responseHeaders }
-      );
-    }
-
-    const { data: existingBooking } = await supabase
-      .from('tour_bookings')
-      .select('id, scheduled_date, scheduled_time, status, duration_minutes')
-      .eq('property_id', propertyId)
-      .eq('lead_id', leadId)
-      .eq('scheduled_date', bookingDate)
-      .eq('scheduled_time', bookingTime)
-      .in('status', ['scheduled', 'confirmed'])
-      .maybeSingle()
-
-    if (existingBooking) {
-      const duplicateCalendarResponse = generateTourCalendarResponse({
-        propertyName,
-        propertyAddress,
-        tourDate: existingBooking.scheduled_date,
-        tourTime: existingBooking.scheduled_time,
-        tourType: 'in_person',
-        durationMinutes: existingBooking.duration_minutes || configuredTourDuration,
-        prospectName: `${leadInfo.first_name || ''} ${leadInfo.last_name || ''}`.trim() || 'Guest',
-        prospectEmail: leadInfo.email,
-        propertyEmail: process.env.RESEND_FROM_EMAIL,
-        specialRequests: effectiveSpecialRequests || undefined,
-      });
-
-      ctx.logSuccess(200, {
-        mode: 'post',
-        bookingId: existingBooking.id,
-        propertyId,
-        leadId,
-        duplicate: true,
-      })
-
-      return NextResponse.json({
-        success: true,
-        duplicate: true,
-        booking: {
-          id: existingBooking.id,
-          date: existingBooking.scheduled_date,
-          time: existingBooking.scheduled_time,
-          status: existingBooking.status,
-        },
-        calendar: {
-          google: duplicateCalendarResponse.calendarLinks.google,
-          outlook: duplicateCalendarResponse.calendarLinks.outlook,
-          office365: duplicateCalendarResponse.calendarLinks.office365,
-          yahoo: duplicateCalendarResponse.calendarLinks.yahoo,
-          icsDownload: duplicateCalendarResponse.calendarLinks.icsDownload,
-        },
-        message: `This tour was already confirmed for ${formatDate(existingBooking.scheduled_date)} at ${formatTime(existingBooking.scheduled_time)}.`,
-      }, { headers: responseHeaders });
-    }
-
-    // Update session with lead if provided
     if (sessionId) {
-      await supabase
-        .from('widget_sessions')
-        .update({ lead_id: leadId, converted_at: new Date().toISOString() })
-        .eq('id', sessionId)
-        .eq('property_id', propertyId);
+      const linked = await supabase.from('widget_sessions').update({lead_id:leadId,converted_at:new Date().toISOString()}).eq('id',sessionId).eq('property_id',propertyId).select('id').single()
+      if (linked.error || !linked.data) throw new Error('Could not confirm session contact link')
     }
-
     if (validatedConversationId) {
-      await supabase
-        .from('conversations')
-        .update({ lead_id: leadId })
-        .eq('id', validatedConversationId)
-        .eq('property_id', propertyId);
+      const linked = await supabase.from('conversations').update({lead_id:leadId}).eq('id',validatedConversationId).eq('property_id',propertyId).select('id').single()
+      if (linked.error || !linked.data) throw new Error('Could not confirm conversation contact link')
     }
-
-    // Create booking
-    const { data: booking, error: bookingError } = await supabase
-      .from('tour_bookings')
-      .insert({
-        property_id: propertyId,
-        lead_id: leadId,
-        slot_id: slotId || null,
-        scheduled_date: bookingDate,
-        scheduled_time: bookingTime,
-        duration_minutes: slot ? 
-          (new Date(`1970-01-01T${slot.end_time}Z`).getTime() - new Date(`1970-01-01T${slot.start_time}Z`).getTime()) / 60000 :
-          configuredTourDuration,
-        special_requests: effectiveSpecialRequests || null,
-        source: 'lumaleasing',
-        booked_via_conversation_id: validatedConversationId,
-        status: 'confirmed',
-      })
-      .select()
-      .single();
-
-    if (bookingError) {
-      ctx.logError(500, bookingError, { operation: 'create_booking', leadId })
-      return NextResponse.json(
-        { error: 'Failed to create booking' },
-        { status: 500, headers: responseHeaders }
-      );
-    }
-
-    // Increment slot booking count (only if slot-based booking)
-    if (slotId && slot) {
-      await supabase
-        .from('tour_slots')
-        .update({ current_bookings: (slot.current_bookings || 0) + 1 })
-        .eq('id', slotId);
-    }
-
-    // Create activity on lead
-    await supabase
-      .from('lead_activities')
-      .insert({
-        lead_id: leadId,
-        type: 'tour_booked',
-        description: `Tour booked for ${bookingDate} at ${bookingTime}`,
-        metadata: { booking_id: booking.id },
-      });
-
-    // Track tour_scheduled engagement event (non-blocking)
-    trackEngagementEvent({
-      leadId,
-      propertyId,
-      eventType: 'tour_scheduled',
-      metadata: { booking_id: booking.id, source: 'lumaleasing_tour_widget' },
-    }).catch(e => console.error('[LumaLeasing Tours] Engagement tracking failed (non-blocking):', e))
-
-    // Record the tour in the connected CRM: syncs leads created via this
-    // endpoint that never reached the CRM, and attaches a tour note to leads
-    // that are already there. Non-blocking.
-    recordLeadNoteAndSyncToCRM(
-      propertyId,
-      leadId,
-      `Tour booked for ${formatDate(bookingDate)} at ${formatTime(bookingTime)} via TourSpark.${effectiveSpecialRequests ? ` Special requests: ${effectiveSpecialRequests}` : ''}`
-    )
-      .then((crmResult) => {
-        if (!crmResult.success) {
-          console.error('[LumaLeasing Tours] CRM tour note failed (non-blocking):', crmResult.error)
-        }
-      })
-      .catch(e => console.error('[LumaLeasing Tours] CRM tour note error (non-blocking):', e))
-
-    // Generate calendar response (Calendly-style)
-    const durationMinutes = booking.duration_minutes || 30;
-
-    const calendarResponse = generateTourCalendarResponse({
-      propertyName,
-      propertyAddress,
-      tourDate: booking.scheduled_date,
-      tourTime: booking.scheduled_time,
-      tourType: 'in_person', // Default to in-person for widget bookings
-      durationMinutes,
-      prospectName: `${leadInfo.first_name || ''} ${leadInfo.last_name || ''}`.trim() || 'Guest',
-      prospectEmail: leadInfo.email,
-      propertyEmail: process.env.RESEND_FROM_EMAIL,
-      specialRequests: effectiveSpecialRequests || undefined
-    });
-
-    // Create Google Calendar event (if calendar connected)
-    try {
-      const calendarConfig = await getCalendarConfig(propertyId)
-      
-      if (calendarConfig && calendarConfig.token_status === 'healthy') {
-        console.log(`[LumaLeasing Tours] Creating Google Calendar event for booking ${booking.id}`)
-        
-        const calendarEvent = await createCalendarEvent(calendarConfig, {
-          propertyName,
-          prospectName: `${leadInfo.first_name || ''} ${leadInfo.last_name || ''}`.trim() || 'Guest',
-          prospectEmail: leadInfo.email,
-          prospectPhone: leadInfo.phone,
-          tourDate: booking.scheduled_date,
-          tourTime: booking.scheduled_time.substring(0, 5), // Convert HH:MM:SS to HH:MM
-          specialRequests: effectiveSpecialRequests || undefined,
-          propertyAddress,
-        })
-
-        // Store event ID for two-way sync
-        const { error: calendarEventStoreError } = await supabase
-          .from('calendar_events')
-          .insert({
-            agent_calendar_id: calendarConfig.id,
-            tour_booking_id: booking.id,
-            google_event_id: calendarEvent.eventId,
-            provider_event_id: calendarEvent.eventId,
-            provider_event_link: calendarEvent.htmlLink || null,
-            sync_status: 'synced',
-            last_synced_at: new Date().toISOString(),
-          })
-
-        if (calendarEventStoreError) {
-          console.error(
-            `[LumaLeasing Tours] ⚠️ Failed to store calendar sync row for booking ${booking.id}:`,
-            calendarEventStoreError
-          )
-        }
-
-        console.log(`[LumaLeasing Tours] ✅ Created Google Calendar event: ${calendarEvent.eventId}`)
-      } else {
-        console.log(`[LumaLeasing Tours] ⚠️ Google Calendar not connected or unhealthy, skipping event creation`)
-      }
-    } catch (calendarError) {
-      // Calendar event creation is non-blocking - don't fail the booking
-      console.error(`[LumaLeasing Tours] ⚠️ Google Calendar event creation failed (non-blocking):`, calendarError)
-      await supabase.from('lead_activities').insert({
-        lead_id: leadId,
-        type: 'calendar_sync_failed',
-        description: `Google Calendar sync failed for booking ${booking.id}`,
-        metadata: {
-          booking_id: booking.id,
-          reason: calendarError instanceof Error ? calendarError.message : 'unknown_error',
-        },
-      })
-    }
-
-    // Send confirmation email with .ics calendar attachment
-    const emailSubject = `Your Tour at ${propertyName} is Confirmed! 📅`;
-    const emailBody = buildConfirmationEmail(
-      leadInfo.first_name || 'there',
-      propertyName,
-      formatDate(booking.scheduled_date),
-      formatTime(booking.scheduled_time),
-      propertyAddress
-    );
-
-    const attachments: EmailAttachment[] = [{
-      filename: calendarResponse.icsAttachment.filename,
-      content: calendarResponse.icsAttachment.content,
-      contentType: calendarResponse.icsAttachment.contentType
-    }];
-
-    // Send email asynchronously (don't block response)
-    sendEmail(
-      leadInfo.email,
-      emailSubject,
-      emailBody.text,
-      undefined,
-      emailBody.html,
-      attachments
-    ).then(result => {
-      if (result.success) {
-        console.log(`[LumaLeasing Tours] ✅ Confirmation email sent to ${leadInfo.email}`);
-      } else {
-        console.error(`[LumaLeasing Tours] ❌ Failed to send email: ${result.error}`);
-      }
-    }).catch(err => {
-      console.error('[LumaLeasing Tours] Email error:', err);
-    });
-
-    ctx.logSuccess(200, {
-      mode: 'post',
-      bookingId: booking.id,
-      propertyId,
-      leadId,
-    })
-
-    return NextResponse.json({
-      success: true,
-      booking: {
-        id: booking.id,
-        date: booking.scheduled_date,
-        time: booking.scheduled_time,
-        status: booking.status,
-      },
-      // Calendly-style calendar links for "Add to Calendar" buttons
-      calendar: {
-        google: calendarResponse.calendarLinks.google,
-        outlook: calendarResponse.calendarLinks.outlook,
-        office365: calendarResponse.calendarLinks.office365,
-        yahoo: calendarResponse.calendarLinks.yahoo,
-        icsDownload: calendarResponse.calendarLinks.icsDownload,
-      },
-      message: `Great! Your tour is confirmed for ${formatDate(booking.scheduled_date)} at ${formatTime(booking.scheduled_time)}. We've sent a confirmation with a calendar invite to ${leadInfo.email}.`,
-    }, { headers: responseHeaders });
+    const result = await bookLumaLeasingTour({supabase,propertyId,propertyName,propertyAddress,
+      leadId,leadInfo,bookingDate,bookingTime,durationMinutes:configuredTourDuration,
+      specialRequests:effectiveSpecialRequests,source:'lumaleasing',conversationId:validatedConversationId,
+      slot,skipAvailabilityCheck:true})
+    if (!result.ok) return NextResponse.json({error:result.message},{status:409,headers:responseHeaders})
+    return NextResponse.json({success:true,duplicate:result.duplicate,
+      booking:{id:result.booking.id,date:result.booking.scheduled_date,time:result.booking.scheduled_time,status:result.booking.status},
+      calendar:result.calendar,confirmationStatus:'pending',message:result.message},{headers:responseHeaders})
 
   } catch (error) {
     ctx.logError(500, error, { operation: 'book_tour' })
     return serverError(error, responseHeaders);
   }
-}
-
-function formatDate(dateStr: string): string {
-  const date = new Date(dateStr + 'T00:00:00');
-  return date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
-}
-
-function formatTime(timeStr: string): string {
-  const [hours, minutes] = timeStr.split(':');
-  const hour = parseInt(hours);
-  const ampm = hour >= 12 ? 'PM' : 'AM';
-  const hour12 = hour % 12 || 12;
-  return `${hour12}:${minutes} ${ampm}`;
-}
-
-function buildConfirmationEmail(
-  firstName: string,
-  propertyName: string,
-  tourDate: string,
-  tourTime: string,
-  propertyAddress?: string
-): { text: string; html: string } {
-  const text = `Hi ${firstName}!
-
-Your tour at ${propertyName} is confirmed! 🎉
-
-📅 Date: ${tourDate}
-🕐 Time: ${tourTime}
-${propertyAddress ? `📍 Address: ${propertyAddress}` : ''}
-
-We've attached a calendar invite to this email - just open it to add this tour to your calendar!
-
-When you arrive, check in at the leasing office and we'll take care of the rest.
-
-Need to reschedule? Just reply to this email.
-
-See you soon!
-The ${propertyName} Team`;
-
-  const html = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-</head>
-<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f4f4f5;">
-  <div style="max-width: 600px; margin: 0 auto; padding: 40px 20px;">
-    <div style="background: white; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
-      
-      <!-- Header -->
-      <div style="background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); padding: 32px; text-align: center;">
-        <h1 style="margin: 0; color: white; font-size: 24px; font-weight: 600;">Tour Confirmed! 🎉</h1>
-      </div>
-      
-      <!-- Content -->
-      <div style="padding: 32px;">
-        <p style="margin: 0 0 24px; font-size: 16px; color: #374151; line-height: 1.6;">
-          Hi ${firstName}!
-        </p>
-        
-        <p style="margin: 0 0 24px; font-size: 16px; color: #374151; line-height: 1.6;">
-          Your tour at <strong>${propertyName}</strong> is all set!
-        </p>
-        
-        <!-- Tour Details Card -->
-        <div style="background: #f9fafb; border-radius: 12px; padding: 24px; margin: 0 0 24px;">
-          <div style="display: flex; align-items: center; margin-bottom: 12px;">
-            <span style="font-size: 20px; margin-right: 12px;">📅</span>
-            <span style="font-size: 18px; font-weight: 600; color: #111827;">${tourDate}</span>
-          </div>
-          <div style="display: flex; align-items: center; margin-bottom: ${propertyAddress ? '12px' : '0'};">
-            <span style="font-size: 20px; margin-right: 12px;">🕐</span>
-            <span style="font-size: 18px; font-weight: 600; color: #111827;">${tourTime}</span>
-          </div>
-          ${propertyAddress ? `
-          <div style="display: flex; align-items: center;">
-            <span style="font-size: 20px; margin-right: 12px;">📍</span>
-            <span style="font-size: 16px; color: #4b5563;">${propertyAddress}</span>
-          </div>
-          ` : ''}
-        </div>
-        
-        <!-- Calendar Reminder -->
-        <div style="background: #fef3c7; border-radius: 8px; padding: 16px; margin: 0 0 24px;">
-          <p style="margin: 0; font-size: 14px; color: #92400e;">
-            <strong>📎 Calendar Invite Attached!</strong><br>
-            Open the attached .ics file to add this tour to your calendar automatically.
-          </p>
-        </div>
-        
-        <p style="margin: 0 0 16px; font-size: 16px; color: #374151; line-height: 1.6;">
-          When you arrive, just check in at the leasing office and we'll take care of the rest.
-        </p>
-        
-        <p style="margin: 0 0 24px; font-size: 14px; color: #6b7280;">
-          Need to reschedule? Just reply to this email.
-        </p>
-        
-        <p style="margin: 0; font-size: 16px; color: #374151;">
-          See you soon!<br>
-          <strong>The ${propertyName} Team</strong>
-        </p>
-      </div>
-      
-    </div>
-    
-    <!-- Footer -->
-    <div style="text-align: center; padding: 24px;">
-      <p style="margin: 0; font-size: 12px; color: #9ca3af;">
-        Powered by P11 Concierge
-      </p>
-    </div>
-  </div>
-</body>
-</html>`;  return { text, html };
 }

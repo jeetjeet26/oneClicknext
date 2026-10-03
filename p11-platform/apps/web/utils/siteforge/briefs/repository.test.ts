@@ -1,3 +1,4 @@
+vi.mock('@/utils/readiness/publication',()=>({currentApprovedReadiness:async(_property:string,client:{from:(table:string)=>{maybeSingle:()=>Promise<{data:unknown;error:unknown}>}})=>{const result=await client.from('property_onboarding_snapshots').maybeSingle();if(result.error)throw new Error('Readiness unavailable');return result.data}}))
 import { describe, expect, it, vi } from 'vitest'
 import {
   hashBrandForgeContract,
@@ -47,7 +48,7 @@ const canonicalBrandHash = hashBrandForgeContract(
 )
 
 describe('SiteForge brief source pinning service', () => {
-  it('returns exact approved onboarding and canonical BrandForge identities', async () => {
+  it.each([{conflicts:[]},{conflicts:[{domain:'propertyFacts',approvalPolicy:'manager_override'}]}])('returns exact current approved identities with acknowledged warnings %j', async ({conflicts}) => {
     const client = {
       from: vi.fn((table: string) => {
         if (table === 'property_onboarding_snapshots') {
@@ -59,7 +60,7 @@ describe('SiteForge brief source pinning service', () => {
               content_hash: 'a'.repeat(64),
               brand_asset_id: BRAND_ID,
               brand_contract_hash: canonicalBrandHash,
-              unresolved_conflicts: [],
+              unresolved_conflicts: conflicts,
             },
             error: null,
           })

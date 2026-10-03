@@ -11,18 +11,12 @@ vi.mock('@/utils/forgestudio/attribution', () => ({
 }))
 vi.mock('@/utils/supabase/admin', () => ({
   createServiceClient: () => ({
-    from: () => ({
-      select: () => ({
-        eq: () => ({
-          single: singleMock,
-        }),
-      }),
-    }),
+    from: () => {const q={select:()=>q,eq:()=>q,not:()=>q,lte:()=>q,single:singleMock};return q},
   }),
 }))
 
 describe('GET /api/forgestudio/track/[token]', () => {
-  it('records an anonymous landing view and redirects', async () => {
+  it('records a redirect observation for a published post', async () => {
     singleMock.mockResolvedValue({
       data: {
         social_content_variants: { link_url: 'https://property.example.com/tours' },
@@ -32,20 +26,20 @@ describe('GET /api/forgestudio/track/[token]', () => {
     recordMock.mockResolvedValue({ recorded: true, publicationId: 'publication-1' })
     const { GET } = await import('./route')
     const response = await GET(new Request(
-      'http://localhost/api/forgestudio/track/token-1',
+      'http://localhost/api/forgestudio/track/11111111-1111-4111-8111-111111111111',
       {
         headers: {
           'x-forwarded-for': '203.0.113.1',
           'user-agent': 'test-agent',
         },
       }
-    ) as NextRequest, { params: Promise.resolve({ token: 'token-1' }) })
+    ) as NextRequest, { params: Promise.resolve({ token: '11111111-1111-4111-8111-111111111111' }) })
 
     expect(response.status).toBe(307)
     expect(response.headers.get('location')).toBe('https://property.example.com/tours')
     expect(recordMock).toHaveBeenCalledWith(expect.objectContaining({
       eventType: 'landing_view',
-      trackingToken: 'token-1',
+      trackingToken: '11111111-1111-4111-8111-111111111111',
     }))
   })
 })

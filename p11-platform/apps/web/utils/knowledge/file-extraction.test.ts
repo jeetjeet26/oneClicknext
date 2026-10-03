@@ -1,0 +1,19 @@
+import {createHash} from 'node:crypto'
+import {it,expect} from 'vitest'
+import {extractOriginal} from './file-extraction'
+function tinyPDF(text='Retained original policy'){
+ const objects=['<< /Type /Catalog /Pages 2 0 R >>','<< /Type /Pages /Kids [3 0 R] /Count 1 >>','<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>','<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',`<< /Length ${text.length+33} >>\nstream\nBT /F1 12 Tf 20 100 Td (${text}) Tj ET\nendstream`]
+ let pdf='%PDF-1.4\n';const offsets=[0];for(const[index,obj]of objects.entries()){offsets.push(Buffer.byteLength(pdf));pdf+=`${index+1} 0 obj\n${obj}\nendobj\n`}const xref=Buffer.byteLength(pdf);pdf+=`xref\n0 6\n0000000000 65535 f \n${offsets.slice(1).map(n=>String(n).padStart(10,'0')+' 00000 n ').join('\n')}\ntrailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;return new TextEncoder().encode(pdf)
+}
+it('retains BOM, CRLF, short passages and Unicode from exact UTF-8 originals',async()=>{const text='\ufeffHi\r\n🏡';expect(await extractOriginal(new TextEncoder().encode(text),'text/plain','a')).toMatchObject({complete:true,pages:[text],text,totalPages:1})})
+it('holds invalid UTF-8 and null characters without lossy decoding',async()=>{expect((await extractOriginal(new Uint8Array([0xff]),'text/plain','a')).errorCode).toBe('invalid_utf8');expect((await extractOriginal(new TextEncoder().encode('No\0text'),'text/plain','a')).complete).toBe(false)})
+it('extracts an actual small PDF in the bounded worker and preserves page evidence',async()=>{const bytes=tinyPDF(),hash=createHash('sha256').update(bytes).digest('hex'),result=await extractOriginal(bytes,'application/pdf',hash);expect(result).toMatchObject({complete:true,totalPages:1,fileHash:hash,recipe:'unpdf-1.4.0-pages-v1'});expect(result.text).toContain('Retained original policy');expect(result.pages).toHaveLength(1);expect(result.limitations.join(' ')).toContain('no OCR')},15000)
+it('holds corrupt and blank PDFs without inventing usable source text',async()=>{const corrupt=new TextEncoder().encode('%PDF-corrupt');expect((await extractOriginal(corrupt,'application/pdf',createHash('sha256').update(corrupt).digest('hex'))).complete).toBe(false);const blank=tinyPDF('');expect((await extractOriginal(blank,'application/pdf',createHash('sha256').update(blank).digest('hex'))).errorCode).toBe('no_text')},15000)
+
+it('checks the exact original hash again inside the isolated PDF worker',async()=>{expect((await extractOriginal(tinyPDF(),'application/pdf','wrong-hash')).errorCode).toBe('original_mismatch')})
+it('holds a real PDF above the page limit before extracting any subset',async()=>{
+ const count=101,font=count+3,stream=count+4,content='BT /F1 12 Tf 20 100 Td (Policy) Tj ET'
+ const objects=['<< /Type /Catalog /Pages 2 0 R >>',`<< /Type /Pages /Kids [${Array.from({length:count},(_,i)=>`${i+3} 0 R`).join(' ')}] /Count ${count} >>`,...Array.from({length:count},()=>`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Resources << /Font << /F1 ${font} 0 R >> >> /Contents ${stream} 0 R >>`),'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',`<< /Length ${content.length} >>\nstream\n${content}\nendstream`]
+ let pdf='%PDF-1.4\n';const offsets=[0];for(const[i,o]of objects.entries()){offsets.push(Buffer.byteLength(pdf));pdf+=`${i+1} 0 obj\n${o}\nendobj\n`}const start=Buffer.byteLength(pdf);pdf+=`xref\n0 ${objects.length+1}\n0000000000 65535 f \n${offsets.slice(1).map(n=>String(n).padStart(10,'0')+' 00000 n ').join('\n')}\ntrailer\n<< /Size ${objects.length+1} /Root 1 0 R >>\nstartxref\n${start}\n%%EOF`
+ const bytes=new TextEncoder().encode(pdf),result=await extractOriginal(bytes,'application/pdf',createHash('sha256').update(bytes).digest('hex'));expect(result).toMatchObject({complete:false,totalPages:101,pages:[],errorCode:'page_limit'})
+},15000)

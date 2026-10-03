@@ -8,6 +8,7 @@ const processTourNoShowsMock = vi.fn()
 const getNoShowStatsMock = vi.fn()
 const startCronJobRunMock = vi.fn()
 const finishCronJobRunMock = vi.fn()
+const confirmCronJobRunMock = vi.fn()
 
 vi.mock('@/utils/supabase/server', () => ({
   createClient: createClientMock,
@@ -22,7 +23,9 @@ vi.mock('@/utils/services/tour-noshow', () => ({
   getNoShowStats: getNoShowStatsMock,
 }))
 
-vi.mock('@/utils/services/cron-job-runs', () => ({
+vi.mock('@/utils/services/cron-job-runs', async original => ({
+  ...await original<object>(),
+  confirmCronJobRun: confirmCronJobRunMock,
   startCronJobRun: startCronJobRunMock,
   finishCronJobRun: finishCronJobRunMock,
 }))
@@ -39,7 +42,8 @@ describe('tour no-show route', () => {
       jobName: 'tours-noshow',
       startedAtMs: 0,
     })
-    finishCronJobRunMock.mockResolvedValue(undefined)
+    finishCronJobRunMock.mockResolvedValue(true)
+    confirmCronJobRunMock.mockResolvedValue(undefined)
     createClientMock.mockResolvedValue({
       auth: { getUser: authGetUserMock },
     })
@@ -77,7 +81,9 @@ describe('tour no-show route', () => {
     processTourNoShowsMock.mockResolvedValue({
       processed: 3,
       markedNoShow: 2,
-      followupsSent: 2,
+      followupsSent: 0,
+      followupsQueued: 2,
+      needsSetup: 0, needsTimezone: 0, deferred: 0,
       failed: 0,
       errors: [],
     })
@@ -99,7 +105,9 @@ describe('tour no-show route', () => {
       success: true,
       processed: 3,
       markedNoShow: 2,
-      followupsSent: 2,
+      followupsSent: 0,
+      followupsQueued: 2,
+      needsSetup: 0, needsTimezone: 0, deferred: 0,
       failed: 0,
       errors: [],
     })
@@ -159,4 +167,28 @@ describe('tour no-show route', () => {
       timestamp: expect.any(String),
     })
   })
+  it('does not process without a durable run record', async () => {
+    process.env.CRON_SECRET = 'expected-secret'
+    startCronJobRunMock.mockResolvedValue(null)
+    const {POST} = await import('./route')
+    const response = await POST(new Request('http://localhost/api/tours/noshow', {method:'POST',headers:{authorization:'Bearer expected-secret'}}) as NextRequest)
+    expect(response.status).toBe(500); expect(processTourNoShowsMock).not.toHaveBeenCalled()
+  })
+  it.each([{failed:1,markedNoShow:0,status:'failed',http:503},{failed:1,markedNoShow:1,status:'partial',http:200}])('records truthful $status', async scenario => {
+    process.env.CRON_SECRET = 'expected-secret'
+    processTourNoShowsMock.mockResolvedValue({processed:2,followupsSent:0,followupsQueued:0,needsSetup:0,needsTimezone:0,deferred:0,errors:['write failed'],...scenario})
+    const {POST} = await import('./route')
+    const response=await POST(new Request('http://localhost/api/tours/noshow',{method:'POST',headers:{authorization:'Bearer expected-secret'}}) as NextRequest)
+    expect(response.status).toBe(scenario.http)
+    expect(await response.json()).toMatchObject({success:false,status:scenario.status})
+    expect(confirmCronJobRunMock).toHaveBeenCalledWith(expect.anything(),expect.objectContaining({status:scenario.status}))
+  })
+  it('does not claim success without a saved completion record', async () => {
+    process.env.CRON_SECRET = 'expected-secret'
+    processTourNoShowsMock.mockResolvedValue({processed:0,markedNoShow:0,followupsSent:0,followupsQueued:0,needsSetup:0,needsTimezone:0,deferred:0,failed:0,errors:[]})
+    confirmCronJobRunMock.mockRejectedValue(new Error('ledger failed'))
+    const {POST}=await import('./route')
+    expect((await POST(new Request('http://localhost/api/tours/noshow',{method:'POST',headers:{authorization:'Bearer expected-secret'}}) as NextRequest)).status).toBe(500)
+  })
+
 })

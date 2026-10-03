@@ -1,4 +1,6 @@
 'use client'
+import {PublicationRecovery} from './PublicationRecovery'
+import {savedEditorialRequest} from '@/utils/forgestudio/client'
 
 import { useCallback, useEffect, useState } from 'react'
 import {
@@ -9,7 +11,6 @@ import {
   ExternalLink,
   Loader2,
   RefreshCw,
-  XCircle,
 } from 'lucide-react'
 
 interface PublicationRow {
@@ -17,6 +18,7 @@ interface PublicationRow {
   platform: string
   status: string
   scheduled_for: string
+  updated_at:string
   timezone: string
   attempt_count: number
   max_attempts: number
@@ -42,7 +44,7 @@ const STATUS_STYLES: Record<string, { label: string; className: string }> = {
   scheduled: { label: 'Scheduled', className: 'bg-blue-100 text-blue-700' },
   queued: { label: 'Queued', className: 'bg-blue-100 text-blue-700' },
   publishing: { label: 'Publishing…', className: 'bg-amber-100 text-amber-700' },
-  reconciling: { label: 'Verifying…', className: 'bg-amber-100 text-amber-700' },
+  reconciling: { label: 'Needs review', className: 'bg-amber-100 text-amber-700' },
   published: { label: 'Published', className: 'bg-green-100 text-green-700' },
   failed: { label: 'Failed', className: 'bg-red-100 text-red-700' },
   cancelled: { label: 'Cancelled', className: 'bg-slate-100 text-slate-500' },
@@ -55,37 +57,44 @@ export function PublicationCalendar({ propertyId, refreshTrigger }: PublicationC
   const [busyId, setBusyId] = useState<string | null>(null)
   const [rescheduleId, setRescheduleId] = useState<string | null>(null)
   const [rescheduleAt, setRescheduleAt] = useState('')
+  const [nextCursor,setNextCursor]=useState<string|null>(null)
+  const [loadingMore,setLoadingMore]=useState(false)
+  const [reviewId,setReviewId]=useState<string|null>(null)
 
-  const load = useCallback(async () => {
-    setLoading(true)
+  const load = useCallback(async (signal?:AbortSignal,cursor?:string) => {
+    if(cursor)setLoadingMore(true);else setLoading(true)
     setError(null)
     try {
-      const res = await fetch(`/api/forgestudio/publications?propertyId=${propertyId}`)
+      const res = await fetch(`/api/forgestudio/publications?${new URLSearchParams({propertyId,...(cursor?{cursor}:{})})}`,{signal})
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Failed to load publications')
-      setPublications(data.publications || [])
+      if(!signal?.aborted){setPublications(previous=>cursor?[...previous,...(data.publications||[]).filter((row:PublicationRow)=>!previous.some(p=>p.id===row.id))]:(data.publications||[]));setNextCursor(data.nextCursor??null)}
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load publications')
+      if(!signal?.aborted){if(!cursor){setPublications([]);setNextCursor(null)};setError(err instanceof Error ? err.message : 'Failed to load publications')}
     } finally {
-      setLoading(false)
+      if(!signal?.aborted){setLoading(false);setLoadingMore(false)}
     }
   }, [propertyId])
 
   useEffect(() => {
-    load()
+    const controller=new AbortController();void load(controller.signal);return()=>controller.abort()
   }, [load, refreshTrigger])
 
   const patchPublication = async (publicationId: string, body: Record<string, unknown>) => {
     setBusyId(publicationId)
     setError(null)
     try {
+      const publication=publications.find(p=>p.id===publicationId)
+      if(!publication)throw new Error('Reload the saved publication before changing it.')
+      const request=await savedEditorialRequest('publication-'+publicationId,{...body,expectedUpdatedAt:publication.updated_at})
       const res = await fetch(`/api/forgestudio/publications/${publicationId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify(request.body),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Update failed')
+      request.acknowledge()
       setRescheduleId(null)
       setRescheduleAt('')
       await load()
@@ -142,7 +151,7 @@ export function PublicationCalendar({ propertyId, refreshTrigger }: PublicationC
             <div className="flex items-center gap-3 mt-2 text-xs text-slate-500">
               <span className="flex items-center gap-1">
                 <Clock className="w-3 h-3" />
-                {new Date(publication.scheduled_for).toLocaleString()} ({publication.timezone})
+                {new Date(publication.scheduled_for).toLocaleString(undefined,{timeZone:publication.timezone})} ({publication.timezone})
               </span>
               {publication.attempt_count > 0 && (
                 <span>
@@ -160,14 +169,14 @@ export function PublicationCalendar({ propertyId, refreshTrigger }: PublicationC
                 </a>
               )}
             </div>
-            {publication.last_error && publication.status === 'failed' && (
+            {publication.last_error && (
               <p className="text-xs text-red-600 mt-1 flex items-center gap-1">
                 <AlertTriangle className="w-3 h-3" /> {publication.last_error}
               </p>
             )}
           </div>
 
-          {editable && (
+          {editable && ['scheduled','queued'].includes(publication.status) && (
             <div className="flex items-center gap-1.5 flex-shrink-0">
               <button
                 onClick={() => {
@@ -194,9 +203,12 @@ export function PublicationCalendar({ propertyId, refreshTrigger }: PublicationC
           )}
         </div>
 
+        <button type="button" className="mt-3 text-sm text-violet-700 underline" onClick={()=>setReviewId(reviewId===publication.id?null:publication.id)}>Review saved evidence</button>
+        {reviewId===publication.id&&<div className="mt-3"><PublicationRecovery key={publication.id} publicationId={publication.id} onSaved={()=>{setReviewId(null);void load()}}/></div>}
         {rescheduleId === publication.id && (
           <div className="flex items-center gap-2 mt-3 pt-3 border-t border-slate-100 dark:border-slate-700">
             <input
+              aria-label="New publication time"
               type="datetime-local"
               value={rescheduleAt}
               onChange={(event) => setRescheduleAt(event.target.value)}
@@ -234,7 +246,9 @@ export function PublicationCalendar({ propertyId, refreshTrigger }: PublicationC
           </p>
         </div>
         <button
-          onClick={load}
+          onClick={()=>void load()}
+          aria-label="Refresh publication schedule"
+          disabled={loadingMore}
           className="flex items-center gap-2 px-3 py-1.5 text-sm text-slate-600 hover:text-slate-900 dark:text-slate-400"
         >
           <RefreshCw className="w-4 h-4" /> Refresh
@@ -260,13 +274,15 @@ export function PublicationCalendar({ propertyId, refreshTrigger }: PublicationC
         )}
       </div>
 
+      {nextCursor&&<button disabled={loadingMore} onClick={()=>void load(undefined,nextCursor)} className="rounded border border-slate-300 px-4 py-2 text-sm">{loadingMore?'Loading more publications…':'Load more publications'}</button>}
+
       {history.length > 0 && (
         <div>
           <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2 flex items-center gap-1.5">
             <CheckCircle className="w-4 h-4" /> History
           </h4>
           <div className="space-y-3">
-            {history.slice(0, 20).map((publication) => renderRow(publication, false))}
+            {history.map((publication) => renderRow(publication, false))}
           </div>
         </div>
       )}

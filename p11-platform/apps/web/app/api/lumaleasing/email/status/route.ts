@@ -1,3 +1,4 @@
+import {integrationPermissionState} from '@/utils/services/integration-permissions'
 /**
  * Gmail Status API
  * Returns email connection status for a property
@@ -32,7 +33,7 @@ type PendingThreadPreview = {
 }
 
 type WebhookCapability = {
-  mode: 'push_watch' | 'unconfigured'
+  mode: 'push_watch' | 'manual_check' | 'unconfigured'
   ready: boolean
   blockers: string[]
   watch_expires_at: string | null
@@ -114,11 +115,14 @@ function parseIsoTimestamp(value: string | null | undefined): number | null {
 
 function getEmailWebhookCapability(params: {
   connected: boolean
+  provider?: string | null
   tokenStatus: string | null
   syncEnabled: boolean | null
   historyId: string | null
   watchExpiration: string | null
 }): WebhookCapability {
+  if (params.provider === 'microsoft') return {mode: 'manual_check', ready: false, blockers: ['provider_push_not_configured', ...(!params.connected ? ['email_access_unavailable'] : [])], watch_expires_at: null, watch_ttl_minutes: null, history_id: null}
+
   if (!params.connected) {
     return {
       mode: 'unconfigured',
@@ -171,7 +175,7 @@ function getConnectionState(params: {
   }
 
   const tokenExpiresMs = parseIsoTimestamp(params.tokenExpiresAt)
-  if (params.tokenStatus !== 'healthy' || (tokenExpiresMs !== null && tokenExpiresMs <= Date.now())) {
+  if (params.tokenStatus !== 'healthy' || (tokenExpiresMs === null || tokenExpiresMs <= Date.now())) {
     return 'reconnect_required'
   }
 
@@ -210,17 +214,19 @@ export async function GET(request: NextRequest) {
     const serviceSupabase = createServiceClient()
     const { data: emailConfig, error } = await serviceSupabase
       .from('email_configurations')
-      .select('id, provider, google_email, account_email, token_status, last_health_check_at, token_expires_at, sync_enabled, auto_reply_enabled, last_sync_at, history_id, watch_expiration')
+      .select('id, scopes, provider_metadata, provider, google_email, account_email, token_status, last_health_check_at, token_expires_at, sync_enabled, auto_reply_enabled, last_sync_at, history_id, watch_expiration')
       .eq('property_id', propertyId)
+      .is('retired_at', null)
       .maybeSingle()
 
-    if (error || !emailConfig) {
+    if (error) throw new Error('Email connection status could not be loaded.')
+    if (!emailConfig) {
       ctx.logSuccess(200, { propertyId, connected: false })
       return NextResponse.json(
         {
           connected: false,
           state: 'disconnected',
-          message: 'Gmail not connected',
+          message: 'Email not connected',
           webhook_capability: getEmailWebhookCapability({
             connected: false,
             tokenStatus: null,
@@ -233,11 +239,14 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    const state = getConnectionState({
+    const connectionState = getConnectionState({
       tokenStatus: emailConfig.token_status,
       syncEnabled: emailConfig.sync_enabled,
       tokenExpiresAt: emailConfig.token_expires_at,
     })
+
+    const permissionState = integrationPermissionState(emailConfig.provider === 'microsoft' ? 'microsoft' : 'google', 'email', emailConfig.scopes, emailConfig.provider_metadata)
+    const state: ConnectionState = connectionState === 'connected' && permissionState !== 'confirmed' ? 'reconnect_required' : connectionState
 
     const { data: threadRows, error: threadError } = await serviceSupabase
       .from('email_threads')
@@ -291,7 +300,8 @@ export async function GET(request: NextRequest) {
       state,
       tokenStatus: emailConfig.token_status,
       webhookReady: getEmailWebhookCapability({
-        connected: true,
+        connected: state === 'connected',
+        provider: emailConfig.provider,
         tokenStatus: emailConfig.token_status,
         syncEnabled: emailConfig.sync_enabled,
         historyId: emailConfig.history_id,
@@ -307,16 +317,20 @@ export async function GET(request: NextRequest) {
       {
         connected: state === 'connected',
         state,
+        message: state === 'connected' ? 'Email access is connected.' : emailConfig.token_status === 'refresh_unconfirmed' ? 'Email renewal could not be confirmed. Reconnect this account to restore access.' : state === 'disconnected' ? 'Email is disconnected.' : 'Email access needs to be renewed. Reconnect this account if access remains unavailable.',
         provider: emailConfig.provider || 'google',
         email: emailConfig.account_email || emailConfig.google_email,
         account_email: emailConfig.account_email || emailConfig.google_email,
+        permission_state: permissionState,
+        permission_message: permissionState === 'confirmed' ? null : permissionState === 'permissions_incomplete' ? 'Required permissions are missing. Reconnect and grant the requested access.' : 'Saved permissions are unconfirmed. Reconnect this account to verify access.',
         token_status: emailConfig.token_status,
         last_health_check_at: emailConfig.last_health_check_at,
         last_sync_at: emailConfig.last_sync_at,
         sync_enabled: emailConfig.sync_enabled,
         auto_reply_enabled: emailConfig.auto_reply_enabled,
         webhook_capability: getEmailWebhookCapability({
-          connected: true,
+          connected: state === 'connected',
+        provider: emailConfig.provider,
           tokenStatus: emailConfig.token_status,
           syncEnabled: emailConfig.sync_enabled,
           historyId: emailConfig.history_id,

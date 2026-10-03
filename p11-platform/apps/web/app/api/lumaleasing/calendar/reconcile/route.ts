@@ -63,7 +63,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(
       {
-        success: true,
+        success: result.failed===0 && result.skipped===0,
         ...result,
       },
       { headers: ctx.responseHeaders }

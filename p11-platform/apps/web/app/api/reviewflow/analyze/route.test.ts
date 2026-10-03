@@ -1,101 +1,25 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { NextRequest } from 'next/server'
-
-const authGetUserMock = vi.fn()
-const createClientMock = vi.fn()
-const validatePropertyAccessMock = vi.fn()
-const openAiCreateMock = vi.fn()
-
-vi.mock('@/utils/supabase/server', () => ({
-  createClient: createClientMock,
-}))
-
-vi.mock('@/utils/services/auth-guard', () => ({
-  validatePropertyAccess: validatePropertyAccessMock,
-}))
-
-vi.mock('openai', () => {
-  return {
-    default: class OpenAI {
-      chat = {
-        completions: {
-          create: openAiCreateMock,
-        },
-      }
-    },
-  }
-})
-
-describe('reviewflow analyze route', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    openAiCreateMock.mockReset()
-    createClientMock.mockResolvedValue({
-      auth: { getUser: authGetUserMock },
-      from: vi.fn(),
-    })
-  })
-
-  it('returns 401 when unauthenticated', async () => {
-    authGetUserMock.mockResolvedValue({ data: { user: null }, error: null })
-
-    const { POST } = await import('./route')
-    const response = await POST(
-      new Request('http://localhost/api/reviewflow/analyze', {
-        method: 'POST',
-        body: JSON.stringify({
-          reviewText: 'Great place',
-          propertyId: 'property-1',
-          rating: 5,
-        }),
-      }) as NextRequest
-    )
-
-    expect(response.status).toBe(401)
-    await expect(response.json()).resolves.toEqual({ error: 'Unauthorized' })
-  })
-
-  it('returns 403 when property access is denied for direct analysis', async () => {
-    authGetUserMock.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
-    validatePropertyAccessMock.mockResolvedValue({ authorized: false })
-
-    const { POST } = await import('./route')
-    const response = await POST(
-      new Request('http://localhost/api/reviewflow/analyze', {
-        method: 'POST',
-        body: JSON.stringify({
-          reviewText: 'Great place',
-          propertyId: 'property-1',
-          rating: 5,
-        }),
-      }) as NextRequest
-    )
-
-    expect(response.status).toBe(403)
-    await expect(response.json()).resolves.toEqual({ error: 'Forbidden' })
-  })
-
-  it('returns 503 with manual review guidance when provider analysis fails', async () => {
-    authGetUserMock.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
-    validatePropertyAccessMock.mockResolvedValue({ authorized: true })
-    openAiCreateMock.mockRejectedValue(new Error('provider down'))
-
-    const { POST } = await import('./route')
-    const response = await POST(
-      new Request('http://localhost/api/reviewflow/analyze', {
-        method: 'POST',
-        body: JSON.stringify({
-          reviewText: 'Great place',
-          propertyId: 'property-1',
-          rating: 5,
-        }),
-      }) as NextRequest
-    )
-
-    expect(response.status).toBe(503)
-    await expect(response.json()).resolves.toMatchObject({
-      error: 'Review analysis unavailable',
-      manualReviewRequired: true,
-    })
-  })
+import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest'
+import {NextRequest} from 'next/server'
+const {auth,access,from,begin,rpc,run,recover,after}=vi.hoisted(()=>({auth:vi.fn(),access:vi.fn(),from:vi.fn(),begin:vi.fn(),rpc:vi.fn(),run:vi.fn(),recover:vi.fn(),after:vi.fn()}))
+vi.mock('next/server',async()=>({...await vi.importActual('next/server'),after}))
+vi.mock('@/utils/supabase/server',()=>({createClient:async()=>({auth:{getUser:auth}})}))
+vi.mock('@/utils/services/auth-guard',()=>({validatePropertyAccess:access}))
+vi.mock('@/utils/supabase/admin',()=>({createServiceClient:()=>({from})}))
+vi.mock('@/utils/reviewflow/analysis-store',async()=>({...await vi.importActual('@/utils/reviewflow/analysis-store'),requestReviewAnalysis:begin,reviewRpc:rpc,runSavedReviewAnalysis:run,recoverReviewAnalysis:recover}))
+import {GET,POST,PATCH} from './route'
+const propertyId='33333333-3333-4333-8333-333333333333',reviewId='55555555-5555-4555-8555-555555555555',requestId='66666666-6666-4666-8666-666666666666'
+const input={propertyId,requestId,reviewId,sourceVersion:1}
+const req=(body?:unknown,method='POST')=>new NextRequest(`http://localhost/api/reviewflow/analyze?propertyId=${propertyId}&reviewId=${reviewId}`,body?{method,body:JSON.stringify(body),headers:{'Content-Type':'application/json'}}:undefined)
+function chain(data:unknown,error:unknown=null){const result={data,error},q={select:vi.fn(),eq:vi.fn(),order:vi.fn(),limit:vi.fn(),or:vi.fn(),maybeSingle:vi.fn().mockResolvedValue(result),then:vi.fn()};for(const key of ['select','eq','order','limit','or'] as const)q[key].mockReturnValue(q);q.then.mockImplementation((r:(v:unknown)=>unknown)=>Promise.resolve(result).then(r));return q}
+beforeEach(()=>{vi.clearAllMocks();vi.stubEnv('OUTBOUND_DELIVERY_PAUSED','true');auth.mockResolvedValue({data:{user:{id:'operator'}},error:null});access.mockResolvedValue({authorized:true});begin.mockResolvedValue({state:'queued',requestId});rpc.mockResolvedValue({state:'saved',requestId,requestState:'result_ready'});recover.mockResolvedValue({state:'saved',analysisId:requestId});from.mockImplementation((name:string)=>chain(name==='reviews'?{source_version:1}:[]))})
+afterEach(()=>vi.unstubAllEnvs())
+describe('saved ReviewFlow analysis API',()=>{
+ it('requires authentication and current property access before private work',async()=>{auth.mockResolvedValueOnce({data:{user:null},error:null});expect((await POST(req(input))).status).toBe(401);access.mockResolvedValue({authorized:false});expect((await POST(req(input))).status).toBe(403);expect((await GET(req())).status).toBe(403);expect(begin).not.toHaveBeenCalled();expect(from).not.toHaveBeenCalled()})
+ it('retires unsaved ad-hoc model execution and rejects unknown fields',async()=>{for(const body of [{propertyId,reviewText:'unsaved input'},{...input,sourceVersion:0},{...input,model:'untrusted'}])expect((await POST(req(body))).status).toBe(400);expect(begin).not.toHaveBeenCalled();expect(after).not.toHaveBeenCalled()})
+ it('saves requests while paused without scheduling model execution',async()=>{const r=await POST(req(input));expect(r.status).toBe(202);expect(await r.json()).toEqual({request:{state:'queued',requestId},modelExecutionPaused:true});expect(begin).toHaveBeenCalledWith(input,'operator');expect(after).not.toHaveBeenCalled();expect(run).not.toHaveBeenCalled()})
+ it('dispatches only a queued saved request after the response when execution is enabled',async()=>{vi.stubEnv('OUTBOUND_DELIVERY_PAUSED','false');await POST(req(input));expect(after).toHaveBeenCalledTimes(1);await after.mock.calls[0][0]();expect(run).toHaveBeenCalledWith(requestId);begin.mockResolvedValue({state:'running',requestId});after.mockClear();await POST(req(input));expect(after).not.toHaveBeenCalled()})
+ it('records exact recovery identity before applying saved output, including during a pause',async()=>{const body={propertyId,requestId,analysisRequestId:reviewId,expectedVersion:3,action:'recover',reason:'Recover saved result'};expect((await PATCH(req(body,'PATCH'))).status).toBe(200);expect(rpc).toHaveBeenCalledWith('request_reviewflow_analysis_recovery',{p_id:requestId,p_property_id:propertyId,p_actor_id:'operator',p_input:{analysisRequestId:reviewId,expectedVersion:3,reason:body.reason}},['saved','replayed','stopped','held','completed']);expect(recover).toHaveBeenCalledWith(reviewId,propertyId,'operator');expect(run).not.toHaveBeenCalled()})
+ it('does not apply a result when recording the recovery decision fails',async()=>{rpc.mockRejectedValue(new Error('database failed'));expect((await PATCH(req({propertyId,requestId,analysisRequestId:reviewId,expectedVersion:3,action:'recover',reason:'Recover saved result'},'PATCH'))).status).toBe(503);expect(recover).not.toHaveBeenCalled()})
+ it('reads only safe request metadata and the current source version',async()=>{const q=chain([{id:requestId,state:'queued',source_version:1}]);from.mockImplementation((name:string)=>name==='reviews'?chain({source_version:1}):q);const r=await GET(req());expect(r.status).toBe(200);expect(await r.json()).toMatchObject({currentSourceVersion:1,requests:[{id:requestId,state:'queued'}]});expect(q.select).toHaveBeenCalledWith('id,review_id,source_version,state,version,analysis_id,error_code,created_at,started_at,finished_at');expect(q.eq).toHaveBeenCalledWith('property_id',propertyId);expect(q.eq).toHaveBeenCalledWith('review_id',reviewId)})
+ it('reports database read failures instead of inventing an empty history',async()=>{from.mockReturnValue(chain(null,{message:'private detail'}));const r=await GET(req());expect(r.status).toBe(503);expect(await r.text()).not.toContain('private detail')})
 })

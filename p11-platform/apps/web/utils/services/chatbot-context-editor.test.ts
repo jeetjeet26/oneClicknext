@@ -113,6 +113,8 @@ type MockDb = {
   sources: Record<string, unknown>[]
   documents: Record<string, unknown>[]
   context: Record<string, unknown> | null
+  serving?:Record<string,unknown>|null
+  servingError?:string
   revisions: unknown[]
 }
 
@@ -145,6 +147,7 @@ function createMockSupabase(overrides: Partial<MockDb> = {}) {
   return {
     db,
     supabase: {
+      rpc:async()=>({data:db.serving===undefined?{state:'legacy'}:db.serving,error:db.servingError?{message:db.servingError}:null}),
       from: (table: string) => new QueryBuilder(table, db),
     },
   }
@@ -374,6 +377,7 @@ describe('chatbot context editor', () => {
         property_id: 'property-1',
         status: 'current',
         context_markdown: 'CLIENT PROPERTY CONTEXT',
+        last_generated_at: new Date().toISOString(),
         context_json: {},
         requires_review: false,
       },
@@ -467,3 +471,24 @@ describe('chatbot context editor', () => {
     expect(db.revisions).toHaveLength(0)
   })
 })
+
+it('flags missing, stale and future-dated context timestamps for review',async()=>{
+ const {contextNeedsFreshnessReview}=await import('./chatbot-context-editor')
+ const now=Date.parse('2026-09-15T12:00:00Z')
+ expect(contextNeedsFreshnessReview(null,now)).toBe(true)
+ expect(contextNeedsFreshnessReview('invalid',now)).toBe(true)
+ expect(contextNeedsFreshnessReview('2026-09-01T00:00:00Z',now)).toBe(true)
+ expect(contextNeedsFreshnessReview('2026-10-01T00:00:00Z',now)).toBe(true)
+ expect(contextNeedsFreshnessReview('2026-09-15T11:00:00Z',now)).toBe(false)
+})
+
+
+describe('reviewed facts runtime fence',()=>{
+ it('serves the complete exact native publication including ordinary source text',async()=>{const markdown='Reviewed full facts\r\nOriginal pet policy paragraph without FAQ labels.';const{supabase}=createMockSupabase({serving:{state:'ready',contextMarkdown:markdown,contextJson:{exact:true},status:'current',requiresReview:false},context:{context_markdown:'OLD FACTS'}});expect(await loadPropertyChatbotContext(supabase as never,'property-1')).toMatchObject({contextMarkdown:markdown,contextJson:{exact:true},servingMode:'full'})})
+ it.each(['withdrawn','sources_changed','website_freshness_review_due','publication_review_due'])('withholds %s facts and does not fall back to old context',async reason=>{const{supabase}=createMockSupabase({serving:{state:'withheld',reason},context:{context_markdown:'OLD PRICE $9,999',status:'current',requires_review:false,last_generated_at:new Date().toISOString()}});const value=await loadPropertyChatbotContext(supabase as never,'property-1');expect(value?.servingMode).toBe('degraded');expect(value?.contextMarkdown).not.toContain('9,999');expect(value?.contextJson).toEqual({})})
+ it('fails closed when the native publication check is unavailable',async()=>{const{supabase}=createMockSupabase({serving:null,servingError:'read outage',context:{context_markdown:'OLD PRICE',status:'current',requires_review:false}});expect(await loadPropertyChatbotContext(supabase as never,'property-1')).toBeNull()})
+ it('rejects malformed native ready results',async()=>{const{supabase}=createMockSupabase({serving:{state:'ready',contextMarkdown:'UNREVIEWED',status:'current',requiresReview:true}});expect(await loadPropertyChatbotContext(supabase as never,'property-1')).toBeNull()})
+})
+
+it.each([null,'2026-07-23T23:30:03Z'])('keeps approved legacy facts serving when their timestamp is %s',async lastGenerated=>{const {supabase}=createMockSupabase({context:{context_markdown:'Approved property facts and floorplan details',context_json:{approved:true},status:'current',requires_review:false,last_generated_at:lastGenerated,source_snapshot:{sources:[{sourceType:'website',lastSyncedAt:'2026-07-23T23:30:03Z'}]}}});expect(await loadPropertyChatbotContext(supabase as never,'property-1')).toMatchObject({servingMode:'full',freshnessReviewDue:true,contextMarkdown:'Approved property facts and floorplan details'})})
+it('returns the age reminder for an unchanged approved publication',async()=>{const {supabase}=createMockSupabase({serving:{state:'ready',contextMarkdown:'Still approved',contextJson:{},status:'current',requiresReview:false,freshnessReviewDue:true}});expect(await loadPropertyChatbotContext(supabase as never,'property-1')).toMatchObject({servingMode:'full',freshnessReviewDue:true})})

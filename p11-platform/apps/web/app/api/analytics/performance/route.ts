@@ -1,3 +1,4 @@
+import { readMarketingFacts, MarketingReadError } from '@/utils/analytics/read-marketing-facts'
 import { createClient } from '@/utils/supabase/server'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { NextRequest, NextResponse } from 'next/server'
@@ -119,26 +120,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    // Fetch current period data
-    let currentQuery = supabase
-      .from('fact_marketing_performance')
-      .select('*')
-      .eq('property_id', propertyId)
-      .order('date', { ascending: true })
-
-    if (startDate) {
-      currentQuery = currentQuery.gte('date', startDate)
-    }
-    if (endDate) {
-      currentQuery = currentQuery.lte('date', endDate)
-    }
-
-    const { data: currentData, error: currentError } = await currentQuery
-
-    if (currentError) {
-      console.error('Error fetching performance data:', currentError)
-      return NextResponse.json({ error: currentError.message }, { status: 500 })
-    }
+    const currentData = await readMarketingFacts(supabase, { propertyId, startDate, endDate })
 
     const current = aggregateData((currentData || []) as PerformanceRow[])
 
@@ -157,15 +139,8 @@ export async function GET(request: NextRequest) {
       const prevStartStr = previousStart.toISOString().split('T')[0]
       const prevEndStr = previousEnd.toISOString().split('T')[0]
 
-      const { data: prevData, error: prevError } = await supabase
-        .from('fact_marketing_performance')
-        .select('*')
-        .eq('property_id', propertyId)
-        .gte('date', prevStartStr)
-        .lte('date', prevEndStr)
-        .order('date', { ascending: true })
-
-      if (!prevError && prevData) {
+      const prevData = await readMarketingFacts(supabase, { propertyId, startDate: prevStartStr, endDate: prevEndStr })
+      {
         const previous = aggregateData(prevData as PerformanceRow[])
         
         comparison = {
@@ -209,6 +184,7 @@ export async function GET(request: NextRequest) {
       comparison,
     })
   } catch (err) {
+    if (err instanceof MarketingReadError) return NextResponse.json({ error: err.message }, { status: err.status })
     console.error('Analytics API error:', err)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }

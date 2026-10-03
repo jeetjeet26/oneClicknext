@@ -1,0 +1,80 @@
+{
+  "$schema": "https://schemas.wp.org/trunk/theme.json",
+  "version": 3,
+  "settings": {
+    "appearanceTools": true,
+    "color": {
+      "palette": [
+        { "slug": "primary", "name": "Primary", "color": "#1a1a1a" },
+        { "slug": "secondary", "name": "Secondary", "color": "#c9a96e" },
+        { "slug": "accent", "name": "Accent", "color": "#8a6d3b" },
+        { "slug": "background", "name": "Background", "color": "#ffffff" }
+      ]
+    },
+    "typography": {
+      "fluid": true,
+      "fontFamilies": [
+        {
+          "slug": "heading",
+          "name": "Heading",
+          "fontFamily": "\"Cormorant Garamond\", serif"
+        },
+        {
+          "slug": "body",
+          "name": "Body",
+          "fontFamily": "Inter, sans-serif"
+        }
+      ],
+      "fontSizes": [
+        { "slug": "small", "name": "Small", "size": "0.875rem" },
+        { "slug": "body", "name": "Body", "size": "1rem" },
+        {
+          "slug": "heading",
+          "name": "Heading",
+          "size": "2.5rem",
+          "fluid": { "min": "2rem", "max": "4rem" }
+        }
+      ]
+    },
+    "spacing": {
+      "spacingSizes": [
+        { "slug": "small", "name": "Small", "size": "1rem" },
+        { "slug": "medium", "name": "Medium", "size": "2rem" },
+        { "slug": "section", "name": "Section", "size": "6rem" }
+      ]
+    },
+    "layout": {
+      "contentSize": "1200px",
+      "wideSize": "1400px"
+    },
+    "border": {
+      "radius": true,
+      "width": true
+    }
+  },
+  "styles": {
+    "color": {
+      "background": "#ffffff",
+      "text": "#1a1a1a"
+    },
+    "typography": {
+      "fontFamily": "var:preset|font-family|body",
+      "lineHeight": "1.6"
+    },
+    "elements": {
+      "heading": {
+        "typography": {
+          "fontFamily": "var:preset|font-family|heading",
+          "fontWeight": "600"
+        }
+      },
+      "button": {
+        "border": { "radius": "0.25rem" },
+        "color": {
+          "background": "#1a1a1a",
+          "text": "#ffffff"
+        }
+      }
+    }
+  }
+}

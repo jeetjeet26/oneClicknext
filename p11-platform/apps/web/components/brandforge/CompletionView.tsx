@@ -1,6 +1,10 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import Link from 'next/link'
+import {AssistantFactsWorkbench}from '@/components/community/AssistantFactsWorkbench'
+import { brandRequest, brandResponse } from '@/utils/brandforge/client-requests'
+
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { AlertCircle, CheckCircle, Download, Eye, FileText, Loader2 } from 'lucide-react'
 import type { BrandForgeCompletionResult } from './types'
 
@@ -8,41 +12,33 @@ interface CompletionViewProps {
   propertyId: string
   brandAssetId: string
   completionResult: BrandForgeCompletionResult | null
-}
-
-async function getApiErrorMessage(response: Response, fallback: string) {
-  try {
-    const body = await response.json()
-    if (typeof body?.details === 'string' && body.details.length > 0) {
-      return `${body.error || fallback}: ${body.details}`
-    }
-    if (typeof body?.error === 'string' && body.error.length > 0) {
-      return body.error
-    }
-  } catch {
-    // Ignore JSON parse failures.
-  }
-
-  return fallback
+  onReview?: () => void
 }
 
 export function CompletionView({
   propertyId,
   brandAssetId,
   completionResult,
+  onReview,
 }: CompletionViewProps) {
+  const requestMemory = useRef(new Map<string, { identity: string; requestId: string }>())
+  const [revision, setRevision] = useState<number | null>(completionResult?.revision ?? null)
   const [pdfUrl, setPdfUrl] = useState<string | null>(completionResult?.pdfUrl ?? null)
   const [exportError, setExportError] = useState<string | null>(completionResult?.exportError ?? null)
   const [warnings, setWarnings] = useState<Array<{ code: string; message: string; action: string }>>([])
   const [isRetryingExport, setIsRetryingExport] = useState(false)
+  const [reviewFacts,setReviewFacts]=useState(false)
   const [isEmbedding, setIsEmbedding] = useState(false)
   const [embedMessage, setEmbedMessage] = useState<string | null>(null)
 
   const refreshStatus = useCallback(async () => {
     try {
       const res = await fetch(`/api/brandforge/status?propertyId=${propertyId}`)
+      if (!res.ok) throw new Error('Saved brand status could not be loaded')
       const data = await res.json()
       const statusAsset = data?.brandAsset
+      setRevision(statusAsset?.revision ?? null)
+      setPdfUrl(statusAsset?.exportUrl ?? null)
 
       if (statusAsset?.exportUrl) {
         setPdfUrl(statusAsset.exportUrl)
@@ -67,7 +63,19 @@ export function CompletionView({
     void refreshStatus()
   }, [refreshStatus])
 
+  async function reviseBrand() {
+    if (!revision || isRetryingExport) return
+    setIsRetryingExport(true); setExportError(null)
+    try {
+      const response = await fetch('/api/brandforge/revise', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: brandRequest(requestMemory, 'revise', { brandAssetId, revision, step: 1 }) })
+      await brandResponse(response, requestMemory, 'revise')
+      onReview?.()
+    } catch (error) { setExportError(error instanceof Error ? error.message : 'Revision could not be started') }
+    finally { setIsRetryingExport(false) }
+  }
+
   async function retryExport() {
+    if (isRetryingExport || !revision) return
     setIsRetryingExport(true)
     setExportError(null)
 
@@ -75,14 +83,10 @@ export function CompletionView({
       const response = await fetch('/api/brandforge/generate-pdf', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ brandAssetId }),
+        body: brandRequest(requestMemory, 'export', { brandAssetId, revision }),
       })
 
-      if (!response.ok) {
-        throw new Error(await getApiErrorMessage(response, 'Failed to generate brand-book export'))
-      }
-
-      const data = await response.json()
+      const data = await brandResponse(response, requestMemory, 'export')
       setPdfUrl(typeof data?.pdfUrl === 'string' ? data.pdfUrl : null)
       setExportError(null)
       await refreshStatus()
@@ -94,6 +98,7 @@ export function CompletionView({
   }
 
   async function embedToKnowledgeBase() {
+    if (!revision || isEmbedding) return
     setIsEmbedding(true)
     setEmbedMessage(null)
 
@@ -101,16 +106,12 @@ export function CompletionView({
       const response = await fetch('/api/brandforge/embed-to-kb', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ brandAssetId, propertyId }),
+        body: brandRequest(requestMemory, 'publish', { brandAssetId, propertyId, revision }),
       })
 
-      if (!response.ok) {
-        throw new Error(await getApiErrorMessage(response, 'Failed to add brand book to the knowledge base'))
-      }
-
-      const data = await response.json()
+      const data = await brandResponse(response, requestMemory, 'publish')
       setEmbedMessage(
-        `Added to knowledge base (${data.embeddedChunks ?? 0}/${data.totalChunks ?? 0} chunks embedded).`
+        `Brand knowledge published (${data.embeddedChunks ?? 0} sections). Review and publish assistant facts below to use this version in Luma.`
       )
     } catch (error) {
       setEmbedMessage(error instanceof Error ? error.message : 'Failed to add brand book to the knowledge base')
@@ -122,7 +123,8 @@ export function CompletionView({
   const isExportReady = Boolean(pdfUrl)
 
   return (
-    <div className="bg-white rounded-xl border border-slate-200 p-8 text-center">
+    <div className="bg-white rounded-xl border border-slate-200 p-4 sm:p-8 text-center">
+      <Link className="mb-4 inline-block rounded-lg border px-3 py-2 text-sm" href={`/dashboard/brandforge/${propertyId}/assets`}>Review brand assets</Link>
       <div className="mb-6">
         <div
           className={`w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4 ${
@@ -172,7 +174,14 @@ export function CompletionView({
         </div>
       )}
 
+      <div className="mb-6 rounded-xl border border-indigo-100 bg-indigo-50 p-4 text-left text-sm text-indigo-950">
+        <p className="font-medium">Bring published brand knowledge into Luma</p>
+        <p className="mt-1">Publishing brand knowledge updates the source. Review the complete assistant-facts draft and publish it explicitly before Luma uses the new version.</p>
+        <button type="button" onClick={()=>setReviewFacts(v=>!v)}className="mt-3 rounded-lg border border-indigo-300 px-4 py-2">{reviewFacts?'Hide assistant facts review':'Review assistant facts'}</button>
+        {reviewFacts&&<div className="mt-4"><AssistantFactsWorkbench key={propertyId}propertyId={propertyId}/></div>}
+      </div>
       <div className="flex flex-wrap gap-4 justify-center">
+        {onReview && <button type="button" disabled={!revision || isRetryingExport} onClick={() => void reviseBrand()} className="px-6 py-2 border border-slate-300 rounded-lg disabled:opacity-50">Revise brand</button>}
         <a
           href={`/dashboard/brandforge/${propertyId}`}
           className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 flex items-center gap-2"
@@ -192,7 +201,7 @@ export function CompletionView({
         ) : (
           <button
             onClick={retryExport}
-            disabled={isRetryingExport}
+            disabled={isRetryingExport || !revision}
             className="px-6 py-2 border border-slate-300 rounded-lg hover:bg-slate-50 flex items-center gap-2 disabled:opacity-50"
           >
             {isRetryingExport ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
@@ -201,7 +210,7 @@ export function CompletionView({
         )}
         <button
           onClick={embedToKnowledgeBase}
-          disabled={isEmbedding}
+          disabled={isEmbedding || !revision}
           className="px-6 py-2 border border-slate-300 rounded-lg hover:bg-slate-50 flex items-center gap-2 disabled:opacity-50"
         >
           {isEmbedding ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}

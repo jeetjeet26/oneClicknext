@@ -1,76 +1,15 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { NextRequest } from 'next/server'
-
-const authGetUserMock = vi.fn()
-const createServerClientMock = vi.fn()
-const validatePropertyAccessMock = vi.fn()
-
-vi.mock('@/utils/supabase/server', () => ({
-  createClient: createServerClientMock,
-}))
-
-vi.mock('@/utils/services/auth-guard', () => ({
-  validatePropertyAccess: validatePropertyAccessMock,
-}))
-
-vi.mock('@supabase/supabase-js', () => ({
-  createClient: vi.fn(() => ({
-    from: vi.fn(),
-    storage: {
-      from: vi.fn(() => ({
-        upload: vi.fn(),
-        getPublicUrl: vi.fn(() => ({ data: { publicUrl: 'https://example.com/image.png' } })),
-      })),
-    },
-  })),
-}))
-
-describe('brandforge generate-images route', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    createServerClientMock.mockResolvedValue({
-      auth: { getUser: authGetUserMock },
-    })
-  })
-
-  it('returns 401 when unauthenticated', async () => {
-    authGetUserMock.mockResolvedValue({ data: { user: null }, error: null })
-
-    const { POST } = await import('./route')
-    const response = await POST(
-      new Request('http://localhost/api/brandforge/generate-images', {
-        method: 'POST',
-        body: JSON.stringify({
-          brandAssetId: 'brand-1',
-          propertyId: 'property-1',
-          type: 'logo',
-          brandData: {},
-        }),
-      }) as NextRequest
-    )
-
-    expect(response.status).toBe(401)
-    await expect(response.json()).resolves.toEqual({ error: 'Unauthorized' })
-  })
-
-  it('returns 403 when property access is denied', async () => {
-    authGetUserMock.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
-    validatePropertyAccessMock.mockResolvedValue({ authorized: false })
-
-    const { POST } = await import('./route')
-    const response = await POST(
-      new Request('http://localhost/api/brandforge/generate-images', {
-        method: 'POST',
-        body: JSON.stringify({
-          brandAssetId: 'brand-1',
-          propertyId: 'property-1',
-          type: 'logo',
-          brandData: {},
-        }),
-      }) as NextRequest
-    )
-
-    expect(response.status).toBe(403)
-    await expect(response.json()).resolves.toEqual({ error: 'Forbidden' })
-  })
-})
+import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest'
+import { NextRequest } from 'next/server'
+const mocks = vi.hoisted(() => ({ fetch: vi.fn(), upload: vi.fn(), active: vi.fn(), kind: '', body: {propertyId:'property',type:'logo'} }))
+vi.mock('@supabase/supabase-js',()=>({createClient:()=>({storage:{from:()=>({upload:mocks.upload,getPublicUrl:()=>({data:{publicUrl:'https://storage.example.invalid/storage/v1/object/public/brand-assets/property/logo.png'}})})}})}))
+vi.mock('google-auth-library',()=>({GoogleAuth:class {getClient=async()=>({getAccessToken:async()=>({token:'fixture-token'})})}}))
+vi.mock('@/utils/brandforge/operations',async()=>{const {z}=await import('zod');const {NextResponse}=await import('next/server');return {brandId:z.string(),sectionNames:['introduction','positioning','target_audience','personas','name_story','logo','typography','colors','design_elements','photo_yep','photo_nope','implementation'],runBrandCommand:async(_request:unknown,kind:string,_fields:unknown,execute:(context:unknown)=>Promise<unknown>)=>{mocks.kind=kind;return NextResponse.json(await execute({body:mocks.body,brand:{id:'brand',property_id:'property',revision:4,approval_status:'approved',section_6_logo:{style:'minimalist'}},assertActive:mocks.active}))}}})
+let POST:typeof import('./route').POST
+beforeAll(async()=>{vi.stubEnv('GOOGLE_APPLICATION_CREDENTIALS','fixture-only.json');vi.stubEnv('GOOGLE_CLOUD_PROJECT_ID','fixture-project');vi.stubGlobal('fetch',mocks.fetch);POST=(await import('./route')).POST})
+afterAll(()=>{vi.unstubAllGlobals();vi.unstubAllEnvs()})
+beforeEach(()=>{vi.clearAllMocks();mocks.body={propertyId:'property',type:'logo'};mocks.active.mockResolvedValue(undefined);mocks.upload.mockResolvedValue({error:null});mocks.fetch.mockResolvedValue(new Response(JSON.stringify({predictions:[{bytesBase64Encoded:'Zml4dHVyZQ==',mimeType:'image/png'}]}),{status:200}))
+ // Each call receives a fresh consumable Response.
+ mocks.fetch.mockImplementation(async()=>new Response(JSON.stringify({predictions:[{bytesBase64Encoded:'Zml4dHVyZQ==',mimeType:'image/png'}]}),{status:200}))})
+it('saves visual candidates as a review proposal, using stored brand context',async()=>{const response=await POST(new NextRequest('http://localhost/api/brandforge/generate-images',{method:'POST'}));const result=await response.json();expect(mocks.kind).toBe('visuals');expect(result.updates).toMatchObject({current_step:6,section_6_logo:null,approval_status:'reviewing',approved_by:null,draft_section:{name:'logo',data:{logoUrl:expect.stringContaining('brand-assets')}}});expect(result.result.generatedCount).toBe(2);expect(mocks.active).toHaveBeenCalledTimes(2)})
+it('does not start provider work after the request has been stopped',async()=>{mocks.active.mockRejectedValue(new Error('Request stopped'));await expect(POST(new NextRequest('http://localhost/api/brandforge/generate-images',{method:'POST'}))).rejects.toThrow('No visual candidate');expect(mocks.fetch).not.toHaveBeenCalled();expect(mocks.upload).not.toHaveBeenCalled()})
+it('checks the requested property before generating',async()=>{mocks.body.propertyId='different';await expect(POST(new NextRequest('http://localhost/api/brandforge/generate-images',{method:'POST'}))).rejects.toThrow('Property mismatch');expect(mocks.fetch).not.toHaveBeenCalled()})

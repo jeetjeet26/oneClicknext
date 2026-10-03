@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js'
 import {
   serverError,
   unauthorized,
+  hasValidCronAuth,
 } from '@/utils/services/api-helpers'
 import { finishCronJobRun, startCronJobRun } from '@/utils/services/cron-job-runs'
 import { createRequestContext } from '@/utils/services/request-context'
@@ -77,10 +78,7 @@ export async function GET(request: NextRequest) {
   const ctx = createRequestContext(request, '/api/cron/publish-scheduled')
   ctx.logStart()
 
-  if (
-    process.env.CRON_SECRET &&
-    request.headers.get('authorization') !== `Bearer ${process.env.CRON_SECRET}`
-  ) {
+  if (!hasValidCronAuth(request)) {
     ctx.logSuccess(401, { reason: 'invalid_cron_auth' })
     return unauthorized(ctx.responseHeaders)
   }

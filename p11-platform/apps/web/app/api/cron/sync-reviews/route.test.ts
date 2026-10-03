@@ -1,174 +1,21 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { NextRequest } from 'next/server'
+import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest'
+import {NextRequest} from 'next/server'
+const {rpc,start,finish,requestIntake,run}=vi.hoisted(()=>({rpc:vi.fn(),start:vi.fn(),finish:vi.fn(),requestIntake:vi.fn(),run:vi.fn()}))
+vi.mock('@/utils/supabase/admin',()=>({createServiceClient:()=>({rpc})}))
+vi.mock('@/utils/services/cron-job-runs',()=>({startCronJobRun:start,finishCronJobRun:finish}))
+vi.mock('@/utils/reviewflow/intake-store',()=>({requestIntake,runSavedIntake:run}))
+import {GET} from './route'
+function req(token='fixture-secret'){return new NextRequest('http://localhost/api/cron/sync-reviews',{headers:{authorization:`Bearer ${token}`}})}
+beforeEach(()=>{vi.clearAllMocks();vi.stubEnv('CRON_SECRET','fixture-secret');vi.stubEnv('OUTBOUND_DELIVERY_PAUSED','false');start.mockResolvedValue({id:'cron-run'});finish.mockResolvedValue(true);rpc.mockResolvedValue({data:[{id:'source',property_id:'property',version:4,schedule_key:'source:4:2026-09-18-12'}],error:null});requestIntake.mockResolvedValue({state:'queued',requestId:'saved-request'});run.mockResolvedValue({state:'preview'})})
+afterEach(()=>vi.unstubAllEnvs())
+describe('recorded source check scheduler',()=>{
+ it('requires configured cron authorization before database work',async()=>{expect((await GET(req('wrong'))).status).toBe(401);vi.stubEnv('CRON_SECRET','');expect((await GET(req())).status).toBe(401);expect(rpc).not.toHaveBeenCalled();expect(start).not.toHaveBeenCalled()})
+ it('respects external pause without claiming success',async()=>{vi.stubEnv('OUTBOUND_DELIVERY_PAUSED','true');expect(await (await GET(req())).json()).toEqual({state:'paused',fetched:0,applied:0});expect(rpc).not.toHaveBeenCalled();expect(run).not.toHaveBeenCalled()})
+ it('uses saved system intent and reports previews separately from applied reviews',async()=>{expect(await (await GET(req())).json()).toMatchObject({status:'success',previewReady:1,applied:0});expect(requestIntake).toHaveBeenCalledWith(expect.any(String),'property',null,expect.objectContaining({trigger:'schedule',connectionVersion:4,scheduleKey:'source:4:2026-09-18-12'}));expect(requestIntake.mock.invocationCallOrder[0]).toBeLessThan(run.mock.invocationCallOrder[0]);expect(run).toHaveBeenCalledWith('saved-request')})
+ it('does not invoke an already running fetch again',async()=>{requestIntake.mockResolvedValue({state:'running',requestId:'saved-request'});await GET(req());expect(run).not.toHaveBeenCalled()})
+ it('records held and failed source results without reporting a successful sync',async()=>{run.mockResolvedValue({state:'held'});expect(await (await GET(req())).json()).toMatchObject({status:'failed',failed:1,applied:0});expect(finish).toHaveBeenCalledWith({id:'cron-run'},expect.objectContaining({status:'failed'}))})
+ it('surfaces scheduler storage errors with safe recovery guidance',async()=>{rpc.mockResolvedValue({error:{message:'private connection failure'}});const r=await GET(req());expect(r.status).toBe(503);expect(await r.text()).not.toContain('private connection');expect(run).not.toHaveBeenCalled()})
+ it('does not fetch or queue work when its run record cannot be created',async()=>{start.mockResolvedValue(null);expect((await GET(req())).status).toBe(503);expect(rpc).not.toHaveBeenCalled();expect(requestIntake).not.toHaveBeenCalled();expect(run).not.toHaveBeenCalled()})
+ it('keeps an unconfirmed scheduler completion visible without invoking a second source fetch',async()=>{finish.mockResolvedValue(false);const response=await GET(req());expect(response.status).toBe(503);expect(await response.text()).toContain('unconfirmed');expect(run).toHaveBeenCalledTimes(1)})
 
-const mockFrom = vi.fn()
-const startCronJobRunMock = vi.fn()
-const finishCronJobRunMock = vi.fn()
-vi.mock('@supabase/supabase-js', () => ({
-  createClient: () => ({
-    from: mockFrom,
-  }),
-}))
-
-vi.mock('@/utils/services/cron-job-runs', () => ({
-  startCronJobRun: startCronJobRunMock,
-  finishCronJobRun: finishCronJobRunMock,
-}))
-
-vi.stubGlobal('fetch', vi.fn())
-
-describe('GET /api/cron/sync-reviews', () => {
-  const originalEnv = { ...process.env }
-
-  beforeEach(() => {
-    vi.clearAllMocks()
-    process.env = { ...originalEnv }
-    startCronJobRunMock.mockResolvedValue({
-      id: 'run-1',
-      jobName: 'sync-reviews',
-      startedAtMs: 0,
-    })
-    finishCronJobRunMock.mockResolvedValue(undefined)
-  })
-
-  afterEach(() => {
-    process.env = originalEnv
-  })
-
-  it('returns 401 when CRON_SECRET is set and Bearer token is wrong', async () => {
-    process.env.CRON_SECRET = 'expected-secret'
-
-    const { GET } = await import('./route')
-    const request = new Request('http://localhost/api/cron/sync-reviews', {
-      method: 'GET',
-      headers: { authorization: 'Bearer wrong-secret' },
-    }) as NextRequest
-
-    const response = await GET(request)
-
-    expect(response.status).toBe(401)
-    await expect(response.json()).resolves.toEqual({ error: 'Unauthorized' })
-    expect(mockFrom).not.toHaveBeenCalled()
-  })
-
-  it('returns success with synced 0 when no connections to sync', async () => {
-    process.env.CRON_SECRET = 'expected-secret'
-
-    mockFrom.mockReturnValue({
-      select: vi.fn(() => ({
-        eq: vi.fn(() => ({
-          in: vi.fn(() => ({
-            or: vi.fn(() => ({
-              lt: vi.fn(() => ({
-                order: vi.fn(() => ({
-                  limit: vi.fn().mockResolvedValue({ data: [], error: null }),
-                })),
-              })),
-            })),
-          })),
-        })),
-      })),
-    })
-
-    const { GET } = await import('./route')
-    const request = new Request('http://localhost/api/cron/sync-reviews', {
-      method: 'GET',
-      headers: { authorization: 'Bearer expected-secret' },
-    }) as NextRequest
-
-    const response = await GET(request)
-    const json = await response.json()
-
-    expect(response.status).toBe(200)
-    expect(json).toMatchObject({
-      success: true,
-      message: 'No connections to sync',
-      synced: 0,
-    })
-  })
-
-  it('skips connections that are already claimed by another worker', async () => {
-    process.env.CRON_SECRET = 'expected-secret'
-
-    const claimMaybeSingleMock = vi.fn().mockResolvedValue({ data: null, error: null })
-    const claimSelectMock = vi.fn(() => ({ maybeSingle: claimMaybeSingleMock }))
-    const claimOrMock = vi.fn(() => ({ select: claimSelectMock }))
-    const claimInMock = vi.fn(() => ({ or: claimOrMock }))
-    const claimEqActiveMock = vi.fn(() => ({ in: claimInMock }))
-    const claimEqIdMock = vi.fn(() => ({ eq: claimEqActiveMock }))
-    const claimUpdateMock = vi.fn(() => ({ eq: claimEqIdMock }))
-
-    mockFrom.mockImplementation((table: string) => {
-      if (table === 'review_platform_connections') {
-        return {
-          select: vi.fn(() => ({
-            eq: vi.fn(() => ({
-              in: vi.fn(() => ({
-                or: vi.fn(() => ({
-                  lt: vi.fn(() => ({
-                    order: vi.fn(() => ({
-                      limit: vi.fn().mockResolvedValue({
-                        data: [
-                          {
-                            id: 'conn-1',
-                            property_id: 'property-1',
-                            platform: 'google',
-                          },
-                        ],
-                        error: null,
-                      }),
-                    })),
-                  })),
-                })),
-              })),
-            })),
-          })),
-          update: claimUpdateMock,
-        }
-      }
-      throw new Error(`Unexpected table ${table}`)
-    })
-
-    const { GET } = await import('./route')
-    const request = new Request('http://localhost/api/cron/sync-reviews', {
-      method: 'GET',
-      headers: { authorization: 'Bearer expected-secret' },
-    }) as NextRequest
-
-    const response = await GET(request)
-    const json = await response.json()
-
-    expect(response.status).toBe(200)
-    expect(json).toMatchObject({
-      success: true,
-      synced: 0,
-      failed: 0,
-      skipped: 1,
-      totalImported: 0,
-      results: [
-        {
-          connectionId: 'conn-1',
-          status: 'skipped',
-        },
-      ],
-    })
-    expect(fetch).not.toHaveBeenCalled()
-  })
-
-  it('returns 500 when CRON_SECRET is missing', async () => {
-    delete process.env.CRON_SECRET
-
-    const { GET } = await import('./route')
-    const request = new Request('http://localhost/api/cron/sync-reviews', {
-      method: 'GET',
-    }) as NextRequest
-
-    const response = await GET(request)
-
-    expect(response.status).toBe(500)
-    await expect(response.json()).resolves.toEqual({
-      error: 'CRON_SECRET is required for sync-reviews cron execution',
-    })
-    expect(mockFrom).not.toHaveBeenCalled()
-  })
 })

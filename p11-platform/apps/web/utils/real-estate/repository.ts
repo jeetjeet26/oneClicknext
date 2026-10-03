@@ -1,3 +1,4 @@
+import {currentApprovedReadiness} from '@/utils/readiness/publication'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database, Json } from '@/types/supabase'
 import { createServiceClient } from '@/utils/supabase/admin'
@@ -641,17 +642,7 @@ export async function loadAdaptiveVerticalContext(
       .eq('approval_status', 'approved')
       .in('rights_status', ['owned', 'licensed', 'generated'])
       .order('name', { ascending: true }),
-    service
-      .from('property_onboarding_snapshots')
-      .select(
-        'id, status, content_hash, snapshot_payload, source_references, approved_at, updated_at'
-      )
-      .eq('org_id', input.orgId)
-      .eq('property_id', input.propertyId)
-      .eq('status', 'approved')
-      .order('updated_at', { ascending: false })
-      .limit(1)
-      .maybeSingle(),
+    currentApprovedReadiness(input.propertyId,service).then(data=>({data:data?.org_id===input.orgId?data:null,error:null})),
   ])
 
   const failed = [

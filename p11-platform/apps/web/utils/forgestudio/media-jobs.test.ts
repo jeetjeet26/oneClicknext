@@ -1,112 +1,36 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import {beforeEach,afterEach,describe,expect,it,vi} from 'vitest'
+import sharp from 'sharp'
+import {createHash} from 'node:crypto'
+const {rpc,from,upload,download,getPublicUrl,imageModel,videoModel,textModel}=vi.hoisted(()=>({rpc:vi.fn(),from:vi.fn(),upload:vi.fn(),download:vi.fn(),getPublicUrl:vi.fn(),imageModel:vi.fn(),videoModel:vi.fn(),textModel:vi.fn()}))
+vi.mock('@/utils/supabase/admin',()=>({createServiceClient:()=>({rpc,from,storage:{from:(bucket:string)=>({upload:(...args:unknown[])=>upload(bucket,...args),download:(...args:unknown[])=>download(bucket,...args),getPublicUrl})}})}))
+vi.mock('ai',()=>({generateImage:imageModel,generateText:textModel,experimental_generateVideo:videoModel}))
+import {enqueueMediaGeneration,estimateMediaCost,processDueMediaJobs,recoverMediaGeneration} from './media-jobs'
+const id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',property='33333333-3333-4333-8333-333333333333',actor='11111111-1111-4111-8111-111111111111',org='22222222-2222-4222-8222-222222222222',token='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',stamp='2026-09-17T12:00:00.000Z'
+const request={modality:'image' as const,tier:'final' as const,prompt:'Generate a simple abstract campaign background',aspectRatio:'1:1' as const,name:'Campaign artwork',altText:'Abstract campaign background',maxCostUsd:1}
+let bytes:Buffer,manifest:Record<string,unknown>,run:Record<string,unknown>
+function chain(){const q={select:vi.fn(()=>q),eq:vi.fn(()=>q),single:vi.fn(async()=>({data:run,error:null}))};return q}
+beforeEach(async()=>{
+ vi.clearAllMocks();vi.stubEnv('OUTBOUND_DELIVERY_PAUSED','false');bytes=await sharp({create:{width:2,height:2,channels:3,background:'#abcdef'}}).png().toBuffer();manifest={contentHash:createHash('sha256').update(bytes).digest('hex'),size:bytes.length,mimeType:'image/png',extension:'png',width:2,height:2};run={id,property_id:property,org_id:org,actor_id:actor,claim_token:token,state:'result_ready',input:{request,model:'fixture/image',estimatedCostUsd:.04,modelPolicyVersion:'fixture'},source_snapshot:null,result_manifest:manifest,updated_at:stamp}
+ rpc.mockImplementation(async(name,args)=>({data:name==='claim_forgestudio_media'?{state:'claimed',request:run}:name==='advance_forgestudio_media'&&args.p_action==='model_intent'?{state:'proceed_once'}:name==='forgestudio_command_start'?{state:'new'}:name==='begin_forgestudio_media'?{state:'saved',jobId:id,estimatedCostUsd:.04}:{state:'saved',assetId:id},error:null}));from.mockImplementation(chain);upload.mockResolvedValue({error:null});download.mockImplementation(async()=>({data:new Blob([new Uint8Array(bytes)]),error:null}));getPublicUrl.mockReturnValue({data:{publicUrl:'https://storage.invalid/generated.png'}});imageModel.mockResolvedValue({image:{uint8Array:bytes,mediaType:'image/png'},warnings:[],providerMetadata:{}})
+})
+afterEach(()=>vi.unstubAllEnvs())
+describe('durable ForgeStudio media',()=>{
+ it('saves an exact request identity with its model policy and bounded estimate',async()=>{expect(estimateMediaCost(request)).toBe(.04);const result=await enqueueMediaGeneration({requestId:id,orgId:org,propertyId:property,actorId:actor,request});expect(result.id).toBe(id);expect(rpc).toHaveBeenCalledWith('begin_forgestudio_media',expect.objectContaining({p_id:id,p_input:expect.objectContaining({request,estimatedCostUsd:.04})}));expect(imageModel).not.toHaveBeenCalled()})
+ it('rejects requests above their cost ceiling before persistence',async()=>{await expect(enqueueMediaGeneration({requestId:id,orgId:org,propertyId:property,actorId:actor,request:{...request,maxCostUsd:.01}})).rejects.toThrow(/exceeds/);expect(rpc).not.toHaveBeenCalled()})
+ it('honors delivery pause before claiming any model work',async()=>{vi.stubEnv('OUTBOUND_DELIVERY_PAUSED','true');expect(await processDueMediaJobs({workerId:'fixture'})).toEqual({claimed:0,results:[],paused:true});expect(rpc).not.toHaveBeenCalled();expect(imageModel).not.toHaveBeenCalled()})
+ it('calls a model once with SDK retries disabled and stores exact immutable bytes',async()=>{const result=await processDueMediaJobs({workerId:'fixture',limit:2});expect(result.results[0].state).toBe('saved');expect(imageModel).toHaveBeenCalledTimes(1);expect(imageModel).toHaveBeenCalledWith(expect.objectContaining({maxRetries:0,model:'fixture/image'}));expect(upload).toHaveBeenNthCalledWith(1,'forgestudio-media-results',`${property}/media/${id}/result`,bytes,{contentType:'image/png',upsert:false});expect(upload).toHaveBeenNthCalledWith(2,'property-assets',`${property}/forgestudio/generated/${id}.png`,bytes,{contentType:'image/png',upsert:false});const intent=rpc.mock.calls.findIndex(c=>c[1]?.p_action==='model_intent'),manifestCall=rpc.mock.calls.findIndex(c=>c[1]?.p_action==='result_manifest');expect(intent).toBeLessThan(manifestCall);expect(rpc).toHaveBeenCalledWith('finish_forgestudio_media',expect.objectContaining({p_payload:expect.objectContaining({contentHash:manifest.contentHash,storageVerified:true})}))})
+ it('never invokes a model after an already-recorded intent or changed source',async()=>{rpc.mockImplementation(async(name,args)=>({data:name==='claim_forgestudio_media'?{state:'claimed',request:run}:args.p_action==='model_intent'?{state:'already_started'}:{state:'saved'},error:null}));expect((await processDueMediaJobs({workerId:'fixture'})).results[0].state).toBe('already_started');expect(imageModel).not.toHaveBeenCalled();expect(upload).not.toHaveBeenCalled()})
+ it('holds an ambiguous provider failure without a second invocation or automatic retry',async()=>{imageModel.mockRejectedValue(new Error('Provider reply lost'));const result=await processDueMediaJobs({workerId:'fixture'});expect(result.results[0].state).toBe('review_required');expect(imageModel).toHaveBeenCalledTimes(1);expect(rpc).toHaveBeenCalledWith('advance_forgestudio_media',expect.objectContaining({p_action:'failure',p_payload:{code:'model_uncertain'}}));expect(upload).not.toHaveBeenCalled()})
+ it('repeats only a lost identical manifest acknowledgement',async()=>{let first=true;const original=rpc.getMockImplementation()!;rpc.mockImplementation(async(name,args)=>{if(args?.p_action==='result_manifest'&&first){first=false;return {data:null,error:{message:'reply lost'}}}return original(name,args)});await processDueMediaJobs({workerId:'fixture'});expect(imageModel).toHaveBeenCalledTimes(1);const calls=rpc.mock.calls.filter(c=>c[1]?.p_action==='result_manifest');expect(calls).toHaveLength(2);expect(calls[0]).toEqual(calls[1])})
+ it('verifies exact stored bytes when an immutable upload acknowledgement is lost',async()=>{upload.mockResolvedValue({error:{message:'reply lost'}});expect((await processDueMediaJobs({workerId:'fixture'})).results[0].state).toBe('saved');expect(download).toHaveBeenCalledTimes(3);expect(imageModel).toHaveBeenCalledTimes(1)})
+ it('holds mismatched storage bytes without publishing an asset or generating again',async()=>{upload.mockResolvedValue({error:{message:'already exists'}});download.mockResolvedValue({data:new Blob(['different']),error:null});expect((await processDueMediaJobs({workerId:'fixture'})).results[0].state).toBe('result_ready');expect(rpc.mock.calls.some(c=>c[0]==='finish_forgestudio_media')).toBe(false);expect(imageModel).toHaveBeenCalledTimes(1)})
+ it('retains a late file privately but never publishes it after stop',async()=>{run={...run,state:'stopped'};expect((await processDueMediaJobs({workerId:'fixture'})).results[0].state).toBe('stopped');expect(upload).toHaveBeenCalledTimes(1);expect(upload.mock.calls[0][0]).toBe('forgestudio-media-results');expect(rpc.mock.calls.some(c=>c[0]==='finish_forgestudio_media')).toBe(false)})
+ it('recovers saved bytes without any model call and binds the reviewed request version',async()=>{await recoverMediaGeneration({requestId:token,jobId:id,propertyId:property,orgId:org,actorId:actor,expectedUpdatedAt:stamp,reason:'Recover confirmed stored image'});expect(imageModel).not.toHaveBeenCalled();expect(upload).toHaveBeenCalledTimes(1);expect(rpc).toHaveBeenLastCalledWith('decide_forgestudio_media',expect.objectContaining({p_payload:expect.objectContaining({expectedUpdatedAt:stamp,storage:expect.objectContaining({origin:'console_recovery'})})}))})
+ it('returns a saved recovery decision before reading or uploading again',async()=>{rpc.mockResolvedValue({data:{state:'replayed',assetId:id},error:null});expect((await recoverMediaGeneration({requestId:token,jobId:id,propertyId:property,orgId:org,actorId:actor,expectedUpdatedAt:stamp,reason:'Recover confirmed stored image'})).state).toBe('replayed');expect(from).not.toHaveBeenCalled();expect(download).not.toHaveBeenCalled();expect(upload).not.toHaveBeenCalled()})
+ it('holds stale recovery or a property moved to another organization before reading private bytes',async()=>{await expect(recoverMediaGeneration({requestId:token,jobId:id,propertyId:property,orgId:org,actorId:actor,expectedUpdatedAt:'2026-09-17T11:00:00Z',reason:'Recover file'})).rejects.toThrow(/changed/);await expect(recoverMediaGeneration({requestId:token,jobId:id,propertyId:property,orgId:token,actorId:actor,expectedUpdatedAt:stamp,reason:'Recover file'})).rejects.toThrow(/previous organization/);expect(download).not.toHaveBeenCalled()})
+ it('retains saved results when final library persistence cannot be confirmed',async()=>{const original=rpc.getMockImplementation()!;rpc.mockImplementation(async(name,args)=>name==='finish_forgestudio_media'?{data:null,error:{message:'db unavailable'}}:original(name,args));expect((await processDueMediaJobs({workerId:'fixture'})).results[0].state).toBe('result_ready');expect(imageModel).toHaveBeenCalledTimes(1);expect(rpc.mock.calls.some(c=>c[1]?.p_action==='failure')).toBe(false)})
+ it('keeps iterative source-image work on one SDK attempt',async()=>{run={...run,input:{...(run.input as object),request:{...request,tier:'iterative'}},source_snapshot:{file_url:'https://example.invalid/approved.png'}};textModel.mockResolvedValue({files:[{uint8Array:bytes,mediaType:'image/png'}]});expect((await processDueMediaJobs({workerId:'fixture'})).results[0].state).toBe('saved');expect(textModel).toHaveBeenCalledWith(expect.objectContaining({maxRetries:0,messages:[{role:'user',content:[{type:'text',text:request.prompt},{type:'image',image:new URL('https://example.invalid/approved.png')}]}]}));expect(imageModel).not.toHaveBeenCalled()})
+ it('bounds video polling inside the worker runtime with no automatic generation retry',async()=>{bytes=Buffer.from([0,0,0,24,...Buffer.from('ftypisom'),0,0,0,0]);manifest={contentHash:createHash('sha256').update(bytes).digest('hex'),size:bytes.length,mimeType:'video/mp4',extension:'mp4',width:null,height:null};run={...run,result_manifest:manifest,input:{...(run.input as object),request:{...request,modality:'video',tier:'social',durationSeconds:8,generateAudio:false,aspectRatio:'16:9'}}};videoModel.mockResolvedValue({videos:[{uint8Array:bytes,mediaType:'video/mp4'}]});expect((await processDueMediaJobs({workerId:'fixture'})).results[0].state).toBe('saved');expect(videoModel).toHaveBeenCalledWith(expect.objectContaining({maxRetries:0,headers:{'idempotency-key':id},poll:{intervalMs:5000,timeoutMs:210000}}));expect(imageModel).not.toHaveBeenCalled()})
+ it('rechecks pause after a claim before recording any model intent',async()=>{rpc.mockImplementation(async()=>{vi.stubEnv('OUTBOUND_DELIVERY_PAUSED','true');return {data:{state:'claimed',request:run},error:null}});expect((await processDueMediaJobs({workerId:'fixture'})).results[0].state).toBe('paused');expect(rpc).toHaveBeenCalledTimes(1);expect(imageModel).not.toHaveBeenCalled()})
 
-const { fromMock, rpcMock } = vi.hoisted(() => ({
-  fromMock: vi.fn(),
-  rpcMock: vi.fn(),
-}))
-
-vi.mock('@/utils/supabase/admin', () => ({
-  createServiceClient: () => ({ from: fromMock, rpc: rpcMock }),
-}))
-
-vi.mock('@/utils/storage/asset-service', () => ({
-  STORAGE_BUCKETS: { CONTENT_ASSETS: 'content-assets' },
-  uploadAndSaveGeneratedAsset: vi.fn(),
-}))
-
-function insertBuilder(result: { data: unknown; error: unknown }) {
-  return {
-    insert: vi.fn(() => ({
-      select: vi.fn(() => ({
-        single: vi.fn().mockResolvedValue(result),
-      })),
-    })),
-  }
-}
-
-describe('ForgeStudio media jobs', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-  })
-
-  it('calculates bounded costs for image and video tiers', async () => {
-    const { estimateMediaCost } = await import('./media-jobs')
-    expect(estimateMediaCost({
-      modality: 'image',
-      tier: 'final',
-      prompt: 'Create campaign art',
-      aspectRatio: '1:1',
-      altText: 'Campaign art',
-      name: 'Campaign art',
-      maxCostUsd: 1,
-    })).toBe(0.04)
-    expect(estimateMediaCost({
-      modality: 'video',
-      tier: 'social',
-      prompt: 'Animate the approved property image',
-      aspectRatio: '9:16',
-      altText: 'Animated property image',
-      name: 'Property reel',
-      maxCostUsd: 5,
-      durationSeconds: 8,
-      generateAudio: true,
-    })).toBeCloseTo(1.2)
-  })
-
-  it('rejects requests whose estimated cost exceeds the caller ceiling', async () => {
-    const { enqueueMediaGeneration } = await import('./media-jobs')
-    await expect(enqueueMediaGeneration({
-      orgId: '11111111-1111-4111-8111-111111111111',
-      propertyId: '22222222-2222-4222-8222-222222222222',
-      actorId: '33333333-3333-4333-8333-333333333333',
-      request: {
-        modality: 'video',
-        tier: 'premium',
-        prompt: 'Create a premium property video',
-        aspectRatio: '16:9',
-        altText: 'Premium property video',
-        name: 'Premium video',
-        maxCostUsd: 1,
-        durationSeconds: 8,
-        generateAudio: true,
-      },
-    })).rejects.toThrow(/exceeds the request ceiling/)
-    expect(fromMock).not.toHaveBeenCalled()
-  })
-
-  it('persists an idempotent shared job with model and cost metadata', async () => {
-    const queued = {
-      id: 'job-1',
-      domain: 'forgestudio.media',
-      lifecycle_status: 'queued',
-    }
-    const builder = insertBuilder({ data: queued, error: null })
-    fromMock.mockReturnValue(builder)
-
-    const { enqueueMediaGeneration } = await import('./media-jobs')
-    const result = await enqueueMediaGeneration({
-      orgId: '11111111-1111-4111-8111-111111111111',
-      propertyId: '22222222-2222-4222-8222-222222222222',
-      actorId: '33333333-3333-4333-8333-333333333333',
-      request: {
-        modality: 'image',
-        tier: 'final',
-        prompt: 'Create approved campaign art',
-        aspectRatio: '1:1',
-        altText: 'Campaign art',
-        name: 'Campaign art',
-        maxCostUsd: 1,
-      },
-    })
-
-    expect(result).toEqual(queued)
-    expect(builder.insert).toHaveBeenCalledWith(expect.objectContaining({
-      domain: 'forgestudio.media',
-      dedupe_key: expect.stringMatching(/^forgestudio-media:/),
-      payload: expect.objectContaining({
-        model: 'google/imagen-4.0-generate-001',
-        estimatedCostUsd: 0.04,
-      }),
-    }))
-  })
 })

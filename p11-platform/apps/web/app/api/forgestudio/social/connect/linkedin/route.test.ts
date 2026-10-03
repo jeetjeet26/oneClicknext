@@ -44,7 +44,7 @@ describe('forgestudio social connect linkedin route', () => {
     const { GET } = await import('./route')
     const response = await GET(
       new Request(
-        'http://localhost/api/forgestudio/social/connect/linkedin?propertyId=property-1'
+        'http://localhost/api/forgestudio/social/connect/linkedin?propertyId=33333333-3333-4333-8333-333333333333'
       ) as NextRequest
     )
 
@@ -63,7 +63,7 @@ describe('forgestudio social connect linkedin route', () => {
     const { GET } = await import('./route')
     const response = await GET(
       new Request(
-        'http://localhost/api/forgestudio/social/connect/linkedin?propertyId=property-1'
+        'http://localhost/api/forgestudio/social/connect/linkedin?propertyId=33333333-3333-4333-8333-333333333333'
       ) as NextRequest
     )
 

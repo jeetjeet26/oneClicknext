@@ -66,7 +66,7 @@ class YardiAdapter(BaseCRMAdapter):
         
         try:
             # Try to get property info as connection test
-            response = requests.get(
+            response = self.read_get(
                 f"{self.api_endpoint}/properties/{self.property_code}",
                 headers=self._get_headers(),
                 timeout=self.timeout
@@ -111,7 +111,7 @@ class YardiAdapter(BaseCRMAdapter):
         
         try:
             # Try RENTCafé schema endpoint
-            response = requests.get(
+            response = self.read_get(
                 f"{self.api_endpoint}/schema/guestcard",
                 headers=self._get_headers(),
                 timeout=self.timeout
@@ -126,7 +126,8 @@ class YardiAdapter(BaseCRMAdapter):
                     api_version=self.api_type,
                     object_name="GuestCard",
                     object_label="Guest Card (Prospect)",
-                    fields=fields
+                    fields=fields,
+                    evidence_source="provider_response"
                 )
             else:
                 logger.warning(f"[Yardi] Schema endpoint not available, using defaults")
@@ -201,7 +202,7 @@ class YardiAdapter(BaseCRMAdapter):
         
         try:
             # Search by email first
-            response = requests.get(
+            response = self.read_get(
                 f"{self.api_endpoint}/guestcards/search",
                 headers=self._get_headers(),
                 params={
@@ -226,7 +227,7 @@ class YardiAdapter(BaseCRMAdapter):
             
             # If not found by email and phone provided, try phone
             if phone:
-                response = requests.get(
+                response = self.read_get(
                     f"{self.api_endpoint}/guestcards/search",
                     headers=self._get_headers(),
                     params={
@@ -301,7 +302,7 @@ class YardiAdapter(BaseCRMAdapter):
         logger.info(f"[Yardi] Getting guest card: {external_id}")
         
         try:
-            response = requests.get(
+            response = self.read_get(
                 f"{self.api_endpoint}/guestcards/{external_id}",
                 headers=self._get_headers(),
                 params={"propertyCode": self.property_code},

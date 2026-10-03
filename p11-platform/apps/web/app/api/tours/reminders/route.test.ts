@@ -21,7 +21,8 @@ vi.mock('@/utils/services/auth-guard', () => ({
   validatePropertyAccess: validatePropertyAccessMock,
 }))
 
-vi.mock('@/utils/services/cron-job-runs', () => ({
+vi.mock('@/utils/services/cron-job-runs', async original => ({
+  ...await original<object>(),
   startCronJobRun: startCronJobRunMock,
   finishCronJobRun: finishCronJobRunMock,
 }))
@@ -37,7 +38,7 @@ describe('Tours reminders route', () => {
       jobName: 'tours-reminders',
       startedAtMs: 0,
     })
-    finishCronJobRunMock.mockResolvedValue(undefined)
+    finishCronJobRunMock.mockResolvedValue(true)
     validatePropertyAccessMock.mockResolvedValue({
       authorized: true,
       orgId: 'org-1',
@@ -181,4 +182,25 @@ describe('Tours reminders route', () => {
     expect(response.headers.get('x-request-id')).toBeTruthy()
     await expect(response.json()).resolves.toEqual({ error: 'Forbidden' })
   })
+  it('requires a persisted run before processing',async()=>{
+    process.env.CRON_SECRET='expected-secret';startCronJobRunMock.mockResolvedValue(null)
+    const {POST}=await import('./route')
+    const response=await POST(new Request('http://localhost/api/tours/reminders',{method:'POST',headers:{authorization:'Bearer expected-secret'}}) as NextRequest)
+    expect(response.status).toBe(503);expect(processTourRemindersMock).not.toHaveBeenCalled()
+  })
+  it('returns uncertainty if the completion acknowledgement is lost',async()=>{
+    process.env.CRON_SECRET='expected-secret';finishCronJobRunMock.mockResolvedValue(false)
+    processTourRemindersMock.mockResolvedValue({processed:1,reminders24h:1,reminders1h:0,acceptedChannels:1,review:0,failed:0,errors:[]})
+    const {POST}=await import('./route')
+    const response=await POST(new Request('http://localhost/api/tours/reminders',{method:'POST',headers:{authorization:'Bearer expected-secret'}}) as NextRequest)
+    expect(response.status).toBe(503);expect((await response.json()).success).toBe(false);expect(processTourRemindersMock).toHaveBeenCalledOnce()
+  })
+  it('records partial delivery when one channel is accepted and the other needs review',async()=>{
+    process.env.CRON_SECRET='expected-secret'
+    processTourRemindersMock.mockResolvedValue({processed:1,reminders24h:0,reminders1h:0,acceptedChannels:1,review:1,failed:0,errors:['Text needs review']})
+    const {POST}=await import('./route')
+    const response=await POST(new Request('http://localhost/api/tours/reminders',{method:'POST',headers:{authorization:'Bearer expected-secret'}}) as NextRequest)
+    expect((await response.json()).success).toBe(false);expect(finishCronJobRunMock).toHaveBeenCalledWith(expect.anything(),expect.objectContaining({status:'partial'}))
+  })
+
 })

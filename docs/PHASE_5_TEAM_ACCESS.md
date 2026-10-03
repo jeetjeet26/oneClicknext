@@ -1,0 +1,17 @@
+# Phase 5 — recorded team access
+
+September 23, 2026. Locally qualified; Phase 5 remains active.
+
+The Team page now works without a selected property. It provides the complete organization roster, exact member/role review, administrator-only access changes, last-available-administrator protection, and removal that clears organization access while preserving the account and historical actor references. Current sessions lose organization reads after removal. Raw adopted membership writes and legacy team PATCH/DELETE paths are held.
+
+Invitations are explicitly reviewed recipient/role/expiry grants. No email is sent: the operator copies and shares the newly saved link. Only a digest is stored; a lost initial reply recovers the decision without inventing or redisclosing a secret. Explicit replacement invalidates the prior link. The verified matching recipient must review and accept or decline; another organization membership is never moved. Expired/revoked/replaced grants and issuers without current administration cannot grant access. Same-page link opening, anonymous sign-in, verification return, account switching and cleared-cookie recovery are supported.
+
+Role changes, access removal, invitation creation/replacement/revocation, recipient acceptance/decline and unused-request cancellation commit with immutable private decisions and semantic activity. A cancellation cannot undo a committed result; its late original request is held. Clipboard outcomes are separate browser observations and never claim delivery. All organization events have no arbitrary property attached. Private before/after inspection and complete native roster/invitation/history paging detect changed collections, including rosters beyond 1,000 members.
+
+Account email/verification facts are read through narrow, service-only database helpers. The application service receives no broad auth.users access. Shared events contain decision identities and state digests, not recipient email, link token, passwords or auth metadata. Tokens move from the URL fragment to a scoped HttpOnly cookie and the fragment is removed; browser recovery stores only request identity/digest. Training eligibility stays false.
+
+Verification: 54 application cases in 12 suites; 85 dedicated database assertions and 1,168 serial regression assertions; 26 distinct browser journeys (10 team plus 16 related setup/property/readiness/activity journeys). Full types, targeted lint, schema stamp, added-line whitespace, 488 native function bodies, fixture cleanup and zero local migration-history entries pass. Database advisors remain 1,333 WARN/ERROR findings with no additions. Mobile team controls were inspected. The separately pending ReviewFlow response SQL suite was not run.
+
+Migration: `20260923082912_phase_five_team_access.sql`. Applied locally for qualification without marking hosted migration history. No hosted change, real invitation email, provider mutation, model/embedding call, training, commit or deployment occurred. Existing delivery and import-worker pauses remain in place.
+
+Remaining account work includes recorded organization settings, personal profile/preferences and credential/session controls. Broader product/system/interaction coverage, retention, reports/search, BI, client/provider acceptance and shared agency gates remain open. Local team qualification does not complete Phase 5 or authorize autonomous access changes.

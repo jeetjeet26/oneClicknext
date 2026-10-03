@@ -1,53 +1,12 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { NextRequest } from 'next/server'
-
-const authGetUserMock = vi.fn()
-const createClientMock = vi.fn()
-const validatePropertyAccessMock = vi.fn()
-
-vi.mock('@/utils/supabase/server', () => ({
-  createClient: createClientMock,
-}))
-
-vi.mock('@/utils/services/auth-guard', () => ({
-  validatePropertyAccess: validatePropertyAccessMock,
-}))
-
-function makeNextRequest(url: string, init?: RequestInit): NextRequest {
-  const request = new Request(url, init) as NextRequest
-  Object.defineProperty(request, 'nextUrl', {
-    value: new URL(url),
-    configurable: true,
-  })
-  return request
-}
-
-describe('community tasks route', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    createClientMock.mockResolvedValue({
-      auth: { getUser: authGetUserMock },
-    })
-  })
-
-  it('GET returns 401 when unauthenticated', async () => {
-    authGetUserMock.mockResolvedValue({ data: { user: null }, error: null })
-
-    const { GET } = await import('./route')
-    const response = await GET(makeNextRequest('http://localhost/api/community/tasks?propertyId=property-1'))
-
-    expect(response.status).toBe(401)
-    await expect(response.json()).resolves.toEqual({ error: 'Unauthorized' })
-  })
-
-  it('GET returns 403 when property access is denied', async () => {
-    authGetUserMock.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
-    validatePropertyAccessMock.mockResolvedValue({ authorized: false })
-
-    const { GET } = await import('./route')
-    const response = await GET(makeNextRequest('http://localhost/api/community/tasks?propertyId=property-1'))
-
-    expect(response.status).toBe(403)
-    await expect(response.json()).resolves.toEqual({ error: 'Forbidden' })
-  })
-})
+import {beforeEach,it,expect,vi} from 'vitest'
+const d=vi.hoisted(()=>({actor:vi.fn(),read:vi.fn(),decide:vi.fn()}))
+vi.mock('@/utils/checklist/store',()=>({checklistActor:d.actor,readChecklist:d.read,decideChecklist:d.decide,ChecklistError:class extends Error{constructor(message:string,readonly status=503){super(message)}}}))
+import {GET,POST,PUT} from './route'
+import {ChecklistError} from '@/utils/checklist/store'
+const id='11111111-1111-1111-1111-111111111111',body={requestId:id,propertyId:id,operation:'create',fields:{name:'Review task',description:'',category:'general',priority:50,status:'pending',notes:'',blockedReason:''},confirmed:false,reason:'Review task'}
+beforeEach(()=>{vi.clearAllMocks();d.actor.mockResolvedValue('actual-actor');d.read.mockResolvedValue({state:'ready',items:[]});d.decide.mockResolvedValue({state:'saved',propertyId:id})})
+it('authenticates before parse or native reads',async()=>{d.actor.mockRejectedValue(new ChecklistError('Unauthorized',401));expect((await GET(new Request('http://local'))).status).toBe(401);expect((await POST(new Request('http://local',{method:'POST',body:'bad'}))).status).toBe(401);expect(d.decide).not.toHaveBeenCalled()})
+it('writes exact actor-bound strict decision and private receipt',async()=>{const result=await POST(new Request('http://local',{method:'POST',body:JSON.stringify(body)}));expect(result.status).toBe(200);expect(result.headers.get('Cache-Control')).toBe('private, no-store');expect(d.decide).toHaveBeenCalledWith('actual-actor',body);expect((await POST(new Request('http://local',{method:'POST',body:JSON.stringify({...body,actorId:id})}))).status).toBe(400)})
+it('rejects both declared and streamed overlimits',async()=>{for(const request of[new Request('http://local',{method:'POST',headers:{'content-length':'32769'},body:'{}'}),new Request('http://local',{method:'POST',body:'x'.repeat(32769)})])expect((await POST(request)).status).toBe(413);expect(d.decide).not.toHaveBeenCalled()})
+it('does not disclose internal failures and closes old unversioned writes',async()=>{d.read.mockRejectedValue(new Error('sensitive query detail'));const response=await GET(new Request(`http://local?propertyId=${id}`));expect(response.status).toBe(503);expect(await response.json()).toEqual({error:'The checklist is unavailable.'});expect((await PUT()).status).toBe(410)})
+it('validates selected history and keeps known permission failures',async()=>{expect((await GET(new Request(`http://local?propertyId=${id}&kind=history`))).status).toBe(400);d.read.mockRejectedValue(new ChecklistError('Forbidden',403));expect((await GET(new Request(`http://local?propertyId=${id}`))).status).toBe(403)})

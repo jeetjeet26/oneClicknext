@@ -126,3 +126,18 @@ class TestCompetitorMembership:
 
     def test_verify_competitors_in_property_allows_empty_list(self):
         verify_competitors_in_property(_FakeSupabase([]), [], "p1")
+
+
+@pytest.mark.parametrize("path,body", [
+    ("/scraper/brand-intelligence", {"property_id": "p1"}),
+    ("/scraper/brand-intelligence/batch", {"property_id": "p1", "competitor_ids": ["c1"]}),
+    ("/scraper/brand-intelligence/search", {"query": "pool", "property_id": "p1"}),
+])
+def test_legacy_brand_execution_is_retired_before_any_provider_call(client, monkeypatch, path, body):
+    import routers.brand_intelligence as brand_module
+    def no_database():
+        raise AssertionError("Retired execution must not read or write the database")
+    monkeypatch.setattr(brand_module, "get_supabase_client", no_database)
+    response = client.post(path, json=body, headers={"X-API-Key": "test-secret-key"})
+    assert response.status_code == 410
+    assert "retained-source" in response.json()["detail"]

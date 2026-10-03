@@ -28,7 +28,7 @@ describe('brandforge conversation route', () => {
     const response = await POST(
       new Request('http://localhost/api/brandforge/conversation', {
         method: 'POST',
-        body: JSON.stringify({ propertyId: 'property-1', action: 'start' }),
+        body: JSON.stringify({ propertyId: '11111111-1111-4111-8111-111111111111', requestId: '55555555-5555-4555-8555-555555555555', revision: 0, action: 'start' }),
       }) as NextRequest
     )
 
@@ -44,7 +44,7 @@ describe('brandforge conversation route', () => {
     const response = await POST(
       new Request('http://localhost/api/brandforge/conversation', {
         method: 'POST',
-        body: JSON.stringify({ propertyId: 'property-1', action: 'start' }),
+        body: JSON.stringify({ propertyId: '11111111-1111-4111-8111-111111111111', requestId: '55555555-5555-4555-8555-555555555555', revision: 0, action: 'start' }),
       }) as NextRequest
     )
 

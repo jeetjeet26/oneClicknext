@@ -10,6 +10,7 @@ import {
 } from '@/utils/forgestudio/content-contract'
 
 const createBriefSchema = z.object({
+  requestId: z.string().uuid(),
   propertyId: z.string().uuid(),
   title: z.string().min(1).max(300),
   objective: z.string().min(1).max(2000),
@@ -99,6 +100,7 @@ export async function POST(request: NextRequest) {
     }
 
     const brief = await createBrief({
+      requestId: parsed.data.requestId,
       orgId: access.orgId,
       propertyId: parsed.data.propertyId,
       createdBy: user.id,

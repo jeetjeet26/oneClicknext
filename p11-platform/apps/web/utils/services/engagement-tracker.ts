@@ -1,65 +1,12 @@
-/**
- * Engagement Tracker
- * Lightweight helper to track lead engagement events directly via Supabase
- * (avoids HTTP overhead of calling the /api/leadpulse/events route)
- */
-
-import { createServiceClient } from '@/utils/supabase/admin'
-import type { Database, Json } from '@/types/supabase'
-import { EVENT_WEIGHTS, type EventType } from './leadpulse-events'
-
+import { leadpulseRpc } from '@/utils/leadpulse/server'
+import type { EventType } from './leadpulse-events'
 interface TrackEventParams {
-  leadId: string
-  propertyId: string
-  eventType: EventType
-  metadata?: Record<string, unknown>
-  idempotencyKey?: string
+ leadId: string; propertyId: string; eventType: EventType; metadata?: Record<string, unknown>
+ idempotencyKey: string; origin: 'siteforge' | 'lumaleasing'
 }
-
-/**
- * Track an engagement event and rescore the lead.
- * Non-blocking — callers should .catch() errors.
- */
-export async function trackEngagementEvent({
-  leadId,
-  propertyId,
-  eventType,
-  metadata,
-  idempotencyKey,
-}: TrackEventParams): Promise<void> {
-  const supabase = createServiceClient()
-  const payload: Database['public']['Tables']['lead_engagement_events']['Insert'] = {
-    lead_id: leadId,
-    property_id: propertyId,
-    event_type: eventType,
-    metadata: ((metadata || {}) as Json),
-    score_weight: EVENT_WEIGHTS[eventType],
-    idempotency_key: idempotencyKey || null,
-  }
-
-  const query = idempotencyKey
-    ? supabase
-        .from('lead_engagement_events')
-        .upsert(payload, {
-          onConflict: 'property_id,idempotency_key',
-          ignoreDuplicates: true,
-        })
-    : supabase.from('lead_engagement_events').insert(payload)
-  const { error } = await query
-
-  if (error) {
-    throw new Error(
-      `[EngagementTracker] Failed to insert ${eventType} for lead ${leadId}: ${error.message}`
-    )
-  }
-
-  // Rescore the lead after new event
-  const { error: scoreError } = await supabase
-    .rpc('score_lead', { p_lead_id: leadId })
-
-  if (scoreError) {
-    throw new Error(
-      `[EngagementTracker] Failed to rescore lead ${leadId}: ${scoreError.message}`
-    )
-  }
+/** One saved source identity records the event, score and private provenance atomically. */
+export async function trackEngagementEvent({ leadId, propertyId, eventType, metadata, idempotencyKey, origin }: TrackEventParams): Promise<void> {
+ const result = await leadpulseRpc('record_lead_engagement', { p_property_id: propertyId, p_lead_id: leadId, p_event_type: eventType,
+  p_metadata: metadata || {}, p_request_key: idempotencyKey, p_origin: origin, p_actor_id: null })
+ if (!['applied', 'replayed'].includes(String(result.state))) throw new Error('Engagement was not confirmed: ' + result.state)
 }

@@ -66,7 +66,7 @@ class RealPageAdapter(BaseCRMAdapter):
         
         try:
             # Try to get property/site info as connection test
-            response = requests.get(
+            response = self.read_get(
                 f"{self.api_endpoint}/sites/{self.property_code}",
                 headers=self._get_headers(),
                 timeout=self.timeout
@@ -111,7 +111,7 @@ class RealPageAdapter(BaseCRMAdapter):
         logger.info(f"[RealPage] Getting schema")
         
         try:
-            response = requests.get(
+            response = self.read_get(
                 f"{self.api_endpoint}/schema/prospects",
                 headers=self._get_headers(),
                 timeout=self.timeout
@@ -126,7 +126,8 @@ class RealPageAdapter(BaseCRMAdapter):
                     api_version="v1",
                     object_name="Prospect",
                     object_label="Prospect",
-                    fields=fields
+                    fields=fields,
+                    evidence_source="provider_response"
                 )
             else:
                 logger.warning(f"[RealPage] Schema endpoint not available, using defaults")
@@ -200,7 +201,7 @@ class RealPageAdapter(BaseCRMAdapter):
         
         try:
             # Search by email
-            response = requests.get(
+            response = self.read_get(
                 f"{self.api_endpoint}/prospects/search",
                 headers=self._get_headers(),
                 params={
@@ -225,7 +226,7 @@ class RealPageAdapter(BaseCRMAdapter):
             
             # Try phone search
             if phone:
-                response = requests.get(
+                response = self.read_get(
                     f"{self.api_endpoint}/prospects/search",
                     headers=self._get_headers(),
                     params={
@@ -299,7 +300,7 @@ class RealPageAdapter(BaseCRMAdapter):
         logger.info(f"[RealPage] Getting prospect: {external_id}")
         
         try:
-            response = requests.get(
+            response = self.read_get(
                 f"{self.api_endpoint}/prospects/{external_id}",
                 headers=self._get_headers(),
                 params={"siteId": self.property_code},

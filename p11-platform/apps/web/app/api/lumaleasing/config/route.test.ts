@@ -1,3 +1,4 @@
+vi.mock('@/utils/services/luma-public-read',()=>({admitLumaRead:vi.fn().mockResolvedValue(null)}))
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NextRequest } from 'next/server'
 
@@ -74,8 +75,8 @@ describe('Luma public config route', () => {
     })
   })
 
-  it('returns widget config for a valid api key', async () => {
-    createServiceClientMock.mockReturnValue({
+  it.each([{logo:'https://example.com/logo.png',failure:false},{logo:null,failure:false},{logo:null,failure:true}])('returns current logo eligibility or a failed read (%j)', async ({logo,failure}) => {
+    createServiceClientMock.mockReturnValue({rpc:vi.fn().mockResolvedValue({data:failure?null:{url:logo},error:failure?{message:'Fixture unavailable'}:null}),
       from: vi.fn((table: string) => {
         if (table === 'lumaleasing_config') {
           return {
@@ -106,7 +107,7 @@ describe('Luma public config route', () => {
                       sunday: { start: '00:00', end: '23:59' },
                     },
                     timezone: 'UTC',
-                    is_active: true,
+                    property_id:'fixture-property',is_active: true,
                     properties: { id: 'property-1', name: 'The Beacon' },
                   },
                   error: null,
@@ -130,7 +131,9 @@ describe('Luma public config route', () => {
     const response = await GET(request)
     const json = await response.json()
 
+    if(failure){expect(response.status).toBe(500);expect(json).not.toHaveProperty('config');return}
     expect(response.status).toBe(200)
+    expect(json.config.logoUrl).toBe(logo)
     expect(response.headers.get('x-request-id')).toBeTruthy()
     expect(json).toMatchObject({
       config: {

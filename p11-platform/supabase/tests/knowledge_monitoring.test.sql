@@ -1,0 +1,103 @@
+BEGIN;
+create temp table assertion_count(n integer);insert into assertion_count values(0);
+create function pg_temp.check_it(v boolean,label text)returns void language plpgsql as $$begin if v is distinct from true then raise exception 'Assertion failed: %',label;end if;update assertion_count set n=n+1;end$$;
+create temp table st(k text primary key,v jsonb);
+insert into public.properties(id,org_id,name)values('ee560000-0000-4000-8000-000000000001','22222222-2222-2222-2222-222222222222','Website monitoring SQL fixture'),('ee560000-0000-4000-8000-000000000002','22222222-2222-2222-2222-222222222222','Website monitoring second SQL fixture');
+create function pg_temp.policy_input(rev int default 0,onoff boolean default true,cap int default 5)returns jsonb language sql as $$select jsonb_build_object('expectedRevision',rev,'enabled',onoff,'intervalHours',24,'dailyLimit',cap,'confirmed',true,'reason','Reviewed automatic private captures with exact limits')$$;
+create function pg_temp.save_policy(i uuid,b jsonb default null,p uuid default'ee560000-0000-4000-8000-000000000001')returns jsonb language sql as $$select public.save_knowledge_web_policy(i,p,'11111111-1111-1111-1111-111111111111',coalesce(b,pg_temp.policy_input()))$$;
+create function pg_temp.publish_source(version uuid)returns jsonb language plpgsql as $$
+declare v public.knowledge_material_versions;m public.knowledge_materials;i uuid:=gen_random_uuid();c jsonb;r jsonb;
+begin select *into v from public.knowledge_material_versions where id=version;select *into m from public.knowledge_materials where id=v.material_id;
+ perform public.begin_knowledge_search(i,v.property_id,v.actor_id,jsonb_build_object('materialId',m.id,'versionId',v.id,'contentHash',v.content_hash,'confirmed',true,'reason','Review synthetic search receipt'),jsonb_build_object('model','text-embedding-3-small','dimensions',1536,'recipe','lossless-utf8-4096-v1','contentHash',v.content_hash,'chunks',jsonb_build_array(v.content)));
+ c:=public.claim_knowledge_search(i);r:=jsonb_build_object('status','received','providerRequestId','synthetic-no-network','response',jsonb_build_object('model','text-embedding-3-small','usage',jsonb_build_object('prompt_tokens',1,'total_tokens',1),'data',jsonb_build_array(jsonb_build_object('index',0,'embedding',(select jsonb_agg(case when n=1 then 1 else 0 end order by n)from generate_series(1,1536)n)))));
+ perform public.record_knowledge_search_result(i,(c->>'claimToken')::uuid,r);perform public.validate_knowledge_search(i,(select result_hash from public.knowledge_embedding_requests where id=i));
+ return public.release_knowledge_material(gen_random_uuid(),v.property_id,v.actor_id,jsonb_build_object('materialId',m.id,'versionId',v.id,'expectedLatestVersionId',m.latest_version_id,'expectedActiveVersionId',m.active_version_id,'expectedReleaseId',m.last_release_id,'operation','publish','confirmed',true,'reason','Approve exact synthetic source','resultHash',(select result_hash from public.knowledge_embedding_requests where id=i)));
+end$$;
+create function pg_temp.source(p uuid,age_days int)returns uuid language plpgsql as $$
+declare i uuid:=gen_random_uuid();token uuid:=gen_random_uuid();review uuid:=gen_random_uuid();r jsonb;b text:='Complete synthetic website source';v jsonb;
+begin
+ insert into public.knowledge_web_captures(id,property_id,org_id,actor_id,input,input_hash,state,claim_token,started_at)values(i,p,'22222222-2222-2222-2222-222222222222','11111111-1111-1111-1111-111111111111',jsonb_build_object('title','Published website fixture','url','https://example.invalid/source','materialId',null,'reason','Fixture retained source'),'fixture','running',token,clock_timestamp()-make_interval(days=>age_days));
+ r:=jsonb_build_object('recipe','public-utf8-html-v1','complete',true,'requestedUrl','https://example.invalid/source','finalUrl','https://example.invalid/final','statusCode',200,'contentType','text/plain','fetchedAt',clock_timestamp()-make_interval(days=>age_days),'body',b,'bodyHash',encode(extensions.digest(b,'sha256'),'hex'),'text',b,'limitations','[]'::jsonb);
+ perform public.record_knowledge_web_capture(i,token,r);
+ v:=public.decide_knowledge_web_capture(review,p,'11111111-1111-1111-1111-111111111111',jsonb_build_object('operation','accept','captureId',i,'expectedRevision',(select revision from public.knowledge_web_captures where id=i),'receiptHash',public.knowledge_hash(r),'content',b,'materialId',null,'previousVersionId',null,'confirmed',true,'reason','Review complete synthetic source'));
+ perform pg_temp.publish_source((v->>'versionId')::uuid);return(v->>'materialId')::uuid;
+end$$;
+create function pg_temp.receipt(i uuid)returns jsonb language sql as $$select jsonb_build_object('recipe','public-utf8-html-v1','complete',true,'requestedUrl',input->>'url','finalUrl','https://example.invalid/final','statusCode',200,'contentType','text/plain','fetchedAt',clock_timestamp(),'body','Updated synthetic text','bodyHash',encode(extensions.digest('Updated synthetic text','sha256'),'hex'),'text','Updated synthetic text','limitations','[]'::jsonb)from public.knowledge_web_captures where id=i$$;
+select pg_temp.check_it(public.read_knowledge_web_policy('ee560000-0000-4000-8000-000000000001','11111111-1111-1111-1111-111111111111')->'policy'='null','automatic checks default off');
+select pg_temp.check_it(public.dispatch_knowledge_web_checks()->'requests'='[]','no enabled policy means no automatic request');
+select pg_temp.check_it(pg_temp.save_policy('ee560000-0000-4000-8000-000000000010')->>'state'='saved','explicit policy saved');
+select pg_temp.check_it(pg_temp.save_policy('ee560000-0000-4000-8000-000000000010')->>'state'='replayed','lost policy reply recovers same decision');
+select pg_temp.check_it(pg_temp.save_policy('ee560000-0000-4000-8000-000000000010',pg_temp.policy_input()||'{"dailyLimit":1}')->>'state'='request_conflict','changed policy replay rejected');
+select pg_temp.check_it(pg_temp.save_policy(gen_random_uuid())->>'state'='policy_changed','stale policy revision rejected');
+select pg_temp.check_it(public.read_knowledge_web_policy('ee560000-0000-4000-8000-000000000001','11111111-1111-1111-1111-111111111111','{"kind":"decision","decisionId":"ee560000-0000-4000-8000-000000000010"}')->>'revision'='1','exact decision recovery');
+select pg_temp.check_it(public.cancel_unused_knowledge_decision('ee560000-0000-4000-8000-000000000010','ee560000-0000-4000-8000-000000000001','11111111-1111-1111-1111-111111111111',jsonb_build_object('inputHash',repeat('a',64),'reason','Cancel only unused policy'))->>'decisionDomain'='knowledge_web_policy','unused cancellation recovers existing policy');
+select pg_temp.check_it(public.cancel_unused_knowledge_decision('ee560000-0000-4000-8000-000000000099','ee560000-0000-4000-8000-000000000001','11111111-1111-1111-1111-111111111111',jsonb_build_object('inputHash',repeat('a',64),'reason','Cancel only unused policy'))->>'state'='cancelled','unused policy cancellation retained');
+select pg_temp.check_it(pg_temp.save_policy('ee560000-0000-4000-8000-000000000099',pg_temp.policy_input(1))->>'state'='decision_cancelled','delayed cancelled policy cannot save');
+insert into st values('fresh',to_jsonb(pg_temp.source('ee560000-0000-4000-8000-000000000001',0)));
+select pg_temp.check_it(public.dispatch_knowledge_web_checks()->'requests'='[]','fresh source is not due');
+insert into st values('old',to_jsonb(pg_temp.source('ee560000-0000-4000-8000-000000000001',8)));
+insert into st values('dispatch',public.dispatch_knowledge_web_checks());
+select pg_temp.check_it(jsonb_array_length(v->'requests')=1,'one due published website captured')from st where k='dispatch';
+select pg_temp.check_it((select actor_id is null and origin='scheduled'and policy_revision=1 and input->>'url'='https://example.invalid/final'from public.knowledge_web_captures where id=(select(v->'requests'->0->>'id')::uuid from st where k='dispatch')),'scheduled intent uses actual source and no fictional human actor');
+select pg_temp.check_it((select count(*)from public.shared_action_events where property_id='ee560000-0000-4000-8000-000000000001'and action='knowledge.web.scheduled'and actor_id is null and service_principal='knowledge.web.schedule')=1,'automatic action attributed to scheduler');
+select pg_temp.check_it(public.dispatch_knowledge_web_checks()->'requests'='[]','pending request never silently dispatched again');
+insert into st values('claim',public.claim_knowledge_web_capture((select(v->'requests'->0->>'id')::uuid from st where k='dispatch')));
+select pg_temp.check_it(v->>'state'='invoke_once','current scheduled policy permits one claim')from st where k='claim';
+select pg_temp.check_it(public.claim_knowledge_web_capture((select(v->'requests'->0->>'id')::uuid from st where k='dispatch'))->>'state'='running','running scheduled capture never fetches twice');
+-- Saving a policy and stopping old scheduled work is one transaction with its action.
+create function pg_temp.fail_policy()returns trigger language plpgsql as $$begin if new.action='knowledge.web.policy_saved'then raise exception 'Synthetic policy history failure';end if;return new;end$$;
+create trigger fixture_policy_failure before insert on public.shared_action_events for each row execute function pg_temp.fail_policy();
+do $$begin begin perform pg_temp.save_policy('ee560000-0000-4000-8000-000000000011',pg_temp.policy_input(1,false));raise exception 'Expected rollback'using errcode='P0002';exception when sqlstate'P0001'then if sqlerrm<>'Synthetic policy history failure'then raise;end if;perform pg_temp.check_it(true,'policy event failure reaches transaction boundary');end;end$$;
+drop trigger fixture_policy_failure on public.shared_action_events;
+select pg_temp.check_it((select revision=1 and enabled from public.knowledge_web_policies where property_id='ee560000-0000-4000-8000-000000000001')and(select state='running'from public.knowledge_web_captures where id=(select(v->'requests'->0->>'id')::uuid from st where k='dispatch')),'history failure rolls back policy and stop');
+select pg_temp.check_it(pg_temp.save_policy('ee560000-0000-4000-8000-000000000011',pg_temp.policy_input(1,false))->>'stoppedCaptures'='1','disable stops unfinished scheduled request');
+select pg_temp.check_it(public.record_knowledge_web_capture((select(v->'requests'->0->>'id')::uuid from st where k='dispatch'),(select(v->>'claimToken')::uuid from st where k='claim'),pg_temp.receipt((select(v->'requests'->0->>'id')::uuid from st where k='dispatch')))->>'state'='stopped','late receipt remains stopped after disable');
+select pg_temp.check_it((select receipt is not null from public.knowledge_web_captures where id=(select(v->'requests'->0->>'id')::uuid from st where k='dispatch')),'late exact evidence retained');
+select pg_temp.check_it(public.dispatch_knowledge_web_checks()->'requests'='[]','disabled policy dispatches nothing');
+select pg_temp.save_policy('ee560000-0000-4000-8000-000000000012',pg_temp.policy_input(2,true,1));
+select pg_temp.check_it(public.dispatch_knowledge_web_checks()->'requests'='[]','daily budget counts earlier policy requests including stopped');
+select pg_temp.save_policy(gen_random_uuid(),pg_temp.policy_input(3,true,5));
+insert into st values('again',public.dispatch_knowledge_web_checks(1));
+select pg_temp.check_it(jsonb_array_length(v->'requests')=1,'explicit policy revision authorizes a new bounded attempt')from st where k='again';
+-- Current owner access required at dispatch and claim; read remains available for current members.
+do $$declare r text;begin select role into r from public.profiles where id='11111111-1111-1111-1111-111111111111';update public.profiles set role=null where id='11111111-1111-1111-1111-111111111111';perform pg_temp.check_it(public.dispatch_knowledge_web_checks()->'requests'='[]','revoked policy owner cannot schedule');perform pg_temp.check_it(public.claim_knowledge_web_capture((select(v->'requests'->0->>'id')::uuid from st where k='again'))->>'state'='forbidden','revoked policy owner blocks queued claim');perform pg_temp.check_it(pg_temp.save_policy(gen_random_uuid(),pg_temp.policy_input(4))->>'state'='forbidden','manager permission rechecked for policy save');perform pg_temp.check_it(public.read_knowledge_web_policy('ee560000-0000-4000-8000-000000000001','11111111-1111-1111-1111-111111111111')->'ownerAuthorized'='false','invalid policy authority visible');update public.profiles set role=r where id='11111111-1111-1111-1111-111111111111';end$$;
+insert into st values('claim2',public.claim_knowledge_web_capture((select(v->'requests'->0->>'id')::uuid from st where k='again')));
+-- Withdrawing the exact source after claim holds its result without publication.
+select public.release_knowledge_material(gen_random_uuid(),m.property_id,'11111111-1111-1111-1111-111111111111',jsonb_build_object('materialId',m.id,'versionId',m.active_version_id,'expectedLatestVersionId',m.latest_version_id,'expectedActiveVersionId',m.active_version_id,'expectedReleaseId',m.last_release_id,'operation','withdraw','resultHash',null,'confirmed',true,'reason','Withdraw exact source while capture runs'))from public.knowledge_materials m where m.id=(select(v#>>'{}')::uuid from st where k='old');
+select pg_temp.check_it(public.record_knowledge_web_capture((select(v->'requests'->0->>'id')::uuid from st where k='again'),(select(v->>'claimToken')::uuid from st where k='claim2'),pg_temp.receipt((select(v->'requests'->0->>'id')::uuid from st where k='again')))->>'state'='held','withdrawn source holds late result');
+select pg_temp.check_it((select active_version_id is null from public.knowledge_materials where id=(select(v#>>'{}')::uuid from st where k='old')),'scheduled result never republishes withdrawn source');
+select pg_temp.check_it(public.dispatch_knowledge_web_checks()->'requests'='[]','withdrawn sources never scheduled');
+-- All due sources are considered, but global and daily caps are enforced across calls.
+select pg_temp.source('ee560000-0000-4000-8000-000000000001',8)from generate_series(1,6);
+select pg_temp.source('ee560000-0000-4000-8000-000000000002',8)from generate_series(1,6);
+select pg_temp.save_policy(gen_random_uuid(),pg_temp.policy_input(0,true,5),'ee560000-0000-4000-8000-000000000002');
+create function pg_temp.fail_schedule()returns trigger language plpgsql as $$begin if new.action='knowledge.web.scheduled'then raise exception 'Synthetic scheduler history failure';end if;return new;end$$;
+create trigger fixture_scheduler_failure before insert on public.shared_action_events for each row execute function pg_temp.fail_schedule();
+do $$begin begin perform public.dispatch_knowledge_web_checks(5);raise exception 'Expected rollback'using errcode='P0002';exception when sqlstate'P0001'then if sqlerrm<>'Synthetic scheduler history failure'then raise;end if;perform pg_temp.check_it(true,'scheduled history failure reaches transaction boundary');end;end$$;
+drop trigger fixture_scheduler_failure on public.shared_action_events;
+select pg_temp.check_it((select count(*)from public.knowledge_web_captures where origin='scheduled'and property_id in('ee560000-0000-4000-8000-000000000001','ee560000-0000-4000-8000-000000000002'))=2,'failed scheduled action rolls back automatic request');
+insert into st values('batch1',public.dispatch_knowledge_web_checks(5));
+select pg_temp.check_it(jsonb_array_length(v->'requests')=5,'global batch cap across properties')from st where k='batch1';
+insert into st values('batch2',public.dispatch_knowledge_web_checks(5));
+select pg_temp.check_it(jsonb_array_length(v->'requests')=3,'remaining daily property budgets retained across sweep calls')from st where k='batch2';
+select pg_temp.check_it(public.dispatch_knowledge_web_checks()->'requests'='[]','exhausted daily budgets cannot be bypassed');
+select pg_temp.check_it((select count(*)from public.knowledge_web_captures where property_id='ee560000-0000-4000-8000-000000000001'and origin='scheduled')=5,'first property exact budget');
+select pg_temp.check_it((select count(*)from public.knowledge_web_captures where property_id='ee560000-0000-4000-8000-000000000002'and origin='scheduled')=5,'second property exact budget');
+select pg_temp.check_it(not exists(select 1 from public.knowledge_web_captures where origin='operator'and property_id in('ee560000-0000-4000-8000-000000000001','ee560000-0000-4000-8000-000000000002')and state='stopped'),'operator captures unaffected by policy changes');
+-- Native bounds and immutable authority, including raw client permissions.
+do $$begin begin perform public.dispatch_knowledge_web_checks(null);raise exception 'Expected bound'using errcode='P0002';exception when sqlstate'P0001'then perform pg_temp.check_it(true,'null batch limit rejected');end;begin perform pg_temp.save_policy(gen_random_uuid(),pg_temp.policy_input(4)||'{"dailyLimit":6}');raise exception 'Expected bound'using errcode='P0002';exception when sqlstate'P0001'then perform pg_temp.check_it(true,'native daily cap enforced');end;begin perform pg_temp.save_policy(gen_random_uuid(),pg_temp.policy_input(4)||'{"confirmed":false}');raise exception 'Expected review'using errcode='P0002';exception when sqlstate'P0001'then perform pg_temp.check_it(true,'native explicit confirmation enforced');end;end$$;
+select set_config('p11.knowledge_policy_scope','',true);
+do $$begin begin update public.knowledge_web_policies set enabled=false where property_id='ee560000-0000-4000-8000-000000000001';raise exception 'Expected guard'using errcode='P0002';exception when sqlstate'P0001'then perform pg_temp.check_it(true,'unrecorded policy mutation blocked');end;begin update public.knowledge_web_policy_decisions set input='{}'where id='ee560000-0000-4000-8000-000000000010';raise exception 'Expected guard'using errcode='P0002';exception when sqlstate'P0001'then perform pg_temp.check_it(true,'policy decisions immutable');end;end$$;
+select pg_temp.check_it(not has_table_privilege('authenticated','public.knowledge_web_policies','select')and not has_function_privilege('anon','public.dispatch_knowledge_web_checks(integer)','execute'),'policy and scheduler private to service boundary');
+select pg_temp.check_it(public.read_knowledge_web_policy('ee560000-0000-4000-8000-000000000001',gen_random_uuid())->>'state'='forbidden','cross account policy read rejected');
+select pg_temp.check_it(not exists(select 1 from public.shared_action_events where property_id in('ee560000-0000-4000-8000-000000000001','ee560000-0000-4000-8000-000000000002')and training_eligible),'automatic work does not enable training');
+select pg_temp.check_it((select count(*)from public.knowledge_material_versions where property_id='ee560000-0000-4000-8000-000000000001')=8,'automatic checks never create accepted source versions');
+-- Full private history beyond REST limits with paging and revision fence.
+insert into st values('history',public.read_knowledge_web_policy('ee560000-0000-4000-8000-000000000001','11111111-1111-1111-1111-111111111111'));
+insert into public.knowledge_web_policy_decisions(id,property_id,org_id,actor_id,input,input_hash,after_state,result)select gen_random_uuid(),'ee560000-0000-4000-8000-000000000001','22222222-2222-2222-2222-222222222222','11111111-1111-1111-1111-111111111111','{"reason":"Historical bounded policy fixture"}','fixture','{}','{}'from generate_series(1,1001);
+select pg_temp.check_it(public.read_knowledge_web_policy('ee560000-0000-4000-8000-000000000001','11111111-1111-1111-1111-111111111111')->>'total'='1005','full history includes entries beyond REST cap');
+select pg_temp.check_it(jsonb_array_length(public.read_knowledge_web_policy('ee560000-0000-4000-8000-000000000001','11111111-1111-1111-1111-111111111111','{"offset":1000}')->'items')=5,'oldest native history reachable');
+select pg_temp.check_it(public.read_knowledge_web_policy('ee560000-0000-4000-8000-000000000001','11111111-1111-1111-1111-111111111111',jsonb_build_object('offset',20,'expectedHash',(select v->>'historyHash'from st where k='history')))->>'state'='history_changed','changed history requires reload');
+select pg_temp.check_it(public.read_knowledge_web_policy('ee560000-0000-4000-8000-000000000001','11111111-1111-1111-1111-111111111111')->'items'->0->>'reason'='Historical bounded policy fixture','operator reason visible in history');
+select n as passed_assertions from assertion_count;
+ROLLBACK;

@@ -16,6 +16,8 @@ vi.mock('resend', () => ({
 
 describe('messaging service', () => {
   beforeEach(() => {
+    vi.stubEnv('OUTBOUND_DELIVERY_PAUSED', 'false')
+    vi.stubEnv('RESEND_FROM_EMAIL', 'fixture@example.com')
     vi.clearAllMocks()
     vi.resetModules()
     vi.stubGlobal('fetch', fetchMock)
@@ -118,7 +120,8 @@ describe('messaging service', () => {
             content_type: 'text/calendar',
           }),
         ],
-      })
+      }),
+      undefined
     )
   })
 
@@ -135,5 +138,24 @@ describe('messaging service', () => {
       error: 'Subject is required for email',
       channel: 'email',
     })
+  })
+})
+
+
+describe('delivery containment', () => {
+  afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.clearAllMocks() })
+  it('blocks email and SMS before any provider access by default', async () => {
+    delete process.env.OUTBOUND_DELIVERY_PAUSED
+    vi.stubGlobal('fetch', fetchMock)
+    const { sendEmail, sendSMS } = await import('./messaging')
+    expect((await sendEmail('fixture@example.com', 'Test', 'Body')).success).toBe(false)
+    expect((await sendSMS('+15551112222', 'Body')).success).toBe(false)
+    expect(fetchMock).not.toHaveBeenCalled(); expect(resendSendMock).not.toHaveBeenCalled()
+  })
+  it('does not call an unacknowledged email successful', async () => {
+    vi.stubEnv('OUTBOUND_DELIVERY_PAUSED', 'false'); vi.stubEnv('RESEND_API_KEY', 'fixture'); vi.stubEnv('RESEND_FROM_EMAIL', 'fixture@example.com')
+    resendSendMock.mockResolvedValue({ data: {}, error: null })
+    const { sendEmail } = await import('./messaging')
+    expect(await sendEmail('fixture@example.com', 'Test', 'Body')).toMatchObject({ success: false, error: expect.stringContaining('not confirmed') })
   })
 })

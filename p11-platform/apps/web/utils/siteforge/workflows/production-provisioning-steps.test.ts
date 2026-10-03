@@ -108,6 +108,7 @@ describe('production WordPress provisioning workflow step', () => {
         builder({ data: { id: 'website-1' }, error: null }),
       ],
     }
+    const completedJob = queues.shared_jobs.at(-1)!
     from.mockImplementation((table: string) => {
       const next = queues[table]?.shift()
       if (!next) throw new Error(`Unexpected ${table} query`)
@@ -126,6 +127,7 @@ describe('production WordPress provisioning workflow step', () => {
       startedAt: '2026-08-06T20:00:00.000Z',
     })
 
+    expect(completedJob.update).toHaveBeenCalledWith(expect.objectContaining({output: result}))
     expect(waitForOperation).toHaveBeenCalledWith('operation-123')
     expect(createWordPressApplicationPassword).toHaveBeenCalledWith({
       ssh: expect.objectContaining({

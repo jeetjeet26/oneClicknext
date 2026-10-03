@@ -1,5 +1,7 @@
 # P11 Platform — The Autonomous Agency
 
+> **Current direction (September 12, 2026):** SiteForge is the personal Codex skill used in each client project. The console prepares client briefs and retains earlier website records; the application generator and runtime documentation below describe the retained earlier implementation. See the [current full implementation plan](docs/P11_IMPLEMENTATION_PLAN.md) for the amended delivery contract, evidence and remaining product work.
+
 <div align="center">
 
 **AI-Powered Marketing Suite for Multifamily Real Estate**
@@ -65,7 +67,7 @@ P11 Platform is an **all-in-one AI marketing operating system** for apartment co
 | Product | Description | Status |
 |---------|-------------|--------|
 | **BrandForge™** | AI-powered brand-book generation with operator review and provider-gated visual steps | Provider validation pending |
-| **SiteForge™** | AI WordPress site generation with local smoke coverage and explicit provider gating | Provider validation pending |
+| **SiteForge™** | Codex skill for bespoke website delivery; console brief handoff and earlier website records | Client delivery and integration qualification in progress |
 | **ForgeStudio AI™** | Content generation with Google Veo 3 video + Imagen 3 images | Local-ready |
 | **ReviewFlow AI™** | Multi-source review sync with AI-generated drafts and manual-review fallback on provider failure | Local-ready |
 

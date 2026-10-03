@@ -13,8 +13,7 @@ import logging
 import re
 import json
 from typing import Dict, Any, List, Tuple, Optional
-from openai import OpenAI
-from tenacity import retry, stop_after_attempt, wait_exponential
+from openai import AsyncOpenAI
 
 logger = logging.getLogger(__name__)
 
@@ -133,10 +132,10 @@ class OpenAINaturalConnector:
         if not self.api_key:
             raise ValueError("OPENAI_API_KEY not set")
         
-        self.client = OpenAI(
+        self.client = AsyncOpenAI(
             api_key=self.api_key,
-            timeout=600.0,
-            max_retries=2
+            timeout=45.0,
+            max_retries=0
         )
         if surface == 'chatgpt':
             self.model = os.environ.get('GEO_CHATGPT_MODEL') or os.environ.get('GEO_OPENAI_MODEL', 'gpt-5.6-sol')
@@ -146,7 +145,6 @@ class OpenAINaturalConnector:
         
         logger.info(f"[OpenAINatural] Model: {self.model}, Web search: {self.enable_web_search}")
     
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     async def get_natural_response(self, query_text: str) -> Tuple[str, List[Dict], Dict]:
         """
         Phase 1: Get natural conversational response using Responses API.
@@ -167,11 +165,12 @@ class OpenAINaturalConnector:
             try:
                 logger.info("[OpenAINatural] Using Responses API with web_search_preview tool")
                 
-                response = self.client.responses.create(
+                response = await self.client.responses.create(
                     model=self.model,
                     input=query_text,
                     instructions=system_prompt,
-                    tools=[{'type': 'web_search_preview'}]
+                    tools=[{'type': 'web_search_preview'}],
+                    max_output_tokens=4000
                 )
                 
                 # Extract text and annotations from response.output
@@ -211,13 +210,14 @@ class OpenAINaturalConnector:
         # Fallback: Chat Completions API (no web search sources)
         logger.info("[OpenAINatural] Using Chat Completions API (fallback)")
         
-        completion = self.client.chat.completions.create(
+        completion = await self.client.chat.completions.create(
             **({
                 "model": self.model,
                 "messages": [
                     {'role': 'system', 'content': system_prompt},
                     {'role': 'user', 'content': query_text}
                 ],
+                **({"max_completion_tokens":4000} if re.search(r"^gpt-[5-9]",self.model,re.I) else {"max_tokens":4000}),
                 **({} if re.search(r'^gpt-5', self.model, re.I) else {"temperature": 0.7})
             })
         )
@@ -239,7 +239,6 @@ class OpenAINaturalConnector:
             }
         )
     
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     async def analyze_response(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """
         Phase 2: Analyze natural response with detailed prompt.
@@ -285,7 +284,7 @@ class OpenAINaturalConnector:
             else:
                 params["max_tokens"] = 4000  # GPT-4 and earlier
             
-            response = self.client.chat.completions.create(**params)
+            response = await self.client.chat.completions.create(**params)
             
             content = response.choices[0].message.content
             

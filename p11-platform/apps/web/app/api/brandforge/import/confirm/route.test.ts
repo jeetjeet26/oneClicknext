@@ -26,6 +26,7 @@ function request(body: unknown): NextRequest {
 }
 
 const validBody = {
+  requestId: '55555555-5555-4555-8555-555555555555',
   propertyId: '11111111-1111-4111-8111-111111111111',
   importId: '22222222-2222-4222-8222-222222222222',
   contract: { contractVersion: '1.0' },

@@ -17,8 +17,8 @@ from ..cloudways_client import (
     wait_for_app_ready,
     install_collection_theme
 )
-from ...shared.supabase_client import get_supabase_client
-from ...shared.audit import log_mcp_action
+from shared.supabase_client import get_supabase as get_supabase_client
+from shared.audit import log_mcp_operation
 
 logger = logging.getLogger(__name__)
 
@@ -32,11 +32,15 @@ async def create_wordpress_instance(
     Installs WordPress, Collection theme, required plugins.
     """
     
-    await log_mcp_action(
-        server='wordpress',
-        tool='create_wordpress_instance',
+    await log_mcp_operation(
+        platform='wordpress',
+        operation_type='write',
+        result={'state': 'requested'},
+        success=False,
+        error_message='Request only; completion is not verified by this legacy audit.',
+        tool_name='create_wordpress_instance',
         property_id=property_id,
-        action_details={'property_name': property_name}
+        parameters={}
     )
     
     # Fail closed instead of persisting placeholder WordPress instances.
@@ -125,11 +129,15 @@ async def deploy_siteforge_blueprint(
     
     property_id = blueprint.get('propertyId')
     
-    await log_mcp_action(
-        server='wordpress',
-        tool='deploy_siteforge_blueprint',
+    await log_mcp_operation(
+        platform='wordpress',
+        operation_type='write',
+        result={'state': 'requested'},
+        success=False,
+        error_message='Request only; completion is not verified by this legacy audit.',
+        tool_name='deploy_siteforge_blueprint',
         property_id=property_id,
-        action_details={'instance_id': instance_id}
+        parameters={'instance_id': instance_id}
     )
     
     # Get instance details

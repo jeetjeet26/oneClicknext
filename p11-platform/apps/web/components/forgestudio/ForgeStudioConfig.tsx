@@ -1,263 +1,44 @@
 'use client'
-
-import { useState, useEffect } from 'react'
-import { Loader2, Save, Palette, Bot, Wand2, Calendar } from 'lucide-react'
-
-interface ForgeStudioConfigProps {
-  propertyId: string
+import {useCallback,useEffect,useId,useRef,useState} from 'react'
+import {Loader2,Save} from 'lucide-react'
+import {studioConfigurationSchema,type StudioConfiguration} from '@/utils/forgestudio/configuration'
+type Saved={config:StudioConfiguration;version:number;isDefault?:boolean}
+const inputClass='w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-white'
+export function ForgeStudioConfig({propertyId}:{propertyId:string}){
+ const fieldId=useId()
+ const [saved,setSaved]=useState<Saved|null>(null),[draft,setDraft]=useState<StudioConfiguration|null>(null),[amenities,setAmenities]=useState(''),[loading,setLoading]=useState(true),[saving,setSaving]=useState(false),[error,setError]=useState<string|null>(null),[message,setMessage]=useState<string|null>(null)
+ const pending=useRef<{key:string;id:string}|null>(null),controller=useRef<AbortController|null>(null)
+ const reload=useCallback(async()=>{
+  controller.current?.abort();const abort=new AbortController();controller.current=abort;setLoading(true);setError(null);setMessage(null);setSaved(null);setDraft(null);pending.current=null
+  try{const r=await fetch(`/api/forgestudio/config?propertyId=${propertyId}`,{signal:AbortSignal.any([abort.signal,AbortSignal.timeout(20000)])}),data=await r.json();if(!r.ok)throw new Error(data.error||'Settings could not be loaded');if(abort.signal.aborted)return;setSaved(data);setDraft(data.config);setAmenities(data.config.key_amenities.join(', '))}catch(e){if(!abort.signal.aborted)setError(e instanceof Error?e.message:'Settings could not be loaded')}finally{if(!abort.signal.aborted)setLoading(false)}
+ },[propertyId])
+ useEffect(()=>{void reload();return()=>controller.current?.abort()},[reload])
+ async function save(e:React.FormEvent){
+  e.preventDefault();if(!draft||!saved)return
+  const parsed=studioConfigurationSchema.safeParse({...draft,key_amenities:amenities.split(',').map(s=>s.trim()).filter(Boolean)})
+  if(!parsed.success){setError('Check the settings: up to 30 amenities, 120 characters each, and a caption limit from 50 to 10,000.');return}
+  const body={propertyId,expectedVersion:saved.version,config:parsed.data},key=JSON.stringify(body);if(pending.current?.key!==key)pending.current={key,id:crypto.randomUUID()}
+  setSaving(true);setError(null);setMessage(null)
+  const abort=new AbortController();controller.current=abort
+  try{const r=await fetch('/api/forgestudio/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...body,requestId:pending.current.id}),signal:AbortSignal.any([abort.signal,AbortSignal.timeout(20000)])}),data=await r.json();if(!r.ok)throw new Error(data.error||'Settings could not be saved');if(abort.signal.aborted)return;setSaved(data);setDraft(data.config);setAmenities(data.config.key_amenities.join(', '));pending.current=null;setMessage('Settings saved. New generation requests will use these preferences. Existing drafts retain their original settings.')}catch(e){if(!abort.signal.aborted)setError(e instanceof Error?e.message:'The save response was interrupted. Retry the same save to confirm its result.')}finally{if(!abort.signal.aborted)setSaving(false)}
+ }
+ return <section aria-label="Studio settings" className="max-w-3xl space-y-5 rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900">
+  <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-lg font-semibold">Studio settings</h2><button type="button" disabled={saving||loading} onClick={()=>void reload()} className="rounded border px-3 py-2 text-sm disabled:opacity-50">Reload saved settings</button></div>
+  <p className="text-sm text-slate-500">Preferences for future campaign drafts. Model and media choices are made in each generation request. Publication still requires a reviewed draft and a separate schedule decision.</p>
+  {error&&<p role="alert" className="text-sm text-red-600">{error}</p>}{message&&<p role="status" className="text-sm text-emerald-700">{message}</p>}
+  {loading?<p role="status" className="flex gap-2"><Loader2 className="h-5 w-5 animate-spin"/>Loading saved settings…</p>:draft&&saved?<form aria-label="Studio preferences" onSubmit={save} className="space-y-4">
+   {saved.isDefault&&<p className="text-sm text-slate-500">Using defaults. Save to record this property’s preferences.</p>}
+   <fieldset disabled={saving} className="space-y-4 disabled:opacity-60">
+    <div className="space-y-1"><label htmlFor={fieldId+'-voice'}>Brand voice</label><textarea id={fieldId+'-voice'} maxLength={2000} rows={3} value={draft.brand_voice??''} onChange={e=>setDraft({...draft,brand_voice:e.target.value||null})} className={inputClass} placeholder="Leave blank to use the property’s brand voice"/></div>
+    <div className="space-y-1"><label htmlFor={fieldId+'-audience'}>Audience interests</label><input id={fieldId+'-audience'} maxLength={1000} value={draft.target_audience??''} onChange={e=>setDraft({...draft,target_audience:e.target.value||null})} className={inputClass} placeholder="For example: outdoor spaces, flexible layouts, nearby transit"/></div>
+    <div className="space-y-1"><label htmlFor={fieldId+'-amenities'}>Amenity topics (comma-separated)</label><textarea id={fieldId+'-amenities'} rows={2} value={amenities} onChange={e=>setAmenities(e.target.value)} className={inputClass} placeholder="Pool, fitness center, rooftop lounge"/></div>
+    <p className="text-xs text-slate-500">Amenity topics guide ideas. Public claims still need supporting property evidence.</p>
+    <label className="flex items-center gap-2"><input type="checkbox" checked={draft.include_hashtags} onChange={e=>setDraft({...draft,include_hashtags:e.target.checked})}/>Allow hashtags in generated drafts</label>
+    <label className="flex items-center gap-2"><input type="checkbox" checked={draft.include_cta} onChange={e=>setDraft({...draft,include_cta:e.target.checked})}/>Allow a call-to-action in generated drafts</label>
+    <div className="space-y-1"><label htmlFor={fieldId+'-length'}>Maximum caption length</label><input id={fieldId+'-length'} type="number" required min={50} max={10000} step={1} value={draft.max_caption_length} onChange={e=>setDraft({...draft,max_caption_length:Number(e.target.value)})} className={inputClass}/></div>
+    <p className="text-xs text-slate-500">Includes hashtags. A channel’s smaller limit takes precedence. Saved preferences guide generation; manually edited drafts remain subject to content review.</p>
+   </fieldset>
+   <button type="submit" disabled={saving} className="flex items-center gap-2 rounded-lg bg-violet-600 px-5 py-2 text-white disabled:opacity-50">{saving?<Loader2 className="h-4 w-4 animate-spin"/>:<Save className="h-4 w-4"/>}Save settings</button>
+  </form>:null}
+ </section>
 }
-
-interface Config {
-  brand_voice: string | null
-  brand_colors: { primary?: string; secondary?: string }
-  target_audience: string | null
-  key_amenities: string[]
-  default_ai_model: string
-  creativity_level: number
-  include_hashtags: boolean
-  include_cta: boolean
-  max_caption_length: number
-  gemini_enabled: boolean
-  default_style: string
-  default_quality: string
-  auto_schedule: boolean
-}
-
-export function ForgeStudioConfig({ propertyId }: ForgeStudioConfigProps) {
-  const [config, setConfig] = useState<Config | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [success, setSuccess] = useState(false)
-
-  useEffect(() => {
-    async function fetchConfig() {
-      try {
-        const res = await fetch(`/api/forgestudio/config?propertyId=${propertyId}`)
-        const data = await res.json()
-        setConfig(data.config)
-      } catch (err) {
-        setError('Failed to load configuration')
-      } finally {
-        setLoading(false)
-      }
-    }
-    fetchConfig()
-  }, [propertyId])
-
-  const handleSave = async () => {
-    if (!config) return
-    
-    setSaving(true)
-    setError(null)
-    setSuccess(false)
-
-    try {
-      const res = await fetch('/api/forgestudio/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ propertyId, ...config })
-      })
-
-      if (!res.ok) throw new Error('Failed to save')
-      
-      setSuccess(true)
-      setTimeout(() => setSuccess(false), 3000)
-    } catch (err) {
-      setError('Failed to save configuration')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <Loader2 className="w-8 h-8 animate-spin text-violet-600" />
-      </div>
-    )
-  }
-
-  if (!config) return null
-
-  return (
-    <div className="space-y-6">
-      {/* Brand Settings */}
-      <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6">
-        <div className="flex items-center gap-3 mb-4">
-          <Palette className="w-5 h-5 text-violet-500" />
-          <h3 className="font-semibold text-slate-900 dark:text-white">Brand Settings</h3>
-        </div>
-        
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-              Brand Voice
-            </label>
-            <textarea
-              value={config.brand_voice || ''}
-              onChange={(e) => setConfig({ ...config, brand_voice: e.target.value })}
-              rows={3}
-              className="w-full px-4 py-2 border border-slate-200 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white resize-none"
-              placeholder="Describe your brand's tone and voice (e.g., professional yet friendly, luxury focused, community-oriented)"
-            />
-          </div>
-          
-          <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-              Target Audience
-            </label>
-            <input
-              type="text"
-              value={config.target_audience || ''}
-              onChange={(e) => setConfig({ ...config, target_audience: e.target.value })}
-              className="w-full px-4 py-2 border border-slate-200 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white"
-              placeholder="e.g., Young professionals, families, pet owners"
-            />
-          </div>
-          
-          <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-              Key Amenities (comma-separated)
-            </label>
-            <input
-              type="text"
-              value={config.key_amenities?.join(', ') || ''}
-              onChange={(e) => setConfig({ ...config, key_amenities: e.target.value.split(',').map(s => s.trim()) })}
-              className="w-full px-4 py-2 border border-slate-200 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white"
-              placeholder="Pool, Fitness Center, Dog Park, Rooftop Lounge"
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* AI Settings */}
-      <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6">
-        <div className="flex items-center gap-3 mb-4">
-          <Bot className="w-5 h-5 text-violet-500" />
-          <h3 className="font-semibold text-slate-900 dark:text-white">AI Generation Settings</h3>
-        </div>
-        
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-              Creativity Level: {Math.round(config.creativity_level * 100)}%
-            </label>
-            <input
-              type="range"
-              min="0"
-              max="100"
-              value={config.creativity_level * 100}
-              onChange={(e) => setConfig({ ...config, creativity_level: parseInt(e.target.value) / 100 })}
-              className="w-full"
-            />
-            <div className="flex justify-between text-xs text-slate-500 mt-1">
-              <span>Conservative</span>
-              <span>Creative</span>
-            </div>
-          </div>
-          
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-slate-700 dark:text-slate-300">Include hashtags</span>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                checked={config.include_hashtags}
-                onChange={(e) => setConfig({ ...config, include_hashtags: e.target.checked })}
-                className="sr-only peer"
-              />
-              <div className="w-11 h-6 bg-slate-200 dark:bg-slate-700 peer-checked:bg-violet-600 rounded-full peer after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
-            </label>
-          </div>
-          
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-slate-700 dark:text-slate-300">Include call-to-action</span>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                checked={config.include_cta}
-                onChange={(e) => setConfig({ ...config, include_cta: e.target.checked })}
-                className="sr-only peer"
-              />
-              <div className="w-11 h-6 bg-slate-200 dark:bg-slate-700 peer-checked:bg-violet-600 rounded-full peer after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
-            </label>
-          </div>
-        </div>
-      </div>
-
-      {/* Google Gemini Settings */}
-      <div className="bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-500/10 dark:to-orange-500/10 rounded-xl border border-amber-200 dark:border-amber-500/20 p-6">
-        <div className="flex items-center gap-3 mb-4">
-          <Wand2 className="w-5 h-5 text-amber-600" />
-          <h3 className="font-semibold text-slate-900 dark:text-white">Google Gemini AI (Image/Video)</h3>
-        </div>
-        
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-slate-700 dark:text-slate-300">Enable AI media generation</span>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                checked={config.gemini_enabled}
-                onChange={(e) => setConfig({ ...config, gemini_enabled: e.target.checked })}
-                className="sr-only peer"
-              />
-              <div className="w-11 h-6 bg-slate-200 dark:bg-slate-700 peer-checked:bg-amber-500 rounded-full peer after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
-            </label>
-          </div>
-          
-          {config.gemini_enabled && (
-            <>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-                  Default Style
-                </label>
-                <select
-                  value={config.default_style}
-                  onChange={(e) => setConfig({ ...config, default_style: e.target.value })}
-                  className="w-full px-4 py-2 border border-slate-200 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700"
-                >
-                  <option value="natural">Natural/Realistic</option>
-                  <option value="luxury">Luxury/Premium</option>
-                  <option value="modern">Modern/Minimalist</option>
-                  <option value="vibrant">Vibrant/Colorful</option>
-                </select>
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-                  Default Quality
-                </label>
-                <select
-                  value={config.default_quality}
-                  onChange={(e) => setConfig({ ...config, default_quality: e.target.value })}
-                  className="w-full px-4 py-2 border border-slate-200 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700"
-                >
-                  <option value="standard">Standard</option>
-                  <option value="high">High Quality</option>
-                </select>
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Save Button */}
-      <div className="flex items-center justify-between">
-        {error && <p className="text-sm text-red-500">{error}</p>}
-        {success && <p className="text-sm text-green-500">Settings saved!</p>}
-        {!error && !success && <div />}
-        
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className="flex items-center gap-2 px-6 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-lg font-medium disabled:opacity-50"
-        >
-          {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
-          Save Settings
-        </button>
-      </div>
-    </div>
-  )
-}
-

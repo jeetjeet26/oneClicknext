@@ -1,36 +1,14 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { NextRequest } from 'next/server'
-
-const authGetUserMock = vi.fn()
-const createClientMock = vi.fn()
-const createServiceClientMock = vi.fn()
-
-vi.mock('@/utils/supabase/server', () => ({
-  createClient: createClientMock,
-}))
-
-vi.mock('@/utils/supabase/admin', () => ({
-  createServiceClient: createServiceClientMock,
-}))
-
-describe('search route auth', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    createClientMock.mockResolvedValue({
-      auth: { getUser: authGetUserMock },
-    })
-    createServiceClientMock.mockReturnValue({
-      from: vi.fn(),
-    })
-  })
-
-  it('GET returns 401 when unauthenticated', async () => {
-    authGetUserMock.mockResolvedValue({ data: { user: null }, error: null })
-
-    const { GET } = await import('./route')
-    const response = await GET(new Request('http://localhost/api/search?q=jo') as NextRequest)
-
-    expect(response.status).toBe(401)
-    await expect(response.json()).resolves.toEqual({ error: 'Unauthorized' })
-  })
-})
+import {beforeEach,expect,it,vi}from 'vitest'
+import {InventoryError}from '@/utils/knowledge/inventory'
+const actor=vi.fn(),rpc=vi.fn();vi.mock('@/utils/search/store',()=>({searchActor:actor,searchRpc:rpc,InventoryError}))
+const id='11111111-1111-1111-1111-111111111111',body={id,propertyId:id,expectedActorId:id,operation:'search',query:'Private original query',filter:'all'}
+const req=(data:unknown=body,origin='http://localhost')=>new Request('http://localhost/api/search',{method:'POST',headers:{origin,'content-type':'application/json'},body:JSON.stringify(data)})
+beforeEach(()=>{vi.clearAllMocks();actor.mockResolvedValue(id);rpc.mockResolvedValue({state:'saved',id,propertyId:id,actorId:id,status:'searched'})})
+it.each([401,403])('preserves current authorization %s',async status=>{actor.mockRejectedValue(new InventoryError('Unavailable',status));const{POST}=await import('./route');expect((await POST(req())).status).toBe(status);expect(rpc).not.toHaveBeenCalled()})
+it('holds foreign origin before recording a query',async()=>{const{POST}=await import('./route');expect((await POST(req(body,'https://outside.invalid'))).status).toBe(403);expect(actor).not.toHaveBeenCalled()})
+it('holds changed signed-in identity',async()=>{actor.mockResolvedValue('other');const{POST}=await import('./route');expect((await POST(req())).status).toBe(409);expect(rpc).not.toHaveBeenCalled()})
+it('validates input before invoking storage',async()=>{const{POST}=await import('./route');expect((await POST(req({...body,query:'x'}))).status).toBe(400);expect(rpc).not.toHaveBeenCalled()})
+it('retains explicit query/filter and request identity with private responses',async()=>{const{POST}=await import('./route');const response=await POST(req());expect(response.status).toBe(200);expect(response.headers.get('cache-control')).toContain('no-store');expect(rpc).toHaveBeenCalledWith('decide_console_search',{p_id:id,p_actor_id:id,p_property_id:id,p_input:{operation:'search',query:body.query,filter:'all'}})})
+it('read failures remain failures, never empty search results',async()=>{rpc.mockRejectedValue(new Error('storage failure'));const{GET}=await import('./route');const response=await GET(new Request('http://localhost/api/search?propertyId='+id));expect(response.status).toBe(503);expect(await response.json()).not.toHaveProperty('items')})
+it('reads only the requested saved page',async()=>{const{GET}=await import('./route');expect((await GET(new Request('http://localhost/api/search?'+new URLSearchParams({propertyId:id,kind:'results',id,offset:'20'})))).status).toBe(200);expect(rpc).toHaveBeenCalledWith('read_console_search',{p_actor_id:id,p_property_id:id,p_kind:'results',p_id:id,p_offset:20,p_hash:null})})
+it('old unscoped keyword route cannot silently return a partial list',async()=>{const{GET}=await import('./route');expect((await GET(new Request('http://localhost/api/search?q=old'))).status).toBe(400);expect(actor).not.toHaveBeenCalled()})

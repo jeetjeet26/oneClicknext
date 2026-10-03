@@ -43,6 +43,7 @@ class CRMSchema:
     object_name: str
     object_label: str
     fields: List[CRMField]
+    evidence_source: str = "fallback"
 
 
 @dataclass
@@ -62,6 +63,7 @@ class CreateResult:
     external_id: Optional[str] = None
     error: Optional[str] = None
     raw_response: Optional[Dict[str, Any]] = None
+    confirmation: str = "unverified"  # confirmed, accepted, or unverified provider acknowledgment
 
 
 @dataclass
@@ -71,6 +73,7 @@ class ConnectionResult:
     message: str = ""
     error: Optional[str] = None
     api_version: Optional[str] = None
+    evidence_source: str = "provider_response"
 
 
 class BaseCRMAdapter(ABC):
@@ -94,6 +97,10 @@ class BaseCRMAdapter(ABC):
         self.credentials = credentials
         self._validate_credentials()
     
+    def read_get(self, *args, **kwargs):
+        import requests
+        return requests.get(*args, **kwargs)
+
     @abstractmethod
     def _validate_credentials(self) -> None:
         """Validate required credentials are present. Raise ValueError if not."""
@@ -206,6 +213,7 @@ class BaseCRMAdapter(ABC):
 # TourSpark canonical schema - the source of truth for field mapping
 TOURSPARK_SCHEMA = {
     "fields": [
+        {"name":"property_name","label":"Property Name","type":"string","required":False,"description":"Saved property name, for explicit company or community mapping"},
         {
             "name": "first_name",
             "label": "First Name",

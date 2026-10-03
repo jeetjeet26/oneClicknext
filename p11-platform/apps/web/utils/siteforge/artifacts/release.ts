@@ -1,3 +1,4 @@
+import {assertSiteForgeTestimonialPermissions} from '@/utils/reviewflow/testimonial-reuse'
 import { createHash, createPublicKey, verify } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
@@ -496,6 +497,7 @@ export async function loadVerifiedSiteForgeRelease(
   ) {
     throw new Error('SiteForge release artifact hash does not match')
   }
+  await assertSiteForgeTestimonialPermissions(client,input.propertyId,artifact.blueprint)
   if (!artifact.asset_manifest_hash || !artifact.base_theme_package_sha256) {
     throw new Error(
       'SiteForge artifact is missing an immutable release snapshot'

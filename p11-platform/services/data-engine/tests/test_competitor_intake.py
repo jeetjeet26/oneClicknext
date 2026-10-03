@@ -39,3 +39,22 @@ def test_build_kb_content_uses_enriched_evidence():
     assert "Competitor: Brookhaven" in content
     assert "Positioning: New townhomes with smart-home technology." in content
     assert "Unique selling points: No Mello Roos" in content
+
+
+def test_retired_intake_dispatch_cannot_schedule_provider_work(monkeypatch):
+    import asyncio
+    import pytest
+    from fastapi import BackgroundTasks, HTTPException
+    from routers import competitor_intake as module
+
+    def forbidden():
+        raise AssertionError("Retired intake must not open a database or provider")
+
+    monkeypatch.setattr(module, "get_supabase_client", forbidden)
+    tasks = BackgroundTasks()
+    with pytest.raises(HTTPException) as result:
+        asyncio.run(module.enrich_competitor_intake(module.EnrichIntakeRequest(batch_id="saved", property_id="property"), tasks))
+    assert result.value.status_code == 410
+    assert tasks.tasks == []
+    with pytest.raises(RuntimeError, match="retired"):
+        asyncio.run(module._process_batch("saved", "property"))

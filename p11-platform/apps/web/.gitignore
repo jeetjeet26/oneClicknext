@@ -23,6 +23,11 @@
 /build
 /runtime-assets/*.zip
 /runtime-assets/*.manifest.*
+# First-party packages are release inputs. Keep the licensed ACF archive local.
+!/runtime-assets/oneclick-siteforge.zip
+!/runtime-assets/oneclick-siteforge-runtime.zip
+!/runtime-assets/oneclick-siteforge-runtime.zip.manifest.json
+!/runtime-assets/oneclick-siteforge-runtime.zip.manifest.sha256
 
 # misc
 .DS_Store

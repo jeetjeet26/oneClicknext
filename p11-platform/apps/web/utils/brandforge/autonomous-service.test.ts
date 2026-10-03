@@ -23,6 +23,7 @@ function snapshot(vertical: 'multifamily_rental' | 'for_sale_community') {
       brandVoice: 'polished',
       targetAudience: 'Local buyers and renters',
       messagingThemes: ['Convenience', 'Design'],
+      reviewedClaims: [{category:'positioning',kind:'source_claim',statement:'Reviewed fixture positioning',quote:'Reviewed fixture positioning'}],
       observedAt: '2026-08-16T12:00:00.000Z',
     }],
   })
@@ -52,7 +53,7 @@ describe('autonomous BrandForge convergence', () => {
     expect(result.contract.identity.name).toBe('Juniper Row')
     expect(result.contract.introduction.content).toContain('for-sale residential community')
     expect(result.contract.positioning._meta.provenance.statement[0]).toMatchObject({
-      sourceType: 'competitor_brand_intelligence',
+      sourceType: 'competitor_brand_review',
       sourceId: '60000000-0000-4000-8000-000000000001',
     })
     expect(result.contract.implementation.examples.every(example =>
@@ -128,8 +129,9 @@ describe('autonomous BrandForge convergence', () => {
         Object.entries(before[key]).filter(([field]) => field !== '_meta')
       )
       expect(resultContent).toEqual(beforeContent)
-      expect(resultMeta.approval).toEqual({ status: 'approved' })
+      expect(resultMeta.approval).toEqual({ status: 'reviewing' })
     }
+    expect(result.contract.implementation._meta.approval).toEqual({ status: 'reviewing' })
     expect(result.contract.implementation.examples).toContainEqual(
       { type: 'signage', description: 'Locked signage rule' }
     )

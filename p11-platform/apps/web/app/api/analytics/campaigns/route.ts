@@ -1,3 +1,5 @@
+import { readMarketingFacts, MarketingReadError } from '@/utils/analytics/read-marketing-facts'
+import { campaignIdentity } from '@/utils/analytics/marketing-fact'
 import { createClient } from '@/utils/supabase/server'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { NextRequest, NextResponse } from 'next/server'
@@ -5,6 +7,8 @@ import { getMarketingChannelFilterValues, normalizeMarketingChannelId } from '@/
 
 type CampaignMetrics = {
   campaign_id: string
+  source_account_id: string | null
+  campaign_key: string
   campaign_name: string
   channel: string
   impressions: number
@@ -40,6 +44,7 @@ export async function GET(request: NextRequest) {
   const startDate = searchParams.get('startDate')
   const endDate = searchParams.get('endDate')
   const campaignId = searchParams.get('campaignId') // Optional: for single campaign detail
+  const sourceAccountId = searchParams.get('sourceAccountId')
   const channel = searchParams.get('channel') // Optional: filter by channel
 
   if (!propertyId) {
@@ -54,21 +59,13 @@ export async function GET(request: NextRequest) {
   try {
     // If requesting a specific campaign's trend data
     if (campaignId) {
-      let trendQuery = supabase
-        .from('fact_marketing_performance')
-        .select('date, impressions, clicks, spend, conversions')
-        .eq('property_id', propertyId)
-        .eq('campaign_id', campaignId)
-        .order('date', { ascending: true })
+      const trendData = await readMarketingFacts(supabase, {
+        propertyId, startDate, endDate, campaignId, sourceAccountId,
+        channels: channel ? getMarketingChannelFilterValues([channel]) : undefined,
+      })
 
-      if (startDate) trendQuery = trendQuery.gte('date', startDate)
-      if (endDate) trendQuery = trendQuery.lte('date', endDate)
-
-      const { data: trendData, error: trendError } = await trendQuery
-
-      if (trendError) {
-        return NextResponse.json({ error: trendError.message }, { status: 500 })
-      }
+      const identities = new Set((trendData || []).map(row => campaignIdentity(row.channel_id, row.source_account_id, row.campaign_id)))
+      if (identities.size > 1) return NextResponse.json({ error: 'Choose the campaign account and channel to view its daily trend' }, { status: 409 })
 
       const trends: CampaignTrend[] = (trendData || []).map(row => ({
         date: row.date,
@@ -81,27 +78,16 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ trends })
     }
 
-    // Fetch all campaign data for the period
-    let query = supabase
-      .from('fact_marketing_performance')
-      .select('*')
-      .eq('property_id', propertyId)
-      .order('date', { ascending: true })
-
-    if (startDate) query = query.gte('date', startDate)
-    if (endDate) query = query.lte('date', endDate)
-    if (channel) query = query.in('channel_id', getMarketingChannelFilterValues([channel]))
-
-    const { data, error } = await query
-
-    if (error) {
-      console.error('Error fetching campaign data:', error)
-      return NextResponse.json({ error: error.message }, { status: 500 })
-    }
+    const data = await readMarketingFacts(supabase, {
+      propertyId, startDate, endDate,
+      channels: channel ? getMarketingChannelFilterValues([channel]) : undefined,
+    })
 
     // Aggregate by campaign
     const campaignMap = new Map<string, {
       campaign_id: string
+      source_account_id: string | null
+      campaign_key: string
       campaign_name: string
       channel: string
       impressions: number
@@ -113,9 +99,11 @@ export async function GET(request: NextRequest) {
     }>()
 
     for (const row of data || []) {
-      const key = row.campaign_id
+      const key = campaignIdentity(row.channel_id, row.source_account_id, row.campaign_id)
       const existing = campaignMap.get(key) || {
         campaign_id: row.campaign_id,
+        source_account_id: row.source_account_id,
+        campaign_key: key,
         campaign_name: row.campaign_name || row.campaign_id,
         channel: normalizeMarketingChannelId(row.channel_id),
         impressions: 0,
@@ -177,6 +165,7 @@ export async function GET(request: NextRequest) {
       },
     })
   } catch (err) {
+    if (err instanceof MarketingReadError) return NextResponse.json({ error: err.message }, { status: err.status })
     console.error('Campaigns API error:', err)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }

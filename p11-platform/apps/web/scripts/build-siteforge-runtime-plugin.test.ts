@@ -84,6 +84,20 @@ describe('SiteForge runtime plugin package', () => {
         archiveHash: first.archiveHash,
         manifestSha256: first.manifestSha256,
       })
+      await expect(
+        checkSiteForgeRuntimePluginArtifact({
+          sourceDirectory,
+          v3Enabled: true,
+          outputDirectory: firstDirectory,
+        })
+      ).resolves.toMatchObject({ archiveHash: first.archiveHash })
+      await expect(
+        checkSiteForgeRuntimePluginArtifact({
+          ...options,
+          gitSha: 'fedcba9876543210fedcba9876543210fedcba98',
+          outputDirectory: firstDirectory,
+        })
+      ).rejects.toThrow(/artifact drift/)
 
       await writeFile(
         `${first.archivePath}.manifest.json`,

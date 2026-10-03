@@ -1,60 +1,23 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { NextRequest } from 'next/server'
-
-const authGetUserMock = vi.fn()
-const createClientMock = vi.fn()
-const validatePropertyAccessMock = vi.fn()
-
-vi.mock('@/utils/supabase/server', () => ({
-  createClient: createClientMock,
-}))
-
-vi.mock('@/utils/services/auth-guard', () => ({
-  validatePropertyAccess: validatePropertyAccessMock,
-}))
-
-describe('analytics query route', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    createClientMock.mockResolvedValue({
-      auth: { getUser: authGetUserMock },
-    })
-  })
-
-  it('returns 401 when unauthenticated', async () => {
-    authGetUserMock.mockResolvedValue({
-      data: { user: null },
-      error: null,
-    })
-
-    const { POST } = await import('./route')
-    const response = await POST(
-      new Request('http://localhost/api/analytics/query', {
-        method: 'POST',
-        body: JSON.stringify({ question: 'What is spend?', propertyId: 'property-1' }),
-      }) as NextRequest
-    )
-
-    expect(response.status).toBe(401)
-    await expect(response.json()).resolves.toEqual({ error: 'Unauthorized' })
-  })
-
-  it('returns 403 when property access is denied', async () => {
-    authGetUserMock.mockResolvedValue({
-      data: { user: { id: 'user-1' } },
-      error: null,
-    })
-    validatePropertyAccessMock.mockResolvedValue({ authorized: false })
-
-    const { POST } = await import('./route')
-    const response = await POST(
-      new Request('http://localhost/api/analytics/query', {
-        method: 'POST',
-        body: JSON.stringify({ question: 'What is spend?', propertyId: 'property-1' }),
-      }) as NextRequest
-    )
-
-    expect(response.status).toBe(403)
-    await expect(response.json()).resolves.toEqual({ error: 'Forbidden' })
-  })
-})
+import { beforeEach, describe, it, expect, vi } from 'vitest';
+const mocked = vi.hoisted(() => ({ actor: vi.fn(), rpc: vi.fn(), interpret: vi.fn(), calculate: vi.fn() }));
+vi.mock('@/utils/analytics/query-store', async () => { const { InventoryError } = await import('@/utils/knowledge/inventory'); return { BiError: InventoryError, queryActor: mocked.actor, queryRpc: mocked.rpc }; });
+vi.mock('@/utils/analytics/query-worker', () => ({ interpretBiQuery: mocked.interpret, queryAssistantEnabled: () => false }));
+vi.mock('@/utils/analytics/query-data', () => ({ calculateQuery: mocked.calculate }));
+import { GET, POST } from './route';
+import { InventoryError } from '@/utils/knowledge/inventory';
+const propertyId = '33333333-3333-3333-3333-333333333333', actor = '11111111-1111-1111-1111-111111111111', id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', hash = 'a'.repeat(64), filters = { startDate: '2026-09-01', endDate: '2026-09-30', channel: null, account: null, compare: false }, plan = { groupBy: 'channel', startDate: filters.startDate, endDate: filters.endDate, channel: null };
+const command = { operation: 'request', mode: 'manual', question: 'Totals', filters, sourceHash: hash, plan, propertyId, id, expectedActorId: actor };
+const post = (body: unknown, origin = 'http://localhost') => new Request('http://localhost/api/analytics/query', { method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+beforeEach(() => { vi.clearAllMocks(); mocked.actor.mockResolvedValue(actor); mocked.rpc.mockResolvedValue({ state: 'saved', propertyId, id, queryId: id, status: 'review' }); });
+describe('retained query API', () => {
+    it('rejects cross-origin mutations before account lookup', async () => { expect((await POST(post(command, 'https://other.test'))).status).toBe(403); expect(mocked.actor).not.toHaveBeenCalled(); });
+    it('requires fresh property authentication', async () => { mocked.actor.mockRejectedValue(new InventoryError('Sign in.', 401)); expect((await GET(new Request(`http://localhost/api/analytics/query?propertyId=${propertyId}`))).status).toBe(401); });
+    it('holds changed account before native work', async () => { expect((await POST(post({ ...command, expectedActorId: id }))).status).toBe(409); expect(mocked.rpc).not.toHaveBeenCalled(); });
+    it('binds the server actor and immutable source identity', async () => { const r = await POST(post(command)); expect(r.status).toBe(200); expect(r.headers.get('cache-control')).toContain('no-store'); expect(mocked.rpc).toHaveBeenCalledWith('decide_bi_query', { p_id: id, p_actor_id: actor, p_property_id: propertyId, p_input: { operation: 'request', mode: 'manual', question: 'Totals', filters, sourceHash: hash, plan }, p_result: null }); expect(mocked.interpret).not.toHaveBeenCalled(); });
+    it('only starts interpretation for a fresh recorded request, never a replay', async () => { const { plan: unused, ...assistant } = command; void unused; mocked.rpc.mockResolvedValue({ state: 'saved', propertyId, id, queryId: id, status: 'requested' }); expect((await POST(post({ ...assistant, mode: 'assistant' }))).status).toBe(200); expect(mocked.interpret).toHaveBeenCalledOnce(); mocked.interpret.mockClear(); mocked.rpc.mockResolvedValue({ state: 'replayed', propertyId, id, queryId: id, status: 'requested' }); await POST(post({ ...assistant, mode: 'assistant' })); expect(mocked.interpret).not.toHaveBeenCalled(); });
+    it('calculates only from native retained source and reviewed plan', async () => { const source = { filters, currentRows: ['synthetic retained rows'] }; mocked.rpc.mockResolvedValueOnce({ state: 'ready', propertyId, id, query: { source, plan, source_hash: hash, plan_hash: hash, state: 'review', revision: 2 } }).mockResolvedValueOnce({ state: 'saved', propertyId, id, status: 'complete' }); mocked.calculate.mockReturnValue({ definitionVersion: 'bi-query-v1', rows: ['server calculation'] }); const r = await POST(post({ operation: 'execute', id, propertyId, expectedActorId: actor, queryId: id, expectedRevision: 2, planHash: hash })); expect(r.status).toBe(200); expect(mocked.calculate).toHaveBeenCalledWith(source, plan, hash, hash); expect(mocked.rpc.mock.calls[1][1].p_result).toEqual({ definitionVersion: 'bi-query-v1', rows: ['server calculation'] }); });
+    it('does not recalculate a completed request during lost-result recovery', async () => { mocked.rpc.mockResolvedValueOnce({ propertyId, id, query: { state: 'complete', revision: 3 } }).mockResolvedValueOnce({ state: 'replayed', propertyId, id, status: 'complete' }); expect((await POST(post({ operation: 'execute', id, propertyId, expectedActorId: actor, queryId: id, expectedRevision: 2, planHash: hash }))).status).toBe(200); expect(mocked.calculate).not.toHaveBeenCalled(); });
+    it('withholds full source rows from browser detail reads', async () => { mocked.rpc.mockResolvedValue({ state: 'ready', propertyId, id, query: { input: { question: 'Totals' }, source: { filters, propertyName: 'Fixture', currentRows: ['private raw capture'] }, state: 'review' } }); const r = await GET(new Request(`http://localhost/api/analytics/query?propertyId=${propertyId}&kind=detail&id=${id}`)); expect(r.status).toBe(200); expect(await r.text()).not.toContain('private raw capture'); });
+    it.each([{ result: { rows: ['forged'] } }, { sql: 'SELECT * FROM profiles' }, { plan: { ...plan, limit: 100 } }, { question: ' ' }, { question: 'x'.repeat(2001) }])('rejects unsupported request %j', async (extra) => { expect((await POST(post({ ...command, ...extra }))).status).toBe(400); expect(mocked.rpc).not.toHaveBeenCalled(); });
+    it('bounds bodies and sanitizes unexpected failures', async () => { expect((await POST(post({ large: 'x'.repeat(9000) }))).status).toBe(413); mocked.rpc.mockRejectedValue(new Error('SECRET')); const r = await POST(post(command)); expect(r.status).toBe(503); expect(await r.text()).not.toContain('SECRET'); });
+});

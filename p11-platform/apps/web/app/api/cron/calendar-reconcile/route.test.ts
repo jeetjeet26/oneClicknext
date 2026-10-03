@@ -36,7 +36,7 @@ describe('cron calendar reconcile route', () => {
     vi.unstubAllEnvs()
     vi.stubEnv('CRON_SECRET', 'secret')
     startCronJobRunMock.mockResolvedValue({ id: 'run-1', jobName: 'lumaleasing-calendar-reconcile', startedAtMs: 1 })
-    finishCronJobRunMock.mockResolvedValue(undefined)
+    finishCronJobRunMock.mockResolvedValue(true)
   })
 
   it('returns 401 when cron secret is invalid', async () => {
@@ -155,4 +155,24 @@ describe('cron calendar reconcile route', () => {
     expect(createServiceClientMock).not.toHaveBeenCalled()
     expect(reconcileCalendarForPropertyMock).toHaveBeenCalledWith('property-9')
   })
+  it('stops before processing when run creation fails',async()=>{
+    startCronJobRunMock.mockResolvedValue(null)
+    const {GET}=await import('./route')
+    expect((await GET(makeNextRequest('http://localhost/api/cron/calendar-reconcile?propertyId=property',{headers:{authorization:'Bearer secret'}}))).status).toBe(503)
+    expect(reconcileCalendarForPropertyMock).not.toHaveBeenCalled()
+  })
+  it('does not report skipped booking repairs as a successful run',async()=>{
+    reconcileCalendarForPropertyMock.mockResolvedValue({activeBookings:1,created:0,repaired:0,alreadySynced:0,skipped:1,failed:0,failures:[{reason:'Needs review'}]})
+    const {GET}=await import('./route')
+    const response=await GET(makeNextRequest('http://localhost/api/cron/calendar-reconcile?propertyId=property',{headers:{authorization:'Bearer secret'}}))
+    expect(await response.json()).toMatchObject({success:false,skipped:1,successful:0})
+    expect(finishCronJobRunMock).toHaveBeenCalledWith(expect.anything(),expect.objectContaining({status:'failed'}))
+  })
+  it('does not acknowledge a run whose completion was not saved',async()=>{
+    reconcileCalendarForPropertyMock.mockResolvedValue({activeBookings:1,created:1,repaired:0,alreadySynced:0,skipped:0,failed:0,failures:[]})
+    finishCronJobRunMock.mockResolvedValue(false)
+    const {GET}=await import('./route')
+    expect((await GET(makeNextRequest('http://localhost/api/cron/calendar-reconcile?propertyId=property',{headers:{authorization:'Bearer secret'}}))).status).toBe(503)
+  })
+
 })

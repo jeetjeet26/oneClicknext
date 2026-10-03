@@ -1,0 +1,22 @@
+# Phase 5 — retained marketing CSV imports
+
+Locally qualified September 23, 2026 (September 24 UTC). The supported daily/dimension CSV workflow now retains original input, review and actual application as one recoverable journey. This completes the CSV import increment; data reconciliation and the holistic product register remain open. Login stays email and password. Nothing is eligible for model training.
+
+The console saves each original UTF-8 file and its exact deterministic preview before reporting data changes. Actual provider account and campaign identities replace generated name/period identities. Missing campaign IDs require explicit entry. Daily reports require complete numeric metrics and true dates; fractional conversions are preserved, and daily spend that cannot be stored exactly to cents is rejected rather than silently rounded. Quoted multiline fields, escaped quotes and commas are handled. Duplicate row identities, unknown metric values, wrong account/currency, aggregate periods and unsupported summaries are held. Excluded total rows remain in the original and are disclosed in preview coverage. Dimension exports require actual reporting dates and preserve their captured metric cells.
+
+Single-file, multiple-file and folder selection are supported, bounded to 20 files, 8 MB and 5,000 rows per file. Previews do not change facts. Each explicit import applies all selected file rows together with an upload receipt and safe shared action record. Immutable private records retain original/preview identities, parser version, complete destination before/after state and attributed decisions. Extended reports now distinguish source account, campaign and dimension identity. Earlier rows retain their unknown ownership; no migration guesses missing accounts or currency.
+
+Changed destination data holds application. An operator can prepare a linked new preview from the retained original, inspect all existing rows, apply or discard, and recover a missed reply using only saved request identity. Cancellation fences unused identities; it never undoes an already accepted import. Current role and property membership are rechecked. Complete current and older upload histories remain paged and readable, with older logs clearly distinguished from retained-source evidence. Validation errors and failed initial history reads can be retried directly. The earlier unrecorded upload endpoint is retired.
+
+Unknown historical account/currency overlaps still require reconciliation before importing affected dates. The next increment must provide the recorded operator correction/exclusion/review workflow; these rows were not deleted or relabeled. Provider acceptance, historical accuracy and actual business attribution remain separate from successful local import.
+
+## Verification
+
+- 59 application cases across four suites, including strict parsing, actual server-derived previews, current actor/origin checks and the retired route.
+- 67 initial native lifecycle assertions and 3,276 selected assertions across 55 serial rollback suites; the final exact-cent refinement passed the expanded 68-case import rollback suite.
+- 55 distinct connected browser journeys: 28 passed in the mixed run, 26 report/schedule/identity journeys passed after fixture date alignment, and the new failed-history/validation recovery journey passed in its targeted follow-up. The initial nine CSV/identity journeys also passed. Fixture dates now follow the browser calendar across UTC midnight; application date behavior is unchanged.
+- Full application types, targeted lint and schema stamp pass; all 631 checked native functions match saved migrations. Local fixture/orphan and migration-history counts are zero. Advisors remain at 1,333 with no additions. Desktop/mobile import evidence was inspected.
+
+Migration `20260924015551_phase_five_bi_csv_imports.sql` was applied once locally. A subsequent exact replacement of `prepare_bi_csv` added the precision guard. No hosted system, real provider/model call, email delivery, training, deployment or autonomous activation was involved. The older composite local-smoke scenario still contains unrelated retired/provider-bound journeys and was not used as qualification; disposable native/browser import journeys cover the supported replacement.
+
+Continue recorded marketing reconciliation and all remaining retained-product work in the Phase 5 register.

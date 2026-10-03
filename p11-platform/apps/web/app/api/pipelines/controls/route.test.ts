@@ -1,0 +1,17 @@
+import { beforeEach, it, expect, vi } from 'vitest';
+const mocked = vi.hoisted(() => ({ actor: vi.fn(), rpc: vi.fn() }));
+vi.mock('@/utils/pipelines/store', async () => { const { InventoryError } = await import('@/utils/knowledge/inventory'); return { InventoryError, pipelineActor: mocked.actor, pipelineRpc: mocked.rpc }; });
+import { GET, POST } from './route';
+import { InventoryError } from '@/utils/knowledge/inventory';
+const propertyId = '33333333-3333-3333-3333-333333333333', actor = '11111111-1111-1111-1111-111111111111', id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const body = { propertyId, expectedActorId: actor, id, operation: 'start', connectionsHash: 'a'.repeat(64), connectionIds: [id], dateRange: 'LAST_30_DAYS' };
+const post = (v: unknown = body, origin = 'http://localhost') => new Request('http://localhost/api/pipelines/controls', { method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify(v) });
+beforeEach(() => { vi.clearAllMocks(); mocked.actor.mockResolvedValue(actor); mocked.rpc.mockResolvedValue({ state: 'saved', propertyId, id, jobId: id, status: 'pending' }); });
+it('rejects cross-origin before account lookup', async () => { expect((await POST(post(body, 'https://elsewhere.test'))).status).toBe(403); expect(mocked.actor).not.toHaveBeenCalled(); });
+it('requires sign-in and current property access', async () => { mocked.actor.mockRejectedValue(new InventoryError('Denied', 403)); expect((await GET(new Request(`http://localhost/api/pipelines/controls?propertyId=${propertyId}`))).status).toBe(403); expect(mocked.rpc).not.toHaveBeenCalled(); });
+it('holds a changed actor before native work', async () => { expect((await POST(post({ ...body, expectedActorId: id }))).status).toBe(409); expect(mocked.rpc).not.toHaveBeenCalled(); });
+it('uses the current actor and exact selected request once', async () => { const r = await POST(post()); expect(r.status).toBe(200); expect(r.headers.get('cache-control')).toContain('no-store'); expect(mocked.rpc).toHaveBeenCalledExactlyOnceWith('decide_pipeline', { p_id: id, p_actor_id: actor, p_property_id: propertyId, p_input: { operation: 'start', connectionsHash: 'a'.repeat(64), connectionIds: [id], dateRange: 'LAST_30_DAYS' } }); });
+it.each([{ ...body, connectionIds: [] }, { ...body, connectionIds: [id, id] }, { ...body, dateRange: 'MAX' }, { ...body, result: { status: 'complete' } }, { ...body, operation: 'stop', jobId: id }])('rejects malformed or forged requests', async (value) => { expect((await POST(post(value))).status).toBe(400); expect(mocked.rpc).not.toHaveBeenCalled(); });
+it('bounds request bodies and sanitizes unknown failures', async () => { expect((await POST(post({ large: 'x'.repeat(17000) }))).status).toBe(413); mocked.rpc.mockRejectedValue(new Error('PRIVATE')); const r = await POST(post()); expect(r.status).toBe(503); expect(await r.text()).not.toContain('PRIVATE'); });
+it('reads a complete page with the supplied drift fingerprint', async () => { await GET(new Request(`http://localhost/api/pipelines/controls?propertyId=${propertyId}&kind=history&id=${id}&offset=20&expectedHash=${'a'.repeat(64)}`)); expect(mocked.rpc.mock.calls[0][1].p_input).toMatchObject({ kind: 'history', id, offset: 20, expectedHash: 'a'.repeat(64) }); });
+it('requires an identity for non-list reads', async () => { expect((await GET(new Request(`http://localhost/api/pipelines/controls?propertyId=${propertyId}&kind=job`))).status).toBe(400); });

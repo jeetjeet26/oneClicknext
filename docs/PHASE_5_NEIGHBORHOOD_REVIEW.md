@@ -1,0 +1,19 @@
+# Phase 5 — reviewed neighborhood sources
+
+September 23, 2026. Locally qualified; Phase 5 remains active.
+
+Neighborhood sources now have stable identities, private immutable draft versions, exact saved-version approval/rejection, withdrawal, reversible archive/restore and complete review history. New sources become marketing facts only after approval. Saving a correction or rejecting a draft preserves earlier approved facts. Archive and withdrawal remove approval; restore never restores it. Existing address metadata, coordinates, exact reported capture timestamps and supported numeric precision are preserved. Blank values remain unknown; zero remains zero. No geocoding, travel estimates or provider calls occur.
+
+Each native decision checks the current operator, role, organization, property and complete source state under the shared property lock. It retains exact input, before/after evidence, actual reviewer/time, result and safe semantic activity atomically. Same-request replay and private identity/digest-only browser recovery handle missed replies; cancellation fences unused late requests without undoing saved decisions. Adopted content/identity and immutable evidence are guarded, earlier rows are identified honestly, and raw authenticated table access plus the old PUT route are closed. Transferred evidence is held for ownership review.
+
+The editor offers complete source/version/history paging, selected original drafts, private before/after review, read-failure holds and property-switch isolation. Current retained place names are separate from private replacement names. Address extras survive ordinary field edits. Source links may include normal map paths containing an at sign; embedded credentials are rejected. Actual approval attribution is separate from supplied capture provenance.
+
+Replacing, withdrawing or archiving approved facts invalidates prior readiness in the same transaction. A native guard rejects obsolete late readiness approval and marks obsolete late builds stale. Native publication aggregation includes approved sources beyond the REST row limit and compares complete pinned facts. SiteForge rechecks readiness approval before artifact persistence and checks the current neighborhood source against that snapshot. ForgeStudio requires fresh review of changed source claims. These changes do not replace the remaining full readiness transaction work.
+
+Migration: 20260923065834_phase_five_neighborhood_review.sql. Local generated types carry the matching stamp.
+
+Verification: 93 application cases in 13 suites; 64 dedicated and 1,023 serial rollback database assertions; four new neighborhood browser journeys and 25 related legal/checklist/organization/property-context/SiteForge journeys (29 distinct). Coverage includes exact source preservation, partial/future drafts, missed replies, stale and concurrent reviews, cancellation, archive/restore, more than 1,000 source/version/history rows, current membership/role/organization changes, action rollback, downstream source invalidation and obsolete readiness races. Mobile editor inspected. Full application/browser types, targeted lint without warnings, schema stamp and added-line whitespace pass. All 453 checked native function bodies match saved migrations; checked fixture/orphan and migration-history counts are zero. Advisor WARN/ERROR keys remain at the existing 1,333 baseline. The separately pending ReviewFlow response rollback suite remains excluded.
+
+Only isolated local synthetic data was changed. No real provider/model/embedding/send, hosted schema, deployment, training, commit or push occurred. Runtime pauses and encryption settings remain unchanged.
+
+Continue atomic readiness build/approval with complete safe source snapshots, account transfer/removal and every remaining holistic product gate. This qualifies neighborhood review, not full onboarding, client/provider acceptance, Phase 5 completion or agency autonomy.

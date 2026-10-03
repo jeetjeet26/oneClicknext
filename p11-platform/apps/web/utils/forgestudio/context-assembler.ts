@@ -1,3 +1,4 @@
+import {currentApprovedReadiness} from '@/utils/readiness/publication'
 /**
  * ForgeStudio trusted context assembler.
  *
@@ -12,6 +13,7 @@
  */
 
 import OpenAI from 'openai'
+import {sourceRecord,type SourceRecord} from './source-records'
 import { createHash } from 'node:crypto'
 import { createServiceClient } from '@/utils/supabase/admin'
 import type { Json } from '@/types/supabase'
@@ -21,6 +23,7 @@ import { buildBusinessContextBridge } from '@/utils/substrate/business-context-b
 export const CONTEXT_BUNDLE_VERSION = 'forgestudio.context.v1'
 
 export type ContextSource = {
+  recordKey?: string
   /** Stable citation id, e.g. property_field:name, kb_document:<uuid>, asset:<uuid> */
   id: string
   kind:
@@ -80,8 +83,10 @@ export type TrustedContextBundle = {
   version: typeof CONTEXT_BUNDLE_VERSION
   propertyId: string
   assembledAt: string
+  sourceRecords?: Record<string,SourceRecord>
   sources: ContextSource[]
   assets: SelectedAsset[]
+  channelSettings?: {includeHashtags:boolean;includeCta:boolean;maxCaptionLength:number}
   brandVoice: string | null
   targetAudience: string | null
   warnings: ContextWarning[]
@@ -131,45 +136,27 @@ const BRAND_SECTIONS: Array<{ column: string; label: string }> = [
   { column: 'section_5_name_story', label: 'Name story' },
 ]
 
-async function retrieveKbSources(
-  propertyId: string,
-  query: string
-): Promise<ContextSource[]> {
-  const openaiKey = process.env.OPENAI_API_KEY
-  if (!openaiKey || !query.trim()) return []
-
-  try {
-    const openai = new OpenAI({ apiKey: openaiKey })
-    const embeddingResponse = await openai.embeddings.create({
-      model: 'text-embedding-3-small',
-      input: query,
-    })
-    const embedding = embeddingResponse.data[0].embedding
-
-    const supabase = createServiceClient()
-    const { data: documents, error } = await supabase.rpc('match_documents', {
-      query_embedding: `[${embedding.join(',')}]`,
-      match_threshold: 0.45,
-      match_count: 6,
-      filter_property: propertyId,
-    })
-
-    if (error || !documents) return []
-
-    return documents.map((doc) => ({
-      id: `kb_document:${doc.id}`,
-      kind: 'kb_document' as const,
-      label: 'Knowledge base document',
-      content: truncate(String(doc.content ?? '')),
-      similarity: Number(doc.similarity ?? 0),
-      authority: 'curated' as const,
-      sensitivity: 'public' as const,
-      allowedUses: ['claim', 'topic'] as Array<'claim' | 'topic'>,
-    }))
-  } catch (error) {
-    console.error('[forgestudio] KB retrieval failed:', error)
-    return []
+async function retrieveKbSources(propertyId:string,query:string,documentIds?:string[]) {
+ const supabase=createServiceClient()
+ let documents:Array<{id:string;content:string|null;metadata:Json;similarity?:number}>=[]
+ const warnings:ContextWarning[]=[]
+ if(documentIds!==undefined){
+  if(documentIds.length){
+   const {data,error}=await supabase.from('documents').select('id,content,metadata').eq('property_id',propertyId).in('id',documentIds)
+   if(error)throw new Error('Saved knowledge sources could not be refreshed. Reload before continuing.')
+   documents=data??[]
+   for(const id of documentIds)if(!documents.some(d=>d.id===id))warnings.push({code:'knowledge_source_missing',message:'A previously cited knowledge document is no longer available.',sourceId:`kb_document:${id}`})
   }
+ }else if(process.env.OPENAI_API_KEY&&query.trim()){
+  const openai=new OpenAI({apiKey:process.env.OPENAI_API_KEY,maxRetries:0,timeout:30_000})
+  const response=await openai.embeddings.create({model:'text-embedding-3-small',input:query})
+  const {data,error}=await supabase.rpc('match_documents',{query_embedding:`[${response.data[0].embedding.join(',')}]`,match_threshold:0.45,match_count:6,filter_property:propertyId})
+  if(error)throw new Error('Knowledge retrieval failed. The request has stopped before text generation.')
+  documents=data??[]
+ }else warnings.push({code:'knowledge_retrieval_unavailable',message:'Knowledge retrieval is not configured; no knowledge documents were used.'})
+ return {warnings,records:Object.fromEntries(documents.map(doc=>[`document:${doc.id}`,sourceRecord('document',doc.id,doc)])),sources:documents.map(doc=>({
+  id:`kb_document:${doc.id}`,recordKey:`document:${doc.id}`,kind:'kb_document' as const,label:'Knowledge base document',content:truncate(String(doc.content??'')),similarity:doc.similarity,authority:'curated' as const,sensitivity:'public' as const,allowedUses:['claim','topic'] as Array<'claim'|'topic'>,
+ }))}
 }
 
 export async function assembleForgeStudioContext(input: {
@@ -180,6 +167,8 @@ export async function assembleForgeStudioContext(input: {
   sourceFacts?: Array<{ text: string; source?: string }>
   /** Explicitly selected asset ids from the brief. */
   assetIds?: string[]
+  /** Refresh exact saved document IDs without a new embedding/model request. */
+  documentIds?: string[]
 }): Promise<TrustedContextBundle> {
   const supabase = createServiceClient()
   const now = new Date()
@@ -196,7 +185,7 @@ export async function assembleForgeStudioContext(input: {
     unitsResult,
     poiResult,
     testimonialResult,
-    kbSources,
+    kbResult,
     businessContextResult,
   ] = await Promise.all([
     supabase
@@ -209,14 +198,7 @@ export async function assembleForgeStudioContext(input: {
       .select('brand_voice, target_audience, key_amenities, include_hashtags, include_cta, max_caption_length, updated_at')
       .eq('property_id', input.propertyId)
       .maybeSingle(),
-    supabase
-      .from('property_onboarding_snapshots')
-      .select('id, status, snapshot_payload, content_hash, unresolved_conflicts, approved_at, updated_at')
-      .eq('property_id', input.propertyId)
-      .eq('status', 'approved')
-      .order('approved_at', { ascending: false })
-      .limit(1)
-      .maybeSingle(),
+    currentApprovedReadiness(input.propertyId,supabase).then(data=>({data,error:null}),error=>({data:null,error})),
     supabase
       .from('property_legal_configs')
       .select('id, status, version, fair_housing, pricing_disclaimer, accessibility, effective_at, approved_at')
@@ -234,13 +216,13 @@ export async function assembleForgeStudioContext(input: {
     (input.assetIds?.length
       ? supabase
           .from('content_assets')
-          .select('id, name, asset_type, file_url, thumbnail_url, description, width, height, duration_seconds, alt_text, rights_status, approval_status, curation_status, expires_at, duplicate_of')
+          .select('id, name, asset_type, file_url, thumbnail_url, description, width, height, duration_seconds, alt_text, rights_status, approval_status, curation_status, expires_at, duplicate_of, content_hash, storage_bucket, storage_path, archived_at, replacement_asset_id')
           .in('id', input.assetIds)
           .eq('property_id', input.propertyId)
       : Promise.resolve({ data: [], error: null })),
     supabase
       .from('property_units')
-      .select('id, unit_type, bedrooms, bathrooms, sqft_min, sqft_max, rent_min, rent_max, available_count, move_in_specials, effective_at, source_updated_at, expires_at, confidence, review_status, source_identity')
+      .select('id, active, unit_type, bedrooms, bathrooms, sqft_min, sqft_max, rent_min, rent_max, available_count, move_in_specials, effective_at, source_updated_at, expires_at, confidence, review_status, source_identity')
       .eq('property_id', input.propertyId)
       .eq('active', true)
       .eq('review_status', 'approved')
@@ -255,16 +237,16 @@ export async function assembleForgeStudioContext(input: {
       .limit(20),
     wantsTestimonials
       ? supabase
-          .from('review_testimonial_approvals')
-          .select('id, status, review_text_snapshot, reviewer_name_snapshot, rating_snapshot, platform_snapshot, attribution_approved, rights_basis, approved_at, revoked_at')
+          .rpc('eligible_reviewflow_testimonials',{p_property_id:input.propertyId,p_channel:'social'})
+          .select('id, status, review_text_snapshot, reviewer_name_snapshot, rating_snapshot, platform_snapshot, attribution_approved, rights_basis, approved_at, revoked_at, version, source_version, content_fingerprint, usage_scope, expires_at')
           .eq('property_id', input.propertyId)
-          .eq('status', 'approved')
+          .eq('status', 'active')
           .is('revoked_at', null)
           .order('approved_at', { ascending: false })
           .limit(5)
       : Promise.resolve({ data: [], error: null }),
-    retrieveKbSources(input.propertyId, input.query),
-    buildBusinessContextBridge({ from: supabase.from.bind(supabase) }, input.propertyId)
+    retrieveKbSources(input.propertyId, input.query,input.documentIds),
+    buildBusinessContextBridge(supabase, input.propertyId)
       .then((data) => ({ data, error: null }))
       .catch((error: unknown) => ({ data: null, error })),
   ])
@@ -273,14 +255,21 @@ export async function assembleForgeStudioContext(input: {
     throw new Error(`Property not found for context assembly: ${propertyResult.error?.message}`)
   }
 
+  for(const [label,result] of Object.entries({config:configResult,onboarding:onboardingResult,legal:legalResult,brand:brandResult,assets:assetsResult,inventory:unitsResult,neighborhood:poiResult,testimonials:testimonialResult})){
+    if(result.error)throw new Error(`The ${label} sources could not be read. Reload before continuing.`)
+  }
   const property = propertyResult.data
   const config = configResult.data
   const sources: ContextSource[] = []
-  const warnings: ContextWarning[] = []
+  const warnings: ContextWarning[] = [...kbResult.warnings]
+  const sourceRecords:Record<string,SourceRecord>={...kbResult.records,property:sourceRecord('property',input.propertyId,property)}
+  sourceRecords.config=config?sourceRecord('config',input.propertyId,config):{kind:'config',id:input.propertyId,values:{absent:true}}
+  const capture=(key:string,kind:SourceRecord['kind'],row:Record<string,unknown>)=>{sourceRecords[key]=sourceRecord(kind,String(row.id),row)}
 
   // 1. Mandatory approved policy envelope.
   const legal = legalResult.data
   if (legal) {
+    capture(`legal:${legal.id}`,'legal',legal)
     sources.push({
       id: `legal_policy:${legal.id}`,
       kind: 'legal_policy',
@@ -307,6 +296,7 @@ export async function assembleForgeStudioContext(input: {
   // 2. Approved onboarding snapshot is the preferred durable property truth.
   const onboarding = onboardingResult.data
   if (onboarding) {
+    capture(`onboarding:${onboarding.id}`,'onboarding',onboarding)
     const conflicts = Array.isArray(onboarding.unresolved_conflicts)
       ? onboarding.unresolved_conflicts.length > 0
       : Boolean(onboarding.unresolved_conflicts)
@@ -381,6 +371,7 @@ export async function assembleForgeStudioContext(input: {
     brand.approval_status === 'approved' &&
     Boolean(brand.contract_hash)
   if (approvedBrand) {
+    capture(`brand:${brand.id}`,'brand',brand)
     const allBrandSections = [
       ...BRAND_SECTIONS,
       { column: 'section_6_logo', label: 'Logo system' },
@@ -416,11 +407,12 @@ export async function assembleForgeStudioContext(input: {
   }
 
   // 6. Property-scoped KB retrieval (curated evidence, freshness-aware when metadata exists).
-  sources.push(...kbSources)
+  sources.push(...kbResult.sources)
 
   // 7. Structured inventory is the only source for pricing, concessions, and availability.
   for (const unit of unitsResult.data ?? []) {
-    const stale = isExpired(unit.expires_at, now)
+    capture(`inventory:${unit.id}`,'inventory',unit)
+    const stale = isExpired(unit.expires_at, now)||Boolean(unit.effective_at&&new Date(unit.effective_at)>now)
     const content = {
       unitType: unit.unit_type,
       bedrooms: unit.bedrooms,
@@ -450,6 +442,7 @@ export async function assembleForgeStudioContext(input: {
 
   // 8. Approved neighborhood POIs may support bounded location claims.
   for (const poi of poiResult.data ?? []) {
+    capture(`poi:${poi.id}`,'poi',poi)
     sources.push({
       id: `approved_poi:${poi.id}`,
       kind: 'approved_poi',
@@ -472,6 +465,7 @@ export async function assembleForgeStudioContext(input: {
 
   // 9. Testimonials enter context only through active rights-bearing approvals.
   for (const testimonial of testimonialResult.data ?? []) {
+    capture(`testimonial:${testimonial.id}`,'testimonial',testimonial)
     sources.push({
       id: `approved_testimonial:${testimonial.id}`,
       kind: 'approved_testimonial',
@@ -551,6 +545,8 @@ export async function assembleForgeStudioContext(input: {
       })
       continue
     }
+    capture(`asset:${asset.id}`,'asset',asset)
+    for(const advisory of usability.advisories)warnings.push({code:advisory,message:`Asset ${asset.name}: ${advisory.replaceAll('_',' ')} (advisory).`,sourceId:`asset:${asset.id}`})
     assets.push({
       id: asset.id,
       name: asset.name,
@@ -580,12 +576,19 @@ export async function assembleForgeStudioContext(input: {
     })
   }
 
+  for(const source of sources){
+    const [kind,id]=source.id.split(':')
+    const mapping:Record<string,string>={property_field:'property',channel_settings:'config',legal_policy:`legal:${id}`,approved_snapshot:`onboarding:${id}`,brand_section:`brand:${id}`,structured_inventory:`inventory:${id}`,approved_poi:`poi:${id}`,approved_testimonial:`testimonial:${id}`,asset:`asset:${id}`}
+    source.recordKey??=mapping[kind]
+  }
   const bundleWithoutHash: Omit<TrustedContextBundle, 'contextHash'> = {
     version: CONTEXT_BUNDLE_VERSION,
     propertyId: input.propertyId,
     assembledAt: new Date().toISOString(),
     sources,
+    sourceRecords,
     assets,
+    channelSettings:{includeHashtags:config?.include_hashtags??true,includeCta:config?.include_cta??true,maxCaptionLength:config?.max_caption_length??2200},
     brandVoice: config?.brand_voice ?? property.brand_voice ?? null,
     targetAudience: sanitizeAudience(config?.target_audience ?? property.target_audience),
     warnings,

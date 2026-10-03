@@ -1,3 +1,6 @@
+import {randomUUID} from 'node:crypto'
+import {authorizationOperation} from '@/utils/services/integration-authorization'
+import type {IntegrationOAuthStatePayload} from '@/utils/services/integration-oauth-state'
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { badRequest, forbidden, serverError, unauthorized } from '@/utils/services/api-helpers'
@@ -40,6 +43,8 @@ export async function GET(
 
     const { searchParams } = new URL(request.url)
     const token = searchParams.get('token')
+    const replacementId = searchParams.get('replacementId') || undefined
+    if(replacementId && (token || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(replacementId)))return badRequest('Replacement requires a reviewed dashboard request.',ctx.responseHeaders)
     let propertyId = searchParams.get('propertyId')
     let profileId: string | undefined
     let inviteId: string | undefined
@@ -86,10 +91,15 @@ export async function GET(
       return badRequest('OAuth context is incomplete', ctx.responseHeaders)
     }
 
-    const requestOrigin = new URL(request.url).origin
+    const requestOrigin = getAppBaseUrl()
     const redirectUri = `${requestOrigin}/api/lumaleasing/integrations/oauth/${provider}/callback`
     const scopes = getProviderScopes(provider, capabilities)
-    const state = createSignedIntegrationOAuthState({
+    const authorization: IntegrationOAuthStatePayload = {
+      requestId: randomUUID(),
+      replacementId,
+      redirectUri,
+      requestedScopes: scopes,
+      timestamp: Date.now(),
       propertyId,
       provider,
       capabilities,
@@ -97,7 +107,10 @@ export async function GET(
       profileId,
       inviteId,
       tokenHash,
-    })
+    }
+    const state = createSignedIntegrationOAuthState(authorization)
+    const saved = await authorizationOperation('begin',authorization)
+    if(saved.state!=='ready' || saved.requestId!==authorization.requestId)return NextResponse.json({error:'The connection request could not be saved. Start a fresh request.'},{status:409,headers:ctx.responseHeaders})
 
     const authUrl = new URL(provider === 'google' ? GOOGLE_AUTH_URL : getMicrosoftAuthUrl())
     authUrl.searchParams.set('client_id', clientId)
@@ -123,6 +136,6 @@ export async function GET(
     return response
   } catch (error) {
     ctx.logError(500, error, { operation: 'integration_oauth_start' })
-    return serverError(error, ctx.responseHeaders)
+    return serverError(undefined, ctx.responseHeaders)
   }
 }

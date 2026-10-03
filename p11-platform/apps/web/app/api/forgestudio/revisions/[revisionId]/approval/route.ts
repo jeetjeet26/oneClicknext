@@ -6,6 +6,8 @@ import { validatePropertyManagerAccess } from '@/utils/services/auth-guard'
 import { ContentStoreError, setRevisionApproval } from '@/utils/forgestudio/content-store'
 
 const approvalSchema = z.object({
+  requestId: z.string().uuid(),
+  contentHash: z.string().regex(/^[0-9a-f]{64}$/),
   decision: z.enum(['approved', 'denied']),
   note: z.string().min(3).max(2000),
 })
@@ -50,6 +52,8 @@ export async function POST(
     }
 
     const updated = await setRevisionApproval({
+      requestId: parsed.data.requestId,
+      contentHash: parsed.data.contentHash,
       revisionId,
       decision: parsed.data.decision,
       reviewerId: user.id,

@@ -6,6 +6,8 @@ const createClientMock = vi.fn()
 const validatePropertyAccessMock = vi.fn()
 const createSignedIntegrationOAuthStateMock = vi.fn()
 
+vi.mock('@/utils/services/integration-authorization',()=>({authorizationOperation:vi.fn(async (_op:string,state:{requestId:string})=>({state:'ready',requestId:state.requestId}))}))
+
 vi.mock('@/utils/supabase/server', () => ({
   createClient: createClientMock,
 }))
@@ -68,6 +70,12 @@ describe('integration OAuth start route', () => {
       })
     )
   })
+
+  it('signs a dashboard replacement identity into the saved authorization context',async()=>{const id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';const {GET}=await import('./route');const response=await GET(new Request(`http://localhost/start?propertyId=property-1&capabilities=email&replacementId=${id}`) as NextRequest,{params:Promise.resolve({provider:'microsoft'})});expect(response.status).toBe(307);expect(createSignedIntegrationOAuthStateMock).toHaveBeenCalledWith(expect.objectContaining({replacementId:id,authSource:'dashboard',profileId:'user-1'}))})
+  it.each(['bad','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa&token=invite'])('rejects malformed or invited replacement attempts %s',async id=>{const {GET}=await import('./route');expect((await GET(new Request(`http://localhost/start?propertyId=property-1&replacementId=${id}`) as NextRequest,{params:Promise.resolve({provider:'microsoft'})})).status).toBe(400);expect(createSignedIntegrationOAuthStateMock).not.toHaveBeenCalled()})
+  it('rejects an unauthenticated dashboard start' ,async()=>{authGetUserMock.mockResolvedValue({data:{user:null}});const {GET}=await import('./route');expect((await GET(new Request('http://localhost/start?propertyId=property-1') as NextRequest,{params:Promise.resolve({provider:'microsoft'})})).status).toBe(401);expect(createSignedIntegrationOAuthStateMock).not.toHaveBeenCalled()})
+
+  it('rejects a cross-property dashboard start',async()=>{validatePropertyAccessMock.mockResolvedValue({authorized:false});const {GET}=await import('./route');expect((await GET(new Request('http://localhost/start?propertyId=property-1') as NextRequest,{params:Promise.resolve({provider:'microsoft'})})).status).toBe(403);expect(createSignedIntegrationOAuthStateMock).not.toHaveBeenCalled()})
 
   it('includes Google identity scopes for dashboard Google calendar auth', async () => {
     vi.stubEnv('GOOGLE_CLIENT_ID', 'google-client-id')

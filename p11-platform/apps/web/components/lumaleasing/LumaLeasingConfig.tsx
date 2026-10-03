@@ -1,10 +1,14 @@
 'use client';
+import {LumaWidgetOperations} from './LumaWidgetOperations';
+import {CalendarEventBinding} from '@/components/leads/CalendarEventBinding';
 
+import {IntegrationReplacementPanel} from './IntegrationReplacementPanel';
+import {IntegrationInvitesPanel} from './IntegrationInvitesPanel';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
-  Save, Copy, Check, RefreshCw, Eye, Palette, MessageSquare, 
-  UserPlus, Calendar, Code, ExternalLink, Loader2,
-  Sparkles, CheckCircle, AlertCircle, Mail, XCircle, Wrench, Upload
+  Save, RefreshCw, Eye, Palette, MessageSquare,
+  UserPlus, Calendar, Code, Loader2,
+  Sparkles, CheckCircle, AlertCircle, Mail, XCircle, Wrench
 } from 'lucide-react';
 import { usePropertyContext } from '../layout/PropertyContext';
 
@@ -30,9 +34,21 @@ interface WidgetConfig {
   tour_duration_minutes: number;
   tour_buffer_minutes: number;
   business_hours: Record<string, { start: string; end: string } | null>;
-  timezone: string;
+  timezone: string | null;
   api_key: string;
   is_active: boolean;
+}
+
+// Older rows use short weekday keys. Present them explicitly in the editor;
+// canonical long keys are persisted only when the operator saves.
+function editableConfiguration(config:WidgetConfig,timezone:string|null):WidgetConfig {
+  const aliases:Record<string,string>={monday:'mon',tuesday:'tue',wednesday:'wed',thursday:'thu',friday:'fri',saturday:'sat',sunday:'sun'};
+  const hours=config.business_hours||{};
+  return {...config,timezone,welcome_message:config.welcome_message||'',offline_message:config.offline_message||'',
+    business_hours:Object.fromEntries(Object.entries(aliases).map(([day,short])=>{
+      const value=Object.hasOwn(hours,day)?hours[day]:hours[short];
+      return [day,value&&(!('enabled' in value)||value.enabled!==false)?{start:value.start,end:value.end}:null];
+    }))};
 }
 
 interface EmailLifecycleSummary {
@@ -56,7 +72,11 @@ interface PendingEmailThreadPreview {
   overdue_days: number | null;
 }
 
+import {CalendarChangeReview,type CalendarObservation} from '@/components/leads/CalendarChangeReview';
+
 interface RecoveryBooking {
+  schedule_timezone:string|null;
+  schedule_version: number;
   id: string;
   lead: { name: string; email: string | null; phone: string | null } | null;
   scheduled_date: string;
@@ -65,8 +85,10 @@ interface RecoveryBooking {
   status: string | null;
   can_cancel: boolean;
   can_reschedule: boolean;
-  calendar_event: { id: string; google_event_id: string; sync_status: string | null } | null;
+  calendar_event: (CalendarObservation & {google_event_id:string}) | null;
 }
+
+import {PropertyTimezoneSetup} from '@/components/leads/PropertyTimezoneSetup';
 
 const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 
@@ -83,18 +105,21 @@ export function LumaLeasingConfig() {
   const [config, setConfig] = useState<WidgetConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [copied, setCopied] = useState(false);
   const [activeTab, setActiveTab] = useState<'branding' | 'behavior' | 'leads' | 'tours' | 'embed'>('branding');
   const [calendarStatus, setCalendarStatus] = useState<{
     connected: boolean;
-    state?: 'connected' | 'reconnect_required' | 'disconnected';
+    state?: 'connected' | 'reconnect_required' | 'disconnected' | 'setup_required';
+    timezone?: string | null;
+    timezone_setup_required?: boolean;
     provider?: 'google' | 'microsoft';
     email?: string;
     account_email?: string;
     token_status?: string;
+    permission_state?: string;
+    permission_message?: string | null;
     last_health_check_at?: string;
     webhook_capability?: {
-      mode: 'push_watch' | 'unconfigured';
+      mode: 'push_watch' | 'unconfigured' | 'manual_check';
       ready: boolean;
       blockers: string[];
       watch_expires_at: string | null;
@@ -120,9 +145,11 @@ export function LumaLeasingConfig() {
     email?: string;
     account_email?: string;
     token_status?: string;
+    permission_state?: string;
+    permission_message?: string | null;
     auto_reply_enabled?: boolean;
     webhook_capability?: {
-      mode: 'push_watch' | 'unconfigured';
+      mode: 'push_watch' | 'manual_check' | 'unconfigured';
       ready: boolean;
       blockers: string[];
       watch_expires_at: string | null;
@@ -137,62 +164,90 @@ export function LumaLeasingConfig() {
   const [repairingCalendarSync, setRepairingCalendarSync] = useState(false);
   const [recoveringBookingId, setRecoveringBookingId] = useState<string | null>(null);
   const [recoveryBookings, setRecoveryBookings] = useState<RecoveryBooking[]>([]);
-  const [recoveryDrafts, setRecoveryDrafts] = useState<Record<string, { date: string; time: string }>>({});
+  const [recoveryDrafts, setRecoveryDrafts] = useState<Record<string, { date: string; time: string; reason?:string }>>({});
+  const recoveryRequest=useRef<Record<string,{key:string;id:string}>>({});
+  const [calendarReviewMessage,setCalendarReviewMessage]=useState('');
+  const [recoveryCursor,setRecoveryCursor]=useState<string|null>(null);
+  const [recoveryLoading,setRecoveryLoading]=useState(false);
+  const recoveryRead=useRef<AbortController|null>(null);
+  useEffect(()=>()=>recoveryRead.current?.abort(),[]);
   const [recoveryError, setRecoveryError] = useState<string | null>(null);
-  const [creatingInvite, setCreatingInvite] = useState<string | null>(null);
+  const disconnectRequest=useRef<{key:string;id:string}|null>(null);
   const [disconnectingIntegration, setDisconnectingIntegration] = useState<'calendar' | 'email' | null>(null);
-  const [uploadingLogo, setUploadingLogo] = useState(false);
-  const [logoUploadError, setLogoUploadError] = useState<string | null>(null);
-  const logoFileInputRef = useRef<HTMLInputElement | null>(null);
 
+  const [canManage,setCanManage]=useState(false);
+  const [configError,setConfigError]=useState('');
+  const [saveMessage,setSaveMessage]=useState('');
+  const [dirty,setDirty]=useState(false);
+  const [saveError,setSaveError]=useState('');
+  const [saveConflict,setSaveConflict]=useState(false);
+  const [revision,setRevision]=useState('');
+  const configRead=useRef<AbortController|null>(null);
+  const configWrite=useRef<AbortController|null>(null);
+  const configIdentity=useRef<{signature:string;requestId:string}|null>(null);
+  useEffect(()=>()=>{configRead.current?.abort();configWrite.current?.abort()},[]);
   const loadConfig = useCallback(async () => {
-    setLoading(true);
+    configRead.current?.abort();const controller=new AbortController();configRead.current=controller;
+    setLoading(true);setConfigError('');
     try {
-      const res = await fetch(`/api/lumaleasing/admin/config?propertyId=${currentProperty.id}`);
-      const data = await res.json();
-      setConfig(data.config);
-    } catch (error) {
-      console.error('Failed to load config:', error);
-    } finally {
-      setLoading(false);
-    }
+      const res=await fetch(`/api/lumaleasing/admin/config?propertyId=${currentProperty.id}`,{signal:controller.signal,cache:'no-store'});
+      const data=await res.json();
+      if(!res.ok||typeof data.revision!=='string'||!('config' in data))throw new Error('Configuration is unavailable. Retry to load saved settings.');
+      if(!controller.signal.aborted){setCanManage(data.canManage===true);setConfig(data.config?editableConfiguration(data.config,data.effectiveTimezone):null);setRevision(data.revision);setDirty(false);setSaveError('');setSaveConflict(false);configIdentity.current=null}
+    } catch {
+      if(!controller.signal.aborted)setConfigError('Configuration is unavailable. Retry to load saved settings.');
+    } finally {if(!controller.signal.aborted)setLoading(false)}
   }, [currentProperty.id]);
 
+  const [calendarLoading,setCalendarLoading]=useState(true);
+  const [calendarError,setCalendarError]=useState('');
+  const calendarRead=useRef<AbortController|null>(null);
+  useEffect(()=>()=>calendarRead.current?.abort(),[]);
   const loadCalendarStatus = useCallback(async () => {
+    calendarRead.current?.abort();
+    const controller=new AbortController();calendarRead.current=controller;
+    setCalendarLoading(true);setCalendarError('');
     try {
-      const res = await fetch(`/api/lumaleasing/calendar/status?propertyId=${currentProperty.id}`);
-      if (res.ok) {
-        const data = await res.json();
-        setCalendarStatus(data);
-      }
-    } catch (error) {
-      console.error('Failed to load calendar status:', error);
-    }
+      const res=await fetch(`/api/lumaleasing/calendar/status?propertyId=${currentProperty.id}`,{signal:controller.signal});
+      const data=await res.json();
+      if(!res.ok)throw new Error('Calendar status is unavailable. Try again before changing its connection.');
+      if(!controller.signal.aborted)setCalendarStatus(data);
+    } catch {
+      if(!controller.signal.aborted)setCalendarError('Calendar status is unavailable. Try again before changing its connection.');
+    } finally {if(!controller.signal.aborted)setCalendarLoading(false);}
   }, [currentProperty.id]);
 
+  const [emailLoading,setEmailLoading]=useState(true);
+  const [emailError,setEmailError]=useState('');
+  const emailRead=useRef<AbortController|null>(null);
+  useEffect(()=>()=>emailRead.current?.abort(),[]);
   const loadEmailStatus = useCallback(async () => {
+    emailRead.current?.abort();const controller=new AbortController();emailRead.current=controller;
+    setEmailLoading(true);setEmailError('');setEmailStatus(null);
     try {
-      const res = await fetch(`/api/lumaleasing/email/status?propertyId=${currentProperty.id}`);
-      if (res.ok) {
-        const data = await res.json();
-        setEmailStatus(data);
-      }
-    } catch (error) {
-      console.error('Failed to load email status:', error);
-    }
+      const res=await fetch(`/api/lumaleasing/email/status?propertyId=${currentProperty.id}`,{signal:controller.signal,cache:'no-store'});
+      if(!res.ok)throw new Error('Email status unavailable');
+      const data=await res.json();
+      if(!controller.signal.aborted)setEmailStatus(data);
+    } catch {
+      if(!controller.signal.aborted)setEmailError('Email status is unavailable. Retry before changing this connection.');
+    } finally {if(!controller.signal.aborted)setEmailLoading(false);}
   }, [currentProperty.id]);
 
-  const loadRecoveryBookings = useCallback(async () => {
+  const loadRecoveryBookings = useCallback(async (cursor:string|null=null) => {
+    recoveryRead.current?.abort();const controller=new AbortController();recoveryRead.current=controller;setRecoveryLoading(true);
     try {
       setRecoveryError(null);
-      const res = await fetch(`/api/lumaleasing/tours/recovery?propertyId=${currentProperty.id}`);
+      const res = await fetch(`/api/lumaleasing/tours/recovery?propertyId=${currentProperty.id}${cursor?`&cursor=${encodeURIComponent(cursor)}`:''}`,{signal:controller.signal,cache:'no-store'});
       if (!res.ok) {
         const payload = await res.json().catch(() => null);
         throw new Error(payload?.error || 'Failed to load booking recovery data');
       }
       const data = await res.json();
       const bookings = (data.bookings || []) as RecoveryBooking[];
-      setRecoveryBookings(bookings);
+      if(controller.signal.aborted)return;
+      setRecoveryBookings(previous=>cursor?[...new Map([...previous,...bookings].map(booking=>[booking.id,booking])).values()]:bookings);
+      setRecoveryCursor(data.nextCursor||null);
       setRecoveryDrafts((prev) => {
         const next = { ...prev };
         for (const booking of bookings) {
@@ -206,9 +261,10 @@ export function LumaLeasingConfig() {
         return next;
       });
     } catch (error) {
+      if(controller.signal.aborted)return;
       console.error('Failed to load booking recovery data:', error);
       setRecoveryError(error instanceof Error ? error.message : 'Failed to load booking recovery data');
-    }
+    }finally{if(!controller.signal.aborted)setRecoveryLoading(false)}
   }, [currentProperty.id]);
 
   useEffect(() => {
@@ -224,8 +280,8 @@ export function LumaLeasingConfig() {
       const error = params.get('error');
       const email = params.get('email');
       
-      if (success === 'calendar_connected' && email) {
-        alert(`Google Calendar connected successfully! (${email})`);
+      if ((success === 'calendar_connected' || success === 'calendar_setup_required') && email) {
+        alert(success === 'calendar_setup_required' ? `Calendar authorization saved (${email}). Choose the property timezone in Tours to finish setup.` : `Calendar authorization saved (${email}). Review its status in Tours.`);
         loadCalendarStatus();
         // Clean URL
         window.history.replaceState({}, '', window.location.pathname);
@@ -305,7 +361,7 @@ export function LumaLeasingConfig() {
 
       await loadCalendarStatus();
       alert(
-        `Calendar repair complete. Created ${payload?.created || 0}, repaired ${payload?.repaired || 0}, failed ${payload?.failed || 0}.`
+        `Calendar review ${payload?.success ? 'complete' : 'needs attention'}. Created ${payload?.created || 0}, repaired ${payload?.repaired || 0}, skipped ${payload?.skipped || 0}, failed ${payload?.failed || 0}.`
       );
     } catch (error) {
       console.error('Failed to repair calendar sync:', error);
@@ -318,10 +374,12 @@ export function LumaLeasingConfig() {
   const disconnectIntegration = async (kind: 'calendar' | 'email') => {
     const status = kind === 'calendar' ? calendarStatus : emailStatus;
     const account = status?.account_email || status?.email || 'this account';
-    if (!confirm(`Remove ${account} from ${kind === 'calendar' ? 'calendar' : 'email'} integration? You can reconnect a new account afterward.`)) {
+    if (!confirm(`Remove ${account} from ${kind === 'calendar' ? 'calendar' : 'email'} integration? Linked bookings and mail stay saved; changing to a different account requires review.`)) {
       return;
     }
 
+    const key=JSON.stringify({propertyId:currentProperty.id,kind,provider:kind==='calendar'?calendarStatus?.provider:emailStatus?.provider});
+    if(disconnectRequest.current?.key!==key)disconnectRequest.current={key,id:crypto.randomUUID()};
     try {
       setDisconnectingIntegration(kind);
       const res = await fetch(`/api/lumaleasing/${kind}/disconnect`, {
@@ -329,6 +387,7 @@ export function LumaLeasingConfig() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           propertyId: currentProperty.id,
+          requestId:disconnectRequest.current.id,
           provider: status?.provider,
         }),
       });
@@ -336,6 +395,8 @@ export function LumaLeasingConfig() {
       if (!res.ok) {
         throw new Error(payload?.error || `Failed to disconnect ${kind}`);
       }
+      if(!payload?.actionEventId)throw new Error('Disconnection could not be confirmed. Retry the same request.');
+      disconnectRequest.current=null;
       if (kind === 'calendar') {
         await loadCalendarStatus();
       } else {
@@ -354,7 +415,9 @@ export function LumaLeasingConfig() {
       setRecoveringBookingId(bookingId);
       setRecoveryError(null);
       const draft = recoveryDrafts[bookingId];
-      const body: Record<string, string> = {
+      const body: Record<string, string|number> = {
+        expectedVersion:recoveryBookings.find(item=>item.id===bookingId)?.schedule_version || 0,
+        reason:draft?.reason?.trim() || '',
         propertyId: currentProperty.id,
         bookingId,
         action,
@@ -363,6 +426,9 @@ export function LumaLeasingConfig() {
         body.rescheduleDate = draft?.date || '';
         body.rescheduleTime = draft?.time || '';
       }
+      const key=JSON.stringify(body);
+      if(recoveryRequest.current[bookingId]?.key!==key)recoveryRequest.current[bookingId]={key,id:crypto.randomUUID()};
+      body.requestId=recoveryRequest.current[bookingId].id;
       const res = await fetch('/api/lumaleasing/tours/recovery', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -376,8 +442,8 @@ export function LumaLeasingConfig() {
       await loadCalendarStatus();
       alert(
         action === 'cancel'
-          ? 'Booking cancelled successfully.'
-          : 'Booking rescheduled successfully.'
+          ? 'Booking cancelled. Any connected calendar update is queued.'
+          : 'Booking rescheduled. Any connected calendar update is queued.'
       );
     } catch (error) {
       console.error('Failed to run booking recovery:', error);
@@ -387,116 +453,30 @@ export function LumaLeasingConfig() {
     }
   };
 
-  const saveConfig = async () => {
-    if (!config) return;
-    setSaving(true);
+  const saveConfig = async (initialize=false) => {
+    if(configWrite.current||(!config&&!initialize)||!revision||saveConflict)return;
+    const values=initialize?{}:{...config,timezone:config?.timezone||undefined};
+    const body={propertyId:currentProperty.id,expectedRevision:revision,...(!initialize?{config:values}:{})};
+    const signature=JSON.stringify(body);
+    if(configIdentity.current?.signature!==signature)configIdentity.current={signature,requestId:crypto.randomUUID()};
+    const controller=new AbortController();configWrite.current=controller;setSaving(true);setSaveError('');setSaveMessage('');
     try {
-      await fetch('/api/lumaleasing/admin/config', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ propertyId: currentProperty.id, config }),
-      });
-    } catch (error) {
-      console.error('Failed to save config:', error);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const regenerateApiKey = async () => {
-    if (!confirm('Are you sure? This will invalidate any existing widget installations.')) return;
-    try {
-      const res = await fetch('/api/lumaleasing/admin/regenerate-key', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ propertyId: currentProperty.id }),
-      });
-      const data = await res.json();
-      if (data.apiKey && config) {
-        setConfig({ ...config, api_key: data.apiKey });
+      const response=await fetch('/api/lumaleasing/admin/config',{method:initialize?'POST':'PUT',headers:{'Content-Type':'application/json'},signal:controller.signal,body:JSON.stringify({...body,requestId:configIdentity.current.requestId})});
+      const data=await response.json();
+      if(!response.ok){if(!controller.signal.aborted)setSaveConflict(['stale_configuration','request_conflict','already_configured'].includes(data.code));throw new Error(data.error||'The save is unconfirmed. Retry the same change safely.')}
+      if(!data.config?.id||!data.actionEventId||!data.revision)throw new Error('The save is unconfirmed. Retry the same change safely.');
+      if(!controller.signal.aborted){
+        setConfig(editableConfiguration(data.config,data.effectiveTimezone));setRevision(data.revision);setDirty(false);configIdentity.current=null;
+        setSaveMessage(data.state==='replayed'?'Save recovered. Current saved settings are shown.':'Settings saved with your action history.');
+        void loadCalendarStatus();
       }
-    } catch (error) {
-      console.error('Failed to regenerate key:', error);
-    }
-  };
-
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  const createExternalAuthLink = async (
-    provider: 'google' | 'microsoft',
-    capability: 'calendar' | 'email'
-  ) => {
-    try {
-      setCreatingInvite(`${provider}-${capability}`);
-      const res = await fetch('/api/lumaleasing/integration-invites', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          propertyId: currentProperty.id,
-          provider,
-          capabilities: [capability],
-        }),
-      });
-      const payload = await res.json().catch(() => null);
-      if (!res.ok || !payload?.url) {
-        throw new Error(payload?.error || 'Failed to create authorization link');
-      }
-      copyToClipboard(payload.url);
-      alert(`${provider === 'google' ? 'Google' : 'Microsoft'} ${capability} authorization link copied.`);
-    } catch (error) {
-      console.error('Failed to create external auth link:', error);
-      alert(error instanceof Error ? error.message : 'Failed to create authorization link');
-    } finally {
-      setCreatingInvite(null);
-    }
+    }catch(cause){if(!controller.signal.aborted)setSaveError(cause instanceof Error&&!(cause instanceof TypeError)?cause.message:'The save is unconfirmed. Retry the same change safely.')}
+    finally{if(!controller.signal.aborted){configWrite.current=null;setSaving(false)}}
   };
 
   const updateConfig = <K extends keyof WidgetConfig>(key: K, value: WidgetConfig[K]) => {
     if (!config) return;
-    setConfig({ ...config, [key]: value });
-  };
-
-  const uploadLogo = async (file: File) => {
-    setLogoUploadError(null);
-
-    if (!file.type.startsWith('image/')) {
-      setLogoUploadError('Please choose an image file (PNG, JPG, GIF, WebP, or SVG).');
-      return;
-    }
-    if (file.size > 2 * 1024 * 1024) {
-      setLogoUploadError('Logo must be 2MB or smaller.');
-      return;
-    }
-
-    setUploadingLogo(true);
-    try {
-      const formData = new FormData();
-      formData.append('propertyId', currentProperty.id);
-      formData.append('file', file);
-
-      const res = await fetch('/api/lumaleasing/admin/logo', {
-        method: 'POST',
-        body: formData,
-      });
-      const payload = await res.json().catch(() => null);
-      if (!res.ok || !payload?.url) {
-        throw new Error(payload?.error || 'Failed to upload logo');
-      }
-
-      setConfig((prev) => (prev ? { ...prev, logo_url: payload.url } : prev));
-    } catch (error) {
-      console.error('Failed to upload logo:', error);
-      setLogoUploadError(error instanceof Error ? error.message : 'Failed to upload logo');
-    } finally {
-      setUploadingLogo(false);
-      if (logoFileInputRef.current) {
-        logoFileInputRef.current.value = '';
-      }
-    }
+    setDirty(true);setSaveMessage('');setConfig({ ...config, [key]: value });
   };
 
   const updateBusinessHours = (day: string, field: 'start' | 'end', value: string) => {
@@ -505,14 +485,14 @@ export function LumaLeasingConfig() {
     if (hours[day]) {
       hours[day] = { ...hours[day]!, [field]: value };
     }
-    setConfig({ ...config, business_hours: hours });
+    setDirty(true);setSaveMessage('');setConfig({ ...config, business_hours: hours });
   };
 
   const toggleDay = (day: string, enabled: boolean) => {
     if (!config) return;
     const hours = { ...config.business_hours };
     hours[day] = enabled ? { start: '09:00', end: '18:00' } : null;
-    setConfig({ ...config, business_hours: hours });
+    setDirty(true);setSaveMessage('');setConfig({ ...config, business_hours: hours });
   };
 
   if (loading) {
@@ -523,33 +503,27 @@ export function LumaLeasingConfig() {
     );
   }
 
+  if(configError) return <section role="alert" className="rounded-xl border border-red-200 bg-red-50 p-6 text-sm text-red-800"><p>{configError}</p><button type="button" onClick={()=>void loadConfig()} className="mt-3 underline">Retry configuration</button></section>;
+
   if (!config) {
     return (
       <div className="text-center py-12">
         <Sparkles className="w-12 h-12 mx-auto text-gray-300 mb-4" />
         <h3 className="text-lg font-medium text-gray-900">LumaLeasing Not Configured</h3>
+        {saveError&&<p role="alert" className="mt-3 text-red-700">{saveError}</p>}
+        {saveConflict&&<button type="button" onClick={()=>void loadConfig()} className="mt-3 underline">Load latest settings</button>}
         <p className="text-gray-500 mt-2">Click below to set up LumaLeasing for this property.</p>
         <button
-          onClick={loadConfig}
+          onClick={()=>void saveConfig(true)}
+          disabled={saving||saveConflict||!canManage}
           className="mt-4 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
         >
-          Initialize LumaLeasing
+          {saving?'Initializing…':'Initialize LumaLeasing'}
         </button>
       </div>
     );
   }
 
-  const embedApiBase = typeof window !== 'undefined' ? window.location.origin : '';
-  const embedCode = `<!-- LumaLeasing Widget -->
-<script>
-  window.LUMALEASING_API_BASE = '${embedApiBase}';
-  (function(w,d,s,o,f,js,fjs){
-    w['LumaLeasing']=o;w[o]=w[o]||function(){(w[o].q=w[o].q||[]).push(arguments)};
-    js=d.createElement(s);fjs=d.getElementsByTagName(s)[0];
-    js.id=o;js.src=f;js.async=1;fjs.parentNode.insertBefore(js,fjs);
-  }(window,document,'script','lumaleasing','${embedApiBase}/lumaleasing.js'));
-  lumaleasing('init', '${config.api_key}');
-</script>`;
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-slate-200">
@@ -573,8 +547,8 @@ export function LumaLeasingConfig() {
             Preview
           </button>
           <button
-            onClick={saveConfig}
-            disabled={saving}
+            onClick={()=>void saveConfig()}
+            disabled={saving||saveConflict||!canManage}
             className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
           >
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
@@ -583,6 +557,11 @@ export function LumaLeasingConfig() {
         </div>
       </div>
 
+      {!canManage&&<p className="mx-6 text-sm text-slate-600">A property manager or administrator can save widget settings.</p>}
+      {saveError&&<div role="alert" className="mx-6 rounded-lg bg-red-50 p-3 text-sm text-red-700"><p>{saveError}</p>{saveConflict&&<button type="button" onClick={()=>void loadConfig()} className="mt-2 underline">Load latest settings</button>}</div>}
+      {dirty&&<p className="mx-6 text-sm text-amber-700">Unsaved changes</p>}
+      {saveMessage&&<p role="status" className="mx-6 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800">{saveMessage}</p>}
+      <p className="mx-6 text-xs text-slate-500">Saving tour settings also updates connected calendars. Previously saved tours keep their recorded timezone.</p>
       {/* Tabs */}
       <div className="border-b border-slate-100">
         <div className="flex">
@@ -610,7 +589,7 @@ export function LumaLeasingConfig() {
       </div>
 
       {/* Content */}
-      <div className="p-6">
+      <fieldset disabled={saving} className="min-w-0 p-6">
         {/* Branding Tab */}
         {activeTab === 'branding' && (
           <div className="space-y-6 max-w-2xl">
@@ -618,6 +597,7 @@ export function LumaLeasingConfig() {
               <label className="block text-sm font-medium text-slate-700 mb-2">Widget Name</label>
               <input
                 type="text"
+                aria-label="Widget name"
                 value={config.widget_name}
                 onChange={(e) => updateConfig('widget_name', e.target.value)}
                 className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
@@ -689,37 +669,15 @@ export function LumaLeasingConfig() {
                       placeholder="https://example.com/logo.png"
                       className="flex-1 px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
                     />
-                    <button
-                      type="button"
-                      onClick={() => logoFileInputRef.current?.click()}
-                      disabled={uploadingLogo}
-                      className="flex items-center gap-2 px-4 py-2 bg-white text-slate-700 rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-50 text-sm font-medium whitespace-nowrap"
-                    >
-                      {uploadingLogo ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-                      {uploadingLogo ? 'Uploading...' : 'Upload Image'}
-                    </button>
-                    <input
-                      ref={logoFileInputRef}
-                      type="file"
-                      accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml"
-                      className="hidden"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) uploadLogo(file);
-                      }}
-                    />
                   </div>
-                  {logoUploadError && (
-                    <p className="text-xs text-red-600">{logoUploadError}</p>
-                  )}
                   <p className="text-xs text-slate-500">
-                    Paste an image URL or upload a file (PNG, JPG, GIF, WebP, or SVG, max 2MB).
-                    A square image with a transparent background works best — it is shown
-                    directly on the chat header colors. Remember to click Save Changes after uploading.
+                    Paste an image URL and save settings, or choose a reviewed library image below.
                   </p>
                 </div>
               </div>
             </div>
+
+            <LumaWidgetOperations propertyId={currentProperty.id} mode="logo" settingsDirty={dirty} onStart={()=>setSaveMessage('')} onChanged={async()=>{await loadConfig();setSaveMessage('Widget decision saved with its history.')}}/>
 
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-2">Agent Photo</label>
@@ -870,11 +828,13 @@ export function LumaLeasingConfig() {
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-2">Timezone</label>
               <select
-                value={config.timezone}
+                aria-label="Scheduling timezone"
+                value={config.timezone||''}
                 onChange={(e) => updateConfig('timezone', e.target.value)}
                 className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
               >
-                {TIMEZONES.map((tz) => (
+                <option value="">Choose property timezone</option>
+                {[...new Set([...(config.timezone?[config.timezone]:[]),...TIMEZONES])].map((tz) => (
                   <option key={tz} value={tz}>{tz}</option>
                 ))}
               </select>
@@ -899,10 +859,10 @@ export function LumaLeasingConfig() {
                     Connect Gmail or Outlook to sync inbound lead replies and keep thread lifecycle states visible for leasing follow-up.
                   </p>
 
-                  {emailStatus && emailStatus.state !== 'disconnected' ? (
+                  {emailLoading ? <p role="status" className="text-sm text-slate-600">Loading email connection…</p> : emailError ? <div role="alert" className="text-sm text-red-700"><p>{emailError}</p><button type="button" onClick={()=>void loadEmailStatus()} className="mt-2 underline">Retry email status</button></div> : emailStatus && emailStatus.state !== 'disconnected' ? (
                     <div className="space-y-3">
                       <div className="flex items-center gap-2 text-sm bg-white/60 rounded-lg p-3">
-                        {emailStatus.state === 'reconnect_required' ? (
+                      {emailStatus.state === 'reconnect_required' ? (
                           <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
                         ) : (
                           <CheckCircle className="w-4 h-4 text-green-600 flex-shrink-0" />
@@ -916,11 +876,11 @@ export function LumaLeasingConfig() {
                             </span>
                             {' '}• Status:{' '}
                             <span className={`font-medium ${
-                              emailStatus.token_status === 'healthy' ? 'text-green-600' :
+                              emailStatus.token_status === 'healthy' && emailStatus.state === 'connected' ? 'text-green-600' :
                               emailStatus.token_status === 'expiring_soon' ? 'text-yellow-600' :
                               'text-red-600'
                             }`}>
-                              {emailStatus.token_status}
+                              {emailStatus.permission_state && emailStatus.permission_state !== 'confirmed' ? 'Permissions need review' : emailStatus.token_status==='refresh_unconfirmed'?'Renewal unconfirmed':emailStatus.token_status==='healthy' && emailStatus.state!=='connected'?'Renewal needed':emailStatus.token_status?.replaceAll('_',' ')}
                             </span>
                             {' '}• Connection:{' '}
                             <span className={`font-medium ${
@@ -929,7 +889,7 @@ export function LumaLeasingConfig() {
                               {emailStatus.state === 'connected' ? 'connected' : 'reconnect required'}
                             </span>
                           </div>
-                          {emailStatus.webhook_capability && (
+                          {emailStatus.webhook_capability?.mode === 'push_watch' && (
                             <div className="text-xs text-slate-600 mt-1">
                               Webhook:{' '}
                               <span
@@ -1014,19 +974,21 @@ export function LumaLeasingConfig() {
                         </button>
                       )}
 
-                      {emailStatus.webhook_capability && !emailStatus.webhook_capability.ready && (
+                      {emailStatus.webhook_capability?.mode === 'push_watch' && !emailStatus.webhook_capability.ready && (
                         <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
                           Webhook capability degraded: {emailStatus.webhook_capability.blockers.join(', ')}.
                           Inbound thread updates may be delayed until watch and history cursor are healthy.
                         </div>
                       )}
 
+                      {emailStatus.webhook_capability?.mode === 'manual_check' && <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">Automatic Outlook notifications are not available. Inbox updates use scheduled checks.</p>}
+
                       {emailStatus.state === 'reconnect_required' && (
                         <div className="flex items-center gap-3">
                           <AlertCircle className="w-5 h-5 text-amber-600" />
                           <div className="flex-1">
                             <p className="text-sm text-amber-900 font-medium">Action Required</p>
-                            <p className="text-xs text-amber-700">Your Gmail connection needs to be refreshed</p>
+                            <p className="text-xs text-amber-700">{emailStatus.permission_message || emailStatus.message || 'Reconnect this email account to restore access.'}</p>
                           </div>
                           <button
                             onClick={() => window.location.href = `/api/lumaleasing/email/connect?propertyId=${currentProperty.id}&provider=${emailStatus.provider || 'google'}`}
@@ -1064,24 +1026,8 @@ export function LumaLeasingConfig() {
                       </button>
                     </div>
                   )}
-                  <div className="flex flex-wrap gap-2 mt-3">
-                    <button
-                      onClick={() => createExternalAuthLink('google', 'email')}
-                      disabled={creatingInvite === 'google-email'}
-                      className="flex items-center gap-2 bg-white text-slate-900 px-3 py-2 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors text-xs font-medium disabled:opacity-60"
-                    >
-                      <Copy className="w-3 h-3" />
-                      {creatingInvite === 'google-email' ? 'Creating...' : 'Copy Gmail Auth Link'}
-                    </button>
-                    <button
-                      onClick={() => createExternalAuthLink('microsoft', 'email')}
-                      disabled={creatingInvite === 'microsoft-email'}
-                      className="flex items-center gap-2 bg-white text-slate-900 px-3 py-2 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors text-xs font-medium disabled:opacity-60"
-                    >
-                      <Copy className="w-3 h-3" />
-                      {creatingInvite === 'microsoft-email' ? 'Creating...' : 'Copy Outlook Auth Link'}
-                    </button>
-                  </div>
+                  <IntegrationReplacementPanel key={`replacement-${currentProperty.id}`} propertyId={currentProperty.id} defaultCapability="email"/>
+                  <IntegrationInvitesPanel key={currentProperty.id} propertyId={currentProperty.id} defaultCapability="email"/>
                 </div>
               </div>
             </div>
@@ -1155,10 +1101,10 @@ export function LumaLeasingConfig() {
                     Tours will automatically appear in your calendar.
                   </p>
                   
-                  {calendarStatus && calendarStatus.state !== 'disconnected' ? (
+                  {calendarLoading ? <p role="status" className="text-sm text-slate-600">Loading calendar status…</p> : calendarError ? <div role="alert" className="text-sm text-red-700"><p>{calendarError}</p><button type="button" onClick={()=>void loadCalendarStatus()} className="mt-2 underline">Retry calendar status</button></div> : calendarStatus && calendarStatus.state !== 'disconnected' ? (
                     <div className="space-y-3">
                       <div className="flex items-center gap-2 text-sm bg-white/50 rounded-lg p-3">
-                        {calendarStatus.state === 'reconnect_required' ? (
+                        {calendarStatus.state !== 'connected' ? (
                           <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
                         ) : (
                           <CheckCircle className="w-4 h-4 text-green-600 flex-shrink-0" />
@@ -1171,21 +1117,21 @@ export function LumaLeasingConfig() {
                               {calendarStatus.provider === 'microsoft' ? 'Outlook Calendar' : 'Google Calendar'}
                             </span>
                             {' '}• Status: <span className={`font-medium ${
-                              calendarStatus.token_status === 'healthy' ? 'text-green-600' :
+                              calendarStatus.token_status === 'healthy' && calendarStatus.state === 'connected' ? 'text-green-600' :
                               calendarStatus.token_status === 'expiring_soon' ? 'text-yellow-600' :
                               'text-red-600'
-                            }`}>{calendarStatus.token_status}</span>
+                            }`}>{calendarStatus.permission_state && calendarStatus.permission_state !== 'confirmed' ? 'Permissions need review' : calendarStatus.token_status==='refresh_unconfirmed'?'Renewal unconfirmed':calendarStatus.token_status?.replaceAll('_',' ')}</span>
                             {' '}• Connection:{' '}
                             <span className={`font-medium ${
                               calendarStatus.state === 'connected' ? 'text-green-600' : 'text-amber-700'
                             }`}>
-                              {calendarStatus.state === 'connected' ? 'connected' : 'reconnect required'}
+                              {calendarStatus.state === 'connected' ? 'connected' : calendarStatus.state === 'setup_required' ? 'timezone setup required' : 'reconnect required'}
                             </span>
                             {calendarStatus.last_health_check_at && (
                               <span> • Last checked: {new Date(calendarStatus.last_health_check_at).toLocaleString()}</span>
                             )}
                           </div>
-                          {calendarStatus.webhook_capability && (
+                          {calendarStatus.webhook_capability?.mode === 'push_watch' && (
                             <div className="text-xs text-slate-600 mt-1">
                               Webhook:{' '}
                               <span
@@ -1205,6 +1151,8 @@ export function LumaLeasingConfig() {
                           )}
                         </div>
                       </div>
+                      {calendarStatus.timezone && <p className="text-sm text-slate-700">Tour timezone: {calendarStatus.timezone}</p>}
+                      {calendarStatus.timezone_setup_required && <PropertyTimezoneSetup key={currentProperty.id} propertyId={currentProperty.id} onSaved={() => void loadCalendarStatus()}/>}
                       {calendarStatus.calendar_sync && (
                         <div className="grid grid-cols-2 gap-3">
                           <div className="rounded-lg bg-white/70 p-3 border border-indigo-100">
@@ -1232,7 +1180,7 @@ export function LumaLeasingConfig() {
                           <AlertCircle className="w-5 h-5 text-amber-600" />
                           <div className="flex-1">
                             <p className="text-sm text-amber-900 font-medium">Action Required</p>
-                            <p className="text-xs text-amber-700">Your calendar needs to be reconnected</p>
+                            <p className="text-xs text-amber-700">{calendarStatus.permission_message || 'Your calendar needs to be reconnected'}</p>
                           </div>
                           <button
                             onClick={() => window.location.href = `/api/lumaleasing/calendar/connect?propertyId=${currentProperty.id}&provider=${calendarStatus.provider || 'google'}`}
@@ -1251,18 +1199,18 @@ export function LumaLeasingConfig() {
                         <XCircle className="w-4 h-4" />
                         {disconnectingIntegration === 'calendar' ? 'Removing...' : 'Remove Calendar Account'}
                       </button>
-                      {calendarStatus.webhook_capability && !calendarStatus.webhook_capability.ready && (
+                      {calendarStatus.webhook_capability?.mode === 'push_watch' && !calendarStatus.webhook_capability.ready && (
                         <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                          Calendar webhook degraded: {calendarStatus.webhook_capability.blockers.join(', ')}.
-                          External Google Calendar edits may not propagate until watch health is restored.
+                          Automatic calendar updates need attention. Changes made in Google Calendar may not appear here until the connection is restored and checked again.
                         </div>
                       )}
+                      {calendarStatus.webhook_capability?.mode === 'manual_check' && <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">Automatic Outlook updates are not available. Check affected bookings after making changes in Outlook.</p>}
                       {calendarStatus.calendar_sync?.degraded && (
                         <div className="space-y-3">
                           <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                            Some bookings are not fully synced to Google Calendar yet, or the linked Google events were changed outside P11. New bookings still work, but operator follow-up may be required.
+                            Review the calendar connection and affected bookings before relying on availability. Calendar health or booking changes need attention.
                           </div>
-                          {calendarStatus.token_status === 'healthy' && (
+                          {calendarStatus.state === 'connected' && (
                             <button
                               onClick={repairCalendarSync}
                               disabled={repairingCalendarSync}
@@ -1293,26 +1241,10 @@ export function LumaLeasingConfig() {
                       </button>
                     </div>
                   )}
-                  <div className="flex flex-wrap gap-2 mt-3">
-                    <button
-                      onClick={() => createExternalAuthLink('google', 'calendar')}
-                      disabled={creatingInvite === 'google-calendar'}
-                      className="flex items-center gap-2 bg-white text-slate-900 px-3 py-2 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors text-xs font-medium disabled:opacity-60"
-                    >
-                      <Copy className="w-3 h-3" />
-                      {creatingInvite === 'google-calendar' ? 'Creating...' : 'Copy Google Calendar Link'}
-                    </button>
-                    <button
-                      onClick={() => createExternalAuthLink('microsoft', 'calendar')}
-                      disabled={creatingInvite === 'microsoft-calendar'}
-                      className="flex items-center gap-2 bg-white text-slate-900 px-3 py-2 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors text-xs font-medium disabled:opacity-60"
-                    >
-                      <Copy className="w-3 h-3" />
-                      {creatingInvite === 'microsoft-calendar' ? 'Creating...' : 'Copy Outlook Calendar Link'}
-                    </button>
-                  </div>
+                  <IntegrationReplacementPanel key={`replacement-${currentProperty.id}`} propertyId={currentProperty.id} defaultCapability="calendar"/>
+                  <IntegrationInvitesPanel key={currentProperty.id} propertyId={currentProperty.id} defaultCapability="calendar"/>
                   
-                  {!calendarStatus?.connected && (
+                  {!calendarLoading&&!calendarError&&!calendarStatus?.connected && (
                     <p className="text-xs text-slate-500 mt-3">
                       💡 Without calendar integration, tour availability will be based on static time slots.
                       Connect your calendar for real-time availability.
@@ -1331,39 +1263,46 @@ export function LumaLeasingConfig() {
                   </p>
                 </div>
                 <button
-                  onClick={loadRecoveryBookings}
-                  disabled={recoveringBookingId !== null}
+                  onClick={()=>void loadRecoveryBookings()}
+                  disabled={recoveringBookingId !== null||recoveryLoading}
                   className="text-xs px-3 py-1.5 rounded border border-slate-300 text-slate-700 hover:bg-white disabled:opacity-60"
                 >
                   Refresh
                 </button>
               </div>
 
+              {calendarReviewMessage&&<p role="status" className="mb-3 text-sm text-emerald-800">{calendarReviewMessage}</p>}
               {recoveryError && (
                 <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2 mb-3">
                   {recoveryError}
                 </div>
               )}
 
-              {recoveryBookings.length === 0 ? (
+              {recoveryLoading&&<p role="status" className="mb-3 text-sm text-slate-500">Loading bookings…</p>}
+              {!recoveryLoading&&!recoveryError&&recoveryBookings.length === 0 ? (
                 <p className="text-xs text-slate-500">No bookings available for recovery actions.</p>
               ) : (
                 <div className="space-y-3">
-                  {recoveryBookings.slice(0, 8).map((booking) => (
+                  {recoveryBookings.map((booking) => (
                     <div key={booking.id} className="rounded-lg border border-slate-200 bg-white p-3">
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <p className="text-sm font-medium text-slate-900">
-                            {booking.lead?.name || 'Unknown lead'} • {booking.scheduled_date} {booking.scheduled_time.slice(0, 5)}
+                            {booking.lead?.name || 'Unknown lead'} • {booking.scheduled_date} {booking.scheduled_time.slice(0, 5)} {booking.schedule_timezone||'(timezone not confirmed)'}
                           </p>
                           <p className="text-xs text-slate-500 mt-1">
                             Status: {booking.status || 'unknown'} • Calendar:{' '}
-                            {booking.calendar_event?.sync_status || 'not_synced'}
+                            {({external_drift:'Time changed — review needed',external_missing:'Event missing — review needed',external_cancelled:'Cancelled — review needed',synced:'Up to date',pending:'Update pending'} as Record<string,string>)[booking.calendar_event?.sync_status||''] || 'Not confirmed'}
                           </p>
                         </div>
                         <span className="text-[11px] text-slate-500 font-mono">{booking.id.slice(0, 8)}</span>
                       </div>
 
+                      {booking.calendar_event?.sync_status?.startsWith('external_')?<CalendarChangeReview
+                        key={booking.id} propertyId={currentProperty.id} bookingId={booking.id}
+                        version={booking.schedule_version} timezone={booking.schedule_timezone} durationMinutes={booking.duration_minutes || 30} observation={booking.calendar_event}
+                        onUpdated={async message=>{setCalendarReviewMessage(message);await loadRecoveryBookings();await loadCalendarStatus();}}/>:<>
+                      {!booking.calendar_event && <CalendarEventBinding key={`${booking.id}/${booking.schedule_version}`} propertyId={currentProperty.id} bookingId={booking.id} version={booking.schedule_version} timezone={booking.schedule_timezone} onUpdated={async message=>{setCalendarReviewMessage(message);await loadRecoveryBookings();await loadCalendarStatus();}}/>}
                       <div className="grid grid-cols-2 gap-2 mt-3">
                         <input
                           type="date"
@@ -1372,6 +1311,7 @@ export function LumaLeasingConfig() {
                             setRecoveryDrafts((prev) => ({
                               ...prev,
                               [booking.id]: {
+                                ...prev[booking.id],
                                 date: e.target.value,
                                 time: prev[booking.id]?.time || booking.scheduled_time.slice(0, 5),
                               },
@@ -1386,6 +1326,7 @@ export function LumaLeasingConfig() {
                             setRecoveryDrafts((prev) => ({
                               ...prev,
                               [booking.id]: {
+                                ...prev[booking.id],
                                 date: prev[booking.id]?.date || booking.scheduled_date,
                                 time: e.target.value,
                               },
@@ -1395,27 +1336,34 @@ export function LumaLeasingConfig() {
                         />
                       </div>
 
-                      <div className="flex items-center gap-2 mt-3">
+                      <div className="flex flex-wrap items-center gap-2 mt-3">
+                        <label className="w-full text-sm text-slate-700">Reason for change
+                          <input aria-label={`Reason for ${booking.lead?.name || 'tour'} change`} value={recoveryDrafts[booking.id]?.reason || ''} maxLength={2000}
+                            onChange={e=>setRecoveryDrafts(previous=>({...previous,[booking.id]:{...previous[booking.id],reason:e.target.value}}))}
+                            className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2"/>
+                        </label>
                         <button
                           onClick={() => runBookingRecovery(booking.id, 'reschedule')}
-                          disabled={!booking.can_reschedule || recoveringBookingId === booking.id}
+                          disabled={!booking.can_reschedule || recoveringBookingId === booking.id || !recoveryDrafts[booking.id]?.reason?.trim()}
                           className="text-xs px-3 py-1.5 rounded bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
                         >
                           {recoveringBookingId === booking.id ? 'Working...' : 'Reschedule'}
                         </button>
                         <button
                           onClick={() => runBookingRecovery(booking.id, 'cancel')}
-                          disabled={!booking.can_cancel || recoveringBookingId === booking.id}
+                          disabled={!booking.can_cancel || recoveringBookingId === booking.id || !recoveryDrafts[booking.id]?.reason?.trim()}
                           className="text-xs px-3 py-1.5 rounded bg-white border border-rose-300 text-rose-700 hover:bg-rose-50 disabled:opacity-50 flex items-center gap-1"
                         >
                           <XCircle className="w-3 h-3" />
                           Cancel
                         </button>
                       </div>
+                      </>}
                     </div>
                   ))}
                 </div>
               )}
+              {recoveryCursor&&<button disabled={recoveryLoading} onClick={()=>void loadRecoveryBookings(recoveryCursor)} className="mt-3 rounded border bg-white px-3 py-2 text-sm disabled:opacity-50">Load more bookings</button>}
             </div>
 
             {/* Tour Settings */}
@@ -1474,69 +1422,9 @@ export function LumaLeasingConfig() {
         )}
 
         {/* Embed Tab */}
-        {activeTab === 'embed' && (
-          <div className="space-y-6">
-            <div className="p-4 bg-slate-50 rounded-lg">
-              <div className="flex items-center justify-between mb-2">
-                <label className="text-sm font-medium text-slate-700">API Key</label>
-                <button
-                  onClick={regenerateApiKey}
-                  className="flex items-center gap-1 text-xs text-slate-500 hover:text-red-600"
-                >
-                  <RefreshCw className="w-3 h-3" />
-                  Regenerate
-                </button>
-              </div>
-              <div className="flex items-center gap-2">
-                <code className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded text-sm font-mono">
-                  {config.api_key}
-                </code>
-                <button
-                  onClick={() => copyToClipboard(config.api_key)}
-                  className="p-2 text-slate-500 hover:text-indigo-600 hover:bg-white rounded"
-                >
-                  {copied ? <Check className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />}
-                </button>
-              </div>
-            </div>
+        {activeTab === 'embed' && <LumaWidgetOperations propertyId={currentProperty.id} mode="installation" settingsDirty={dirty} onStart={()=>setSaveMessage('')} onChanged={async()=>{await loadConfig();setSaveMessage('Widget decision saved with its history.')}}/>}
 
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <label className="text-sm font-medium text-slate-700">Embed Code</label>
-                <button
-                  onClick={() => copyToClipboard(embedCode)}
-                  className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-700"
-                >
-                  <Copy className="w-3 h-3" />
-                  Copy Code
-                </button>
-              </div>
-              <pre className="p-4 bg-slate-900 text-slate-100 rounded-lg overflow-x-auto text-sm">
-                <code>{embedCode}</code>
-              </pre>
-              <p className="text-xs text-slate-500 mt-2">
-                Paste this code before the closing &lt;/body&gt; tag on your website.
-              </p>
-            </div>
-
-            <div className="flex items-center gap-4 p-4 bg-indigo-50 rounded-lg">
-              <ExternalLink className="w-5 h-5 text-indigo-600" />
-              <div className="flex-1">
-                <p className="font-medium text-indigo-900">Test Your Widget</p>
-                <p className="text-sm text-indigo-700">Preview how the widget looks on a test page</p>
-              </div>
-              <a
-                href={`/lumaleasing/demo?apiKey=${config.api_key}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm"
-              >
-                Open Demo
-              </a>
-            </div>
-          </div>
-        )}
-      </div>
+      </fieldset>
     </div>
   );
 }

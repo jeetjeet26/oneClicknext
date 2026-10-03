@@ -13,7 +13,7 @@ class MetaAdsClient:
     def __init__(self, access_token: str, ad_account_id: str):
         self.base_url = "https://graph.facebook.com/v19.0"
         self.access_token = access_token
-        self.ad_account_id = ad_account_id
+        self.ad_account_id = ad_account_id.removeprefix("act_")
         
     def get_insights(self, date_preset="yesterday") -> List[Dict[str, Any]]:
         """
@@ -22,8 +22,9 @@ class MetaAdsClient:
         url = f"{self.base_url}/act_{self.ad_account_id}/insights"
         params = {
             "access_token": self.access_token,
-            "level": "ad",
-            "fields": "campaign_name,campaign_id,adset_name,ad_name,spend,impressions,clicks,actions,date_start,date_stop",
+            "level": "campaign",
+            "time_increment": 1,
+            "fields": "account_id,account_currency,campaign_name,campaign_id,adset_name,ad_name,spend,impressions,clicks,actions,date_start,date_stop",
             "date_preset": date_preset,
             "limit": 100
         }
@@ -37,7 +38,15 @@ class MetaAdsClient:
                 response.raise_for_status()
                 
             data = response.json()
-            all_data.extend(data.get("data", []))
+            rows = data.get('data')
+            if not isinstance(rows, list):
+                raise ValueError('Meta report page was not confirmed')
+            for row in rows:
+                if str(row.get('account_id')) != self.ad_account_id.removeprefix('act_') or row.get('account_currency') != 'USD':
+                    raise ValueError('Meta report account or USD currency is not confirmed')
+                if not row.get('date_start') or row.get('date_start') != row.get('date_stop'):
+                    raise ValueError('Meta report must contain daily rows')
+            all_data.extend(rows)
             
             # Handle Pagination
             if "paging" in data and "next" in data["paging"]:
@@ -94,7 +103,7 @@ def run_pipeline():
     # Using 'upsert' to handle idempotency (if we run script multiple times for same date)
     try:
         response = supabase.table('fact_marketing_performance').upsert(
-            records, on_conflict="date, property_id, campaign_id"
+            records, on_conflict="date,property_id,channel_id,source_account_id,campaign_id"
         ).execute()
         print(f"Successfully loaded {len(records)} rows to Supabase.")
     except Exception as e:

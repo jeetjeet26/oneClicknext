@@ -1,12 +1,37 @@
-import { Resend } from 'resend'
+import { requireDeliveryEnabled } from '@/utils/services/delivery-guard'
+import { Resend, type ErrorResponse } from 'resend'
+import { incidentAlertFailureMessage, type IncidentAlertFailureCode } from './health-alert-state'
 import { createServiceClient } from '@/utils/supabase/admin'
+
+export class IncidentAlertDeliveryError extends Error {
+  constructor(readonly state: 'blocked' | 'unconfirmed', readonly code: IncidentAlertFailureCode) {
+    super(incidentAlertFailureMessage(code))
+    this.name = 'IncidentAlertDeliveryError'
+  }
+}
+
+// Only explicit non-acceptance responses may be called blocked. A timeout,
+// server error or idempotency conflict can conceal an already accepted email.
+function providerFailure(error: ErrorResponse): IncidentAlertDeliveryError {
+  if (error.statusCode === 403 && error.name === 'validation_error' &&
+      /domain.{0,300}(?:not verified|verify)|verify.{0,100}domain/i.test(error.message)) {
+    return new IncidentAlertDeliveryError('blocked', 'sender_domain_unverified')
+  }
+  if ([401, 403].includes(error.statusCode || 0)) {
+    return new IncidentAlertDeliveryError('blocked', 'provider_access_denied')
+  }
+  if ([400, 404, 405, 422].includes(error.statusCode || 0)) {
+    return new IncidentAlertDeliveryError('blocked', 'provider_rejected')
+  }
+  return new IncidentAlertDeliveryError('unconfirmed', 'acceptance_unconfirmed')
+}
 
 type AlertSummary = {
   processed: number
   failed: number
   unhealthy: number
   degraded: number
-  staleJobsRecovered: number
+  staleJobsRecovered: number | null
   restoreDrills: {
     failed: number
     awaitingOperator: number
@@ -27,14 +52,15 @@ export async function sendSiteForgeIncidentAlert(input: {
   runId: string
   summary: AlertSummary
 }) {
+  requireDeliveryEnabled()
   const apiKey = process.env.RESEND_API_KEY
   const from = process.env.RESEND_FROM_EMAIL
   if (!apiKey || !from) {
-    throw new Error('SiteForge incident email delivery is not configured')
+    throw new IncidentAlertDeliveryError('blocked', 'delivery_not_configured')
   }
   const orgIds = [...new Set(input.orgIds)]
   if (orgIds.length === 0) {
-    throw new Error('SiteForge incident alert has no affected organization')
+    throw new IncidentAlertDeliveryError('blocked', 'recipients_unavailable')
   }
   const service = createServiceClient()
   const { data: profiles, error: profilesError } = await service
@@ -43,13 +69,14 @@ export async function sendSiteForgeIncidentAlert(input: {
     .in('org_id', orgIds)
     .in('role', ['admin', 'manager'])
   if (profilesError) {
-    throw new Error(
-      `Failed to resolve SiteForge incident recipients: ${profilesError.message}`
-    )
+    throw new IncidentAlertDeliveryError('blocked', 'recipients_unavailable')
   }
   const users = await Promise.all(
     (profiles || []).map(profile => service.auth.admin.getUserById(profile.id))
   )
+  if (users.some(result => result.error || !result.data.user)) {
+    throw new IncidentAlertDeliveryError('blocked', 'recipients_unavailable')
+  }
   const recipients = [
     ...new Set(
       users
@@ -58,7 +85,11 @@ export async function sendSiteForgeIncidentAlert(input: {
     ),
   ]
   if (recipients.length === 0) {
-    throw new Error('No manager email is available for SiteForge incident alerts')
+    throw new IncidentAlertDeliveryError('blocked', 'recipients_missing')
+  }
+
+  if (recipients.length > 100) {
+    throw new IncidentAlertDeliveryError('blocked', 'recipients_limit')
   }
 
   const dashboardUrl = `${(
@@ -69,7 +100,7 @@ export async function sendSiteForgeIncidentAlert(input: {
     ['Execution failures', input.summary.failed],
     ['Unhealthy websites', input.summary.unhealthy],
     ['Degraded websites', input.summary.degraded],
-    ['Stale jobs recovered', input.summary.staleJobsRecovered],
+    ['Stale jobs recovered', input.summary.staleJobsRecovered ?? 'Not measured for this organization'],
     ['Restore drills failed', input.summary.restoreDrills.failed],
     [
       'Restores awaiting operator',
@@ -114,10 +145,15 @@ export async function sendSiteForgeIncidentAlert(input: {
         `Run ID: ${input.runId}`,
       ].join('\n'),
     })),
-    { idempotencyKey: `siteforge-health/${input.runId}` }
+    { idempotencyKey: `siteforge-health/${input.runId}`, batchValidation: 'strict' }
   )
   if (error) {
-    throw new Error(`Failed to send SiteForge incident alert: ${error.message}`)
+    throw providerFailure(error)
   }
-  return { recipients: recipients.length, messageIds: data?.data.map(item => item.id) || [] }
+  const messageIds = data?.data?.map(item => item.id) || []
+  if (messageIds.length !== recipients.length || new Set(messageIds).size !== recipients.length ||
+      messageIds.some(id => typeof id !== 'string' || !id.trim())) {
+    throw new IncidentAlertDeliveryError('unconfirmed', 'acceptance_unconfirmed')
+  }
+  return { recipients: recipients.length, messageIds }
 }

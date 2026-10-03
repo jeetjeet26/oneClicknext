@@ -1,160 +1,25 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { NextRequest } from 'next/server'
-
-const authGetUserMock = vi.fn()
-const createServerClientMock = vi.fn()
-const validatePropertyAccessMock = vi.fn()
-const mockFrom = vi.fn()
-
-vi.mock('@/utils/supabase/server', () => ({
-  createClient: createServerClientMock,
-}))
-
-vi.mock('@/utils/services/auth-guard', () => ({
-  validatePropertyAccess: validatePropertyAccessMock,
-}))
-
-vi.mock('@supabase/supabase-js', () => ({
-  createClient: vi.fn(() => ({
-    from: mockFrom,
-  })),
-}))
-
-describe('forgestudio assets route', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    vi.resetModules()
-
-    createServerClientMock.mockResolvedValue({
-      auth: { getUser: authGetUserMock },
-    })
-  })
-
-  afterEach(() => {
-    vi.restoreAllMocks()
-  })
-
-  it('GET returns 401 when unauthenticated', async () => {
-    authGetUserMock.mockResolvedValue({
-      data: { user: null },
-      error: null,
-    })
-
-    const { GET } = await import('./route')
-    const response = await GET(
-      new Request('http://localhost/api/forgestudio/assets?propertyId=property-1') as NextRequest
-    )
-
-    expect(response.status).toBe(401)
-    await expect(response.json()).resolves.toEqual({ error: 'Unauthorized' })
-    expect(mockFrom).not.toHaveBeenCalled()
-  })
-
-  it('POST returns 403 when property access is denied', async () => {
-    authGetUserMock.mockResolvedValue({
-      data: { user: { id: 'user-1' } },
-      error: null,
-    })
-    validatePropertyAccessMock.mockResolvedValue({ authorized: false })
-
-    const { POST } = await import('./route')
-    const response = await POST(
-      new Request('http://localhost/api/forgestudio/assets', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          propertyId: 'property-1',
-          name: 'Asset',
-          assetType: 'image',
-          fileUrl: 'https://example.com/a.png',
-        }),
-      }) as NextRequest
-    )
-
-    expect(response.status).toBe(403)
-    await expect(response.json()).resolves.toEqual({ error: 'Forbidden' })
-    expect(mockFrom).not.toHaveBeenCalled()
-  })
-
-  it('PATCH returns 403 when asset property access is denied', async () => {
-    authGetUserMock.mockResolvedValue({
-      data: { user: { id: 'user-1' } },
-      error: null,
-    })
-    validatePropertyAccessMock.mockResolvedValue({ authorized: false })
-
-    const updateSelectSingleMock = vi.fn()
-    mockFrom.mockImplementation((table: string) => {
-      if (table !== 'content_assets') {
-        throw new Error(`Unexpected table ${table}`)
-      }
-      return {
-        select: vi.fn(() => ({
-          eq: vi.fn(() => ({
-            single: vi.fn().mockResolvedValue({
-              data: { id: 'asset-1', property_id: 'property-1' },
-              error: null,
-            }),
-          })),
-        })),
-        update: vi.fn(() => ({
-          eq: vi.fn(() => ({
-            select: vi.fn(() => ({
-              single: updateSelectSingleMock,
-            })),
-          })),
-        })),
-      }
-    })
-
-    const { PATCH } = await import('./route')
-    const response = await PATCH(
-      new Request('http://localhost/api/forgestudio/assets', {
-        method: 'PATCH',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ assetId: 'asset-1', name: 'Updated' }),
-      }) as NextRequest
-    )
-
-    expect(response.status).toBe(403)
-    await expect(response.json()).resolves.toEqual({ error: 'Forbidden' })
-    expect(updateSelectSingleMock).not.toHaveBeenCalled()
-  })
-
-  it('DELETE returns 403 when asset property access is denied', async () => {
-    authGetUserMock.mockResolvedValue({
-      data: { user: { id: 'user-1' } },
-      error: null,
-    })
-    validatePropertyAccessMock.mockResolvedValue({ authorized: false })
-
-    const deleteEqMock = vi.fn()
-    mockFrom.mockImplementation((table: string) => {
-      if (table !== 'content_assets') {
-        throw new Error(`Unexpected table ${table}`)
-      }
-      return {
-        select: vi.fn(() => ({
-          eq: vi.fn(() => ({
-            single: vi.fn().mockResolvedValue({
-              data: { id: 'asset-1', property_id: 'property-1' },
-              error: null,
-            }),
-          })),
-        })),
-        delete: vi.fn(() => ({
-          eq: deleteEqMock,
-        })),
-      }
-    })
-
-    const { DELETE } = await import('./route')
-    const response = await DELETE(
-      new Request('http://localhost/api/forgestudio/assets?assetId=asset-1') as NextRequest
-    )
-
-    expect(response.status).toBe(403)
-    await expect(response.json()).resolves.toEqual({ error: 'Forbidden' })
-    expect(deleteEqMock).not.toHaveBeenCalled()
-  })
+import {beforeEach,describe,expect,it,vi} from 'vitest'
+import type {NextRequest} from 'next/server'
+const auth=vi.fn(),access=vi.fn(),from=vi.fn(),rpc=vi.fn(),upload=vi.fn(),recover=vi.fn(),form=vi.fn()
+vi.mock('@/utils/supabase/server',()=>({createClient:async()=>({auth:{getUser:auth}})}))
+vi.mock('@/utils/supabase/admin',()=>({createServiceClient:()=>({from})}))
+vi.mock('@/utils/services/auth-guard',()=>({validatePropertyAccess:access}))
+vi.mock('@/utils/forgestudio/asset-library-store',()=>({assetLibraryRpc:rpc,uploadLibraryAsset:upload,recoverLibraryUpload:recover,boundedAssetForm:form}))
+const property='11111111-1111-4111-8111-111111111111',asset='22222222-2222-4222-8222-222222222222',requestId='33333333-3333-4333-8333-333333333333'
+let rows:unknown[],error:unknown,chain:Record<string,ReturnType<typeof vi.fn>>
+const request=(body:unknown,method='PATCH')=>new Request('http://localhost/api/forgestudio/assets',{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}) as NextRequest
+const patch={requestId,propertyId:property,assetId:asset,revision:2,action:'save',patch:{folder:'Community',is_favorite:true}}
+beforeEach(()=>{vi.clearAllMocks();rows=[];error=null;chain={};for(const key of ['select','eq','is','not','order','limit','or','lt','ilike'])chain[key]=vi.fn(()=>chain);chain.then=vi.fn((resolve:(r:unknown)=>unknown)=>resolve({data:rows,error}));from.mockReturnValue(chain);auth.mockResolvedValue({data:{user:{id:'actual-user'}},error:null});access.mockResolvedValue({authorized:true});rpc.mockResolvedValue({state:'saved',asset:{id:asset}});upload.mockResolvedValue({state:'saved',asset:{id:asset}});recover.mockResolvedValue({state:'saved',asset:{id:asset}});const f=new FormData();f.set('propertyId',property);form.mockResolvedValue(f)})
+describe('asset library API',()=>{
+ it('requires sign-in before library reads or writes',async()=>{auth.mockResolvedValue({data:{user:null},error:null});const r=await import('./route');expect((await r.GET(new Request('http://localhost/api/forgestudio/assets?propertyId='+property) as NextRequest)).status).toBe(401);expect((await r.PATCH(request(patch))).status).toBe(401);expect(from).not.toHaveBeenCalled();expect(rpc).not.toHaveBeenCalled()})
+ it('forbids writes outside the actual property',async()=>{access.mockResolvedValue({authorized:false});expect((await(await import('./route')).PATCH(request(patch))).status).toBe(403);expect(rpc).not.toHaveBeenCalled()})
+ it('saves real folder and favorite values under the actual actor and exact revision',async()=>{expect((await(await import('./route')).PATCH(request(patch))).status).toBe(200);expect(rpc).toHaveBeenCalledWith('manage_forgestudio_asset',{p_id:requestId,p_property_id:property,p_actor_id:'actual-user',p_payload:{assetId:asset,revision:2,action:'save',patch:patch.patch}})})
+ it.each([{...patch,revision:undefined},{...patch,requestId:undefined},{...patch,patch:{file_url:'https://malicious.invalid'}},{...patch,actorId:'forged'}])('rejects missing identity and unsupported direct mutation %j',async body=>{expect((await(await import('./route')).PATCH(request(body))).status).toBe(400);expect(rpc).not.toHaveBeenCalled()})
+ it('uses server pagination and filters across the library',async()=>{rows=Array.from({length:31},(_,i)=>({id:`11111111-1111-4111-8111-${String(i).padStart(12,'0')}`,created_at:'2026-09-17T00:00:00Z'}));const response=await(await import('./route')).GET(new Request(`http://localhost/api/forgestudio/assets?propertyId=${property}&folder=Community&favorites=true&usable=true`) as NextRequest);const data=await response.json();expect(response.status).toBe(200);expect(data.assets).toHaveLength(30);expect(data.nextCursor).toBeTruthy();expect(chain.eq).toHaveBeenCalledWith('folder','Community');expect(chain.eq).toHaveBeenCalledWith('is_favorite',true);expect(chain.eq).toHaveBeenCalledWith('approval_status','approved');expect(chain.is).toHaveBeenCalledWith('archived_at',null)})
+ it('rejects an invalid page cursor instead of hiding older assets',async()=>{expect((await(await import('./route')).GET(new Request(`http://localhost/api/forgestudio/assets?propertyId=${property}&cursor=invalid`) as NextRequest)).status).toBe(400)})
+ it('read failure is distinct from an empty library',async()=>{error={message:'unavailable'};expect((await(await import('./route')).GET(new Request(`http://localhost/api/forgestudio/assets?propertyId=${property}`) as NextRequest)).status).toBe(503)})
+ it('does not retain the old arbitrary URL registration or hard-delete bypass',async()=>{const r=await import('./route');expect((await r.POST(request({propertyId:property,fileUrl:'https://example.invalid/x'},'POST'))).status).toBe(400);expect((await r.DELETE()).status).toBe(409);expect(upload).not.toHaveBeenCalled()})
+ it('requires property authorization before storing multipart bytes',async()=>{access.mockResolvedValue({authorized:false});const r=await(await import('./route')).POST(new Request('http://localhost/api/forgestudio/assets',{method:'POST',headers:{'Content-Type':'multipart/form-data; boundary=fixture'},body:'fixture'}) as NextRequest);expect(r.status).toBe(403);expect(upload).not.toHaveBeenCalled()})
+ it('recovers stored bytes with an attributed explicit decision',async()=>{const body={requestId,propertyId:property,uploadId:asset,action:'keep_separate',reason:'Keep the stored file and review the original separately'};expect((await(await import('./route')).PATCH(request(body))).status).toBe(200);expect(recover).toHaveBeenCalledWith({...body,actorId:'actual-user'})})
+ it('pending uploads are scoped to the requesting operator',async()=>{await(await import('./route')).GET(new Request(`http://localhost/api/forgestudio/assets?mode=uploads&propertyId=${property}`) as NextRequest);expect(chain.eq).toHaveBeenCalledWith('actor_id','actual-user');expect(chain.eq).toHaveBeenCalledWith('state','prepared')})
 })

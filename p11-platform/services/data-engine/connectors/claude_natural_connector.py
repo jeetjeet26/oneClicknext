@@ -8,7 +8,6 @@ import logging
 import re
 from typing import Any, Dict, List, Optional, Tuple
 import anthropic
-from tenacity import retry, stop_after_attempt, wait_exponential
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +73,7 @@ class ClaudeNaturalConnector:
         if not self.api_key:
             raise ValueError("ANTHROPIC_API_KEY not set")
         
-        self.client = anthropic.Anthropic(api_key=self.api_key)
+        self.client = anthropic.AsyncAnthropic(api_key=self.api_key,timeout=45,max_retries=0)
         self.model = os.environ.get('GEO_CLAUDE_MODEL', 'claude-sonnet-5')
         claude_search = os.environ.get('GEO_CLAUDE_WEB_SEARCH')
         if claude_search is not None:
@@ -84,7 +83,6 @@ class ClaudeNaturalConnector:
         
         logger.info(f"[ClaudeNatural] Model: {self.model}, Web search: {self.enable_web_search}")
     
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     async def get_natural_response(self, query_text: str) -> Tuple[str, List[Dict], Dict]:
         """
         Phase 1: Get natural conversational response with web search.
@@ -108,7 +106,7 @@ class ClaudeNaturalConnector:
         if self.enable_web_search:
             try:
                 logger.info("[Claude-Natural] Using Anthropic web_search_20250305")
-                response = self.client.messages.create(
+                response = await self.client.messages.create(
                     model=self.model,
                     max_tokens=2000,
                     system=system_prompt,
@@ -145,7 +143,7 @@ class ClaudeNaturalConnector:
                     exc_info=True,
                 )
 
-        response = self.client.messages.create(
+        response = await self.client.messages.create(
             model=self.model,
             max_tokens=2000,
             system=system_prompt,
@@ -168,7 +166,6 @@ class ClaudeNaturalConnector:
             },
         )
     
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     async def analyze_response(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """
         Phase 2: Analyze the natural response and extract GEO metrics.
@@ -233,7 +230,7 @@ CRITICAL:
 Output ONLY valid JSON, no markdown."""
 
         try:
-            response = self.client.messages.create(
+            response = await self.client.messages.create(
                 model=self.model,
                 max_tokens=4000,  # Increased to avoid truncation in detailed analysis
                 system='You are a precise GEO extraction system. Output ONLY valid JSON without markdown or extra text.',

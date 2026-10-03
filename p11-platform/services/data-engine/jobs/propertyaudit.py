@@ -90,37 +90,57 @@ def recover_stale_running_runs(
     )
     cutoff = (now or _utc_now()) - timedelta(seconds=stale_after)
 
-    response = (
-        supabase.table("geo_runs")
-        .select("id, status, surface, started_at, last_updated_at, current_query_index, query_count")
-        .eq("status", "running")
-        .execute()
-    )
-    runs = response.data or []
-    stale_runs = [run for run in runs if is_stale_running_run(run, cutoff)]
-
-    for run in stale_runs:
-        current = run.get("current_query_index") or 0
-        total = run.get("query_count") or 0
-        message = (
-            "Data-engine worker heartbeat expired; run was likely orphaned by a service restart "
-            f"after {current}/{total} query executions."
-        )
-        (
+    recovered = 0
+    after_id = None
+    # Keyset pages remain stable while recovered rows leave the running set.
+    while True:
+        query = (
             supabase.table("geo_runs")
-            .update({
-                "status": "failed",
-                "finished_at": _utc_now().isoformat(),
-                "error_message": message,
-                "provider_failure_reason": "timeout",
-            })
-            .eq("id", run["id"])
+            .select("id, status, surface, started_at, last_updated_at, current_query_index, query_count")
             .eq("status", "running")
-            .execute()
+            .eq("execution_version", 1)
+            .order("id")
+            .limit(500)
         )
-        logger.warning("[PropertyAudit] Recovered stale run %s (%s): %s", run["id"], run.get("surface"), message)
-
-    return len(stale_runs)
+        if after_id:
+            query = query.gt("id", after_id)
+        runs = query.execute().data or []
+        if not runs:
+            break
+        for run in runs:
+            if not is_stale_running_run(run, cutoff):
+                continue
+            current = run.get("current_query_index") or 0
+            total = run.get("query_count") or 0
+            message = (
+                "Data-engine worker heartbeat expired; run was likely orphaned by a service restart "
+                f"after {current}/{total} query executions."
+            )
+            update = (
+                supabase.table("geo_runs")
+                .update({
+                    "status": "failed",
+                    "finished_at": _utc_now().isoformat(),
+                    "error_message": message,
+                    "provider_failure_reason": "timeout",
+                })
+                .eq("id", run["id"])
+                .eq("status", "running")
+            )
+            # A heartbeat or competing completion after the read invalidates
+            # this recovery decision. Do not fail a newly healthy worker.
+            if run.get("last_updated_at") is not None:
+                update = update.eq("last_updated_at", run["last_updated_at"])
+            else:
+                update = update.is_("last_updated_at", "null").eq("started_at", run["started_at"])
+            saved = update.execute().data or []
+            if any(row.get("id") == run["id"] and row.get("status") == "failed" for row in saved):
+                recovered += 1
+                logger.warning("[PropertyAudit] Marked stale run %s failed (%s)", run["id"], run.get("surface"))
+        after_id = runs[-1]["id"]
+        if len(runs) < 500:
+            break
+    return recovered
 
 
 def _is_no_rows_error(error: Exception) -> bool:
@@ -158,6 +178,10 @@ def _sanitize_error_message(message: Optional[str]) -> str:
     sanitized = re.sub(r'api_key=[^&\\s;]+', 'api_key=[redacted]', str(message))
     sanitized = re.sub(r'key=[^&\\s;]+', 'key=[redacted]', sanitized)
     return sanitized
+
+
+class RunStateConflict(RuntimeError):
+    """The worker no longer has a running row to update."""
 
 
 class PropertyAuditExecutor:
@@ -213,6 +237,7 @@ class PropertyAuditExecutor:
         logger.info(f"[PropertyAudit] Starting execution for run_id={run_id}")
         
         heartbeat_task: Optional[asyncio.Task] = None
+        owns_run = False
 
         try:
             # 1. Claim run if not already claimed by caller.
@@ -222,10 +247,16 @@ class PropertyAuditExecutor:
 
             if not run:
                 latest_run = self._get_run(run_id)
-                if not latest_run:
-                    raise ValueError(f"Run {run_id} not found")
-                raise ValueError(f"Run {run_id} is not in queued state (status={latest_run.get('status')})")
+                status = latest_run.get('status') if latest_run else None
+                logger.info("[PropertyAudit] Run %s was not claimed (status=%s)", run_id, status)
+                return {
+                    'success': False,
+                    'state_saved': False,
+                    'error': 'Run is not queued' if latest_run else 'Run not found',
+                    'status': status,
+                }
 
+            owns_run = True
             heartbeat_task = asyncio.create_task(self._heartbeat_run(run_id))
 
             # 2. Get queries for the property
@@ -285,6 +316,8 @@ class PropertyAuditExecutor:
                             )
                         
                     except Exception as e:
+                        if isinstance(e, RunStateConflict):
+                            raise
                         message = _sanitize_error_message(str(e))
                         logger.error(f"[PropertyAudit] Error processing query {query['id']}: {message}")
                         errors.append(f"Query {query['id']}: {message}")
@@ -363,7 +396,8 @@ class PropertyAuditExecutor:
             await self._refresh_siteaudit_analyst_if_batch_ready(run.get('property_id'), run.get('batch_id'))
             
             return {
-                'success': True,
+                'success': final_status == 'completed',
+                'partial': bool(results) and bool(errors),
                 'run_id': run_id,
                 'processed': len(results),
                 'errors': len(errors),
@@ -374,14 +408,20 @@ class PropertyAuditExecutor:
         except Exception as e:
             message = _sanitize_error_message(str(e))
             logger.error(f"[PropertyAudit] Fatal error for run_id={run_id}: {message}", exc_info=True)
-            self._update_run_status(
-                run_id,
-                'failed',
-                error_message=message,
-                progress_pct=0,
-                provider_failure_reason=self._classify_failure(message)
-            )
-            return {'success': False, 'error': message}
+            state_saved = False
+            if owns_run and not isinstance(e, RunStateConflict):
+                try:
+                    self._update_run_status(
+                        run_id,
+                        'failed',
+                        error_message=message,
+                        provider_failure_reason=self._classify_failure(message)
+                    )
+                    state_saved = True
+                except Exception:
+                    logger.exception("[PropertyAudit] Could not confirm failed state for run %s", run_id)
+            return {'success': False, 'error': message, 'state_saved': state_saved}
+
         finally:
             if heartbeat_task:
                 heartbeat_task.cancel()
@@ -429,14 +469,16 @@ class PropertyAuditExecutor:
             update_data['progress_pct'] = progress_pct
         
         if status in ['completed', 'failed']:
-            update_data['finished_at'] = datetime.utcnow().isoformat()
+            update_data['finished_at'] = _utc_now().isoformat()
         
         if error_message:
             update_data['error_message'] = error_message
         if provider_failure_reason:
             update_data['provider_failure_reason'] = provider_failure_reason
         
-        self.supabase.table('geo_runs').update(update_data).eq('id', run_id).execute()
+        saved = self.supabase.table('geo_runs').update(update_data).eq('id', run_id).eq('status', 'running').execute()
+        if not saved.data or not any(row.get('id') == run_id and row.get('status') == status for row in saved.data):
+            raise RunStateConflict('Run status transition was not confirmed')
         logger.debug(f"[PropertyAudit] Updated run {run_id}: status={status}, progress={progress_pct}%")
 
     async def _refresh_siteaudit_analyst_if_batch_ready(
@@ -444,49 +486,17 @@ class PropertyAuditExecutor:
         property_id: Optional[str],
         batch_id: Optional[str],
     ) -> None:
-        """Write grounded recommendations once every surface in the batch is done."""
-        if not property_id or not batch_id:
-            return
-        try:
-            siblings = (
-                self.supabase.table('geo_runs')
-                .select('id, status')
-                .eq('batch_id', batch_id)
-                .execute()
-            )
-            statuses = [row.get('status') for row in (siblings.data or [])]
-            if not statuses or any(status in ('queued', 'running') for status in statuses):
-                return
+        # Recommendation source/receipt work belongs to the enrolled durable worker.
+        return None
 
-            crawl_response = (
-                self.supabase.table('geo_site_crawls')
-                .select('id, status')
-                .eq('batch_id', batch_id)
-                .eq('status', 'completed')
-                .order('finished_at', desc=True)
-                .limit(1)
-                .execute()
-            )
-            crawl = (crawl_response.data or [None])[0]
-            if not crawl:
-                return
-
-            from siteaudit.analyst import SiteAuditAnalyst
-            result = await SiteAuditAnalyst(self.supabase).generate(property_id, crawl['id'], batch_id)
-            logger.info(
-                "[PropertyAudit] SiteAudit analyst refresh for batch %s: %s",
-                batch_id,
-                result.get('success'),
-            )
-        except Exception as error:
-            logger.warning("[PropertyAudit] SiteAudit analyst refresh failed: %s", error)
-    
     def _update_progress(self, run_id: str, progress_pct: int, current_query_index: int):
         """Update progress tracking fields."""
-        self.supabase.table('geo_runs').update({
+        saved = self.supabase.table('geo_runs').update({
             'progress_pct': progress_pct,
             'current_query_index': current_query_index
-        }).eq('id', run_id).execute()
+        }).eq('id', run_id).eq('status', 'running').execute()
+        if not saved.data:
+            raise RunStateConflict('Run progress transition was not confirmed')
 
     async def _heartbeat_run(self, run_id: str):
         """Keep last_updated_at fresh while a long provider call is in flight."""
@@ -602,7 +612,8 @@ class PropertyAuditExecutor:
         run: Dict,
         query: Dict,
         property_data: Dict,
-        config: Dict
+        config: Dict,
+        persist: bool = True
     ) -> Dict:
         """
         Process a single query using LLM connectors.
@@ -664,7 +675,11 @@ class PropertyAuditExecutor:
             else:
                 raise ValueError(f"Unsupported PropertyAudit surface: {surface}")
             
-            result = await connector.invoke_natural_mode(context)
+            try:
+                result = await connector.invoke_natural_mode(context)
+            finally:
+                if getattr(connector,"client",None) is not None:
+                    await connector.client.close()
             natural_response_text = result['raw'].get('natural_response', '')
             context['sourceText'] = natural_response_text
             context['analysis'] = result['raw'].get('analysis')
@@ -678,8 +693,15 @@ class PropertyAuditExecutor:
             else:
                 raise ValueError(f"Structured mode is not supported for surface {run['surface']}")
             
-            result = await connector.invoke(context)
+            try:
+                result = await connector.invoke(context)
+            finally:
+                if getattr(connector,"client",None) is not None:
+                    await connector.client.close()
         
+        raw = result.get('raw') or {}
+        if (raw.get('phase2') or {}).get('error') or (raw.get('analysis') or {}).get('error'):
+            raise RuntimeError('Provider response analysis failed; measurement is incomplete')
         answer = result['answer']
         
         # Score the answer using proper formula
@@ -704,41 +726,23 @@ class PropertyAuditExecutor:
             answer_insert['natural_response'] = natural_response_text
             answer_insert['analysis_method'] = analysis_method
         
-        self.supabase.table('geo_answers').insert(answer_insert).execute()
-        
-        # Insert citations
-        if answer.get('citations'):
-            brand_domains = context['brandDomains']
-            citations = []
-            
-            # Get the answer_id we just inserted
-            answer_result = self.supabase.table('geo_answers')\
-                .select('id')\
-                .eq('run_id', run['id'])\
-                .eq('query_id', query['id'])\
-                .order('created_at', desc=True)\
-                .limit(1)\
-                .single()\
-                .execute()
-            
-            if answer_result.data:
-                answer_id = answer_result.data['id']
-                
-                for c in answer['citations']:
-                    domain = c.get('domain', '')
-                    # Use evaluator's is_brand_domain logic
-                    from connectors.evaluator import is_brand_domain
-                    citations.append({
-                        'answer_id': answer_id,
-                        'url': c['url'],
-                        'domain': domain,
-                        'is_brand_domain': is_brand_domain(domain, brand_domains),
-                        'entity_ref': c.get('entity_ref')
-                    })
-                
-                if citations:
-                    self.supabase.table('geo_citations').insert(citations).execute()
-        
+        from connectors.evaluator import is_brand_domain
+        citations = [{
+            'url': c['url'], 'domain': c.get('domain', ''),
+            'is_brand_domain': is_brand_domain(c.get('domain', ''), context['brandDomains']),
+            'entity_ref': c.get('entity_ref')
+        } for c in answer.get('citations', []) if c.get('url')]
+        if not persist:
+            return {'answer': answer_insert, 'citations': citations, 'score': scored}
+        saved = self.supabase.table('geo_answers').insert(answer_insert).execute().data
+        if not saved or not saved[0].get('id'):
+            raise RuntimeError('Answer persistence was not confirmed')
+        if citations:
+            rows = [{**c, 'answer_id': saved[0]['id']} for c in citations]
+            confirmed = self.supabase.table('geo_citations').insert(rows).execute().data
+            if not confirmed or len(confirmed) != len(rows):
+                raise RuntimeError('Citation persistence was not confirmed')
+
         return scored
     
     def _calculate_aggregate_scores(self, results: List[Dict]) -> Dict:

@@ -25,6 +25,7 @@ export const chatMessageSchema = z.object({
 }).strict()
 
 export const chatRequestSchema = z.object({
+  requestId: z.string().uuid().optional(),
   // The public client is only authoritative for its newest user turn.
   // Conversation history is rebuilt from the property-scoped server session.
   messages: z.tuple([chatMessageSchema], {
@@ -48,17 +49,21 @@ export const chatRequestSchema = z.object({
 // ─── LeadPulse ────────────────────────────────────────────────────────────
 
 export const leadPulseEventRequestSchema = z.object({
+  requestId: uuidField,
   leadId: safeString(100).min(1),
   eventType: safeString(100).min(1),
-  metadata: z.record(z.string(), z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).refine(value => JSON.stringify(value).length <= 6000, 'Event notes are too long').optional(),
   propertyId: safeString(100).min(1).optional(),
 }).strict()
 
 export const leadPulseScoreRequestSchema = z.object({
+  requestId: uuidField,
+  retryBatchId: uuidField.optional(),
   leadId: safeString(100).min(1).optional(),
   leadIds: z.array(safeString(100).min(1)).min(1).max(500).optional(),
   propertyId: safeString(100).min(1).optional(),
 }).strict().superRefine((data, ctx) => {
+  if (data.retryBatchId && (!data.propertyId || data.leadId || data.leadIds)) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Retry requires a property and no other target' })
   const targets = Number(Boolean(data.leadId)) + Number(Boolean(data.leadIds)) + Number(Boolean(data.propertyId && !data.leadId && !data.leadIds))
   if (targets !== 1) {
     ctx.addIssue({
@@ -78,6 +83,7 @@ export const leadPulseScoreRequestSchema = z.object({
 // ─── LumaLeasing Tour Booking ─────────────────────────────────────────────
 
 export const tourBookingSchema = z.object({
+  requestId: z.string().uuid().optional(),
   slotId: safeString(100).optional().nullable(),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD').optional(),
   time: z.string().regex(/^\d{2}:\d{2}$/, 'Time must be HH:MM').optional(),
@@ -114,6 +120,7 @@ export const tourBookingSchema = z.object({
 // ─── LumaLeasing Lead Capture ─────────────────────────────────────────────
 
 export const leadCaptureSchema = z.object({
+  requestId: z.string().uuid().optional(),
   // Support both direct fields and leadInfo wrapper
   leadInfo: z.object({
     first_name: safeString(100).optional(),
@@ -146,19 +153,22 @@ export const leadCaptureSchema = z.object({
 
 export const tourCompleteSchema = z.object({
   tourId: uuidField,
+  requestId: uuidField,
   notes: safeString(2000).optional(),
 })
 
 // ─── Admin Config Update ──────────────────────────────────────────────────
 
-export const adminConfigUpdateSchema = z.object({
-  propertyId: uuidField,
+const configurationUrl = z.string().url().max(2048).refine(value => {const url = new URL(value);return ['http:','https:'].includes(url.protocol)&&!url.username&&!url.password}, 'Use a public http or https URL without credentials')
+const businessHour = z.object({start: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/), end: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/)}).refine(hours => hours.start < hours.end, 'Closing time must follow opening time')
+export const adminConfigInitializeSchema = z.object({propertyId: z.string().regex(/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i, 'Invalid property ID'), requestId: uuidField, expectedRevision: z.string().regex(/^[a-f0-9]{64}$/)})
+export const adminConfigUpdateSchema = adminConfigInitializeSchema.extend({
   config: z.object({
     widget_name: safeString(100).optional(),
     primary_color: z.string().regex(/^#[0-9A-Fa-f]{6}$/, 'Invalid hex color').optional(),
     secondary_color: z.string().regex(/^#[0-9A-Fa-f]{6}$/, 'Invalid hex color').optional(),
-    logo_url: z.string().url().max(2048).optional().nullable(),
-    agent_avatar_url: z.string().url().max(2048).optional().nullable(),
+    logo_url: configurationUrl.optional().nullable(),
+    agent_avatar_url: configurationUrl.optional().nullable(),
     welcome_message: safeString(500).optional(),
     offline_message: safeString(500).optional(),
     auto_popup_delay_seconds: z.number().int().min(0).max(300).optional(),
@@ -167,12 +177,12 @@ export const adminConfigUpdateSchema = z.object({
     collect_email: z.boolean().optional(),
     collect_phone: z.boolean().optional(),
     lead_capture_prompt: safeString(500).optional(),
-    floor_plans_url: z.string().url().max(2048).optional().nullable(),
-    availability_url: z.string().url().max(2048).optional().nullable(),
+    floor_plans_url: configurationUrl.optional().nullable(),
+    availability_url: configurationUrl.optional().nullable(),
     tours_enabled: z.boolean().optional(),
     tour_duration_minutes: z.number().int().min(15).max(180).optional(),
     tour_buffer_minutes: z.number().int().min(0).max(60).optional(),
-    business_hours: z.record(z.string(), z.unknown()).optional(),
+    business_hours: z.record(z.enum(['monday','tuesday','wednesday','thursday','friday','saturday','sunday']), businessHour.nullable()).optional(),
     timezone: safeString(50).optional(),
     is_active: z.boolean().optional(),
   }),

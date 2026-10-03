@@ -1,3 +1,4 @@
+vi.mock('@/utils/readiness/publication',()=>({currentApprovedReadiness:async()=>{const response=await fromMock('property_onboarding_snapshots');return response.data}}))
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const fromMock = vi.fn()
@@ -48,6 +49,7 @@ describe('assembleForgeStudioContext', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.resetModules()
+    rpcMock.mockReturnValue(chainResolving({data:[],error:null}))
     process.env = { ...originalEnv }
     delete process.env.OPENAI_API_KEY
 
@@ -188,6 +190,7 @@ describe('assembleForgeStudioContext', () => {
     expect(bundle.policy.legalConfigId).toBe('legal-1')
     expect(ids.some((id) => id.startsWith('performance_signal:'))).toBe(true)
     expect(bundle.contextHash).toMatch(/^[a-f0-9]{64}$/)
+    expect(bundle.channelSettings).toEqual({includeHashtags:true,includeCta:true,maxCaptionLength:2200})
 
     // No OPENAI_API_KEY → no KB sources, and no RPC call attempted.
     expect(ids.some((id) => id.startsWith('kb_document:'))).toBe(false)
@@ -236,4 +239,33 @@ describe('assembleForgeStudioContext', () => {
     const bundle = await assembleForgeStudioContext({ propertyId: 'prop-1', query: 'q' })
     expect(bundle.sources.some((source) => source.kind === 'brand_section')).toBe(false)
   })
+  it('stops on source-read failure instead of silently treating it as missing evidence',async()=>{
+    const baseline=fromMock.getMockImplementation()!
+    fromMock.mockImplementation((table:string)=>table==='property_units'?chainResolving({data:null,error:{message:'unavailable'}}):baseline(table))
+    await expect((await import('./context-assembler')).assembleForgeStudioContext({propertyId:'prop-1',query:'q',documentIds:[]})).rejects.toThrow('inventory sources could not be read')
+  })
+  it('refreshes saved knowledge by exact ID without embedding calls',async()=>{
+    process.env.OPENAI_API_KEY='fixture-never-used'
+    const baseline=fromMock.getMockImplementation()!
+    fromMock.mockImplementation((table:string)=>table==='documents'?chainResolving({data:[{id:'saved-doc',content:'Current pet policy',metadata:{version:2}}],error:null}):baseline(table))
+    const bundle=await(await import('./context-assembler')).assembleForgeStudioContext({propertyId:'prop-1',query:'q',documentIds:['saved-doc','removed-doc']})
+    expect(rpcMock).not.toHaveBeenCalled();expect(bundle.sourceRecords?.['document:saved-doc'].values.content).toBe('Current pet policy');expect(bundle.warnings).toContainEqual(expect.objectContaining({code:'knowledge_source_missing',sourceId:'kb_document:removed-doc'}))
+  })
+  it('does not permit inventory claims before their effective date',async()=>{
+    const baseline=fromMock.getMockImplementation()!
+    fromMock.mockImplementation((table:string)=>table==='property_units'?chainResolving({data:[{id:'future-unit',unit_type:'Studio',effective_at:'2099-01-01T00:00:00Z',expires_at:null,review_status:'approved',active:true}],error:null}):baseline(table))
+    const bundle=await(await import('./context-assembler')).assembleForgeStudioContext({propertyId:'prop-1',query:'q',documentIds:[]})
+    expect(bundle.sources.find(s=>s.id==='structured_inventory:future-unit')?.allowedUses).not.toContain('claim')
+  })
+  it('uses scoped current-source eligibility and retains rights-bearing evidence',async()=>{
+    const builder=chainResolving({data:[{id:'testimonial',status:'active',review_text_snapshot:'Calm community',attribution_approved:true,reviewer_name_snapshot:'Resident',rights_basis:'direct_consent',revoked_at:null}],error:null})
+    rpcMock.mockReturnValue(builder)
+    const bundle=await(await import('./context-assembler')).assembleForgeStudioContext({propertyId:'prop-1',query:'testimonial',documentIds:[]})
+    expect(rpcMock).toHaveBeenCalledWith('eligible_reviewflow_testimonials',{p_property_id:'prop-1',p_channel:'social'});expect(bundle.sourceRecords?.['testimonial:testimonial'].values.status).toBe('active')
+  })
+
+it('captures absent settings explicitly so a later configuration save is detectable',async()=>{
+ const previous=fromMock.getMockImplementation()!;fromMock.mockImplementation((table:string)=>table==='forgestudio_config'?chainResolving({data:null,error:null}):previous(table));const result=await(await import('./context-assembler')).assembleForgeStudioContext({propertyId:'prop-1',query:'q',documentIds:[]});expect(result.sourceRecords?.config).toEqual({kind:'config',id:'prop-1',values:{absent:true}})
+})
+
 })

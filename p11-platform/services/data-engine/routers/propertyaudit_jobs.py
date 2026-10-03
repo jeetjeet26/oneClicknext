@@ -10,7 +10,6 @@ from typing import Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from connectors.cross_model_analyzer import CrossModelAnalyzer
 from jobs.propertyaudit import PropertyAuditExecutor
 from utils.auth import verify_api_key
 from utils.supabase_client import get_supabase_client
@@ -40,25 +39,8 @@ def _get_run_or_404(run_id: str):
 
 
 async def _maybe_analyze_batch(batch_id: Optional[str]):
-    if not batch_id:
-        return
-
-    supabase = get_supabase_client()
-    runs_result = supabase.table("geo_runs").select(
-        "id, surface, status"
-    ).eq("batch_id", batch_id).execute()
-    runs = runs_result.data or []
-
-    if len(runs) < 2:
-        return
-
-    statuses = {run.get("status") for run in runs}
-    surfaces = {run.get("surface") for run in runs}
-    if statuses == {"completed"} and len(surfaces) >= 2:
-        analyzer = CrossModelAnalyzer(supabase)
-        analysis = await analyzer.analyze_batch(batch_id)
-        if not analysis.get("success"):
-            logger.warning("[PropertyAudit] Cross-model analysis failed for %s: %s", batch_id, analysis)
+    # The durable worker owns reviewed source/receipt processing.
+    return None
 
 
 def _execute_propertyaudit_job(run_id: str, claimed_run: dict, batch_id: Optional[str]):
@@ -88,33 +70,15 @@ async def run_propertyaudit(
     _: str = Depends(verify_api_key),
 ):
     supabase = get_supabase_client()
-    executor = PropertyAuditExecutor(supabase)
-    claimed_run = executor.claim_queued_run(request.run_id)
-
-    if not claimed_run:
-        run = _get_run_or_404(request.run_id)
-        raise HTTPException(
-            status_code=409,
-            detail=f"Run {request.run_id} is not queued (status={run.get('status')})",
-        )
-
-    asyncio.create_task(
-        asyncio.to_thread(
-            _execute_propertyaudit_job,
-            request.run_id,
-            claimed_run,
-            request.batch_id or claimed_run.get("batch_id"),
-        )
-    )
-
-    return {
-        "success": True,
-        "accepted": True,
-        "run_id": request.run_id,
-        "surface": request.surface,
-        "batch_id": request.batch_id or claimed_run.get("batch_id"),
-        "status": "running",
-    }
+    from jobs.geo_durable import rpc
+    run = _get_run_or_404(request.run_id)
+    if run['surface'] != request.surface or (request.batch_id and request.batch_id != run.get('batch_id')):
+        raise HTTPException(status_code=409, detail='Run scope does not match dispatch request')
+    try:
+        result = rpc(supabase, 'enqueue_geo_execution', p_run_id=request.run_id)
+    except Exception:
+        raise HTTPException(status_code=503, detail='Could not confirm durable audit queue')
+    return {**result, 'success': True, 'surface': run['surface'], 'batch_id': run.get('batch_id'), 'status': run['status']}
 
 
 @router.get("/status/{run_id}")
@@ -143,17 +107,4 @@ async def reanalyze_propertyaudit_batch(
     batch_id: str,
     _: str = Depends(verify_api_key),
 ):
-    supabase = get_supabase_client()
-    analyzer = CrossModelAnalyzer(supabase)
-    result = await analyzer.analyze_batch(batch_id)
-
-    if not result.get("success"):
-        raise HTTPException(status_code=500, detail=result.get("error", "Cross-model analysis failed"))
-
-    analysis = result.get("analysis") or {}
-    return {
-        "success": True,
-        "batch_id": batch_id,
-        "message": "Cross-model analysis completed",
-        "agreement_rate": analysis.get("agreement_rate"),
-    }
+    raise HTTPException(status_code=410, detail="Use the console's saved recommendation request and review flow")

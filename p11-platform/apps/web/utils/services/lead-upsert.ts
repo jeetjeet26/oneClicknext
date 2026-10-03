@@ -1,5 +1,6 @@
+import type { Database,Json } from '@/types/supabase'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { Database, Json } from '@/types/supabase'
+import { phaseFourDb } from './phase-four-db'
 
 type LeadRow = Database['public']['Tables']['leads']['Row']
 type LeadInsert = Database['public']['Tables']['leads']['Insert']
@@ -29,6 +30,7 @@ export interface UpsertLeadByContactInput {
   create: Omit<LeadInsert, 'property_id'>
   update: LeadUpdate
   repeatActivity?: RepeatLeadActivity
+  recordOperatorRepeat?: (leadId: string, activity: RepeatLeadActivity) => Promise<void>
 }
 
 export interface UpsertLeadByContactResult {
@@ -114,6 +116,7 @@ async function recordRepeatActivity(
   leadId: string
 ) {
   if (!input.repeatActivity) return
+  if (input.recordOperatorRepeat) { await input.recordOperatorRepeat(leadId, input.repeatActivity); return }
 
   const type = input.repeatActivity.type || 'note'
   const duplicateCutoff = new Date(
@@ -153,6 +156,17 @@ async function recordRepeatActivity(
 export async function upsertLeadByContact(
   input: UpsertLeadByContactInput
 ): Promise<UpsertLeadByContactResult> {
+  if (String(input.create.source).startsWith('LumaLeasing')) {
+    const result = await phaseFourDb(input.client).rpc('upsert_luma_lead', {
+      p_property_id:input.propertyId,p_email:input.email ?? null,p_phone:input.phone ?? null,
+      p_existing_id:input.existingLeadId ?? null,p_create:input.create as Json,p_update:input.update as Json,
+      p_activity:input.repeatActivity ? input.repeatActivity as unknown as Json : null,
+    })
+    if (result.error || !result.data) throw new LeadUpsertError('Could not confirm saved lead and follow-up handoff',result.error?.code)
+    const saved = result.data as unknown as UpsertLeadByContactResult
+    if (!saved.leadId || !saved.lead?.id) throw new LeadUpsertError('Missing saved lead identity')
+    return saved
+  }
   const existing = await findExistingLead(input)
 
   if (existing.lead) {

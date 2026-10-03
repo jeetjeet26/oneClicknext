@@ -1,3 +1,5 @@
+import { brandRpc } from './operations'
+import { BRAND_SECTION_COLUMNS } from './contracts'
 import { createAdminClient } from '@/utils/supabase/admin'
 import {
   type BrandForgeContractV1,
@@ -10,16 +12,13 @@ import {
 } from './normalize'
 import { convergeBrandForgeContract } from './autonomous-service'
 import { loadCompetitivePositioningSnapshot } from '@/utils/marketvision/brandforge-competitive-snapshot'
-import type { Json } from '@/types/supabase'
-
-function toJson(value: unknown): Json {
-  return JSON.parse(JSON.stringify(value)) as Json
-}
 
 export async function loadBrandForgeCompetitiveSnapshot(
   input: BrandForgeWorkflowInput
 ): Promise<CompetitivePositioningSnapshot> {
   'use step'
+  if (!input.operationId || !input.operationToken) throw new Error('Brand workflow is missing its saved request')
+  await ensureBrandRequestActive(input)
   console.info('[brandforge_workflow] loading competitive snapshot', {
     brandAssetId: input.brandAssetId,
     propertyId: input.propertyId,
@@ -36,6 +35,7 @@ export async function convergeBrandForgeWorkflowContract(
   snapshot: CompetitivePositioningSnapshot
 ) {
   'use step'
+  await ensureBrandRequestActive(input)
   console.info('[brandforge_workflow] converging contract', {
     brandAssetId: input.brandAssetId,
     mode: input.mode,
@@ -71,6 +71,7 @@ export async function persistBrandForgeWorkflowContract(input: {
       vertical: workflow.vertical,
       requestedBy: workflow.requestedBy,
       generation,
+      modelVersion: generation === 'model' ? process.env.BRANDFORGE_MODEL || 'anthropic/claude-sonnet-5' : generation,
     },
     competitiveSnapshot: {
       schemaVersion: snapshot.schemaVersion,
@@ -82,44 +83,27 @@ export async function persistBrandForgeWorkflowContract(input: {
   }
   const sections = brandContractToStorageSections(contract)
 
-  const { data: updated, error } = await supabase
-    .from('property_brand_assets')
-    .update({
-      section_1_introduction: toJson(sections.section_1_introduction),
-      section_2_positioning: toJson(sections.section_2_positioning),
-      section_3_target_audience: toJson(sections.section_3_target_audience),
-      section_4_personas: toJson(sections.section_4_personas),
-      section_5_name_story: toJson(sections.section_5_name_story),
-      section_6_logo: toJson(sections.section_6_logo),
-      section_7_typography: toJson(sections.section_7_typography),
-      section_8_colors: toJson(sections.section_8_colors),
-      section_9_design_elements: toJson(sections.section_9_design_elements),
-      section_10_photo_yep: toJson(sections.section_10_photo_yep),
-      section_11_photo_nope: toJson(sections.section_11_photo_nope),
-      section_12_implementation: toJson(sections.section_12_implementation),
-      generation_status: 'complete',
-      current_step: 12,
-      current_step_name: 'complete',
-      draft_section: null,
-      contract_version: contract.contractVersion,
-      brand_origin: contract.origin,
-      approval_status: 'approved',
-      contract_hash: contractHash,
-      competitor_ids: snapshot.evidence.map(item => item.competitorId),
-      competitive_analysis: toJson(snapshot),
-      source_manifest: toJson(sourceManifest),
-      model_version: generation === 'model'
-        ? process.env.BRANDFORGE_MODEL || 'anthropic/claude-sonnet-5'
-        : generation,
-    })
-    .eq('id', workflow.brandAssetId)
-    .eq('property_id', workflow.propertyId)
-    .select('id')
-    .single()
-
-  if (error || !updated) {
-    throw new Error(`Unable to persist BrandForge contract: ${error?.message || 'asset not found'}`)
-  }
+  if (!workflow.operationId || !workflow.operationToken) throw new Error('Brand workflow is missing its saved request')
+  const draftSections = Object.fromEntries(Object.entries(sections).map(([key, value]) => {
+    const section = value as Record<string, unknown>
+    const meta = (section._meta || {}) as Record<string, unknown>
+    return [key, { ...section, status: 'reviewing', approved_by: null, approved_at: null, _meta: { ...meta, approval: { status: 'reviewing' } } }]
+  }))
+  const persisted = await brandRpc('finish_brand_operation', {
+    p_request_id: workflow.operationId, p_claim_token: workflow.operationToken,
+    p_updates: {
+      ...Object.fromEntries(BRAND_SECTION_COLUMNS.map(column => [column, null])),
+      proposed_sections: draftSections,
+      generation_status: 'reviewing', current_step: 1, current_step_name: 'introduction',
+      draft_section: { step: 1, name: 'introduction', data: draftSections.section_1_introduction, version: 1 },
+      contract_version: contract.contractVersion, brand_origin: contract.origin,
+      approval_status: 'reviewing', approved_by: null, approved_at: null, contract_hash: contractHash,
+      competitive_analysis: snapshot,
+      source_manifest: sourceManifest,
+    },
+    p_result: { contractHash, snapshotCausalHash: snapshot.causalHash, generation, readyForReview: true },
+  })
+  if (!['applied','replayed'].includes(String(persisted.state))) throw new Error('Brand generation no longer matches the saved request')
 
   console.info('[brandforge_workflow] contract persisted', {
     brandAssetId: workflow.brandAssetId,
@@ -144,21 +128,12 @@ export async function failBrandForgeWorkflow(
     brandAssetId: input.brandAssetId,
     message,
   })
-  const supabase = createAdminClient()
-  await supabase
-    .from('property_brand_assets')
-    .update({
-      generation_status: 'failed',
-      draft_section: null,
-      source_manifest: {
-        workflow: {
-          mode: input.mode,
-          vertical: input.vertical,
-          requestedBy: input.requestedBy,
-          failure: message,
-        },
-      },
-    })
-    .eq('id', input.brandAssetId)
-    .eq('property_id', input.propertyId)
+  if (!input.operationId || !input.operationToken) return
+  await brandRpc('finish_brand_operation', { p_request_id: input.operationId, p_claim_token: input.operationToken, p_updates: {}, p_result: {}, p_error: 'generation_failed' })
+}
+
+async function ensureBrandRequestActive(input: BrandForgeWorkflowInput) {
+ if (!input.operationId || !input.operationToken) throw new Error('Brand workflow is missing its saved request')
+ const current = await brandRpc('check_brand_operation', { p_request_id: input.operationId, p_claim_token: input.operationToken })
+ if (current.state !== 'active') throw new Error('Brand request is no longer active')
 }

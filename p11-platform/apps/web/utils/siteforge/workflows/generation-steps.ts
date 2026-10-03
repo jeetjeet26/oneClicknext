@@ -1,3 +1,5 @@
+import {requireCurrentReadiness} from '@/utils/readiness/publication'
+import {loadNeighborhoodPublicationSource} from '@/utils/neighborhood/publication-source'
 import { FatalError } from 'workflow'
 import { createServiceClient } from '@/utils/supabase/admin'
 import type { BrandContext } from '@/utils/siteforge/agents/brand-agent'
@@ -363,18 +365,20 @@ export async function analyzeSiteForgeBrand(
   }
   const { data: snapshot, error: snapshotError } = await supabase
     .from('property_onboarding_snapshots')
-    .select('id, property_id, content_hash')
+    .select('id, property_id, status, content_hash')
     .eq('id', data.onboarding_snapshot_id || '')
     .single()
   if (
     snapshotError
     || !snapshot
+    || snapshot.status !== 'approved'
     || snapshot.property_id !== input.propertyId
     || snapshot.content_hash !== data.onboarding_snapshot_hash
     || snapshot.content_hash !== plan.onboardingSnapshot.contentHash
   ) {
     throw new FatalError('Pinned onboarding snapshot hash does not match the confirmed plan')
   }
+  await requireCurrentReadiness(input.propertyId,snapshot.id,snapshot.content_hash,supabase)
   return brandContextFromContract(
     contract,
     input.evidenceSnapshot?.assetManifest.assets
@@ -671,16 +675,8 @@ export async function persistSiteForgeGenerationArtifact(
   if (!confirmedPlan.onboardingSnapshot) {
     resolveApprovedLegalContractForGeneration(confirmedPlan, null)
   }
-  const { data: onboardingSnapshot, error: onboardingError } = await supabase
-    .from('property_onboarding_snapshots')
-    .select('snapshot_payload, content_hash')
-    .eq('id', confirmedPlan.onboardingSnapshot!.id)
-    .eq('property_id', input.propertyId)
-    .single()
-  const legal = resolveApprovedLegalContractForGeneration(
-    confirmedPlan,
-    onboardingError ? null : onboardingSnapshot
-  )
+  const onboardingSnapshot = await requireCurrentReadiness(input.propertyId,confirmedPlan.onboardingSnapshot!.id,confirmedPlan.onboardingSnapshot!.contentHash,supabase)
+  const legal = resolveApprovedLegalContractForGeneration(confirmedPlan,onboardingSnapshot)
   const propertySnapshot = onboardingSnapshot!.snapshot_payload
   assertPublishableGeneratedPages(pages)
   const durablePhotoManifest = await persistSiteForgeAssets(
@@ -752,24 +748,13 @@ export async function persistSiteForgeGenerationArtifact(
       'Approved floor-plan inventory changed or is no longer publishable'
     )
   }
-  const { data: approvedPointsOfInterest, error: pointsOfInterestError } =
-    await supabase
-      .from('property_points_of_interest')
-      .select(
-        'name, category, address, distance_miles, travel_time_minutes, source_url'
-      )
-      .eq('property_id', input.propertyId)
-      .eq('approval_status', 'approved')
-      .order('category', { ascending: true })
-      .order('name', { ascending: true })
-  if (pointsOfInterestError) {
-    throw new FatalError(
-      `Failed to load approved neighborhood points of interest: ${pointsOfInterestError.message}`
-    )
-  }
+  const {items: approvedPointsOfInterest} = await loadNeighborhoodPublicationSource(
+    supabase, input.propertyId, input.orgId,
+    (propertySnapshot as Record<string, unknown>).pointsOfInterest ?? []
+  )
   const { data: approvedReviewRows, error: approvedReviewsError } =
     await supabase
-      .from('review_testimonial_approvals')
+      .rpc('eligible_reviewflow_testimonials',{p_property_id:input.propertyId,p_channel:'website'})
       .select(
         'id, reviewer_name_snapshot, review_text_snapshot, rating_snapshot, platform_snapshot, review_date_snapshot'
       )

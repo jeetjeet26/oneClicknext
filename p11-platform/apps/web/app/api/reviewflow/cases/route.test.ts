@@ -1,139 +1,24 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { NextRequest } from 'next/server'
-
-const authGetUserMock = vi.fn()
-const createClientMock = vi.fn()
-const validatePropertyAccessMock = vi.fn()
-const fromMock = vi.fn()
-
-vi.mock('@/utils/supabase/server', () => ({
-  createClient: createClientMock,
-}))
-
-vi.mock('@/utils/services/auth-guard', () => ({
-  validatePropertyAccess: validatePropertyAccessMock,
-}))
-
-describe('reviewflow cases route', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    fromMock.mockReset()
-    createClientMock.mockResolvedValue({
-      auth: { getUser: authGetUserMock },
-      from: fromMock,
-    })
-  })
-
-  it('returns 400 without reviewId', async () => {
-    const { GET } = await import('./route')
-    const response = await GET(
-      new Request('http://localhost/api/reviewflow/cases') as NextRequest
-    )
-    expect(response.status).toBe(400)
-  })
-
-  it('returns 401 when unauthenticated', async () => {
-    authGetUserMock.mockResolvedValue({ data: { user: null }, error: null })
-
-    const { GET } = await import('./route')
-    const response = await GET(
-      new Request('http://localhost/api/reviewflow/cases?reviewId=review-1') as NextRequest
-    )
-    expect(response.status).toBe(401)
-  })
-
-  it('returns 403 when property access is denied', async () => {
-    authGetUserMock.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
-    validatePropertyAccessMock.mockResolvedValue({ authorized: false })
-
-    const maybeSingleMock = vi.fn().mockResolvedValue({
-      data: { id: 'review-1', property_id: 'property-1' },
-      error: null,
-    })
-    const eqMock = vi.fn().mockReturnValue({ maybeSingle: maybeSingleMock })
-    const selectMock = vi.fn().mockReturnValue({ eq: eqMock })
-    fromMock.mockReturnValue({ select: selectMock })
-
-    const { GET } = await import('./route')
-    const response = await GET(
-      new Request('http://localhost/api/reviewflow/cases?reviewId=review-1') as NextRequest
-    )
-    expect(response.status).toBe(403)
-  })
-
-  it('returns the case, timeline events, and latest analysis', async () => {
-    authGetUserMock.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
-    validatePropertyAccessMock.mockResolvedValue({ authorized: true })
-
-    const caseRow = { id: 'case-1', review_id: 'review-1', status: 'triaged' }
-    const analysisRow = { id: 'analysis-1', review_id: 'review-1', analysis_version: 2 }
-    const eventRows = [
-      { id: 'event-1', event_type: 'case_created', actor_profile_id: null, payload: null, created_at: '2026-07-01T00:00:00Z' },
-    ]
-
-    fromMock.mockImplementation((table: string) => {
-      if (table === 'reviews') {
-        return {
-          select: vi.fn(() => ({
-            eq: vi.fn(() => ({
-              maybeSingle: vi.fn().mockResolvedValue({
-                data: { id: 'review-1', property_id: 'property-1' },
-                error: null,
-              }),
-            })),
-          })),
-        }
-      }
-      if (table === 'reputation_cases') {
-        return {
-          select: vi.fn(() => ({
-            eq: vi.fn(() => ({
-              order: vi.fn(() => ({
-                limit: vi.fn(() => ({
-                  maybeSingle: vi.fn().mockResolvedValue({ data: caseRow, error: null }),
-                })),
-              })),
-            })),
-          })),
-        }
-      }
-      if (table === 'review_analyses') {
-        return {
-          select: vi.fn(() => ({
-            eq: vi.fn(() => ({
-              eq: vi.fn(() => ({
-                order: vi.fn(() => ({
-                  limit: vi.fn(() => ({
-                    maybeSingle: vi.fn().mockResolvedValue({ data: analysisRow, error: null }),
-                  })),
-                })),
-              })),
-            })),
-          })),
-        }
-      }
-      if (table === 'reputation_case_events') {
-        return {
-          select: vi.fn(() => ({
-            eq: vi.fn(() => ({
-              order: vi.fn().mockResolvedValue({ data: eventRows, error: null }),
-            })),
-          })),
-        }
-      }
-      throw new Error(`Unexpected table ${table}`)
-    })
-
-    const { GET } = await import('./route')
-    const response = await GET(
-      new Request('http://localhost/api/reviewflow/cases?reviewId=review-1') as NextRequest
-    )
-
-    expect(response.status).toBe(200)
-    await expect(response.json()).resolves.toEqual({
-      case: caseRow,
-      events: eventRows,
-      analysis: analysisRow,
-    })
-  })
+import {beforeEach,describe,expect,it,vi} from 'vitest'
+import {NextRequest} from 'next/server'
+const{auth,access,from,rpc}=vi.hoisted(()=>({auth:vi.fn(),access:vi.fn(),from:vi.fn(),rpc:vi.fn()}))
+vi.mock('@/utils/supabase/server',()=>({createClient:async()=>({auth:{getUser:auth}})}))
+vi.mock('@/utils/services/auth-guard',()=>({validatePropertyAccess:access}))
+vi.mock('@/utils/supabase/admin',()=>({createServiceClient:()=>({from})}))
+vi.mock('@/utils/reviewflow/analysis-store',async()=>({...await vi.importActual('@/utils/reviewflow/analysis-store'),reviewRpc:rpc}))
+import {GET,PATCH} from './route'
+const propertyId='33333333-3333-4333-8333-333333333333',reviewId='44444444-4444-4444-8444-444444444444',caseId='55555555-5555-4555-8555-555555555555',requestId='66666666-6666-4666-8666-666666666666'
+const input={propertyId,reviewId,requestId,caseId,expectedVersion:2,sourceVersion:3,action:'resolve',reason:'Reviewed staff completion',resolutionNotes:'Staff verified the repair'}
+function req(body?:unknown,query=`propertyId=${propertyId}&reviewId=${reviewId}`){return new NextRequest('http://localhost/api/reviewflow/cases?'+query,body?{method:'PATCH',body:JSON.stringify(body)}:undefined)}
+function chain(data:unknown,error:unknown=null){const result={data,error},q={select:vi.fn(),eq:vi.fn(),in:vi.fn(),order:vi.fn(),limit:vi.fn(),or:vi.fn(),gt:vi.fn(),maybeSingle:vi.fn().mockResolvedValue(result),single:vi.fn().mockResolvedValue(result),then:vi.fn()};for(const k of ['select','eq','in','order','limit','or','gt'] as const)q[k].mockReturnValue(q);q.then.mockImplementation((r:(v:unknown)=>unknown)=>Promise.resolve(result).then(r));return q}
+beforeEach(()=>{vi.clearAllMocks();auth.mockResolvedValue({data:{user:{id:'operator'}},error:null});access.mockResolvedValue({authorized:true});rpc.mockResolvedValue({state:'saved',caseId});from.mockImplementation((table:string)=>chain(table==='reviews'?{id:reviewId,source_version:3}:table==='reputation_cases'?{id:caseId,status:'open'}:table==='review_analyses'?{id:'analysis'}:table==='properties'?{org_id:'organization'}:[]))})
+describe('ReviewFlow case workspace',()=>{
+ it('rejects missing scope, unknown mutations and unreviewed closure',async()=>{expect((await GET(req(undefined,''))).status).toBe(400);for(const body of [{...input,unsafe:true},{...input,resolutionNotes:''},{...input,expectedVersion:0}])expect((await PATCH(req(body))).status).toBe(400);expect(rpc).not.toHaveBeenCalled()})
+ it('requires current authentication and access before private reads and decisions',async()=>{auth.mockResolvedValueOnce({data:{user:null},error:null});expect((await GET(req())).status).toBe(401);access.mockResolvedValue({authorized:false});expect((await GET(req())).status).toBe(403);expect((await PATCH(req(input))).status).toBe(403);expect(from).not.toHaveBeenCalled();expect(rpc).not.toHaveBeenCalled()})
+ it('records exact actor, source and reviewed case version in one atomic command',async()=>{expect((await PATCH(req(input))).status).toBe(200);const payload=Object.fromEntries(Object.entries(input).filter(([key])=>!['propertyId','requestId'].includes(key)));expect(rpc).toHaveBeenCalledWith('decide_reviewflow_case',{p_id:requestId,p_property_id:propertyId,p_actor_id:'operator',p_input:payload})})
+ it('preserves explicit replay and exposes stale or unfinished-work conflicts',async()=>{rpc.mockResolvedValueOnce({state:'replayed',caseId});expect((await PATCH(req(input))).status).toBe(200);for(const state of ['stale_case','stale_ticket','stale_source','open_tickets','case_closed','request_conflict']){rpc.mockResolvedValueOnce({state});expect((await PATCH(req(input))).status).toBe(409)}})
+ it('requires resolution evidence when completing a ticket',async()=>{const ticket={...input,action:'ticket.update',ticketId:requestId,expectedTicketVersion:1,status:'resolved',resolutionNotes:''};expect((await PATCH(req(ticket))).status).toBe(400);expect(rpc).not.toHaveBeenCalled()})
+ it('reads current-source intelligence and property-scoped paged timeline',async()=>{const analysis=chain({id:'current-analysis'}),history=chain(Array.from({length:31},(_,i)=>({id:`event-${i}`})));from.mockImplementation((table:string)=>table==='review_analyses'?analysis:table==='reputation_case_events'?history:chain(table==='reviews'?{source_version:3}:{id:caseId}));const r=await GET(req());expect(await r.json()).toMatchObject({sourceVersion:3,nextCursor:'event-29'});expect(analysis.eq).toHaveBeenCalledWith('source_version',3);expect(analysis.eq).toHaveBeenCalledWith('property_id',propertyId);expect(history.eq).toHaveBeenCalledWith('property_id',propertyId);expect(history.limit).toHaveBeenCalledWith(31)})
+ it('returns recoverable read failures instead of an empty successful workspace',async()=>{from.mockReturnValue(chain(null,{message:'private database detail'}));const r=await GET(req());expect(r.status).toBe(503);expect(await r.text()).not.toContain('private database detail')})
+ it('rejects history cursors outside the selected case',async()=>{from.mockImplementation((table:string)=>chain(table==='reviews'?{source_version:3}:table==='reputation_cases'?{id:caseId}:null));expect((await GET(req(undefined,`propertyId=${propertyId}&reviewId=${reviewId}&cursor=${requestId}`))).status).toBe(409)})
+ it('loads only scoped team names with a bounded next page',async()=>{const team=chain(Array.from({length:101},(_,i)=>({id:`member-${i}`,full_name:'Team member'})));from.mockImplementation((table:string)=>table==='profiles'?team:chain({org_id:'organization'}));const r=await GET(req(undefined,`propertyId=${propertyId}&view=members`));expect(await r.json()).toMatchObject({nextCursor:'member-99'});expect(team.eq).toHaveBeenCalledWith('org_id','organization');expect(team.select).toHaveBeenCalledWith('id,full_name')})
 })

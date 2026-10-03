@@ -1,240 +1,26 @@
 'use client'
-
-import { useState } from 'react'
-import {
-  Calendar,
-  Mail,
-  Phone,
-  MessageSquare,
-  CheckCircle2,
-  XCircle,
-  Clock,
-  Zap,
-  Square,
-  User,
-  FileText,
-  MapPin,
-  Send,
-  Plus,
-  Loader2
-} from 'lucide-react'
-import { formatDistanceToNow, format } from 'date-fns'
-
-type Activity = {
-  id: string
-  type: string
-  description: string
-  metadata?: Record<string, unknown>
-  created_at: string
-  created_by_user?: {
-    id: string
-    full_name: string | null
-  }
+import {useCallback,useEffect,useRef,useState} from 'react'
+import {saveNoteDecision} from '@/utils/leads/activity-client'
+const button='rounded border bg-white px-3 py-2 text-sm disabled:opacity-50',field='block w-full rounded border bg-white p-2'
+type Entry={id:string;type:string;description:string|null;createdAt:string|null;actorName:string|null;version:number;noteState:string;provenance:string;updatedAt:string|null;sourceHash:string|null;canEdit:boolean}
+type Revision={id:string;action:string;reason:string;beforeContent:string|null;afterContent:string;beforeState:string|null;afterState:string;version:number;sourceType:string;createdAt:string;actorName:string|null}
+const when=(v:string|null)=>v&&Number.isFinite(Date.parse(v))?new Date(v).toLocaleString():'Time not recorded'
+const label:Record<string,string>={'lead.note.created':'Note added','lead.note.corrected':'Note corrected','lead.note.withdrawn':'Note withdrawn','lead.note.restored':'Note restored'}
+function NoteHistory({propertyId,leadId,noteId}:{propertyId:string;leadId:string;noteId:string}){
+ const [rows,setRows]=useState<Revision[]>([]),[cursor,setCursor]=useState<string|null>(null),[busy,setBusy]=useState(true),[error,setError]=useState(''),generation=useRef(0),invalidate=useCallback(()=>{generation.current++},[])
+ const load=useCallback(async(after?:string)=>{const turn=++generation.current;setBusy(true);setError('');try{const r=await fetch(`/api/leads/${leadId}/activities?${new URLSearchParams({propertyId,noteId,...(after?{cursor:after}:{})})}`,{cache:'no-store',signal:AbortSignal.timeout(15000)}),d=await r.json();if(!r.ok)throw new Error(d.error||'Note history could not be loaded.');if(turn===generation.current){setRows(old=>after?[...old,...d.history]:d.history);setCursor(d.nextCursor)}}catch(e){if(turn===generation.current)setError(e instanceof Error?e.message:'Note history could not be loaded.')}finally{if(turn===generation.current)setBusy(false)}},[propertyId,leadId,noteId])
+ useEffect(()=>{void load();return invalidate},[load,invalidate])
+ return <section aria-label="Note decision history" className="mt-3 space-y-3 border-t pt-3"><div className="flex flex-wrap justify-between gap-2"><h5 className="font-medium">Retained note history</h5><button className={button} disabled={busy} onClick={()=>load()}>Reload note history</button></div>{error&&<p role="alert" className="text-red-700">{error}</p>}{busy&&<p role="status">Loading note history…</p>}{!error&&!busy&&rows.map(r=><details key={r.id} className="rounded border p-3"><summary>{label[r.action]??'Recorded note decision'} · {when(r.createdAt)}</summary><p className="mt-2">{r.reason}</p><p className="text-xs text-slate-500">By {r.actorName??'a recorded operator'} · Version {r.version}{r.sourceType==='legacy'?' · Original note predates recorded decisions':''}</p>{r.beforeContent!==null&&<div className="mt-2"><p className="font-medium">Before ({r.beforeState})</p><p className="whitespace-pre-wrap break-words">{r.beforeContent}</p></div>}<div className="mt-2"><p className="font-medium">Retained content ({r.afterState})</p><p className="whitespace-pre-wrap break-words">{r.afterContent}</p></div></details>)}{cursor&&!error&&<button className={button} disabled={busy} onClick={()=>load(cursor)}>Older note decisions</button>}</section>
 }
-
-interface ActivityTimelineProps {
-  activities: Activity[]
-  leadId: string
-  onActivityAdded?: () => void
+export function ActivityTimeline({propertyId,leadId}:{propertyId:string;leadId:string}){
+ const [rows,setRows]=useState<Entry[]>([]),[counts,setCounts]=useState({all:0,notes:0,withdrawn:0}),[cursor,setCursor]=useState<string|null>(null),[busy,setBusy]=useState(true),[ready,setReady]=useState(false),[error,setError]=useState(''),[message,setMessage]=useState(''),[newContent,setNewContent]=useState(''),[edit,setEdit]=useState<{entry:Entry;action:'correct'|'withdraw'|'restore'}|null>(null),[content,setContent]=useState(''),[reason,setReason]=useState(''),[historyId,setHistoryId]=useState<string|null>(null),generation=useRef(0),invalidate=useCallback(()=>{generation.current++},[])
+ const load=useCallback(async(after?:string)=>{const turn=++generation.current;setBusy(true);setReady(false);setError('');try{const response=await fetch(`/api/leads/${leadId}/activities?${new URLSearchParams({propertyId,...(after?{cursor:after}:{})})}`,{cache:'no-store',signal:AbortSignal.timeout(15000)}),data=await response.json();if(!response.ok)throw new Error(data.error||'The timeline could not be loaded.');if(turn===generation.current){setRows(old=>after?[...old,...data.activities]:data.activities);setCursor(data.nextCursor);setCounts(data.counts);setReady(true)}}catch(e){if(turn===generation.current)setError(e instanceof Error?e.message:'The timeline could not be loaded.')}finally{if(turn===generation.current)setBusy(false)}},[propertyId,leadId])
+ useEffect(()=>{void load();return invalidate},[load,invalidate])
+ async function save(add=false){const turn=generation.current;setBusy(true);setError('');setMessage('');try{const input=add?{propertyId,action:'add',content:newContent,reason:'Save an internal operator note'}:{propertyId,action:edit!.action,noteId:edit!.entry.id,expectedVersion:edit!.entry.version,sourceHash:edit!.entry.sourceHash,reason,...(edit!.action==='correct'?{content}:{})};await saveNoteDecision(leadId,input);if(turn!==generation.current)return;setMessage(add?'Note saved. No message or CRM transfer was sent.':edit!.action==='withdraw'?'Note withdrawn. Its prior content remains in retained history.':edit!.action==='restore'?'Note restored with its original retained content.':'Correction saved with the original note preserved.');setNewContent('');setEdit(null);setReason('');await load()}catch(e){if(turn===generation.current)setError(e instanceof Error?e.message:'The note could not be confirmed.')}finally{if(turn===generation.current)setBusy(false)}}
+ const review=(entry:Entry,action:'correct'|'withdraw'|'restore')=>{setEdit({entry,action});setContent(entry.description??'');setReason('');setError('');setMessage('')}
+ return <section aria-label="Lead activity and notes" className="space-y-4 text-sm"><div className="flex flex-wrap justify-between gap-2"><h4 className="font-semibold">Activity and notes</h4><button disabled={busy} className={button} onClick={()=>{setEdit(null);void load()}}>Reload timeline</button></div><p className="text-slate-600">Notes are internal records. Email delivery, bookings and workflow outcomes must be confirmed in their own workflows.</p>{error&&<p role="alert" className="rounded bg-red-50 p-3 text-red-700">{error}</p>}{message&&<p role="status" className="rounded bg-emerald-50 p-3 text-emerald-800">{message}</p>}{busy&&<p role="status">Loading or saving activity…</p>}
+  <form onSubmit={e=>{e.preventDefault();void save(true)}}><fieldset disabled={busy||!ready} className="min-w-0 space-y-2"><label>New internal note<textarea aria-label="New internal note" className={field} maxLength={16000} required value={newContent} onChange={e=>setNewContent(e.target.value)}/></label><button className={button} disabled={!newContent.trim()}>Save internal note</button></fieldset></form>
+  {ready&&edit&&<form aria-label="Review note change" onSubmit={e=>{e.preventDefault();void save()}} className="space-y-3 rounded border border-indigo-200 p-3"><fieldset disabled={busy} className="min-w-0 space-y-3"><h5 className="font-medium">{edit.action==='correct'?'Correct this note':edit.action==='withdraw'?'Withdraw this note':'Restore this note'}</h5>{edit.entry.provenance==='earlier_note'&&<p>The original note predates this recorded workflow. This decision retains its earlier content and author without inventing its initial history.</p>}{edit.action==='correct'&&<label>Corrected note<textarea aria-label="Corrected note" className={field} maxLength={16000} value={content} onChange={e=>setContent(e.target.value)}/></label>}<label>Reason for note change<textarea aria-label="Reason for note change" className={field} minLength={3} maxLength={2000} value={reason} onChange={e=>setReason(e.target.value)}/></label><div className="flex flex-wrap gap-2"><button className={button} disabled={reason.trim().length<3||(edit.action==='correct'&&!content.trim())}>{edit.action==='correct'?'Save note correction':edit.action==='withdraw'?'Confirm note withdrawal':'Confirm note restoration'}</button><button type="button" className={button} onClick={()=>setEdit(null)}>Cancel note change</button></div></fieldset></form>}
+  {ready&&<><p className="text-xs text-slate-500">{counts.all} recorded activities · {counts.notes} notes · {counts.withdrawn} withdrawn notes.</p>{rows.length===0&&<p>No activity has been recorded for this lead.</p>}<ul className="space-y-3">{rows.map(row=><li key={row.id} className="min-w-0 space-y-2 rounded border bg-white p-3"><p className="text-xs text-slate-500">{row.provenance==='earlier_property'?'Earlier property note · content held':row.provenance==='recorded'?'Recorded operator note':row.provenance==='legacy'?'Earlier note with recorded revisions':row.provenance==='earlier_note'?'Earlier note · initial action evidence unavailable':'Activity record · confirm results in its workflow'}</p><p className="whitespace-pre-wrap break-words">{row.description??'This note belongs to the lead’s earlier property and cannot be read or changed here.'}</p><p className="text-xs text-slate-500">{when(row.createdAt)}{row.actorName?` · Recorded by ${row.actorName}`:' · Original author not recorded'}{row.version>1?` · Last changed ${when(row.updatedAt)}`:''}</p><div className="flex flex-wrap gap-2">{row.canEdit&&(row.noteState==='withdrawn'?<button className={button} disabled={busy} onClick={()=>review(row,'restore')}>Restore note</button>:<><button className={button} disabled={busy} onClick={()=>review(row,'correct')}>Correct note</button><button className={button} disabled={busy} onClick={()=>review(row,'withdraw')}>Withdraw note</button></>)}{row.version>0&&row.provenance!=='earlier_property'&&<button className={button} disabled={busy} onClick={()=>setHistoryId(historyId===row.id?null:row.id)}>{historyId===row.id?'Close note history':'Open note history'}</button>}</div>{historyId===row.id&&<NoteHistory key={`${row.id}:${row.version}`} propertyId={propertyId} leadId={leadId} noteId={row.id}/>}</li>)}</ul>{cursor&&<button className={button} disabled={busy} onClick={()=>load(cursor)}>Older activities</button>}</>}
+ </section>
 }
-
-const ACTIVITY_CONFIG: Record<string, { icon: React.ElementType; color: string; bgColor: string }> = {
-  note: { icon: FileText, color: 'text-slate-600', bgColor: 'bg-slate-100' },
-  status_change: { icon: CheckCircle2, color: 'text-blue-600', bgColor: 'bg-blue-100' },
-  tour_scheduled: { icon: Calendar, color: 'text-purple-600', bgColor: 'bg-purple-100' },
-  tour_completed: { icon: CheckCircle2, color: 'text-emerald-600', bgColor: 'bg-emerald-100' },
-  tour_cancelled: { icon: XCircle, color: 'text-red-600', bgColor: 'bg-red-100' },
-  tour_no_show: { icon: Clock, color: 'text-amber-600', bgColor: 'bg-amber-100' },
-  tour_booked: { icon: MapPin, color: 'text-purple-600', bgColor: 'bg-purple-100' },
-  email_sent: { icon: Mail, color: 'text-blue-600', bgColor: 'bg-blue-100' },
-  sms_sent: { icon: Phone, color: 'text-emerald-600', bgColor: 'bg-emerald-100' },
-  call_made: { icon: Phone, color: 'text-indigo-600', bgColor: 'bg-indigo-100' },
-  workflow_started: { icon: Zap, color: 'text-amber-600', bgColor: 'bg-amber-100' },
-  workflow_stopped: { icon: Square, color: 'text-slate-600', bgColor: 'bg-slate-100' },
-  lead_created: { icon: User, color: 'text-indigo-600', bgColor: 'bg-indigo-100' },
-}
-
-function ActivityItem({ activity }: { activity: Activity }) {
-  const config = ACTIVITY_CONFIG[activity.type] || ACTIVITY_CONFIG.note
-  const Icon = config.icon
-  
-  return (
-    <div className="flex gap-3 group">
-      {/* Timeline dot */}
-      <div className="flex flex-col items-center">
-        <div className={`h-8 w-8 rounded-full ${config.bgColor} flex items-center justify-center flex-shrink-0 ring-4 ring-white`}>
-          <Icon size={14} className={config.color} />
-        </div>
-        <div className="w-0.5 flex-1 bg-slate-200 mt-2 group-last:hidden" />
-      </div>
-
-      {/* Content */}
-      <div className="flex-1 pb-6">
-        <div className="bg-white border border-slate-200 rounded-lg p-3 hover:border-slate-300 transition-colors">
-          <p className="text-sm text-slate-900">{activity.description}</p>
-          
-          {/* Metadata */}
-          {activity.metadata && Object.keys(activity.metadata).length > 0 && (
-            <div className="mt-2 pt-2 border-t border-slate-100">
-              <div className="flex flex-wrap gap-2">
-                {Object.entries(activity.metadata).map(([key, value]) => {
-                  // Skip internal fields
-                  if (key.startsWith('_') || key === 'tour_id' || key === 'workflow_id') return null
-                  
-                  return (
-                    <span 
-                      key={key}
-                      className="inline-flex items-center gap-1 px-2 py-0.5 bg-slate-50 text-slate-600 rounded text-xs"
-                    >
-                      <span className="font-medium">{key}:</span>
-                      <span>{String(value)}</span>
-                    </span>
-                  )
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* Footer */}
-          <div className="flex items-center gap-2 mt-2 text-xs text-slate-400">
-            <Clock size={12} />
-            <span>{formatDistanceToNow(new Date(activity.created_at), { addSuffix: true })}</span>
-            {activity.created_by_user?.full_name && (
-              <>
-                <span>•</span>
-                <span>by {activity.created_by_user.full_name}</span>
-              </>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-export function ActivityTimeline({ activities, leadId, onActivityAdded }: ActivityTimelineProps) {
-  const [showAddNote, setShowAddNote] = useState(false)
-  const [noteText, setNoteText] = useState('')
-  const [loading, setLoading] = useState(false)
-
-  const handleAddNote = async () => {
-    if (!noteText.trim()) return
-
-    setLoading(true)
-    try {
-      const response = await fetch(`/api/leads/${leadId}/activities`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type: 'note',
-          description: noteText.trim(),
-        }),
-      })
-
-      if (!response.ok) {
-        throw new Error('Failed to add note')
-      }
-
-      setNoteText('')
-      setShowAddNote(false)
-      onActivityAdded?.()
-    } catch (error) {
-      console.error('Error adding note:', error)
-      alert('Failed to add note. Please try again.')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  if (activities.length === 0 && !showAddNote) {
-    return (
-      <div className="bg-slate-50 rounded-xl p-6 text-center">
-        <FileText className="mx-auto text-slate-300 mb-3" size={32} />
-        <p className="text-sm text-slate-600 font-medium mb-1">No activity yet</p>
-        <p className="text-xs text-slate-500 mb-4">
-          Add a note or interact with this lead to see activity here.
-        </p>
-        <button
-          onClick={() => setShowAddNote(true)}
-          className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors"
-        >
-          <Plus size={16} />
-          Add Note
-        </button>
-      </div>
-    )
-  }
-
-  return (
-    <div className="space-y-4">
-      {/* Add Note Section */}
-      {showAddNote ? (
-        <div className="bg-slate-50 rounded-xl p-4">
-          <div className="flex items-start gap-2 mb-3">
-            <FileText size={18} className="text-indigo-600 mt-1" />
-            <div className="flex-1">
-              <label className="block text-sm font-medium text-slate-700 mb-2">
-                Add a note
-              </label>
-              <textarea
-                value={noteText}
-                onChange={e => setNoteText(e.target.value)}
-                placeholder="What happened with this lead?"
-                rows={3}
-                autoFocus
-                className="w-full px-3 py-2.5 border border-slate-300 rounded-lg bg-white text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 resize-none"
-              />
-            </div>
-          </div>
-          <div className="flex gap-2 justify-end">
-            <button
-              onClick={() => {
-                setShowAddNote(false)
-                setNoteText('')
-              }}
-              disabled={loading}
-              className="px-3 py-1.5 text-sm text-slate-600 hover:text-slate-900 transition-colors disabled:opacity-50"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleAddNote}
-              disabled={loading || !noteText.trim()}
-              className="flex items-center gap-1.5 px-4 py-1.5 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {loading ? (
-                <>
-                  <Loader2 size={14} className="animate-spin" />
-                  Saving...
-                </>
-              ) : (
-                <>
-                  <Send size={14} />
-                  Add Note
-                </>
-              )}
-            </button>
-          </div>
-        </div>
-      ) : (
-        <button
-          onClick={() => setShowAddNote(true)}
-          className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-slate-50 text-slate-600 rounded-lg hover:bg-slate-100 transition-colors border border-slate-200 border-dashed"
-        >
-          <Plus size={16} />
-          <span className="text-sm font-medium">Add Note</span>
-        </button>
-      )}
-
-      {/* Timeline */}
-      {activities.length > 0 && (
-        <div className="relative">
-          {activities.map(activity => (
-            <ActivityItem key={activity.id} activity={activity} />
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-

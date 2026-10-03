@@ -1,7 +1,9 @@
 'use client'
 
+import { formatConversions } from '@/utils/analytics/marketing-fact'
+
 import { useState, useEffect, useCallback } from 'react'
-import { X, TrendingUp, TrendingDown, Minus, Calendar, ExternalLink } from 'lucide-react'
+import { X, Calendar, ExternalLink } from 'lucide-react'
 import { format, parseISO } from 'date-fns'
 import {
   AreaChart,
@@ -16,15 +18,17 @@ import { getMarketingChannelLabel, normalizeMarketingChannelId } from '@/utils/a
 
 type Campaign = {
   campaign_id: string
+  source_account_id?: string | null
+  campaign_key?: string
   campaign_name: string
   channel: string
   impressions: number
   clicks: number
-  spend: number
+  spend: number | null
   conversions: number
-  ctr: number
-  cpc: number
-  cpa: number
+  ctr: number | null
+  cpc: number | null
+  cpa: number | null
   first_date: string
   last_date: string
 }
@@ -33,7 +37,7 @@ type CampaignTrend = {
   date: string
   impressions: number
   clicks: number
-  spend: number
+  spend: number | null
   conversions: number
 }
 
@@ -42,6 +46,7 @@ type CampaignDetailDrawerProps = {
   propertyId: string
   startDate: string
   endDate: string
+  storedTrends?: CampaignTrend[]
   onClose: () => void
 }
 
@@ -59,7 +64,8 @@ function formatNumber(value: number, decimals: number = 0): string {
   return value.toFixed(decimals)
 }
 
-function formatCurrency(value: number): string {
+function formatCurrency(value: number | null): string {
+  if(value===null)return "Not available"
   return new Intl.NumberFormat('en-US', { 
     style: 'currency', 
     currency: 'USD',
@@ -75,40 +81,48 @@ export function CampaignDetailDrawer({
   propertyId,
   startDate,
   endDate,
+  storedTrends,
   onClose,
 }: CampaignDetailDrawerProps) {
   const [trends, setTrends] = useState<CampaignTrend[]>([])
   const [loading, setLoading] = useState(false)
+  const [trendError, setTrendError] = useState<string | null>(null)
   const [selectedMetric, setSelectedMetric] = useState<MetricKey>('spend')
 
-  const fetchTrends = useCallback(async () => {
+  const fetchTrends = useCallback(async (signal: AbortSignal) => {
     if (!campaign) return
+    if(storedTrends){setTrends(storedTrends);setLoading(false);setTrendError(null);return}
     
     setLoading(true)
+    setTrends([])
+    setTrendError(null)
     try {
       const params = new URLSearchParams({
         propertyId,
         startDate,
         endDate,
         campaignId: campaign.campaign_id,
+        channel: campaign.channel,
+        sourceAccountId: campaign.source_account_id ?? '',
       })
       
-      const response = await fetch(`/api/analytics/campaigns?${params}`)
-      if (response.ok) {
+      const response = await fetch(`/api/analytics/campaigns?${params}`, { signal })
+      if (!response.ok) throw new Error('Campaign trend could not be loaded. Refresh to try again.')
+      if (!signal.aborted) {
         const data = await response.json()
-        setTrends(data.trends || [])
+        if (!signal.aborted) setTrends(data.trends || [])
       }
     } catch (err) {
-      console.error('Error fetching campaign trends:', err)
+      if (!signal.aborted) setTrendError(err instanceof Error ? err.message : 'Campaign trend could not be loaded')
     } finally {
-      setLoading(false)
+      if (!signal.aborted) setLoading(false)
     }
-  }, [campaign, propertyId, startDate, endDate])
+  }, [campaign, propertyId, startDate, endDate,storedTrends])
 
   useEffect(() => {
-    if (campaign) {
-      fetchTrends()
-    }
+    const controller = new AbortController()
+    if (campaign) void fetchTrends(controller.signal)
+    return () => controller.abort()
   }, [campaign, fetchTrends])
 
   if (!campaign) return null
@@ -120,7 +134,7 @@ export function CampaignDetailDrawer({
     spend: { label: 'Spend', color: '#6366f1', format: (v) => formatCurrency(v) },
     clicks: { label: 'Clicks', color: '#10b981', format: (v) => formatNumber(v) },
     impressions: { label: 'Impressions', color: '#f59e0b', format: (v) => formatNumber(v) },
-    conversions: { label: 'Conversions', color: '#8b5cf6', format: (v) => formatNumber(v) },
+    conversions: { label: 'Conversions', color: '#8b5cf6', format: (v) => formatConversions(v) },
   }
 
   const formattedTrends = trends.map(t => ({
@@ -130,7 +144,7 @@ export function CampaignDetailDrawer({
 
   // Calculate daily averages
   const daysCount = trends.length || 1
-  const dailyAvgSpend = campaign.spend / daysCount
+  const dailyAvgSpend = campaign.spend===null?null:campaign.spend/daysCount
   const dailyAvgClicks = campaign.clicks / daysCount
   const dailyAvgImpressions = campaign.impressions / daysCount
 
@@ -143,7 +157,7 @@ export function CampaignDetailDrawer({
       />
       
       {/* Drawer */}
-      <div className="fixed inset-y-0 right-0 w-full max-w-xl bg-white shadow-2xl z-50 overflow-hidden flex flex-col animate-slide-in">
+      <div role="dialog" aria-modal="true" aria-label="Campaign details" className="fixed inset-y-0 right-0 w-full max-w-xl bg-white shadow-2xl z-50 overflow-hidden flex flex-col animate-slide-in">
         {/* Header */}
         <div className="flex items-start justify-between p-6 border-b border-slate-200 bg-gradient-to-r from-slate-50 to-white">
           <div className="flex-1 min-w-0 pr-4">
@@ -166,16 +180,19 @@ export function CampaignDetailDrawer({
               {campaign.campaign_name}
             </h2>
             <p className="text-sm text-slate-500 mt-1 truncate" title={campaign.campaign_id}>
-              ID: {campaign.campaign_id}
+              ID: {campaign.campaign_id} · {campaign.source_account_id ? `Account ${campaign.source_account_id}` : 'Account needs review'}
             </p>
           </div>
           <button
+            aria-label="Close campaign details"
             onClick={onClose}
             className="p-2 rounded-lg hover:bg-slate-100 transition-colors text-slate-400 hover:text-slate-600"
           >
             <X size={20} />
           </button>
         </div>
+
+        {trendError && <p role="alert" className="px-6 py-3 text-sm text-red-700">{trendError}</p>}
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto">
@@ -188,24 +205,24 @@ export function CampaignDetailDrawer({
               <div className="bg-gradient-to-br from-indigo-50 to-indigo-100/50 rounded-xl p-4">
                 <p className="text-sm text-indigo-600 font-medium mb-1">Total Spend</p>
                 <p className="text-2xl font-bold text-indigo-900">{formatCurrency(campaign.spend)}</p>
-                <p className="text-xs text-indigo-500 mt-1">{formatCurrency(dailyAvgSpend)}/day avg</p>
+                <p className="text-xs text-indigo-500 mt-1">{formatCurrency(dailyAvgSpend)} per observed day</p>
               </div>
               <div className="bg-gradient-to-br from-emerald-50 to-emerald-100/50 rounded-xl p-4">
                 <p className="text-sm text-emerald-600 font-medium mb-1">Conversions</p>
-                <p className="text-2xl font-bold text-emerald-900">{campaign.conversions}</p>
+                <p className="text-2xl font-bold text-emerald-900">{formatConversions(campaign.conversions)}</p>
                 <p className="text-xs text-emerald-500 mt-1">
-                  {campaign.cpa > 0 ? `${formatCurrency(campaign.cpa)} CPA` : 'No conversions yet'}
+                  {campaign.cpa !== null ? `${formatCurrency(campaign.cpa)} CPA` : 'Cost per conversion unavailable'}
                 </p>
               </div>
               <div className="bg-gradient-to-br from-amber-50 to-amber-100/50 rounded-xl p-4">
                 <p className="text-sm text-amber-600 font-medium mb-1">Impressions</p>
                 <p className="text-2xl font-bold text-amber-900">{formatNumber(campaign.impressions)}</p>
-                <p className="text-xs text-amber-500 mt-1">{formatNumber(dailyAvgImpressions)}/day avg</p>
+                <p className="text-xs text-amber-500 mt-1">{formatNumber(dailyAvgImpressions)} per observed day</p>
               </div>
               <div className="bg-gradient-to-br from-sky-50 to-sky-100/50 rounded-xl p-4">
                 <p className="text-sm text-sky-600 font-medium mb-1">Clicks</p>
                 <p className="text-2xl font-bold text-sky-900">{formatNumber(campaign.clicks)}</p>
-                <p className="text-xs text-sky-500 mt-1">{formatNumber(dailyAvgClicks)}/day avg</p>
+                <p className="text-xs text-sky-500 mt-1">{formatNumber(dailyAvgClicks)} per observed day</p>
               </div>
             </div>
           </div>
@@ -223,11 +240,11 @@ export function CampaignDetailDrawer({
                   <p className="text-xs text-slate-400">Clicks / Impressions × 100</p>
                 </div>
                 <div className="text-right">
-                  <p className="text-lg font-bold text-slate-900">{campaign.ctr.toFixed(2)}%</p>
+                  <p className="text-lg font-bold text-slate-900">{campaign.ctr===null?'Not available':campaign.ctr.toFixed(2)+'%'}</p>
                   <div className="w-24 h-1.5 bg-slate-100 rounded-full mt-1 overflow-hidden">
                     <div 
                       className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full"
-                      style={{ width: `${Math.min(campaign.ctr * 10, 100)}%` }}
+                      style={{ width: `${Math.min((campaign.ctr??0) * 10, 100)}%` }}
                     />
                   </div>
                 </div>
@@ -240,7 +257,7 @@ export function CampaignDetailDrawer({
                   <p className="text-xs text-slate-400">Spend / Clicks</p>
                 </div>
                 <p className="text-lg font-bold text-slate-900">
-                  {campaign.cpc > 0 ? formatCurrency(campaign.cpc) : '—'}
+                  {campaign.cpc !== null ? formatCurrency(campaign.cpc) : '—'}
                 </p>
               </div>
 
@@ -251,7 +268,7 @@ export function CampaignDetailDrawer({
                   <p className="text-xs text-slate-400">Spend / Conversions</p>
                 </div>
                 <p className="text-lg font-bold text-slate-900">
-                  {campaign.cpa > 0 ? formatCurrency(campaign.cpa) : '—'}
+                  {campaign.cpa !== null ? formatCurrency(campaign.cpa) : '—'}
                 </p>
               </div>
 

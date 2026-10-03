@@ -1,5 +1,7 @@
 # Vision: SiteForge
 
+> **Historical application design. Superseded for new client delivery on September 8, 2026.** The owner chose the personal SiteForge Codex skill, independent client projects and the current agent. Do not restart the proprietary generator or impose its fixed model/runtime gates on independent client sites. Preserve this document as requirements/history for existing application-managed clients. The [current full plan](../../../docs/P11_IMPLEMENTATION_PLAN.md) retains the detailed product outcomes and later amendments.
+
 Last Updated: August 19, 2026
 Document Type: Vision grounded in current implementation
 

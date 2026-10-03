@@ -686,5 +686,11 @@ describe('shared approvals service', () => {
     })
     expect(approvalInsert).not.toHaveBeenCalled()
   })
+  it.each(['approved','denied'] as const)('routes messaging draft %s decisions through MarketVision before writes',async decisionStatus=>{
+    fromMock.mockReturnValue({select:()=>({eq:()=>({eq:()=>({single:async()=>({data:{id:'attempt',action_type:'forgestudio_messaging_brief',proposal_decision_status:'proposed'},error:null})})})})})
+    await expect(recordSharedApprovalDecision({actionAttemptId:'attempt',propertyId:'property',reviewerProfileId:'manager',decisionStatus,decisionReason:'Review exact draft'},buildMockSupabase())).rejects.toMatchObject({statusCode:409})
+    expect(fromMock).toHaveBeenCalledTimes(1)
+  })
+
 })
 

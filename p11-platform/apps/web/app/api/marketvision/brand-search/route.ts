@@ -1,0 +1,7 @@
+import {NextRequest,NextResponse} from 'next/server'
+import {SearchRequest,SearchRead} from '@/utils/marketvision/brand-search-contracts'
+import {requireMarketOperator,MarketStoreError,marketError} from '@/utils/marketvision/decision-store'
+import {brandSearchRpc} from '@/utils/marketvision/brand-search-store'
+const reply=(value:unknown)=>NextResponse.json(value,{headers:{'Cache-Control':'private, no-store'}})
+export async function GET(req:NextRequest){try{const parsed=SearchRead.safeParse(Object.fromEntries(req.nextUrl.searchParams));if(!parsed.success)throw new MarketStoreError('Choose the property and saved search page.',400);const {propertyId,requestId,cursor,after}=parsed.data,actor=await requireMarketOperator(propertyId);return reply(await brandSearchRpc('read_marketvision_brand_searches',{p_property_id:propertyId,p_actor_id:actor,p_request_id:requestId??null,p_cursor:cursor??null,p_after:after}))}catch(e){return marketError(e)}}
+export async function POST(req:NextRequest){try{const parsed=SearchRequest.safeParse(await req.json().catch(()=>null));if(!parsed.success)throw new MarketStoreError('Use a phrase or up to ten search words, and choose the evidence scope.',400);const {requestId,propertyId,...input}=parsed.data,actor=await requireMarketOperator(propertyId);return reply({result:await brandSearchRpc('save_marketvision_brand_search',{p_id:requestId,p_property_id:propertyId,p_actor_id:actor,p_input:{...input,reason:'Search the selected reviewed brand evidence'}})})}catch(e){return marketError(e)}}

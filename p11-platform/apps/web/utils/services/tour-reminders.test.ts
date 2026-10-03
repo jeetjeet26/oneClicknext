@@ -1,110 +1,42 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import {afterEach,beforeEach,expect,it,vi} from 'vitest'
+import type {ReminderWork} from './tour-reminders'
+const d=vi.hoisted(()=>({rpc:vi.fn(),email:vi.fn(),sms:vi.fn(),configured:vi.fn(),updates:vi.fn(),paused:vi.fn()}))
+vi.mock('@/utils/supabase/admin',()=>({createServiceClient:()=>({rpc:d.rpc})}))
+vi.mock('./messaging',()=>({sendEmail:d.email,sendMessage:d.sms,isMessagingConfigured:d.configured}))
+vi.mock('./tour-schedule-delivery',()=>({processTourScheduleWork:d.updates}))
+vi.mock('./delivery-guard',()=>({isDeliveryPaused:d.paused,DELIVERY_PAUSED_MESSAGE:'Delivery is paused'}))
+import {getPendingRemindersCount,processTourReminders,reminderContent,confirmationAttachment} from './tour-reminders'
+const candidate={propertyId:'property',source:'tours',tourId:'tour',version:2,kind:'reminder_1h'}
+const work={id:'job',property_id:'property',lead_id:'lead',tour_source:'tours',tour_id:'tour',schedule_version:2,kind:'reminder_1h',state:'running',lease_token:'token',lease_until:'2026-09-16T00:05:00Z',created_at:'2026-09-16T00:00:00Z',error_code:null,payload:{firstName:'Guest',propertyName:'Fixture',date:'2026-09-15',time:'18:00',timezone:'America/Los_Angeles',startsAt:'2026-09-16T01:00:00Z'},channels:[{id:'email',work_id:'job',channel:'email',recipient:'guest@example.invalid',state:'queued',attempts:0,body:null,subject:null,sender:null,provider_id:null,error_code:null,started_at:null}]} as ReminderWork
+const pending={candidates:[candidate],reminders24h:0,reminders1h:1,confirmations:0,needsReview:0,held:0}
+function rpc(name:string){if(name==='pending_tour_reminders')return pending;if(name==='prepare_tour_reminder')return structuredClone(work);if(name==='start_tour_reminder_channel')return {id:'channel',state:'running'};if(name==='settle_tour_reminder')return 'completed';return true}
+beforeEach(()=>{vi.resetAllMocks();vi.stubEnv('RESEND_FROM_EMAIL','sender@example.invalid');vi.stubEnv('TELNYX_PHONE_NUMBER','+15550000001');d.paused.mockReturnValue(false);d.configured.mockReturnValue({email:true,sms:true});d.updates.mockResolvedValue({review:0});d.rpc.mockImplementation(async name=>({data:rpc(name),error:null}));d.email.mockResolvedValue({success:true,messageId:'email-receipt'});d.sms.mockResolvedValue({success:true,messageId:'sms-receipt'})})
+afterEach(()=>vi.unstubAllEnvs())
+it('reads scoped counts from the same database eligibility contract',async()=>{expect(await getPendingRemindersCount('property')).toEqual({reminders24h:0,reminders1h:1,confirmations:0,needsReview:0,held:0});expect(d.rpc).toHaveBeenCalledWith('pending_tour_reminders',{p_property_id:'property',p_limit:100})})
+it('does not turn a database outage into zero pending reminders',async()=>{d.rpc.mockResolvedValue({error:{message:'offline'}});await expect(getPendingRemindersCount()).rejects.toThrow('could not be loaded')})
+it('does not query or send while paused',async()=>{d.paused.mockReturnValue(true);expect((await processTourReminders()).errors).toEqual(['Delivery is paused']);expect(d.rpc).not.toHaveBeenCalled();expect(d.updates).not.toHaveBeenCalled();expect(d.email).not.toHaveBeenCalled()})
+it('formats exact dates in the property timezone, including an offset label',()=>{const content=reminderContent(work,'email');expect(content.body).toContain('Tuesday, September 15');expect(content.body).toContain('6:00 PM PDT');expect(content.body).not.toContain('tomorrow')})
+it('sends an email-only one-hour reminder after saving intent and a stable email key',async()=>{expect(await processTourReminders()).toMatchObject({reminders1h:1,acceptedChannels:1,failed:0});expect(d.email.mock.calls[0][6]).toBe('tour-reminder/email');const calls=d.rpc.mock.calls.map(c=>c[0]);expect(calls.indexOf('start_tour_reminder_channel')).toBeLessThan(calls.indexOf('finish_tour_reminder_channel'));expect(d.rpc.mock.invocationCallOrder[calls.indexOf('start_tour_reminder_channel')]).toBeLessThan(d.email.mock.invocationCallOrder[0]);expect(d.rpc).toHaveBeenCalledWith('finish_tour_reminder_channel',{p_id:'email',p_token:'token',p_provider_id:'email-receipt'});expect(d.sms).not.toHaveBeenCalled()})
+it('does not send when the versioned claim is refused',async()=>{d.rpc.mockImplementation(async n=>({data:n==='prepare_tour_reminder'?null:rpc(n)}));expect((await processTourReminders()).processed).toBe(0);expect(d.email).not.toHaveBeenCalled()})
+it('does not send after a lost attempt acknowledgement',async()=>{d.rpc.mockImplementation(async n=>n==='start_tour_reminder_channel'?{error:{message:'response lost'}}:{data:rpc(n)});expect((await processTourReminders()).failed).toBe(1);expect(d.email).not.toHaveBeenCalled();expect(d.rpc.mock.calls.map(c=>c[0])).not.toContain('finish_tour_reminder_channel')})
+it('does not send after the final deadline check refuses it',async()=>{d.rpc.mockImplementation(async n=>({data:n==='start_tour_reminder_channel'?null:n==='settle_tour_reminder'?'superseded':rpc(n)}));expect((await processTourReminders()).reminders1h).toBe(0);expect(d.email).not.toHaveBeenCalled()})
+it('does not overwrite a possibly saved receipt after acknowledgement is lost',async()=>{d.rpc.mockImplementation(async n=>n==='finish_tour_reminder_channel'?{error:{message:'lost response'}}:{data:rpc(n)});expect((await processTourReminders()).failed).toBe(1);expect(d.email).toHaveBeenCalledTimes(1);expect(d.rpc.mock.calls.filter(c=>c[0]==='finish_tour_reminder_channel')).toHaveLength(1);expect(d.rpc.mock.calls.map(c=>c[0])).not.toContain('settle_tour_reminder')})
+it('holds ambiguous provider transport errors without automatic retry',async()=>{d.email.mockRejectedValue(new Error('socket lost'));d.rpc.mockImplementation(async n=>({data:n==='settle_tour_reminder'?'review':rpc(n)}));expect((await processTourReminders()).review).toBe(1);expect(d.email).toHaveBeenCalledTimes(1);expect(d.rpc).toHaveBeenCalledWith('finish_tour_reminder_channel',expect.objectContaining({p_provider_id:null}))})
+it('requires a provider ID rather than trusting a success boolean',async()=>{d.email.mockResolvedValue({success:true});d.rpc.mockImplementation(async n=>({data:n==='settle_tour_reminder'?'review':rpc(n)}));expect((await processTourReminders()).acceptedChannels).toBe(0);expect(d.rpc).toHaveBeenCalledWith('finish_tour_reminder_channel',expect.objectContaining({p_provider_id:null}))})
+it('retains accepted email when retrying only a confirmed unsent text',async()=>{const w=structuredClone(work);w.channels[0].state='accepted';w.channels.push({...w.channels[0],id:'sms',channel:'sms',recipient:'+15550000000',state:'queued',body:'Saved SMS',sender:'+15550000001'});d.rpc.mockImplementation(async n=>({data:n==='prepare_tour_reminder'?w:rpc(n)}));expect((await processTourReminders()).acceptedChannels).toBe(1);expect(d.email).not.toHaveBeenCalled();expect(d.sms).toHaveBeenCalledOnce();expect(d.sms).toHaveBeenCalledWith(expect.objectContaining({body:'Saved SMS'}))})
+it('persists separate receipts when one channel fails',async()=>{const w=structuredClone(work);w.channels.push({...w.channels[0],id:'sms',channel:'sms',recipient:'+15550000000'});d.sms.mockResolvedValue({success:false,error:'unconfirmed'});d.rpc.mockImplementation(async n=>({data:n==='prepare_tour_reminder'?w:n==='settle_tour_reminder'?'review':rpc(n)}));expect(await processTourReminders()).toMatchObject({acceptedChannels:1,reminders1h:0,review:1});expect(d.rpc.mock.calls.filter(c=>c[0]==='finish_tour_reminder_channel').map(c=>c[1].p_provider_id)).toEqual(['email-receipt',null])})
+it('reports missing timezones and held delivery instead of claiming a successful empty batch',async()=>{d.rpc.mockImplementation(async n=>({data:n==='pending_tour_reminders'?{...pending,candidates:[],needsReview:2,held:1}:rpc(n)}));expect(await processTourReminders()).toMatchObject({review:3,errors:['3 reminder schedules or deliveries need review']})})
+it('holds an unconfigured channel before transport',async()=>{d.configured.mockReturnValue({email:false,sms:false});d.rpc.mockImplementation(async n=>({data:n==='start_tour_reminder_channel'?null:n==='settle_tour_reminder'?'review':rpc(n)}));expect((await processTourReminders()).review).toBe(1);expect(d.rpc).toHaveBeenCalledWith('start_tour_reminder_channel',expect.objectContaining({p_sender:''}));expect(d.email).not.toHaveBeenCalled()})
+it('fails closed when interrupted-claim recovery cannot be read',async()=>{d.rpc.mockImplementation(async n=>n==='recover_tour_reminders'?{error:{message:'offline'}}:{data:rpc(n)});await expect(processTourReminders()).rejects.toThrow('recovery could not be confirmed');expect(d.email).not.toHaveBeenCalled()})
 
-const createServiceClientMock = vi.fn()
-
-vi.mock('@/utils/supabase/admin', () => ({
-  createServiceClient: createServiceClientMock,
-}))
-
-describe('tour reminders service', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    vi.resetModules()
-    vi.useFakeTimers()
-    vi.setSystemTime(new Date('2026-03-10T12:00:00.000Z'))
-  })
-
-  afterEach(() => {
-    vi.useRealTimers()
-    vi.restoreAllMocks()
-  })
-
-  it('counts pending 24h and 1h reminders across tours and tour bookings', async () => {
-    const formatLocalDate = (date: Date) =>
-      `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}-${date
-        .getDate()
-        .toString()
-        .padStart(2, '0')}`
-    const formatLocalTime = (date: Date) =>
-      `${date.getHours().toString().padStart(2, '0')}:${date
-        .getMinutes()
-        .toString()
-        .padStart(2, '0')}:${date.getSeconds().toString().padStart(2, '0')}`
-
-    const now = new Date()
-    const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000)
-    const oneHour = new Date(now.getTime() + 60 * 60 * 1000)
-
-    const tomorrowDate = formatLocalDate(tomorrow)
-    const tomorrowTime = formatLocalTime(tomorrow)
-    const oneHourDate = formatLocalDate(oneHour)
-    const oneHourTime = formatLocalTime(oneHour)
-
-    const toursEqProperty = vi.fn().mockResolvedValue({
-      data: [
-        {
-          id: 'tour-1',
-          tour_date: tomorrowDate,
-          tour_time: tomorrowTime,
-          reminder_24h_sent_at: null,
-          reminder_sent_at: null,
-        },
-      ],
-      error: null,
-    })
-    const bookingsEqProperty = vi.fn().mockResolvedValue({
-      data: [
-        {
-          id: 'booking-1',
-          scheduled_date: oneHourDate,
-          scheduled_time: oneHourTime,
-          reminder_24h_sent_at: null,
-          reminder_1h_sent_at: null,
-        },
-      ],
-      error: null,
-    })
-
-    createServiceClientMock.mockReturnValue({
-      from: vi.fn((table: string) => {
-        if (table === 'tours') {
-          return {
-            select: vi.fn(() => ({
-              eq: vi.fn(() => ({
-                or: vi.fn(() => ({
-                  eq: toursEqProperty,
-                  then: undefined,
-                })),
-              })),
-            })),
-          }
-        }
-
-        if (table === 'tour_bookings') {
-          return {
-            select: vi.fn(() => ({
-              eq: vi.fn(() => ({
-                or: vi.fn(() => ({
-                  eq: bookingsEqProperty,
-                  then: undefined,
-                })),
-              })),
-            })),
-          }
-        }
-
-        throw new Error(`Unexpected table ${table}`)
-      }),
-    })
-
-    const { getPendingRemindersCount } = await import('./tour-reminders')
-    const result = await getPendingRemindersCount('property-1')
-
-    expect(result).toEqual({
-      reminders24h: 1,
-      reminders1h: 1,
-    })
-    expect(toursEqProperty).toHaveBeenCalledWith('property_id', 'property-1')
-    expect(bookingsEqProperty).toHaveBeenCalledWith('property_id', 'property-1')
-  })
+it('uses exact UTC instants and stable calendar identity for queued confirmations',()=>{
+ const w={...work,kind:'confirmation' as const};const content=reminderContent(w,'email');expect(content.subject).toBe('Tour confirmation at Fixture')
+ const attachment=confirmationAttachment(w)![0];const ics=Buffer.from(attachment.content,'base64').toString()
+ expect(ics).toContain('DTSTART:20260916T010000Z');expect(ics).toContain('DTEND:20260916T013000Z');expect(ics).toContain('UID:tour-tour-v2@p11')
+ expect(confirmationAttachment(work)).toBeUndefined()
+})
+it('counts a completed confirmation separately and attaches its calendar invite',async()=>{
+ d.rpc.mockImplementation(async n=>({data:n==='prepare_tour_reminder'?{...structuredClone(work),kind:'confirmation'}:rpc(n)}))
+ expect(await processTourReminders()).toMatchObject({confirmations:1,reminders1h:0,acceptedChannels:1})
+ expect(d.email.mock.calls[0][5]).toHaveLength(1)
 })

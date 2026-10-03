@@ -149,7 +149,8 @@ class HubSpotAdapter(BaseCRMAdapter):
                 api_version="v3",
                 object_name="Contact",
                 object_label="Contact",
-                fields=fields
+                fields=fields,
+                    evidence_source="provider_response"
             )
             
         except Exception as e:

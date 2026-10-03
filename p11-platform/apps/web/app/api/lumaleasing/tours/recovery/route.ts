@@ -10,23 +10,25 @@ import {
   unauthorized,
 } from '@/utils/services/api-helpers'
 import { createRequestContext } from '@/utils/services/request-context'
-import {
-  cancelCalendarEvent,
-  createCalendarEvent,
-  getCalendarConfig,
-  updateCalendarEvent,
-} from '@/utils/services/google-calendar'
+import {validCalendarDay} from '@/utils/services/calendar-time'
+import {changeTourSchedule,scheduleFailure} from '@/utils/services/tour-scheduling'
+
+const CursorSchema=z.object({date:z.string().refine(validCalendarDay),time:z.string().regex(/^([01]\d|2[0-3]):[0-5]\d:[0-5]\d$/),id:z.string().regex(/^[0-9a-f-]{36}$/i)}).strict()
 
 const RecoveryActionSchema = z.object({
+  requestId:z.string().uuid(),
+  expectedVersion:z.number().int().positive(),
   propertyId: z.string().min(1),
   bookingId: z.string().min(1),
   action: z.enum(['cancel', 'reschedule']),
   rescheduleDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   rescheduleTime: z.string().regex(/^\d{2}:\d{2}$/).optional(),
-  reason: z.string().max(500).optional(),
+  reason: z.string().trim().min(1).max(2000),
 })
 
 type RecoveryBookingRow = {
+  schedule_timezone:string|null
+  schedule_version:number
   id: string
   property_id: string | null
   lead_id: string | null
@@ -38,6 +40,9 @@ type RecoveryBookingRow = {
 }
 
 type CalendarEventRow = {
+  remote_snapshot: {id:string;status:string|null;startDateTime:string|null;endDateTime:string|null}|null
+  observed_schedule_version:number|null
+  last_synced_at:string|null
   id: string
   google_event_id: string
   sync_status: string | null
@@ -50,29 +55,12 @@ type LeadRow = {
   phone: string | null
 }
 
-type PropertyRow = {
-  name: string | null
-  address: { street?: string; full?: string } | null
-}
-
-function normalizeAddress(property: PropertyRow | null): string | undefined {
-  if (!property?.address || typeof property.address !== 'object') {
-    return undefined
-  }
-
-  return property.address.street || property.address.full
-}
-
 function normalizeLeadName(lead: LeadRow | null): string {
   if (!lead) {
     return 'Guest'
   }
   const composed = `${lead.first_name || ''} ${lead.last_name || ''}`.trim()
   return composed || 'Guest'
-}
-
-function normalizeTimeForCalendar(timeValue: string): string {
-  return timeValue.split(':').slice(0, 2).join(':')
 }
 
 function isRecoverableStatus(status: string | null): boolean {
@@ -86,6 +74,12 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
     const propertyId = searchParams.get('propertyId')
+    const encodedCursor=searchParams.get('cursor')
+    let cursor:z.infer<typeof CursorSchema>|null=null
+    if(encodedCursor){
+      try{if(encodedCursor.length>512)throw new Error('Invalid cursor');cursor=CursorSchema.parse(JSON.parse(Buffer.from(encodedCursor,'base64url').toString('utf8')))}
+      catch{return badRequest('Invalid booking page. Refresh the list.',ctx.responseHeaders)}
+    }
 
     if (!propertyId) {
       ctx.logSuccess(400, { reason: 'missing_property_id' })
@@ -110,37 +104,37 @@ export async function GET(request: NextRequest) {
     }
 
     const serviceSupabase = createServiceClient()
-    const [{ data: bookingRows, error: bookingError }, { data: calendarEventRows, error: calendarError }] =
-      await Promise.all([
-        serviceSupabase
-          .from('tour_bookings')
-          .select('id, property_id, lead_id, scheduled_date, scheduled_time, duration_minutes, status, special_requests')
-          .eq('property_id', propertyId)
-          .order('scheduled_date', { ascending: true })
-          .order('scheduled_time', { ascending: true })
-          .limit(100),
-        serviceSupabase
-          .from('calendar_events')
-          .select('id, tour_booking_id, google_event_id, sync_status')
-          .limit(1000),
-      ])
+    let bookingQuery=serviceSupabase
+      .from('tour_bookings')
+      .select('id, property_id, lead_id, scheduled_date, scheduled_time, duration_minutes, status, special_requests, schedule_version, schedule_timezone')
+      .eq('property_id',propertyId)
+      .in('status',['scheduled','confirmed'])
+      .order('scheduled_date',{ascending:true}).order('scheduled_time',{ascending:true}).order('id',{ascending:true})
+      .limit(101)
+    if(cursor)bookingQuery=bookingQuery.or(`scheduled_date.gt.${cursor.date},and(scheduled_date.eq.${cursor.date},scheduled_time.gt.${cursor.time}),and(scheduled_date.eq.${cursor.date},scheduled_time.eq.${cursor.time},id.gt.${cursor.id})`)
+    const {data:bookingRows,error:bookingError}=await bookingQuery
 
     if (bookingError) {
       ctx.logError(500, bookingError, { operation: 'load_recovery_bookings', propertyId })
       return serverError(bookingError, ctx.responseHeaders)
     }
+    const scopedBookings=(bookingRows||[]).slice(0,100) as unknown as RecoveryBookingRow[]
+    const {data:calendarEventRows,error:calendarError}=scopedBookings.length?await serviceSupabase
+      .from('calendar_events').select('id, tour_booking_id, google_event_id, sync_status, remote_snapshot, observed_schedule_version, last_synced_at')
+      .in('tour_booking_id',scopedBookings.map(booking=>booking.id)):{data:[],error:null}
     if (calendarError) {
       ctx.logError(500, calendarError, { operation: 'load_recovery_calendar_events', propertyId })
       return serverError(calendarError, ctx.responseHeaders)
     }
 
-    const bookings = (bookingRows || []) as RecoveryBookingRow[]
+    const bookings = scopedBookings
     const leadIds = Array.from(new Set(bookings.map((booking) => booking.lead_id).filter(Boolean))) as string[]
 
     const { data: leadRows, error: leadError } = leadIds.length
       ? await serviceSupabase
           .from('leads')
           .select('id, first_name, last_name, email, phone')
+          .eq('property_id',propertyId)
           .in('id', leadIds)
       : { data: [], error: null }
 
@@ -153,7 +147,7 @@ export async function GET(request: NextRequest) {
       ((leadRows || []) as Array<LeadRow & { id: string }>).map((lead) => [lead.id, lead])
     )
     const eventByBookingId = new Map(
-      ((calendarEventRows || []) as Array<CalendarEventRow & { tour_booking_id: string | null }>)
+      ((calendarEventRows || []) as unknown as Array<CalendarEventRow & { tour_booking_id: string | null }>)
         .filter((row): row is CalendarEventRow & { tour_booking_id: string } => Boolean(row.tour_booking_id))
         .map((row) => [row.tour_booking_id, row])
     )
@@ -170,9 +164,11 @@ export async function GET(request: NextRequest) {
               phone: lead.phone,
             }
           : null,
+        schedule_timezone:booking.schedule_timezone,
         scheduled_date: booking.scheduled_date,
         scheduled_time: booking.scheduled_time,
         duration_minutes: booking.duration_minutes,
+        schedule_version:booking.schedule_version,
         status: booking.status,
         special_requests: booking.special_requests,
         can_cancel: isRecoverableStatus(booking.status),
@@ -182,6 +178,9 @@ export async function GET(request: NextRequest) {
               id: calendarEvent.id,
               google_event_id: calendarEvent.google_event_id,
               sync_status: calendarEvent.sync_status,
+              remote_snapshot:calendarEvent.remote_snapshot,
+              observed_schedule_version:calendarEvent.observed_schedule_version,
+              last_synced_at:calendarEvent.last_synced_at,
             }
           : null,
       }
@@ -195,8 +194,9 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(
       {
         bookings: recoverableBookings,
+        nextCursor:(bookingRows||[]).length>100?Buffer.from(JSON.stringify({date:bookings[99].scheduled_date,time:bookings[99].scheduled_time,id:bookings[99].id})).toString('base64url'):null,
       },
-      { headers: ctx.responseHeaders }
+      { headers: {...ctx.responseHeaders,'Cache-Control':'no-store'} }
     )
   } catch (error) {
     ctx.logError(500, error, { operation: 'load_recovery_bookings' })
@@ -237,220 +237,17 @@ export async function POST(request: NextRequest) {
 
     const serviceSupabase = createServiceClient()
 
-    const [{ data: booking, error: bookingError }, { data: property, error: propertyError }] =
-      await Promise.all([
-        serviceSupabase
-          .from('tour_bookings')
-          .select('id, property_id, lead_id, scheduled_date, scheduled_time, duration_minutes, status, special_requests')
-          .eq('id', bookingId)
-          .eq('property_id', propertyId)
-          .maybeSingle(),
-        serviceSupabase.from('properties').select('name, address').eq('id', propertyId).maybeSingle(),
-      ])
-
-    if (bookingError || !booking) {
-      ctx.logSuccess(400, { reason: 'booking_not_found', propertyId, bookingId })
-      return badRequest('Booking not found for property', ctx.responseHeaders)
-    }
-    if (propertyError) {
-      ctx.logError(500, propertyError, { operation: 'load_recovery_property', propertyId })
-      return serverError(propertyError, ctx.responseHeaders)
-    }
-
+    const {data:booking,error:bookingError}=await serviceSupabase.from('tour_bookings').select('id,property_id,lead_id,scheduled_date,scheduled_time,duration_minutes,status,special_requests,schedule_version').eq('id',bookingId).eq('property_id',propertyId).maybeSingle()
+    if(bookingError || !booking)return badRequest('Booking not found for property',ctx.responseHeaders)
     const bookingRow = booking as RecoveryBookingRow
-    if (!isRecoverableStatus(bookingRow.status)) {
-      ctx.logSuccess(409, {
-        reason: 'booking_not_recoverable',
-        bookingId,
-        status: bookingRow.status,
-      })
-      return NextResponse.json(
-        { error: 'Only scheduled/confirmed bookings can be changed' },
-        { status: 409, headers: ctx.responseHeaders }
-      )
-    }
-
-    const { data: leadRow } = bookingRow.lead_id
-      ? await serviceSupabase
-          .from('leads')
-          .select('first_name, last_name, email, phone')
-          .eq('id', bookingRow.lead_id)
-          .maybeSingle()
-      : { data: null }
-
-    const { data: calendarEvent } = await serviceSupabase
-      .from('calendar_events')
-      .select('id, google_event_id, sync_status')
-      .eq('tour_booking_id', bookingId)
-      .maybeSingle()
-
-    const calendarConfig = await getCalendarConfig(propertyId)
-    const nowIso = new Date().toISOString()
-
-    if (action === 'cancel') {
-      await serviceSupabase
-        .from('tour_bookings')
-        .update({
-          status: 'cancelled',
-          completion_notes: reason || 'Cancelled by operator from recovery panel',
-          updated_at: nowIso,
-        })
-        .eq('id', bookingId)
-
-      let calendarAction: 'skipped' | 'cancelled' | 'failed' = 'skipped'
-      if (
-        calendarEvent?.google_event_id &&
-        calendarConfig &&
-        calendarConfig.token_status === 'healthy'
-      ) {
-        try {
-          await cancelCalendarEvent(calendarConfig, calendarEvent.google_event_id)
-          calendarAction = 'cancelled'
-        } catch {
-          calendarAction = 'failed'
-        }
-      }
-
-      if (calendarEvent?.id) {
-        await serviceSupabase
-          .from('calendar_events')
-          .update({
-            sync_status:
-              calendarAction === 'failed'
-                ? 'failed'
-                : 'external_cancelled',
-            last_synced_at: nowIso,
-          })
-          .eq('id', calendarEvent.id)
-      }
-
-      if (bookingRow.lead_id) {
-        await serviceSupabase.from('lead_activities').insert({
-          lead_id: bookingRow.lead_id,
-          type: 'tour_cancelled',
-          description: `Tour booking ${bookingId} cancelled by operator`,
-          metadata: {
-            booking_id: bookingId,
-            previous_date: bookingRow.scheduled_date,
-            previous_time: bookingRow.scheduled_time,
-            reason: reason || null,
-            calendar_action: calendarAction,
-          },
-        })
-      }
-
-      ctx.logSuccess(200, { propertyId, bookingId, action, calendarAction })
-      return NextResponse.json(
-        {
-          success: true,
-          bookingId,
-          action,
-          calendarAction,
-        },
-        { headers: ctx.responseHeaders }
-      )
-    }
-
-    if (!rescheduleDate || !rescheduleTime) {
-      ctx.logSuccess(400, { reason: 'missing_reschedule_datetime', bookingId })
-      return badRequest('rescheduleDate and rescheduleTime are required', ctx.responseHeaders)
-    }
-
-    const nextStart = new Date(`${rescheduleDate}T${rescheduleTime}:00`)
-    if (Number.isNaN(nextStart.getTime()) || nextStart <= new Date()) {
-      ctx.logSuccess(400, { reason: 'invalid_reschedule_datetime', bookingId })
-      return badRequest('Reschedule target must be a valid future date/time', ctx.responseHeaders)
-    }
-
-    await serviceSupabase
-      .from('tour_bookings')
-      .update({
-        scheduled_date: rescheduleDate,
-        scheduled_time: `${rescheduleTime}:00`,
-        status: 'confirmed',
-        updated_at: nowIso,
-      })
-      .eq('id', bookingId)
-
-    let calendarAction: 'skipped' | 'updated' | 'created' | 'failed' = 'skipped'
-    if (calendarConfig && calendarConfig.token_status === 'healthy' && leadRow?.email) {
-      try {
-        const propertyRow = (property || null) as PropertyRow | null
-        const tourDetails = {
-          propertyName: propertyRow?.name || 'Property Tour',
-          prospectName: normalizeLeadName((leadRow || null) as LeadRow | null),
-          prospectEmail: leadRow.email,
-          prospectPhone: leadRow.phone || undefined,
-          tourDate: rescheduleDate,
-          tourTime: normalizeTimeForCalendar(rescheduleTime),
-          specialRequests: bookingRow.special_requests || undefined,
-          propertyAddress: normalizeAddress(propertyRow),
-        }
-
-        if (calendarEvent?.google_event_id) {
-          await updateCalendarEvent(calendarConfig, calendarEvent.google_event_id, tourDetails)
-          await serviceSupabase
-            .from('calendar_events')
-            .update({
-              sync_status: 'synced',
-              last_synced_at: nowIso,
-            })
-            .eq('id', calendarEvent.id)
-          calendarAction = 'updated'
-        } else {
-          const created = await createCalendarEvent(calendarConfig, tourDetails)
-          await serviceSupabase.from('calendar_events').insert({
-            agent_calendar_id: calendarConfig.id,
-            tour_booking_id: bookingId,
-            google_event_id: created.eventId,
-            provider_event_id: created.eventId,
-            provider_event_link: created.htmlLink || null,
-            sync_status: 'synced',
-            last_synced_at: nowIso,
-          })
-          calendarAction = 'created'
-        }
-      } catch {
-        calendarAction = 'failed'
-        if (calendarEvent?.id) {
-          await serviceSupabase
-            .from('calendar_events')
-            .update({
-              sync_status: 'failed',
-              last_synced_at: nowIso,
-            })
-            .eq('id', calendarEvent.id)
-        }
-      }
-    }
-
-    if (bookingRow.lead_id) {
-      await serviceSupabase.from('lead_activities').insert({
-        lead_id: bookingRow.lead_id,
-        type: 'tour_rescheduled',
-        description: `Tour booking ${bookingId} rescheduled by operator`,
-        metadata: {
-          booking_id: bookingId,
-          previous_date: bookingRow.scheduled_date,
-          previous_time: bookingRow.scheduled_time,
-          next_date: rescheduleDate,
-          next_time: `${rescheduleTime}:00`,
-          reason: reason || null,
-          calendar_action: calendarAction,
-        },
-      })
-    }
-
-    ctx.logSuccess(200, { propertyId, bookingId, action, calendarAction })
-    return NextResponse.json(
-      {
-        success: true,
-        bookingId,
-        action,
-        calendarAction,
-      },
-      { headers: ctx.responseHeaders }
-    )
+    if(!bookingRow.lead_id)return badRequest('Booking has no linked lead',ctx.responseHeaders)
+    if(action==='reschedule' && (!rescheduleDate || !rescheduleTime))return badRequest('Choose a new date and time',ctx.responseHeaders)
+    const result=await changeTourSchedule({propertyId,leadId:bookingRow.lead_id,source:'tour_bookings',tourId:bookingId,actorId:user.id,
+      requestId:parsed.data.requestId,expectedVersion:parsed.data.expectedVersion,action,reason,notify:false,date:rescheduleDate,time:rescheduleTime},serviceSupabase)
+    const failure=scheduleFailure(result)
+    if(failure)return NextResponse.json({error:failure.error,code:result.state},{status:failure.status,headers:ctx.responseHeaders})
+    ctx.logSuccess(200,{propertyId,bookingId,action,changeId:result.changeId})
+    return NextResponse.json({...result,success:true,bookingId,action,calendarAction:result.queued?'queued':'not_required'},{headers:ctx.responseHeaders})
   } catch (error) {
     ctx.logError(500, error, { operation: 'booking_recovery_action' })
     return serverError(error, ctx.responseHeaders)

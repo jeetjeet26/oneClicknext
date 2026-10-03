@@ -1,455 +1,127 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import Link from 'next/link'
 import { usePropertyContext } from '@/components/layout/PropertyContext'
-import { LeadPulseInsights } from '@/components/leadpulse'
-import { LeadScoreBadge, LeadScoreRing } from '@/components/leadpulse/LeadScoreBadge'
+import { LeadPulseInsights } from '@/components/leadpulse/LeadPulseInsights'
+import { LeadScoreBadge } from '@/components/leadpulse/LeadScoreBadge'
 import { ScoreBreakdown } from '@/components/leadpulse/ScoreBreakdown'
-import {
-  Sparkles,
-  Users,
-  Zap,
-  RefreshCw,
-  Settings,
-  TrendingUp,
-  Filter,
-  Search,
-  ChevronRight,
-  Clock,
-} from 'lucide-react'
+import { LeadScoreReview } from '@/components/leadpulse/LeadScoreReview'
+import { LeadEngagementHistory } from '@/components/leadpulse/LeadEngagementHistory'
+import { leadResponse, savedLeadRequest, type ScoreBatch } from '@/utils/leadpulse/client'
+import type { LeadScore } from '@/app/api/leadpulse/score/route'
+import { RefreshCw, Sparkles, X } from 'lucide-react'
 
-interface Lead {
-  id: string
-  first_name: string
-  last_name: string
-  email: string
-  phone: string
-  source: string
-  status: string
-  score: number | null
-  score_bucket: string | null
-  created_at: string
-}
-
-interface LeadWithScore extends Lead {
-  scoreDetails?: {
-    totalScore: number
-    engagementScore: number
-    timingScore: number
-    sourceScore: number
-    completenessScore: number
-    behaviorScore: number
-    factors: { factor: string; impact: string; type: 'positive' | 'negative' | 'neutral' }[]
-    workflowOutcomes?: {
-      workflowStatus: string | null
-      pending: number
-      sent: number
-      skipped: number
-      failed: number
-      retried: number
-      nextActionAt: string | null
-      lastActionAt: string | null
-    }
-    scoredAt: string
-    modelVersion: string
-  }
-}
-
+type Lead = { id: string; first_name: string | null; last_name: string | null; email: string | null; source: string | null; status: string; score: number | null; score_bucket: 'hot' | 'warm' | 'cold' | 'unqualified' | null }
+const button = 'rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50'
+const secondary = 'rounded-lg border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 disabled:opacity-50'
 export default function LeadPulsePage() {
-  const { currentProperty } = usePropertyContext()
-  const [leads, setLeads] = useState<LeadWithScore[]>([])
-  const [loading, setLoading] = useState(true)
-  const [selectedLead, setSelectedLead] = useState<LeadWithScore | null>(null)
-  const [loadingScore, setLoadingScore] = useState(false)
-  const [isRescoring, setIsRescoring] = useState(false)
-  const [filter, setFilter] = useState<'all' | 'hot' | 'warm' | 'cold' | 'unqualified'>('all')
-  const [searchQuery, setSearchQuery] = useState('')
-
-  useEffect(() => {
-    fetchLeads()
-  }, [currentProperty?.id])
-
-  const fetchLeads = async () => {
-    try {
-      setLoading(true)
-      const params = new URLSearchParams()
-      if (currentProperty?.id) {
-        params.set('propertyId', currentProperty.id)
-      }
-      params.set('limit', '100')
-
-      const res = await fetch(`/api/leads?${params}`)
-      const data = await res.json()
-
-      if (res.ok) {
-        setLeads(data.leads || [])
-      }
-    } catch (err) {
-      console.error('Error fetching leads:', err)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const fetchLeadScore = async (lead: Lead) => {
-    setSelectedLead({ ...lead })
-    setLoadingScore(true)
-
-    try {
-      const res = await fetch(`/api/leadpulse/score?leadId=${lead.id}`)
-      const data = await res.json()
-
-      if (res.ok && data.score) {
-        setSelectedLead({
-          ...lead,
-          score: data.score.totalScore,
-          score_bucket: data.score.scoreBucket,
-          scoreDetails: data.score,
-        })
-      }
-    } catch (err) {
-      console.error('Error fetching score:', err)
-    } finally {
-      setLoadingScore(false)
-    }
-  }
-
-  const rescoreAllLeads = async () => {
-    if (!currentProperty?.id) return
-
-    setIsRescoring(true)
-    try {
-      const res = await fetch('/api/leadpulse/score', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ propertyId: currentProperty.id }),
-      })
-      const data = await res.json()
-
-      if (res.ok) {
-        console.log(`Rescored ${data.successful}/${data.processed} leads`)
-        fetchLeads()
-      }
-    } catch (err) {
-      console.error('Error rescoring leads:', err)
-    } finally {
-      setIsRescoring(false)
-    }
-  }
-
-  const rescoreSelectedLead = async () => {
-    if (!selectedLead) return
-
-    setLoadingScore(true)
-    try {
-      const res = await fetch('/api/leadpulse/score', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ leadId: selectedLead.id }),
-      })
-      const data = await res.json()
-
-      if (res.ok && data.score) {
-        setSelectedLead({
-          ...selectedLead,
-          score: data.score.totalScore,
-          score_bucket: data.score.scoreBucket,
-          scoreDetails: data.score,
-        })
-        // Update in list too
-        setLeads(leads.map(l =>
-          l.id === selectedLead.id
-            ? { ...l, score: data.score.totalScore, score_bucket: data.score.scoreBucket }
-            : l
-        ))
-      }
-    } catch (err) {
-      console.error('Error rescoring lead:', err)
-    } finally {
-      setLoadingScore(false)
-    }
-  }
-
-  // Filter and sort leads
-  const filteredLeads = leads
-    .filter(lead => {
-      if (filter !== 'all' && lead.score_bucket !== filter) return false
-      if (searchQuery) {
-        const query = searchQuery.toLowerCase()
-        return (
-          lead.first_name?.toLowerCase().includes(query) ||
-          lead.last_name?.toLowerCase().includes(query) ||
-          lead.email?.toLowerCase().includes(query)
-        )
-      }
-      return true
-    })
-    .sort((a, b) => (b.score || 0) - (a.score || 0))
-
-  return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
-            <Sparkles className="w-7 h-7 text-indigo-500" />
-            <span className="text-gray-900 dark:text-gray-100">LeadPulse</span>
-          </h1>
-          <p className="text-gray-700 dark:text-gray-300 mt-1">
-            AI-powered lead scoring and prioritization
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <button
-            onClick={rescoreAllLeads}
-            disabled={isRescoring || !currentProperty?.id}
-            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            <RefreshCw className={`w-4 h-4 ${isRescoring ? 'animate-spin' : ''}`} />
-            {isRescoring ? 'Rescoring...' : 'Rescore All'}
-          </button>
-          <button className="p-2 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg">
-            <Settings className="w-5 h-5" />
-          </button>
-        </div>
-      </div>
-
-      {/* Insights Dashboard */}
-      <LeadPulseInsights
-        propertyId={currentProperty?.id}
-      />
-
-      {/* Lead List with Scores */}
-      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
-        {/* List Header */}
-        <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
-              <Users className="w-5 h-5 text-gray-500" />
-              Leads by Score
-            </h2>
-            <div className="flex items-center gap-3">
-              {/* Search */}
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                <input
-                  type="text"
-                  placeholder="Search leads..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-9 pr-4 py-2 w-64 text-sm border border-gray-200 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white dark:bg-gray-700"
-                />
-              </div>
-              {/* Filter */}
-              <div className="flex items-center gap-1 bg-gray-100 dark:bg-gray-700 p-1 rounded-lg">
-                {(['all', 'hot', 'warm', 'cold', 'unqualified'] as const).map((bucket) => (
-                  <button
-                    key={bucket}
-                    onClick={() => setFilter(bucket)}
-                    className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                      filter === bucket
-                        ? 'bg-white dark:bg-gray-600 text-gray-900 dark:text-white shadow-sm'
-                        : 'text-gray-500 hover:text-gray-700'
-                    }`}
-                  >
-                    {bucket === 'all' ? 'All' : bucket.charAt(0).toUpperCase() + bucket.slice(1)}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Lead Table */}
-        <div className="overflow-x-auto">
-          {loading ? (
-            <div className="p-12 text-center">
-              <RefreshCw className="w-8 h-8 animate-spin text-indigo-500 mx-auto mb-4" />
-              <p className="text-gray-500">Loading leads...</p>
-            </div>
-          ) : filteredLeads.length === 0 ? (
-            <div className="p-12 text-center">
-              <Users className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-              <p className="text-gray-500">No leads found</p>
-            </div>
-          ) : (
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-gray-100 dark:border-gray-700">
-                  <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 py-3">
-                    Score
-                  </th>
-                  <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 py-3">
-                    Lead
-                  </th>
-                  <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 py-3">
-                    Source
-                  </th>
-                  <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 py-3">
-                    Status
-                  </th>
-                  <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 py-3">
-                    Created
-                  </th>
-                  <th className="px-4 py-3"></th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                {filteredLeads.map((lead) => (
-                  <tr
-                    key={lead.id}
-                    onClick={() => fetchLeadScore(lead)}
-                    className={`hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer transition-colors ${
-                      selectedLead?.id === lead.id ? 'bg-indigo-50 dark:bg-indigo-900/20' : ''
-                    }`}
-                  >
-                    <td className="px-4 py-3">
-                      <LeadScoreRing
-                        score={lead.score}
-                        bucket={lead.score_bucket as 'hot' | 'warm' | 'cold' | 'unqualified' | null}
-                        size={50}
-                      />
-                    </td>
-                    <td className="px-4 py-3">
-                      <div>
-                        <p className="font-medium text-gray-900 dark:text-white">
-                          {lead.first_name} {lead.last_name}
-                        </p>
-                        <p className="text-sm text-gray-500">{lead.email}</p>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="text-sm text-gray-600 dark:text-gray-400">
-                        {lead.source || 'Unknown'}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300 capitalize">
-                        {lead.status}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="text-sm text-gray-500 flex items-center gap-1">
-                        <Clock className="w-3.5 h-3.5" />
-                        {new Date(lead.created_at).toLocaleDateString()}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <ChevronRight className="w-5 h-5 text-gray-400" />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </div>
-
-      {/* Score Detail Drawer */}
-      {selectedLead && (
-        <div className="fixed inset-y-0 right-0 w-96 bg-white dark:bg-gray-800 shadow-2xl border-l border-gray-200 dark:border-gray-700 overflow-y-auto z-50">
-          <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
-            <div>
-              <h3 className="font-semibold text-gray-900 dark:text-white">
-                {selectedLead.first_name} {selectedLead.last_name}
-              </h3>
-              <p className="text-sm text-gray-500">{selectedLead.email}</p>
-            </div>
-            <button
-              onClick={() => setSelectedLead(null)}
-              className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"
-            >
-              ✕
-            </button>
-          </div>
-
-          <div className="p-4 space-y-6">
-            {/* Score Overview */}
-            <div className="text-center py-4">
-              <LeadScoreRing
-                score={selectedLead.score}
-                bucket={selectedLead.score_bucket as 'hot' | 'warm' | 'cold' | 'unqualified' | null}
-                size={100}
-              />
-              <div className="mt-3">
-                <LeadScoreBadge
-                  score={selectedLead.score}
-                  bucket={selectedLead.score_bucket as 'hot' | 'warm' | 'cold' | 'unqualified' | null}
-                  size="lg"
-                />
-              </div>
-            </div>
-
-            {/* Score Breakdown */}
-            {loadingScore ? (
-              <div className="text-center py-8">
-                <RefreshCw className="w-6 h-6 animate-spin text-indigo-500 mx-auto" />
-                <p className="text-sm text-gray-500 mt-2">Loading score details...</p>
-              </div>
-            ) : selectedLead.scoreDetails ? (
-              <>
-                <ScoreBreakdown
-                  totalScore={selectedLead.scoreDetails.totalScore}
-                  engagementScore={selectedLead.scoreDetails.engagementScore}
-                  timingScore={selectedLead.scoreDetails.timingScore}
-                  sourceScore={selectedLead.scoreDetails.sourceScore}
-                  completenessScore={selectedLead.scoreDetails.completenessScore}
-                  behaviorScore={selectedLead.scoreDetails.behaviorScore}
-                  factors={selectedLead.scoreDetails.factors}
-                  scoredAt={selectedLead.scoreDetails.scoredAt}
-                  modelVersion={selectedLead.scoreDetails.modelVersion}
-                  onRescore={rescoreSelectedLead}
-                  isRescoring={loadingScore}
-                />
-
-                {selectedLead.scoreDetails.workflowOutcomes && (
-                  <div className="rounded-xl border border-gray-200 dark:border-gray-700 p-4">
-                    <h4 className="text-sm font-semibold text-gray-900 dark:text-white">
-                      Workflow Outcome Context
-                    </h4>
-                    <p className="mt-1 text-xs text-gray-500">
-                      Status: {selectedLead.scoreDetails.workflowOutcomes.workflowStatus || 'none'}
-                    </p>
-                    <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
-                      <div className="rounded bg-gray-100 px-2 py-1 dark:bg-gray-700">
-                        Pending: {selectedLead.scoreDetails.workflowOutcomes.pending}
-                      </div>
-                      <div className="rounded bg-green-100 px-2 py-1 text-green-800 dark:bg-green-900/40 dark:text-green-300">
-                        Sent: {selectedLead.scoreDetails.workflowOutcomes.sent}
-                      </div>
-                      <div className="rounded bg-gray-100 px-2 py-1 dark:bg-gray-700">
-                        Skipped: {selectedLead.scoreDetails.workflowOutcomes.skipped}
-                      </div>
-                      <div className="rounded bg-red-100 px-2 py-1 text-red-800 dark:bg-red-900/40 dark:text-red-300">
-                        Failed: {selectedLead.scoreDetails.workflowOutcomes.failed}
-                      </div>
-                      <div className="rounded bg-indigo-100 px-2 py-1 text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-300">
-                        Retried: {selectedLead.scoreDetails.workflowOutcomes.retried}
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </>
-            ) : (
-              <div className="text-center py-8">
-                <Zap className="w-8 h-8 text-gray-300 mx-auto mb-2" />
-                <p className="text-sm text-gray-500">Score details not available</p>
-              </div>
-            )}
-
-            {/* Quick Actions */}
-            <div className="space-y-2">
-              <button className="w-full px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm font-medium">
-                Contact Lead
-              </button>
-              <button className="w-full px-4 py-2 border border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors text-sm font-medium">
-                Schedule Tour
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  )
+ const { currentProperty } = usePropertyContext()
+ return currentProperty?.id ? <LeadPulseWorkspace key={currentProperty.id} propertyId={currentProperty.id} propertyName={currentProperty.name}/> : <p>Select a property to review lead scores.</p>
 }
-
+function LeadPulseWorkspace({ propertyId, propertyName }: { propertyId: string; propertyName: string }) {
+ const alive = useRef(true), halted = useRef(false), runOwner = useRef(0)
+ const [leads, setLeads] = useState<Lead[]>([]), [total, setTotal] = useState(0), [pages, setPages] = useState(0)
+ const [page, setPage] = useState(1), [search, setSearch] = useState(''), [bucket, setBucket] = useState('all')
+ const [selected, setSelected] = useState<Lead | null>(null), [version, setVersion] = useState(0)
+ const [loading, setLoading] = useState(true), [busy, setBusy] = useState(false), [batchReady, setBatchReady] = useState(false)
+ const [error, setError] = useState<string | null>(null), [listError, setListError] = useState<string | null>(null)
+ const [batch, setBatch] = useState<ScoreBatch | null>(null)
+ useEffect(() => { alive.current = true; return () => { alive.current = false; halted.current = true } }, [])
+ useEffect(() => {
+  const controller = new AbortController()
+  setLoading(true); setListError(null)
+  const timer = setTimeout(() => { void fetch(`/api/leadpulse/leads?${new URLSearchParams({propertyId, search, bucket, page: String(page)})}`, { signal: controller.signal })
+   .then(leadResponse).then(data => { if (!controller.signal.aborted) { setLeads(data.leads); setTotal(data.total); setPages(data.pages) } })
+   .catch(err => { if (!controller.signal.aborted) { setLeads([]); setListError(err.message) } })
+   .finally(() => { if (!controller.signal.aborted) setLoading(false) }) }, search ? 250 : 0)
+  return () => { clearTimeout(timer); controller.abort() }
+ }, [propertyId, search, bucket, page, version])
+ const checkBatch = useCallback(async () => {
+  const data = await leadResponse(await fetch(`/api/leadpulse/batches?propertyId=${propertyId}`))
+  if (alive.current) { setBatch(data.batch); setBatchReady(true) }
+  return data.batch as ScoreBatch | null
+ }, [propertyId])
+ useEffect(() => { void checkBatch().catch(err => { if (alive.current) setError(err.message) }) }, [checkBatch])
+ const refresh = () => setVersion(value => value + 1)
+ async function continuePages(initial: ScoreBatch, owner: number) {
+  let current = initial
+  while (alive.current && !halted.current && owner === runOwner.current && current.state === 'running' && current.canContinue) {
+   current = await leadResponse(await fetch('/api/leadpulse/score', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ propertyId, batchId: current.requestId, requestId: current.requestId, action: 'continue' }) }))
+   if (alive.current && owner === runOwner.current) { setBatch(current); refresh() }
+  }
+ }
+ async function start(leadId?: string, retryBatchId?: string) {
+  if (busy || !batchReady || batch?.state === 'running') return
+  const owner = ++runOwner.current; halted.current = false; setBusy(true); setError(null)
+  try {
+   const request = await savedLeadRequest('score', { propertyId, ...(leadId ? { leadId } : {}), ...(retryBatchId ? { retryBatchId } : {}) })
+   const data = await leadResponse(await fetch('/api/leadpulse/score', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request.body) }))
+   request.acknowledge()
+   if (alive.current && owner === runOwner.current) { setBatch(data); refresh(); await continuePages(data, owner) }
+  } catch (err) { if (alive.current && owner === runOwner.current) setError(err instanceof Error ? err.message : 'Scoring could not be confirmed.') }
+  finally { if (alive.current && owner === runOwner.current) setBusy(false) }
+ }
+ async function resume() {
+  if (!batch || busy) return
+  const owner = ++runOwner.current; halted.current = false; setBusy(true); setError(null)
+  try { await continuePages(batch, owner) }
+  catch (err) { if (alive.current && owner === runOwner.current) setError(err instanceof Error ? err.message : 'Progress could not be confirmed.') }
+  finally { if (alive.current && owner === runOwner.current) setBusy(false) }
+ }
+ async function stop() {
+  if (!batch) return
+  halted.current = true; const owner = ++runOwner.current; setBusy(true); setError(null)
+  try {
+   const request = await savedLeadRequest('stop', { propertyId, batchId: batch.requestId, action: 'cancel' })
+   const data = await leadResponse(await fetch('/api/leadpulse/score', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request.body) }))
+   request.acknowledge(); if (alive.current && owner === runOwner.current) { setBatch(data); refresh() }
+  } catch (err) { if (alive.current && owner === runOwner.current) setError(err instanceof Error ? err.message : 'Stop could not be confirmed.') }
+  finally { if (alive.current && owner === runOwner.current) setBusy(false) }
+ }
+ return <div className="space-y-6 text-gray-900 dark:text-gray-100">
+  <header className="flex flex-wrap items-start justify-between gap-4">
+   <div><h1 className="flex items-center gap-2 text-2xl font-bold"><Sparkles className="text-indigo-500"/>LeadPulse</h1><p className="mt-1 text-sm text-gray-600 dark:text-gray-300">Understand and prioritize leads for {propertyName}.</p><p className="mt-1 text-xs text-gray-500">Scores use fixed rules. They are not conversion predictions or a trained model.</p></div>
+   <button className={button} disabled={busy || !batchReady || batch?.state === 'running'} onClick={() => void start()}>Rescore all property leads</button>
+  </header>
+  {error && <div role="alert" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">{error}</div>}
+  <section aria-label="Scoring progress" className="rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
+   <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-semibold">Saved scoring progress</h2><button className={secondary} disabled={busy} onClick={() => { setError(null); void checkBatch().then(refresh).catch(err => setError(err.message)) }}>Check saved progress</button></div>
+   {!batchReady ? <p className="mt-2 text-sm">Checking saved work before starting another run…</p> : batch ? <>
+    <p className="mt-3 text-sm" role="status">{batch.state === 'running' ? 'In progress' : batch.state === 'cancelled' ? 'Stopped' : batch.failed ? 'Finished with errors' : 'Completed'} · {batch.successful} of {batch.total} scored · {batch.failed} failed · {batch.pending} remaining</p>
+    <p className="mt-1 text-xs text-gray-500">Lead selection saved {new Date(batch.startedAt).toLocaleString()}. Each score uses the evidence available when it is calculated.</p>
+    <div className="mt-3 flex flex-wrap gap-2">{batch.state === 'running' && <><button className={button} disabled={busy || !batch.canContinue} onClick={() => void resume()}>Continue saved run</button><button className={secondary} onClick={() => void stop()}>Stop remaining work</button></>}{batch.state !== 'running' && batch.failed > 0 && <button className={button} disabled={busy} onClick={() => void start(undefined, batch.requestId)}>Retry failed leads</button>}</div>
+    {batch.state === 'running' && !batch.canContinue && <p className="mt-2 text-sm">The person who started this run can continue it. You can stop remaining work.</p>}
+    {batch.failed > 0 && <details className="mt-3 text-sm"><summary>Review failures{batch.failed > 20 ? ' (first 20)' : ''}</summary><ul className="mt-2">{batch.failures.map(item => <li key={item.leadId}>Lead {item.leadId}: {item.code === 'target_changed' ? 'Deleted or moved since the run began' : 'Score could not be saved; no partial score was kept'}</li>)}</ul></details>}
+   </> : <p className="mt-3 text-sm text-gray-500">No scoring run has been saved for this property.</p>}
+  </section>
+  <LeadPulseInsights key={`${propertyId}/${version}`} propertyId={propertyId}/>
+  <section className="overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
+   <div className="flex flex-wrap gap-3 border-b border-gray-200 p-4 dark:border-gray-700"><input aria-label="Search leads" maxLength={200} placeholder="Search name or email" className="min-w-40 flex-1 rounded-lg border border-gray-300 bg-transparent px-3 py-2 text-sm dark:border-gray-600" value={search} onChange={e => { setSearch(e.target.value); setPage(1) }}/><select aria-label="Score category" className="rounded-lg border border-gray-300 bg-transparent p-2 text-sm dark:border-gray-600" value={bucket} onChange={e => { setBucket(e.target.value); setPage(1) }}>{['all','hot','warm','cold','unqualified','unscored'].map(value => <option key={value} value={value}>{value === 'all' ? 'All score categories' : value[0].toUpperCase() + value.slice(1)}</option>)}</select></div>
+   {listError ? <div role="alert" className="p-4">{listError}<button className={secondary} onClick={refresh}>Retry loading leads</button></div> : loading ? <p className="p-6 text-sm">Loading leads…</p> : <><div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="bg-gray-50 text-gray-500 dark:bg-gray-900"><tr><th className="p-3">Score</th><th className="p-3">Lead</th><th className="p-3">Source</th><th className="p-3">Status</th></tr></thead><tbody>{leads.map(lead => <tr key={lead.id} className="border-t border-gray-100 dark:border-gray-700"><td className="p-3"><LeadScoreBadge score={lead.score} bucket={lead.score_bucket}/></td><td className="p-3"><button className="text-left font-medium text-indigo-600 dark:text-indigo-300" onClick={() => setSelected(lead)}>{[lead.first_name, lead.last_name].filter(Boolean).join(' ') || 'Unnamed lead'}</button><p className="text-xs text-gray-500">{lead.email}</p></td><td className="p-3">{lead.source || 'Unknown'}</td><td className="p-3">{lead.status.replaceAll('_',' ')}</td></tr>)}</tbody></table>{!leads.length && <p className="p-6 text-sm text-gray-500">No leads match these filters.</p>}</div><div className="flex items-center justify-between border-t border-gray-200 p-3 text-sm dark:border-gray-700"><p>{total} matching leads · Page {page} of {Math.max(1,pages)}</p><div className="flex gap-2"><button className={secondary} disabled={page <= 1} onClick={() => setPage(value => value - 1)}>Previous</button><button className={secondary} disabled={page >= pages} onClick={() => setPage(value => value + 1)}>Next</button></div></div></>}
+  </section>
+  {selected && <LeadScorePanel key={selected.id} propertyId={propertyId} lead={selected} version={version} rescore={() => start(selected.id)} disabled={busy || !batchReady || batch?.state === 'running'} close={() => setSelected(null)} changed={refresh}/>}
+ </div>
+}
+function LeadScorePanel({ propertyId, lead, version, rescore, disabled, close, changed }: { propertyId: string; lead: Lead; version: number; rescore: () => Promise<void>; disabled: boolean; close: () => void; changed: () => void }) {
+ const [refresh, setRefresh] = useState(0)
+ const readKey = `${lead.id}/${version}/${refresh}`
+ const [result, setResult] = useState<{key:string;score:LeadScore|null;error:string|null}|null>(null)
+ const loading = result?.key !== readKey, score = !loading ? result?.score : null, error = !loading ? result?.error : null
+ useEffect(() => {
+  const controller = new AbortController()
+  void fetch(`/api/leadpulse/score?leadId=${lead.id}`, {signal: controller.signal}).then(leadResponse).then(data => { if (!controller.signal.aborted) setResult({key:readKey,score:data.score,error:null}) }).catch(err => { if (!controller.signal.aborted) setResult({key:readKey,score:null,error:err.message}) })
+  return () => controller.abort()
+ }, [lead.id, readKey])
+ return <aside role="dialog" aria-modal="false" aria-label="Lead score and engagement" className="fixed inset-y-0 right-0 z-50 w-full max-w-lg overflow-y-auto border-l border-gray-200 bg-white p-5 shadow-2xl dark:border-gray-700 dark:bg-gray-800">
+  <header className="mb-5 flex items-start justify-between"><div><h2 className="text-lg font-semibold">{[lead.first_name,lead.last_name].filter(Boolean).join(' ') || 'Unnamed lead'}</h2><p className="text-sm text-gray-500">{lead.email}</p></div><button aria-label="Close lead details" onClick={close}><X/></button></header>
+  {loading ? <p className="flex items-center gap-2 text-sm"><RefreshCw className="h-4 w-4 animate-spin"/>Loading saved score…</p> : error ? <div role="alert">{error}<button className={secondary} onClick={() => setRefresh(value => value+1)}>Retry score read</button></div> : score ? <>
+   <ScoreBreakdown {...score} onRescore={() => void rescore()} isRescoring={disabled}/>
+   <div className="my-4 rounded-lg bg-gray-50 p-3 text-sm dark:bg-gray-900"><p>{score.provenance?.status === 'captured' ? 'Saved scoring evidence is available.' : 'This older score has no saved input snapshot. Rescore to capture current evidence.'}</p>{score.provenance?.status === 'captured' && <p className="mt-1 text-xs text-gray-500">{String(score.provenance.eventCount)} active events · {String(score.provenance.reportedEventCount)} staff reports · {String(score.provenance.legacyEventCount)} legacy events · {String(score.provenance.userMessageCount)} user messages. Historical values stay as scored.</p>}</div>
+   <LeadScoreReview key={score.id} propertyId={propertyId} leadId={lead.id} scoreId={score.id}/>
+   {score.workflowOutcomes && <p className="my-3 text-sm text-gray-500">Current follow-up context: {score.workflowOutcomes.sent} sent, {score.workflowOutcomes.failed} failed, {score.workflowOutcomes.pending} pending. These delivery counts do not change the saved score.</p>}
+  </> : <div className="my-4 rounded-lg border border-gray-200 p-4 dark:border-gray-700"><p className="mb-3 text-sm">This lead has not been scored. Opening it does not calculate a score.</p><button className={button} disabled={disabled} onClick={() => void rescore()}>Calculate score</button></div>}
+  <LeadEngagementHistory propertyId={propertyId} leadId={lead.id} changed={() => { setRefresh(value => value+1); changed() }}/>
+  <Link href="/dashboard/leads" className="mt-5 block text-sm text-indigo-600 dark:text-indigo-300">Open leads and tour management →</Link>
+ </aside>
+}

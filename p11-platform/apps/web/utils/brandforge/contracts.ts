@@ -140,16 +140,17 @@ export type BrandForgeContractV1 = z.infer<typeof brandForgeContractV1Schema>
 export type BrandSectionMeta = z.infer<typeof brandSectionMetaSchema>
 
 export const competitivePositioningEvidenceSchema = z.object({
-  competitorId: z.string().uuid(),
+  competitorId: z.string().regex(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i),
   competitorName: z.string().min(1),
   positioning: z.string().nullable(),
   brandVoice: z.string().nullable(),
   targetAudience: z.string().nullable(),
   messagingThemes: z.array(z.string()),
   source: z.object({
-    sourceType: z.literal('competitor_brand_intelligence'),
-    sourceId: z.string().uuid(),
-    captureId: z.string().uuid().nullable(),
+    sourceType: z.enum(['competitor_brand_intelligence', 'competitor_brand_review']),
+    reviewedClaims: z.array(z.object({category:z.string(),kind:z.enum(['source_claim','interpretation']),statement:z.string(),quote:z.string()})).optional(),
+    sourceId: z.string().regex(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i),
+    captureId: z.string().regex(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i).nullable(),
     sourceUrl: z.url().nullable(),
     observedAt: z.iso.datetime().nullable(),
   }),
@@ -157,10 +158,11 @@ export const competitivePositioningEvidenceSchema = z.object({
 
 export const competitivePositioningSnapshotSchema = z.object({
   schemaVersion: z.literal(BRAND_FORGE_COMPETITIVE_SNAPSHOT_VERSION),
-  propertyId: z.string().uuid(),
+  propertyId: z.string().regex(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i),
   vertical: brandForgeVerticalSchema,
   generatedAt: z.iso.datetime(),
   evidence: z.array(competitivePositioningEvidenceSchema),
+  coverage: z.object({activeCompetitors:z.number().int().nonnegative(),reviewedCompetitors:z.number().int().nonnegative(),limitations:z.string()}).optional(),
   marketGaps: z.array(z.string()),
   websiteExpressionOpportunities: z.array(z.string()),
   sourceHash: z.string().regex(/^[0-9a-f]{64}$/),
@@ -263,6 +265,8 @@ export const brandForgeGeneratedContentSchema = z.object({
 })
 
 const brandForgeWorkflowBaseSchema = z.object({
+  operationId: z.string().uuid().optional(),
+  operationToken: z.string().uuid().optional(),
   brandAssetId: z.string().uuid(),
   propertyId: z.string().uuid(),
   orgId: z.string().uuid(),
