@@ -14,6 +14,11 @@ export function CRMBulkTransfers({propertyId,canManage,onReviewTransfer}:{proper
  useEffect(()=>{alive.current=true;return()=>{alive.current=false;reloadController.current?.abort();selected.current=null}},[])
  const review=useCallback(async(id:string)=>{selected.current=id;const seq=++sequence.current;const data=await crmResponse(await fetch(`/api/crm/batches?${new URLSearchParams({propertyId,batchId:id})}`));if(alive.current&&selected.current===id&&sequence.current===seq){setPreview(data);setPaused(data.deliveryPaused)}},[propertyId])
  const reload=useCallback(async()=>{reloadController.current?.abort();const controller=new AbortController();reloadController.current=controller;const data=await crmResponse(await fetch(`/api/crm/batches?${new URLSearchParams({propertyId,page:String(page)})}`,{signal:controller.signal}));if(alive.current&&!controller.signal.aborted){setBatches(data.batches);setPages(data.pages);setPaused(data.deliveryPaused);if(selected.current)await review(selected.current)}},[propertyId,page,review])
+ useEffect(()=>{
+  const params=new URLSearchParams(window.location.search),batchId=params.get('batchId')
+  if(params.get('propertyId')!==propertyId||!batchId||!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(batchId))return
+  void review(batchId).catch(err=>{if(alive.current)setError(err.message)})
+ },[propertyId,review])
  useEffect(()=>{void reload().catch(err=>{if(alive.current&&err.name!=='AbortError')setError(err.message)})},[reload])
  useEffect(()=>{
   const controller=new AbortController();setLoadingLeads(true)

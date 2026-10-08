@@ -1,4 +1,5 @@
 'use client';
+import { prepareLeadBatch } from '@/utils/crm/prepare-lead-batch';
 import {LumaConversationInbox} from '@/components/lumaleasing/LumaConversationInbox';
 import { LeadRecordEditor, LeadRecordRecovery, LeadRecordHistory, LeadFollowupControls } from '@/components/leads/LeadRecordControls';
 import { useLeadRecords, type RecordLead, type LeadRecordController } from '@/utils/leads/use-lead-records';
@@ -1095,7 +1096,8 @@ function LeadsWorkspace() {
     // Bulk CRM sync
     const [selectedLeads, setSelectedLeads] = useState<Set<string>>(new Set());
     const [syncingToCRM, setSyncingToCRM] = useState(false);
-    const [syncSuccess, setSyncSuccess] = useState<string | null>(null);
+    const [syncError, setSyncError] = useState<string | null>(null);
+    const syncBusy = useRef(false);
     const fetchLeads = useCallback(async () => {
         if (!currentProperty?.id)
             return;
@@ -1166,39 +1168,17 @@ function LeadsWorkspace() {
     const totalLeads = data?.pagination.total || 0;
     const statusSummary = data?.statusSummary || {};
     const handleBulkSyncToCRM = async () => {
-        if (selectedLeads.size === 0)
-            return;
+        if (!currentProperty?.id || !selectedLeads.size || syncBusy.current || !recordController.canManage) return;
+        syncBusy.current = true;
         setSyncingToCRM(true);
-        setSyncSuccess(null);
-        setError(null);
+        setSyncError(null);
         try {
-            const response = await fetch('/api/integrations/crm', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    action: 'bulk-sync',
-                    propertyId: currentProperty?.id,
-                    leadIds: Array.from(selectedLeads),
-                }),
-            });
-            const result = await response.json();
-            if (result.success || result.message) {
-                setSyncSuccess(result.message || `Syncing ${selectedLeads.size} leads to CRM...`);
-                setSelectedLeads(new Set());
-                // Refresh leads after a short delay to show updated sync status
-                setTimeout(() => {
-                    fetchLeads();
-                    setSyncSuccess(null);
-                }, 2000);
-            }
-            else {
-                setError(result.error || 'Bulk sync failed');
-            }
-        }
-        catch (err) {
-            setError(err instanceof Error ? err.message : 'Failed to sync leads');
-        }
-        finally {
+            const reviewUrl = await prepareLeadBatch(currentProperty.id, Array.from(selectedLeads));
+            window.location.assign(reviewUrl);
+        } catch (err) {
+            setSyncError(err instanceof Error ? err.message : 'CRM review could not be prepared. Check saved batches before retrying.');
+        } finally {
+            syncBusy.current = false;
             setSyncingToCRM(false);
         }
     };
@@ -1241,13 +1221,13 @@ function LeadsWorkspace() {
         </div>
         
         <div className="flex items-center gap-3">
-          {selectedLeads.size > 0 && (<button onClick={handleBulkSyncToCRM} disabled={syncingToCRM} className="flex items-center gap-2 px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors shadow-lg shadow-teal-500/20 disabled:opacity-50">
+          {selectedLeads.size > 0 && (<button onClick={handleBulkSyncToCRM} disabled={syncingToCRM || !recordController.canManage} className="flex items-center gap-2 px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors shadow-lg shadow-teal-500/20 disabled:opacity-50">
               {syncingToCRM ? (<>
                   <Loader2 size={16} className="animate-spin"/>
-                  Syncing...
+                  Preparing review...
                 </>) : (<>
                   <Upload size={16}/>
-                  Sync {selectedLeads.size} to CRM
+                  Review {selectedLeads.size} for CRM
                 </>)}
             </button>)}
           <button onClick={fetchLeads} disabled={loading} className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors disabled:opacity-50">
@@ -1282,11 +1262,11 @@ function LeadsWorkspace() {
         })}
       </div>
 
-      {/* Bulk Sync Alert */}
-      {syncSuccess && (<div className="bg-teal-50 border border-teal-200 rounded-xl p-4 flex items-center gap-3">
-          <CheckCircle2 className="text-teal-600" size={20}/>
-          <p className="text-teal-800">{syncSuccess}</p>
-        </div>)}
+      {syncError && <div role="alert" className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-amber-900">
+        <p className="font-medium">CRM review could not be prepared</p>
+        <p className="text-sm">{syncError}</p>
+        <a href="/dashboard/settings/crm" className="underline text-sm">Check saved CRM transfers</a>
+      </div>}
 
       {/* CRM Sync Info */}
       {unsyncedLeads.length > 0 && (<div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
@@ -1298,7 +1278,7 @@ function LeadsWorkspace() {
                   {unsyncedLeads.length} lead{unsyncedLeads.length !== 1 ? 's' : ''} not synced to CRM
                 </p>
                 <p className="text-sm text-amber-700 mt-1">
-                  Select leads below and click &quot;Sync to CRM&quot; to push them to your connected CRM.
+                  Select leads below to review their CRM transfer. Existing links and leads needing attention are shown before anything is sent.
                 </p>
               </div>
             </div>
