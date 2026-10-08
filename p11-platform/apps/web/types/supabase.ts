@@ -1,4 +1,4 @@
-// schema_migration_version: 20261002212425
+// schema_migration_version: 20261007223000
 // Generated from the qualified production-schema upgrade rehearsal.
 export type Json =
   | string
@@ -33192,6 +33192,1287 @@ export type Database = {
           },
         ]
       }
+      property_intelligence_changes: {
+        Row: {
+          actor_id: string
+          after_value: Json
+          before_value: Json | null
+          created_at: string
+          id: string
+          input: Json
+          org_id: string
+          property_id: string
+          result: Json
+        }
+        Insert: {
+          actor_id: string
+          after_value: Json
+          before_value?: Json | null
+          created_at?: string
+          id: string
+          input: Json
+          org_id: string
+          property_id: string
+          result: Json
+        }
+        Update: {
+          actor_id?: string
+          after_value?: Json
+          before_value?: Json | null
+          created_at?: string
+          id?: string
+          input?: Json
+          org_id?: string
+          property_id?: string
+          result?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "property_intelligence_changes_actor_id_fkey"
+            columns: ["actor_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_intelligence_changes_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_intelligence_changes_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_intelligence_changes_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "property_intelligence_changes_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+        ]
+      }
+      property_intelligence_documents: {
+        Row: {
+          actor_id: string
+          created_at: string
+          id: string
+          key: string
+          kind: string
+          locked: boolean
+          org_id: string
+          payload: Json
+          property_id: string
+          revision: number
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          actor_id: string
+          created_at?: string
+          id?: string
+          key: string
+          kind: string
+          locked?: boolean
+          org_id: string
+          payload: Json
+          property_id: string
+          revision?: number
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          actor_id?: string
+          created_at?: string
+          id?: string
+          key?: string
+          kind?: string
+          locked?: boolean
+          org_id?: string
+          payload?: Json
+          property_id?: string
+          revision?: number
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "property_intelligence_documents_actor_id_fkey"
+            columns: ["actor_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_intelligence_documents_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_intelligence_documents_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_intelligence_documents_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "property_intelligence_documents_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+        ]
+      }
+      siteforge_client_decisions: {
+        Row: {
+          artifact_content_hash: string
+          artifact_id: string
+          canonical_url: string | null
+          certification_evidence_id: string | null
+          certification_report_hash: string | null
+          certified_at: string | null
+          created_at: string
+          decision: string
+          id: string
+          org_id: string
+          property_id: string
+          rationale: string
+          review_session_id: string
+          review_token_id: string | null
+          reviewer_email: string | null
+          reviewer_name: string | null
+          website_id: string
+        }
+        Insert: {
+          artifact_content_hash: string
+          artifact_id: string
+          canonical_url?: string | null
+          certification_evidence_id?: string | null
+          certification_report_hash?: string | null
+          certified_at?: string | null
+          created_at?: string
+          decision: string
+          id?: string
+          org_id: string
+          property_id: string
+          rationale: string
+          review_session_id: string
+          review_token_id?: string | null
+          reviewer_email?: string | null
+          reviewer_name?: string | null
+          website_id: string
+        }
+        Update: {
+          artifact_content_hash?: string
+          artifact_id?: string
+          canonical_url?: string | null
+          certification_evidence_id?: string | null
+          certification_report_hash?: string | null
+          certified_at?: string | null
+          created_at?: string
+          decision?: string
+          id?: string
+          org_id?: string
+          property_id?: string
+          rationale?: string
+          review_session_id?: string
+          review_token_id?: string | null
+          reviewer_email?: string | null
+          reviewer_name?: string | null
+          website_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "siteforge_client_decision_session_tenant_fkey"
+            columns: [
+              "review_session_id",
+              "org_id",
+              "property_id",
+              "website_id",
+            ]
+            isOneToOne: false
+            referencedRelation: "siteforge_review_sessions"
+            referencedColumns: ["id", "org_id", "property_id", "website_id"]
+          },
+          {
+            foreignKeyName: "siteforge_client_decision_token_tenant_fkey"
+            columns: [
+              "review_token_id",
+              "review_session_id",
+              "org_id",
+              "property_id",
+              "website_id",
+            ]
+            isOneToOne: false
+            referencedRelation: "siteforge_review_tokens"
+            referencedColumns: [
+              "id",
+              "review_session_id",
+              "org_id",
+              "property_id",
+              "website_id",
+            ]
+          },
+          {
+            foreignKeyName: "siteforge_client_decisions_artifact_id_fkey"
+            columns: ["artifact_id"]
+            isOneToOne: false
+            referencedRelation: "siteforge_blueprint_versions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_client_decisions_certification_evidence_id_fkey"
+            columns: ["certification_evidence_id"]
+            isOneToOne: false
+            referencedRelation: "siteforge_certification_evidence"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_client_decisions_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_client_decisions_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_client_decisions_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "siteforge_client_decisions_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "siteforge_client_decisions_review_session_id_fkey"
+            columns: ["review_session_id"]
+            isOneToOne: false
+            referencedRelation: "siteforge_review_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_client_decisions_review_token_id_fkey"
+            columns: ["review_token_id"]
+            isOneToOne: false
+            referencedRelation: "siteforge_review_tokens"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_client_decisions_website_id_fkey"
+            columns: ["website_id"]
+            isOneToOne: false
+            referencedRelation: "property_websites"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_client_decisions_website_id_fkey"
+            columns: ["website_id"]
+            isOneToOne: false
+            referencedRelation: "website_summary"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      siteforge_launch_confirmations: {
+        Row: {
+          artifact_content_hash: string
+          auth_event_id: string | null
+          auth_session_id: string | null
+          authentication_time: string | null
+          confirmation_hash: string
+          confirmation_kind: string
+          confirmation_payload: Json
+          confirmed_at: string
+          confirmed_by: string
+          created_at: string
+          expires_at: string
+          factor_id: string | null
+          id: string
+          ip_address_hash: string | null
+          launch_policy_content_hash: string
+          launch_policy_id: string
+          meets_required_aal: boolean | null
+          observed_aal: string
+          org_id: string
+          payload_hash: string
+          previous_confirmation_hash: string | null
+          property_id: string
+          reauthenticated_at: string | null
+          release_id: string
+          request_id: string
+          required_aal: string
+          user_agent_hash: string | null
+          website_id: string
+        }
+        Insert: {
+          artifact_content_hash: string
+          auth_event_id?: string | null
+          auth_session_id?: string | null
+          authentication_time?: string | null
+          confirmation_hash: string
+          confirmation_kind: string
+          confirmation_payload: Json
+          confirmed_at: string
+          confirmed_by: string
+          created_at?: string
+          expires_at: string
+          factor_id?: string | null
+          id?: string
+          ip_address_hash?: string | null
+          launch_policy_content_hash: string
+          launch_policy_id: string
+          meets_required_aal?: boolean | null
+          observed_aal: string
+          org_id: string
+          payload_hash: string
+          previous_confirmation_hash?: string | null
+          property_id: string
+          reauthenticated_at?: string | null
+          release_id: string
+          request_id: string
+          required_aal: string
+          user_agent_hash?: string | null
+          website_id: string
+        }
+        Update: {
+          artifact_content_hash?: string
+          auth_event_id?: string | null
+          auth_session_id?: string | null
+          authentication_time?: string | null
+          confirmation_hash?: string
+          confirmation_kind?: string
+          confirmation_payload?: Json
+          confirmed_at?: string
+          confirmed_by?: string
+          created_at?: string
+          expires_at?: string
+          factor_id?: string | null
+          id?: string
+          ip_address_hash?: string | null
+          launch_policy_content_hash?: string
+          launch_policy_id?: string
+          meets_required_aal?: boolean | null
+          observed_aal?: string
+          org_id?: string
+          payload_hash?: string
+          previous_confirmation_hash?: string | null
+          property_id?: string
+          reauthenticated_at?: string | null
+          release_id?: string
+          request_id?: string
+          required_aal?: string
+          user_agent_hash?: string | null
+          website_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "siteforge_launch_confirmation_policy_tenant_fkey"
+            columns: [
+              "launch_policy_id",
+              "org_id",
+              "property_id",
+              "website_id",
+              "launch_policy_content_hash",
+            ]
+            isOneToOne: false
+            referencedRelation: "siteforge_launch_policies"
+            referencedColumns: [
+              "id",
+              "org_id",
+              "property_id",
+              "website_id",
+              "content_hash",
+            ]
+          },
+          {
+            foreignKeyName: "siteforge_launch_confirmation_release_tenant_fkey"
+            columns: [
+              "release_id",
+              "org_id",
+              "property_id",
+              "website_id",
+              "artifact_content_hash",
+            ]
+            isOneToOne: false
+            referencedRelation: "siteforge_launch_releases"
+            referencedColumns: [
+              "id",
+              "org_id",
+              "property_id",
+              "website_id",
+              "artifact_content_hash",
+            ]
+          },
+          {
+            foreignKeyName: "siteforge_launch_confirmations_confirmed_by_fkey"
+            columns: ["confirmed_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_launch_confirmations_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      siteforge_package_jobs: {
+        Row: {
+          actor_id: string
+          created_at: string
+          error_message: string | null
+          id: string
+          input_file_id: string | null
+          input_path: string | null
+          instructions: string
+          lease_until: string | null
+          model: string
+          org_id: string
+          package_bytes: number | null
+          package_hash: string | null
+          package_path: string | null
+          parent_id: string | null
+          property_id: string
+          request_hash: string
+          response_id: string | null
+          source_hash: string
+          source_snapshot: Json
+          state: string
+          target: string
+          updated_at: string
+          usage: Json | null
+        }
+        Insert: {
+          actor_id: string
+          created_at?: string
+          error_message?: string | null
+          id: string
+          input_file_id?: string | null
+          input_path?: string | null
+          instructions: string
+          lease_until?: string | null
+          model?: string
+          org_id: string
+          package_bytes?: number | null
+          package_hash?: string | null
+          package_path?: string | null
+          parent_id?: string | null
+          property_id: string
+          request_hash: string
+          response_id?: string | null
+          source_hash: string
+          source_snapshot: Json
+          state?: string
+          target: string
+          updated_at?: string
+          usage?: Json | null
+        }
+        Update: {
+          actor_id?: string
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          input_file_id?: string | null
+          input_path?: string | null
+          instructions?: string
+          lease_until?: string | null
+          model?: string
+          org_id?: string
+          package_bytes?: number | null
+          package_hash?: string | null
+          package_path?: string | null
+          parent_id?: string | null
+          property_id?: string
+          request_hash?: string
+          response_id?: string | null
+          source_hash?: string
+          source_snapshot?: Json
+          state?: string
+          target?: string
+          updated_at?: string
+          usage?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "siteforge_package_jobs_actor_id_fkey"
+            columns: ["actor_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_package_jobs_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_package_jobs_parent_id_fkey"
+            columns: ["parent_id"]
+            isOneToOne: false
+            referencedRelation: "siteforge_package_jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_package_jobs_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_package_jobs_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "siteforge_package_jobs_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+        ]
+      }
+      siteforge_package_releases: {
+        Row: {
+          actor_id: string
+          approval_id: string | null
+          created_at: string
+          id: string
+          job_id: string
+          kind: string
+          org_id: string
+          package_hash: string
+          preview_id: string | null
+          property_id: string
+          receipt: Json
+          state: string
+          target_id: string
+          target_snapshot: Json
+          updated_at: string
+        }
+        Insert: {
+          actor_id: string
+          approval_id?: string | null
+          created_at?: string
+          id: string
+          job_id: string
+          kind: string
+          org_id: string
+          package_hash: string
+          preview_id?: string | null
+          property_id: string
+          receipt?: Json
+          state: string
+          target_id: string
+          target_snapshot: Json
+          updated_at?: string
+        }
+        Update: {
+          actor_id?: string
+          approval_id?: string | null
+          created_at?: string
+          id?: string
+          job_id?: string
+          kind?: string
+          org_id?: string
+          package_hash?: string
+          preview_id?: string | null
+          property_id?: string
+          receipt?: Json
+          state?: string
+          target_id?: string
+          target_snapshot?: Json
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "siteforge_package_releases_actor_id_fkey"
+            columns: ["actor_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_package_releases_approval_id_fkey"
+            columns: ["approval_id"]
+            isOneToOne: false
+            referencedRelation: "siteforge_package_releases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_package_releases_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "siteforge_package_jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_package_releases_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_package_releases_preview_id_fkey"
+            columns: ["preview_id"]
+            isOneToOne: false
+            referencedRelation: "siteforge_package_releases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_package_releases_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_package_releases_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "siteforge_package_releases_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "siteforge_package_releases_target_id_fkey"
+            columns: ["target_id"]
+            isOneToOne: false
+            referencedRelation: "siteforge_wordpress_targets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      siteforge_review_comments: {
+        Row: {
+          anchor: Json
+          artifact_id: string
+          author_email: string | null
+          author_name: string | null
+          author_profile_id: string | null
+          author_type: string
+          body: string
+          category: string
+          created_at: string
+          disposition_reason: string | null
+          id: string
+          org_id: string
+          page_path: string
+          parent_comment_id: string | null
+          property_id: string
+          resulting_artifact_id: string | null
+          review_session_id: string
+          revision_round_id: string | null
+          section_id: string | null
+          semantic_operations: Json
+          status: string
+          updated_at: string
+          viewport: string | null
+          website_id: string
+        }
+        Insert: {
+          anchor?: Json
+          artifact_id: string
+          author_email?: string | null
+          author_name?: string | null
+          author_profile_id?: string | null
+          author_type: string
+          body: string
+          category?: string
+          created_at?: string
+          disposition_reason?: string | null
+          id?: string
+          org_id: string
+          page_path: string
+          parent_comment_id?: string | null
+          property_id: string
+          resulting_artifact_id?: string | null
+          review_session_id: string
+          revision_round_id?: string | null
+          section_id?: string | null
+          semantic_operations?: Json
+          status?: string
+          updated_at?: string
+          viewport?: string | null
+          website_id: string
+        }
+        Update: {
+          anchor?: Json
+          artifact_id?: string
+          author_email?: string | null
+          author_name?: string | null
+          author_profile_id?: string | null
+          author_type?: string
+          body?: string
+          category?: string
+          created_at?: string
+          disposition_reason?: string | null
+          id?: string
+          org_id?: string
+          page_path?: string
+          parent_comment_id?: string | null
+          property_id?: string
+          resulting_artifact_id?: string | null
+          review_session_id?: string
+          revision_round_id?: string | null
+          section_id?: string | null
+          semantic_operations?: Json
+          status?: string
+          updated_at?: string
+          viewport?: string | null
+          website_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "siteforge_review_comment_parent_tenant_fkey"
+            columns: [
+              "parent_comment_id",
+              "review_session_id",
+              "org_id",
+              "property_id",
+              "website_id",
+            ]
+            isOneToOne: false
+            referencedRelation: "siteforge_review_comments"
+            referencedColumns: [
+              "id",
+              "review_session_id",
+              "org_id",
+              "property_id",
+              "website_id",
+            ]
+          },
+          {
+            foreignKeyName: "siteforge_review_comment_round_tenant_fkey"
+            columns: [
+              "revision_round_id",
+              "review_session_id",
+              "org_id",
+              "property_id",
+              "website_id",
+            ]
+            isOneToOne: false
+            referencedRelation: "siteforge_revision_rounds"
+            referencedColumns: [
+              "id",
+              "review_session_id",
+              "org_id",
+              "property_id",
+              "website_id",
+            ]
+          },
+          {
+            foreignKeyName: "siteforge_review_comment_session_tenant_fkey"
+            columns: [
+              "review_session_id",
+              "org_id",
+              "property_id",
+              "website_id",
+            ]
+            isOneToOne: false
+            referencedRelation: "siteforge_review_sessions"
+            referencedColumns: ["id", "org_id", "property_id", "website_id"]
+          },
+          {
+            foreignKeyName: "siteforge_review_comments_artifact_id_fkey"
+            columns: ["artifact_id"]
+            isOneToOne: false
+            referencedRelation: "siteforge_blueprint_versions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_review_comments_author_profile_id_fkey"
+            columns: ["author_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_review_comments_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_review_comments_parent_comment_id_fkey"
+            columns: ["parent_comment_id"]
+            isOneToOne: false
+            referencedRelation: "siteforge_review_comments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_review_comments_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_review_comments_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "siteforge_review_comments_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "siteforge_review_comments_resulting_artifact_id_fkey"
+            columns: ["resulting_artifact_id"]
+            isOneToOne: false
+            referencedRelation: "siteforge_blueprint_versions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_review_comments_review_session_id_fkey"
+            columns: ["review_session_id"]
+            isOneToOne: false
+            referencedRelation: "siteforge_review_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_review_comments_revision_round_id_fkey"
+            columns: ["revision_round_id"]
+            isOneToOne: false
+            referencedRelation: "siteforge_revision_rounds"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_review_comments_website_id_fkey"
+            columns: ["website_id"]
+            isOneToOne: false
+            referencedRelation: "property_websites"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_review_comments_website_id_fkey"
+            columns: ["website_id"]
+            isOneToOne: false
+            referencedRelation: "website_summary"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      siteforge_review_sessions: {
+        Row: {
+          artifact_content_hash: string
+          artifact_id: string
+          client_safe_summary: Json
+          closed_at: string | null
+          closes_at: string | null
+          id: string
+          instructions: string | null
+          opened_at: string
+          opened_by: string | null
+          org_id: string
+          property_id: string
+          status: string
+          title: string
+          website_id: string
+        }
+        Insert: {
+          artifact_content_hash: string
+          artifact_id: string
+          client_safe_summary?: Json
+          closed_at?: string | null
+          closes_at?: string | null
+          id?: string
+          instructions?: string | null
+          opened_at?: string
+          opened_by?: string | null
+          org_id: string
+          property_id: string
+          status?: string
+          title: string
+          website_id: string
+        }
+        Update: {
+          artifact_content_hash?: string
+          artifact_id?: string
+          client_safe_summary?: Json
+          closed_at?: string | null
+          closes_at?: string | null
+          id?: string
+          instructions?: string | null
+          opened_at?: string
+          opened_by?: string | null
+          org_id?: string
+          property_id?: string
+          status?: string
+          title?: string
+          website_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "siteforge_review_sessions_artifact_id_fkey"
+            columns: ["artifact_id"]
+            isOneToOne: false
+            referencedRelation: "siteforge_blueprint_versions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_review_sessions_opened_by_fkey"
+            columns: ["opened_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_review_sessions_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_review_sessions_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_review_sessions_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "siteforge_review_sessions_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "siteforge_review_sessions_website_id_fkey"
+            columns: ["website_id"]
+            isOneToOne: false
+            referencedRelation: "property_websites"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_review_sessions_website_id_fkey"
+            columns: ["website_id"]
+            isOneToOne: false
+            referencedRelation: "website_summary"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_review_tenant_fkey"
+            columns: ["website_id", "org_id", "property_id"]
+            isOneToOne: false
+            referencedRelation: "property_websites"
+            referencedColumns: ["id", "org_id", "property_id"]
+          },
+        ]
+      }
+      siteforge_review_tokens: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          expires_at: string
+          id: string
+          last_used_at: string | null
+          org_id: string
+          permissions: Json
+          property_id: string
+          review_session_id: string
+          reviewer_email: string | null
+          reviewer_name: string | null
+          revoked_at: string | null
+          token_hash: string
+          website_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          expires_at: string
+          id?: string
+          last_used_at?: string | null
+          org_id: string
+          permissions?: Json
+          property_id: string
+          review_session_id: string
+          reviewer_email?: string | null
+          reviewer_name?: string | null
+          revoked_at?: string | null
+          token_hash: string
+          website_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          expires_at?: string
+          id?: string
+          last_used_at?: string | null
+          org_id?: string
+          permissions?: Json
+          property_id?: string
+          review_session_id?: string
+          reviewer_email?: string | null
+          reviewer_name?: string | null
+          revoked_at?: string | null
+          token_hash?: string
+          website_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "siteforge_review_token_session_tenant_fkey"
+            columns: [
+              "review_session_id",
+              "org_id",
+              "property_id",
+              "website_id",
+            ]
+            isOneToOne: false
+            referencedRelation: "siteforge_review_sessions"
+            referencedColumns: ["id", "org_id", "property_id", "website_id"]
+          },
+          {
+            foreignKeyName: "siteforge_review_tokens_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_review_tokens_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_review_tokens_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_review_tokens_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "siteforge_review_tokens_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "siteforge_review_tokens_review_session_id_fkey"
+            columns: ["review_session_id"]
+            isOneToOne: false
+            referencedRelation: "siteforge_review_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_review_tokens_website_id_fkey"
+            columns: ["website_id"]
+            isOneToOne: false
+            referencedRelation: "property_websites"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_review_tokens_website_id_fkey"
+            columns: ["website_id"]
+            isOneToOne: false
+            referencedRelation: "website_summary"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      siteforge_revision_rounds: {
+        Row: {
+          assigned_to: string | null
+          created_at: string
+          due_at: string | null
+          id: string
+          org_id: string
+          property_id: string
+          requested_by_email: string | null
+          requested_by_name: string | null
+          resulting_artifact_id: string | null
+          resulting_content_hash: string | null
+          review_session_id: string
+          round_number: number
+          status: string
+          updated_at: string
+          website_id: string
+        }
+        Insert: {
+          assigned_to?: string | null
+          created_at?: string
+          due_at?: string | null
+          id?: string
+          org_id: string
+          property_id: string
+          requested_by_email?: string | null
+          requested_by_name?: string | null
+          resulting_artifact_id?: string | null
+          resulting_content_hash?: string | null
+          review_session_id: string
+          round_number: number
+          status?: string
+          updated_at?: string
+          website_id: string
+        }
+        Update: {
+          assigned_to?: string | null
+          created_at?: string
+          due_at?: string | null
+          id?: string
+          org_id?: string
+          property_id?: string
+          requested_by_email?: string | null
+          requested_by_name?: string | null
+          resulting_artifact_id?: string | null
+          resulting_content_hash?: string | null
+          review_session_id?: string
+          round_number?: number
+          status?: string
+          updated_at?: string
+          website_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "siteforge_revision_round_session_tenant_fkey"
+            columns: [
+              "review_session_id",
+              "org_id",
+              "property_id",
+              "website_id",
+            ]
+            isOneToOne: false
+            referencedRelation: "siteforge_review_sessions"
+            referencedColumns: ["id", "org_id", "property_id", "website_id"]
+          },
+          {
+            foreignKeyName: "siteforge_revision_rounds_assigned_to_fkey"
+            columns: ["assigned_to"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_revision_rounds_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_revision_rounds_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_revision_rounds_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "siteforge_revision_rounds_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "siteforge_revision_rounds_resulting_artifact_id_fkey"
+            columns: ["resulting_artifact_id"]
+            isOneToOne: false
+            referencedRelation: "siteforge_blueprint_versions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_revision_rounds_review_session_id_fkey"
+            columns: ["review_session_id"]
+            isOneToOne: false
+            referencedRelation: "siteforge_review_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_revision_rounds_website_id_fkey"
+            columns: ["website_id"]
+            isOneToOne: false
+            referencedRelation: "property_websites"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_revision_rounds_website_id_fkey"
+            columns: ["website_id"]
+            isOneToOne: false
+            referencedRelation: "website_summary"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       brand_books: {
@@ -38729,6 +40010,120 @@ export type Database = {
         Returns: Json
       }
       validate_property_unit_data: { Args: { p_data: Json }; Returns: boolean }
+      decide_property_intelligence: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      record_siteforge_package_download: {
+        Args: { p_actor_id: string; p_job_id: string; p_property_id: string }
+        Returns: boolean
+      }
+      reserve_shared_execution_budget: {
+        Args: {
+          p_browser_runs?: number
+          p_budget_id: string
+          p_cost_cents?: number
+          p_input_tokens?: number
+          p_model_attempts?: number
+          p_output_tokens?: number
+          p_provider_calls?: number
+          p_repair_operations?: number
+        }
+        Returns: {
+          created_at: string
+          deadline_at: string | null
+          id: string
+          job_id: string | null
+          max_browser_runs: number
+          max_cost_cents: number
+          max_input_tokens: number
+          max_model_attempts: number
+          max_output_tokens: number
+          max_provider_calls: number
+          max_repair_operations: number
+          max_wall_seconds: number
+          metadata: Json
+          model_policy: Json
+          org_id: string
+          policy_version: string
+          property_id: string | null
+          reserved_cost_cents: number
+          reserved_input_tokens: number
+          reserved_output_tokens: number
+          started_at: string
+          status: string
+          updated_at: string
+          used_browser_runs: number
+          used_cost_cents: number
+          used_input_tokens: number
+          used_model_attempts: number
+          used_output_tokens: number
+          used_provider_calls: number
+          used_repair_operations: number
+          website_id: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "shared_execution_budgets"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      settle_shared_execution_budget: {
+        Args: {
+          p_budget_id: string
+          p_reserved_cost_cents?: number
+          p_reserved_input_tokens?: number
+          p_reserved_output_tokens?: number
+          p_used_cost_cents?: number
+          p_used_input_tokens?: number
+          p_used_output_tokens?: number
+        }
+        Returns: {
+          created_at: string
+          deadline_at: string | null
+          id: string
+          job_id: string | null
+          max_browser_runs: number
+          max_cost_cents: number
+          max_input_tokens: number
+          max_model_attempts: number
+          max_output_tokens: number
+          max_provider_calls: number
+          max_repair_operations: number
+          max_wall_seconds: number
+          metadata: Json
+          model_policy: Json
+          org_id: string
+          policy_version: string
+          property_id: string | null
+          reserved_cost_cents: number
+          reserved_input_tokens: number
+          reserved_output_tokens: number
+          started_at: string
+          status: string
+          updated_at: string
+          used_browser_runs: number
+          used_cost_cents: number
+          used_input_tokens: number
+          used_model_attempts: number
+          used_output_tokens: number
+          used_provider_calls: number
+          used_repair_operations: number
+          website_id: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "shared_execution_budgets"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
     }
     Enums: {
       geo_crawl_status_enum: "queued" | "running" | "completed" | "failed"

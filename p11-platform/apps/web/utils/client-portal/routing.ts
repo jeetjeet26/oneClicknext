@@ -11,6 +11,7 @@ export function clientApiAllowed(path: string, method: string) {
   if (
     [
       "/api/client-portal/overview",
+      "/api/client/intelligence",
       "/api/client-portal/conversations",
     ].includes(path)
   )

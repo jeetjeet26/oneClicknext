@@ -79,7 +79,7 @@ export const navigationGroups = [
         href: "/dashboard/siteforge",
         label: "SiteForge",
         icon: Globe,
-        description: "Websites and briefs",
+        description: "Website generation and packages",
       },
       {
         href: "/dashboard/forgestudio",
@@ -98,6 +98,12 @@ export const navigationGroups = [
         label: "PropertyAudit",
         icon: Search,
         description: "Visibility and website health",
+      },
+      {
+        href: "/dashboard/intelligence",
+        label: "Property intelligence",
+        icon: Sparkles,
+        description: "Reviewed facts, data and results",
       },
       {
         href: "/dashboard/bi",
@@ -163,6 +169,7 @@ export const settingsNavigation = {
 };
 export const portalNavigation = [
   { href: "/client", label: "Overview", icon: LayoutDashboard },
+  { href: "/client/insights", label: "Insights", icon: Sparkles },
   { href: "/client/performance", label: "Performance", icon: BarChart3 },
   { href: "/client/properties", label: "Properties", icon: Building2 },
   { href: "/client/reports", label: "Reports", icon: FileText },

@@ -6,6 +6,10 @@
   "installCommand": "npm ci --ignore-scripts",
   "crons": [
     {
+      "path": "/api/cron/siteforge-packages",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/workflows/process",
       "schedule": "*/10 * * * *"
     },

@@ -1,0 +1,42 @@
+/* P11's requested understated light canvas, including when the host uses dark mode. */
+.surface {
+  background: #f7f7f6 !important;
+  color: #222 !important;
+  color-scheme: light;
+  --console-line: #e6e6e3;
+  --console-ink: #222;
+  --console-quiet: #656565;
+  --primary: #a53212;
+  --primary-foreground: #fff;
+}
+.surface :global(.console-panel) {
+  background: #fff !important;
+  color: #222 !important;
+  border-color: #e6e6e3 !important;
+}
+.surface :global(.console-brand),
+.surface :global(.portal-account) {
+  color: #222;
+}
+.surface :global(.console-action-primary) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 10px 16px;
+  border-radius: 8px;
+  background: #a53212;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 500;
+}
+.surface :global(.console-action-primary:disabled) {
+  opacity: 0.55;
+}
+.surface :global(.console-action) {
+  min-height: 44px;
+}
+
+.surface :global(.console-panel.overflow-x-auto) {
+  overflow-x: auto;
+}

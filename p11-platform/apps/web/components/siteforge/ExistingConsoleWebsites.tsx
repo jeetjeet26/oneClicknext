@@ -1,6 +1,6 @@
 'use client'
 
-// Existing application-managed website records. New client work starts in Codex.
+// Retained records from the earlier application-managed generation workflow.
 
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
@@ -181,7 +181,7 @@ export default function ExistingConsoleWebsites({ property }: { property: { id: 
             Earlier console projects
           </h2>
           <p className="text-gray-700 dark:text-gray-300 mt-1">
-            Website records from the earlier console workflow. Sites built directly in Codex are maintained in their client projects.
+            Website records from the earlier console workflow. Open a record to review or maintain that website.
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -240,7 +240,7 @@ export default function ExistingConsoleWebsites({ property }: { property: { id: 
             No earlier console projects
           </h3>
           <p className="text-gray-500 dark:text-gray-400 mb-6 max-w-sm mx-auto">
-            There are no earlier console website records for this property. You can prepare a Codex brief above.
+            There are no earlier console website records for this property. Generate a website package above to begin.
           </p>
 
         </div>

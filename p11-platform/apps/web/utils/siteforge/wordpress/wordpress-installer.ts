@@ -373,6 +373,89 @@ wp_cache_flush();
 }
 
 export class SshWordPressInstaller {
+  /** Install an immutable generated theme on an explicitly selected WordPress app. */
+  async installGeneratedPackage(input: {
+    ssh: WordPressSshCredentials; archive: Buffer; archiveHash: string;
+    slug: string; releaseId: string; packageHash: string; expectedUrl: string; preview: boolean;
+    checksums: Record<string,string>; installContent?: boolean;
+  }): Promise<{ theme: string; previousTheme: string; backup: string; url: string }> {
+    if (!/^p11-astra-[a-f0-9]{24}$/.test(input.slug) || !/^[a-f0-9-]{36}$/.test(input.releaseId) ||
+      !/^[a-f0-9]{64}$/.test(input.packageHash) || sha256(input.archive) !== input.archiveHash) throw new Error('Invalid generated theme identity');
+    const root = input.ssh.applicationRoot;
+    if (!root || !input.ssh.sftpApplicationRoot) throw new Error('Explicit WordPress and SFTP application paths are required');
+    const client = await connect(input.ssh);
+    const timer = setTimeout(() => client.end(), 180_000);
+    const wp = (command: string) => exec(client, `cd ${shellQuote(root)} && ${command}`);
+    const archiveName = `.p11-${input.releaseId}.zip`;
+    try {
+      await wp('wp core is-installed --skip-plugins --skip-themes');
+      const actualUrl = (await wp('wp option get home --skip-plugins --skip-themes')).trim().replace(/\/$/, '');
+      if (actualUrl !== input.expectedUrl.replace(/\/$/, '')) throw new Error('WordPress URL does not match the selected destination');
+      const previousTheme = (await wp('wp option get stylesheet --skip-plugins --skip-themes')).trim();
+      if (!/^[a-zA-Z0-9_-]+$/.test(previousTheme)) throw new Error('Previous theme identity is invalid');
+      // Backup is outside public_html and private to the application user. Never return DB contents.
+      const home = (await exec(client, `printf '%s' "$HOME"`)).trim();
+      if (!home.startsWith('/') || home === '/' || home.includes('/public_html')) throw new Error('Private backup home is unavailable');
+      const backupDirectory = `${home}/.p11-package-backups`;
+      const backup = `${backupDirectory}/${input.releaseId}.sql`;
+      await wp(`umask 077 && mkdir -p ${shellQuote(backupDirectory)} && test ! -e ${shellQuote(backup)} && wp db export ${shellQuote(backup)} --skip-plugins --skip-themes`);
+      const sftp = await getSftp(client);
+      await writeFile(sftp, `${input.ssh.sftpApplicationRoot}/${archiveName}`, input.archive);
+      await wp(`printf '%s  %s\\n' ${shellQuote(input.archiveHash)} ${shellQuote(archiveName)} | sha256sum -c -`);
+      // Each attempt uses a new folder; existing themes and manual edits are not overwritten.
+      await wp(`test ! -e ${shellQuote('wp-content/themes/' + input.slug)} && wp theme install ${shellQuote(archiveName)} --skip-plugins --skip-themes`);
+      await wp(`find ${shellQuote('wp-content/themes/' + input.slug)} -type f -name '*.php' -exec php -l {} \\;`);
+      if (input.preview) await wp('wp option update blog_public 0 --skip-plugins --skip-themes');
+      await wp(`wp theme activate ${shellQuote(input.slug)}`);
+      if(input.installContent){
+        const contentScheme = new URL(input.expectedUrl).protocol === 'https:' ? 'https' : 'http';
+        const importer = "$scheme='" + contentScheme + "';$release=" + "'" + input.releaseId + "';" + "$dir=get_stylesheet_directory();$manifest=json_decode(file_get_contents($dir.'/siteforge-content.json'),true);if(!is_array($manifest)||count($manifest['pages']??[])<5)throw new Exception('Complete page manifest required');$ids=[];foreach($manifest['pages'] as $page){$slug=$page['slug'];if(!preg_match('/^[a-z0-9]+(?:-[a-z0-9]+)*$/',$slug))throw new Exception('Invalid page');$old=get_page_by_path($slug,OBJECT,'page');if($old&&get_post_meta($old->ID,'_p11_package_release',true)===$release){$ids[$slug]=$old->ID;continue;}if($old){$result=wp_update_post(['ID'=>$old->ID,'post_name'=>'p11-previous-'.$old->ID.'-'.substr($release,0,8),'post_status'=>'draft'],true);if(is_wp_error($result))throw new Exception('Could not preserve previous page');}$id=wp_insert_post(['post_type'=>'page','post_status'=>'publish','post_name'=>$slug,'post_title'=>$page['title'],'comment_status'=>'closed','ping_status'=>'closed','meta_input'=>['_p11_package_release'=>$release]],true);if(is_wp_error($id))throw new Exception('Page creation failed');$ids[$slug]=$id;}foreach($manifest['pages'] as $page){$file=$page['contentFile'];if(!preg_match('#^website/content/[a-z0-9-]+\\.html$#',$file))throw new Exception('Invalid content path');$content=file_get_contents($dir.'/'.substr($file,8));$content=str_replace(['{{SITE_URL}}','{{THEME_URL}}'],[untrailingslashit(home_url('',$scheme)),untrailingslashit(set_url_scheme(get_stylesheet_directory_uri(),$scheme))],$content);$result=wp_update_post(wp_slash(['ID'=>$ids[$page['slug']],'post_content'=>wp_kses_post($content)]),true);if(is_wp_error($result))throw new Exception('Content import failed');}update_option('page_on_front',$ids['home']);update_option('show_on_front','page');update_option('blogname',$manifest['title']);update_option('permalink_structure','/%postname%/');echo wp_json_encode($ids);\n";
+        await wp(`wp eval ${shellQuote(importer)} --skip-plugins`);
+      }
+      await wp('wp rewrite flush');
+      // Importing with plugins skipped avoids side effects, but bypasses cache invalidation hooks.
+      // Clear only this WordPress site's Breeze cache before checking the public pages.
+      const hasBreeze = (await wp("wp eval 'echo class_exists(\"Breeze_WP_Cli_Core\") ? \"yes\" : \"no\";' --skip-themes")).trim();
+      if (hasBreeze === 'yes') {
+        const blogId = (await wp("wp eval 'echo is_multisite() ? get_current_blog_id() : 0;' --skip-plugins --skip-themes")).trim();
+        if (!/^(0|[1-9][0-9]*)$/.test(blogId)) throw new Error('WordPress cache scope is unavailable');
+        await wp(`wp breeze purge --cache=all${blogId === '0' ? '' : ` --level=${blogId}`} --skip-themes`);
+      }
+      const active = (await wp('wp option get stylesheet --skip-plugins --skip-themes')).trim();
+      if (active !== input.slug) throw new Error('Activated theme could not be verified');
+      const receipt = { releaseId: input.releaseId, packageHash: input.packageHash, theme: input.slug, previousTheme, backup, url: actualUrl };
+      await wp(`wp option update p11_astra_release ${shellQuote(JSON.stringify(receipt))} --format=json --skip-plugins --skip-themes`);
+      return receipt;
+    } finally {
+      await wp(`rm -f ${shellQuote(archiveName)}`).catch(() => undefined);
+      clearTimeout(timer); client.end();
+    }
+  }
+
+  async verifyGeneratedPackage(input: {ssh: WordPressSshCredentials; releaseId: string; packageHash: string; theme: string; expectedUrl: string; checksums: Record<string,string>}): Promise<Record<string,unknown>> {
+    if (!input.ssh.applicationRoot) throw new Error('WordPress path is missing');
+    const client = await connect(input.ssh);
+    const timer = setTimeout(() => client.end(), 30_000);
+    try {
+      const command = `cd ${shellQuote(input.ssh.applicationRoot)} && wp option get p11_astra_release --format=json --skip-plugins --skip-themes && wp option get stylesheet --skip-plugins --skip-themes && wp option get home --skip-plugins --skip-themes`;
+      const lines = (await exec(client, command)).trim().split('\n');
+      const expected = Buffer.from(JSON.stringify(input.checksums)).toString('base64');
+      const verify = `$files=json_decode(base64_decode('${expected}'),true);foreach($files as $file=>$hash){if(!is_file($file)||hash_file('sha256',$file)!==$hash){fwrite(STDERR,'Preview files changed');exit(1);}}`;
+      await exec(client, `cd ${shellQuote(input.ssh.applicationRoot)} && php -r ${shellQuote(verify)}`);
+      const marker = JSON.parse(lines[0]);
+      if (marker.releaseId !== input.releaseId || marker.packageHash !== input.packageHash || marker.theme !== input.theme || lines[1] !== input.theme || lines[2]?.replace(/\/$/, '') !== input.expectedUrl.replace(/\/$/, '')) throw new Error('The preview changed. Create and review a fresh preview.');
+      const fingerprintPhp = `global $wpdb; $data=array(); $data['posts']=$wpdb->get_results("SELECT ID,post_type,post_status,post_title,post_name,post_content,post_excerpt,post_parent,menu_order FROM {$wpdb->posts} WHERE post_type <> 'revision' ORDER BY ID",ARRAY_A); $data['meta']=$wpdb->get_results("SELECT post_id,meta_key,meta_value FROM {$wpdb->postmeta} WHERE meta_key NOT IN ('_edit_lock','_edit_last') ORDER BY post_id,meta_key,meta_id",ARRAY_A); $data['options']=$wpdb->get_results("SELECT option_name,option_value FROM {$wpdb->options} WHERE option_name IN ('blogname','blogdescription','show_on_front','page_on_front','page_for_posts','permalink_structure','sidebars_widgets') OR option_name LIKE 'theme_mods_%' OR option_name LIKE 'widget_%' ORDER BY option_name",ARRAY_A); $data['terms']=$wpdb->get_results("SELECT * FROM {$wpdb->terms} ORDER BY term_id",ARRAY_A); $data['taxonomies']=$wpdb->get_results("SELECT * FROM {$wpdb->term_taxonomy} ORDER BY term_taxonomy_id",ARRAY_A); $data['relationships']=$wpdb->get_results("SELECT * FROM {$wpdb->term_relationships} ORDER BY object_id,term_taxonomy_id",ARRAY_A); echo hash('sha256',wp_json_encode($data));`;
+      const contentHash=(await exec(client,`cd ${shellQuote(input.ssh.applicationRoot)} && wp eval ${shellQuote(fingerprintPhp)} --skip-plugins --skip-themes`)).trim();
+      if(!/^[a-f0-9]{64}$/.test(contentHash))throw new Error('WordPress content fingerprint unavailable');
+      return {theme:marker.theme,previousTheme:marker.previousTheme,backup:marker.backup,url:marker.url,contentHash};
+    } finally { clearTimeout(timer); client.end(); }
+  }
+
+  async productionVisibility(ssh:WordPressSshCredentials,restore?:'0'|'1'):Promise<'0'|'1'>{
+    if(!ssh.applicationRoot)throw new Error('WordPress path required');const client=await connect(ssh);const timer=setTimeout(()=>client.end(),30000);
+    try{const prefix=`cd ${shellQuote(ssh.applicationRoot)} && `;if(restore!==undefined)await exec(client,prefix+`wp option update blog_public ${restore} --skip-plugins --skip-themes`);const value=(await exec(client,prefix+'wp option get blog_public --skip-plugins --skip-themes')).trim();if(value!=='0'&&value!=='1')throw new Error('Search visibility unavailable');return value;}finally{clearTimeout(timer);client.end();}
+  }
+
   async getActiveTheme(input: {
     ssh: WordPressSshCredentials
     rememberForRollback?: boolean

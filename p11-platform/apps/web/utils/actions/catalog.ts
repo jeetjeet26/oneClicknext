@@ -1,6 +1,6 @@
 export const PRODUCT_LABELS={platform:'Console',siteforge:'SiteForge',lumaleasing:'LumaLeasing',propertyaudit:'PropertyAudit',brandforge:'BrandForge',tourspark:'TourSpark',leadpulse:'LeadPulse',crm:'CRM Sync',forgestudio:'ForgeStudio',reviewflow:'ReviewFlow',marketvision:'MarketVision',bi:'MultiChannel BI',knowledge:'Knowledge Base',property:'Property setup',integrations:'Integrations',reports:'Reports',pipelines:'Pipelines',settings:'Settings',team:'Team',agency:'Agency controls'} as const
 export type ProductKey=keyof typeof PRODUCT_LABELS
-const routes:Record<string,ProductKey>={siteforge:'siteforge',lumaleasing:'lumaleasing',propertyaudit:'propertyaudit',brandforge:'brandforge',leads:'tourspark',leadpulse:'leadpulse',crm:'crm',forgestudio:'forgestudio',reviewflow:'reviewflow',marketvision:'marketvision',bi:'bi',knowledge:'knowledge',community:'property',properties:'property','floor-plans':'property',integrations:'integrations',reports:'reports',pipelines:'pipelines',settings:'settings',team:'team',agency:'agency',substrate:'agency',luma:'agency',activity:'platform',delivery:'platform'}
+const routes:Record<string,ProductKey>={siteforge:'siteforge',lumaleasing:'lumaleasing',propertyaudit:'propertyaudit',brandforge:'brandforge',leads:'tourspark',leadpulse:'leadpulse',crm:'crm',forgestudio:'forgestudio',reviewflow:'reviewflow',marketvision:'marketvision',bi:'bi',knowledge:'knowledge',community:'property',properties:'property','floor-plans':'property',integrations:'integrations',reports:'reports',pipelines:'pipelines',settings:'settings',team:'team',agency:'agency',substrate:'agency',luma:'agency',activity:'platform',delivery:'platform',intelligence:'platform'}
 export function pageObservation(pathname:string):{product:ProductKey;path:string}|null {
  // Record the registered page family, never URL query text or resource identifiers.
  const parts=pathname.split('/').filter(Boolean)
@@ -10,6 +10,55 @@ export function pageObservation(pathname:string):{product:ProductKey;path:string
  return product?{product,path:`/dashboard/${parts[1]}`}:null
 }
 export const ACTION_LABELS:Record<string,string>={
+ 'intelligence.fact.save':'Saved a draft of property fact',
+ 'intelligence.fact.approve':'Approved property fact',
+ 'intelligence.fact.withdraw':'Withdrew property fact',
+ 'intelligence.fact.lock':'Locked property fact',
+ 'intelligence.fact.unlock':'Unlocked property fact',
+ 'intelligence.fact.implement':'Recorded implementation of property fact',
+ 'intelligence.fact.measure':'Recorded measurements for property fact',
+ 'intelligence.fact.dismiss':'Dismissed property fact',
+ 'intelligence.creative.save':'Saved a draft of creative direction',
+ 'intelligence.creative.approve':'Approved creative direction',
+ 'intelligence.creative.withdraw':'Withdrew creative direction',
+ 'intelligence.creative.lock':'Locked creative direction',
+ 'intelligence.creative.unlock':'Unlocked creative direction',
+ 'intelligence.creative.implement':'Recorded implementation of creative direction',
+ 'intelligence.creative.measure':'Recorded measurements for creative direction',
+ 'intelligence.creative.dismiss':'Dismissed creative direction',
+ 'intelligence.batch.save':'Saved a draft of observation import',
+ 'intelligence.batch.approve':'Approved observation import',
+ 'intelligence.batch.withdraw':'Withdrew observation import',
+ 'intelligence.batch.lock':'Locked observation import',
+ 'intelligence.batch.unlock':'Unlocked observation import',
+ 'intelligence.batch.implement':'Recorded implementation of observation import',
+ 'intelligence.batch.measure':'Recorded measurements for observation import',
+ 'intelligence.batch.dismiss':'Dismissed observation import',
+ 'intelligence.recommendation.save':'Saved a draft of recommendation',
+ 'intelligence.recommendation.approve':'Approved recommendation',
+ 'intelligence.recommendation.withdraw':'Withdrew recommendation',
+ 'intelligence.recommendation.lock':'Locked recommendation',
+ 'intelligence.recommendation.unlock':'Unlocked recommendation',
+ 'intelligence.recommendation.implement':'Recorded implementation of recommendation',
+ 'intelligence.recommendation.measure':'Recorded measurements for recommendation',
+ 'intelligence.recommendation.dismiss':'Dismissed recommendation',
+ 'intelligence.experiment.save':'Saved a draft of experiment',
+ 'intelligence.experiment.approve':'Approved experiment',
+ 'intelligence.experiment.withdraw':'Withdrew experiment',
+ 'intelligence.experiment.lock':'Locked experiment',
+ 'intelligence.experiment.unlock':'Unlocked experiment',
+ 'intelligence.experiment.implement':'Recorded implementation of experiment',
+ 'intelligence.experiment.measure':'Recorded measurements for experiment',
+ 'intelligence.experiment.dismiss':'Dismissed experiment',
+ 'site.package.queued':'Requested an Astra website build',
+ 'site.package.preparing':'Preparing saved website information',
+ 'site.package.starting':'Preparing the Astra generation request',
+ 'site.package.generating':'Started website generation',
+ 'site.package.packaging':'Preparing the generated website package',
+ 'site.package.ready':'Retained the website package for review',
+ 'site.package.failed':'Website build needs attention',
+ 'site.package.uncertain':'Website build needs provider confirmation',
+ 'site.package.download_prepared':'Prepared a website package download',
 'delivery.outcomes':'Recorded reviewed leasing outcomes','delivery.outcome_withdraw':'Withdrew a reported leasing outcome','delivery.work_save':'Saved a property work proposal','delivery.work_transition':'Recorded the next delivery step','delivery.quality_review':'Saved a work quality assessment','delivery.report_draft':'Prepared a client report draft','delivery.report_edit':'Revised the client report narrative','delivery.report_refresh':'Refreshed captured client report results','delivery.report_transition':'Recorded a client report publication decision','delivery.report_policy':'Updated monthly draft preparation','delivery.cancel_request':'Closed an unused delivery request',
 
  'agency.execution.prepared':'Prepared local agency rehearsal','agency.execution.authorized':'Recorded rehearsal authorization check','agency.execution.advanced':'Recorded rehearsal progress','agency.execution.paused':'Paused agency rehearsal','agency.execution.resumed':'Resumed agency rehearsal','agency.execution.stopped':'Stopped agency rehearsal','agency.execution.reversed':'Recorded rehearsal undo','agency.execution.cancelled':'Closed unused rehearsal command',

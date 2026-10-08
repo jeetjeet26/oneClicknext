@@ -5,6 +5,7 @@ import { usePropertyContext } from '@/components/layout/PropertyContext'
 import { SiteForgeCodexBrief } from '@/components/siteforge/SiteForgeCodexBrief'
 import {SiteForgeDeliveryRecords}from '@/components/siteforge/SiteForgeDeliveryRecords'
 import ExistingConsoleWebsites from '@/components/siteforge/ExistingConsoleWebsites'
+import { SiteForgePackages } from '@/components/siteforge/SiteForgePackages'
 
 export default function SiteForgePage() {
   const { currentProperty, loading, hasLoadedProperties } = usePropertyContext()
@@ -15,7 +16,7 @@ export default function SiteForgePage() {
         <h1 className="flex items-center gap-2 text-2xl font-bold text-gray-900 dark:text-gray-100">
           <Globe className="h-7 w-7 text-indigo-500" aria-hidden="true" />SiteForge
         </h1>
-        <p className="mt-1 text-gray-700 dark:text-gray-300">Website delivery and maintenance with Codex</p>
+        <p className="mt-1 text-gray-700 dark:text-gray-300">Property websites, generated with Astra</p>
       </header>
       {loading ? (
         <p role="status" className="flex items-center gap-2 py-8 text-gray-600 dark:text-gray-300"><Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />Loading your property…</p>
@@ -26,12 +27,15 @@ export default function SiteForgePage() {
         </div>
       ) : currentProperty ? (
         <>
+          <SiteForgePackages key={`packages-${currentProperty.id}`} propertyId={currentProperty.id} />
+          <details className="rounded-xl border border-gray-200 bg-white p-5"><summary className="cursor-pointer font-medium text-gray-700">Earlier briefs and delivery history</summary><div className="mt-4 space-y-6">
           <SiteForgeCodexBrief key={`brief-${currentProperty.id}`} property={currentProperty} />
           <SiteForgeDeliveryRecords key={`delivery-${currentProperty.id}`} propertyId={currentProperty.id}/>
+          </div></details>
           <ExistingConsoleWebsites key={`records-${currentProperty.id}`} property={currentProperty} />
         </>
       ) : (
-        <p className="rounded-xl border border-gray-200 bg-white p-6 text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300">Select a property to prepare a website brief and view its earlier console projects.</p>
+        <p className="rounded-xl border border-gray-200 bg-white p-6 text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300">Select a property to generate its website and review saved packages.</p>
       )}
     </div>
   )
