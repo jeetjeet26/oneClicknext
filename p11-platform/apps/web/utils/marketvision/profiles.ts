@@ -30,6 +30,7 @@ export interface CompetitorProfile extends Competitor {
   historicalBrand: HistoricalBrand | null
   reviewedBrand: ReviewedBrand | null
   scopeNotes: string[]
+  conflictedUnitIds?: string[]
 }
 export interface SubjectProfile {
   name: string
