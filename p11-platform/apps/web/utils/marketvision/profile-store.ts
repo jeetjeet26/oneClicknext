@@ -2,6 +2,7 @@ import { createServiceClient } from '@/utils/supabase/admin'
 import { marketRpc, MarketStoreError } from './decision-store'
 import { BriefSources } from './saved-brief'
 import { formatCompetitor } from './records'
+import { conflictedPriceUnits } from './analysis'
 import { historicalBrand, scopeNotes, type ReviewedBrand, type CompetitorProfiles } from './profiles'
 
 const columns = 'competitor_id,last_analyzed_at,positioning_statement,brand_voice,brand_personality,target_audience,unique_selling_points,highlighted_amenities,service_offerings,lifestyle_focus,community_events,active_specials,promotional_messaging,urgency_tactics,key_messaging_themes,call_to_action_patterns,pages_analyzed'
@@ -40,13 +41,14 @@ export async function readCompetitorProfiles(propertyId: string, actor: string):
   ])
   if (brandResult.status === 'rejected') { brands.clear(); warnings.push('Historical analysis could not be loaded. Reload to try again.') }
   if (reviewResult.status === 'rejected') { reviews.clear(); warnings.push('Current brand reviews could not be loaded. Historical analysis is shown separately.') }
-  if (subjectResult.status === 'rejected') warnings.push('Your property’s approved prices could not be loaded. The comparison shows them as unavailable.')
+  if (subjectResult.status === 'rejected') warnings.push('Approved subject prices and price-integrity checks could not be loaded. Price comparisons are withheld until a reload succeeds.')
+  const conflicts = subjectResult.status === 'fulfilled' ? conflictedPriceUnits(subjectResult.value, true) : new Set(competitors.flatMap(c => (c.units ?? []).map(u => u.id)))
   return {
     propertyId, readAt: new Date().toISOString(), warnings,
     subject: subjectResult.status === 'fulfilled' ? { name: subjectResult.value.propertyName, units: subjectResult.value.subjectUnits } : { name: 'Your property', units: [] },
     competitors: competitors.map(c => {
       const brand = brands.get(c.id) ?? null
-      return { ...c, historicalBrand: brand, reviewedBrand: reviews.get(c.id) ?? null, scopeNotes: scopeNotes(c, brand) }
+      return { ...c, historicalBrand: brand, reviewedBrand: reviews.get(c.id) ?? null, scopeNotes: scopeNotes(c, brand), withheldUnitIds: (c.units ?? []).filter(u => conflicts.has(u.id)).map(u => u.id) }
     }),
   }
 }

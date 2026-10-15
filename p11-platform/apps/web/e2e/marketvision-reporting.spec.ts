@@ -21,7 +21,7 @@ const test=base.extend<{fixture:Fixture}>({fixture:async({},provide)=>{
 test.beforeEach(async({page})=>{page.on('pageerror',error=>console.error('Response browser page error:',error.message));await page.goto('/auth/login');await page.getByLabel('Email address').fill('local-admin@p11.test');await page.getByLabel('Password',{exact:true}).fill('local-dev-password');await page.getByRole('button',{name:'Sign in',exact:true}).click();await expect(page).not.toHaveURL(/auth\/login/,{timeout:30000})})
 
 
-async function openMarket(page:Page,f:Fixture,tab='Competitors'){await page.addInitScript(p=>localStorage.setItem('p11_selected_property_id',p),f.property);await page.goto('/dashboard/marketvision');await page.getByRole('button',{name:tab,exact:true}).click()}
+async function openMarket(page:Page,f:Fixture,tab='Competitors'){await page.addInitScript(p=>localStorage.setItem('p11_selected_property_id',p),f.property);await page.goto('/dashboard/marketvision');if(tab==='Monitoring')await page.getByRole('combobox',{name:'MarketVision tools'}).selectOption('monitoring');else await page.getByRole('button',{name:tab==='Market Brief'?'Reports':tab,exact:true}).click()}
 async function seed(f:Fixture){
  const second=randomUUID(),third=randomUUID(),ids=[randomUUID(),randomUUID(),randomUUID()]
  const check=async(p:PromiseLike<{error:unknown}>)=>{const r=await p;if(r.error)throw r.error}

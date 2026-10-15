@@ -20,7 +20,7 @@ export function CompetitorProfileContent({ profile, compact = false }: { profile
     ...(!compact ? [['Services', old.services], ['Lifestyle', old.lifestyles], ['Community events', old.events],
       ['Messaging themes', old.themes], ['Calls to action', old.callsToAction]] : []),
   ] as Array<[string, string[]]> : []
-  return <div className="space-y-4 text-sm">
+  return <div className="space-y-4 break-words text-sm">
     {profile.scopeNotes.map(note => <p key={note} className="rounded-lg bg-amber-50 p-3 text-amber-900">Scope needs review: {note}</p>)}
     {reviewed && <section className="space-y-2 rounded-lg border border-emerald-200 bg-emerald-50/50 p-3 text-slate-900">
       <h4 className="font-semibold">Reviewed brand evidence</h4>
@@ -36,6 +36,6 @@ export function CompetitorProfileContent({ profile, compact = false }: { profile
       {!compact && (old.promotions.length > 0 || old.promotionalMessaging || old.urgency.length > 0) && <div className="rounded-lg bg-amber-50 p-3 text-amber-950"><h5 className="font-semibold">Previously observed offers</h5><p className="mb-2 text-xs">Historical only. Availability and expiry have not been verified.</p>{old.promotions.map((offer, i) => <p key={i}>{offer}</p>)}{old.promotionalMessaging && <p>{old.promotionalMessaging}</p>}{old.urgency.length > 0 && <p>{old.urgency.join(' · ')}</p>}</div>}
     </section> : !reviewed && <p className="text-slate-500">No brand analysis saved yet. Pricing and property details remain available.</p>}
     {profile.amenities.length > 0 && <p><span className="font-semibold">Saved property amenities: </span>{profile.amenities.join(' · ')}</p>}
-    {!compact && <Link href={`/dashboard/marketvision?tab=brand-intel&competitorId=${profile.id}`} className="inline-block text-indigo-700 underline">Review brand evidence and sources</Link>}
+    {!compact && <Link href={`/dashboard/marketvision?tab=brand-intel&brandCompetitorId=${profile.id}`} className="inline-block text-indigo-700 underline">Review brand evidence and sources</Link>}
   </div>
 }

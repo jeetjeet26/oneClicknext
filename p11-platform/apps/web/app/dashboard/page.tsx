@@ -230,10 +230,10 @@ export default function DashboardPage() {
               Recent activity
             </h2>
             <Link
-              href="/dashboard/bi"
+              href="/dashboard/intelligence"
               className="text-sm text-[#a53212] hover:text-[#78260e] flex items-center gap-1"
             >
-              View all analytics
+              View property intelligence
               <ArrowRight size={14} />
             </Link>
           </div>
@@ -388,7 +388,7 @@ export default function DashboardPage() {
               </div>
               <div>
                 <h3 className="font-semibold text-slate-900">
-                  Property knowledge
+                  Community knowledge
                 </h3>
                 <p className="text-xs text-slate-500">
                   {loading
@@ -398,10 +398,10 @@ export default function DashboardPage() {
               </div>
             </div>
             <Link
-              href="/dashboard/luma"
+              href="/dashboard/community?section=knowledge"
               className="block w-full py-2.5 bg-white text-center text-sm font-medium text-[#a53212] rounded-lg border border-[#efd8cd] hover:bg-[#fff5f0] transition-colors"
             >
-              Manage Documents
+              Manage knowledge
             </Link>
           </div>
 
@@ -412,7 +412,7 @@ export default function DashboardPage() {
             </h3>
             <div className="space-y-2">
               <Link
-                href="/dashboard/bi"
+                href="/dashboard/intelligence?section=campaigns"
                 className="flex items-center gap-3 p-3 rounded-lg hover:bg-slate-50 transition-colors group"
               >
                 <div className="h-9 w-9 bg-[#e8eff1] rounded-lg flex items-center justify-center group-hover:bg-indigo-200 transition-colors">
@@ -420,7 +420,7 @@ export default function DashboardPage() {
                 </div>
                 <div className="flex-1">
                   <p className="text-sm font-medium text-slate-900">
-                    View Analytics
+                    Campaign performance
                   </p>
                   <p className="text-xs text-slate-500">
                     Marketing results and saved reports

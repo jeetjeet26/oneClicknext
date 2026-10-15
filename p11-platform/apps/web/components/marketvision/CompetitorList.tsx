@@ -1,330 +1,69 @@
 'use client'
-
-import { useState, useEffect, useCallback, useRef } from 'react'
-import {sendMarketDecision} from '@/utils/marketvision/decision-client'
-import { 
-  Building2, 
-  ExternalLink, 
-  Phone, 
-  MapPin, 
-  MoreVertical,
-  Edit2,
-  Eye,
-  Plus,
-  Search,
-  RefreshCw
-} from 'lucide-react'
-
-interface CompetitorUnit {
-  id: string
-  unitType: string
-  bedrooms: number
-  rentMin: number | null
-  rentMax: number | null
-  availableCount: number
-}
-
-interface Competitor {
-  version: number
-  id: string
-  propertyId?: string
-  name: string
-  address: string | null
-  websiteUrl: string | null
-  phone: string | null
-  unitsCount: number | null
-  yearBuilt: number | null
-  propertyType: string
-  amenities: string[]
-  photos?: string[]
-  ilsListings?: Record<string, string>
-  notes?: string | null
-  isActive: boolean
-  lastScrapedAt: string | null
-  units?: CompetitorUnit[]
-}
+import { useState } from 'react'
+import { Building2, ExternalLink, Plus, RefreshCw, Search } from 'lucide-react'
+import { sendMarketDecision } from '@/utils/marketvision/decision-client'
+import { profileText, rentSummary, type CompetitorProfile } from '@/utils/marketvision/profiles'
+import { useCompetitorProfiles } from '@/utils/marketvision/use-profiles'
+import { CompetitorProfileContent, money, profileDate, safeWebsite } from './CompetitorProfileContent'
+import { CompetitorProfileComparison } from './CompetitorProfileComparison'
 
 interface CompetitorListProps {
   propertyId: string | undefined
   onAddClick: () => void
-  onEditClick: (competitor: Competitor) => void
-  onViewClick: (competitor: Competitor) => void
+  onEditClick: (competitor: CompetitorProfile) => void
+  onViewClick: (competitor: CompetitorProfile) => void
   onRefresh?: () => void
 }
-
-export function CompetitorList({ 
-  propertyId, 
-  onAddClick, 
-  onEditClick, 
-  onViewClick
-}: CompetitorListProps) {
-  const readGeneration=useRef(0)
-  const [competitors, setCompetitors] = useState<Competitor[]>([])
-  const [loading, setLoading] = useState(true)
-  const [searchQuery, setSearchQuery] = useState('')
+export function CompetitorList({propertyId, onAddClick, onEditClick, onViewClick}: CompetitorListProps) {
+  const {data, loading, error, refresh} = useCompetitorProfiles(propertyId)
+  const [search, setSearch] = useState('')
   const [showInactive, setShowInactive] = useState(false)
-  const [error,setError]=useState<string|null>(null)
-  const [decision,setDecision]=useState<Competitor|null>(null)
-  const [reason,setReason]=useState('')
-  const [saving,setSaving]=useState(false)
-  const [menuOpen, setMenuOpen] = useState<string | null>(null)
-
-  const fetchCompetitors = useCallback(async () => {
-    if (!propertyId) return
-
-    const generation=++readGeneration.current
-    setLoading(true)
-    setError(null)
+  const [selected, setSelected] = useState<string[]>([])
+  const [compare, setCompare] = useState(false)
+  const [decision, setDecision] = useState<CompetitorProfile | null>(null)
+  const [reason, setReason] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const competitors = data?.competitors ?? []
+  const active = competitors.filter(c => c.isActive)
+  const visible = competitors.filter(c => (showInactive || c.isActive) && profileText(c).includes(search.trim().toLowerCase()))
+  const comparison = active.filter(c => selected.includes(c.id)).slice(0,4)
+  async function toggleActive() {
+    if (!decision || !propertyId) return
+    setSaving(true); setSaveError(null)
     try {
-      const params = new URLSearchParams({
-        propertyId,
-        includeUnits: 'true',
-        activeOnly: (!showInactive).toString()
-      })
-
-      const res = await fetch(`/api/marketvision/competitors?${params}`)
-      const data = await res.json()
-      if(generation!==readGeneration.current)return
-      if (!res.ok) throw new Error(data.error || 'Competitors could not be loaded.')
-      setCompetitors(data.competitors || [])
-    } catch (err) {
-      if(generation!==readGeneration.current)return
-      setError(err instanceof Error ? err.message : 'Competitors could not be loaded.')
-      setCompetitors([])
-    } finally {
-      if(generation===readGeneration.current)setLoading(false)
-    }
-  },[propertyId,showInactive])
-  const cancelRead=useCallback(()=>{readGeneration.current++},[])
-  useEffect(()=>{void fetchCompetitors();return cancelRead},[fetchCompetitors,cancelRead])
-
-  const handleToggleActive = async () => {
-    if(!decision || !propertyId)return
-    setSaving(true);setError(null)
-    try{await sendMarketDecision('/api/marketvision/competitors','PUT',{propertyId,competitorId:decision.id,expectedVersion:decision.version,action:decision.isActive?'archive':'restore',reason});setDecision(null);setReason('');await fetchCompetitors()}
-    catch(e){setError(e instanceof Error?e.message:'This decision could not be confirmed.')}
-    finally{setSaving(false)}
+      await sendMarketDecision('/api/marketvision/competitors', 'PUT', {propertyId, competitorId: decision.id, expectedVersion: decision.version, action: decision.isActive ? 'archive' : 'restore', reason})
+      setSelected(old=>old.filter(id=>id!==decision.id)); setDecision(null); setReason(''); refresh()
+    } catch (e) {setSaveError(e instanceof Error ? e.message : 'This decision could not be confirmed.')}
+    finally {setSaving(false)}
   }
-
-  const filteredCompetitors = competitors.filter(c => 
-    c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    c.address?.toLowerCase().includes(searchQuery.toLowerCase())
-  )
-
-  // Calculate average rent for a competitor
-  const getAvgRent = (units?: CompetitorUnit[]) => {
-    if (!units || units.length === 0) return null
-    const rents = units.filter(u => u.rentMin).map(u => u.rentMin!)
-    if (rents.length === 0) return null
-    return Math.round(rents.reduce((a, b) => a + b, 0) / rents.length)
-  }
-
-  if (!propertyId) {
-    return (
-      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-8 text-center">
-        <Building2 className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-        <p className="text-gray-500">Select a property to view competitors</p>
-      </div>
-    )
-  }
-
-  return (
-    <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
-      {/* Header */}
-      <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
-            <Building2 className="w-5 h-5 text-indigo-500" />
-            Competitors
-            <span className="ml-2 px-2 py-0.5 text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-full">
-              {competitors.length}
-            </span>
-          </h2>
-          <button
-            onClick={onAddClick}
-            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm font-medium"
-          >
-            <Plus className="w-4 h-4" />
-            Add Competitor
-          </button>
-        </div>
-
-        {/* Search & Filters */}
-        <div className="flex items-center gap-3">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Search competitors..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 text-sm border border-gray-200 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white dark:bg-gray-700"
-            />
-          </div>
-          <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 cursor-pointer">
-            <input
-              type="checkbox"
-              disabled={saving} checked={showInactive}
-              onChange={(e) => setShowInactive(e.target.checked)}
-              className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-            />
-            Show inactive
-          </label>
-          <button
-            disabled={saving} aria-label="Reload competitors"
-            onClick={fetchCompetitors}
-            className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
-          >
-            <RefreshCw className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
-
-      {error && <p role="alert" className="p-4 text-red-700">{error} <button onClick={()=>{setDecision(null);void fetchCompetitors()}} className="underline">Reload competitors</button></p>}
-      {decision && <section aria-label="Review competitor status" className="p-4 border-y space-y-3"><p>{decision.isActive?'Archive':'Restore'} {decision.name}? Saved units and history will be retained.</p><label className="block text-sm">Reason for status change<textarea value={reason} onChange={e=>setReason(e.target.value)} minLength={3} maxLength={2000} className="block border rounded p-2 w-full" /></label><button disabled={saving||reason.trim().length<3} onClick={handleToggleActive} className="border rounded px-3 py-2 disabled:opacity-50">{saving?'Saving…':decision.isActive?'Archive competitor':'Restore competitor'}</button> <button disabled={saving} onClick={()=>setDecision(null)}>Cancel</button></section>}
-      {/* Competitor List */}
-      <div className="divide-y divide-gray-100 dark:divide-gray-700">
-        {loading ? (
-          <div className="p-8 text-center">
-            <RefreshCw className="w-8 h-8 animate-spin text-indigo-500 mx-auto mb-4" />
-            <p className="text-gray-500">Loading competitors...</p>
-          </div>
-        ) : filteredCompetitors.length === 0 ? (
-          <div className="p-8 text-center">
-            <Building2 className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-            <p className="text-gray-500 mb-4">
-              {searchQuery ? 'No competitors match your search' : 'No competitors added yet'}
-            </p>
-            {!searchQuery && (
-              <button
-                onClick={onAddClick}
-                className="text-indigo-600 hover:text-indigo-700 text-sm font-medium"
-              >
-                Add your first competitor
-              </button>
-            )}
-          </div>
-        ) : (
-          filteredCompetitors.map((competitor) => (
-            <div
-              key={competitor.id}
-              className={`p-4 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors ${
-                !competitor.isActive ? 'opacity-60' : ''
-              }`}
-            >
-              <div className="flex items-start justify-between">
-                <div className="flex-1 min-w-0 cursor-pointer" onClick={() => onViewClick(competitor)}>
-                  <div className="flex items-center gap-2">
-                    <h3 className="font-medium text-gray-900 dark:text-white truncate">
-                      {competitor.name}
-                    </h3>
-                    {!competitor.isActive && (
-                      <span className="px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-500 rounded-full">
-                        Inactive
-                      </span>
-                    )}
-                  </div>
-                  
-                  {competitor.address && (
-                    <p className="text-sm text-gray-500 flex items-center gap-1 mt-1">
-                      <MapPin className="w-3.5 h-3.5" />
-                      {competitor.address}
-                    </p>
-                  )}
-
-                  {/* Quick Stats */}
-                  <div className="flex items-center gap-4 mt-3">
-                    {competitor.units && competitor.units.length > 0 && (
-                      <span className="text-sm text-gray-600 dark:text-gray-400">
-                        {competitor.units.length} unit types
-                      </span>
-                    )}
-                    {getAvgRent(competitor.units) && (
-                      <span className="text-sm font-medium text-green-600 dark:text-green-400">
-                        Avg: ${getAvgRent(competitor.units)?.toLocaleString()}
-                      </span>
-                    )}
-                    {competitor.amenities.length > 0 && (
-                      <span className="text-sm text-gray-500">
-                        {competitor.amenities.slice(0, 3).join(', ')}
-                        {competitor.amenities.length > 3 && ` +${competitor.amenities.length - 3}`}
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                {/* Actions */}
-                <div className="flex items-center gap-2 ml-4">
-                  {competitor.websiteUrl && (
-                    <a
-                      href={competitor.websiteUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
-                    >
-                      <ExternalLink className="w-4 h-4" />
-                    </a>
-                  )}
-                  {competitor.phone && (
-                    <a
-                      href={`tel:${competitor.phone}`}
-                      className="p-2 text-gray-400 hover:text-green-600 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
-                    >
-                      <Phone className="w-4 h-4" />
-                    </a>
-                  )}
-                  
-                  {/* More Menu */}
-                  <div className="relative">
-                    <button
-                      disabled={saving} aria-label={`Actions for ${competitor.name}`}
-                      onClick={() => setMenuOpen(menuOpen === competitor.id ? null : competitor.id)}
-                      className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
-                    >
-                      <MoreVertical className="w-4 h-4" />
-                    </button>
-                    
-                    {menuOpen === competitor.id && (
-                      <div className="absolute right-0 mt-1 w-48 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 py-1 z-10">
-                        <button
-                          onClick={() => {
-                            onViewClick(competitor)
-                            setMenuOpen(null)
-                          }}
-                          className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
-                        >
-                          <Eye className="w-4 h-4" />
-                          View Details
-                        </button>
-                        <button
-                          onClick={() => {
-                            onEditClick(competitor)
-                            setMenuOpen(null)
-                          }}
-                          className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
-                        >
-                          <Edit2 className="w-4 h-4" />
-                          Edit
-                        </button>
-                        <button
-                          onClick={() => {
-                            setDecision(competitor);setReason('')
-                            setMenuOpen(null)
-                          }}
-                          className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
-                        >
-                          {competitor.isActive ? 'Archive' : 'Restore'}
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          ))
-        )}
-      </div>
+  if (!propertyId) return <p className="rounded-xl border border-slate-200 bg-white p-8">Select a property to view competitors.</p>
+  return <section aria-label="Competitor profiles" className="space-y-5">
+    <div className="flex flex-wrap items-start justify-between gap-4">
+      <div><h2 className="text-xl font-semibold">Your competitive set</h2><p className="mt-1 text-sm text-slate-500">{loading ? 'Loading profiles…' : `${active.length} active competitors · ${competitors.length - active.length} archived`} · pricing, positioning, amenities and saved research</p></div>
+      <div className="flex flex-wrap gap-2"><button onClick={() => setCompare(v => !v)} disabled={!comparison.length} className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm disabled:opacity-40">{compare ? 'Hide comparison' : `Compare selected (${comparison.length}/4)`}</button><button onClick={onAddClick} className="flex items-center gap-2 rounded-lg bg-emerald-700 px-4 py-2 text-sm text-white"><Plus className="h-4 w-4" />Add Competitor</button></div>
     </div>
-  )
+    <div className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white p-3">
+      <label className="relative min-w-48 flex-1"><span className="sr-only">Search competitor profiles</span><Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" /><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search names, amenities, positioning or saved research…" className="w-full rounded-lg border border-slate-200 py-2 pl-10 pr-3 text-sm" /></label>
+      <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={showInactive} onChange={e => setShowInactive(e.target.checked)} />Show archived</label>
+      <button aria-label="Reload competitors" disabled={loading || saving} onClick={refresh} className="rounded-lg border border-slate-200 p-2 disabled:opacity-40"><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /></button>
+    </div>
+    {(error || saveError) && <p role="alert" className="rounded-lg bg-red-50 p-4 text-red-700">{error || saveError}</p>}
+    {data?.warnings.map(w => <p role="status" key={w} className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">{w}</p>)}
+    {decision && <section aria-label="Review competitor status" className="space-y-3 rounded-xl border border-slate-200 bg-white p-4"><p>{decision.isActive ? 'Archive' : 'Restore'} {decision.name}? Saved units and history will be retained.</p><label className="block text-sm">Reason for status change<textarea value={reason} onChange={e => setReason(e.target.value)} minLength={3} maxLength={2000} className="block w-full rounded border p-2" /></label><button disabled={saving || reason.trim().length < 3} onClick={toggleActive} className="rounded border px-3 py-2 disabled:opacity-50">{saving ? 'Saving…' : decision.isActive ? 'Archive competitor' : 'Restore competitor'}</button> <button disabled={saving} onClick={() => setDecision(null)}>Cancel</button></section>}
+    {compare && data && comparison.length > 0 && <CompetitorProfileComparison subject={data.subject} competitors={comparison} />}
+    {loading ? <p role="status" className="p-8 text-center text-slate-500">Loading competitor profiles and saved intelligence…</p> : !error && visible.length === 0 ? <div className="rounded-xl border border-slate-200 bg-white p-8 text-center"><Building2 className="mx-auto mb-3 h-8 w-8 text-slate-400" /><p>{search ? 'No saved profiles match your search.' : 'No competitors in this view.'}</p>{!search && <button onClick={onAddClick} className="mt-3 text-emerald-700 underline">Add a competitor</button>}</div> : <div className="grid items-start gap-5 xl:grid-cols-2">
+      {visible.map(c => {
+        const rents = rentSummary((c.units ?? []).filter(u => !c.withheldUnitIds?.includes(u.id)))
+        const url = safeWebsite(c.websiteUrl)
+        return <article key={c.id} aria-label={`${c.name} profile`} className="min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-white text-slate-900 shadow-sm">
+          <div className="border-b border-slate-200 bg-slate-50/60 p-5"><div className="flex items-start justify-between gap-3"><div><h3 className="text-lg font-semibold"><button onClick={() => onViewClick(c)} className="text-left hover:text-emerald-700">{c.name}</button></h3><p className="mt-1 text-sm text-slate-500">{c.address || 'Address not recorded'}</p></div>{!c.isActive ? <span className="rounded-full bg-slate-200 px-2 py-1 text-xs">Archived</span> : <label className="flex shrink-0 items-center gap-2 text-xs"><input type="checkbox" aria-label={`Compare ${c.name}`} checked={comparison.some(item=>item.id===c.id)} disabled={!comparison.some(item=>item.id===c.id) && comparison.length >= 4} onChange={e => setSelected(old => e.target.checked ? [...old, c.id] : old.filter(id => id !== c.id))} />Compare</label>}</div>
+          <div className="mt-4 flex flex-wrap gap-x-6 gap-y-2"><div><p className="text-xl font-semibold">{c.scopeNotes.length ? 'Scope needs review' : money(rents.mean)}</p><p className="text-xs text-slate-500">{c.scopeNotes.length ? 'Prices withheld from comparison' : 'Mean saved starting rent'}</p></div><div><p className="text-xl font-semibold">{rents.priced}<span className="text-sm font-normal text-slate-500"> / {c.units?.length ?? 0}</span></p><p className="text-xs text-slate-500">Plans with usable prices</p></div></div>
+          <p className="mt-3 text-xs text-slate-500">Last saved price observation: {profileDate((c.units ?? []).map(u => u.lastUpdatedAt).filter(Boolean).sort().at(-1))}</p>{Boolean(c.withheldUnitIds?.length) && <p className="mt-2 text-xs text-amber-800">Some prices are withheld pending a price-history check. Open the profile to review saved values.</p>}</div>
+          <div className="p-5"><CompetitorProfileContent profile={c} compact /></div>
+          <div className="flex flex-wrap items-center gap-4 border-t border-slate-200 p-4 text-sm"><button onClick={() => onViewClick(c)} className="rounded-lg bg-emerald-700 px-3 py-2 font-medium text-white">View full profile</button>{url && <a href={url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-slate-600">Website<ExternalLink className="h-3.5 w-3.5" /></a>}<details className="ml-auto"><summary aria-label={`Actions for ${c.name}`} className="cursor-pointer text-slate-500">Manage</summary><div className="mt-2 flex gap-4"><button onClick={() => onEditClick(c)} className="underline">Edit</button><button disabled={saving} onClick={() => {setDecision(c); setReason('')}} className="underline">{c.isActive ? 'Archive' : 'Restore'}</button></div></details></div>
+        </article>
+      })}
+    </div>}
+  </section>
 }
-

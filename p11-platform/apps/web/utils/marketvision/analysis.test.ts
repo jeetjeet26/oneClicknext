@@ -17,3 +17,15 @@ describe('complete market analysis',()=>{
  it.each(['0','-1','NaN','1x','367','1.5'])('rejects invalid reporting window %s',days=>{expect(AnalysisQuery.safeParse({propertyId:id(1),days}).success).toBe(false)})
  it('validates real DB UUIDs and rejects ambiguous or unknown filters',()=>{expect(AnalysisQuery.safeParse({propertyId:'33333333-3333-3333-3333-333333333333'}).success).toBe(true);expect(AnalysisQuery.safeParse({propertyId:id(1),bedrooms:'0',unitType:'A1'}).success).toBe(false);expect(AnalysisQuery.safeParse({propertyId:id(1),bedrooms:'0'}).success).toBe(true);expect(AnalysisQuery.safeParse({propertyId:id(1),unexpected:'yes'}).success).toBe(false)})
 })
+
+it('does not turn several prices for one plan in one capture into market movements',()=>{
+ const s=snapshot(),u=unit(101,1,2695);u.capture_id=id(99);s.units=[u]
+ s.history=[2585,2295,2795,2395].map((rent,i)=>({...row(200+i,101,rent,`2026-09-20T11:0${i}:00Z`),capture_id:id(99)}))
+ const result=analyzeMarket(s)
+ expect(result.changes).toEqual([]);expect(result.trends).toEqual([]);expect(result.comparisons[0].avgRent).toBeNull();expect(result.summary.pricedPlans).toBe(0)
+})
+it('allows a later independently captured price while withholding the conflicted historical trend',()=>{
+ const s=snapshot(),u=unit(101,1,2700);u.capture_id=id(100);s.units=[u]
+ s.history=[{...row(201,101,2585,'2026-09-19T11:00:00Z'),capture_id:id(99)},{...row(202,101,2295,'2026-09-19T11:01:00Z'),capture_id:id(99)},{...row(203,101,2700,'2026-09-20T12:00:00Z'),capture_id:id(100)}]
+ const result=analyzeMarket(s);expect(result.comparisons[0].avgRent).toBe(2700);expect(result.changes).toEqual([])
+})

@@ -8,6 +8,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {sendMarketDecision} from '@/utils/marketvision/decision-client'
+import {ScheduledRefreshHistory} from './ScheduledRefreshHistory'
 import {MarketRunHistory} from './MarketRunHistory'
 import {MarketDecisionHistory} from './MarketDecisionHistory'
 import {
@@ -85,6 +86,7 @@ export function MonitoringPanel({ propertyId,openRequestId }: MonitoringPanelPro
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="lg:col-span-2"><ScheduledRefreshHistory key={`${propertyId}:${historyVersion}`} propertyId={propertyId}/></div>
       {/* Settings */}
       <section className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6 space-y-4">
         <h3 className="font-semibold text-gray-900 dark:text-white flex items-center gap-2">
@@ -100,7 +102,7 @@ export function MonitoringPanel({ propertyId,openRequestId }: MonitoringPanelPro
             className="rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
           />
           <span className="text-sm text-gray-700 dark:text-gray-300">
-            Prefer scheduled monitoring when activated
+            Enable scheduled price refreshes
           </span>
         </label>
 
@@ -165,7 +167,7 @@ export function MonitoringPanel({ propertyId,openRequestId }: MonitoringPanelPro
         <label className="block text-sm">Reason for settings change<textarea minLength={3} maxLength={2000} value={reason} onChange={e=>setReason(e.target.value)} className="block w-full border rounded p-2 mt-1" /></label>
         </fieldset>
         {!canManage&&ready&&<p className="text-sm text-gray-500">A property manager can change these settings.</p>}
-        <p className="text-sm text-gray-500">Saving preferences does not start a source refresh. Provider access and worker readiness are checked separately.</p>
+        <p className="text-sm text-gray-500">Saving changes controls eligibility for the scheduled pricing worker. It does not start an immediate refresh. Automatic competitor discovery is separate.</p>
         <button disabled={isSaving} onClick={()=>{setReason('');setMessage(null);void load()}} className="text-sm underline">Reload monitoring</button>
         {message && (
           <p
@@ -186,7 +188,7 @@ export function MonitoringPanel({ propertyId,openRequestId }: MonitoringPanelPro
 
         {config?.last_run_at && (
           <p className="text-xs text-gray-500">
-            Earlier recorded refresh: {new Date(config.last_run_at).toLocaleString()}
+            Last confirmed complete refresh: {new Date(config.last_run_at).toLocaleString()}
             {typeof config.error_count === 'number' && config.error_count > 0 && (
               <span className="text-amber-600"> · {config.error_count} source errors</span>
             )}

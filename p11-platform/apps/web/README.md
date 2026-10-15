@@ -25,7 +25,9 @@ Visit http://localhost:3000 — authenticated users land in `/dashboard`.
 - **Dashboard Shell** - Sidebar navigation, user menu, responsive design
 
 ### Products
-- **MultiChannel BI** (`/dashboard/bi`) - Marketing analytics with charts and metrics
+- **Community knowledge** (`/dashboard/community`) - Selected-property facts, sources, brand and assets
+- **Property intelligence** (`/dashboard/intelligence`) - Selected-property results, campaign performance, recommendations and experiments; former `/dashboard/bi` links open campaign performance here
+- **Portfolio assistant** (`/dashboard/portfolio`) - Find and compare explicitly selected communities
 - **LumaLeasing** (`/dashboard/luma`) - AI-powered leasing chatbot with RAG
 - **Properties** (`/dashboard/properties`) - Property CRUD management
 - **Team** (`/dashboard/team`) - Team member management and invitations

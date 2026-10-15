@@ -16,25 +16,27 @@ export async function GET(req:NextRequest) {
     const key=process.env.DATA_ENGINE_API_KEY
     if(!key) throw new Error('Scraping service authentication is not configured')
     const db=phaseFourDb(createServiceClient())
-    const claimed=await db.rpc('claim_phase_four_maintenance',{p_kind:'competitors',p_limit:5})
+    const claimed=await db.rpc('claim_phase_four_maintenance',{p_kind:'competitors',p_limit:1})
     if(claimed.error || !claimed.data) throw new Error('Could not confirm scheduled refresh claims')
     const configs=claimed.data as unknown as Array<{property_id:string;maintenanceId:string;maintenanceToken:string}>
     const outcomes=[]
     for(const config of configs) {
       let success=false
       let updated=0
+      let receipt:'complete'|'partial'|'failed'|'unconfirmed'='unconfirmed'
       try {
         const response=await fetch(`${getDataEngineUrl()}/scraper/refresh-pricing`,{method:'POST',
           headers:{'Content-Type':'application/json','X-API-Key':key},
-          body:JSON.stringify({property_id:config.property_id,prefer_website:true}),signal:AbortSignal.timeout(50000)})
+          body:JSON.stringify({property_id:config.property_id,prefer_website:true}),signal:AbortSignal.timeout(240000)})
         const payload=await response.json()
         success=response.ok && payload.success===true && Number.isInteger(payload.updated_count) &&
           payload.error_count===0 && Number.isInteger(payload.total_competitors) && payload.updated_count===payload.total_competitors
         updated=Number.isInteger(payload.updated_count) ? payload.updated_count : 0
-      } catch { /* A missing receipt is a failure, not a completed refresh. */ }
+        receipt=success?'complete':updated>0?'partial':'failed'
+      } catch { /* The worker may continue after a timeout. Preserve that uncertainty. */ }
       const saved=await db.rpc('finish_phase_four_maintenance',{p_kind:'competitors',p_item_id:config.maintenanceId,p_token:config.maintenanceToken,p_success:success})
       if(saved.error || !saved.data) throw new Error('Could not confirm scheduled refresh result')
-      outcomes.push({propertyId:config.property_id,success,updated})
+      outcomes.push({propertyId:config.property_id,success,updated,receipt})
     }
     const succeeded=outcomes.filter(o=>o.success).length
     const failed=outcomes.length-succeeded

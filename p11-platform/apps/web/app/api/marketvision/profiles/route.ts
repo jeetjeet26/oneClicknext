@@ -6,7 +6,7 @@ import { readCompetitorProfiles } from '@/utils/marketvision/profile-store'
 export async function GET(request: NextRequest) {
   try {
     const id = marketId.safeParse(request.nextUrl.searchParams.get('propertyId'))
-    if (!id.success) throw new MarketStoreError('Select a property.', 400)
+    if (!id.success || request.nextUrl.searchParams.getAll('propertyId').length !== 1 || [...request.nextUrl.searchParams.keys()].some(k => k !== 'propertyId')) throw new MarketStoreError('Select a property.', 400)
     const actor = await requireMarketOperator(id.data)
     const data = await readCompetitorProfiles(id.data, actor)
     if (await requireMarketOperator(id.data) !== actor) throw new MarketStoreError('Your session changed. Reload this property.', 403)

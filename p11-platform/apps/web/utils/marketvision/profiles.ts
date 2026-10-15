@@ -30,7 +30,7 @@ export interface CompetitorProfile extends Competitor {
   historicalBrand: HistoricalBrand | null
   reviewedBrand: ReviewedBrand | null
   scopeNotes: string[]
-  conflictedUnitIds?: string[]
+  withheldUnitIds: string[]
 }
 export interface SubjectProfile {
   name: string
@@ -67,7 +67,7 @@ export function scopeNotes(competitor: Competitor, brand: HistoricalBrand | null
     const match = u.unitType.match(/^(.{4,})\s+(?:\d+\s?BR|studio)$/i)
     return match ? [match[1].toLowerCase()] : []
   }))
-  if (locations.size > 1) notes.push('Saved listings span multiple named locations. Confirm that they belong to one comparable community.')
+  if (locations.size > 1 && /portfolio|management company|properties|communities/i.test(brand?.positioning ?? '')) notes.push('The source may cover several properties, and saved unit names differ by location. Confirm one comparable community before using its rents.')
   return notes
 }
 
@@ -79,7 +79,7 @@ export function currentClaims(profile: CompetitorProfile, category: string): str
 export function profileText(profile: CompetitorProfile): string {
   return [profile.name, profile.address, ...profile.amenities, ...profile.scopeNotes,
     ...Object.values(profile.historicalBrand ?? {}).flatMap(v => Array.isArray(v) ? v : typeof v === 'string' ? [v] : []),
-    ...(profile.reviewedBrand?.claims.flatMap(c => [c.statement, c.quote]) ?? []),
+    ...(profile.reviewedBrand?.disposition==='published' && profile.reviewedBrand.sourceCurrent ? profile.reviewedBrand.claims.flatMap(c => [c.statement, c.quote]) : []),
   ].join(' ').toLowerCase()
 }
 export function rentSummary(units: Array<{ rentMin: number | null; bedrooms: number }> , bedrooms?: number) {

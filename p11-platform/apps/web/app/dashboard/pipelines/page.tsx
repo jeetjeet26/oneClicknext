@@ -208,7 +208,7 @@ function PropertyPipelines({ propertyId, propertyName }: {
             await loadList();
             if (selected)
                 await choose(selected.id);
-        })}>Refresh imports</button><Link className={button} href="/dashboard/bi">Open MultiChannel BI</Link></div></header>
+        })}>Refresh imports</button><Link className={button} href="/dashboard/intelligence?section=campaigns">Open campaign performance</Link></div></header>
   {error && <p role="alert" className="rounded-lg border border-amber-500 p-3">{error} Previously loaded progress may be out of date.</p>}{message && <p role="status" className="rounded-lg border border-border p-3">{message}</p>}{!list && !error && <p role="status">Loading import history…</p>}
   {pending && <section aria-label="Unconfirmed import request" className={card}><h2 className="font-semibold">Check the saved request</h2><p className="mt-2 text-sm">The last reply was not confirmed. Check its result before starting another request. Cancelling an unused request prevents it from running later; completed decisions stay recorded.</p><div className="mt-3 flex flex-wrap gap-2"><button className={button} disabled={busy} onClick={() => void work(async () => settle(await request({ kind: 'command', id: pending.id })))}>Check request result</button><button className={button} disabled={busy || !canManage} onClick={() => void work(async () => settle(await request({ operation: 'cancel_request', id: pending.id }, 'POST')))}>Cancel unused request</button></div></section>}
   {list && <>

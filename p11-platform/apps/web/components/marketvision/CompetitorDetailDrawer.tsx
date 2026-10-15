@@ -1,6 +1,10 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import {Dialog} from '@/components/ui/dialog'
+import type {Competitor, CompetitorUnit} from '@/utils/marketvision/records'
+import type {CompetitorProfile} from '@/utils/marketvision/profiles'
+import {CompetitorProfileContent, profileDate, safeWebsite} from './CompetitorProfileContent'
 import {CompetitorUnitsPanel} from './CompetitorUnitsPanel'
 import {CompetitorExtractionPanel} from './CompetitorExtractionPanel'
 import {CompetitorListingPanel} from './CompetitorListingPanel'
@@ -14,44 +18,10 @@ import {
   Home,
   Edit2,
   RefreshCw,
-  Sparkles,
 } from 'lucide-react'
 
-interface CompetitorUnit {
-  id: string
-  unitType: string
-  bedrooms: number
-  bathrooms: number | null
-  sqftMin: number | null
-  sqftMax: number | null
-  rentMin: number | null
-  rentMax: number | null
-  availableCount: number | null
-  moveInSpecials: string | null
-  lastUpdatedAt: string
-}
-
-interface Competitor {
-  version: number
-  id: string
-  propertyId?: string
-  name: string
-  address: string | null
-  websiteUrl: string | null
-  phone: string | null
-  unitsCount: number | null
-  yearBuilt: number | null
-  propertyType: string
-  amenities: string[]
-  photos: string[]
-  ilsListings?: Record<string, string>
-  notes: string | null
-  isActive: boolean
-  lastScrapedAt: string | null
-  units?: CompetitorUnit[]
-}
-
 interface CompetitorDetailDrawerProps {
+  profile?: CompetitorProfile
   competitor: Competitor | null
   onClose: () => void
   onEdit: (competitor: Competitor) => void
@@ -64,12 +34,13 @@ interface RefreshStatus {
 }
 
 export function CompetitorDetailDrawer({ 
-  competitor, 
+  competitor, profile,
   onClose,
   onEdit
 }: CompetitorDetailDrawerProps) {
+  const controller=useRef<AbortController|null>(null)
   const scopeId=competitor?.id,scopeProperty=competitor?.propertyId,sourceUnits=competitor?.units
-  const [units, setUnits] = useState<CompetitorUnit[]>([])
+  const [units, setUnits] = useState<CompetitorUnit[]>(sourceUnits ?? [])
   const [loading, setLoading] = useState(false)
   const [refreshStatus, setRefreshStatus] = useState<RefreshStatus>({
     loading: false,
@@ -77,6 +48,7 @@ export function CompetitorDetailDrawer({
     type: null
   })
   
+  const [manageOpen,setManageOpen]=useState(false)
   const [sourceGeneration,setSourceGeneration]=useState(0)
   const [openExtraction,setOpenExtraction]=useState<{competitorId:string;id:string}|null>(null)
   const [listingGeneration,setListingGeneration]=useState(0)
@@ -84,42 +56,35 @@ export function CompetitorDetailDrawer({
   const fetchUnits = useCallback(async () => {
     if (!scopeId || !scopeProperty) return
 
-    setLoading(true)
+    controller.current?.abort();const request=new AbortController();controller.current=request
     try {
-      const res = await fetch(`/api/marketvision/units?propertyId=${scopeProperty}&competitorId=${scopeId}`)
+      const res = await fetch(`/api/marketvision/units?propertyId=${scopeProperty}&competitorId=${scopeId}`,{signal:request.signal,cache:'no-store'})
       const data = await res.json()
 
       if (!res.ok) throw new Error(data.error||'Unit values could not be loaded.')
-      setUnits(data.units || [])
+      if(!request.signal.aborted){setUnits(data.units || []);setRefreshStatus({loading:false,type:null,message:null})}
     } catch (err) {
-      setRefreshStatus({loading:false,type:'error',message:err instanceof Error?err.message:'Unit values could not be loaded.'})
+      if(!request.signal.aborted)setRefreshStatus({loading:false,type:'error',message:err instanceof Error?err.message:'Unit values could not be loaded.'})
     } finally {
-      setLoading(false)
+      if(!request.signal.aborted)setLoading(false)
     }
   },[scopeId,scopeProperty])
 
-  useEffect(() => {
-    if (scopeId) {
-      if (sourceUnits) {
-        setUnits(sourceUnits)
-      } else {
-        fetchUnits()
-      }
-      // Reset state when competitor changes
-      setRefreshStatus({ loading: false, message: null, type: null })
+  // Open from the loaded profile snapshot. Refresh after an explicit reload or
+  // a saved pricing decision, without a second initial request.
 
-
-    }
-  }, [scopeId,sourceUnits,fetchUnits])
+  useEffect(()=>()=>controller.current?.abort(),[])
+  const handleOpenChange=useCallback((open:boolean)=>{if(!open)onClose()},[onClose])
 
   if (!competitor) return null
 
-  const knownPrices = units.flatMap(u=>u.rentMin===null?[]:[u.rentMin])
+  const website=safeWebsite(competitor.websiteUrl)
+  const knownPrices = units.filter(u=>!profile?.withheldUnitIds?.includes(u.id)).flatMap(u=>u.rentMin===null?[]:[u.rentMin])
   const avgRent = knownPrices.length ? Math.round(knownPrices.reduce((a,b)=>a+b,0)/knownPrices.length) : null
   const totalAvailable = units.length && units.every(u=>u.availableCount!==null) ? units.reduce((sum,u)=>sum+(u.availableCount??0),0) : null
 
   return (
-    <div role="dialog" aria-label="Competitor details" className="fixed inset-y-0 right-0 w-full max-w-[480px] bg-white dark:bg-gray-800 shadow-2xl border-l border-gray-200 dark:border-gray-700 z-50 flex flex-col">
+    <Dialog open={Boolean(competitor)} onOpenChange={handleOpenChange}><div role="dialog" aria-modal="true" aria-label="Competitor details" className="fixed inset-y-0 right-0 w-full max-w-[760px] bg-white dark:bg-gray-800 shadow-2xl border-l border-gray-200 dark:border-gray-700 z-50 flex flex-col">
       {/* Header */}
       <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex items-start justify-between">
         <div className="flex items-start gap-3">
@@ -162,15 +127,15 @@ export function CompetitorDetailDrawer({
         <div className="grid grid-cols-3 gap-4 p-4 bg-gray-50 dark:bg-gray-700/30">
           <div className="text-center">
             <p className="text-2xl font-bold text-gray-900 dark:text-white">
-              {avgRent!==null ? `$${avgRent.toLocaleString()}` : 'Unknown'}
+              {profile?.scopeNotes.length?'Needs review':avgRent!==null ? `$${avgRent.toLocaleString()}` : 'Unknown'}
             </p>
-            <p className="text-xs text-gray-500">Avg Rent</p>
+            <p className="text-xs text-gray-500">Mean saved starting rent</p>
           </div>
           <div className="text-center">
             <p className="text-2xl font-bold text-gray-900 dark:text-white">
               {units.length}
             </p>
-            <p className="text-xs text-gray-500">Unit Types</p>
+            <p className="text-xs text-gray-500">Saved floor plans</p>
           </div>
           <div className="text-center">
             <p className="text-2xl font-bold text-gray-900 dark:text-white">
@@ -220,9 +185,9 @@ export function CompetitorDetailDrawer({
 
           {/* Contact Links */}
           <div className="flex items-center gap-3 mt-4">
-            {competitor.websiteUrl && (
+            {website && (
               <a
-                href={competitor.websiteUrl}
+                href={website}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 rounded-lg hover:bg-indigo-100 dark:hover:bg-indigo-900/30 transition-colors"
@@ -243,58 +208,17 @@ export function CompetitorDetailDrawer({
           </div>
         </div>
 
-        {/* Amenities */}
-        <div className="p-4 border-b border-gray-100 dark:border-gray-700">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-emerald-500" />
-              Amenities
-            </h3>
-            {competitor.amenities.length > 0 && (
-              <span className="text-xs text-gray-500">
-                {competitor.amenities.length} amenities
-              </span>
-            )}
-          </div>
-          {competitor.amenities.length > 0 ? (
-            <div className="flex flex-wrap gap-1.5">
-              {competitor.amenities.map((amenity, i) => (
-                <span
-                  key={i}
-                  className="px-2.5 py-1 text-xs bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 rounded-full"
-                >
-                  {amenity}
-                </span>
-              ))}
-            </div>
-          ) : (
-            <div className="py-4 text-center">
-              <p className="text-sm text-gray-400">No amenities recorded</p>
-              <button
-                aria-label="Edit competitor details"
-            onClick={() => onEdit(competitor)}
-                className="mt-2 text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
-              >
-                Add amenities →
-              </button>
-            </div>
-          )}
-        </div>
+        {profile && <div className="border-b p-5"><CompetitorProfileContent profile={profile}/></div>}
 
         {refreshStatus.message && <p role="alert" className="p-4 text-sm text-red-700">{refreshStatus.message}</p>}
-        {competitor.propertyId && <div className="p-4"><CompetitorListingPanel key={`${competitor.propertyId}:${competitor.id}`} propertyId={competitor.propertyId} competitorId={competitor.id} onChanged={()=>{setSourceGeneration(v=>v+1);setListingGeneration(v=>v+1)}} /></div>}
-
-        {competitor.propertyId && <div className="p-4"><CompetitorSourcePanel key={`${competitor.id}:${listingGeneration}`} propertyId={competitor.propertyId} competitorId={competitor.id} onExtractionReady={id=>setOpenExtraction({competitorId:competitor.id,id})} /></div>}
-        {competitor.propertyId && <div className="p-4"><CompetitorExtractionPanel key={competitor.id} openRequestId={openExtraction?.competitorId===competitor.id?openExtraction.id:undefined} propertyId={competitor.propertyId} competitorId={competitor.id} onApplied={()=>{setSourceGeneration(v=>v+1);void fetchUnits()}} /></div>}
-
         {/* Unit Pricing */}
         <div className="p-4">
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">
-              Unit Types
+              Saved floor plans and pricing
             </h3>
             <button
-              onClick={fetchUnits}
+              aria-label="Reload floor plan prices" onClick={()=>{setLoading(true);void fetchUnits()}}
               className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
             >
               <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
@@ -365,9 +289,11 @@ export function CompetitorDetailDrawer({
                       )}
                     </div>
 
+                    <p className="mt-2 text-xs text-slate-500">Saved {profileDate(unit.lastUpdatedAt)}</p>
+                    {profile?.withheldUnitIds?.includes(unit.id)&&<p className="mt-2 text-xs text-amber-800">This saved price is excluded from comparisons because its history is conflicting or unavailable. Review the source before using it.</p>}
                     {unit.moveInSpecials && (
                       <div className="mt-2 px-2 py-1 bg-amber-50 dark:bg-amber-900/20 rounded text-xs text-amber-700 dark:text-amber-300">
-                        🎁 {unit.moveInSpecials}
+                        Previously observed offer (verify availability): {unit.moveInSpecials}
                       </div>
                     )}
                   </div>
@@ -376,7 +302,13 @@ export function CompetitorDetailDrawer({
           )}
         </div>
 
+        <details className="m-4 rounded-xl border" onToggle={e=>setManageOpen(e.currentTarget.open)}><summary className="cursor-pointer p-4 font-semibold">Manage sources and pricing</summary>{manageOpen&&<>        {competitor.propertyId && <div className="p-4"><CompetitorListingPanel key={`${competitor.propertyId}:${competitor.id}`} propertyId={competitor.propertyId} competitorId={competitor.id} onChanged={()=>{setSourceGeneration(v=>v+1);setListingGeneration(v=>v+1)}} /></div>}
+
+        {competitor.propertyId && <div className="p-4"><CompetitorSourcePanel key={`${competitor.id}:${listingGeneration}`} propertyId={competitor.propertyId} competitorId={competitor.id} onExtractionReady={id=>setOpenExtraction({competitorId:competitor.id,id})} /></div>}
+        {competitor.propertyId && <div className="p-4"><CompetitorExtractionPanel key={competitor.id} openRequestId={openExtraction?.competitorId===competitor.id?openExtraction.id:undefined} propertyId={competitor.propertyId} competitorId={competitor.id} onApplied={()=>{setSourceGeneration(v=>v+1);void fetchUnits()}} /></div>}
+
         {competitor.propertyId && <div className="px-6 py-4"><CompetitorUnitsPanel key={`${competitor.id}:${sourceGeneration}`} propertyId={competitor.propertyId} competitorId={competitor.id} onChanged={()=>{void fetchUnits()}} /></div>}
+        </>}</details>
         {/* Notes */}
         {competitor.notes && (
           <div className="p-4 border-t border-gray-100 dark:border-gray-700">
@@ -389,7 +321,6 @@ export function CompetitorDetailDrawer({
           </div>
         )}
       </div>
-    </div>
+    </div></Dialog>
   )
 }
-

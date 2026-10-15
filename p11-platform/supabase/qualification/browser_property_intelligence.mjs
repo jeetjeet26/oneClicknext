@@ -13,15 +13,15 @@ const cookies=[],auth=createServerClient(config.gateway,config.anon,{cookies:{ge
 const {error}=await auth.auth.setSession(config.session)
 if(error)throw Error('Synthetic session unavailable')
 const browser=await chromium.launch({headless:true})
-let count=0
+let count=0,page
 function check(value,label){if(!value)throw Error(label);count++;console.log(JSON.stringify({state:'passed',check:label}))}
 try{
   const context=await browser.newContext({viewport:{width:1365,height:1000}})
   await context.route('**/*',route=>{const u=new URL(route.request().url());return ['127.0.0.1','localhost'].includes(u.hostname)||['data:','blob:'].includes(u.protocol)?route.continue():route.abort()})
   await context.addCookies(cookies.map(c=>({name:c.name,value:c.value,url:config.webUrl})))
   await context.addInitScript(id=>{if(!localStorage.getItem('p11_selected_property_id'))localStorage.setItem('p11_selected_property_id',id)},A)
-  const page=await context.newPage(),errors=[]
-  process.on('uncaughtException',async error=>{console.error((await page.locator('body').innerText()).slice(-8000));await page.screenshot({path:'/private/tmp/property-intelligence-failed.png',fullPage:true});console.error(error);await browser.close();process.exit(1)})
+  page=await context.newPage()
+  const errors=[]
   page.setDefaultTimeout(45000)
   page.on('pageerror',e=>errors.push(e.message))
   const go=route=>page.goto(config.webUrl+route,{waitUntil:'domcontentloaded',timeout:180000})
@@ -30,7 +30,8 @@ try{
   await go('/dashboard/intelligence')
   const first=await firstReport
   if(!first.ok())throw Error('Property report failed: '+await first.text())
-  check((await first.json()).properties.every(p=>p.score.id===A),'Default Intelligence report contains only selected community A')
+  const firstData=await first.json()
+  check(firstData.properties.length===1&&firstData.properties[0].score.id===A,'Default Intelligence report contains only selected community A')
   await expect(page.getByRole('heading',{name:'Community A performance',exact:true})).toBeVisible()
   check(await page.getByRole('button',{name:'Property record',exact:true}).count()===0,'Intelligence has no competing fact editor')
   check(await page.getByRole('button',{name:'Creative direction',exact:true}).count()===0,'Intelligence has no creative-direction editor')
@@ -38,7 +39,8 @@ try{
   const nextReport=reportFor(B)
   await page.getByRole('combobox',{name:'Property',exact:true}).selectOption(B)
   const next=await nextReport
-  check(next.ok()&&(await next.json()).properties.every(p=>p.score.id===B),'Property switch reloads the report with only community B')
+  const nextData=await next.json()
+  check(next.ok()&&nextData.properties.length===1&&nextData.properties[0].score.id===B,'Property switch reloads the report with only community B')
   await expect(page.getByRole('heading',{name:'Community B performance',exact:true})).toBeVisible()
   await expect(page.getByRole('heading',{name:'Community A performance',exact:true})).toHaveCount(0)
   const questionResponse=page.waitForResponse(r=>r.url().endsWith('/api/intelligence')&&r.request().method()==='POST')
@@ -91,7 +93,8 @@ try{
   check(JSON.stringify(data.groups).includes('Intelligence boundary fixture market'),'Community Brain consumes the fact approved in Community knowledge')
   await go('/dashboard/siteforge/direction')
   await expect(page.getByRole('heading',{name:'Property design brief',exact:true})).toBeVisible()
-  check(await page.getByLabel('Creative concept',{exact:true}).count()===1,'Reusable design brief is available only in SiteForge’s direction screen')
+  await expect(page.getByLabel('Creative concept',{exact:true})).toBeVisible({timeout:45000})
+  check(true,'Reusable design brief is available only in SiteForge’s direction screen')
   await page.setViewportSize({width:390,height:844})
   await go('/dashboard/intelligence')
   await expect(page.getByRole('heading',{name:'Community A performance',exact:true})).toBeVisible()
@@ -99,4 +102,7 @@ try{
   check(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1),'Intelligence stays within the mobile viewport')
   check(errors.length===0,'No browser runtime errors in the tested flows')
   console.log(JSON.stringify({state:'passed',checks:count,liveEndpointsContacted:false}))
+}catch(error){
+  if(page){console.error((await page.locator('body').innerText()).slice(-8000));await page.screenshot({path:'/private/tmp/property-intelligence-failed.png',fullPage:true})}
+  throw error
 }finally{await browser.close()}

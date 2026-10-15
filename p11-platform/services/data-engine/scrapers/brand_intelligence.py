@@ -15,6 +15,7 @@ from enum import Enum
 
 import httpx
 from openai import OpenAI
+from scrapers.unit_identity import unique_units, existing_unit_index, unit_key
 
 from scrapers.website_intelligence import (
     CommunityWebsiteScraper,
@@ -435,7 +436,7 @@ class BrandIntelligenceExtractor:
             
             # Store floor plans/pricing data if available
             if floor_plans:
-                self._store_floor_plans(brand_intel.competitor_id, floor_plans)
+                self._store_floor_plans(brand_intel.competitor_id, floor_plans, capture_id=capture_id)
             
             logger.info(f"Stored brand intelligence for {brand_intel.competitor_id}")
             return True
@@ -447,22 +448,24 @@ class BrandIntelligenceExtractor:
     def _store_floor_plans(
         self,
         competitor_id: str,
-        floor_plans: List[FloorPlanUnit]
+        floor_plans: List[FloorPlanUnit],
+        capture_id: Optional[str] = None
     ) -> None:
         """
         Store floor plans with pricing data to competitor_units table.
         Updates existing units or creates new ones.
         """
+        floor_plans = unique_units(floor_plans)
         try:
             # Get existing units
             existing_result = self.supabase.table('competitor_units').select(
                 'id, unit_type, rent_min, rent_max, available_count'
             ).eq('competitor_id', competitor_id).execute()
             
-            existing_map = {u['unit_type']: u for u in (existing_result.data or [])}
+            existing_map = existing_unit_index(existing_result.data or [])
             
             for fp in floor_plans:
-                existing = existing_map.get(fp.unit_type)
+                existing = existing_map.get(unit_key(fp.unit_type))
                 
                 if existing:
                     # Check if price changed
@@ -482,6 +485,7 @@ class BrandIntelligenceExtractor:
                         'deposit': fp.deposit,
                         'available_count': fp.available_count,
                         'move_in_specials': fp.move_in_specials,
+                        'capture_id': capture_id,
                         'last_updated_at': datetime.now(timezone.utc).isoformat()
                     }
                     
@@ -496,7 +500,8 @@ class BrandIntelligenceExtractor:
                             'rent_min': fp.rent_min,
                             'rent_max': fp.rent_max,
                             'available_count': fp.available_count,
-                            'source': 'website_scrape'
+                            'source': 'website_scrape',
+                            'capture_id': capture_id
                         }).execute()
                         
                         logger.info(f"Price change detected for {fp.unit_type}: "
@@ -514,7 +519,8 @@ class BrandIntelligenceExtractor:
                         'rent_max': fp.rent_max,
                         'deposit': fp.deposit,
                         'available_count': fp.available_count,
-                        'move_in_specials': fp.move_in_specials
+                        'move_in_specials': fp.move_in_specials,
+                        'capture_id': capture_id
                     }
                     
                     result = self.supabase.table('competitor_units').insert(
@@ -528,13 +534,15 @@ class BrandIntelligenceExtractor:
                             'rent_min': fp.rent_min,
                             'rent_max': fp.rent_max,
                             'available_count': fp.available_count,
-                            'source': 'website_scrape'
+                            'source': 'website_scrape',
+                            'capture_id': capture_id
                         }).execute()
             
             logger.info(f"Stored {len(floor_plans)} floor plans for competitor {competitor_id}")
             
         except Exception as e:
             logger.error(f"Error storing floor plans: {e}")
+            raise
 
 
 class CompetitorBatchProcessor:
@@ -1032,4 +1040,3 @@ if __name__ == "__main__":
         print(json.dumps(result, indent=2, default=str))
     else:
         print("No results extracted")
-

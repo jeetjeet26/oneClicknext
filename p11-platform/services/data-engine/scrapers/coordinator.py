@@ -32,6 +32,7 @@ def run_async_in_thread(coro):
         future = executor.submit(run)
         return future.result()
 
+from scrapers.unit_identity import unique_units, existing_unit_index, unit_key
 from scrapers.base import ScrapedProperty
 from scrapers.discovery import CompetitorDiscovery, DiscoveryConfig, SubjectPropertyInfo
 from scrapers.brand_intelligence import (
@@ -470,12 +471,13 @@ class ScrapingCoordinator:
         Returns:
             Number of units updated/created
         """
+        floor_plans = unique_units(floor_plans)
         # Get existing units
         existing_result = self.supabase.table('competitor_units').select(
             'id, unit_type, rent_min, rent_max, available_count'
         ).eq('competitor_id', competitor_id).execute()
         
-        existing_map = {u['unit_type']: u for u in (existing_result.data or [])}
+        existing_map = existing_unit_index(existing_result.data or [])
         
         # Get competitor details for alerts
         competitor_result = self.supabase.table('competitors').select(
@@ -489,7 +491,7 @@ class ScrapingCoordinator:
         units_updated = 0
         
         for fp in floor_plans:
-            existing = existing_map.get(fp.unit_type)
+            existing = existing_map.get(unit_key(fp.unit_type))
             
             if existing:
                 old_rent = existing.get('rent_min')
@@ -527,7 +529,7 @@ class ScrapingCoordinator:
                     }).execute()
                 
                 # Create price alert if significant change
-                if price_changed and property_id and old_rent and fp.rent_min:
+                if price_changed and property_id and old_rent and fp.rent_min is not None and old_rent != fp.rent_min:
                     change = fp.rent_min - old_rent
                     change_pct = (change / old_rent) * 100
                     
@@ -542,6 +544,8 @@ class ScrapingCoordinator:
                         'description': f"${old_rent} → ${fp.rent_min} ({change_pct:+.1f}%)",
                         'data': {
                             'unit_type': fp.unit_type,
+                            'unit_id': existing['id'],
+                            'capture_id': capture_id,
                             'old_price': old_rent,
                             'new_price': fp.rent_min,
                             'change': change,
@@ -749,7 +753,7 @@ class ScrapingCoordinator:
     
     def _add_units(self, competitor_id: str, units: List, capture_id: Optional[str] = None) -> None:
         """Add units and initial price history"""
-        for unit in units:
+        for unit in unique_units(units):
             try:
                 unit_data = {
                     'competitor_id': competitor_id,
@@ -791,6 +795,9 @@ class ScrapingCoordinator:
         capture_id: Optional[str] = None
     ) -> None:
         """Update competitor with refreshed data"""
+        units = unique_units(refreshed.units)
+        if not units:
+            raise ValueError("No floor plan observations were returned")
         try:
             # Update competitor info
             self.supabase.table('competitors').update({
@@ -805,11 +812,11 @@ class ScrapingCoordinator:
                 'id, unit_type, rent_min, rent_max, available_count'
             ).eq('competitor_id', competitor_id).execute()
             
-            existing_map = {u['unit_type']: u for u in (existing_units.data or [])}
+            existing_map = existing_unit_index(existing_units.data or [])
             
             # Update or add units
-            for unit in refreshed.units:
-                existing = existing_map.get(unit.unit_type)
+            for unit in units:
+                existing = existing_map.get(unit_key(unit.unit_type))
                 
                 if existing:
                     # Check if price changed
@@ -1993,7 +2000,7 @@ class ScrapingCoordinator:
                 'id, unit_type, rent_min, rent_max'
             ).eq('competitor_id', competitor_id).execute()
             
-            existing_map = {u['unit_type']: u for u in (existing_result.data or [])}
+            existing_map = existing_unit_index(existing_result.data or [])
             
             # Get competitor details for alert
             competitor_result = self.supabase.table('competitors').select(
@@ -2005,8 +2012,8 @@ class ScrapingCoordinator:
             
             competitor = competitor_result.data
             
-            for unit in scraped_data.units:
-                existing = existing_map.get(unit.unit_type)
+            for unit in unique_units(scraped_data.units):
+                existing = existing_map.get(unit_key(unit.unit_type))
                 
                 if existing and unit.rent_min:
                     old_rent = existing.get('rent_min')

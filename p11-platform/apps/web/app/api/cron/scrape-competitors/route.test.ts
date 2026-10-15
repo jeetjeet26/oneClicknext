@@ -26,3 +26,9 @@ it('does not report success without the saved final run receipt',async()=>{
 })
 
 it('does not claim or scrape while outbound delivery is paused',async()=>{vi.stubEnv('OUTBOUND_DELIVERY_PAUSED','true');expect(await(await GET(req())).json()).toEqual({state:'paused',processed:0});expect(d.start).not.toHaveBeenCalled();expect(d.rpc).not.toHaveBeenCalled();expect(d.fetch).not.toHaveBeenCalled()})
+it('records timeout uncertainty and claims only one property within the execution budget',async()=>{
+ d.fetch.mockRejectedValue(new DOMException('Timed out','TimeoutError'))
+ const response=await GET(req()),body=await response.json()
+ expect(response.status).toBe(502);expect(body.outcomes).toEqual([{propertyId:'property',success:false,updated:0,receipt:'unconfirmed'}])
+ expect(d.rpc).toHaveBeenCalledWith('claim_phase_four_maintenance',{p_kind:'competitors',p_limit:1})
+})

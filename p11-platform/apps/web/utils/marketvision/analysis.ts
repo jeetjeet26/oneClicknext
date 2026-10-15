@@ -27,8 +27,34 @@ const max = (v: number[]) => v.length ? v.reduce((a, b) => Math.max(a, b)) : nul
 const latest = (v: Array<string | null>) => v.filter((d): d is string => d !== null).sort((a,b) => Date.parse(b)-Date.parse(a))[0] ?? null
 export const ANALYSIS_METHOD = 'Mean of known advertised starting rents per saved floor plan; each plan counts once. Missing values stay unknown. No weighting by available apartments, concessions, lease terms or amenities.'
 
+// A source capture is one observation. Several prices for one plan in that
+// capture are an identity conflict, not a sequence of market movements.
+export function conflictedPriceUnits(snapshot: MarketAnalysisSnapshot, currentOnly = false): Set<string> {
+  const prices = new Map<string, Set<string>>()
+  const keysByUnit = new Map<string, Set<string>>()
+  const keys = (unitId: string, captureId: string | null, recordedAt: string | null) => [
+    ...(captureId ? [`${unitId}:capture:${captureId}`] : []),
+    ...(recordedAt ? [`${unitId}:time:${Date.parse(recordedAt)}`] : []),
+  ]
+  const observe = (unitId: string, captureId: string | null, at: string | null, min: number | null, max: number | null) => {
+    const unitKeys = keysByUnit.get(unitId) ?? new Set<string>()
+    for (const key of keys(unitId, captureId, at)) {const values = prices.get(key) ?? new Set<string>(); values.add(JSON.stringify([min, max])); prices.set(key, values); unitKeys.add(key)}
+    keysByUnit.set(unitId, unitKeys)
+  }
+  const history = snapshot.history.filter(h => Date.parse(h.recorded_at) <= Date.parse(snapshot.snapshotAt))
+  for (const h of history) observe(h.competitor_unit_id, h.capture_id, h.recorded_at, h.rent_min, h.rent_max)
+  for (const u of snapshot.units) observe(u.id, u.capture_id, u.last_updated_at, u.rent_min, u.rent_max)
+  const result = new Set<string>()
+  for (const u of snapshot.units) {
+    const observations = currentOnly ? keys(u.id, u.capture_id, u.last_updated_at) : [...(keysByUnit.get(u.id) ?? [])]
+    if (observations.some(key => (prices.get(key)?.size ?? 0) > 1)) result.add(u.id)
+  }
+  return result
+}
+
 export function analyzeMarket(snapshot: MarketAnalysisSnapshot, filter: {bedrooms?: number; unitType?: string} = {}) {
-  const units = snapshot.units.filter(u => (filter.bedrooms === undefined || u.bedrooms === filter.bedrooms) && (filter.unitType === undefined || u.unit_type === filter.unitType))
+  const conflicts = conflictedPriceUnits(snapshot, true)
+  const units = snapshot.units.filter(u => (filter.bedrooms === undefined || u.bedrooms === filter.bedrooms) && (filter.unitType === undefined || u.unit_type === filter.unitType)).map(u => conflicts.has(u.id) ? {...u, rent_min:null, rent_max:null} : u)
   const compById = new Map(snapshot.competitors.map(c => [c.id, c]))
   const unitById = new Map(units.map(u => [u.id, u]))
   const captures = new Map(snapshot.captures.map(c => [c.id, c]))
@@ -63,7 +89,7 @@ export function analyzeMarket(snapshot: MarketAnalysisSnapshot, filter: {bedroom
       rentRange:rows.filter(u => known(u.rent_min)).map(u => ({competitor:compById.get(u.competitor_id)!.name,rent:u.rent_min!,unitId:u.id})), citations:rows.map(u => citation(u))}
   })
   const start = Date.parse(snapshot.windowStart), now = Date.parse(snapshot.snapshotAt)
-  const ambiguous = new Set<string>()
+  const ambiguous = conflictedPriceUnits(snapshot)
   for(const [unitId,rows]of byUnit){for(let i=1;i<rows.length;i++){if(Date.parse(rows[i-1].recorded_at)===Date.parse(rows[i].recorded_at)&&rows[i-1].rent_min!==rows[i].rent_min)ambiguous.add(unitId)}}
   const changes: Array<{competitorId:string;competitorName:string;unitId:string;unitType:string;bedrooms:number|null;previousValue:number;currentValue:number;changeAmount:number;changePercent:number|null;recordedAt:string;citations:ReturnType<typeof citation>[]}> = []
   for (const [unitId, rows] of byUnit) {
@@ -91,7 +117,7 @@ export function analyzeMarket(snapshot: MarketAnalysisSnapshot, filter: {bedroom
   const movement=movementPct===null?'insufficient_data':movementPct>0?'rising':movementPct<0?'falling':'stable'
   const evidence=units.map(u=>citation(u))
   return {snapshotAt:snapshot.snapshotAt,windowStart:snapshot.windowStart,windowDays:snapshot.windowDays,methodology:ANALYSIS_METHOD,
-    limitations:['Saved observations describe advertised prices; actual price-effective dates may be unknown.','History uses console recording time and the current active floor-plan set and bedroom labels. Removed or archived plans are excluded.','Conflicting prices at the same recorded time are excluded from changes and history.','Repeated updates do not increase a plan’s weight. Trend lines carry saved values between records; they do not prove unchanged live prices.'],
+    limitations:['Saved observations describe advertised prices; actual price-effective dates may be unknown.','History uses console recording time and the current active floor-plan set and bedroom labels. Removed or archived plans are excluded.','Conflicting prices within one source capture or at the same recorded time are excluded from changes and history. Current conflicting prices are withheld from averages.','Repeated updates do not increase a plan’s weight. Trend lines carry saved values between records; they do not prove unchanged live prices.'],
     summary:{competitorCount:snapshot.competitors.length,totalUnitsTracked:units.length,pricedPlans:stats(units).pricedPlans,
       avgRentByBedroom:Object.fromEntries(position.map(p=>[`${p.bedrooms}BR`,{min:p.minRent,max:p.maxRent,avg:p.avgRent,pricedPlans:p.pricedPlans,totalPlans:p.totalPlans,competitorsSampled:p.competitors}])),
       recentPriceChanges:changes.filter(c=>Date.parse(c.recordedAt)>=now-7*86400000).length,marketTrend:movement,lastUpdated:latest(evidence.map(c=>c.recordedAt)),

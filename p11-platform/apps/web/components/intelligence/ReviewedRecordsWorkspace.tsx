@@ -440,7 +440,7 @@ export function ReviewedRecordsWorkspace({ propertyId, propertyName, mode, initi
           {message}
         </p>
       )}
-      {!view && !error && <p role="status">Loading property records…</p>}
+      {!view && !error && tab !== "insights" && tab !== "campaigns" && <p role="status">Loading property records…</p>}
       {tab === "insights" ? (
         <InsightsView propertyId={propertyId} propertyName={propertyName} />
       ) : tab === "campaigns" ? (
