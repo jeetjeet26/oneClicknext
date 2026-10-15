@@ -3,9 +3,12 @@ import { z } from 'zod'
 import { createClient } from '@/utils/supabase/server'
 import { createAdminClient } from '@/utils/supabase/admin'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
+import { brandCommunityContext } from '@/utils/community-brain/brand'
+import type { SavedCommunityContext } from '@/utils/community-brain/generation'
+import { reservePackageProcessing } from '@/utils/community-brain/budgets'
 
 export const brandId = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
-export const brandCommandSchema = z.object({ brandAssetId: brandId, requestId: brandId, revision: z.number().int().positive() })
+export const brandCommandSchema = z.object({ brandAssetId: brandId, requestId: brandId, revision: z.number().int().positive(), deliverableId: brandId.optional() })
 export type BrandKind = 'brief' | 'generate' | 'regenerate' | 'edit' | 'approve' | 'contract' | 'import' | 'export' | 'revise' | 'visuals' | 'publish'
 export type BrandRow = Record<string, unknown> & { id: string; property_id: string; revision: number }
 type JsonObject = Record<string, unknown>
@@ -36,7 +39,7 @@ export function brandReply(result: JsonObject) {
   })
 }
 export async function runBrandCommand<T extends z.ZodRawShape>(request: NextRequest, kind: BrandKind, fields: T,
-  execute: (context: { body: z.infer<typeof brandCommandSchema> & z.infer<z.ZodObject<T>>; brand: BrandRow; userId: string; orgId: string; client: ReturnType<typeof createAdminClient>; assertActive: () => Promise<void> }) => Promise<{ updates: JsonObject; result: JsonObject }>) {
+  execute: (context: { body: z.infer<typeof brandCommandSchema> & z.infer<z.ZodObject<T>>; brand: BrandRow; userId: string; orgId: string; client: ReturnType<typeof createAdminClient>; communityContext?: SavedCommunityContext; assertActive: () => Promise<void> }) => Promise<{ updates: JsonObject; result: JsonObject }>) {
   let knownFailure = false
   let claim: { requestId: string; token: string } | null = null
   try {
@@ -59,11 +62,18 @@ export async function runBrandCommand<T extends z.ZodRawShape>(request: NextRequ
     if (typeof started.claimToken !== 'string') throw new Error('Missing brand claim')
     claim = { requestId: command.requestId, token: started.claimToken }
     const activeClaim = claim
+    const communityContext = ['generate', 'regenerate', 'visuals', 'contract'].includes(kind)
+      ? await brandCommunityContext(user.id, brand.property_id, command.requestId, true, command.deliverableId)
+      : undefined
     const assertActive = async () => {
       const current = await brandRpc('check_brand_operation', { p_request_id: activeClaim.requestId, p_claim_token: activeClaim.token })
       if (current.state !== 'active') throw new Error('Brand request is no longer active')
+      if (communityContext) await brandCommunityContext(user.id, brand.property_id, command.requestId)
     }
-    const output = await execute({ body: command, brand, userId: user.id, orgId: access.orgId, client, assertActive })
+    if (communityContext) await assertActive()
+    if (communityContext) await reservePackageProcessing('brand',command.requestId,'initial')
+    const output = await execute({ body: command, brand, userId: user.id, orgId: access.orgId, client, communityContext, assertActive })
+    if (communityContext) await assertActive()
     return brandReply(await brandRpc('finish_brand_operation', { p_request_id: claim.requestId, p_claim_token: claim.token, p_updates: output.updates, p_result: output.result }))
   } catch {
     if (claim) {

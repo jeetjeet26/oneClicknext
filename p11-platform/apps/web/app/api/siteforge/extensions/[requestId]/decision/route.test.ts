@@ -297,6 +297,7 @@ function serviceFor(
       }),
     },
     rpc: async (_name: string, args: Record<string, unknown>) => {
+      if(_name==='brain_can')return {data:true,error:null}
       rpcCalls.push(args)
       const identity = (
         args.p_blueprint as Record<string, unknown>

@@ -1,9 +1,12 @@
+import { reportingRows } from "@/utils/analytics/report-quality";
+import { periodMeasures, funnelRates, leaseAttribution, spendingRatios } from "./reporting";
 import {
   ACTION_LABELS,
   PRODUCT_LABELS,
   type ProductKey,
 } from "@/utils/actions/catalog";
 import "server-only";
+import {brainRpc,resolvePortfolioScope,requireCurrentScope} from "@/utils/community-brain/server";
 import { createServiceClient } from "@/utils/supabase/admin";
 import {
   portalActor,
@@ -30,6 +33,8 @@ export async function readPortfolio(
   end: string,
   client: boolean,
   propertyId?: string,
+  selectedPropertyIds?: string[],
+  page = 0,
 ) {
   const actor = await portalActor(),
     db = createServiceClient();
@@ -58,23 +63,16 @@ export async function readPortfolio(
       .single();
     if (p.error || !p.data?.org_id)
       throw new IntelligenceError("Workspace access is required.", 403);
-    const r = await db
-      .from("properties")
-      .select("id,name")
-      .eq("org_id", p.data.org_id)
-      .order("name")
-      .limit(101);
-    if (r.error) throw new IntelligenceError("Properties could not be loaded.");
-    properties = r.data ?? [];
+    properties = await brainRpc<Array<{id:string;name:string}>>("brain_list_communities",{p_actor_id:actor.id,p_capability:propertyId?'read':'portfolio'});
   }
+  if(selectedPropertyIds){if(selectedPropertyIds.some(id=>!properties.some(p=>p.id===id)))throw new IntelligenceError('Selected properties are unavailable.',403);properties=properties.filter(p=>selectedPropertyIds.includes(p.id));}
   if (propertyId && !properties.some((p) => p.id === propertyId))
     throw new IntelligenceError("Property not available.", 403);
   if (propertyId) properties = properties.filter((p) => p.id === propertyId);
-  if (properties.length > 100)
-    throw new IntelligenceError(
-      "Select a property to keep this analysis within 100 properties.",
-      422,
-    );
+  if(!Number.isSafeInteger(page)||page<0)throw new IntelligenceError('Choose a valid portfolio page.',400);
+  const selectedCount=properties.length;
+  const communityScope=!client&&!propertyId&&properties.length?await resolvePortfolioScope(actor.id,properties.map(p=>p.id)):null;
+  properties=properties.slice(page*25,(page+1)*25);
   const days = Math.floor((Date.parse(end) - Date.parse(start)) / 86400000) + 1,
     day = (n: number) => new Date(n).toISOString().slice(0, 10),
     priorEnd = day(Date.parse(start) - 86400000),
@@ -84,6 +82,7 @@ export async function readPortfolio(
   for (let offset = 0; offset < properties.length; offset += 5) {
     const group = await Promise.all(
       properties.slice(offset, offset + 5).map(async (p) => {
+        if(communityScope)await requireCurrentScope(communityScope,p.id);
         const [current, previous, docs, delivery, market, changes] =
           await Promise.all([
             readMarketingFacts(db, {
@@ -136,7 +135,7 @@ export async function readPortfolio(
           ? await db
               .from("competitor_units")
               .select(
-                "id,competitor_id,unit_type,rent_min,rent_max,last_updated_at,capture_id",
+                "id,competitor_id,unit_type,rent_min,rent_max,last_updated_at,capture_id,bedrooms,available_count,move_in_specials",
               )
               .in("competitor_id", competitorIds)
               .not("capture_id", "is", null)
@@ -147,25 +146,12 @@ export async function readPortfolio(
           throw new IntelligenceError(
             "Saved market observations could not be loaded.",
           );
-        const normalize = (rows: typeof current) =>
-          rows.map((r) => {
-            if (
-              [r.impressions, r.clicks, r.spend, r.conversions].some(
-                (v) => v === null,
-              )
-            )
-              throw new IntelligenceError(
-                "Some marketing measures are missing. Review the source before comparing results.",
-                422,
-              );
-            return {
-              ...r,
-              impressions: Number(r.impressions),
-              clicks: Number(r.clicks),
-              spend: Number(r.spend),
-              conversions: Number(r.conversions),
-            };
-          });
+        const captureIds = [...new Set((unitData.data ?? []).map(u => u.capture_id).filter((id): id is string => !!id))];
+        const captures = captureIds.length ? await db.from("market_source_captures")
+          .select("id,competitor_id,source_url,captured_at,effective_at,status")
+          .eq("property_id", p.id).in("id", captureIds) : { data: [], error: null };
+        if (captures.error) throw new IntelligenceError("Market sources could not be loaded.");
+        const normalize = reportingRows;
         const source: BiSource = {
           version: "bi-v1",
           propertyId: p.id,
@@ -190,9 +176,9 @@ export async function readPortfolio(
           name: p.name,
           market: facts.find((f) => f.field === "market")?.value ?? null,
           days,
-          observedDays: new Set(current.map((r) => r.date)).size,
-          previousObservedDays: new Set(previous.map((r) => r.date)).size,
-          spend: report.totals.spend,
+          observedDays: new Set(normalize(current).map((r) => r.date)).size,
+          previousObservedDays: new Set(normalize(previous).map((r) => r.date)).size,
+          spend: current.length && current.length === source.currentRows.length ? report.totals.spend : null,
           clicks: report.totals.clicks,
           inquiries: funnel.inquiries,
           tours: funnel.booked,
@@ -200,7 +186,7 @@ export async function readPortfolio(
           leases: funnel.leases,
           previous: {
             spend: report.comparison?.totals?.spend ?? null,
-            clicks: previous.reduce((s, r) => s + Number(r.clicks ?? 0), 0),
+            clicks: normalize(previous).reduce((s, r) => s + r.clicks, 0),
             inquiries: prior.inquiries,
             tours: prior.booked,
           },
@@ -248,9 +234,14 @@ export async function readPortfolio(
           });
         return {
           score,
+          incompleteMarketingRows: current.length - source.currentRows.length,
+          periodMeasures: periodMeasures(observations, start, end),
+          stageRatios: funnelRates(funnel),
+          attribution: leaseAttribution(observations, start, end),
+          spending: spendingRatios(current.length ? score.spend : null, current.length === source.currentRows.length && score.observedDays === days, funnel),
           market: {
             competitors: market.data ?? [],
-            units: unitData.data ?? [],
+            units: (unitData.data ?? []).map(u => ({ ...u, evidence: (captures.data ?? []).find(c => c.id === u.capture_id && c.competitor_id === u.competitor_id) ?? null })),
             limited:
               (market.data?.length ?? 0) > 50 ||
               (unitData.data?.length ?? 0) > 200,
@@ -266,7 +257,9 @@ export async function readPortfolio(
               })),
             more: (changes.data?.length ?? 0) > 50,
           },
-          insights: scoreInsights(score),
+          insights: current.length !== source.currentRows.length || previous.length !== source.previousRows.length
+            ? [{ title: "Marketing measures need review", observation: "Some current or prior marketing records are incomplete.", interpretation: "Missing measures can distort trends and property comparisons.", confidence: "low" as const, targetMetric: "Data coverage", action: "Reconcile source records before drawing performance conclusions." }]
+            : scoreInsights(score),
           facts,
           diagnostics,
           recommendations,
@@ -375,7 +368,9 @@ export async function readPortfolio(
         409,
       );
   }
+  if(communityScope)await requireCurrentScope(communityScope,communityScope.property_ids[0]);
   return {
+    coverage:{selected:selectedCount,returned:results.length,page,nextPage:(page+1)*25<selectedCount?page+1:null},
     start,
     end,
     priorStart,

@@ -134,6 +134,13 @@ export const metricKeys = [
   "active_leases",
   "applications",
   "signed_leases",
+  "move_ins",
+  "effective_rent",
+  "concession_weeks",
+  "occupancy_percent",
+  "new_supply_units",
+  "renter_demand_index",
+  "estimated_competitor_visits",
 ] as const;
 export const observationSchema = z
   .object({
@@ -150,6 +157,11 @@ export const observationSchema = z
     variant: z.enum(["control", "treatment"]).nullable().default(null),
     experimentId: z.string().uuid().nullable().default(null),
     reference: z.string().max(500).default(""),
+    unit: z.string().trim().max(100).optional(),
+    definition: z.string().trim().max(1000).optional(),
+    outcomeId: z.string().trim().min(1).max(200).optional(),
+    attributionModel: z.enum(["first_touch", "last_touch"]).optional(),
+    verification: z.enum(["reported", "source_confirmed"]).default("reported"),
   })
   .strict();
 export const batchSchema = z
@@ -177,6 +189,16 @@ export const batchSchema = z
         code: "custom",
         message: "A row falls outside the reporting window.",
       });
+    for (const row of v.rows) {
+      if (["effective_rent", "concession_weeks", "occupancy_percent", "new_supply_units", "renter_demand_index", "estimated_competitor_visits"].includes(row.metric) && (!row.unit || !row.definition || !row.reference.trim()))
+        c.addIssue({ code: "custom", message: "Market observations require a unit, definition (including geographic scope and source period), and source reference." });
+      if (row.metric === "occupancy_percent" && row.value > 100)
+        c.addIssue({ code: "custom", message: "Occupancy must be between 0 and 100 percent." });
+      if (row.verification === "source_confirmed" && !row.reference.trim())
+        c.addIssue({ code: "custom", message: "Source-confirmed observations require a source reference." });
+      if (row.attributionModel && (row.metric !== "signed_leases" || row.value !== 1 || !row.outcomeId || row.verification !== "source_confirmed" || row.device !== "all" || row.page !== null || row.floorplanId !== null || row.variant !== null))
+        c.addIssue({ code: "custom", message: "Attributed leases require one source-confirmed lease, a stable outcome ID, a model, and no breakdown dimensions." });
+    }
     if (new Set(v.rows.map((r) => r.key)).size !== v.rows.length)
       c.addIssue({
         code: "custom",

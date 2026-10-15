@@ -1,8 +1,8 @@
+import {loadPublicChatContext} from '@/utils/community-brain/chat-release'
 import { buildPropertyOnlyResponse,containsContactInfo,detectTourIntent,detectTourOffer,isPropertyChatInScope,stripMarkdownFormatting } from '@/utils/chat-scope';
 import { getPropertyTypeConfig } from '@/utils/property-types';
 import { badRequest,buildCorsHeaders,corsPreflightResponse,rateLimited,serverError } from '@/utils/services/api-helpers';
 import { auditLog,getRequestIp } from '@/utils/services/audit-logger';
-import { loadPropertyChatbotContext } from '@/utils/services/chatbot-context-editor';
 import { upsertLeadByContact } from '@/utils/services/lead-upsert';
 import { budgetedLumaCompletion } from '@/utils/services/luma-ai-budget';
 import { linkLumaVisitorLead,saveLumaMessage,withLumaRequest } from '@/utils/services/luma-requests';
@@ -34,10 +34,6 @@ type RecentMessageRow = {
   role: string | null
   content: string | null
   created_at: string | null
-}
-
-type DuplicateReplyResult = {
-  assistantReply: string
 }
 
 async function incrementSessionMessageCount(
@@ -73,38 +69,6 @@ async function incrementSessionMessageCount(
     .update({ last_activity_at: new Date().toISOString() })
     .eq('id', sessionId);
   return null;
-}
-
-function findRecentDuplicateReply(
-  recentMessages: RecentMessageRow[],
-  userMessage: string
-): DuplicateReplyResult | null {
-  try {
-    const nowMs = Date.now()
-
-    for (let index = recentMessages.length - 1; index >= 0; index -= 1) {
-      const row = recentMessages[index]
-      if (row.role !== 'user' || row.content !== userMessage || !row.created_at) {
-        continue
-      }
-
-      const createdMs = Date.parse(row.created_at)
-      if (!Number.isFinite(createdMs) || nowMs - createdMs > 2 * 60 * 1000) {
-        continue
-      }
-
-      for (let replyIndex = index + 1; replyIndex < recentMessages.length; replyIndex += 1) {
-        const replyRow = recentMessages[replyIndex]
-        if (replyRow.role === 'assistant' && typeof replyRow.content === 'string' && replyRow.content) {
-          return { assistantReply: replyRow.content }
-        }
-      }
-    }
-  } catch (error) {
-    console.error('[LumaLeasing] Duplicate reply lookup failed:', error)
-  }
-
-  return null
 }
 
 async function loadTrustedConversationHistory(
@@ -564,35 +528,8 @@ async function handlePost(req: NextRequest) {
       trustedHistory = await loadTrustedConversationHistory(supabase, conversationId)
     }
 
-    // 5. Save user message
-    if (conversationId) {
-      const duplicateReply = validation.data.requestId ? null : findRecentDuplicateReply(trustedHistory, lastMessage)
-      if (duplicateReply) {
-        const messageCount = widgetSession?.message_count || 0
-        const shouldPromptLeadCapture = !leadId && config.collect_email && messageCount >= 3
-
-        ctx.logSuccess(200, {
-          conversationId,
-          sessionId: activeSessionId,
-          hasLeadId: !!leadId,
-          retryDuplicateSuppressed: true,
-        })
-
-        return NextResponse.json(
-          {
-            content: duplicateReply.assistantReply,
-            sessionId: activeSessionId,
-            conversationId,
-            shouldPromptLeadCapture,
-            leadCapturePrompt: shouldPromptLeadCapture ? config.lead_capture_prompt : null,
-            wantsTour: false,
-            duplicate: true,
-          },
-          { headers: responseHeaders }
-        )
-      }
-    }
-
+    // Durable request identities handle retries. Conversation text alone cannot
+    // establish that a previous answer still uses current community evidence.
     let modeRevision:number|undefined;
     if (conversationId) {
       const saved=await saveLumaMessage(supabase, propertyId, conversationId, 'user', lastMessage);
@@ -637,7 +574,8 @@ async function handlePost(req: NextRequest) {
       }, { headers: responseHeaders });
     }
 
-    const generatedContext = await loadPropertyChatbotContext(supabase, propertyId);
+    const communityRequest={configId:config.id,sessionId:activeSessionId!,query:lastMessage};
+    const generatedContext = await loadPublicChatContext(supabase,propertyId,communityRequest).catch(()=>null);
 
     if (!generatedContext) {
       const reply = `I'm still getting ${propertyName}'s property information ready. I can have someone from our team follow up with you about that.`;
@@ -677,19 +615,12 @@ async function handlePost(req: NextRequest) {
       const messageCount = activeSessionId
         ? await incrementSessionMessageCount(supabase, activeSessionId)
         : widgetSession?.message_count ?? null;
-      ctx.logSuccess(200, {
-        conversationId,
-        sessionId: activeSessionId,
-        degradedContext: true,
-      })
+      ctx.logSuccess(200, {conversationId, sessionId: activeSessionId, degradedContext: true});
       return NextResponse.json({
-        content: reply,
-        sessionId: activeSessionId,
-        conversationId,
+        content: reply, sessionId: activeSessionId, conversationId,
         shouldPromptLeadCapture: !leadId && config.collect_email && (messageCount ?? 0) >= 3,
-        leadCapturePrompt: null,
-        wantsTour: false,
-      }, { headers: responseHeaders });
+        leadCapturePrompt: null, wantsTour: false,
+      }, {headers: responseHeaders});
     }
 
     // 6. Detect intent for tour booking. Affirmative or scheduling follow-ups
@@ -814,7 +745,7 @@ Remember: You represent ${propertyName}. Provide exceptional customer service wi
       })(),
       temperature: 0.7,
       max_tokens: 400,
-    }, 'answer', {conversationId,modeRevision,assistantContext:generatedContext});
+    }, 'answer', {conversationId,modeRevision,assistantContext:generatedContext,communityRequest});
 
     // Deterministic backstop: the model sometimes ignores the prompt's
     // no-markdown rule, and the widget renders plain text.
@@ -911,4 +842,3 @@ Remember: You represent ${propertyName}. Provide exceptional customer service wi
     return serverError(error, responseHeaders);
   }
 }
-

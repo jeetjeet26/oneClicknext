@@ -125,7 +125,8 @@ function deterministicGeneratedContent(
 
 function generationPrompt(
   input: GeneratedInput,
-  snapshot: CompetitivePositioningSnapshot
+  snapshot: CompetitivePositioningSnapshot,
+  approvedCommunityContext = ''
 ): string {
   return `Create one complete, coherent BrandForge contract content object for a ${verticalLabel(input.vertical)}.
 
@@ -135,6 +136,9 @@ Do not invent property facts, demographics, amenities, pricing, availability, or
 
 Creative brief:
 ${JSON.stringify(input.creativeBrief)}
+
+Current approved community context (authoritative for facts):
+${approvedCommunityContext}
 
 Typed MarketVision competitive positioning snapshot:
 ${JSON.stringify(snapshot)}
@@ -236,7 +240,8 @@ export function applyCompetitiveWebsiteExpression(
 export async function convergeBrandForgeContract(
   input: BrandForgeWorkflowInput,
   snapshot: CompetitivePositioningSnapshot,
-  generate: StructuredGenerator = defaultStructuredGenerator
+  generate: StructuredGenerator = defaultStructuredGenerator,
+  approvedCommunityContext = ''
 ): Promise<{ contract: BrandForgeContractV1; generation: 'model' | 'deterministic' | 'supplied' }> {
   if (input.mode === 'supplied') {
     return {
@@ -246,7 +251,7 @@ export async function convergeBrandForgeContract(
   }
 
   try {
-    const content = await generate(generationPrompt(input, snapshot))
+    const content = await generate(generationPrompt(input, snapshot, approvedCommunityContext))
     return {
       contract: generatedContract(content, snapshot),
       generation: 'model',

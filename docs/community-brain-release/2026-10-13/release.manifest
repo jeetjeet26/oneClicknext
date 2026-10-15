@@ -1,0 +1,1425 @@
+{
+  "version": "community-brain-release-v1",
+  "recorded_at": "2026-10-14T01:40:49.528404+00:00",
+  "status": "local-candidate-not-full-plan-completion",
+  "production_changed": false,
+  "base_commit": "b07cdc170ff40b5d85baf0164a77b302777f062f",
+  "branch": "codex/property-intelligence-siteforge-release",
+  "live_baseline": {
+    "project": "lmjmutuggvzuadwreqxx",
+    "postgres": "17.6",
+    "pgvector": "0.8.0",
+    "migrations": 288,
+    "latest": "20261007223000",
+    "community_brain_deployed": false,
+    "nonproduction_branches": 0,
+    "public_schema_sha256": "dbc31eba4702e30d693fdaea6203ee17725b3ed19917f755d6164071700adb1c"
+  },
+  "candidate_migration": "20261014013217",
+  "original_dirty_files": [
+    {
+      "path": "p11-platform/apps/web/components/client-portal/ClientPortal.tsx",
+      "sha256": "5492a72c000ca75b210f3236dc64f96b05db5069d43cd0df459771b7cec51b0b"
+    },
+    {
+      "path": "p11-platform/apps/web/components/intelligence/InsightsView.tsx",
+      "sha256": "a28890bea57d209aef5bfa2835962a7757a6f12ce1db4bf4d8d737234522ad61"
+    },
+    {
+      "path": "p11-platform/apps/web/components/intelligence/IntelligenceWorkspace.tsx",
+      "sha256": "193a4fb9490f15cdbe4cd41b7284fcc5119207cea245bde94c360cec6bfa68c2"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/client-portal/contracts.ts",
+      "sha256": "796ea755bbe82d2a7de2b1d16bbffaf72b7eea435398f0f43427423f23e45723"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/client-portal/server.ts",
+      "sha256": "b1d2794e36f433bfca71a7152f3db1fa49cd33cf944c5569eaf9f1c985ce5013"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/intelligence/analysis.ts",
+      "sha256": "f5b5d0ffe8d0aa4600d81b8cfdbbbb607c13acc11e91f4eb3ea49f8ed80013c4"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/intelligence/contracts.ts",
+      "sha256": "ba5d2312d5085b617352201510b5f2c05fa520e1423cc2e3efa8534eb5f9b486"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/intelligence/import.ts",
+      "sha256": "da05a862390c3255ae4fae4aa973aa0c9ffa214780bcf41ec5d1aaf19f8ff2df"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/intelligence/portfolio.ts",
+      "sha256": "f0ddca055cfdcad4cfc0b0423af39dafb599eeb2b6a02f8a704d99b019f0723e"
+    },
+    {
+      "path": "p11-platform/apps/web/components/intelligence/ReportingDetail.tsx",
+      "sha256": "bd9b9c3b6ecc7e1c83702f1d24ebfd00dfc7abcc692355abd2087c9041f96ce1"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/analytics/report-quality.test.ts",
+      "sha256": "19b3043bb7c6f54803b943562ea66bca9cedfce5a1fc5f3c9d97cc1f5129c95b"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/analytics/report-quality.ts",
+      "sha256": "d5dc44ea253d08c01a5a03e475b4ea26d37fa67b3c944f3ce2b847d530497d59"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/intelligence/reporting.test.ts",
+      "sha256": "3e01b6474a3dd352bfebbe99b20ea9d7cedd44e5f67d81540c6bdb54c483cfda"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/intelligence/reporting.ts",
+      "sha256": "ec3f45694996459091d8db0622504347ec150f235eb4d8b1c3b893e40a625bf5"
+    }
+  ],
+  "preserved_original_count": 13,
+  "verification": {
+    "migration_replay": [
+      {
+        "schema": "community_brain_local_system_20261013.sql",
+        "state": "restored"
+      },
+      {
+        "schema": "community_brain_live_public_20261013.sql",
+        "state": "restored"
+      },
+      {
+        "localOnlyForeignKeyTarget": "siteforge_review_tokens",
+        "state": "excluded_from_live_schema_replay"
+      },
+      {
+        "migration": "20261013233353_community_brain_scope_and_evidence.sql",
+        "state": "passed"
+      },
+      {
+        "migration": "20261013234107_community_brain_context_and_lifecycle.sql",
+        "state": "passed"
+      },
+      {
+        "migration": "20261013234435_community_brain_files_and_workers.sql",
+        "state": "passed"
+      },
+      {
+        "migration": "20261013235537_community_brain_worker_memory_and_manifests.sql",
+        "state": "passed"
+      },
+      {
+        "migration": "20261013235913_community_brain_portfolio_provider_and_coordination.sql",
+        "state": "passed"
+      },
+      {
+        "migration": "20261014000320_community_brain_intake_handoff_and_operations.sql",
+        "state": "passed"
+      },
+      {
+        "migration": "20261014001441_community_brain_execution_guards.sql",
+        "state": "passed"
+      },
+      {
+        "migration": "20261014001925_community_brain_review_and_indexing.sql",
+        "state": "passed"
+      },
+      {
+        "migration": "20261014002318_community_brain_operations_and_access.sql",
+        "state": "passed"
+      },
+      {
+        "migration": "20261014003009_community_brain_brand_and_lifecycle_guards.sql",
+        "state": "passed"
+      },
+      {
+        "migration": "20261014003257_community_brain_retrieval_and_measurement_receipts.sql",
+        "state": "passed"
+      },
+      {
+        "migration": "20261014003655_community_brain_connected_file_lifecycle.sql",
+        "state": "passed"
+      },
+      {
+        "migration": "20261014004310_community_brain_release_controls.sql",
+        "state": "passed"
+      },
+      {
+        "migration": "20261014005029_community_brain_lifecycle_qualification.sql",
+        "state": "passed"
+      },
+      {
+        "migration": "20261014011528_community_brain_connected_schedules.sql",
+        "state": "passed"
+      },
+      {
+        "migration": "20261014011849_community_brain_competitor_memory.sql",
+        "state": "passed"
+      },
+      {
+        "migration": "20261014012634_community_brain_reconciliation_replay.sql",
+        "state": "passed"
+      },
+      {
+        "migration": "20261014013217_community_brain_community_rollout.sql",
+        "state": "passed"
+      },
+      {
+        "test": "community_brain_execution.test.sql",
+        "state": "passed"
+      },
+      {
+        "test": "community_brain_memory.test.sql",
+        "state": "passed"
+      },
+      {
+        "test": "community_brain_scope.test.sql",
+        "state": "passed"
+      },
+      {
+        "database": "community_brain_replay_20261013_v18",
+        "migrations": 18,
+        "customerRowsCopied": false
+      }
+    ],
+    "http_and_restore": [
+      {
+        "check": "HTTP RLS A-only, same-org B and foreign C withheld",
+        "state": "passed"
+      },
+      {
+        "check": "JWT client cannot call privileged scope factory",
+        "state": "passed"
+      },
+      {
+        "check": "Anonymous JWT has no private knowledge",
+        "state": "passed"
+      },
+      {
+        "check": "Auth validates the fixture actor JWT",
+        "state": "passed"
+      },
+      {
+        "check": "Dedicated worker password configured in synthetic Auth only",
+        "state": "passed"
+      },
+      {
+        "check": "Actual worker password exchange succeeds",
+        "state": "passed"
+      },
+      {
+        "check": "Actual Auth hook issues a short-lived worker role",
+        "state": "passed"
+      },
+      {
+        "check": "Exact original written to private Storage",
+        "state": "passed"
+      },
+      {
+        "check": "Private original has no public URL access",
+        "state": "passed"
+      },
+      {
+        "check": "Worker claims its assigned original through HTTP",
+        "state": "passed"
+      },
+      {
+        "check": "Leased worker downloads exact original bytes",
+        "state": "passed"
+      },
+      {
+        "check": "Leased worker writes only its own rendition prefix",
+        "state": "passed"
+      },
+      {
+        "check": "Storage denies cross-community worker writes",
+        "state": "passed"
+      },
+      {
+        "check": "Actual sandbox parser retains exact image hash and page rendition",
+        "state": "passed"
+      },
+      {
+        "check": "Leased worker stores checked page rendition",
+        "state": "passed"
+      },
+      {
+        "check": "Leased worker stores checked preview rendition",
+        "state": "passed"
+      },
+      {
+        "check": "Real extraction commits through its scoped worker lease",
+        "state": "passed"
+      },
+      {
+        "check": "Review binds exact retained page to exact community floorplan",
+        "state": "passed"
+      },
+      {
+        "check": "Exact asset resolver preserves approved drawing checksum",
+        "state": "passed"
+      },
+      {
+        "check": "Selected-community portfolio retrieves the exact reviewed drawing",
+        "state": "passed"
+      },
+      {
+        "check": "Synthetic browser actor configured",
+        "state": "passed"
+      },
+      {
+        "check": "Synthetic browser actor obtains actual Auth session",
+        "state": "passed"
+      },
+      {
+        "check": "Portfolio UI lists the granted community",
+        "state": "passed"
+      },
+      {
+        "check": "Foreign community absent from the UI selection",
+        "state": "passed"
+      },
+      {
+        "check": "UI renders the exact retained floorplan returned through real APIs",
+        "state": "passed"
+      },
+      {
+        "check": "Browser downloads the approved drawing through authenticated file delivery",
+        "state": "passed"
+      },
+      {
+        "check": "Real application route denies a substituted foreign community",
+        "state": "passed"
+      },
+      {
+        "check": "Only administrators can change community activation in the UI",
+        "state": "passed"
+      },
+      {
+        "check": "UI exposes retained original and reviewed processing result",
+        "state": "passed"
+      },
+      {
+        "check": "Historical replay queues only an eligible retained source through the real UI and API",
+        "state": "passed"
+      },
+      {
+        "check": "Community workspace renders without browser runtime exceptions",
+        "state": "passed"
+      },
+      {
+        "check": "Rights expiry immediately denies the exact asset resolver",
+        "state": "passed"
+      },
+      {
+        "check": "Portfolio reports missing eligible drawing after rights expiry",
+        "state": "passed"
+      },
+      {
+        "check": "Revocation blocks original access with an unchanged worker JWT",
+        "state": "passed"
+      },
+      {
+        "check": "Revoked worker cannot renew its credential",
+        "state": "passed"
+      },
+      {
+        "check": "Database metadata, policies and synthetic access history restored from pg_dump",
+        "state": "passed"
+      },
+      {
+        "check": "Database-only restore does not falsely report stored original bytes",
+        "state": "passed"
+      },
+      {
+        "check": "Exact original bytes restored to independent private Storage",
+        "state": "passed"
+      },
+      {
+        "check": "Restored original checksum matches its retained database identity",
+        "state": "passed"
+      },
+      {
+        "check": "Restored originals remain private",
+        "state": "passed"
+      },
+      {
+        "check": "Restored worker revocation still denies the original",
+        "state": "passed"
+      },
+      {
+        "check": "Restored rights expiry prevents obsolete asset release",
+        "state": "passed"
+      },
+      {
+        "state": "passed",
+        "checks": 33,
+        "database": "community_brain_replay_20261013_v18",
+        "liveEndpointsContacted": false
+      }
+    ],
+    "browser": {
+      "checks": 9,
+      "state": "passed",
+      "mockedApis": false,
+      "externalRequestsBlocked": true
+    },
+    "capacity": {
+      "maxMs": 208.051,
+      "p50Ms": 19.1375,
+      "p95Ms": 31.5628,
+      "state": "passed",
+      "requests": 500,
+      "communities": 500,
+      "indexedChunks": 2300,
+      "qualification": "Sequential synthetic lexical context only; no semantic relevance or concurrent production-load claim",
+      "crossCommunityResults": 0,
+      "lexicalFixtureMatches": 500,
+      "largestCommunityChunks": 803
+    },
+    "web_regression": {
+      "passed_suites": 791,
+      "skipped_suites": 6,
+      "passed_tests": 5472,
+      "skipped_tests": 44,
+      "later_changes": "Final replay/activation routes qualified by actual browser/API and type/lint/schema checks"
+    },
+    "backend": {
+      "passed": 109,
+      "skipped": 4
+    },
+    "linux_parsers": {
+      "passed": 10,
+      "network": "none",
+      "root_filesystem": "read-only"
+    },
+    "types": "passed",
+    "new_module_lint": "passed",
+    "foundation_lint": {
+      "errors": 0,
+      "existing_warnings": 27
+    },
+    "schema_checks": "passed",
+    "trust_boundary_checks": "passed",
+    "runtime_checks": "passed",
+    "diff_whitespace": "passed",
+    "render": {
+      "state": "passed",
+      "method": "local Draft 2020-12 JSON schema validation",
+      "blueprintTransmitted": false,
+      "workspaceConflictsChecked": false,
+      "schemaUrl": "https://render.com/schema/render.yaml.json"
+    }
+  },
+  "worker_image": {
+    "tag": "oneclick-community-brain:20261013",
+    "image_id": "sha256:822c3d8d20982657dc5841ab7faf5f06e031bdb55c723b400967b99031fef9c7",
+    "published": false
+  },
+  "cleanup": {
+    "removedDisposableDatabases": [
+      "community_brain_replay_20261013_1",
+      "community_brain_replay_20261013_2",
+      "community_brain_replay_20261013_3",
+      "community_brain_replay_20261013_4",
+      "community_brain_replay_20261013_5",
+      "community_brain_replay_20261013_6",
+      "community_brain_replay_20261013_7",
+      "community_brain_replay_20261013_http1",
+      "community_brain_replay_20261013_http2",
+      "community_brain_replay_20261013_http3",
+      "community_brain_replay_20261013_http4",
+      "community_brain_replay_20261013_http5",
+      "community_brain_replay_20261013_http6",
+      "community_brain_replay_20261013_http7",
+      "community_brain_replay_20261013_final",
+      "community_brain_replay_20261013_web2",
+      "community_brain_replay_20261013_web3",
+      "community_brain_replay_20261013_recovery",
+      "community_brain_replay_20261013_recovery_restore",
+      "community_brain_replay_20261013_release",
+      "community_brain_replay_20261013_release_restore"
+    ],
+    "keptIfActive": [],
+    "retainedCandidates": [
+      "community_brain_20261013",
+      "community_brain_replay_20261013_v18",
+      "community_brain_replay_20261013_v18_restore"
+    ]
+  },
+  "remaining_packages": [
+    "CB07 full format-to-consumer qualification",
+    "CB08 real labelled semantic/concurrent-load evaluation",
+    "CB11 all provider lifecycle and output fidelity",
+    "CB13 verified cost and end-to-end attribution",
+    "CB14 selected live pilot",
+    "CB15 additional adapters and real channel qualification",
+    "CB16 measured learning and bounded qualified actions",
+    "CB17 retention/erasure, full recovery and operational acceptance"
+  ],
+  "files": [
+    {
+      "path": "docs/COMMUNITY_BRAIN_ARCHITECTURE_REVIEW_2026_10_13.md",
+      "sha256": "23a8e3d4b39ea9988799e75bfdecc53240ad05ff8b0799b6dae890a2c5269a81",
+      "bytes": 98122,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "docs/COMMUNITY_BRAIN_IMPLEMENTATION_PLAN_2026_10_13.md",
+      "sha256": "fcdc6a6fcefa6fc62aab08116c9f6d5786c34aa160e90875966dbcbbb1f54d52",
+      "bytes": 69852,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "docs/COMMUNITY_BRAIN_IMPLEMENTATION_STATUS_2026_10_13.md",
+      "sha256": "20624bce9b24d8d55419e9a98970f8416ce66fd9748ec8a0f2df0ec9ba868f61",
+      "bytes": 13242,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "docs/REAL_ESTATE_MARKETING_PLATFORM_AND_INGESTION_REVIEW_2026_10_13.md",
+      "sha256": "4c778207c14cf31e7d8610051f58c33682bd33394d4a7358d92d7a27be93ee23",
+      "bytes": 38095,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "docs/community-brain-release/2026-10-13/README.md",
+      "sha256": "2901d8cb31f2d772f86022d3a36053de23689ff8ad23f5cdb89f5d2ccc4609a5",
+      "bytes": 9516,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/app/api/analytics/campaigns/route.ts",
+      "sha256": "f48ab09d67b36616db9cbf904ef08e6839f5fd7155c6ca755d7553791d689909",
+      "bytes": 2693,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/app/api/brandforge/analyze-existing/route.ts",
+      "sha256": "73b8bd5e9aa09014c439c71064fe28ec0601d8724fa4ae6b2e30e0c5c313e71e",
+      "bytes": 2276,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/app/api/brandforge/generate-images/route.ts",
+      "sha256": "1b715956980cc8438df5427d82a0e3a5af24c1688d98642cc70beebd5c3783df",
+      "bytes": 15548,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/app/api/brandforge/generate-next-section/route.ts",
+      "sha256": "5a172685ecf84fabf4b94b45977b1c6eb69932f848721d7557a84fa6ce1497f7",
+      "bytes": 16464,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/app/api/brandforge/regenerate-section/route.ts",
+      "sha256": "af360c04836b0f7760569156c53a6484b11a11515655cb37470d304ab09e174b",
+      "bytes": 2428,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/app/api/brandforge/workflow/route.test.ts",
+      "sha256": "97a4b161a2858b2865418de28ab06e6c476893808f63ce656aab4ac687f9c4f2",
+      "bytes": 6179,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/app/api/brandforge/workflow/route.ts",
+      "sha256": "ca08e7d450dbf1a97c91a1cad62458d7f09ac993ebfa025ac0761878846f98cb",
+      "bytes": 5296,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/app/api/community-brain/access/route.ts",
+      "sha256": "d0c3d03cc98f92081617d4815393a604e1ff019fa78ad8f617957b2ca10a348e",
+      "bytes": 1494,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/app/api/community-brain/assets/route.ts",
+      "sha256": "8ca376215592764ec2d45a85bf616f3c4af093b27440efd175cdb73ed9d5df0d",
+      "bytes": 1325,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/app/api/community-brain/bundles/route.ts",
+      "sha256": "0981062f2fed32b447657d64145a63c8672f6ac96cce95026270ec763e9496b9",
+      "bytes": 3061,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/app/api/community-brain/communities/route.ts",
+      "sha256": "2a3761dc95f63a038aff65c171a43ec221aa47cb317168e73a6556fd8249db4b",
+      "bytes": 532,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/app/api/community-brain/context/route.ts",
+      "sha256": "7d6e1bf7bcfae580e24ed91420847d52d27645957f125067701e91495db29d32",
+      "bytes": 884,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/app/api/community-brain/coordination/route.ts",
+      "sha256": "5e00d1d7970f403b16d512221f38854cbe2aef86735c1a39f74e9384c715e151",
+      "bytes": 3751,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/app/api/community-brain/files/route.ts",
+      "sha256": "97cb04777ac9d0a531e8ce3150c359d7b69868ec1da6dfd733bd9218521ce0dd",
+      "bytes": 2974,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/app/api/community-brain/operations/route.ts",
+      "sha256": "ab9dcf171c405122dbfc2cbde1ce5773e497f5915df07c3e23f17fbf6bb69768",
+      "bytes": 870,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/app/api/community-brain/portfolio/route.ts",
+      "sha256": "b002f561d6dec1366560e2f3a54e3ed1cc707d0022cf4636c0c6dc4efb8cdfe8",
+      "bytes": 1412,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/app/api/community-brain/reconciliation/route.ts",
+      "sha256": "fa027b7e58dd54f107abc4fd510de50758c19d29a0abf5443da919fbc6d54479",
+      "bytes": 1401,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/app/api/community-brain/review/route.ts",
+      "sha256": "d6d77be4e6b4eb61c943d48b95633bbce23961b035fe9887102719a7a22124b9",
+      "bytes": 3798,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/app/api/community-brain/rollout/route.ts",
+      "sha256": "6e4fdd87a50ea2ab1782f9c09bafe140ef81411f93514be62c4b1e930e70fad0",
+      "bytes": 1203,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/app/api/community-brain/sources/route.ts",
+      "sha256": "3cebe30b3e025a04a48cfb134c0124b076d3e4850bed33bc02f83f86848df28d",
+      "bytes": 2701,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/app/api/community-brain/uploads/route.ts",
+      "sha256": "c929e84f322b4cc3aab2619dd00d0435fd274bcb8f5e61af47f6b5e36492cd08",
+      "bytes": 4445,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/app/api/cron/community-brain-maintenance/route.ts",
+      "sha256": "4e6a45d1c8348dfab7454c336bf7bfa7cf4abc09c77af1e5a5391f070a3ed379",
+      "bytes": 1754,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/app/api/cron/community-brain-sources/route.ts",
+      "sha256": "d6c9a2ee6ba54c2cb8dc02be5340b7664f60142602d067705d8db95c42156cd4",
+      "bytes": 1883,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/app/api/forgestudio/briefs/[briefId]/generate/route.ts",
+      "sha256": "b73e7a3cb9d2d59a86d85b946c192144b933714bd9f9a4671b76e4611a333a6c",
+      "bytes": 2685,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/app/api/knowledge/files/route.ts",
+      "sha256": "4d1640763ab26ad8b5da981a9b8e37cc618bafcc7bd015047bbc2386627c1f39",
+      "bytes": 2516,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/app/api/lumaleasing/chat/route.test.ts",
+      "sha256": "2ebacea044c75c37e4228f053d9d7301d1235ba62a43b13641dda3510663c33d",
+      "bytes": 49116,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/app/api/lumaleasing/chat/route.ts",
+      "sha256": "61d46caf53366895644e67fc7a5ebdfb858704eeb7dd510229258e9d2e99884b",
+      "bytes": 34913,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/app/api/siteforge/assets/sources/[sourceId]/runs/route.test.ts",
+      "sha256": "3ef8e1788b366cb062eaf1a6ed3d9300acd5d25f5a6eebe91e7a64b40417952c",
+      "bytes": 3200,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/app/api/siteforge/assets/sources/[sourceId]/runs/route.ts",
+      "sha256": "597c391ab4c96c4790671dc5bce1ef4a2890488045b38e0cea9bb4757905e428",
+      "bytes": 4560,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/app/api/siteforge/extensions/[requestId]/decision/route.test.ts",
+      "sha256": "ede08a8a8751d0a2dd95923429ecc9f39a0ac37bd7dd7a8910f851bfeb0d39f4",
+      "bytes": 19431,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/app/api/siteforge/packages/route.ts",
+      "sha256": "e8fb300b1ceb57043979dafff282c768d42edda1135ef8ceb0bd112d35a6be06",
+      "bytes": 4870,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/app/dashboard/community-brain/page.tsx",
+      "sha256": "699671905d8d1bd6152e77fa071c5acea30c7962012eb71d4eaacea1b99e8bdd",
+      "bytes": 159,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/components/client-portal/ClientPortal.tsx",
+      "sha256": "5492a72c000ca75b210f3236dc64f96b05db5069d43cd0df459771b7cec51b0b",
+      "bytes": 36479,
+      "provenance": "preserved-existing-dirty-work"
+    },
+    {
+      "path": "p11-platform/apps/web/components/community-brain/CommunityAccess.tsx",
+      "sha256": "63339c1dfb7e2112aff02a6ed519c45451ef64edf19388d69c760ce1e28c4d43",
+      "bytes": 2662,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/components/community-brain/CommunityBrainWorkspace.tsx",
+      "sha256": "088f06ab628a230817975e6d5e3de11a7afb390cfc9fec16d7eb0c9ccfe4f0e7",
+      "bytes": 23624,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/components/community-brain/CommunityOperations.tsx",
+      "sha256": "b12ce50086756a524b7111e9f211ed3cb48709aff5a642fffc796c1b8f6e7f7a",
+      "bytes": 2611,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/components/community-brain/CommunityPrograms.tsx",
+      "sha256": "c8967f3d6d0eed82ac0006892053392aa48ca571b04254382b4b26dc9492d0f5",
+      "bytes": 8713,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/components/community-brain/CommunityReconciliation.tsx",
+      "sha256": "1576166e87b2c4ab8078e524a2388f830fabc13299c5df64c1c8869099cb9098",
+      "bytes": 2778,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/components/community-brain/CommunityRollout.tsx",
+      "sha256": "3d8749cea2635967e204ad0522494ff5ffa3082af5472e8ff33c088ee4ebfb6c",
+      "bytes": 3627,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/components/community-brain/CommunitySourceReviews.tsx",
+      "sha256": "8475fc9f7cfca0b6e07082013083ee5d80150d85bc0fb62b79604f5b119e4d0d",
+      "bytes": 5973,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/components/community-brain/CommunitySources.tsx",
+      "sha256": "0f348a2608cb24bc8f9dbc1a0b0ad43418c8ff0abb07839037f55c06ca63b6cf",
+      "bytes": 4490,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/components/intelligence/InsightsView.tsx",
+      "sha256": "a28890bea57d209aef5bfa2835962a7757a6f12ce1db4bf4d8d737234522ad61",
+      "bytes": 18807,
+      "provenance": "preserved-existing-dirty-work"
+    },
+    {
+      "path": "p11-platform/apps/web/components/intelligence/IntelligenceWorkspace.tsx",
+      "sha256": "193a4fb9490f15cdbe4cd41b7284fcc5119207cea245bde94c360cec6bfa68c2",
+      "bytes": 52017,
+      "provenance": "preserved-existing-dirty-work"
+    },
+    {
+      "path": "p11-platform/apps/web/components/intelligence/ReportingDetail.tsx",
+      "sha256": "bd9b9c3b6ecc7e1c83702f1d24ebfd00dfc7abcc692355abd2087c9041f96ce1",
+      "bytes": 4411,
+      "provenance": "preserved-existing-dirty-work"
+    },
+    {
+      "path": "p11-platform/apps/web/components/layout/PropertyBoundary.tsx",
+      "sha256": "7270a85f518fd26b5b54954ff32f297fde75742765e7af3532ff59047a5cec29",
+      "bytes": 2322,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/components/layout/navigation.ts",
+      "sha256": "398dd24042cabcd2179819a3e36ee0f09707a2a568e04ec138ceef253640bad3",
+      "bytes": 4982,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/next.config.ts",
+      "sha256": "0d441965dfbcea21bf6cc6f3c3150f3ff927a2530ad94165ba8feec248d21605",
+      "bytes": 2404,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/types/supabase.ts",
+      "sha256": "ac0d7497e72bcb4959d474f341cfb40dccc7405ea310662d5a95102e93a2dcd4",
+      "bytes": 1390255,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/analytics/report-quality.test.ts",
+      "sha256": "19b3043bb7c6f54803b943562ea66bca9cedfce5a1fc5f3c9d97cc1f5129c95b",
+      "bytes": 535,
+      "provenance": "preserved-existing-dirty-work"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/analytics/report-quality.ts",
+      "sha256": "d5dc44ea253d08c01a5a03e475b4ea26d37fa67b3c944f3ce2b847d530497d59",
+      "bytes": 590,
+      "provenance": "preserved-existing-dirty-work"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/brandforge/autonomous-service.ts",
+      "sha256": "1c7f3cd66b9fe295558af939531c3cb18670ac4f5980f4b073ab68ba73714550",
+      "bytes": 10523,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/brandforge/imports.ts",
+      "sha256": "cc4fc24a5812e9d6f00c5f89c89959eae2fc1a80a1091659df060cf10beed4db",
+      "bytes": 17595,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/brandforge/operations.ts",
+      "sha256": "c27c6fe3f4111478c20c2195a0095b59011b380598c660e4b70ae1bd50e62914",
+      "bytes": 7750,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/brandforge/workflow-steps.test.ts",
+      "sha256": "698d19ba9e10f884c8d130bcfd1af4146562498d95adfbd949e3fe1b53bb2e12",
+      "bytes": 3804,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/brandforge/workflow-steps.ts",
+      "sha256": "cd39e3afb5d2303cba85fefee4becbe106aaaca5ef77991f80693a1347f9d292",
+      "bytes": 6505,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/client-portal/contracts.ts",
+      "sha256": "796ea755bbe82d2a7de2b1d16bbffaf72b7eea435398f0f43427423f23e45723",
+      "bytes": 3652,
+      "provenance": "preserved-existing-dirty-work"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/client-portal/server.ts",
+      "sha256": "b1d2794e36f433bfca71a7152f3db1fa49cd33cf944c5569eaf9f1c985ce5013",
+      "bytes": 11094,
+      "provenance": "preserved-existing-dirty-work"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/community-brain/brand.ts",
+      "sha256": "f451f527d7e723a905accbd297db4472fa2dbdb31c327913b68492d0e56c2fde",
+      "bytes": 618,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/community-brain/budgets.ts",
+      "sha256": "221bfb0275a5ec2fc422681491109062ce6597c5d34b0f7971adb9d1d93163cc",
+      "bytes": 601,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/community-brain/connected-files.ts",
+      "sha256": "ed283a4f36487b4fcdd74aa0691e128b34e7e59404d6708510ce126a87b09317",
+      "bytes": 4805,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/community-brain/contracts.ts",
+      "sha256": "fa0182323a3f0540e5efd5af816e23a6f9fc7f90a1759bb0657b39f22ea92cb8",
+      "bytes": 2980,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/community-brain/download.test.ts",
+      "sha256": "56669267bf7b25cf3fb189096ca3637333f50192a9ae71b74d650f6db1a86f34",
+      "bytes": 2491,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/community-brain/download.ts",
+      "sha256": "725b2973096696ebe41d9337acf925c3dc8c229489a54d94e454faae3531b2ed",
+      "bytes": 1855,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/community-brain/floorplans.ts",
+      "sha256": "ac28ba158164f760bc28ba72cb37a281469e5b1d8f911f5fad9609812974f7d6",
+      "bytes": 1993,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/community-brain/formats.ts",
+      "sha256": "7b898f602ed9e2e5d12c5f4e8281edbb59cb4e8953e5b581db497c324a4ec831",
+      "bytes": 2186,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/community-brain/generation.ts",
+      "sha256": "11b3321fa5173aa707a340cf115b9a5be319b594fca93dde424455744d4a8c2b",
+      "bytes": 1935,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/community-brain/http.test.ts",
+      "sha256": "bb1420f8b40b0f67b0561badad22ed2441b56ec5a511be10bdd8b89426d1087d",
+      "bytes": 784,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/community-brain/http.ts",
+      "sha256": "376ea50f5531e957b0e1003da5527926ce22c07378841e8c8b0eb26cfb1a0ea0",
+      "bytes": 1577,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/community-brain/portfolio.ts",
+      "sha256": "1ab28be5731c3e975b11665cf290caf1eef7837eac18051c7fac94100e1ed953",
+      "bytes": 10714,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/community-brain/providers.ts",
+      "sha256": "b792ebd705f3084ce1fd1e595e817301aa833960cc94673ad4fd33fff11f1a2a",
+      "bytes": 3563,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/community-brain/public-context.ts",
+      "sha256": "20ec98fe902a2b557430d8c5fe4d2dcb5b9556c5da29a22b6b0bfeeaf103e1a6",
+      "bytes": 1257,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/community-brain/retrieval.ts",
+      "sha256": "094437a6cbdf0e99bbf47f76582535fd9a06c2dc88a4606fc88d5207bc80cf15",
+      "bytes": 1532,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/community-brain/server.ts",
+      "sha256": "1fbfaa0b29376027ab575e2a8782938ae40bd3aea8650803be21f5a73cccf97c",
+      "bytes": 4326,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/forgestudio/asset-library-store.test.ts",
+      "sha256": "6ad37580dd2442668682fca8cf934a462c7fdf784493c74ad41ada1d3251745a",
+      "bytes": 5243,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/forgestudio/asset-library-store.ts",
+      "sha256": "09a1348e93ef5f510060b6d9d9bf3218575490089f085a277c7bda59c3e04789",
+      "bytes": 8622,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/forgestudio/context-assembler.test.ts",
+      "sha256": "d67619a7faa3e0fc92fb86ea4192800f5eac440258c53fc9caeaa6e7e7a1137a",
+      "bytes": 14360,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/forgestudio/context-assembler.ts",
+      "sha256": "eded99be370b24a13ece2cb9db9b1d1cd6a974ddad7689fdbb669753b5a489d0",
+      "bytes": 26957,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/forgestudio/generation-store.test.ts",
+      "sha256": "01c0070114691efd3bf3ff97ffb9d65c5edacd3bdda3808bd10a0b1b023e6f7d",
+      "bytes": 7491,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/forgestudio/generation-store.ts",
+      "sha256": "c8fc556de0e80f918779a375e12f79007a7d5d98bd3a0d029247240f3c0d8fa5",
+      "bytes": 7042,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/forgestudio/generation.ts",
+      "sha256": "ee2cb1a4284fa6059510f2d0e14089921f6ea74e0bcf72fff7a450173e7457f1",
+      "bytes": 17732,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/intelligence/analysis.ts",
+      "sha256": "f5b5d0ffe8d0aa4600d81b8cfdbbbb607c13acc11e91f4eb3ea49f8ed80013c4",
+      "bytes": 11375,
+      "provenance": "preserved-existing-dirty-work"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/intelligence/contracts.ts",
+      "sha256": "ba5d2312d5085b617352201510b5f2c05fa520e1423cc2e3efa8534eb5f9b486",
+      "bytes": 11479,
+      "provenance": "preserved-existing-dirty-work"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/intelligence/import.ts",
+      "sha256": "da05a862390c3255ae4fae4aa973aa0c9ffa214780bcf41ec5d1aaf19f8ff2df",
+      "bytes": 2365,
+      "provenance": "preserved-existing-dirty-work"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/intelligence/portfolio.ts",
+      "sha256": "afad256cfe8c69a25ccb08d9773f2547cceab47ca4c3e940975d155b09b3a1db",
+      "bytes": 15652,
+      "provenance": "extended-existing-portfolio-reader"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/intelligence/reporting.test.ts",
+      "sha256": "3e01b6474a3dd352bfebbe99b20ea9d7cedd44e5f67d81540c6bdb54c483cfda",
+      "bytes": 3180,
+      "provenance": "preserved-existing-dirty-work"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/intelligence/reporting.ts",
+      "sha256": "ec3f45694996459091d8db0622504347ec150f235eb4d8b1c3b893e40a625bf5",
+      "bytes": 4961,
+      "provenance": "preserved-existing-dirty-work"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/knowledge/file-store.test.ts",
+      "sha256": "be95435ed5af332540dbe63a289d94c652ae2a52a73123e32fe2a5e634d7ddb1",
+      "bytes": 6132,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/knowledge/file-store.ts",
+      "sha256": "7c5bc9a4f0780fea35b724d9b72b1490f1e884d322e196d83ee6ef709da0d662",
+      "bytes": 6668,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/knowledge/web-policy-store.test.ts",
+      "sha256": "1c55530b93011720360266a40e5a41f9dfb2c87e5ba612433de580a0f470de99",
+      "bytes": 2599,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/knowledge/web-policy-store.ts",
+      "sha256": "63d2c12d22cd968c1079c027ea6df93f3bb1862c8f24308f9191eab91727212c",
+      "bytes": 1785,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/services/auth-guard.test.ts",
+      "sha256": "6104ac1e7bf559fa4817648ad986bb28d2aa4bc0e986b750f24b63b94981f030",
+      "bytes": 6102,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/services/auth-guard.ts",
+      "sha256": "da66a3fcce9a4e8af1e33cba44ba085da67224b6d5055f6e6ce12c61fb4b2ffd",
+      "bytes": 7950,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/services/luma-ai-budget.ts",
+      "sha256": "160503066d385ad69d14f6941ff7c52a6f2393fce99a04bdf330572858b61f73",
+      "bytes": 3603,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/siteforge/assets/source-adapters.test.ts",
+      "sha256": "61f06793a3dbce8295db3e6125865eba3745b800a735c2a00e5444ce80c773b6",
+      "bytes": 6468,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/siteforge/assets/source-adapters.ts",
+      "sha256": "aa07d971c7663e657d164507f6db92814ebb27353948b7e53f68da0ab8a943a6",
+      "bytes": 17501,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/siteforge/kb.ts",
+      "sha256": "b1bb358a2dfc5e2a3d87378f652e66def9f93d6240fcd1fb3b2cebcb0d8cff5f",
+      "bytes": 897,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/siteforge/packages/contracts.ts",
+      "sha256": "ba4ac714248f667b78b796292e85a655c5d47b13d251ce551fde708b8b8c1342",
+      "bytes": 1041,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/siteforge/packages/delivery.ts",
+      "sha256": "a1a66271aa6a8f1851d287d2f69d20f455ed087db358e1c874a33cbf3b5c8991",
+      "bytes": 19350,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/siteforge/packages/design-review.ts",
+      "sha256": "e47988965a8804be3071fcc8bfe8b5817675f5e4333f8429d0514da729a3dc9a",
+      "bytes": 3023,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/siteforge/packages/runner.test.ts",
+      "sha256": "96ba944bb0a683b445441fbb8cd814b43b956ed26a22cf02bc8ba9bf55699a4b",
+      "bytes": 7187,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/siteforge/packages/runner.ts",
+      "sha256": "35b617db98f46f3c62be70491816ff5a11a7e303e4bcb0cf879397134436877d",
+      "bytes": 20615,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/siteforge/packages/source.test.ts",
+      "sha256": "e302fb73412f93eb475d829de5b47c74ba006c2b11959276f3cb8c297337d9cf",
+      "bytes": 4081,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/siteforge/packages/source.ts",
+      "sha256": "1ca0fb6144d90b5dfe4796bd1ba69fc56a6c2de6cbca967666a7345e19bae12b",
+      "bytes": 14065,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/utils/siteforge/packages/store.ts",
+      "sha256": "c86b3670d2e4b6d125786e38dd6e1391a1dbeb3da6e833ababacdee13e208055",
+      "bytes": 5295,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/vercel.json",
+      "sha256": "d9a6fc621752cca8aa1367a211cac4cec7a7d22869822a882928dabce91da20a",
+      "bytes": 2090,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/apps/web/vitest.config.ts",
+      "sha256": "215aab07c0661cb3bc3ca74d114c20af8dfe941c6801bfb9ee6bea6bcd58189f",
+      "bytes": 583,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/services/data-engine/.dockerignore",
+      "sha256": "50e2402368110b5b4d9ea77cd4705f60d6d133d556d8ebb4f6464e2a93547cff",
+      "bytes": 60,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/services/data-engine/Dockerfile.community-brain",
+      "sha256": "56fd65b2d059b219ef261e6bfd1ac7dd2faf39c33098d2d8deb7e47ebf880b4d",
+      "bytes": 515,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/services/data-engine/community_brain/__init__.py",
+      "sha256": "e8cdf8ebfb34bc79782cf1b48be90fd1a882d3445c4f211f5090c8d733cdf5eb",
+      "bytes": 94,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/services/data-engine/community_brain/parser_process.py",
+      "sha256": "0853feb151242da6efdfc1e7e1b42d580879322f6916005e88bb7a7c1d61ddae",
+      "bytes": 2784,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/services/data-engine/community_brain/processors.py",
+      "sha256": "99edafed615b2601b956e7140b705e5cecf64402e96bf0e1b909f998fb599533",
+      "bytes": 21564,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/services/data-engine/community_brain/worker.py",
+      "sha256": "0b1a9e1de845a3962f3af70719f23c5a3539cbc2617f95cef6405838f8b3190e",
+      "bytes": 10562,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/services/data-engine/jobs/marketing_import.py",
+      "sha256": "9486245ed97825bd9f9d69bffeaca5fb43633103b5bb8a9cd106351994a3f784",
+      "bytes": 5025,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/services/data-engine/pipelines/ga4.py",
+      "sha256": "dc7c3a23b40c6eab735c9852c5cd968fcc77a1b307c639ce1b940baf0b73219d",
+      "bytes": 7959,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/services/data-engine/pipelines/google_ads.py",
+      "sha256": "3a76c67a6e70c7f7b247b9a2abefef8ec324a01a15765552cdbde6f4272ff160",
+      "bytes": 5516,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/services/data-engine/pipelines/mcp_marketing_sync.py",
+      "sha256": "d3c155fd14515ff9b72d5e6e6e168963dda11c549d762a79735ed80a35086e58",
+      "bytes": 14607,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/services/data-engine/pipelines/meta_ads.py",
+      "sha256": "4ecb8a459a318eef5d76487b24432329263157aed58d4d6a5da84f7a59fc514d",
+      "bytes": 3680,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/services/data-engine/pipelines/outcome.py",
+      "sha256": "6fad377f4dc5098dca271d568f77ef28e68fecfe5a193c669f3a741b2fafd0e6",
+      "bytes": 2598,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/services/data-engine/render.yaml",
+      "sha256": "eb34c3dc46c8ca9acc496b31f882eb982b1bad3a7675cc25d1fd735563e9cb4a",
+      "bytes": 2593,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/services/data-engine/requirements-brain.in",
+      "sha256": "a3eaeb9742b3c1ecb3baffff4923472e32053658c0bde94d80150beb32e1e70a",
+      "bytes": 177,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/services/data-engine/requirements-brain.txt",
+      "sha256": "ee211b9999589907977ae1e109b28a39450a5fa5c98036317e9000505497649f",
+      "bytes": 23121,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/services/data-engine/run_pipelines.py",
+      "sha256": "fc4f9d1a7fb97d820a7254d8fb73662309823b952c92c3f60612536a3ea710c4",
+      "bytes": 9592,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/services/data-engine/scrapers/brand_intelligence.py",
+      "sha256": "eaea2f9feaa82f7fb0f2f7a30455a439555cb1a05db622f7acfb721cd80b1bbd",
+      "bytes": 40751,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/services/data-engine/tests/test_community_processors.py",
+      "sha256": "4f29c7e356a2f0aa7c05f55da15b2ad5ea2399510d9f4a8c4fe015f13c180f3f",
+      "bytes": 9107,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/services/data-engine/tests/test_competitor_capture_memory.py",
+      "sha256": "09cb60551814a678e9193daea2e50764aace8f7493db7e3e17a4c7b18c0dd536",
+      "bytes": 1388,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/services/data-engine/tests/test_daily_marketing_reports.py",
+      "sha256": "408d9f210ea6ef00a556b3448f4ba08c80d1f3206f0b035662272b201ce8fa56",
+      "bytes": 17278,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/services/data-engine/tests/test_legacy_import_outcomes.py",
+      "sha256": "aba36fecc9066225e62482181b739a71d67040e826dcf3d2b8c3e26ef0bb7361",
+      "bytes": 3051,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/services/data-engine/tests/test_marketing_import.py",
+      "sha256": "d2ad028cc99e21b7bec73b9df498f6bf0af2df2d8c46e6652088a9ccef40d86b",
+      "bytes": 14050,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/services/mcp-servers/google_ads/tools/performance.py",
+      "sha256": "776363027e46cbb2cd34136bd2878145c28350b6312834d47ac44e74964e4baa",
+      "bytes": 10483,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/services/mcp-servers/meta_ads/client.py",
+      "sha256": "2d42b18bc057472a27d9a9a484bf785cf2b172ff27aacc7791707c0748e4e5ac",
+      "bytes": 18485,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/supabase/migrations/20261013233353_community_brain_scope_and_evidence.sql",
+      "sha256": "0ab0e9d3f362ffd3b3e9b59bf571adaab006c58e0f44a253660970b8d67036cd",
+      "bytes": 25481,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/supabase/migrations/20261013234107_community_brain_context_and_lifecycle.sql",
+      "sha256": "47600b11fcc3f094802a09eee782230ddb7983e7a2f9ea0245e856fc51099ea4",
+      "bytes": 17645,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/supabase/migrations/20261013234435_community_brain_files_and_workers.sql",
+      "sha256": "5db66a4ceac5a17399c28e6eb3e824a79bd369300fd4f97f7200015e937439c7",
+      "bytes": 26060,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/supabase/migrations/20261013235537_community_brain_worker_memory_and_manifests.sql",
+      "sha256": "ff6fdb88af88807024551438b7cc0d25e1729f0cc4e31c15531081018a82c5c8",
+      "bytes": 32070,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/supabase/migrations/20261013235913_community_brain_portfolio_provider_and_coordination.sql",
+      "sha256": "0c723365e0ca2466f721be2d6069075fba73500bc65b0552fecd13df01b4118d",
+      "bytes": 27553,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/supabase/migrations/20261014000320_community_brain_intake_handoff_and_operations.sql",
+      "sha256": "a96fe39d5f1fcfdb70647758849bcae202dccd12cff0bc676421db93f5848783",
+      "bytes": 15630,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/supabase/migrations/20261014001441_community_brain_execution_guards.sql",
+      "sha256": "70561e0ffa39df0e58fd0ebdddb843659deac6cf404ff47768ed95b0840b9e4a",
+      "bytes": 19427,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/supabase/migrations/20261014001925_community_brain_review_and_indexing.sql",
+      "sha256": "e03dcf0c31a45aaffd8961561cf205be4cfc3f20013c962133cba98a5d5f988f",
+      "bytes": 17383,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/supabase/migrations/20261014002318_community_brain_operations_and_access.sql",
+      "sha256": "8bc8ea05d15ec0341557f6709020f5373d00b15d01f828b50a3738651aaf3d51",
+      "bytes": 4610,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/supabase/migrations/20261014003009_community_brain_brand_and_lifecycle_guards.sql",
+      "sha256": "aeae95711492b6c55d36909068165b96f3364ef235e48d6bc6a604ff7dac3233",
+      "bytes": 6121,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/supabase/migrations/20261014003257_community_brain_retrieval_and_measurement_receipts.sql",
+      "sha256": "a7a5beda13154eed557ecc19e984a8f5d7cdc2ff78ca76997c322dd14aa9168b",
+      "bytes": 12168,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/supabase/migrations/20261014003655_community_brain_connected_file_lifecycle.sql",
+      "sha256": "1cc538d7e55989eb9af1d56fc4fb0e17480da8e364d226fbf87e51caf334504a",
+      "bytes": 9182,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/supabase/migrations/20261014004310_community_brain_release_controls.sql",
+      "sha256": "54b65048186c8c6d1f6b01766771dcec9e9fb3e3e0c23dad39e9c0981e7da91f",
+      "bytes": 10468,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/supabase/migrations/20261014005029_community_brain_lifecycle_qualification.sql",
+      "sha256": "a44530d9aeec999a133dbebe88a7d09f98f9634bd76e3a1d02da6e97c877a77a",
+      "bytes": 13585,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/supabase/migrations/20261014011528_community_brain_connected_schedules.sql",
+      "sha256": "8b1ba797b157655fe0734f9a75edd945ab2816566ab3d381b08782146d6ef169",
+      "bytes": 5471,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/supabase/migrations/20261014011849_community_brain_competitor_memory.sql",
+      "sha256": "9fa40e1236a87500fcdc23ae69dfe2f8ed7bc4fc11f9d986c99db495219206bf",
+      "bytes": 4650,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/supabase/migrations/20261014012634_community_brain_reconciliation_replay.sql",
+      "sha256": "f2313ecc4cbe32f2fe5288d314a1b3f7924c9fbf2cb3456f655eb42915eef2df",
+      "bytes": 5842,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/supabase/migrations/20261014013217_community_brain_community_rollout.sql",
+      "sha256": "e462bfd302f1ae79bab4166eaeedcd1659cae193475f05cc95f7c1bdc781a4e4",
+      "bytes": 6780,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/supabase/qualification/browser_community_brain.mjs",
+      "sha256": "9d3c05cea10bcd25d4908812efb37cf1d125bca760a086064624e953ceacdb4f",
+      "bytes": 4904,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/supabase/qualification/capacity_community_brain.py",
+      "sha256": "7ec63d1513a7d38d2d38d84cc11468d4d0d69563a86a8b93dce6bd1db0a718cf",
+      "bytes": 4402,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/supabase/qualification/http_community_brain.py",
+      "sha256": "95c4d3a7f54bd335e724cb5e19136d890520f65b9fce879933274e32cb4bfd86",
+      "bytes": 22738,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/supabase/qualification/replay_community_brain.py",
+      "sha256": "913b0bf043346c45dc8e5518f4b968a4e1be1727bae77158d699bc061283de65",
+      "bytes": 3552,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/supabase/qualification/web_community_brain.py",
+      "sha256": "710a2c1d64ffde63892085083da9c5970692ece2afbc1dfe5b01d59181bfc993",
+      "bytes": 5401,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/supabase/tests/community_brain_execution.test.sql",
+      "sha256": "d008528ed2a8981b976d06fa5e035d43861762dc23c7e459b1a4ae4239303c07",
+      "bytes": 18904,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/supabase/tests/community_brain_memory.test.sql",
+      "sha256": "0c2b09920593af89d29cb12bb495aaaafbc3b6f3ea47a222ee0685db9766947f",
+      "bytes": 16522,
+      "provenance": "candidate-or-review-document"
+    },
+    {
+      "path": "p11-platform/supabase/tests/community_brain_scope.test.sql",
+      "sha256": "675f30112fb0edf8ae5caab72c562260da727b95dfab46a8a6ba1eea1a86f16f",
+      "bytes": 6080,
+      "provenance": "candidate-or-review-document"
+    }
+  ]
+}

@@ -15,7 +15,7 @@ export async function GET(req:Request){try{const actor=await fileActor(),query=f
 export async function POST(req:Request){try{
  const actor=await fileActor()
  if(req.headers.get('content-type')?.startsWith('multipart/form-data')){
-  const bytes=await boundedBytes(req,10485760+16384);let form:FormData
+  const bytes=await boundedBytes(req,26214400+16384);let form:FormData
   try{form=await new Response(bytes,{headers:{'content-type':req.headers.get('content-type')!}}).formData()}catch{throw new FileError('Provide a complete file upload.',400)}
   return NextResponse.json(await uploadOriginal(actor,form),{headers})
  }

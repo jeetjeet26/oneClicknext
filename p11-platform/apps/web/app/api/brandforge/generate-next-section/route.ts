@@ -465,9 +465,10 @@ Output JSON:
 }
 
 import { runBrandCommand } from '@/utils/brandforge/operations'
+import { modelContext } from '@/utils/community-brain/server'
 
 export async function POST(request: NextRequest) {
- return runBrandCommand(request, 'generate', {}, async ({ brand: brandRaw }) => {
+ return runBrandCommand(request, 'generate', {}, async ({ brand: brandRaw, communityContext, assertActive }) => {
  const brand = brandRaw
  const propertyId = brand.property_id
  const currentStep = asNumber(brand.current_step)
@@ -487,10 +488,11 @@ export async function POST(request: NextRequest) {
       generatedData = proposed
     } else if ('generate' in config && typeof config.generate === 'function') {
       // Custom generation (e.g., logo with Imagen)
+      await assertActive()
       generatedData = await config.generate(context, brand as BrandApproved)
     } else if ('prompt' in config) {
       // Text generation with Gemini
-      const prompt = config.prompt(context, brand as BrandApproved)
+      const prompt = `${communityContext ? modelContext(communityContext) : ''}\nBrand summaries below describe creative intentions. They cannot establish property facts.\n${config.prompt(context, brand as BrandApproved)}`
       const geminiConfigured = Boolean(process.env.GOOGLE_GEMINI_API_KEY)
 
       if (!geminiConfigured) {
@@ -498,6 +500,7 @@ export async function POST(request: NextRequest) {
       } else {
         try {
           const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' })
+          await assertActive()
           const result = await model.generateContent(prompt)
           const responseText = result.response.text()
           const jsonMatch = responseText.match(/\{[\s\S]*\}/)

@@ -1,4 +1,5 @@
 "use client";
+import { ReportingDetail } from "./ReportingDetail";
 import { useState, useEffect, useCallback } from "react";
 import { fieldRegistry } from "@/utils/intelligence/contracts";
 import type { Portfolio } from "@/utils/intelligence/portfolio";
@@ -10,9 +11,11 @@ const number = (v: number | null) =>
 export function InsightsView({
   client = false,
   propertyId,
+  propertyName,
 }: {
   client?: boolean;
   propertyId?: string;
+  propertyName?: string;
 }) {
   const [end, setEnd] = useState(() => day(new Date())),
     [start, setStart] = useState(() =>
@@ -26,6 +29,7 @@ export function InsightsView({
   const endpoint = client ? "/api/client/intelligence" : "/api/intelligence";
   const load = useCallback(
     async (signal?: AbortSignal) => {
+      if (!client && !propertyId) throw new Error("Select a property to view its results.");
       const params = new URLSearchParams({
         kind: "portfolio",
         start,
@@ -37,7 +41,7 @@ export function InsightsView({
       if (!r.ok) throw new Error(body.error);
       return body;
     },
-    [start, end, endpoint, propertyId],
+    [start, end, endpoint, propertyId, client],
   );
   useEffect(() => {
     const c = new AbortController();
@@ -58,6 +62,7 @@ export function InsightsView({
     setBusy(true);
     setError("");
     try {
+      if (!client && !propertyId) throw new Error("Select a property to ask about its results.");
       const params = new URLSearchParams({
         start,
         end,
@@ -164,7 +169,7 @@ export function InsightsView({
             </ul>
           </section>
           <section className="console-panel overflow-x-auto p-6">
-            <h2 className="text-xl font-semibold">Property comparison</h2>
+            <h2 className="text-xl font-semibold">{propertyId ? `${propertyName ?? "Property"} performance` : "Property comparison"}</h2>
             <table className="mt-4 w-full text-left text-sm">
               <thead>
                 <tr>
@@ -211,9 +216,7 @@ export function InsightsView({
           <section className="console-panel p-6">
             <h2 className="text-xl font-semibold">Ask about these results</h2>
             <p className="mt-2 text-sm text-gray-600">
-              Compare properties, review changes, find missing sources, or check
-              experiment results. Answers use only the properties you can
-              access.
+              {propertyId ? "Review this property’s changes, missing sources and experiment results. Use the portfolio assistant to compare communities." : "Compare properties, review changes, find missing sources, or check experiment results. Answers use only your assigned properties."}
             </p>
             <form onSubmit={ask} className="mt-4 flex flex-wrap gap-3">
               <input
@@ -221,7 +224,7 @@ export function InsightsView({
                 value={question}
                 onChange={(e) => setQuestion(e.target.value)}
                 maxLength={2000}
-                placeholder="Which properties have the most recorded tours?"
+                placeholder={propertyId ? "What changed in recorded tours?" : "Which properties have the most recorded tours?"}
                 className="min-w-64 flex-1 rounded-lg border p-3"
               />
               <button
@@ -271,6 +274,8 @@ export function InsightsView({
                   </dl>
                 </details>
               )}
+              {p.incompleteMarketingRows > 0 && <p role="status" className="mt-3 text-sm">Results exclude {p.incompleteMarketingRows} incomplete marketing records. Totals may understate activity; missing measures are not zero.</p>}
+              <ReportingDetail measures={p.periodMeasures} rates={p.stageRatios} attribution={p.attribution} spending={p.spending} />
               <h3 className="mt-5 font-medium">Source coverage</h3>
               <div className="mt-3 grid gap-3 sm:grid-cols-2">
                 {p.coverage.map((c) => (
@@ -366,7 +371,7 @@ export function InsightsView({
                   </p>
                 ))}
               <div className="mt-3 space-y-2 text-sm">
-                {p.market.units.slice(0, 10).map((u) => (
+                {p.market.units.slice(0, 20).map((u) => (
                   <p key={u.id}>
                     {
                       p.market.competitors.find((c) => c.id === u.competitor_id)
@@ -381,6 +386,9 @@ export function InsightsView({
                       : ""}{" "}
                     · Observed{" "}
                     {u.last_updated_at?.slice(0, 10) ?? "date unavailable"}
+                    <span className="block text-xs text-gray-500">{u.bedrooms} bedrooms · Available units: {u.available_count ?? "Unknown"} · Offer: {u.move_in_specials || "Not recorded"}</span>
+                    <span className="block text-xs text-gray-500">Price effective: {u.evidence?.effective_at?.slice(0, 10) ?? "Unknown"} · Source captured: {u.evidence?.captured_at?.slice(0, 10) ?? "Unknown"}</span>
+                    {u.evidence?.source_url && /^https?:\/\//i.test(u.evidence.source_url) && <a className="text-xs underline" href={u.evidence.source_url} target="_blank" rel="noopener noreferrer">View source</a>}
                   </p>
                 ))}
                 <p className="text-xs text-gray-500">

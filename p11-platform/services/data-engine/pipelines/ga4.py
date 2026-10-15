@@ -179,88 +179,25 @@ class GA4Client:
 
 
 def run_pipeline():
-    """Execute the GA4 data pipeline."""
-    print("=" * 60)
-    print("Starting GA4 Analytics Pipeline...")
-    print("=" * 60)
-    
-    # 1. Configuration
-    GA4_PROPERTY_ID = os.environ.get("GA4_PROPERTY_ID")
-    GA4_CREDENTIALS_PATH = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-    GA4_CREDENTIALS_JSON = os.environ.get("GA4_CREDENTIALS_JSON")
-    PROPERTY_ID = os.environ.get("TARGET_PROPERTY_ID")
-    
-    if not GA4_PROPERTY_ID:
-        print("⚠ Skipping: GA4_PROPERTY_ID not set.")
-        print("  Set this to your GA4 property ID (e.g., '123456789')")
-        return
-    
-    if not GA4_CREDENTIALS_PATH and not GA4_CREDENTIALS_JSON:
-        print("⚠ Skipping: No GA4 credentials found.")
-        print("  Set GOOGLE_APPLICATION_CREDENTIALS (path) or GA4_CREDENTIALS_JSON (JSON string)")
-        return
-    
-    # 2. Initialize client
-    try:
-        client = GA4Client(
-            property_id=GA4_PROPERTY_ID,
-            credentials_path=GA4_CREDENTIALS_PATH,
-            credentials_json=GA4_CREDENTIALS_JSON
-        )
-        print(f"✓ Connected to GA4 property: {GA4_PROPERTY_ID}")
-    except Exception as e:
-        print(f"✗ Failed to initialize GA4 client: {e}")
-        return
-    
-    # 3. Fetch data (last 3 days to catch delayed data)
-    try:
-        raw_data = client.get_traffic_data(
-            start_date="3daysAgo",
-            end_date="yesterday"
-        )
-        print(f"✓ Fetched {len(raw_data)} records from GA4 API.")
-    except Exception as e:
-        print(f"✗ Failed to fetch GA4 data: {e}")
-        return
-    
-    if not raw_data:
-        print("⚠ No data returned from GA4.")
-        return
-    
-    # 4. Normalize data
-    df = normalize_ga4_data(raw_data)
-    df['source_account_id'] = GA4_PROPERTY_ID.removeprefix('properties/')
-    df['currency_code'] = None
-    
-    # Add Property ID context (critical for multi-tenant)
-    if PROPERTY_ID:
-        df['property_id'] = PROPERTY_ID
-    else:
-        print("⚠ Warning: TARGET_PROPERTY_ID not set. Data won't be linked to a property.")
-    
-    print(f"✓ Data normalized: {len(df)} rows")
-    
-    # 5. Load to Supabase
-    try:
-        supabase = get_supabase()
-        records = df.to_dict(orient='records')
-        
-        # Using 'upsert' for idempotency
-        response = supabase.table('fact_marketing_performance').upsert(
-            records, 
-            on_conflict="date,property_id,channel_id,source_account_id,campaign_id"
-        ).execute()
-        
-        print(f"✓ Successfully loaded {len(records)} rows to Supabase.")
-    except Exception as e:
-        print(f"✗ Database Load Error: {e}")
-        return
-    
-    print("=" * 60)
-    print("GA4 Pipeline completed successfully!")
-    print("=" * 60)
+    from pipelines.outcome import PipelineOutcome, load_confirmed
+    account, path, credentials, property_id = (os.environ.get(key) for key in ('GA4_PROPERTY_ID', 'GOOGLE_APPLICATION_CREDENTIALS', 'GA4_CREDENTIALS_JSON', 'TARGET_PROPERTY_ID'))
+    if not account or not (path or credentials):
+        return PipelineOutcome('skipped', 'not_requested', error='GA4 credentials are missing')
+    if not property_id:
+        raise ValueError('A community is required before fetching GA4 data')
+    client = GA4Client(property_id=account, credentials_path=path, credentials_json=credentials)
+    raw = client.get_traffic_data(start_date='3daysAgo', end_date='yesterday')
+    records = []
+    if raw:
+        frame = normalize_ga4_data(raw)
+        frame['source_account_id'] = account.removeprefix('properties/')
+        frame['currency_code'] = None
+        frame['property_id'] = property_id
+        records = frame.to_dict(orient='records')
+    return load_confirmed(get_supabase(), records, property_id)
 
 
-if __name__ == "__main__":
-    run_pipeline()
-
+if __name__ == '__main__':
+    outcome = run_pipeline()
+    print(outcome)
+    raise SystemExit(1 if outcome.status == 'error' else 0)

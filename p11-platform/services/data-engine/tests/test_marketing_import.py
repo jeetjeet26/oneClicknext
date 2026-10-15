@@ -165,7 +165,7 @@ def test_worker_claim_prevents_duplicate_execution_and_honors_requested_range(db
     asyncio.run(api.run_import_job(JOB)); asyncio.run(api.run_import_job(JOB))
     provider.assert_awaited_once_with(PROPERTY, '123', 'LAST_30_DAYS')
     assert job['status'] == 'complete'
-    assert sum(call.args[1] == 'save_marketing_import_report' for call in rpc_mock.await_args_list) == 1
+    assert sum(call.args[1] == 'save_marketing_import_report_v2' for call in rpc_mock.await_args_list) == 1
 
 
 def test_worker_does_not_execute_when_claim_fails(db, monkeypatch):
@@ -184,7 +184,7 @@ def test_resumed_worker_uses_saved_report_without_refetching_provider(db, monkey
     job, rpc_mock, provider = worker_fixture(db, monkeypatch, saved=True)
     asyncio.run(api.run_import_job(JOB))
     provider.assert_not_awaited()
-    assert not any(call.args[1] == 'save_marketing_import_report' for call in rpc_mock.await_args_list)
+    assert not any(call.args[1] == 'save_marketing_import_report_v2' for call in rpc_mock.await_args_list)
     assert job['status'] == 'complete'
 
 

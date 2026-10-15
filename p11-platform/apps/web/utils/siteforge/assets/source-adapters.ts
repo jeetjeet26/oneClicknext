@@ -1,6 +1,8 @@
 import { z } from 'zod'
 import { createServiceClient } from '@/utils/supabase/admin'
 import type { AssetSourceProvider } from './contracts'
+import { intakeFormats, intakeFormat } from '@/utils/community-brain/formats'
+import { createHash } from 'node:crypto'
 
 const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.readonly'
 const DROPBOX_SCOPES = ['files.metadata.read', 'files.content.read'] as const
@@ -34,6 +36,9 @@ export type AssetSourceFile = {
   modifiedAt: string | null
   providerHash: string | null
   downloadRef: string
+  providerRevision?: string
+  exportMime?: string
+  exportRecipe?: 'google-workspace-office-v1'
 }
 
 export type AssetSourceCheckpoint = Record<string, unknown>
@@ -68,6 +73,7 @@ export async function fetchProviderWithRetry(
     try {
       response = await fetchFn(url, {
         ...init,
+        redirect: 'error',
         signal: AbortSignal.timeout(30_000),
       })
     } catch {
@@ -165,6 +171,7 @@ export async function resolveAssetSourceCredential(input: {
 }
 
 async function discoverGoogleDriveFiles(input: {
+  communityFiles?: boolean
   folderId: string
   accessToken: string
   checkpoint: AssetSourceCheckpoint
@@ -184,14 +191,14 @@ async function discoverGoogleDriveFiles(input: {
       `'${input.folderId.replaceAll("'", "\\'")}' in parents`,
       'trashed = false',
     ]
-    if (modifiedAfter) {
+    if (modifiedAfter && !input.communityFiles) {
       queryParts.push(`modifiedTime > '${modifiedAfter.replaceAll("'", "")}'`)
     }
     const params = new URLSearchParams({
       q: queryParts.join(' and '),
       pageSize: '1000',
       fields:
-        'nextPageToken,files(id,name,mimeType,size,md5Checksum,modifiedTime)',
+        'nextPageToken,files(id,name,mimeType,size,md5Checksum,modifiedTime,version)',
     })
     if (pageToken) params.set('pageToken', pageToken)
     const response = await fetchProviderWithRetry(
@@ -215,26 +222,36 @@ async function discoverGoogleDriveFiles(input: {
         size?: string
         md5Checksum?: string
         modifiedTime?: string
+        version?: string
       }>
     }
+    if(input.communityFiles&&(!Array.isArray(payload.files)||(payload.nextPageToken!==undefined&&typeof payload.nextPageToken!=='string')))throw new AssetProviderError('Google Drive folder inventory was not confirmed')
     for (const file of payload.files || []) {
       if (
         !file.id ||
         !file.name ||
-        !file.mimeType?.startsWith('image/')
+        !file.mimeType || (!input.communityFiles && !file.mimeType.startsWith('image/'))
       ) {
         continue
       }
+      const exportExtension = ({'application/vnd.google-apps.document':'docx','application/vnd.google-apps.spreadsheet':'xlsx','application/vnd.google-apps.presentation':'pptx','application/vnd.google-apps.drawing':'pdf'} as Record<string,string>)[file.mimeType]
+      const name = input.communityFiles && exportExtension ? `${file.name}.${exportExtension}` : file.name
+      const extension = name.split('.').pop()?.toLowerCase() as keyof typeof intakeFormats
+      if(input.communityFiles && !intakeFormats[extension]) continue
+      if(input.communityFiles && !file.version) throw new AssetProviderError('Google Drive omitted a file revision')
+      if(input.communityFiles&&files.some(existing=>existing.providerFileId===file.id))throw new AssetProviderError('Google Drive returned a repeated file identity')
       files.push({
         sourceIdentity: `google_drive:${file.id}`,
         providerFileId: file.id,
-        name: file.name,
-        mediaType: file.mimeType,
+        name,
+        mediaType: input.communityFiles ? intakeFormats[extension].mime : file.mimeType,
         size: file.size ? Number(file.size) : null,
         modifiedAt: file.modifiedTime || null,
         providerHash: file.md5Checksum || null,
         downloadRef: file.id,
+        ...(input.communityFiles ? {providerRevision:file.version, ...(exportExtension ? {exportMime:intakeFormats[extension].mime,exportRecipe:'google-workspace-office-v1' as const} : {})} : {}),
       })
+      if(input.communityFiles && files.length>1000) throw new AssetProviderError('Folder exceeds 1000 files; select smaller source folders')
       if (
         file.modifiedTime &&
         (!latestModifiedAt || file.modifiedTime > latestModifiedAt)
@@ -256,6 +273,7 @@ async function discoverGoogleDriveFiles(input: {
 }
 
 async function discoverDropboxFiles(input: {
+  communityFiles?: boolean
   folderId: string
   accessToken: string
   checkpoint: AssetSourceCheckpoint
@@ -264,7 +282,7 @@ async function discoverDropboxFiles(input: {
 }) {
   const files: AssetSourceFile[] = []
   let cursor =
-    typeof input.checkpoint.cursor === 'string'
+    !input.communityFiles && typeof input.checkpoint.cursor === 'string'
       ? input.checkpoint.cursor
       : null
 
@@ -308,11 +326,13 @@ async function discoverDropboxFiles(input: {
         size?: number
         content_hash?: string
         server_modified?: string
+        rev?: string
       }>
     }
+    if(input.communityFiles&&(!Array.isArray(payload.entries)||typeof payload.has_more!=='boolean'))throw new AssetProviderError('Dropbox folder inventory was not confirmed')
     for (const file of payload.entries || []) {
       const extension = file.name?.split('.').pop()?.toLowerCase()
-      const mediaType =
+      const mediaType = input.communityFiles ? intakeFormats[extension as keyof typeof intakeFormats]?.mime :
         extension === 'png'
           ? 'image/png'
           : extension === 'webp'
@@ -329,6 +349,7 @@ async function discoverDropboxFiles(input: {
       ) {
         continue
       }
+      if(input.communityFiles&&files.some(existing=>existing.providerFileId===file.id))throw new AssetProviderError('Dropbox returned a repeated file identity')
       files.push({
         sourceIdentity: `dropbox:${file.id}`,
         providerFileId: file.id,
@@ -338,7 +359,9 @@ async function discoverDropboxFiles(input: {
         modifiedAt: file.server_modified || null,
         providerHash: file.content_hash || null,
         downloadRef: file.path_lower,
+        ...(input.communityFiles ? {providerRevision:file.rev} : {}),
       })
+      if(input.communityFiles && (!file.rev || files.length>1000)) throw new AssetProviderError('Dropbox revision or bounded folder inventory could not be confirmed')
     }
     if (!payload.cursor) {
       throw new AssetProviderError('Dropbox omitted its sync checkpoint')
@@ -350,6 +373,7 @@ async function discoverDropboxFiles(input: {
 }
 
 export async function discoverAssetSourceFiles(input: {
+  communityFiles?: boolean
   provider: AssetSourceProvider
   folderId: string
   accessToken: string
@@ -364,6 +388,7 @@ export async function discoverAssetSourceFiles(input: {
 }
 
 export async function downloadAssetSourceFile(input: {
+  communityFiles?: boolean
   provider: AssetSourceProvider
   file: AssetSourceFile
   accessToken: string
@@ -373,7 +398,7 @@ export async function downloadAssetSourceFile(input: {
   const response =
     input.provider === 'google_drive'
       ? await fetchProviderWithRetry(
-          `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(input.file.downloadRef)}?alt=media`,
+          `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(input.file.downloadRef)}${input.file.exportMime ? `/export?mimeType=${encodeURIComponent(input.file.exportMime)}` : '?alt=media'}`,
           {
             method: 'GET',
             headers: { Authorization: `Bearer ${input.accessToken}` },
@@ -392,6 +417,7 @@ export async function downloadAssetSourceFile(input: {
               Authorization: `Bearer ${input.accessToken}`,
               'Dropbox-API-Arg': JSON.stringify({
                 path: input.file.downloadRef,
+                ...(input.file.providerRevision ? {rev:input.file.providerRevision} : {}),
               }),
             },
           },
@@ -403,13 +429,28 @@ export async function downloadAssetSourceFile(input: {
         )
   const mediaType =
     response.headers.get('content-type')?.split(';')[0] || input.file.mediaType
-  if (!['image/jpeg', 'image/png', 'image/webp'].includes(mediaType)) {
+  if (!input.communityFiles && !['image/jpeg', 'image/png', 'image/webp'].includes(mediaType)) {
     throw new AssetProviderError('Provider returned an unsupported image type')
   }
-  return {
-    bytes: new Uint8Array(await response.arrayBuffer()),
-    mediaType,
+  const spec = input.communityFiles ? intakeFormat(input.file.name, Math.max(1,input.file.size??1)) : {maxBytes:20*1024*1024,mime:mediaType}
+  if(Number(response.headers.get('content-length'))>spec.maxBytes || !response.body) throw new AssetProviderError('Provider file exceeds the intake limit')
+  const reader=response.body.getReader(),chunks:Uint8Array[]=[];let size=0
+  try{while(true){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>spec.maxBytes)throw new AssetProviderError('Provider file exceeds the intake limit');chunks.push(value)}}finally{await reader.cancel();reader.releaseLock()}
+  const bytes=new Uint8Array(Buffer.concat(chunks))
+  if(input.communityFiles){
+    intakeFormat(input.file.name,bytes.byteLength)
+    if(input.provider==='google_drive'){
+      const metadata=await fetchProviderWithRetry(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(input.file.providerFileId)}?fields=version,md5Checksum,trashed`,{headers:{Authorization:`Bearer ${input.accessToken}`}},{fetchFn:input.fetchFn,sleep:input.sleep,provider:input.provider})
+      const current=await metadata.json() as {version?:string;md5Checksum?:string;trashed?:boolean}
+      if(current.trashed||current.version!==input.file.providerRevision||(!input.file.exportMime&&current.md5Checksum&&createHash('md5').update(bytes).digest('hex')!==current.md5Checksum))throw new AssetProviderError('Google Drive file changed during download')
+    } else {
+      const current=JSON.parse(response.headers.get('dropbox-api-result')??'{}') as {rev?:string;content_hash?:string}
+      const blocks=[];for(let i=0;i<bytes.length;i+=4*1024*1024)blocks.push(createHash('sha256').update(bytes.subarray(i,i+4*1024*1024)).digest())
+      const hash=createHash('sha256').update(Buffer.concat(blocks)).digest('hex')
+      if(current.rev!==input.file.providerRevision||hash!==input.file.providerHash||current.content_hash!==hash)throw new AssetProviderError('Dropbox file revision or content hash changed')
+    }
   }
+  return {bytes,mediaType:input.communityFiles?spec.mime:mediaType}
 }
 
 export const assetSourceScopeManifest = {

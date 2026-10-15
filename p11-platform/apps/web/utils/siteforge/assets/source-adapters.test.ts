@@ -135,3 +135,24 @@ describe('SiteForge asset source adapters', () => {
     ).rejects.toBeInstanceOf(AssetProviderError)
   })
 })
+
+describe('retained community originals',()=>{
+ it('inventories native Office exports and binaries without trusting an old photo checkpoint',async()=>{
+  const fetchFn=vi.fn().mockResolvedValue(Response.json({files:[{id:'native',name:'Brand guide',mimeType:'application/vnd.google-apps.presentation',version:'12'},{id:'plan',name:'plans.pdf',mimeType:'application/pdf',version:'3',size:'300'}]}))
+  const value=await discoverAssetSourceFiles({provider:'google_drive',folderId:'community',accessToken:'fixture',checkpoint:{modifiedAfter:'2026-01-01'},communityFiles:true,fetchFn})
+  expect(value.files.map(f=>[f.name,f.providerRevision])).toEqual([['Brand guide.pptx','12'],['plans.pdf','3']]);expect(value.files[0].exportRecipe).toBe('google-workspace-office-v1');expect(fetchFn.mock.calls[0][0]).not.toContain('modifiedTime+%3E')
+ })
+ it.each([{error:'incomplete response'},{files:[{id:'plan',name:'plans.pdf',mimeType:'application/pdf'}]}])('rejects an unconfirmed Google inventory instead of withdrawing all originals',async payload=>{
+  await expect(discoverAssetSourceFiles({provider:'google_drive',folderId:'community',accessToken:'fixture',checkpoint:{},communityFiles:true,fetchFn:vi.fn().mockResolvedValue(Response.json(payload))})).rejects.toThrow()
+ })
+ it('does not call an old Dropbox delta a complete current folder inventory',async()=>{
+  const fetchFn=vi.fn().mockResolvedValue(Response.json({cursor:'next',has_more:false,entries:[]}))
+  await discoverAssetSourceFiles({provider:'dropbox',folderId:'/community',accessToken:'fixture',checkpoint:{cursor:'old'},communityFiles:true,fetchFn})
+  expect(fetchFn.mock.calls[0][0]).toBe('https://api.dropboxapi.com/2/files/list_folder')
+ })
+ it('rejects a Drive file replaced while exporting',async()=>{
+  const {downloadAssetSourceFile}=await import('./source-adapters')
+  const fetchFn=vi.fn().mockResolvedValueOnce(new Response('retained office bytes')).mockResolvedValueOnce(Response.json({version:'13'}))
+  await expect(downloadAssetSourceFile({provider:'google_drive',accessToken:'fixture',communityFiles:true,file:{sourceIdentity:'google_drive:native',providerFileId:'native',name:'Brand.docx',mediaType:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',size:null,modifiedAt:null,providerHash:null,downloadRef:'native',providerRevision:'12',exportMime:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',exportRecipe:'google-workspace-office-v1'},fetchFn})).rejects.toThrow('changed during download')
+ })
+})

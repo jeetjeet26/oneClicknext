@@ -1,16 +1,20 @@
 import {beforeEach,describe,expect,it,vi} from 'vitest'
+vi.mock('@/utils/community-brain/budgets',()=>({reservePackageProcessing:vi.fn().mockResolvedValue({state:'no_package'})}))
 const rpc=vi.fn(),generate=vi.fn(),assemble=vi.fn(),materialize=vi.fn(),single=vi.fn()
 vi.mock('@/utils/supabase/admin',()=>({createServiceClient:()=>({rpc,from:()=>{const q={select:()=>q,eq:()=>q,single};return q}})}))
 vi.mock('./context-assembler',()=>({assembleForgeStudioContext:assemble}))
 vi.mock('./generation',()=>({GENERATION_PROMPT_VERSION:'forgestudio.generation.v2',generateRevisionContent:generate,generationOutputSchema:{parse:(v:unknown)=>v},materializeGeneration:materialize}))
+const guard=vi.hoisted(()=>({current:vi.fn().mockResolvedValue(undefined)}))
+vi.mock('@/utils/community-brain/server',()=>({resolveCommunityScope:async()=>({id:'scope',actor_id:'actor'})}))
+vi.mock('@/utils/community-brain/generation',()=>({saveGenerationContext:async()=>({snapshotId:'snapshot',readSetHash:'read-set'}),requireGenerationCurrent:guard.current,readServiceDeliverable:vi.fn()}))
 const input={requestId:'request',briefId:'brief',propertyId:'property',actorId:'actor'}
 const brief={channels:['facebook'],format_plan:[{platform:'facebook',contentFormat:'text',quantity:1}],objective:'Explain community',topic:null,audience:null,constraints:{},source_facts:[],asset_ids:[]}
 const content={contractVersion:'forgestudio.social.v1',conceptSummary:'Saved model result',variants:[{variantKey:'facebook:text:1',sequenceIndex:0,platform:'facebook',caption:'Welcome to this community',hashtags:[],assetIds:[],mediaUrls:[],contentFormat:'text',storyboard:[],overlayText:[],safeArea:{topPercent:10,rightPercent:8,bottomPercent:18,leftPercent:8}}],claims:[]}
 const raw={output:{example:'raw-model-output'},metadata:{promptVersion:'forgestudio.generation.v2',contractVersion:'forgestudio.social.v1'}}
 let startState='claimed',intentState='proceed_once',lostResult=0,failContext=false
 beforeEach(()=>{
- vi.clearAllMocks();startState='claimed';intentState='proceed_once';lostResult=0;failContext=false
- assemble.mockResolvedValue({propertyId:'property',sources:[],assets:[],contextHash:'context'})
+ vi.clearAllMocks();guard.current.mockResolvedValue(undefined);startState='claimed';intentState='proceed_once';lostResult=0;failContext=false
+ assemble.mockResolvedValue({propertyId:'property',sources:[],assets:[],contextHash:'context',communityContext:{readSetHash:'read-set'}})
  materialize.mockReturnValue({content,metadata:raw.metadata})
  single.mockResolvedValue({data:{state:'result_ready',raw_result:raw,raw_result_hash:'database-hash',model_input:{bundle:{},promptVersion:'forgestudio.generation.v2'}},error:null})
  generate.mockImplementation(async args=>{await args.onResult(raw);return{content,metadata:raw.metadata}})
@@ -41,3 +45,5 @@ it('recovers original v1 output after the settings prompt upgrade without reusin
 it('holds saved results whose prompt does not match the recorded request',async()=>{
  single.mockResolvedValue({data:{state:'result_ready',raw_result:raw,model_input:{bundle:{},promptVersion:'forgestudio.generation.v1'}},error:null});await expect((await import('./generation-store')).recoverGeneration('request','property','actor','decision')).rejects.toThrow(/inconsistent/);expect(materialize).not.toHaveBeenCalled();expect(generate).not.toHaveBeenCalled()
 })
+
+it('holds the native generation before model dispatch when a source is withdrawn',async()=>{guard.current.mockRejectedValueOnce(new Error('Sources changed'));await expect((await import('./generation-store')).runBriefGeneration(input)).rejects.toThrow('Sources changed');expect(generate).not.toHaveBeenCalled()})

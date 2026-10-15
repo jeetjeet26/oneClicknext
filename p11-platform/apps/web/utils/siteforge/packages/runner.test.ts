@@ -1,7 +1,11 @@
 import { beforeEach,describe,it,expect,vi } from 'vitest'
+vi.mock('@/utils/community-brain/budgets',()=>({reservePackageProcessing:vi.fn().mockResolvedValue({state:'no_package'})}))
 import {zipSync,strToU8} from 'fflate'
 import type { PackageJob } from './store'
 const mocks=vi.hoisted(()=>({job:{} as PackageJob,create:vi.fn(),retrieve:vi.fn(),uploadFile:vi.fn(),download:vi.fn(),upload:vi.fn(),assemble:vi.fn(),content:vi.fn()}))
+const guard=vi.hoisted(()=>({current:vi.fn().mockResolvedValue(undefined)}))
+vi.mock('@/utils/community-brain/generation',()=>({requireGenerationCurrent:guard.current,readServiceDeliverable:vi.fn()}))
+vi.mock('@/utils/community-brain/providers',async()=>({...await vi.importActual<typeof import('@/utils/community-brain/providers')>('@/utils/community-brain/providers'),packageProviderTask:async()=>{await guard.current();return{scope:{id:'scope'},contextId:'context'}},recordProviderObject:async(_task:unknown,_kind:unknown,id:string)=>({id}),readProviderObject:async(_task:unknown,_kind:unknown,id:string)=>({id})}))
 vi.mock('openai',()=>({default:class {files={create:mocks.uploadFile,delete:vi.fn()};responses={create:mocks.create,retrieve:mocks.retrieve};containers={files:{content:{retrieve:mocks.content}}}},toFile:vi.fn(async b=>b)}))
 vi.mock('./source',()=>({assembleSourceArchive:mocks.assemble,sha256:()=> 'hash'}))
 vi.mock('./store',()=>({
@@ -16,7 +20,7 @@ vi.mock('./store',()=>({
 import { processPackage,generationInstructions } from './runner'
 describe('Astra execution recovery',()=>{
   beforeEach(()=>{
-    vi.clearAllMocks()
+    vi.clearAllMocks();guard.current.mockResolvedValue(undefined)
     mocks.job={id:'build',org_id:'org',property_id:'property',actor_id:'actor',parent_id:null,target:'standalone',state:'queued',instructions:'Use the saved property',source_hash:'source',source_snapshot:{},created_at:new Date().toISOString(),updated_at:new Date().toISOString()} as PackageJob
     mocks.assemble.mockResolvedValue(new Uint8Array([1,2]));mocks.upload.mockResolvedValue({error:null});mocks.uploadFile.mockResolvedValue({id:'file-input'})
   })
@@ -45,7 +49,7 @@ describe('Astra execution recovery',()=>{
   })
   it('does not accept a claimed completion without the finished artifact',async()=>{
     mocks.job.state='generating';mocks.job.response_id='response-1'
-    mocks.retrieve.mockResolvedValue({status:'completed',output:[{type:'message',content:[{type:'output_text',text:'Done!',annotations:[]}]}]})
+    mocks.retrieve.mockResolvedValue({id:'original',metadata:{siteforge_package_id:'build'},status:'completed',output:[{type:'message',content:[{type:'output_text',text:'Done!',annotations:[]}]}]})
     await processPackage('build')
     expect(mocks.job).toMatchObject({state:'failed',error_message:expect.stringContaining('without a downloadable website')})
   })
@@ -57,7 +61,7 @@ describe('Astra execution recovery',()=>{
   })
   it('saves and dispatches one critique-driven repair for an incomplete candidate',async()=>{
     mocks.job.state='generating';mocks.job.response_id='original';
-    mocks.retrieve.mockResolvedValue({status:'completed',output:[{type:'message',content:[{type:'output_text',annotations:[{type:'container_file_citation',filename:'siteforge-package.zip',file_id:'output',container_id:'container'}]}]}]});
+    mocks.retrieve.mockResolvedValue({id:'original',metadata:{siteforge_package_id:'build'},status:'completed',output:[{type:'shell_call',environment:{type:'container_reference',container_id:'container'}},{type:'message',content:[{type:'output_text',annotations:[{type:'container_file_citation',filename:'siteforge-package.zip',file_id:'output',container_id:'container'}]}]}]});
     mocks.job.target='wordpress';mocks.job.input_path='input';
     mocks.content.mockResolvedValue(new Response(zipSync({'incomplete.txt':strToU8('Not a website')})));
     mocks.download.mockResolvedValue({data:new Blob([zipSync({'property.json':strToU8('{"floorplans":[]}')})]),error:null});
@@ -74,3 +78,5 @@ describe('Astra execution recovery',()=>{
   })
 
 })
+
+it('does not call the provider when its saved community scope was revoked',async()=>{vi.clearAllMocks();mocks.job.state='queued';guard.current.mockRejectedValueOnce(new Error('Access revoked'));await expect(processPackage('build')).rejects.toThrow('Access revoked');expect(mocks.create).not.toHaveBeenCalled()})

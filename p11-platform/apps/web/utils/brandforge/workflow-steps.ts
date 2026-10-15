@@ -1,4 +1,7 @@
 import { brandRpc } from './operations'
+import { brandCommunityContext } from '@/utils/community-brain/brand'
+import { modelContext } from '@/utils/community-brain/server'
+import { reservePackageProcessing } from '@/utils/community-brain/budgets'
 import { BRAND_SECTION_COLUMNS } from './contracts'
 import { createAdminClient } from '@/utils/supabase/admin'
 import {
@@ -41,7 +44,11 @@ export async function convergeBrandForgeWorkflowContract(
     mode: input.mode,
     snapshotCausalHash: snapshot.causalHash,
   })
-  return convergeBrandForgeContract(input, snapshot)
+  const context = await brandCommunityContext(input.requestedBy, input.propertyId, input.operationId!)
+  if(input.mode==='generated')await reservePackageProcessing('brand',input.operationId!,'initial')
+  const result = await convergeBrandForgeContract(input, snapshot, undefined, modelContext(context))
+  await ensureBrandRequestActive(input)
+  return result
 }
 
 export async function persistBrandForgeWorkflowContract(input: {
@@ -52,6 +59,8 @@ export async function persistBrandForgeWorkflowContract(input: {
 }) {
   'use step'
   const { workflow, snapshot, contract, generation } = input
+  await ensureBrandRequestActive(workflow)
+  const communityContext = await brandCommunityContext(workflow.requestedBy, workflow.propertyId, workflow.operationId!)
   const supabase = createAdminClient()
   const { data: property, error: propertyError } = await supabase
     .from('properties')
@@ -66,6 +75,7 @@ export async function persistBrandForgeWorkflowContract(input: {
 
   const contractHash = hashBrandForgeContract(contract)
   const sourceManifest = {
+    communityBrain: { snapshotId: communityContext.snapshotId, readSetHash: communityContext.readSetHash },
     workflow: {
       mode: workflow.mode,
       vertical: workflow.vertical,
@@ -136,4 +146,5 @@ async function ensureBrandRequestActive(input: BrandForgeWorkflowInput) {
  if (!input.operationId || !input.operationToken) throw new Error('Brand workflow is missing its saved request')
  const current = await brandRpc('check_brand_operation', { p_request_id: input.operationId, p_claim_token: input.operationToken })
  if (current.state !== 'active') throw new Error('Brand request is no longer active')
+ await brandCommunityContext(input.requestedBy, input.propertyId, input.operationId)
 }

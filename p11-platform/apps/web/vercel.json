@@ -47,7 +47,7 @@
     },
     {
       "path": "/api/cron/knowledge-refresh",
-      "schedule": "0 */6 * * *"
+      "schedule": "*/15 * * * *"
     },
     {
       "path": "/api/cron/scrape-competitors",
@@ -80,6 +80,14 @@
     {
       "path": "/api/cron/client-report-drafts",
       "schedule": "30 * * * *"
+    },
+    {
+      "path": "/api/cron/community-brain-maintenance",
+      "schedule": "17 * * * *"
+    },
+    {
+      "path": "/api/cron/community-brain-sources",
+      "schedule": "*/15 * * * *"
     }
   ]
 }

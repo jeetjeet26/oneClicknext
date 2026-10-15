@@ -1,5 +1,5 @@
 /**
- * Auth Guard — validates that an authenticated user's org owns the requested property.
+ * Auth Guard — validates organization identity and a current explicit community grant.
  *
  * Prevents cross-tenant data access by checking the ownership chain:
  *   user → profile.org_id → properties.org_id → match propertyId
@@ -11,6 +11,14 @@
 
 import { createServiceClient } from '@/utils/supabase/admin'
 import { createClient } from '@/utils/supabase/server'
+
+async function communityCapability(client: unknown, actorId: string, propertyId: string, capability: 'read' | 'manage') {
+  const db=client as {rpc:(name:string,args:Record<string,unknown>)=>Promise<{data:unknown;error:unknown}>}
+  try {
+    const result=await db.rpc('brain_can',{p_actor_id:actorId,p_property_id:propertyId,p_capability:capability})
+    return !result.error && result.data===true
+  } catch { return false }
+}
 
 export interface AccessResult {
   authorized: boolean
@@ -88,6 +96,7 @@ export async function validatePropertyAccess(
     return { authorized: false, error: 'Forbidden' }
   }
 
+  if (!(await communityCapability(supabase,userId,propertyId,'read'))) return {authorized:false,error:'Community access is unavailable'}
   return { authorized: true, orgId: profile.org_id }
 }
 
@@ -140,6 +149,7 @@ export async function validatePropertyManagerAccess(
     return { authorized: false, error: 'Forbidden' }
   }
 
+  if (!(await communityCapability(supabase,userId,propertyId,'manage'))) return {authorized:false,error:'Community management access is unavailable'}
   return { authorized: true, orgId: profile.org_id }
 }
 
@@ -214,6 +224,7 @@ export async function validateSiteForgeOwnerOperatorAccess(
         : 'Forbidden',
     }
   }
+  if (!(await communityCapability(supabase,userId,propertyId,'manage'))) return {authorized:false,error:'Community management access is unavailable',capability:SITEFORGE_OWNER_OPERATOR_CAPABILITY}
   return {
     authorized: true,
     orgId: profile.org_id,

@@ -396,6 +396,9 @@ class BrandIntelligenceExtractor:
             True if successful
         """
         try:
+            if not capture_id:
+                logger.error("A retained competitor capture is required before storing searchable text")
+                return False
             # Upsert brand intelligence
             brand_row = brand_intel.to_db_dict()
             if capture_id:
@@ -405,11 +408,9 @@ class BrandIntelligenceExtractor:
                 on_conflict='competitor_id'
             ).execute()
             
-            # Delete old chunks for this competitor
-            self.supabase.table('competitor_content_chunks').delete().eq(
-                'competitor_id', brand_intel.competitor_id
-            ).execute()
-            
+            # Retain per-capture history. Unlinked legacy text cannot become
+            # current community evidence, and replacement crawls must not erase
+            # the exact sources retained by earlier generation manifests.
             # Insert new chunks (batch in groups of 50). Scrapers can emit duplicate
             # content across pages, so dedupe again before insert to avoid blocking
             # brand intelligence storage on repeated content hashes.
@@ -429,7 +430,7 @@ class BrandIntelligenceExtractor:
                 batch = deduped_chunks[i:i+50]
                 self.supabase.table('competitor_content_chunks').upsert(
                     batch,
-                    on_conflict='competitor_id,content_hash'
+                    on_conflict='competitor_id,capture_id,content_hash'
                 ).execute()
             
             # Store floor plans/pricing data if available

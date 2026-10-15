@@ -175,6 +175,8 @@ class MetaAdsClient:
                     'clicks': row.get('clicks'), 'actions': row.get('actions', []),
                 })
             paging = page.get('paging', {})
+            if len(rows) > 50_000 or len(cursors) >= 500:
+                raise ReportValidationError('Daily report exceeds the bounded import capacity')
             if not isinstance(paging, dict):
                 raise ReportValidationError('Meta daily report pagination was not confirmed')
             if not paging.get('next'):
@@ -186,7 +188,8 @@ class MetaAdsClient:
             cursors.add(after)
             params['after'] = after
         return {'account_id': acct, 'currency': account.get('currency'),
-                'timezone': account.get('timezone_name'), 'start_date': start, 'end_date': end, 'rows': rows}
+                'timezone': account.get('timezone_name'), 'start_date': start, 'end_date': end, 'rows': rows,
+                'pagination_complete': True, 'pages': len(cursors) + 1}
 
     # ========== ADSET MANAGEMENT ==========
     
@@ -465,9 +468,6 @@ class MetaAdsClient:
         
         result = await self._get(f"/{object_id}/insights", params)
         return result.get("data", [])
-
-
-
 
 
 

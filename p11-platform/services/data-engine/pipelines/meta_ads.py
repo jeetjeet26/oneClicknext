@@ -60,54 +60,26 @@ class MetaAdsClient:
         return all_data
 
 def run_pipeline():
-    print("Starting Real Meta Ads Pipeline...")
-    
-    # 1. Config
-    # In production, these come from the 'properties' table in Supabase via a secure query
-    # based on the job context. For MVP script, we read env.
-    ACCESS_TOKEN = os.environ.get("META_ACCESS_TOKEN")
-    AD_ACCOUNT_ID = os.environ.get("META_AD_ACCOUNT_ID")
-    PROPERTY_ID = os.environ.get("TARGET_PROPERTY_ID") # To link data to a property
-    
-    if not ACCESS_TOKEN or not AD_ACCOUNT_ID:
-        print("Skipping: META_ACCESS_TOKEN or META_AD_ACCOUNT_ID not set.")
-        return
-
-    client = MetaAdsClient(ACCESS_TOKEN, AD_ACCOUNT_ID)
-    
-    # 2. Fetch
-    try:
-        raw_data = client.get_insights(date_preset="last_3d") # Fetch last 3 days to catch delayed conversions
-        print(f"Fetched {len(raw_data)} records from Meta Graph API.")
-    except Exception as e:
-        print(f"Failed to fetch data: {e}")
-        return
-
-    # 3. Normalize
-    if not raw_data:
-        print("No data returned.")
-        return
-
-    df = normalize_meta_data(raw_data)
-    
-    # Add Property ID context (critical for multi-tenant)
-    if PROPERTY_ID:
-        df['property_id'] = PROPERTY_ID
-        
-    print("Data normalized.")
-    
-    # 4. Load to Supabase
+    from pipelines.outcome import PipelineOutcome, load_confirmed
+    token, account, property_id = (os.environ.get(key) for key in ('META_ACCESS_TOKEN', 'META_AD_ACCOUNT_ID', 'TARGET_PROPERTY_ID'))
+    if not token or not account:
+        return PipelineOutcome('skipped', 'not_requested', error='Meta credentials are missing')
+    if not property_id:
+        raise ValueError('A community is required before fetching Meta data')
     supabase = get_supabase()
-    records = df.to_dict(orient='records')
-    
-    # Using 'upsert' to handle idempotency (if we run script multiple times for same date)
-    try:
-        response = supabase.table('fact_marketing_performance').upsert(
-            records, on_conflict="date,property_id,channel_id,source_account_id,campaign_id"
-        ).execute()
-        print(f"Successfully loaded {len(records)} rows to Supabase.")
-    except Exception as e:
-        print(f"Database Load Error: {e}")
+    binding = supabase.table('ad_account_connections').select('property_id,account_id').eq('platform', 'meta_ads').eq('account_id', account).eq('property_id', property_id).eq('is_active', True).execute()
+    if not binding.data:
+        raise ValueError('The Meta account is not linked to the selected community')
+    raw = MetaAdsClient(token, account).get_insights(date_preset='last_3d')
+    records = []
+    if raw:
+        frame = normalize_meta_data(raw)
+        frame['property_id'] = property_id
+        records = frame.to_dict(orient='records')
+    return load_confirmed(supabase, records, property_id)
 
-if __name__ == "__main__":
-    run_pipeline()
+
+if __name__ == '__main__':
+    outcome = run_pipeline()
+    print(outcome)
+    raise SystemExit(1 if outcome.status == 'error' else 0)

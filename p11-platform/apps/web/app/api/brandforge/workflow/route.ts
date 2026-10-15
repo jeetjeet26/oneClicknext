@@ -11,6 +11,7 @@ import {
   brandForgeWorkflowInputSchema,
 } from '@/utils/brandforge/contracts'
 import { brandForgeWorkflow } from '@/workflows/brandforge'
+import { brandCommunityContext } from '@/utils/community-brain/brand'
 
 const workflowRequestSchema = z.discriminatedUnion('mode', [
   z.object({
@@ -18,6 +19,7 @@ const workflowRequestSchema = z.discriminatedUnion('mode', [
     requestId: brandId,
     revision: z.number().int().min(0),
     propertyId: brandId,
+    deliverableId: brandId.optional(),
     brandAssetId: brandId.optional(),
     vertical: brandForgeVerticalSchema,
     creativeBrief: z.object({
@@ -37,12 +39,15 @@ const workflowRequestSchema = z.discriminatedUnion('mode', [
     brandAssetId: brandId.optional(),
     vertical: brandForgeVerticalSchema,
     suppliedContract: brandForgeContractV1Schema,
+    deliverableId: brandId.optional(),
   }),
 ])
 
 export async function POST(request: NextRequest) {
   const ctx = createRequestContext(request, '/api/brandforge/workflow')
   ctx.logStart()
+  let claimed: { requestId: string; token: string } | null = null
+  let dispatchAttempted = false
   try {
     const supabase = await createClient()
     const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -85,6 +90,9 @@ export async function POST(request: NextRequest) {
     const { requestId, revision, ...requested } = parsed.data
     const claim = await brandRpc('begin_brand_operation', { p_property_id: parsed.data.propertyId, p_brand_asset_id: parsed.data.brandAssetId || null, p_actor_id: user.id, p_request_id: requestId, p_revision: revision, p_kind: 'contract', p_input: requested })
     if (claim.state !== 'claimed') return brandReply(claim)
+    if (typeof claim.claimToken !== 'string') throw new Error('Missing brand claim')
+    claimed = { requestId, token: claim.claimToken }
+    await brandCommunityContext(user.id, parsed.data.propertyId, requestId, true, parsed.data.deliverableId)
     const brandAssetId = String(claim.brandAssetId)
     const input = brandForgeWorkflowInputSchema.parse({
       ...parsed.data,
@@ -94,6 +102,7 @@ export async function POST(request: NextRequest) {
       orgId: access.orgId,
       requestedBy: user.id,
     })
+    dispatchAttempted = true
     const run = await start(brandForgeWorkflow, [input])
 
     ctx.logSuccess(202, {
@@ -112,6 +121,15 @@ export async function POST(request: NextRequest) {
       requestId,
     }, { status: 202, headers: ctx.responseHeaders })
   } catch (error) {
+    // Before dispatch, failure is known and may safely release the native claim.
+    // Once dispatch was attempted, retain it for reconciliation: the durable
+    // workflow may have started even if its acknowledgement was lost.
+    if (claimed && !dispatchAttempted) {
+      await brandRpc('finish_brand_operation', {
+        p_request_id: claimed.requestId, p_claim_token: claimed.token,
+        p_updates: {}, p_result: {}, p_error: 'context_preparation_failed',
+      }).catch(() => undefined)
+    }
     ctx.logError(500, error)
     return NextResponse.json(
       { error: 'Unable to start BrandForge workflow' },

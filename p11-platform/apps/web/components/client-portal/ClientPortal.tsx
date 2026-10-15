@@ -418,6 +418,7 @@ export function ClientPortal({ view }: { view: string }) {
                 </section>
               ) : (
                 <>
+                  {!!data.incompleteMarketingRows && <div role="status" className="console-panel mb-5 p-5 text-sm">Some marketing records have missing measures. Results exclude {data.incompleteMarketingRows} incomplete records and may understate activity. Missing values have not been counted as zero.</div>}
                   {["overview", "performance"].includes(view) && (
                     <ClientProgress data={data} />
                   )}

@@ -31,6 +31,7 @@ function makeSupabaseClient(options: {
   }
 }) {
   return {
+    rpc: vi.fn().mockResolvedValue({data:true,error:null}),
     from: vi.fn((table: string) => {
       if (table === 'profiles') {
         return makeQueryBuilder(
@@ -71,7 +72,7 @@ describe('auth guard', () => {
     })
   })
 
-  it('authorizes access when profile org matches property org', async () => {
+  it('authorizes access with matching organization and an explicit current community grant', async () => {
     createServiceClientMock.mockReturnValue(
       makeSupabaseClient({
         profileResult: { data: { org_id: 'org-1' }, error: null },
@@ -87,6 +88,15 @@ describe('auth guard', () => {
       authorized: true,
       orgId: 'org-1',
     })
+  })
+
+  it('denies same-organization access without a community grant', async () => {
+    const client=makeSupabaseClient({})
+    client.rpc.mockResolvedValue({data:false,error:null})
+    createServiceClientMock.mockReturnValue(client)
+    const {validatePropertyAccess}=await import('./auth-guard')
+    expect((await validatePropertyAccess('user-1','property-2')).authorized).toBe(false)
+    expect(client.rpc).toHaveBeenCalledWith('brain_can',{p_actor_id:'user-1',p_property_id:'property-2',p_capability:'read'})
   })
 
   it('falls back to the server client when service client creation fails', async () => {

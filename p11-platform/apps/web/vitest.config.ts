@@ -12,6 +12,8 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, '.'),
+      // Next resolves this marker at build time; node unit tests exercise the server modules directly.
+      'server-only': path.resolve(__dirname, 'node_modules/next/dist/compiled/server-only/empty.js'),
     },
   },
 })

@@ -1,8 +1,8 @@
 import {createHash} from 'node:crypto'
 import {createServiceClient} from '@/utils/supabase/admin'
 import {InventoryError,inventoryActor} from './inventory'
-import {fileUploadFields,type FileCommand,type FileDetail,type FileReceipt,type OriginalFile} from './file-contracts'
-import {extractOriginal} from './file-extraction'
+import {fileUploadFields,type FileCommand,type FileDetail,type OriginalFile} from './file-contracts'
+import {intakeFormat} from '@/utils/community-brain/formats'
 export {InventoryError as FileError,inventoryActor as fileActor}
 const bucket='knowledge-originals'
 type Value=Record<string,unknown>
@@ -30,8 +30,8 @@ export async function uploadOriginal(actor:string,form:FormData){
  const parsed=fileUploadFields.safeParse({...fields,materialId:fields.materialId||null})
  if(!parsed.success)throw new InventoryError('Provide the saved property, title and reason for this original.',400)
  const{requestId,propertyId,title,reason,materialId}=parsed.data
- const extension=file.name.split('.').pop()?.toLowerCase(),mimeType=extension==='pdf'?'application/pdf':extension==='txt'?'text/plain':extension==='md'?'text/markdown':null
- if(!mimeType||!file.size||file.size>(mimeType==='application/pdf'?10485760:262144)||file.name.length>255||/[\u0000-\u001f\u007f]/.test(file.name))throw new InventoryError('Choose a PDF up to 10 MiB or UTF-8 .txt/.md up to 256 KiB.',400)
+ let mimeType:string
+ try{mimeType=intakeFormat(file.name,file.size).mime}catch(error){throw new InventoryError(error instanceof Error?error.message:'Unsupported file.',400)}
  const bytes=new Uint8Array(await file.arrayBuffer())
  if(mimeType==='application/pdf'&&new TextDecoder().decode(bytes.slice(0,5))!=='%PDF-')throw new InventoryError('The selected file does not have a PDF signature.',400)
  const byteHash=createHash('sha256').update(bytes).digest('hex')
@@ -47,15 +47,10 @@ export async function uploadOriginal(actor:string,form:FormData){
  return{...result,fileState:stored.fileState||stored.state}
 }
 export async function runFileExtraction(id:string){
- const claim=await fileRpc('claim_knowledge_file_extraction',{p_id:id})
- if(claim.state!=='invoke_once')return claim
- const file=claim.file as OriginalFile
- let receipt:FileReceipt
- try{receipt=await extractOriginal(await verifyOriginal(file),file.input.mimeType,file.input.byteHash)}catch{receipt={recipe:'unpdf-1.4.0-pages-v1',fileHash:file.input.byteHash,complete:false,totalPages:null,pages:[],text:'',errorCode:'original_unavailable',blankPages:[],limitations:[]}}
- if(Buffer.byteLength(JSON.stringify(receipt))>7*1024*1024)receipt={...receipt,complete:false,pages:[],text:'',errorCode:'receipt_limit',blankPages:[],limitations:['The extracted receipt exceeded the retention limit. The complete binary original remains retained.']}
- const args={p_id:id,p_claim_token:claim.claimToken,p_receipt:receipt}
- try{return await fileRpc('record_knowledge_file_extraction',args)}catch{return fileRpc('record_knowledge_file_extraction',args)}
+ // Heavy and scanned documents use the same retained extraction request in a bounded worker.
+ return fileRpc('brain_enqueue_extraction',{p_id:id})
 }
+
 export async function decideFile(actor:string,command:FileCommand){
  const{requestId,propertyId,operation,...input}=command
  const result=await fileRpc(operation==='cancel_unused'?'cancel_unused_knowledge_decision':'decide_knowledge_file',{p_id:requestId,p_property_id:propertyId,p_actor_id:actor,p_input:operation==='cancel_unused'?input:{...input,operation}})

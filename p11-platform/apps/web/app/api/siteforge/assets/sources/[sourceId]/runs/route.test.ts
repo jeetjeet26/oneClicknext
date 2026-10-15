@@ -11,8 +11,8 @@ vi.mock('@/utils/siteforge/assets/auth', () => ({
 vi.mock('@/utils/supabase/admin', () => ({
   createServiceClient: createServiceClientMock,
 }))
-vi.mock('@/utils/siteforge/assets/source-ingestion', () => ({
-  runAssetSourceIngestion: runAssetSourceIngestionMock,
+vi.mock('@/utils/community-brain/connected-files', () => ({
+  syncConnectedFiles: runAssetSourceIngestionMock,
 }))
 
 const propertyId = '11111111-1111-4111-8111-111111111111'
@@ -96,12 +96,6 @@ describe('asset source run route', () => {
     await expect(response.json()).resolves.toEqual({
       error: 'Dropbox request failed (503)',
     })
-    expect(runAssetSourceIngestionMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        source: expect.objectContaining({
-          checkpoint: { cursor: 'durable-cursor' },
-        }),
-      })
-    )
+    expect(runAssetSourceIngestionMock).toHaveBeenCalledWith('user-1',propertyId,sourceId)
   })
 })

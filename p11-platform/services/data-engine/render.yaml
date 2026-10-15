@@ -52,3 +52,29 @@ services:
     # Calendar health is not a nested web-service job. The old declaration never
     # established a Render cron. Any replacement needs its own reviewed service
     # and current credential-claim path before activation. See PHASE_6_OPERATIONS.
+
+  # CB06: independent parser queue; no project-wide service key or model key.
+  # Enable the custom access-token hook and assign this dedicated identity only
+  # to qualified communities before creating this worker. Auto deploy is off.
+  - type: worker
+    name: p11-community-brain-worker
+    runtime: docker
+    region: oregon
+    plan: 1c-2g
+    rootDir: p11-platform/services/data-engine
+    dockerfilePath: ./Dockerfile.community-brain
+    dockerContext: .
+    autoDeployTrigger: "off"
+    maxShutdownDelaySeconds: 300
+    numInstances: 1
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: COMMUNITY_BRAIN_WORKER_EMAIL
+        sync: false
+      - key: COMMUNITY_BRAIN_WORKER_PASSWORD
+        sync: false
+      - key: BRAIN_PARSER_SANDBOX_REQUIRED
+        value: "true"

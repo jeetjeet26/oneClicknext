@@ -54,10 +54,11 @@ async def run_import_job(job_id: str):
                     outcome = await syncer._sync_meta_ads(job['property_id'], account['account_id'], job['date_range'])
                 if lost_lease.is_set():
                     return
-                await rpc(client, 'save_marketing_import_report', {
+                await rpc(client, 'save_marketing_import_report_v2', {
                     **account_args,
                     'p_records': outcome['records'] if outcome['state'] == 'succeeded' else [],
                     'p_error': None if outcome['state'] == 'succeeded' else outcome.get('detail') or 'Provider report could not be verified.',
+                    'p_receipt': outcome.get('receipt') or {},
                 })
             while not lost_lease.is_set():
                 try:

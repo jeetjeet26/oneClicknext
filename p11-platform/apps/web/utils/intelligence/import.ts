@@ -33,6 +33,11 @@ export function parseObservationCsv(
       variant: r.variant || null,
       experimentId: r.experimentId || null,
       reference: r.reference || "",
+      unit: r.unit || undefined,
+      definition: r.definition || undefined,
+      outcomeId: r.outcomeId || undefined,
+      attributionModel: r.attributionModel || undefined,
+      verification: r.verification || "reported",
     });
   });
   const dates = parsed.map((r) => r.date).sort();
@@ -51,4 +56,4 @@ export function parseObservationCsv(
   });
 }
 export const observationTemplate =
-  "key,date,metric,value,channel,device,floorplanId,page,variant,experimentId,reference\r\n";
+  "key,date,metric,value,channel,device,floorplanId,page,variant,experimentId,reference,outcomeId,attributionModel,verification,unit,definition\r\n";

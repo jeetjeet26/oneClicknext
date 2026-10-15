@@ -1,3 +1,6 @@
+import {saveGenerationContext,requireGenerationCurrent,readServiceDeliverable} from '@/utils/community-brain/generation'
+import {resolveCommunityScope} from '@/utils/community-brain/server'
+import {reservePackageProcessing} from '@/utils/community-brain/budgets'
 import {createServiceClient} from '@/utils/supabase/admin'
 import {assembleForgeStudioContext} from './context-assembler'
 import {GENERATION_PROMPT_VERSION,generateRevisionContent,generationOutputSchema,materializeGeneration,type GenerationInput,type GenerationResult} from './generation'
@@ -27,6 +30,7 @@ export async function recoverGeneration(id:string,propertyId:string,actorId:stri
  if(error||!run)throw new ContentStoreError('Generation request not found',404)
  if(run.state==='completed'&&!recoveryRequestId)return {state:'replayed',packageId:run.package_id,revisionId:run.revision_id}
  if(!['result_ready','completed'].includes(run.state)||!run.raw_result||!run.model_input)throw new ContentStoreError('No recoverable model result is saved. Reload the request status.',409)
+ await requireGenerationCurrent('social',id)
  const raw=run.raw_result as unknown as {output:unknown;metadata:GenerationResult['metadata']}
  const input=run.model_input as unknown as GenerationInput & {promptVersion?:string}
  const savedVersion=input.promptVersion??'forgestudio.generation.v1'
@@ -35,7 +39,7 @@ export async function recoverGeneration(id:string,propertyId:string,actorId:stri
  const content=revisionContentSchema.parse(generated.content)
  return ensure(await generationRpc(recoveryRequestId?'recover_forgestudio_generation':'finish_forgestudio_generation',{p_id:recoveryRequestId||id,p_property_id:propertyId,p_actor_id:actorId,p_payload:{generationId:id,resultHash:run.raw_result_hash,content,validation:content.variants.map(validateVariant)}}))
 }
-export async function runBriefGeneration(input:{requestId:string;briefId:string;propertyId:string;actorId:string}){
+export async function runBriefGeneration(input:{requestId:string;briefId:string;propertyId:string;actorId:string;deliverableId?:string}){
  const started=await generationRpc('begin_forgestudio_generation',{p_id:input.requestId,p_property_id:input.propertyId,p_actor_id:input.actorId,p_brief_id:input.briefId})
  if(started.state!=='claimed')return started
  const token=String(started.claimToken),brief=started.brief as Tables<'social_content_briefs'>
@@ -45,12 +49,19 @@ export async function runBriefGeneration(input:{requestId:string;briefId:string;
   const channels=(brief.channels??[]).filter((c):c is SocialPlatform=>(SOCIAL_PLATFORMS as readonly string[]).includes(c))
   if(!channels.length)throw new ContentStoreError('The saved brief needs at least one valid channel.',400)
   const formatPlan=formatPlanItemSchema.array().min(1).parse(brief.format_plan)
-  const bundle=await assembleForgeStudioContext({propertyId:input.propertyId,query:[brief.objective,brief.topic].filter(Boolean).join(' — '),sourceFacts:(brief.source_facts??[]) as Array<{text:string;source?:string}>,assetIds:brief.asset_ids??[]})
+  const bundle=await assembleForgeStudioContext({actorId:input.actorId,propertyId:input.propertyId,query:[brief.objective,brief.topic].filter(Boolean).join(' — '),sourceFacts:(brief.source_facts??[]) as Array<{text:string;source?:string}>,assetIds:brief.asset_ids??[]})
   if((brief.asset_ids??[]).some(id=>!bundle.assets.some(asset=>asset.id===id)))throw new ContentStoreError('A selected asset is unavailable or needs approval. Review the library and update the brief before generating.',409)
-  const savedInput={bundle,objective:brief.objective,topic:brief.topic,audience:brief.audience,constraints:(brief.constraints??{}) as ObjectValue,channels,formatPlan,actorId:input.actorId,model:resolveForgeStudioTextModel(),promptVersion:GENERATION_PROMPT_VERSION,modelPolicyVersion:FORGESTUDIO_MODEL_POLICY_VERSION}
+  const servicePackage=input.deliverableId?await readServiceDeliverable(input.actorId,input.propertyId,'social',input.deliverableId):null
+  const scope=await resolveCommunityScope(input.actorId,input.propertyId,'social')
+  const saved=servicePackage?.context??await saveGenerationContext(scope,{propertyId:input.propertyId,query:[brief.objective,brief.topic].filter(Boolean).join(' — '),assetIds:brief.asset_ids??[]},bundle.communityContext)
+  if(saved.readSetHash!==bundle.communityContext?.readSetHash)throw new ContentStoreError('The service package sources changed. Refresh this deliverable.',409)
+  bundle.communityContext=saved
+  const savedInput={bundle,servicePackage,objective:brief.objective,topic:brief.topic,audience:brief.audience,constraints:(brief.constraints??{}) as ObjectValue,channels,formatPlan,actorId:input.actorId,model:resolveForgeStudioTextModel(),promptVersion:GENERATION_PROMPT_VERSION,modelPolicyVersion:FORGESTUDIO_MODEL_POLICY_VERSION}
   await persist('advance_forgestudio_generation',step('context',savedInput))
   const permission=await generationRpc('advance_forgestudio_generation',step('model_intent',{}))
   ensure(permission,['proceed_once'])
+  await requireGenerationCurrent('social',input.requestId)
+  await reservePackageProcessing('social',input.requestId,'initial')
   invoked=true
   await generateRevisionContent({...savedInput,onResult:async result=>{await persist('advance_forgestudio_generation',step('raw_result',result));resultSaved=true}})
   return await recoverGeneration(input.requestId,input.propertyId,input.actorId)

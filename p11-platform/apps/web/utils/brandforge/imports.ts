@@ -9,6 +9,7 @@ import {
 } from './normalize'
 import type { BrandForgeContractV1 } from './contracts'
 import type { Json } from '@/types/supabase'
+import { brainRpc, resolveCommunityScope } from '@/utils/community-brain/server'
 
 type JsonRecord = Record<string, unknown>
 
@@ -152,12 +153,9 @@ export async function createBrandImportPreview(input: BrandImportInput) {
   const sourceManifest: JsonRecord[] = []
 
   if (input.documentIds?.length) {
-    const { data: documents, error } = await client
-      .from('documents')
-      .select('id, content, metadata, original_file_name')
-      .eq('property_id', input.propertyId)
-      .in('id', input.documentIds)
-    if (error || new Set(documents?.map(document => document.id)).size !== new Set(input.documentIds).size) throw new Error('Every brand document must belong to this property and still be available.')
+    await resolveCommunityScope(input.userId, input.propertyId, 'brand')
+    const documents = await brainRpc<Array<{ id: string; content: string; metadata: unknown; original_file_name?: string }>>('brain_documents', { p_purpose: 'brand', p_property_id: input.propertyId, p_ids: input.documentIds, p_query: '' })
+    if (new Set(documents.map(document => document.id)).size !== new Set(input.documentIds).size) throw new Error('Every brand document must be current approved evidence for this property.')
     const combined = (documents || []).map(document => document.content).join('\n\n')
     const colors = unique(
       [...combined.matchAll(/#[0-9a-f]{6}\b/gi)].map(match => match[0].toUpperCase()),

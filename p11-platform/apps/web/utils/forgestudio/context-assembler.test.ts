@@ -4,6 +4,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const fromMock = vi.fn()
 const rpcMock = vi.fn()
 
+vi.mock('@/utils/community-brain/server',()=>({
+ brainActor:vi.fn().mockResolvedValue('actor'),resolveCommunityScope:vi.fn().mockResolvedValue({id:'scope'}),
+ brainRpc:async(name:string,args:unknown)=>{const result=await rpcMock(name,args);if(result.error)throw Error('Saved knowledge sources could not be refreshed');return name==='brain_documents'?(result.data??[]).filter((d:Record<string,unknown>)=>typeof d.content==='string'):result.data},
+ getCommunityContext:async()=>{const result=await rpcMock('brain_context',{});return{version:'community-context-v1',propertyId:'prop-1',scopeKind:'community',purpose:'social',expiresAt:'2099-01-01T00:00:00Z',canonical:{facts:[],assets:[{id:'44444444-4444-4444-8444-444444444444',property_id:'prop-1',content_hash:'a'.repeat(64)}]},evidence:(result.data??[]).filter((d:Record<string,unknown>)=>typeof d.content==='string').map((d:Record<string,unknown>)=>({...d,propertyId:'prop-1',allowedUses:d.allowed_uses??['fact'],authority:d.authority??'reviewed',audience:'public'}))}}
+}))
 vi.mock('@/utils/supabase/admin', () => ({
   createServiceClient: () => ({ from: fromMock, rpc: rpcMock }),
 }))
@@ -108,6 +113,7 @@ describe('assembleForgeStudioContext', () => {
           data: [
             {
               id: ASSET_ID,
+              content_hash:'a'.repeat(64),
               name: 'Pool at sunset',
               asset_type: 'image',
               file_url: 'https://cdn.example.com/pool.jpg',
@@ -192,9 +198,9 @@ describe('assembleForgeStudioContext', () => {
     expect(bundle.contextHash).toMatch(/^[a-f0-9]{64}$/)
     expect(bundle.channelSettings).toEqual({includeHashtags:true,includeCta:true,maxCaptionLength:2200})
 
-    // No OPENAI_API_KEY → no KB sources, and no RPC call attempted.
+    // Eligible exact/lexical context remains available without an embedding provider.
     expect(ids.some((id) => id.startsWith('kb_document:'))).toBe(false)
-    expect(rpcMock).not.toHaveBeenCalled()
+    expect(rpcMock).toHaveBeenCalledWith('brain_context',{})
   })
 
   it('includes KB documents with ids and similarity when retrieval is available', async () => {
@@ -212,10 +218,8 @@ describe('assembleForgeStudioContext', () => {
 
     const kbSource = bundle.sources.find((source) => source.id === 'kb_document:doc-1')
     expect(kbSource).toBeDefined()
-    expect(kbSource?.similarity).toBe(0.82)
-    expect(rpcMock).toHaveBeenCalledWith('match_documents', expect.objectContaining({
-      filter_property: 'prop-1',
-    }))
+    expect(kbSource?.allowedUses).toContain('claim')
+    expect(rpcMock).toHaveBeenCalledWith('brain_context',{})
   })
 
   it('skips brand sections when BrandForge generation is incomplete', async () => {
@@ -247,9 +251,9 @@ describe('assembleForgeStudioContext', () => {
   it('refreshes saved knowledge by exact ID without embedding calls',async()=>{
     process.env.OPENAI_API_KEY='fixture-never-used'
     const baseline=fromMock.getMockImplementation()!
-    fromMock.mockImplementation((table:string)=>table==='documents'?chainResolving({data:[{id:'saved-doc',content:'Current pet policy',metadata:{version:2}}],error:null}):baseline(table))
+    fromMock.mockImplementation(baseline);rpcMock.mockImplementation(async(name:string)=>({data:name==='brain_documents'?[{id:'saved-doc',content:'Current pet policy',metadata:{version:2},allowed_uses:['fact'],authority:'reviewed',audience:'public'}]:[],error:null}))
     const bundle=await(await import('./context-assembler')).assembleForgeStudioContext({propertyId:'prop-1',query:'q',documentIds:['saved-doc','removed-doc']})
-    expect(rpcMock).not.toHaveBeenCalled();expect(bundle.sourceRecords?.['document:saved-doc'].values.content).toBe('Current pet policy');expect(bundle.warnings).toContainEqual(expect.objectContaining({code:'knowledge_source_missing',sourceId:'kb_document:removed-doc'}))
+    expect(rpcMock).toHaveBeenCalledWith('brain_documents',expect.objectContaining({p_ids:['saved-doc','removed-doc'],p_purpose:'social'}));expect(bundle.sourceRecords?.['document:saved-doc'].values.content).toBe('Current pet policy');expect(bundle.warnings).toContainEqual(expect.objectContaining({code:'knowledge_source_missing',sourceId:'kb_document:removed-doc'}))
   })
   it('does not permit inventory claims before their effective date',async()=>{
     const baseline=fromMock.getMockImplementation()!
@@ -267,5 +271,18 @@ describe('assembleForgeStudioContext', () => {
 it('captures absent settings explicitly so a later configuration save is detectable',async()=>{
  const previous=fromMock.getMockImplementation()!;fromMock.mockImplementation((table:string)=>table==='forgestudio_config'?chainResolving({data:null,error:null}):previous(table));const result=await(await import('./context-assembler')).assembleForgeStudioContext({propertyId:'prop-1',query:'q',documentIds:[]});expect(result.sourceRecords?.config).toEqual({kind:'config',id:'prop-1',values:{absent:true}})
 })
+
+  it.each([true,false])('uses only the current retained original for private selected assets (current=%s)',async(current)=>{
+    const previous=fromMock.getMockImplementation()!
+    fromMock.mockImplementation((table:string)=>table==='content_assets'?chainResolving({data:[{
+      id:ASSET_ID,property_id:'prop-1',content_hash:(current?'a':'b').repeat(64),
+      name:'Reviewed private drawing',asset_type:'image',file_url:`/api/community-brain/assets?propertyId=prop-1&assetId=${ASSET_ID}`,
+      storage_bucket:'knowledge-originals',storage_path:'prop-1/original-file/original',
+      rights_status:'owned',approval_status:'approved',curation_status:'selected',expires_at:null,duplicate_of:null,
+    }],error:null}):previous(table))
+    const bundle=await(await import('./context-assembler')).assembleForgeStudioContext({propertyId:'prop-1',query:'q',assetIds:[ASSET_ID]})
+    expect(bundle.assets).toHaveLength(current?1:0)
+    if(current)expect(bundle.assets[0].fileUrl).toBe(`/api/community-brain/assets?propertyId=prop-1&assetId=${ASSET_ID}`)
+  })
 
 })

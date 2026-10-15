@@ -155,6 +155,7 @@ function citationSourceType(sourceId: string): SourceKind {
 
 export function buildGenerationPrompt(input: {
   bundle: TrustedContextBundle
+  servicePackage?: Record<string,unknown>|null
   objective: string
   topic?: string | null
   audience?: string | null
@@ -215,7 +216,7 @@ ${bundle.channelSettings?.includeHashtags===false?'Do not put hashtags in captio
 ${bundle.channelSettings?.includeCta===false?'Do not include a call-to-action in the caption. Set callToAction to null.':'Calls-to-action may be used when appropriate; include their text in the caption itself.'}
 10. Produce exactly one variant for every requested format-plan key. Carousels need ordered assets and slide overlays; stories/reels/videos need safe areas, storyboard frames, subtitles, and thumbnail guidance.`
 
-  const prompt = `OBJECTIVE: ${input.objective}
+  const prompt = `${input.servicePackage?'VERSIONED SERVICE PACKAGE: '+JSON.stringify({...input.servicePackage,context:undefined})+'\n':''}OBJECTIVE: ${input.objective}
 ${input.topic ? `TOPIC: ${input.topic}` : ''}
 ${mustInclude.length ? `MUST INCLUDE: ${mustInclude.join('; ')}` : ''}
 ${mustAvoid.length ? `MUST AVOID: ${mustAvoid.join('; ')}` : ''}
@@ -261,6 +262,7 @@ export type GenerationResult = {
  */
 export type GenerationInput = {
   bundle: TrustedContextBundle
+  servicePackage?: Record<string,unknown>|null
   objective: string
   topic?: string | null
   audience?: string | null

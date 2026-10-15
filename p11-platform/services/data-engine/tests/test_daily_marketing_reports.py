@@ -48,6 +48,7 @@ def test_unsupported_period_or_timezone_is_not_replaced_with_all_history(preset,
 
 def report(rows=None):
     return {'account_id': ACCOUNT, 'currency': 'USD', 'timezone': 'UTC',
+            'pagination_complete': True, 'pages': 1,
             'start_date': '2026-09-07', 'end_date': '2026-09-13', 'rows': rows if rows is not None else [row()]}
 
 

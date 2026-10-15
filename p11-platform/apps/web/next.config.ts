@@ -38,6 +38,8 @@ if (publicSupabaseKey === "[SENSITIVE]") {
 }
 
 const nextConfig: NextConfig = {
+  // Local qualification can run alongside the developer's existing server.
+  distDir: process.env.P11_QUALIFICATION_DIST_DIR || '.next',
   /* config options here */
   allowedDevOrigins: ["127.0.0.1"],
   reactCompiler: true,

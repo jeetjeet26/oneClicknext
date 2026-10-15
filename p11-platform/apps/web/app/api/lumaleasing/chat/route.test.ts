@@ -90,9 +90,8 @@ vi.mock('@/utils/services/messaging', () => ({
   sendEmail: sendEmailMock,
 }))
 
-vi.mock('@/utils/services/chatbot-context-editor', () => ({
-  loadPropertyChatbotContext: loadPropertyChatbotContextMock,
-}))
+vi.mock('@/utils/services/chatbot-context-editor', () => ({loadPropertyChatbotContext:loadPropertyChatbotContextMock}))
+vi.mock('@/utils/community-brain/chat-release', () => ({loadPublicChatContext:loadPropertyChatbotContextMock}))
 
 vi.mock('openai', () => ({
   default: openAiCtorMock,
@@ -385,7 +384,8 @@ describe('LumaLeasing chat route', () => {
     expect(openAiEmbeddingsCreateMock).not.toHaveBeenCalled()
   })
 
-  it('returns recent assistant reply and suppresses duplicate retry side effects', async () => {
+  it('does not replay a recent answer when current information is withheld', async () => {
+    loadPropertyChatbotContextMock.mockResolvedValue(null)
     validateBodyMock.mockReturnValue({
       success: true,
       data: {
@@ -419,9 +419,13 @@ describe('LumaLeasing chat route', () => {
         }
 
         if (table === 'widget_sessions') {
+          const updateQuery={eq:vi.fn(),select:vi.fn(),single:vi.fn().mockResolvedValue({data:{message_count:4},error:null})}
+          updateQuery.eq.mockReturnValue(updateQuery);updateQuery.select.mockReturnValue(updateQuery)
           return {
+            update:vi.fn(()=>updateQuery),
             select: vi.fn(() => ({
               eq: vi.fn(() => ({
+                single:vi.fn().mockResolvedValue({data:{message_count:3},error:null}),
                 eq: vi.fn(() => ({
                   maybeSingle: vi.fn().mockResolvedValue({
                     data: { id: 'session-1', last_activity_at: new Date().toISOString(), lead_id: null, message_count: 3 },
@@ -491,12 +495,12 @@ describe('LumaLeasing chat route', () => {
 
     expect(response.status).toBe(200)
     expect(json).toMatchObject({
-      content: 'Yes, we are pet friendly with breed restrictions.',
+      content: expect.stringContaining('property information ready'),
       sessionId: 'session-1',
       conversationId: 'conv-1',
-      duplicate: true,
       shouldPromptLeadCapture: true,
     })
+    expect(json.duplicate).toBeUndefined()
     expect(openAiChatCreateMock).not.toHaveBeenCalled()
     expect(openAiEmbeddingsCreateMock).not.toHaveBeenCalled()
   })
@@ -729,11 +733,7 @@ describe('LumaLeasing chat route', () => {
         leadInfo: null,
       },
     })
-    loadPropertyChatbotContextMock.mockResolvedValue({
-      contextMarkdown: 'PROPERTY FACTS ARE TEMPORARILY WITHHELD PENDING OPERATOR REVIEW.',
-      contextJson: {},
-      ...acacia.chatbot.reviewRequiredContext,
-    })
+    loadPropertyChatbotContextMock.mockRejectedValue(new Error('Current public context is unavailable'))
     createServiceClientMock.mockReturnValue({
       from: vi.fn((table: string) => {
         if (table === 'lumaleasing_config') {
@@ -775,7 +775,7 @@ describe('LumaLeasing chat route', () => {
 
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toMatchObject({
-      content: expect.stringContaining('being reviewed'),
+      content: expect.stringContaining('follow up'),
       wantsTour: false,
     })
     expect(openAiChatCreateMock).not.toHaveBeenCalled()
@@ -1195,7 +1195,7 @@ describe('LumaLeasing chat route', () => {
         }),
       })
     )
-    expect(loadPropertyChatbotContextMock).toHaveBeenCalledWith(expect.anything(), 'property-1')
+    expect(loadPropertyChatbotContextMock).toHaveBeenCalledWith(expect.anything(),'property-1',expect.objectContaining({query:expect.any(String),sessionId:expect.any(String)}))
     expect(openAiChatCreateMock).toHaveBeenCalled()
   })
 

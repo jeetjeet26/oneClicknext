@@ -4,6 +4,7 @@ export const packageRequestSchema = z.object({
   requestId: z.uuid(), propertyId: z.guid(), parentId: z.uuid().nullable().default(null),
   target: z.enum(['wordpress', 'standalone']),
   instructions: z.string().trim().min(1).max(8000),
+  deliverableId: z.uuid().optional(),
 }).strict()
 export type PackageRequest = z.infer<typeof packageRequestSchema>
 export type PackageState = 'queued' | 'preparing' | 'starting' | 'generating' | 'packaging' | 'ready' | 'failed' | 'uncertain'
@@ -14,7 +15,7 @@ export type PackageSummary = {
 }
 export type PackageSourceSummary = {
   name: string; hash: string; floorplans: number; assets: number;
-  brand: boolean; direction: boolean; warnings: string[];
+  brand: boolean; direction: boolean; directionName?: string | null; directionSource?: 'website' | 'property_brief' | null; warnings: string[];
 }
 export class PackageError extends Error {
   constructor(message: string, readonly status = 503) { super(message) }

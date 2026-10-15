@@ -1,0 +1,10 @@
+FROM python:3.11.16-slim
+RUN apt-get update && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng ffmpeg libseccomp2 && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY requirements-brain.txt ./
+RUN pip install --no-cache-dir --require-hashes -r requirements-brain.txt
+COPY community_brain ./community_brain
+RUN useradd --create-home --uid 10001 brain
+USER 10001
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 BRAIN_PARSER_SANDBOX_REQUIRED=true
+CMD ["python", "-m", "community_brain.worker"]

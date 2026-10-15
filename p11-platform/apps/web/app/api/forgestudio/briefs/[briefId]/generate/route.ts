@@ -11,14 +11,14 @@ export async function POST(request:NextRequest,{params}:{params:Promise<{briefId
  try{
   const {data:{user},error:authError}=await (await createClient()).auth.getUser()
   if(authError||!user)return NextResponse.json({error:'Unauthorized'},{status:401})
-  const parsed=z.object({requestId:z.string().uuid()}).safeParse(await request.json().catch(()=>null))
+  const parsed=z.object({requestId:z.string().uuid(),deliverableId:z.uuid().optional()}).safeParse(await request.json().catch(()=>null))
   if(!parsed.success)return NextResponse.json({error:'A saved generation request identity is required.'},{status:400})
   const {briefId}=await params
   const {data:brief,error}=await createServiceClient().from('social_content_briefs').select('property_id,org_id').eq('id',briefId).single()
   if(error||!brief)return NextResponse.json({error:'Brief not found'},{status:404})
   const access=await validatePropertyAccess(user.id,brief.property_id)
   if(!access.authorized||access.orgId!==brief.org_id)return NextResponse.json({error:'Forbidden'},{status:403})
-  const result=await runBriefGeneration({requestId:parsed.data.requestId,briefId,propertyId:brief.property_id,actorId:user.id})
+  const result=await runBriefGeneration({requestId:parsed.data.requestId,briefId,propertyId:brief.property_id,actorId:user.id,...(parsed.data.deliverableId?{deliverableId:parsed.data.deliverableId}:{})})
   const success=['saved','replayed','completed'].includes(String(result.state))
   const pending=['preparing','ready','generating','result_ready','busy'].includes(String(result.state))
   return NextResponse.json({result,...(!success?{error:pending?'This request already exists. Reload its saved status; no second model run was started.':'Review the saved request before starting another generation.'}:{})},{status:success?201:pending?202:409,headers:{'Cache-Control':'no-store'}})

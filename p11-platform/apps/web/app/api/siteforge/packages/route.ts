@@ -34,7 +34,7 @@ export async function GET(request:NextRequest) {
       packageDb().from('siteforge_package_jobs').select('id,target,instructions,state,parent_id,created_at,error_message,source_hash,package_bytes').eq('property_id',propertyId).order('created_at',{ascending:false}).limit(30),
     ])
     if(history.error) throw new PackageError('Website package history is unavailable. The local database migration may still be pending.')
-    return reply({jobs:history.data,configured:Boolean(process.env.OPENAI_API_KEY),source:{name:snapshot.source.property.name,hash:snapshot.hash,floorplans:snapshot.source.floorplans.length,assets:snapshot.source.assets.length,brand:Boolean(snapshot.source.brand),direction:Boolean(snapshot.source.canonical.creative || snapshot.source.direction),warnings:snapshot.source.warnings}})
+    return reply({jobs:history.data,configured:Boolean(process.env.OPENAI_API_KEY),source:{name:snapshot.source.property.name,hash:snapshot.hash,floorplans:snapshot.source.floorplans.length,assets:snapshot.source.assets.length,brand:Boolean(snapshot.source.brand),direction:Boolean(snapshot.source.direction),directionName:snapshot.source.direction?.name??null,directionSource:snapshot.source.direction?.source??null,warnings:snapshot.source.warnings}})
   }catch(error){return failure(error)}
 }
 const command=z.discriminatedUnion('action',[
@@ -48,7 +48,7 @@ export async function POST(request:NextRequest) {
     if(!parsed.success) throw new PackageError('Review the website request and select a property.',400)
     const input=parsed.data,actor=await requirePackageOperator(input.propertyId)
     if(input.action==='generate') {
-      const draft=packageRequestSchema.parse({requestId:input.requestId,propertyId:input.propertyId,parentId:input.parentId,target:input.target,instructions:input.instructions})
+      const draft=packageRequestSchema.parse({requestId:input.requestId,propertyId:input.propertyId,parentId:input.parentId,target:input.target,instructions:input.instructions,...(input.deliverableId?{deliverableId:input.deliverableId}:{})})
       const job=await savePackageRequest(draft,actor)
       after(async()=>{await processPackage(job.id).catch(()=>undefined)})
       return reply({id:job.id,state:job.state},202)

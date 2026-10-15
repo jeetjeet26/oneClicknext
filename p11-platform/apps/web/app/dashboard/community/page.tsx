@@ -1,7 +1,10 @@
 'use client'
 
 import Link from 'next/link'
-import { useState, useEffect, useCallback, useRef, type ComponentProps } from 'react'
+import { useSearchParams } from 'next/navigation'
+import { ReviewedRecordsWorkspace } from '@/components/intelligence/ReviewedRecordsWorkspace'
+import { CommunityBrainWorkspace } from '@/components/community-brain/CommunityBrainWorkspace'
+import { Suspense, useState, useEffect, useCallback, useRef, type ComponentProps } from 'react'
 import { usePropertyContext } from '@/components/layout/PropertyContext'
 import {
   PropertyProfileCard,
@@ -25,7 +28,7 @@ import {
   AlertCircle
 } from 'lucide-react'
 
-type Tab = 'overview' | 'knowledge' | 'checklist'
+type Tab = 'overview' | 'facts' | 'knowledge' | 'files' | 'checklist'
 
 async function extractFetchError(response: Response, fallback: string): Promise<string> {
   try {
@@ -39,13 +42,17 @@ async function extractFetchError(response: Response, fallback: string): Promise<
   return `${fallback} (${response.status})`
 }
 
-export default function PropertyDashboardPage() {
+function PropertyDashboardPage() {
   const { currentProperty } = usePropertyContext()
-  const [activeTab, setActiveTab] = useState<Tab>('overview')
-  useEffect(() => {
-    const query = new URLSearchParams(window.location.search)
-    if (['knowledgeGroup', 'knowledgeFile', 'knowledgeSource', 'assistantFactVersion', 'unitReview', 'knowledgeCapture'].some(key => query.has(key))) setActiveTab('knowledge')
-  }, [])
+  const query = useSearchParams()
+  const section = query.get('section')
+  const activeTab: Tab = section === 'facts' || section === 'knowledge' || section === 'files' || section === 'checklist' ? section : ['knowledgeGroup', 'knowledgeFile', 'knowledgeSource', 'assistantFactVersion', 'unitReview', 'knowledgeCapture'].some(key => query.has(key)) ? 'knowledge' : 'overview'
+  function setActiveTab(tab: Tab) {
+    const url = new URL(window.location.href)
+    url.search = ''
+    url.searchParams.set('section', tab)
+    window.history.pushState(null, '', url)
+  }
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   
@@ -131,13 +138,16 @@ export default function PropertyDashboardPage() {
   }, [currentProperty])
 
   useEffect(() => {
-    void fetchData()
-    return () => requestRef.current?.abort()
+    let disposed = false
+    queueMicrotask(() => { if (!disposed) void fetchData() })
+    return () => { disposed = true; requestRef.current?.abort() }
   }, [fetchData])
 
   const tabs = [
     { id: 'overview' as Tab, label: 'Overview', icon: Building2 },
-    { id: 'knowledge' as Tab, label: 'Knowledge Base', icon: BookOpen },
+    { id: 'facts' as Tab, label: 'Approved facts', icon: ClipboardCheck },
+    { id: 'knowledge' as Tab, label: 'Text & websites', icon: BookOpen },
+    { id: 'files' as Tab, label: 'Files & assets', icon: BookOpen },
     { id: 'checklist' as Tab, label: 'Onboarding', icon: ClipboardCheck },
   ]
 
@@ -146,9 +156,9 @@ export default function PropertyDashboardPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Property</h1>
+          <h1 className="text-2xl font-bold text-slate-900">Community knowledge</h1>
           <p className="text-slate-500 mt-1">
-            Manage your property information and knowledge base
+            {currentProperty.name} · Property information, sources and approved knowledge
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -278,10 +288,12 @@ export default function PropertyDashboardPage() {
             </div>
           )}
 
+          {activeTab === 'facts' && <ReviewedRecordsWorkspace key={currentProperty.id} propertyId={currentProperty.id} propertyName={currentProperty.name} mode="facts" />}
+          {activeTab === 'files' && <CommunityBrainWorkspace key={currentProperty.id} propertyId={currentProperty.id} propertyName={currentProperty.name} />}
           {/* Knowledge Base Tab */}
           {activeTab === 'knowledge' && (
             <div className="space-y-6">
-              <ChatbotContextStatusCard propertyId={currentProperty?.id || ''} />
+              <details className="rounded-xl border border-slate-200 bg-white p-5"><summary className="cursor-pointer font-medium">Chatbot publication and retained facts history</summary><p className="my-3 text-sm text-slate-600">Review the chatbot’s published snapshot and its source versions. Maintain current property information in Approved facts and property setup.</p><ChatbotContextStatusCard propertyId={currentProperty?.id || ''} /></details>
 
               <KnowledgeSourcesList
                 sources={knowledgeData?.sources ?? []}
@@ -322,3 +334,7 @@ export default function PropertyDashboardPage() {
   )
 }
 
+
+export default function CommunityKnowledgePage() {
+  return <Suspense fallback={<p role="status">Loading community knowledge…</p>}><PropertyDashboardPage /></Suspense>
+}

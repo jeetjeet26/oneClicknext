@@ -1,3 +1,4 @@
+import {saveGenerationContext,readServiceDeliverable} from '@/utils/community-brain/generation'
 import { createClient as createSupabase } from '@supabase/supabase-js'
 import { createClient } from '@/utils/supabase/server'
 import { getSupabaseUrl,getSupabaseServiceRoleKey } from '@/utils/supabase/config'
@@ -11,6 +12,7 @@ export type PackageJob={
   instructions:string;request_hash:string;source_hash:string;source_snapshot:PackageSource;model:string;
   state:PackageState;response_id:string|null;input_file_id:string|null;input_path:string|null;
   package_path:string|null;package_hash:string|null;package_bytes:number|null;error_message:string|null;
+  brain_context_id?:string|null;community_deliverable_id?:string|null;
   usage:Json|null;lease_until:string|null;created_at:string;updated_at:string;
 }
 // Domain projection narrows the generated JSON snapshot and SQL state strings for this worker.
@@ -40,8 +42,11 @@ export async function savePackageRequest(input:PackageRequest,actor:{id:string;o
     return existing
   }
   if(!process.env.OPENAI_API_KEY) throw new PackageError('Astra is not configured on this server yet. Your saved information has not been changed.')
-  const {source,hash}=await loadPackageSource(input.propertyId)
-  const {data,error}=await db.from('siteforge_package_jobs').insert({id:input.requestId,property_id:input.propertyId,org_id:actor.orgId,actor_id:actor.id,parent_id:input.parentId,target:input.target,instructions:input.instructions,request_hash:requestHash,source_hash:hash,source_snapshot:source}).select('*').single()
+  const {source,hash,context,scope}=await loadPackageSource(input.propertyId,actor.id)
+  const deliverable=input.deliverableId?await readServiceDeliverable(actor.id,input.propertyId,'site',input.deliverableId):null
+  const saved=deliverable?.context??await saveGenerationContext(scope,{propertyId:input.propertyId,query:'community facts amenities policies brand floorplans',assetIds:source.assets.map(a=>a.id)},context)
+  if(saved.readSetHash!==context.readSetHash)throw new PackageError('The service package sources changed. Refresh its deliverable before building.',409)
+  const {data,error}=await db.from('siteforge_package_jobs').insert({id:input.requestId,property_id:input.propertyId,org_id:actor.orgId,actor_id:actor.id,parent_id:input.parentId,target:input.target,instructions:input.instructions,request_hash:requestHash,source_hash:hash,source_snapshot:source,brain_context_id:saved.snapshotId,community_deliverable_id:input.deliverableId??null}).select('*').single()
   if(error||!data) {
     if(error?.code==='23505') {
       const retry=await db.from('siteforge_package_jobs').select('*').eq('id',input.requestId).maybeSingle()

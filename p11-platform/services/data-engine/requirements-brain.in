@@ -1,0 +1,6 @@
+# Isolated parser worker. No provider SDK or credentials are needed by the parser subprocess.
+pypdfium2==5.14.0
+Pillow==12.3.0
+defusedxml==0.7.1
+fonttools==4.66.1
+brotli==1.2.0

@@ -1,3 +1,4 @@
+import { reportingRows } from "@/utils/analytics/report-quality";
 import type { Funnel, Goal, ReportEvidence } from "@/utils/delivery/contracts";
 import { createHash, randomBytes } from "node:crypto";
 import { createClient } from "@/utils/supabase/server";
@@ -162,14 +163,7 @@ export async function readPortal(
     }),
     clientLumaProperties(scope),
   ]);
-  const normalize = (rows: Awaited<ReturnType<typeof readMarketingFacts>>) =>
-    rows.map((f) => ({
-      ...f,
-      impressions: Number(f.impressions ?? 0),
-      clicks: Number(f.clicks ?? 0),
-      conversions: Number(f.conversions ?? 0),
-      spend: Number(f.spend ?? 0),
-    }));
+  const normalize = reportingRows;
   const facts = sources.flatMap((s) => s.current);
   const source: BiSource = {
     version: "bi-v1",
@@ -303,7 +297,8 @@ export async function readPortal(
     inquiries: funnel.inquiries,
     tours: funnel.booked,
     marketing: report.totals,
-    hasMarketingData: facts.length > 0,
+    hasMarketingData: source.currentRows.length > 0,
+    incompleteMarketingRows: facts.length - source.currentRows.length,
     channels: report.channels,
     trend: report.timeSeries.map((d) => ({
       date: d.date,
@@ -316,11 +311,11 @@ export async function readPortal(
     updatedAt: new Date().toISOString(),
     funnel,
     previousFunnel: sumFunnel("previousFunnel"),
-    comparison: report.comparison,
+    comparison: facts.length === source.currentRows.length && sources.flatMap(s => s.previous).length === source.previousRows.length ? report.comparison : null,
     coverage: sources.map((s) => ({
       propertyId: s.property.id,
       propertyName: s.property.name,
-      observedDays: new Set(s.current.map((r) => r.date)).size,
+      observedDays: new Set(normalize(s.current).map((r) => r.date)).size,
       requestedDays: query.days,
       latestDate:
         s.current

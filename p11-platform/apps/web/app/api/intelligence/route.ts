@@ -39,6 +39,7 @@ import {
 } from "@/utils/intelligence/components";
 import { readPortfolio } from "@/utils/intelligence/portfolio";
 import { answerPortfolioQuestion } from "@/utils/intelligence/questions";
+import { selectPackageDirection } from "@/utils/siteforge/packages/direction";
 export const maxDuration = 300;
 const reply = (data: unknown, status = 200) =>
   NextResponse.json(data, {
@@ -59,12 +60,30 @@ export async function GET(req: NextRequest) {
           range.start,
           range.end,
           false,
-          p.get("propertyId") ?? undefined,
+          z.string().uuid().parse(p.get("propertyId")),
         ),
       );
     }
     const id = z.string().uuid().parse(p.get("propertyId"));
     await intelligenceActor(id);
+    if (kind === "direction") {
+      const db = createServiceClient();
+      const [set, briefs] = await Promise.all([
+        db.from("siteforge_creative_direction_sets").select("selected_direction_id")
+          .eq("property_id", id).eq("status", "approved")
+          .order("approved_at", { ascending: false }).limit(1).maybeSingle(),
+        readDocuments(id, ["creative"]),
+      ]);
+      if (set.error) throw new IntelligenceError("Website direction could not be loaded.");
+      const website = set.data?.selected_direction_id
+        ? await db.from("siteforge_creative_directions").select("id,name,direction,content_hash,website_id")
+          .eq("property_id", id).eq("id", set.data.selected_direction_id).single()
+        : { data: null, error: null };
+      if (website.error) throw new IntelligenceError("Approved website direction could not be loaded.");
+      const selected = selectPackageDirection(website.data, briefs.find(d => d.status === "approved") ?? null);
+      await intelligenceActor(id);
+      return reply({ selected });
+    }
     if (kind === "webflow") {
       const info = await canonicalInformation(id);
       return new NextResponse(webflowCsv(info.facts), {
@@ -146,7 +165,7 @@ export async function POST(req: NextRequest) {
           question: z.string().min(1).max(2000),
           start: z.string(),
           end: z.string(),
-          propertyId: z.string().uuid().optional(),
+          propertyId: z.string().uuid(),
         })
         .strict()
         .parse(body);

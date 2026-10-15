@@ -132,6 +132,8 @@ async def get_daily_campaign_performance(customer_id: str, date_range: DateRange
         rows = []
         # Iterating the SearchPager consumes subsequent pages as well.
         for row in service.search(customer_id=clean_id, query=query, timeout=60):
+            if len(rows) >= 50_000:
+                raise ReportValidationError('Daily report exceeds the bounded import capacity')
             rows.append({
                 'account_id': str(row.customer.id), 'currency': row.customer.currency_code,
                 'date': row.segments.date, 'date_stop': row.segments.date,
@@ -141,7 +143,8 @@ async def get_daily_campaign_performance(customer_id: str, date_range: DateRange
                 'conversions': row.metrics.conversions,
             })
         return {'account_id': clean_id, 'currency': account.currency_code,
-                'timezone': account.time_zone, 'start_date': start, 'end_date': end, 'rows': rows}
+                'timezone': account.time_zone, 'start_date': start, 'end_date': end, 'rows': rows,
+                'pagination_complete': True}
 
     # The official Google Ads client is synchronous; keep status requests responsive.
     return await asyncio.to_thread(fetch)
@@ -286,8 +289,6 @@ async def get_keywords(
         })
     
     return keywords
-
-
 
 
 

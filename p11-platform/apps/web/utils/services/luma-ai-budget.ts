@@ -1,14 +1,16 @@
+import type {PublicCommunityRequest} from '@/utils/community-brain/public-context'
+import {loadPublicChatContext} from '@/utils/community-brain/chat-release'
 import { createServiceClient } from '@/utils/supabase/admin'
 import type OpenAI from 'openai'
 import type {ChatCompletion,ChatCompletionCreateParamsNonStreaming} from 'openai/resources/chat/completions'
 import {lumaRequestContext} from './luma-request-context'
 import {lumaEvidenceRpc} from './luma-model-evidence'
 import {loadPropertyChatbotContext} from './chatbot-context-editor'
-export type LumaModelSource={conversationId:string|null;modeRevision:number;assistantContext?:Awaited<ReturnType<typeof loadPropertyChatbotContext>>}
+export type LumaModelSource={conversationId:string|null;modeRevision:number;communityRequest?:PublicCommunityRequest;assistantContext?:Awaited<ReturnType<typeof loadPropertyChatbotContext>>}
 export async function budgetedLumaCompletion(openai:OpenAI,db:ReturnType<typeof createServiceClient>,propertyId:string,params:ChatCompletionCreateParamsNonStreaming,purpose:'answer'|'extraction'|'summary',source:LumaModelSource){
  const context=lumaRequestContext.getStore()
  if(!context||context.propertyId!==propertyId)throw new Error('A recorded visitor request is required before model execution.')
- const fresh=async()=>{if(source.assistantContext!==undefined&&JSON.stringify(await loadPropertyChatbotContext(db,propertyId))!==JSON.stringify(source.assistantContext))throw new Error('Property information changed while preparing the answer. The team can review this request.')}
+ const fresh=async()=>{if(source.assistantContext!==undefined&&JSON.stringify(await(source.communityRequest?loadPublicChatContext(db,propertyId,source.communityRequest):loadPropertyChatbotContext(db,propertyId)))!==JSON.stringify(source.assistantContext))throw new Error('Property information changed while preparing the answer. The team can review this request.')}
  await fresh()
  const reserve=Buffer.byteLength(JSON.stringify(params.messages),'utf8')+1024+(params.max_tokens??500)
  const configured=Number(process.env.LUMALEASING_DAILY_TOKEN_ALLOWANCE)

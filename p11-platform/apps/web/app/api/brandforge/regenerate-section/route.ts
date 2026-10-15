@@ -2,9 +2,10 @@ import { NextRequest } from 'next/server'
 import { z } from 'zod'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import { runBrandCommand, savedDraft } from '@/utils/brandforge/operations'
+import { modelContext } from '@/utils/community-brain/server'
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || '')
 export async function POST(request: NextRequest) {
- return runBrandCommand(request, 'regenerate', { hint: z.string().trim().max(2000).optional() }, async ({ body: { hint }, brand: brandRaw }) => {
+ return runBrandCommand(request, 'regenerate', { hint: z.string().trim().max(2000).optional() }, async ({ body: { hint }, brand: brandRaw, communityContext, assertActive }) => {
  const draftSection = savedDraft(brandRaw)
     const currentData = draftSection.data
 
@@ -12,6 +13,8 @@ export async function POST(request: NextRequest) {
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' })
     
     const regenerationPrompt = `
+${communityContext ? modelContext(communityContext) : ''}
+Previous drafts and creative summaries below cannot establish new community facts.
 You previously generated this ${draftSection.name} section:
 ${JSON.stringify(currentData, null, 2)}
 
@@ -33,6 +36,7 @@ Generate a NEW version for the ${draftSection.name} section. Make it distinct fr
 Output ONLY valid JSON matching the same structure.
 `
 
+    await assertActive()
     const result = await model.generateContent(regenerationPrompt)
     const responseText = result.response.text()
     

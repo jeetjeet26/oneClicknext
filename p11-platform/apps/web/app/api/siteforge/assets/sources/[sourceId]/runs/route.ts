@@ -4,7 +4,7 @@ import { createServiceClient } from '@/utils/supabase/admin'
 import { createRequestContext } from '@/utils/services/request-context'
 import { authorizeAssetProperty } from '@/utils/siteforge/assets/auth'
 import { runAssetSourceSchema } from '@/utils/siteforge/assets/contracts'
-import { runAssetSourceIngestion } from '@/utils/siteforge/assets/source-ingestion'
+import { syncConnectedFiles } from '@/utils/community-brain/connected-files'
 
 const paramsSchema = z.object({ sourceId: z.string().uuid() })
 const propertyIdSchema = z.guid()
@@ -104,24 +104,7 @@ export async function POST(
         { status: 409, headers: ctx.responseHeaders }
       )
     }
-    const activeSource =
-      source.status === 'error'
-        ? ({ ...source, status: 'active' } as typeof source)
-        : source
-    if (source.status === 'error') {
-      const { error: retryError } = await service
-        .from('siteforge_asset_sources')
-        .update({ status: 'active', last_error: null })
-        .eq('id', source.id)
-        .eq('org_id', authorization.orgId)
-        .eq('property_id', parsed.data.propertyId)
-      if (retryError) throw new Error('Failed to prepare asset source retry')
-    }
-    const run = await runAssetSourceIngestion({
-      source: activeSource,
-      userId: authorization.userId,
-      supabase: service,
-    })
+    const run = await syncConnectedFiles(authorization.userId, source.property_id, source.id)
     ctx.logSuccess(201, {
       runId: run.id,
       importedCount: run.imported_count,

@@ -4,7 +4,8 @@ import {z} from 'zod'
 import {createServiceClient} from '@/utils/supabase/admin'
 import {ContentStoreError} from './content-store'
 import {rightsStatus} from './asset-library'
-import {STORAGE_BUCKETS} from '@/utils/storage/asset-service'
+const ORIGINALS_BUCKET='knowledge-originals'
+function uploadBucket(value:unknown){if(value!==ORIGINALS_BUCKET&&value!=='property-assets')throw new ContentStoreError('The upload storage identity could not be verified.',409);return value}
 type ObjectValue=Record<string,unknown>
 const messages:Record<string,string>={forbidden:'Your current access does not allow this asset decision.',stale_asset:'This asset changed. Reload its saved version before editing it.',request_conflict:'This request differs from its saved version. Reload the saved work.',asset_archived:'This asset is archived. Restore it before reviewing it.',asset_not_archived:'This asset is already in the active library. Reload its saved state.',asset_unavailable:'This asset is unavailable for this property.',asset_duplicate:'A duplicate cannot be approved as a separate asset.',replacement_changed:'The original asset changed after this upload started. Recover the stored file separately or reload the original before replacing it.',duplicate_archived:'This exact file already exists in the archive. Restore its saved library record.',upload_unavailable:'The saved upload is unavailable.'}
 export async function assetLibraryRpc(name:string,args:ObjectValue,allowed=['saved','replayed','prepared']){
@@ -47,15 +48,15 @@ export async function uploadLibraryAsset(form:FormData,actorId:string,propertyId
  const args={p_id:requestId,p_property_id:propertyId,p_actor_id:actorId}
  const started=await assetLibraryRpc('begin_forgestudio_asset_upload',{...args,p_input:input})
  if(started.state!=='prepared')return started
- const db=createServiceClient(),storage=db.storage.from(STORAGE_BUCKETS.PROPERTY_ASSETS),path=String(started.storagePath)
+ const db=createServiceClient(),bucket=uploadBucket(started.storageBucket),storage=db.storage.from(bucket),path=String(started.storagePath)
  if(!started.duplicateAssetId){
   const {error}=await storage.upload(path,inspected.bytes,{contentType:file.type,upsert:false})
-  if(error)await verifyStoredAsset(path,inspected.contentHash,file.size)
+  if(error)await verifyStoredAsset(bucket,path,inspected.contentHash,file.size)
  }
- return assetLibraryRpc('finish_forgestudio_asset_upload',{...args,p_payload:{contentHash:inspected.contentHash,storagePath:path,storageBucket:STORAGE_BUCKETS.PROPERTY_ASSETS,storageVerified:!started.duplicateAssetId,fileUrl:storage.getPublicUrl(path).data.publicUrl}})
+ return assetLibraryRpc('finish_forgestudio_asset_upload',{...args,p_payload:{contentHash:inspected.contentHash,storagePath:path,storageBucket:bucket,storageVerified:!started.duplicateAssetId,fileUrl:`/api/community-brain/assets?propertyId=${propertyId}&assetId=${requestId}`}})
 }
-async function verifyStoredAsset(path:string,hash:string,size:number){
- const {data,error}=await createServiceClient().storage.from(STORAGE_BUCKETS.PROPERTY_ASSETS).download(path)
+async function verifyStoredAsset(bucket:string,path:string,hash:string,size:number){
+ const {data,error}=await createServiceClient().storage.from(bucket).download(path)
  if(error||!data||data.size!==size||createHash('sha256').update(Buffer.from(await data.arrayBuffer())).digest('hex')!==hash)throw new ContentStoreError('The stored file could not be confirmed. Re-select the same file to retry, or recover this upload from the saved requests.',503)
 }
 export async function recoverLibraryUpload(input:{requestId:string;propertyId:string;actorId:string;uploadId:string;action:'recover'|'keep_separate';reason:string}){
@@ -66,9 +67,10 @@ export async function recoverLibraryUpload(input:{requestId:string;propertyId:st
  const db=createServiceClient(),{data:upload,error}=await db.from('forgestudio_asset_uploads').select('*').eq('id',input.uploadId).eq('property_id',input.propertyId).eq('actor_id',input.actorId).single()
  if(error||!upload)throw new ContentStoreError('Your saved upload could not be loaded.',503)
  const saved=upload.input as {contentHash:string;size:number}
+ const bucket=uploadBucket((upload as unknown as {storage_bucket:string}).storage_bucket)
  const {data:duplicate,error:duplicateError}=await db.from('content_assets').select('id').eq('property_id',input.propertyId).eq('content_hash',saved.contentHash).maybeSingle()
  if(duplicateError)throw new ContentStoreError('The library could not be checked. Reload before recovering.',503)
- if(!duplicate&&upload.state!=='completed')await verifyStoredAsset(upload.storage_path,saved.contentHash,saved.size)
- const storage={contentHash:saved.contentHash,storagePath:upload.storage_path,storageBucket:STORAGE_BUCKETS.PROPERTY_ASSETS,storageVerified:!duplicate,fileUrl:db.storage.from(STORAGE_BUCKETS.PROPERTY_ASSETS).getPublicUrl(upload.storage_path).data.publicUrl}
+ if(!duplicate&&upload.state!=='completed')await verifyStoredAsset(bucket,upload.storage_path,saved.contentHash,saved.size)
+ const storage={contentHash:saved.contentHash,storagePath:upload.storage_path,storageBucket:bucket,storageVerified:!duplicate,fileUrl:`/api/community-brain/assets?propertyId=${input.propertyId}&assetId=${input.uploadId}`}
  return assetLibraryRpc('recover_forgestudio_asset_upload',{...args,p_payload:{...decision,storage}})
 }

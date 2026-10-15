@@ -7,6 +7,7 @@ const validatePropertyAccessMock = vi.fn()
 const fromMock = vi.fn()
 const startMock = vi.fn()
 const rpcMock = vi.fn()
+const communityContextMock = vi.fn()
 
 vi.mock('@/utils/supabase/server', () => ({
   createClient: createClientMock,
@@ -15,6 +16,7 @@ vi.mock('@/utils/services/auth-guard', () => ({
   validatePropertyAccess: validatePropertyAccessMock,
 }))
 vi.mock('@/utils/brandforge/operations', async () => ({ ...(await vi.importActual<typeof import('@/utils/brandforge/operations')>('@/utils/brandforge/operations')), brandRpc:rpcMock }))
+vi.mock('@/utils/community-brain/brand',()=>({brandCommunityContext:communityContextMock}))
 vi.mock('workflow/api', () => ({
   start: startMock,
 }))
@@ -35,6 +37,7 @@ const userId = '40000000-0000-4000-8000-000000000001'
 describe('BrandForge workflow route', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    communityContextMock.mockResolvedValue({snapshotId:'saved-context'})
     createClientMock.mockResolvedValue({
       auth: { getUser: authGetUserMock },
       from: fromMock,
@@ -127,4 +130,21 @@ describe('BrandForge workflow route', () => {
       vertical: 'for_sale_community',
     })
   })
+  it.each([false, true])('retains only ambiguous dispatches for reconciliation (dispatch=%s)', async (dispatched) => {
+    authGetUserMock.mockResolvedValue({data:{user:{id:userId}},error:null})
+    validatePropertyAccessMock.mockResolvedValue({authorized:true,orgId})
+    const builder = {select:vi.fn(),eq:vi.fn(),single:vi.fn().mockResolvedValue({data:{id:propertyId,org_id:orgId},error:null})}
+    builder.select.mockReturnValue(builder);builder.eq.mockReturnValue(builder);fromMock.mockReturnValue(builder)
+    rpcMock.mockResolvedValue({state:'claimed',brandAssetId,claimToken:'66666666-6666-4666-8666-666666666666'})
+    if(dispatched) startMock.mockRejectedValue(new Error('Lost workflow acknowledgement'))
+    else communityContextMock.mockRejectedValue(new Error('Source was withdrawn'))
+    const response=await(await import('./route')).POST(new Request('http://localhost/api/brandforge/workflow',{
+      method:'POST',body:JSON.stringify({requestId:'55555555-5555-4555-8555-555555555555',revision:1,mode:'generated',propertyId,brandAssetId,vertical:'for_sale_community',creativeBrief:{brandName:'Juniper Row'}}),
+    }) as NextRequest)
+    expect(response.status).toBe(500)
+    const finishes=rpcMock.mock.calls.filter(([name])=>name==='finish_brand_operation')
+    expect(finishes).toHaveLength(dispatched?0:1)
+    expect(startMock).toHaveBeenCalledTimes(dispatched?1:0)
+  })
+
 })

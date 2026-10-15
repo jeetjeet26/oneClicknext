@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { validatePropertyAccess } from '@/utils/services/auth-guard'
 import { createBrandImportPreview } from '@/utils/brandforge/imports'
+import { brainRpc, resolveCommunityScope } from '@/utils/community-brain/server'
 
 /**
  * Analyze existing knowledge base documents to extract brand insights
@@ -28,13 +29,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
-    const { data: docs, error: docsError } = await supabase
-      .from('documents')
-      .select('id')
-      .eq('property_id', propertyId)
-      .limit(50)
+    await resolveCommunityScope(user.id, propertyId, 'brand')
+    const docs = await brainRpc<Array<{ id: string }>>('brain_documents', { p_purpose: 'brand', p_property_id: propertyId, p_ids: null, p_query: 'brand identity colors typography voice' })
 
-    if (docsError || !docs || docs.length === 0) {
+    if (docs.length === 0) {
       return NextResponse.json({ 
         error: 'No documents found',
         hasDocs: false 
@@ -66,7 +64,6 @@ export async function POST(req: NextRequest) {
     }, { status: 500 })
   }
 }
-
 
 
 

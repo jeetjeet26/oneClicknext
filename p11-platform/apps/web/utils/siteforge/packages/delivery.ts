@@ -1,3 +1,4 @@
+import {requireGenerationCurrent} from '@/utils/community-brain/generation'
 import 'server-only'
 import { createClient } from '@supabase/supabase-js'
 import { zipSync } from 'fflate'
@@ -26,17 +27,18 @@ async function target(id:string,propertyId:string,orgId:string){const {data:t,er
 async function credential(t:TargetSnapshot){const c=await getWordPressCredentialReference(t.credentialRef);if(c.provider!=='cloudways'||!c.ssh?.applicationRoot||!c.ssh.sftpApplicationRoot||c.providerMetadata?.applicationId!==t.applicationId||c.providerMetadata?.serverId!==t.serverId||c.url.replace(/\/$/,'')!==t.url.replace(/\/$/,''))throw new PackageError('The saved WordPress credentials do not match this destination.',409);return c.ssh}
 async function release(id:string,propertyId:string){const r=await db().from('siteforge_package_releases').select('*').eq('id',id).eq('property_id',propertyId).single();if(r.error||!r.data)throw new PackageError('Saved release not found.',404);return r.data}
 export function themeArchive(bytes:Uint8Array,slug:string){if(!/^p11-astra-[a-f0-9]{24}$/.test(slug))throw new PackageError('Invalid theme identity.',422);const input=unpackPackage(bytes);const theme:Record<string,Uint8Array>={};for(const [name,b]of Object.entries(input))if(name.startsWith('website/')&&!name.endsWith('/'))theme[slug+'/'+name.slice(8)]=b;if(!theme[slug+'/style.css']||!theme[slug+'/index.php']||!theme[slug+'/functions.php'])throw new PackageError('An installable WordPress package is required.',422);return zipSync(theme,{level:1})}
-async function packageBytes(job:Awaited<ReturnType<typeof getPackageJob>>){if(job.state!=='ready'||job.target!=='wordpress'||!job.package_path||!job.package_hash)throw new PackageError('Choose a ready WordPress package.',409);const r=await packageDb().storage.from('siteforge-packages').download(job.package_path);if(r.error||!r.data)throw new PackageError('The retained package could not be read.');const b=new Uint8Array(await r.data.arrayBuffer());if(sha256(b)!==job.package_hash)throw new PackageError('Package integrity check failed.',409);return b}
+async function packageBytes(job:Awaited<ReturnType<typeof getPackageJob>>){if(job.state!=='ready'||job.target!=='wordpress'||!job.package_path||!job.package_hash)throw new PackageError('Choose a ready WordPress package.',409);const storageClient=packageDb();const r=await storageClient.storage.from('siteforge-packages').download(job.package_path);if(r.error||!r.data)throw new PackageError('The retained package could not be read.');const b=new Uint8Array(await r.data.arrayBuffer());if(sha256(b)!==job.package_hash)throw new PackageError('Package integrity check failed.',409);return b}
 function themeChecksums(bytes:Uint8Array,slug:string){const files=unpackPackage(themeArchive(bytes,slug));return Object.fromEntries(Object.entries(files).map(([name,b])=>['wp-content/themes/'+name,sha256(b)]))}
 async function verifyPreview(p:Release){const current=await target(p.target_id,p.property_id,p.org_id);if(stableJson(current)!==stableJson(p.target_snapshot))throw new PackageError('Preview destination changed. Create another preview.',409);const latest=await db().from('siteforge_package_releases').select('id').eq('target_id',p.target_id).in('kind',['preview','deploy']).order('created_at',{ascending:false}).limit(1).single();if(latest.data?.id!==p.id)throw new PackageError('The preview has been superseded.',409);return await new SshWordPressInstaller().verifyGeneratedPackage({ssh:await credential(current),releaseId:p.id,packageHash:p.package_hash,theme:String(p.receipt.theme),expectedUrl:current.url,checksums:themeChecksums(await packageBytes(await getPackageJob(p.job_id,p.property_id)),String(p.receipt.theme))});}
 export async function requestDelivery(input:{requestId:string;propertyId:string;jobId:string;targetId:string;kind:Release['kind'];previewId?:string;approvalId?:string},actor:{id:string;orgId:string}){
  const existing=await db().from('siteforge_package_releases').select('*').eq('id',input.requestId).maybeSingle();if(existing.error)throw new PackageError('Release history unavailable.');if(existing.data){const r=existing.data;if(r.actor_id!==actor.id||r.org_id!==actor.orgId||r.property_id!==input.propertyId||r.job_id!==input.jobId||r.target_id!==input.targetId||r.kind!==input.kind||r.preview_id!==(input.previewId??null)||r.approval_id!==(input.approvalId??null))throw new PackageError('This request already has different saved details.',409);return {id:r.id,state:r.state,created:false}}
  const job=await getPackageJob(input.jobId,input.propertyId);if(job.org_id!==actor.orgId)throw new PackageError('Website unavailable.',404);readWebsitePlan(unpackPackage(await packageBytes(job)));
+ await requireGenerationCurrent('site_package',job.id);
  const t=await target(input.targetId,input.propertyId,actor.orgId);await credential(t);
  if(input.kind==='preview'&&t.type!=='staging')throw new PackageError('Preview requires a separate staging destination.',409);
  let approvedContent:Record<string,unknown>={};
  if(input.kind!=='preview'){
-  const source=await loadPackageSource(input.propertyId);if(source.hash!==job.source_hash)throw new PackageError('Property information changed. Generate and review an updated website first.',409);
+  const source=await loadPackageSource(input.propertyId,actor.id);if(source.hash!==job.source_hash)throw new PackageError('Property information changed. Generate and review an updated website first.',409);
   if(!input.previewId)throw new PackageError('Review a successful preview first.',409);const p=await release(input.previewId,input.propertyId);if(p.kind!=='preview'||p.state!=='succeeded'||p.job_id!==job.id||p.package_hash!==job.package_hash)throw new PackageError('An exact successful preview is required.',409);approvedContent=await verifyPreview(p);await verifyWebsite(p.target_snapshot.url,readWebsitePlan(unpackPackage(await packageBytes(job))));
   if(input.kind==='approve'&&t.id!==p.target_id)throw new PackageError('Approve the preview destination.',409);
   if(input.kind==='deploy'&&(!input.approvalId||t.type!=='production'||t.websiteId!==p.target_snapshot.websiteId||t.url===p.target_snapshot.url))throw new PackageError('Select the separate production destination for this preview.',409);
@@ -58,7 +60,7 @@ export async function executeDelivery(id:string){
  try{
   const access=await validateSiteForgeOwnerOperatorAccess(r.actor_id,r.property_id);if(!access.authorized||access.orgId!==r.org_id)throw Error('Access changed');
   const t=await target(r.target_id,r.property_id,r.org_id);if(stableJson(t)!==stableJson(r.target_snapshot))throw Error('Destination changed');
-  const job=await getPackageJob(r.job_id,r.property_id);const bytes=await packageBytes(job);if(job.package_hash!==r.package_hash)throw Error('Package changed');
+  const job=await getPackageJob(r.job_id,r.property_id);await requireGenerationCurrent('site_package',job.id);const bytes=await packageBytes(job);if(job.package_hash!==r.package_hash)throw Error('Package changed');
   let slug='p11-astra-'+r.id.replaceAll('-','').slice(0,24);
   if(r.kind==='preview'){
    receipt={stage:'installing',message:'Installing the complete website: theme, editable pages and homepage.'};await checkpoint(r.id,receipt);
@@ -67,7 +69,7 @@ export async function executeDelivery(id:string){
    receipt={...receipt,stage:'checking',message:'Checking every page, navigation link, image and floorplan.'};await checkpoint(r.id,receipt);
    await new SshWordPressInstaller().verifyGeneratedPackage({ssh:await credential(t),releaseId:r.id,packageHash:r.package_hash,theme:slug,expectedUrl:t.url,checksums:themeChecksums(bytes,slug)});
   }else{
-   const source=await loadPackageSource(r.property_id);if(source.hash!==job.source_hash)throw Error('Property information changed');
+   const source=await loadPackageSource(r.property_id,r.actor_id);if(source.hash!==job.source_hash)throw Error('Property information changed');
    const p=await release(r.preview_id!,r.property_id),a=await release(r.approval_id!,r.property_id),proof=await verifyPreview(p);
    if(!a.receipt.contentHash||a.receipt.contentHash!==proof.contentHash)throw Error('Preview content changed after approval');
    const config=getCloudwaysProviderCredentials();if(!config)throw Error('Cloudways API credentials are missing');const provider=new CloudwaysProviderClient(config);
@@ -80,6 +82,7 @@ export async function executeDelivery(id:string){
    await provider.verifyOperation(backup.operationId,{kind:'backup',serverId:t.serverId,applicationId:t.applicationId,backupId});
    // Recheck approval after backup, immediately before the one-time provider mutation.
    const latestProof=await verifyPreview(p);if(latestProof.contentHash!==a.receipt.contentHash)throw Error('Preview changed');
+   await requireGenerationCurrent('site_package',job.id);
    const promotion=await provider.promoteStagingApplication({serverId:t.serverId,stagingApplicationId:p.target_snapshot.applicationId,productionApplicationId:t.applicationId});
    receipt={...receipt,backupId,operationId:promotion.operationId,theme:p.receipt.theme,previewReleaseId:p.id};await checkpoint(r.id,receipt);if(!promotion.operationId)throw Error('Promotion result requires inspection');
    await provider.waitForOperation(promotion.operationId,90000);await provider.verifyOperation(promotion.operationId,{kind:'promotion',serverId:t.serverId,applicationId:t.applicationId,stagingApplicationId:p.target_snapshot.applicationId});

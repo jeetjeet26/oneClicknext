@@ -12,7 +12,8 @@ import {currentApprovedReadiness} from '@/utils/readiness/publication'
  * generation runs.
  */
 
-import OpenAI from 'openai'
+import {brainRpc,brainActor,resolveCommunityScope,getCommunityContext} from '@/utils/community-brain/server'
+import {assertCommunityContext,type GenerationContext} from '@/utils/community-brain/contracts'
 import {sourceRecord,type SourceRecord} from './source-records'
 import { createHash } from 'node:crypto'
 import { createServiceClient } from '@/utils/supabase/admin'
@@ -83,6 +84,7 @@ export type TrustedContextBundle = {
   version: typeof CONTEXT_BUNDLE_VERSION
   propertyId: string
   assembledAt: string
+  communityContext?: GenerationContext
   sourceRecords?: Record<string,SourceRecord>
   sources: ContextSource[]
   assets: SelectedAsset[]
@@ -136,26 +138,12 @@ const BRAND_SECTIONS: Array<{ column: string; label: string }> = [
   { column: 'section_5_name_story', label: 'Name story' },
 ]
 
-async function retrieveKbSources(propertyId:string,query:string,documentIds?:string[]) {
- const supabase=createServiceClient()
- let documents:Array<{id:string;content:string|null;metadata:Json;similarity?:number}>=[]
+async function retrieveKbSources(propertyId:string,query:string,documentIds?:string[],context?:GenerationContext) {
+ const documents=context?context.evidence.map(e=>({id:e.id,content:e.content,metadata:e.metadata as Json,allowed_uses:e.allowedUses,authority:e.authority,audience:e.audience})):await brainRpc<Array<{id:string;content:string;metadata:Json;allowed_uses:string[];authority:string;audience:string}>>('brain_documents',{p_property_id:propertyId,p_purpose:'social',p_query:query,p_ids:documentIds??null})
  const warnings:ContextWarning[]=[]
- if(documentIds!==undefined){
-  if(documentIds.length){
-   const {data,error}=await supabase.from('documents').select('id,content,metadata').eq('property_id',propertyId).in('id',documentIds)
-   if(error)throw new Error('Saved knowledge sources could not be refreshed. Reload before continuing.')
-   documents=data??[]
-   for(const id of documentIds)if(!documents.some(d=>d.id===id))warnings.push({code:'knowledge_source_missing',message:'A previously cited knowledge document is no longer available.',sourceId:`kb_document:${id}`})
-  }
- }else if(process.env.OPENAI_API_KEY&&query.trim()){
-  const openai=new OpenAI({apiKey:process.env.OPENAI_API_KEY,maxRetries:0,timeout:30_000})
-  const response=await openai.embeddings.create({model:'text-embedding-3-small',input:query})
-  const {data,error}=await supabase.rpc('match_documents',{query_embedding:`[${response.data[0].embedding.join(',')}]`,match_threshold:0.45,match_count:6,filter_property:propertyId})
-  if(error)throw new Error('Knowledge retrieval failed. The request has stopped before text generation.')
-  documents=data??[]
- }else warnings.push({code:'knowledge_retrieval_unavailable',message:'Knowledge retrieval is not configured; no knowledge documents were used.'})
+ for(const id of documentIds??[])if(!documents.some(d=>d.id===id))warnings.push({code:'knowledge_source_missing',message:'A previously cited document is no longer eligible for this purpose.',sourceId:`kb_document:${id}`})
  return {warnings,records:Object.fromEntries(documents.map(doc=>[`document:${doc.id}`,sourceRecord('document',doc.id,doc)])),sources:documents.map(doc=>({
-  id:`kb_document:${doc.id}`,recordKey:`document:${doc.id}`,kind:'kb_document' as const,label:'Knowledge base document',content:truncate(String(doc.content??'')),similarity:doc.similarity,authority:'curated' as const,sensitivity:'public' as const,allowedUses:['claim','topic'] as Array<'claim'|'topic'>,
+  id:`kb_document:${doc.id}`,recordKey:`document:${doc.id}`,kind:'kb_document' as const,label:'Reviewed community evidence',content:truncate(doc.content),authority:doc.allowed_uses.includes('fact')?'curated' as const:'advisory' as const,sensitivity:doc.audience==='public'?'public' as const:'restricted' as const,allowedUses:doc.allowed_uses.includes('fact')?['claim','topic'] as Array<'claim'|'topic'|'tone'>:['tone'] as Array<'claim'|'topic'|'tone'>,
  }))}
 }
 
@@ -169,7 +157,13 @@ export async function assembleForgeStudioContext(input: {
   assetIds?: string[]
   /** Refresh exact saved document IDs without a new embedding/model request. */
   documentIds?: string[]
+  communityContext?: GenerationContext
+  actorId?: string
 }): Promise<TrustedContextBundle> {
+  const actor=input.actorId??await brainActor()
+  const scope=await resolveCommunityScope(actor,input.propertyId,'social')
+  const community=input.communityContext??await getCommunityContext(scope,{propertyId:input.propertyId,query:input.query,assetIds:input.assetIds})
+  assertCommunityContext(community,input.propertyId)
   const supabase = createServiceClient()
   const now = new Date()
   const nowIso = now.toISOString()
@@ -245,7 +239,7 @@ export async function assembleForgeStudioContext(input: {
           .order('approved_at', { ascending: false })
           .limit(5)
       : Promise.resolve({ data: [], error: null }),
-    retrieveKbSources(input.propertyId, input.query,input.documentIds),
+    retrieveKbSources(input.propertyId,input.query,input.documentIds,input.documentIds===undefined?community:undefined),
     buildBusinessContextBridge(supabase, input.propertyId)
       .then((data) => ({ data, error: null }))
       .catch((error: unknown) => ({ data: null, error })),
@@ -534,12 +528,16 @@ export async function assembleForgeStudioContext(input: {
   const assets: SelectedAsset[] = []
   for (const asset of assetsResult.data ?? []) {
     const usability = getAssetUsability(asset, now)
-    if (!usability.usable || !asset.file_url.startsWith('https://')) {
+    const exactPrivateUrl=`/api/community-brain/assets?propertyId=${input.propertyId}&assetId=${asset.id}`
+    const retained=/^[a-f0-9]{64}$/.test(asset.content_hash??'')&&community.canonical.assets.find(value=>value.id===asset.id&&value.property_id===input.propertyId&&value.content_hash===asset.content_hash)
+    const privateAsset=asset.file_url===exactPrivateUrl&&!!retained&&asset.storage_bucket==='knowledge-originals'&&!!asset.storage_path
+    if (!usability.usable || !retained || (!privateAsset&&!asset.file_url.startsWith('https://'))) {
       warnings.push({
         code: 'asset_not_usable',
         message: `Asset "${asset.name}" was omitted: ${[
           ...usability.blockers,
-          ...(!asset.file_url.startsWith('https://') ? ['https_required'] : []),
+          ...(!retained ? ['current_approved_asset_required'] : []),
+          ...(!privateAsset&&!asset.file_url.startsWith('https://') ? ['secure_delivery_required'] : []),
         ].join(', ')}`,
         sourceId: `asset:${asset.id}`,
       })
@@ -572,10 +570,11 @@ export async function assembleForgeStudioContext(input: {
       authority: 'authoritative',
       approvalStatus: asset.approvalStatus,
       sensitivity: 'public',
-      allowedUses: ['claim', 'topic', 'format'],
+      allowedUses: ['topic', 'format'],
     })
   }
 
+  for(const fact of community.canonical.facts)sources.push({id:`approved_snapshot:${fact.id}`,kind:'approved_snapshot',label:'Accepted community fact',content:JSON.stringify(fact.payload),authority:'authoritative',sensitivity:'public',allowedUses:['claim']})
   for(const source of sources){
     const [kind,id]=source.id.split(':')
     const mapping:Record<string,string>={property_field:'property',channel_settings:'config',legal_policy:`legal:${id}`,approved_snapshot:`onboarding:${id}`,brand_section:`brand:${id}`,structured_inventory:`inventory:${id}`,approved_poi:`poi:${id}`,approved_testimonial:`testimonial:${id}`,asset:`asset:${id}`}
@@ -585,6 +584,7 @@ export async function assembleForgeStudioContext(input: {
     version: CONTEXT_BUNDLE_VERSION,
     propertyId: input.propertyId,
     assembledAt: new Date().toISOString(),
+    communityContext:community,
     sources,
     sourceRecords,
     assets,

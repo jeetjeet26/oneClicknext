@@ -106,6 +106,7 @@ export type PortalData = {
   tours: number;
   marketing: Totals;
   hasMarketingData: boolean;
+  incompleteMarketingRows?: number;
   channels: ({ channel: string } & Totals)[];
   trend: {
     date: string;

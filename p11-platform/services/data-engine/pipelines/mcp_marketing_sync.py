@@ -89,6 +89,16 @@ class MCPMarketingSync:
             'detail': detail
         }
 
+    @staticmethod
+    def _coverage_receipt(report: dict, platform: str, count: int) -> dict:
+        from shared.daily_reports import ReportValidationError
+        if report.get('pagination_complete') is not True:
+            raise ReportValidationError('Provider report pagination was not confirmed')
+        return {**{key: report.get(key) for key in ['account_id', 'currency', 'timezone', 'start_date', 'end_date']},
+                'pagination_complete': True, 'provider': platform,
+                'recipe': 'mcp-daily-complete-v1', 'fetched_count': count,
+                **({'pages': report['pages']} if 'pages' in report else {})}
+
     async def sync_property(
         self, property_id: str, channels: Optional[List[str]] = None,
         date_range: Optional[str] = None, incremental: bool = True,
@@ -189,7 +199,8 @@ class MCPMarketingSync:
                 return self._build_channel_result('google_ads', 'skipped', [], 'Google Ads tools not available')
             report = await daily_report(customer_id=clean_customer_id(customer_id), date_range=date_range, **({'reference_time': self.reference_time} if self.reference_time is not None else {}))
             records = report_records(report, property_id, 'google_ads', customer_id)
-            return self._build_channel_result('google_ads', 'succeeded', records)
+            return {**self._build_channel_result('google_ads', 'succeeded', records),
+                    'receipt': self._coverage_receipt(report, 'google_ads', len(records))}
         except ReportValidationError as error:
             return self._build_channel_result('google_ads', 'failed', [], str(error))
         except Exception:
@@ -207,7 +218,8 @@ class MCPMarketingSync:
                 return self._build_channel_result('meta_ads', 'skipped', [], 'Meta Ads client not available')
             report = await MetaAdsClient().get_daily_campaign_insights(account_id=account_id, date_range=date_range, **({'reference_time': self.reference_time} if self.reference_time is not None else {}))
             records = report_records(report, property_id, 'meta_ads', account_id)
-            return self._build_channel_result('meta_ads', 'succeeded', records)
+            return {**self._build_channel_result('meta_ads', 'succeeded', records),
+                    'receipt': self._coverage_receipt(report, 'meta_ads', len(records))}
         except ReportValidationError as error:
             return self._build_channel_result('meta_ads', 'failed', [], str(error))
         except Exception:
@@ -262,4 +274,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-

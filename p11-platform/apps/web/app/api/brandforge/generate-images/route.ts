@@ -137,9 +137,11 @@ async function uploadToStorage(
 
 import { z } from 'zod'
 import { brandId, runBrandCommand } from '@/utils/brandforge/operations'
+import { modelContext } from '@/utils/community-brain/server'
 import { prepareBrandRevision } from '@/utils/brandforge/revisions'
 export async function POST(request: NextRequest) {
- return runBrandCommand(request, 'visuals', { propertyId: brandId, type: z.enum(['logo','moodboard','photo_examples']) }, async ({ body: { propertyId, type }, brand, assertActive }) => {
+ return runBrandCommand(request, 'visuals', { propertyId: brandId, type: z.enum(['logo','moodboard','photo_examples']) }, async ({ body: { propertyId, type }, brand, assertActive, communityContext }) => {
+ const scopedPrompt=(prompt:string)=>`${prompt}\n${communityContext?modelContext(communityContext):''}\nGenerated imagery is conceptual creative, never a documentary photo or an exact floorplan.`
   if (propertyId !== brand.property_id) throw new Error('Property mismatch')
   const safeBrandData: BrandData = brand
   const results: { type: string; url: string; prompt: string }[] = []
@@ -161,7 +163,7 @@ export async function POST(request: NextRequest) {
           }
           
           await assertActive()
-          const images = await generateImage(logoPrompt, {
+          const images = await generateImage(scopedPrompt(logoPrompt), {
             aspectRatio: '1:1',
             sampleCount: 2, // 2 variations per batch
             negativePrompt: 'text, words, letters, alphabet, typography, font, writing, label, caption, title, name, watermark, signature, low quality, blurry, pixelated, jpeg artifacts, multiple objects, cluttered, busy, complex'
@@ -209,7 +211,7 @@ export async function POST(request: NextRequest) {
           }
           
           await assertActive()
-          const images = await generateImage(moodPrompts[i], {
+          const images = await generateImage(scopedPrompt(moodPrompts[i]), {
             aspectRatio: '16:9',
             negativePrompt: 'text, words, letters, watermark, signature, low quality, cartoon, anime, illustration, drawing'
           })
@@ -248,7 +250,7 @@ export async function POST(request: NextRequest) {
       for (let i = 0; i < yepPrompts.length; i++) {
         try {
           await assertActive()
-          const images = await generateImage(yepPrompts[i], {
+          const images = await generateImage(scopedPrompt(yepPrompts[i]), {
             aspectRatio: '4:3',
             negativePrompt: 'text, words, watermark, low quality, artificial, staged, stock photo look'
           })
@@ -372,4 +374,3 @@ function buildPhotoYepPrompts(brandData: BrandData): string[] {
     `Person working from home in stylish apartment office nook, ${baseStyle}`
   ]
 }
-

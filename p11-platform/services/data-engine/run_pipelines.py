@@ -106,70 +106,28 @@ def check_config() -> dict:
     return config_status
 
 
-def run_meta_pipeline() -> dict:
-    """Run the Meta Ads pipeline."""
-    result = {"pipeline": "meta_ads", "status": "skipped", "records": 0, "error": None}
-    
+def run_confirmed_pipeline(name: str) -> dict:
+    from importlib import import_module
+    from pipelines.outcome import PipelineOutcome
     try:
-        from pipelines.meta_ads import run_pipeline
-        log("Running Meta Ads pipeline...", "info")
-        run_pipeline()
-        result["status"] = "success"
-        log("Meta Ads pipeline completed successfully", "success")
-    except ImportError as e:
-        result["status"] = "error"
-        result["error"] = f"Import error: {e}"
-        log(f"Meta Ads pipeline import failed: {e}", "error")
-    except Exception as e:
-        result["status"] = "error"
-        result["error"] = str(e)
-        log(f"Meta Ads pipeline failed: {e}", "error")
-    
-    return result
+        outcome = import_module(f'pipelines.{name}').run_pipeline()
+        if not isinstance(outcome, PipelineOutcome):
+            raise RuntimeError('Pipeline returned no confirmed outcome')
+        return outcome.result(name)
+    except Exception as error:
+        return PipelineOutcome('error', 'failed', error=str(error)).result(name)
+
+
+def run_meta_pipeline() -> dict:
+    return run_confirmed_pipeline('meta_ads')
 
 
 def run_google_pipeline() -> dict:
-    """Run the Google Ads pipeline."""
-    result = {"pipeline": "google_ads", "status": "skipped", "records": 0, "error": None}
-    
-    try:
-        from pipelines.google_ads import run_pipeline
-        log("Running Google Ads pipeline...", "info")
-        run_pipeline()
-        result["status"] = "success"
-        log("Google Ads pipeline completed successfully", "success")
-    except ImportError as e:
-        result["status"] = "error"
-        result["error"] = f"Import error: {e}"
-        log(f"Google Ads pipeline import failed: {e}", "error")
-    except Exception as e:
-        result["status"] = "error"
-        result["error"] = str(e)
-        log(f"Google Ads pipeline failed: {e}", "error")
-    
-    return result
+    return run_confirmed_pipeline('google_ads')
 
 
 def run_ga4_pipeline() -> dict:
-    """Run the GA4 pipeline."""
-    result = {"pipeline": "ga4", "status": "skipped", "records": 0, "error": None}
-    
-    try:
-        from pipelines.ga4 import run_pipeline
-        log("Running GA4 pipeline...", "info")
-        run_pipeline()
-        result["status"] = "success"
-        log("GA4 pipeline completed successfully", "success")
-    except ImportError as e:
-        result["status"] = "error"
-        result["error"] = f"Import error: {e}"
-        log(f"GA4 pipeline import failed: {e}", "error")
-    except Exception as e:
-        result["status"] = "error"
-        result["error"] = str(e)
-        log(f"GA4 pipeline failed: {e}", "error")
-    
-    return result
+    return run_confirmed_pipeline('ga4')
 
 
 def print_summary(results: list, start_time: datetime):

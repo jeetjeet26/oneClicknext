@@ -47,7 +47,7 @@ export function summarizeObservations(
 ) {
   const grouped = new Map<string, RetainedObservation[]>();
   for (const r of rows.filter(
-    (r) => r.date >= start && r.date <= end && r.variant === null,
+    (r) => r.date >= start && r.date <= end && r.variant === null && !r.attributionModel,
   )) {
     // Sources and channels are separate observations, never silently added together.
     const key = JSON.stringify([
@@ -67,6 +67,12 @@ export function summarizeObservations(
       "available_units",
       "market_rent",
       "active_leases",
+      "effective_rent",
+      "concession_weeks",
+      "occupancy_percent",
+      "new_supply_units",
+      "renter_demand_index",
+      "estimated_competitor_visits",
     ].includes(metric);
     const latest = rs
       .map((r) => r.date)
@@ -83,7 +89,7 @@ export function summarizeObservations(
       floorplanId: rs[0].floorplanId,
       page: rs[0].page,
       value:
-        metric === "market_rent"
+        ["effective_rent", "concession_weeks", "occupancy_percent", "renter_demand_index", "estimated_competitor_visits", "new_supply_units"].includes(metric) && used.length !== 1 ? null : metric === "market_rent"
           ? used.reduce((s, r) => s + r.value, 0) / used.length
           : used.reduce((s, r) => s + r.value, 0),
       records: used.length,

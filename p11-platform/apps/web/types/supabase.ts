@@ -1,5 +1,4 @@
-// schema_migration_version: 20261007223000
-// Generated from the qualified production-schema upgrade rehearsal.
+// schema_migration_version: 20261014013217
 export type Json =
   | string
   | number
@@ -3673,6 +3672,455 @@ export type Database = {
           },
         ]
       }
+      community_access_events: {
+        Row: {
+          actor_id: string
+          after_state: Json
+          before_state: Json | null
+          created_at: string
+          id: string
+          property_id: string
+          reason: string
+          target_actor_id: string
+        }
+        Insert: {
+          actor_id: string
+          after_state: Json
+          before_state?: Json | null
+          created_at?: string
+          id?: string
+          property_id: string
+          reason: string
+          target_actor_id: string
+        }
+        Update: {
+          actor_id?: string
+          after_state?: Json
+          before_state?: Json | null
+          created_at?: string
+          id?: string
+          property_id?: string
+          reason?: string
+          target_actor_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "community_access_events_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_access_events_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "community_access_events_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+        ]
+      }
+      community_access_grants: {
+        Row: {
+          actor_id: string
+          capabilities: string[]
+          expires_at: string | null
+          granted_by: string
+          property_id: string
+          revision: number
+          revoked_at: string | null
+          updated_at: string
+        }
+        Insert: {
+          actor_id: string
+          capabilities?: string[]
+          expires_at?: string | null
+          granted_by: string
+          property_id: string
+          revision?: number
+          revoked_at?: string | null
+          updated_at?: string
+        }
+        Update: {
+          actor_id?: string
+          capabilities?: string[]
+          expires_at?: string | null
+          granted_by?: string
+          property_id?: string
+          revision?: number
+          revoked_at?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "community_access_grants_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_access_grants_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "community_access_grants_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+        ]
+      }
+      community_asset_bindings: {
+        Row: {
+          actor_id: string
+          asset_id: string
+          created_at: string
+          decision: Json
+          file_id: string
+          id: string
+          org_id: string
+          original_hash: string
+          property_id: string
+          unit_id: string | null
+        }
+        Insert: {
+          actor_id: string
+          asset_id: string
+          created_at?: string
+          decision: Json
+          file_id: string
+          id: string
+          org_id: string
+          original_hash: string
+          property_id: string
+          unit_id?: string | null
+        }
+        Update: {
+          actor_id?: string
+          asset_id?: string
+          created_at?: string
+          decision?: Json
+          file_id?: string
+          id?: string
+          org_id?: string
+          original_hash?: string
+          property_id?: string
+          unit_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "community_asset_bindings_asset_id_property_id_fkey"
+            columns: ["asset_id", "property_id"]
+            isOneToOne: false
+            referencedRelation: "content_assets"
+            referencedColumns: ["id", "property_id"]
+          },
+          {
+            foreignKeyName: "community_asset_bindings_file_id_property_id_fkey"
+            columns: ["file_id", "property_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_files"
+            referencedColumns: ["id", "property_id"]
+          },
+          {
+            foreignKeyName: "community_asset_bindings_property_id_org_id_fkey"
+            columns: ["property_id", "org_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id", "org_id"]
+          },
+          {
+            foreignKeyName: "community_asset_bindings_property_id_org_id_fkey"
+            columns: ["property_id", "org_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id", "org_id"]
+          },
+          {
+            foreignKeyName: "community_asset_bindings_unit_id_property_id_fkey"
+            columns: ["unit_id", "property_id"]
+            isOneToOne: false
+            referencedRelation: "property_units"
+            referencedColumns: ["id", "property_id"]
+          },
+        ]
+      }
+      community_brain_settings: {
+        Row: {
+          consumers: string[]
+          context_enabled: boolean
+          feedback_enabled: boolean
+          ingestion_enabled: boolean
+          policy_revision: number
+          portfolio_enabled: boolean
+          private_delivery_enabled: boolean
+          property_id: string
+          updated_at: string
+        }
+        Insert: {
+          consumers?: string[]
+          context_enabled?: boolean
+          feedback_enabled?: boolean
+          ingestion_enabled?: boolean
+          policy_revision?: number
+          portfolio_enabled?: boolean
+          private_delivery_enabled?: boolean
+          property_id: string
+          updated_at?: string
+        }
+        Update: {
+          consumers?: string[]
+          context_enabled?: boolean
+          feedback_enabled?: boolean
+          ingestion_enabled?: boolean
+          policy_revision?: number
+          portfolio_enabled?: boolean
+          private_delivery_enabled?: boolean
+          property_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "community_brain_settings_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: true
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_brain_settings_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: true
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "community_brain_settings_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: true
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+        ]
+      }
+      community_brand_contexts: {
+        Row: {
+          actor_id: string
+          context_id: string
+          created_at: string
+          deliverable_id: string | null
+          operation_id: string
+          property_id: string
+        }
+        Insert: {
+          actor_id: string
+          context_id: string
+          created_at?: string
+          deliverable_id?: string | null
+          operation_id: string
+          property_id: string
+        }
+        Update: {
+          actor_id?: string
+          context_id?: string
+          created_at?: string
+          deliverable_id?: string | null
+          operation_id?: string
+          property_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "community_brand_contexts_context_id_fkey"
+            columns: ["context_id"]
+            isOneToOne: false
+            referencedRelation: "shared_context_snapshots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_brand_contexts_deliverable_id_fkey"
+            columns: ["deliverable_id"]
+            isOneToOne: false
+            referencedRelation: "community_generation_briefs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_brand_contexts_operation_id_fkey"
+            columns: ["operation_id"]
+            isOneToOne: true
+            referencedRelation: "brand_operations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_brand_contexts_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_brand_contexts_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "community_brand_contexts_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+        ]
+      }
+      community_channel_qualifications: {
+        Row: {
+          action: string
+          adapter_version: string
+          destination_hash: string
+          expires_at: string
+          failure_receipt: Json
+          id: string
+          property_id: string
+          qualified_at: string
+          qualified_by: string
+          recovery_receipt: Json
+          revoked_at: string | null
+          success_receipt: Json
+        }
+        Insert: {
+          action: string
+          adapter_version: string
+          destination_hash: string
+          expires_at: string
+          failure_receipt: Json
+          id?: string
+          property_id: string
+          qualified_at?: string
+          qualified_by: string
+          recovery_receipt: Json
+          revoked_at?: string | null
+          success_receipt: Json
+        }
+        Update: {
+          action?: string
+          adapter_version?: string
+          destination_hash?: string
+          expires_at?: string
+          failure_receipt?: Json
+          id?: string
+          property_id?: string
+          qualified_at?: string
+          qualified_by?: string
+          recovery_receipt?: Json
+          revoked_at?: string | null
+          success_receipt?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "community_channel_qualifications_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_channel_qualifications_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "community_channel_qualifications_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+        ]
+      }
+      community_connected_files: {
+        Row: {
+          current: boolean
+          file_id: string
+          observed_at: string
+          property_id: string
+          provider_file_id: string
+          provider_metadata: Json
+          provider_revision: string
+          source_id: string
+        }
+        Insert: {
+          current?: boolean
+          file_id: string
+          observed_at?: string
+          property_id: string
+          provider_file_id: string
+          provider_metadata: Json
+          provider_revision: string
+          source_id: string
+        }
+        Update: {
+          current?: boolean
+          file_id?: string
+          observed_at?: string
+          property_id?: string
+          provider_file_id?: string
+          provider_metadata?: Json
+          provider_revision?: string
+          source_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "community_connected_files_file_id_property_id_fkey"
+            columns: ["file_id", "property_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_files"
+            referencedColumns: ["id", "property_id"]
+          },
+          {
+            foreignKeyName: "community_connected_files_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_connected_files_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "community_connected_files_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "community_connected_files_source_id_fkey"
+            columns: ["source_id"]
+            isOneToOne: false
+            referencedRelation: "siteforge_asset_sources"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       community_contacts: {
         Row: {
           billing_address: Json | null
@@ -3743,6 +4191,1003 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "vw_property_marketing_setup"
             referencedColumns: ["property_id"]
+          },
+        ]
+      }
+      community_context_dependencies: {
+        Row: {
+          asset_id: string | null
+          context_id: string
+          evidence_id: string | null
+          org_id: string
+          property_id: string
+          source_hash: string
+          unit_id: string | null
+        }
+        Insert: {
+          asset_id?: string | null
+          context_id: string
+          evidence_id?: string | null
+          org_id: string
+          property_id: string
+          source_hash: string
+          unit_id?: string | null
+        }
+        Update: {
+          asset_id?: string | null
+          context_id?: string
+          evidence_id?: string | null
+          org_id?: string
+          property_id?: string
+          source_hash?: string
+          unit_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "brain_dependency_unit_owner"
+            columns: ["unit_id", "property_id"]
+            isOneToOne: false
+            referencedRelation: "property_units"
+            referencedColumns: ["id", "property_id"]
+          },
+          {
+            foreignKeyName: "community_context_dependencie_context_id_property_id_org_i_fkey"
+            columns: ["context_id", "property_id", "org_id"]
+            isOneToOne: false
+            referencedRelation: "shared_context_snapshots"
+            referencedColumns: ["id", "property_id", "org_id"]
+          },
+          {
+            foreignKeyName: "community_context_dependencies_asset_id_property_id_fkey"
+            columns: ["asset_id", "property_id"]
+            isOneToOne: false
+            referencedRelation: "content_assets"
+            referencedColumns: ["id", "property_id"]
+          },
+          {
+            foreignKeyName: "community_context_dependencies_evidence_id_property_id_fkey"
+            columns: ["evidence_id", "property_id"]
+            isOneToOne: false
+            referencedRelation: "community_evidence"
+            referencedColumns: ["id", "property_id"]
+          },
+          {
+            foreignKeyName: "community_context_dependencies_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "property_units"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      community_evidence: {
+        Row: {
+          allowed_uses: string[]
+          asset_id: string | null
+          asset_revision: number | null
+          audience: string
+          authority: string
+          competitor_capture_id: string | null
+          competitor_chunk_id: string | null
+          competitor_id: string | null
+          competitor_text_hash: string | null
+          content_hash: string
+          created_at: string
+          creative_id: string | null
+          effective_at: string
+          expires_at: string | null
+          id: string
+          material_version_id: string | null
+          org_id: string
+          origin: string
+          parent_evidence_id: string | null
+          property_id: string
+          purposes: string[]
+          review_after: string
+          review_status: string
+          updated_at: string
+        }
+        Insert: {
+          allowed_uses?: string[]
+          asset_id?: string | null
+          asset_revision?: number | null
+          audience?: string
+          authority: string
+          competitor_capture_id?: string | null
+          competitor_chunk_id?: string | null
+          competitor_id?: string | null
+          competitor_text_hash?: string | null
+          content_hash: string
+          created_at?: string
+          creative_id?: string | null
+          effective_at?: string
+          expires_at?: string | null
+          id?: string
+          material_version_id?: string | null
+          org_id: string
+          origin: string
+          parent_evidence_id?: string | null
+          property_id: string
+          purposes?: string[]
+          review_after: string
+          review_status?: string
+          updated_at?: string
+        }
+        Update: {
+          allowed_uses?: string[]
+          asset_id?: string | null
+          asset_revision?: number | null
+          audience?: string
+          authority?: string
+          competitor_capture_id?: string | null
+          competitor_chunk_id?: string | null
+          competitor_id?: string | null
+          competitor_text_hash?: string | null
+          content_hash?: string
+          created_at?: string
+          creative_id?: string | null
+          effective_at?: string
+          expires_at?: string | null
+          id?: string
+          material_version_id?: string | null
+          org_id?: string
+          origin?: string
+          parent_evidence_id?: string | null
+          property_id?: string
+          purposes?: string[]
+          review_after?: string
+          review_status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "brain_evidence_competitor_chunk_owner"
+            columns: ["competitor_chunk_id", "property_id"]
+            isOneToOne: false
+            referencedRelation: "competitor_content_chunks"
+            referencedColumns: ["id", "property_id"]
+          },
+          {
+            foreignKeyName: "community_evidence_asset_id_fkey"
+            columns: ["asset_id"]
+            isOneToOne: false
+            referencedRelation: "content_assets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_evidence_competitor_capture_id_fkey"
+            columns: ["competitor_capture_id"]
+            isOneToOne: false
+            referencedRelation: "market_source_captures"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_evidence_competitor_id_fkey"
+            columns: ["competitor_id"]
+            isOneToOne: false
+            referencedRelation: "competitors"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_evidence_creative_id_fkey"
+            columns: ["creative_id"]
+            isOneToOne: false
+            referencedRelation: "property_intelligence_documents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_evidence_material_version_id_fkey"
+            columns: ["material_version_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_material_versions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_evidence_parent_evidence_id_property_id_fkey"
+            columns: ["parent_evidence_id", "property_id"]
+            isOneToOne: false
+            referencedRelation: "community_evidence"
+            referencedColumns: ["id", "property_id"]
+          },
+          {
+            foreignKeyName: "community_evidence_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_evidence_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "community_evidence_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "community_evidence_property_id_org_id_fkey"
+            columns: ["property_id", "org_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id", "org_id"]
+          },
+          {
+            foreignKeyName: "community_evidence_property_id_org_id_fkey"
+            columns: ["property_id", "org_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id", "org_id"]
+          },
+        ]
+      }
+      community_file_renditions: {
+        Row: {
+          byte_size: number
+          content_hash: string
+          created_at: string
+          file_id: string
+          id: string
+          kind: string
+          metadata: Json
+          mime_type: string
+          original_hash: string
+          page: number
+          property_id: string
+          recipe: string
+          storage_bucket: string
+          storage_path: string
+        }
+        Insert: {
+          byte_size: number
+          content_hash: string
+          created_at?: string
+          file_id: string
+          id: string
+          kind: string
+          metadata?: Json
+          mime_type: string
+          original_hash: string
+          page: number
+          property_id: string
+          recipe: string
+          storage_bucket?: string
+          storage_path: string
+        }
+        Update: {
+          byte_size?: number
+          content_hash?: string
+          created_at?: string
+          file_id?: string
+          id?: string
+          kind?: string
+          metadata?: Json
+          mime_type?: string
+          original_hash?: string
+          page?: number
+          property_id?: string
+          recipe?: string
+          storage_bucket?: string
+          storage_path?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "community_file_renditions_file_id_property_id_fkey"
+            columns: ["file_id", "property_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_files"
+            referencedColumns: ["id", "property_id"]
+          },
+        ]
+      }
+      community_generation_bindings: {
+        Row: {
+          actor_id: string
+          context_id: string
+          created_at: string
+          deliverable_id: string | null
+          id: string
+          org_id: string
+          package_job_id: string | null
+          property_id: string
+          shared_job_id: string | null
+          social_generation_id: string | null
+        }
+        Insert: {
+          actor_id: string
+          context_id: string
+          created_at?: string
+          deliverable_id?: string | null
+          id?: string
+          org_id: string
+          package_job_id?: string | null
+          property_id: string
+          shared_job_id?: string | null
+          social_generation_id?: string | null
+        }
+        Update: {
+          actor_id?: string
+          context_id?: string
+          created_at?: string
+          deliverable_id?: string | null
+          id?: string
+          org_id?: string
+          package_job_id?: string | null
+          property_id?: string
+          shared_job_id?: string | null
+          social_generation_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "community_generation_bindings_context_id_property_id_org_i_fkey"
+            columns: ["context_id", "property_id", "org_id"]
+            isOneToOne: false
+            referencedRelation: "shared_context_snapshots"
+            referencedColumns: ["id", "property_id", "org_id"]
+          },
+          {
+            foreignKeyName: "community_generation_bindings_deliverable_id_fkey"
+            columns: ["deliverable_id"]
+            isOneToOne: false
+            referencedRelation: "community_generation_briefs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_generation_bindings_deliverable_id_property_id_fkey"
+            columns: ["deliverable_id", "property_id"]
+            isOneToOne: false
+            referencedRelation: "community_generation_briefs"
+            referencedColumns: ["id", "property_id"]
+          },
+          {
+            foreignKeyName: "community_generation_bindings_package_job_id_fkey"
+            columns: ["package_job_id"]
+            isOneToOne: true
+            referencedRelation: "siteforge_package_jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_generation_bindings_shared_job_id_fkey"
+            columns: ["shared_job_id"]
+            isOneToOne: true
+            referencedRelation: "shared_jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_generation_bindings_social_generation_id_fkey"
+            columns: ["social_generation_id"]
+            isOneToOne: true
+            referencedRelation: "forgestudio_generations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      community_generation_briefs: {
+        Row: {
+          actor_id: string
+          context_id: string
+          created_at: string
+          id: string
+          org_id: string
+          output_contract: Json
+          package_id: string
+          property_id: string
+          purpose: string
+          requirements: Json
+          review_criteria: Json
+        }
+        Insert: {
+          actor_id: string
+          context_id: string
+          created_at?: string
+          id: string
+          org_id: string
+          output_contract: Json
+          package_id: string
+          property_id: string
+          purpose: string
+          requirements: Json
+          review_criteria: Json
+        }
+        Update: {
+          actor_id?: string
+          context_id?: string
+          created_at?: string
+          id?: string
+          org_id?: string
+          output_contract?: Json
+          package_id?: string
+          property_id?: string
+          purpose?: string
+          requirements?: Json
+          review_criteria?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "community_generation_briefs_context_id_property_id_org_id_fkey"
+            columns: ["context_id", "property_id", "org_id"]
+            isOneToOne: false
+            referencedRelation: "shared_context_snapshots"
+            referencedColumns: ["id", "property_id", "org_id"]
+          },
+          {
+            foreignKeyName: "community_generation_briefs_package_id_property_id_fkey"
+            columns: ["package_id", "property_id"]
+            isOneToOne: false
+            referencedRelation: "community_service_packages"
+            referencedColumns: ["id", "property_id"]
+          },
+        ]
+      }
+      community_initiatives: {
+        Row: {
+          actor_id: string
+          baseline: Json
+          created_at: string
+          ends_on: string
+          id: string
+          name: string
+          objective: string
+          offering: string
+          org_id: string
+          property_id: string
+          starts_on: string
+          stop_conditions: Json
+          success_metric: string
+        }
+        Insert: {
+          actor_id: string
+          baseline: Json
+          created_at?: string
+          ends_on: string
+          id: string
+          name: string
+          objective: string
+          offering: string
+          org_id: string
+          property_id: string
+          starts_on: string
+          stop_conditions: Json
+          success_metric: string
+        }
+        Update: {
+          actor_id?: string
+          baseline?: Json
+          created_at?: string
+          ends_on?: string
+          id?: string
+          name?: string
+          objective?: string
+          offering?: string
+          org_id?: string
+          property_id?: string
+          starts_on?: string
+          stop_conditions?: Json
+          success_metric?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "community_initiatives_property_id_org_id_fkey"
+            columns: ["property_id", "org_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id", "org_id"]
+          },
+          {
+            foreignKeyName: "community_initiatives_property_id_org_id_fkey"
+            columns: ["property_id", "org_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id", "org_id"]
+          },
+        ]
+      }
+      community_measurement_receipts: {
+        Row: {
+          account_id: string
+          connection_id: string
+          created_at: string
+          currency: string | null
+          end_date: string | null
+          fetched_count: number
+          job_id: string
+          platform: string
+          property_id: string
+          provider_metadata: Json
+          rows_hash: string
+          start_date: string | null
+          status: string
+          timezone: string | null
+        }
+        Insert: {
+          account_id: string
+          connection_id: string
+          created_at?: string
+          currency?: string | null
+          end_date?: string | null
+          fetched_count: number
+          job_id: string
+          platform: string
+          property_id: string
+          provider_metadata: Json
+          rows_hash: string
+          start_date?: string | null
+          status: string
+          timezone?: string | null
+        }
+        Update: {
+          account_id?: string
+          connection_id?: string
+          created_at?: string
+          currency?: string | null
+          end_date?: string | null
+          fetched_count?: number
+          job_id?: string
+          platform?: string
+          property_id?: string
+          provider_metadata?: Json
+          rows_hash?: string
+          start_date?: string | null
+          status?: string
+          timezone?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "community_measurement_receipts_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "ad_account_connections"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_measurement_receipts_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "import_jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_measurement_receipts_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_measurement_receipts_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "community_measurement_receipts_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+        ]
+      }
+      community_memory_events: {
+        Row: {
+          created_at: string
+          id: string
+          job_id: string
+          operation: string
+          org_id: string
+          property_id: string
+          source_hash: string
+          source_id: string
+          source_table: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          job_id: string
+          operation: string
+          org_id: string
+          property_id: string
+          source_hash: string
+          source_id: string
+          source_table: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          job_id?: string
+          operation?: string
+          org_id?: string
+          property_id?: string
+          source_hash?: string
+          source_id?: string
+          source_table?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "community_memory_events_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "shared_jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_memory_events_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_memory_events_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "community_memory_events_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "community_memory_events_property_id_org_id_fkey"
+            columns: ["property_id", "org_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id", "org_id"]
+          },
+          {
+            foreignKeyName: "community_memory_events_property_id_org_id_fkey"
+            columns: ["property_id", "org_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id", "org_id"]
+          },
+        ]
+      }
+      community_memory_receipts: {
+        Row: {
+          event_id: string
+          outcome: string
+          projected_at: string
+          projection_hash: string
+          property_id: string
+        }
+        Insert: {
+          event_id: string
+          outcome: string
+          projected_at?: string
+          projection_hash: string
+          property_id: string
+        }
+        Update: {
+          event_id?: string
+          outcome?: string
+          projected_at?: string
+          projection_hash?: string
+          property_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "community_memory_receipts_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: true
+            referencedRelation: "community_memory_events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_memory_receipts_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_memory_receipts_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "community_memory_receipts_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+        ]
+      }
+      community_model_calls: {
+        Row: {
+          actor_id: string
+          created_at: string
+          finished_at: string | null
+          id: string
+          input_units: number
+          model: string
+          org_id: string
+          output_limit: number
+          portfolio_session_id: string | null
+          provider_object_id: string | null
+          request_hash: string
+          response: Json | null
+          scope_id: string
+          state: string
+          usage: Json | null
+        }
+        Insert: {
+          actor_id: string
+          created_at?: string
+          finished_at?: string | null
+          id: string
+          input_units: number
+          model: string
+          org_id: string
+          output_limit: number
+          portfolio_session_id?: string | null
+          provider_object_id?: string | null
+          request_hash: string
+          response?: Json | null
+          scope_id: string
+          state?: string
+          usage?: Json | null
+        }
+        Update: {
+          actor_id?: string
+          created_at?: string
+          finished_at?: string | null
+          id?: string
+          input_units?: number
+          model?: string
+          org_id?: string
+          output_limit?: number
+          portfolio_session_id?: string | null
+          provider_object_id?: string | null
+          request_hash?: string
+          response?: Json | null
+          scope_id?: string
+          state?: string
+          usage?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "community_model_calls_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_model_calls_portfolio_session_id_fkey"
+            columns: ["portfolio_session_id"]
+            isOneToOne: false
+            referencedRelation: "community_portfolio_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_model_calls_provider_object_id_fkey"
+            columns: ["provider_object_id"]
+            isOneToOne: false
+            referencedRelation: "community_provider_objects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_model_calls_scope_id_fkey"
+            columns: ["scope_id"]
+            isOneToOne: false
+            referencedRelation: "community_task_scopes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      community_operation_receipts: {
+        Row: {
+          counts: Json
+          created_at: string
+          duration_ms: number | null
+          id: string
+          operation: string
+          property_id: string
+          request_id: string | null
+          source_hash: string | null
+          status: string
+        }
+        Insert: {
+          counts?: Json
+          created_at?: string
+          duration_ms?: number | null
+          id?: string
+          operation: string
+          property_id: string
+          request_id?: string | null
+          source_hash?: string | null
+          status: string
+        }
+        Update: {
+          counts?: Json
+          created_at?: string
+          duration_ms?: number | null
+          id?: string
+          operation?: string
+          property_id?: string
+          request_id?: string | null
+          source_hash?: string | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "community_operation_receipts_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_operation_receipts_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "community_operation_receipts_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+        ]
+      }
+      community_package_budgets: {
+        Row: {
+          budget_id: string
+          package_id: string
+        }
+        Insert: {
+          budget_id: string
+          package_id: string
+        }
+        Update: {
+          budget_id?: string
+          package_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "community_package_budgets_budget_id_fkey"
+            columns: ["budget_id"]
+            isOneToOne: true
+            referencedRelation: "shared_execution_budgets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_package_budgets_package_id_fkey"
+            columns: ["package_id"]
+            isOneToOne: true
+            referencedRelation: "community_service_packages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      community_portfolio_messages: {
+        Row: {
+          body: string
+          created_at: string
+          evidence: Json
+          id: string
+          role: string
+          session_id: string
+        }
+        Insert: {
+          body: string
+          created_at?: string
+          evidence?: Json
+          id: string
+          role: string
+          session_id: string
+        }
+        Update: {
+          body?: string
+          created_at?: string
+          evidence?: Json
+          id?: string
+          role?: string
+          session_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "community_portfolio_messages_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "community_portfolio_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      community_portfolio_sessions: {
+        Row: {
+          actor_id: string
+          created_at: string
+          expires_at: string
+          id: string
+          org_id: string
+          permission_hash: string
+          property_ids: string[]
+          title: string
+        }
+        Insert: {
+          actor_id: string
+          created_at?: string
+          expires_at?: string
+          id: string
+          org_id: string
+          permission_hash: string
+          property_ids: string[]
+          title: string
+        }
+        Update: {
+          actor_id?: string
+          created_at?: string
+          expires_at?: string
+          id?: string
+          org_id?: string
+          permission_hash?: string
+          property_ids?: string[]
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "community_portfolio_sessions_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      community_processing_reservations: {
+        Row: {
+          created_at: string
+          id: string
+          native_id: string
+          native_kind: string
+          operation: string
+          package_id: string
+          reserved_cents: number
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          native_id: string
+          native_kind: string
+          operation: string
+          package_id: string
+          reserved_cents: number
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          native_id?: string
+          native_kind?: string
+          operation?: string
+          package_id?: string
+          reserved_cents?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "community_processing_reservations_package_id_fkey"
+            columns: ["package_id"]
+            isOneToOne: false
+            referencedRelation: "community_service_packages"
+            referencedColumns: ["id"]
           },
         ]
       }
@@ -3826,6 +5271,629 @@ export type Database = {
             foreignKeyName: "community_profiles_property_id_fkey"
             columns: ["property_id"]
             isOneToOne: true
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+        ]
+      }
+      community_provider_objects: {
+        Row: {
+          context_id: string | null
+          created_at: string
+          deleted_at: string | null
+          expires_at: string
+          id: string
+          last_checked_at: string | null
+          object_id: string
+          object_kind: string
+          parents: string[]
+          policy_revision: string
+          portfolio_session_id: string | null
+          project_ref: string
+          property_id: string | null
+          provider: string
+          scope_id: string
+          state: string
+        }
+        Insert: {
+          context_id?: string | null
+          created_at?: string
+          deleted_at?: string | null
+          expires_at: string
+          id?: string
+          last_checked_at?: string | null
+          object_id: string
+          object_kind: string
+          parents?: string[]
+          policy_revision: string
+          portfolio_session_id?: string | null
+          project_ref: string
+          property_id?: string | null
+          provider: string
+          scope_id: string
+          state?: string
+        }
+        Update: {
+          context_id?: string | null
+          created_at?: string
+          deleted_at?: string | null
+          expires_at?: string
+          id?: string
+          last_checked_at?: string | null
+          object_id?: string
+          object_kind?: string
+          parents?: string[]
+          policy_revision?: string
+          portfolio_session_id?: string | null
+          project_ref?: string
+          property_id?: string | null
+          provider?: string
+          scope_id?: string
+          state?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "community_provider_objects_context_id_fkey"
+            columns: ["context_id"]
+            isOneToOne: false
+            referencedRelation: "shared_context_snapshots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_provider_objects_portfolio_session_id_fkey"
+            columns: ["portfolio_session_id"]
+            isOneToOne: false
+            referencedRelation: "community_portfolio_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_provider_objects_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_provider_objects_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "community_provider_objects_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "community_provider_objects_scope_id_fkey"
+            columns: ["scope_id"]
+            isOneToOne: false
+            referencedRelation: "community_task_scopes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      community_query_embeddings: {
+        Row: {
+          actor_id: string
+          created_at: string
+          embedding: string | null
+          expires_at: string
+          id: string
+          model: string
+          permission_hash: string
+          property_id: string
+          purpose: string
+          query_hash: string
+          state: string
+          units: number
+        }
+        Insert: {
+          actor_id: string
+          created_at?: string
+          embedding?: string | null
+          expires_at?: string
+          id?: string
+          model?: string
+          permission_hash: string
+          property_id: string
+          purpose: string
+          query_hash: string
+          state: string
+          units: number
+        }
+        Update: {
+          actor_id?: string
+          created_at?: string
+          embedding?: string | null
+          expires_at?: string
+          id?: string
+          model?: string
+          permission_hash?: string
+          property_id?: string
+          purpose?: string
+          query_hash?: string
+          state?: string
+          units?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "community_query_embeddings_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_query_embeddings_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "community_query_embeddings_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+        ]
+      }
+      community_replay_runs: {
+        Row: {
+          actor_id: string
+          created_at: string
+          id: string
+          property_id: string
+          records: Json
+          request_hash: string
+          result: Json
+          scope_id: string
+        }
+        Insert: {
+          actor_id: string
+          created_at?: string
+          id: string
+          property_id: string
+          records: Json
+          request_hash: string
+          result: Json
+          scope_id: string
+        }
+        Update: {
+          actor_id?: string
+          created_at?: string
+          id?: string
+          property_id?: string
+          records?: Json
+          request_hash?: string
+          result?: Json
+          scope_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "community_replay_runs_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_replay_runs_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "community_replay_runs_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "community_replay_runs_scope_id_fkey"
+            columns: ["scope_id"]
+            isOneToOne: false
+            referencedRelation: "community_task_scopes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      community_rollout_events: {
+        Row: {
+          actor_id: string
+          after_state: Json
+          before_state: Json | null
+          created_at: string
+          id: string
+          property_id: string
+          reason: string
+        }
+        Insert: {
+          actor_id: string
+          after_state: Json
+          before_state?: Json | null
+          created_at?: string
+          id?: string
+          property_id: string
+          reason: string
+        }
+        Update: {
+          actor_id?: string
+          after_state?: Json
+          before_state?: Json | null
+          created_at?: string
+          id?: string
+          property_id?: string
+          reason?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "community_rollout_events_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_rollout_events_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "community_rollout_events_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+        ]
+      }
+      community_service_packages: {
+        Row: {
+          actor_id: string
+          ai_budget_usd: number
+          brief: Json
+          brief_hash: string
+          created_at: string
+          id: string
+          initiative_id: string
+          previous_id: string | null
+          property_id: string
+          state: string
+          version: number
+        }
+        Insert: {
+          actor_id: string
+          ai_budget_usd: number
+          brief: Json
+          brief_hash: string
+          created_at?: string
+          id: string
+          initiative_id: string
+          previous_id?: string | null
+          property_id: string
+          state?: string
+          version: number
+        }
+        Update: {
+          actor_id?: string
+          ai_budget_usd?: number
+          brief?: Json
+          brief_hash?: string
+          created_at?: string
+          id?: string
+          initiative_id?: string
+          previous_id?: string | null
+          property_id?: string
+          state?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "community_service_packages_initiative_id_property_id_fkey"
+            columns: ["initiative_id", "property_id"]
+            isOneToOne: false
+            referencedRelation: "community_initiatives"
+            referencedColumns: ["id", "property_id"]
+          },
+          {
+            foreignKeyName: "community_service_packages_previous_id_property_id_fkey"
+            columns: ["previous_id", "property_id"]
+            isOneToOne: false
+            referencedRelation: "community_service_packages"
+            referencedColumns: ["id", "property_id"]
+          },
+        ]
+      }
+      community_source_reviews: {
+        Row: {
+          actor_id: string
+          allowed_uses: string[]
+          audience: string
+          expires_at: string | null
+          origin: string
+          property_id: string
+          purposes: string[]
+          reason: string
+          review_after: string
+          reviewed_at: string
+          version_id: string
+        }
+        Insert: {
+          actor_id: string
+          allowed_uses: string[]
+          audience: string
+          expires_at?: string | null
+          origin: string
+          property_id: string
+          purposes: string[]
+          reason: string
+          review_after: string
+          reviewed_at?: string
+          version_id: string
+        }
+        Update: {
+          actor_id?: string
+          allowed_uses?: string[]
+          audience?: string
+          expires_at?: string | null
+          origin?: string
+          property_id?: string
+          purposes?: string[]
+          reason?: string
+          review_after?: string
+          reviewed_at?: string
+          version_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "community_source_reviews_version_id_fkey"
+            columns: ["version_id"]
+            isOneToOne: true
+            referencedRelation: "knowledge_material_versions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_source_reviews_version_id_property_id_fkey"
+            columns: ["version_id", "property_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_material_versions"
+            referencedColumns: ["id", "property_id"]
+          },
+        ]
+      }
+      community_source_schedules: {
+        Row: {
+          actor_id: string
+          config_hash: string
+          enabled: boolean
+          failures: number
+          interval_hours: number
+          last_completed_at: string | null
+          last_state: string | null
+          lease_token: string | null
+          lease_until: string | null
+          next_due_at: string
+          property_id: string
+          revision: number
+          source_id: string
+          updated_at: string
+        }
+        Insert: {
+          actor_id: string
+          config_hash: string
+          enabled?: boolean
+          failures?: number
+          interval_hours: number
+          last_completed_at?: string | null
+          last_state?: string | null
+          lease_token?: string | null
+          lease_until?: string | null
+          next_due_at?: string
+          property_id: string
+          revision?: number
+          source_id: string
+          updated_at?: string
+        }
+        Update: {
+          actor_id?: string
+          config_hash?: string
+          enabled?: boolean
+          failures?: number
+          interval_hours?: number
+          last_completed_at?: string | null
+          last_state?: string | null
+          lease_token?: string | null
+          lease_until?: string | null
+          next_due_at?: string
+          property_id?: string
+          revision?: number
+          source_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "community_source_schedules_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_source_schedules_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "community_source_schedules_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "community_source_schedules_source_id_fkey"
+            columns: ["source_id"]
+            isOneToOne: true
+            referencedRelation: "siteforge_asset_sources"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      community_source_syncs: {
+        Row: {
+          actor_id: string
+          config_hash: string
+          inventory: Json | null
+          inventory_hash: string | null
+          lease_until: string
+          run_id: string
+          scope_id: string
+          source_id: string
+        }
+        Insert: {
+          actor_id: string
+          config_hash: string
+          inventory?: Json | null
+          inventory_hash?: string | null
+          lease_until: string
+          run_id: string
+          scope_id: string
+          source_id: string
+        }
+        Update: {
+          actor_id?: string
+          config_hash?: string
+          inventory?: Json | null
+          inventory_hash?: string | null
+          lease_until?: string
+          run_id?: string
+          scope_id?: string
+          source_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "community_source_syncs_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "siteforge_asset_ingest_runs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_source_syncs_scope_id_fkey"
+            columns: ["scope_id"]
+            isOneToOne: false
+            referencedRelation: "community_task_scopes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_source_syncs_source_id_fkey"
+            columns: ["source_id"]
+            isOneToOne: true
+            referencedRelation: "siteforge_asset_sources"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      community_task_scopes: {
+        Row: {
+          actor_id: string
+          created_at: string
+          expires_at: string
+          id: string
+          kind: string
+          org_id: string
+          permission_hash: string
+          policy_revision: number
+          property_ids: string[]
+          purpose: string
+        }
+        Insert: {
+          actor_id: string
+          created_at?: string
+          expires_at: string
+          id?: string
+          kind: string
+          org_id: string
+          permission_hash: string
+          policy_revision?: number
+          property_ids: string[]
+          purpose: string
+        }
+        Update: {
+          actor_id?: string
+          created_at?: string
+          expires_at?: string
+          id?: string
+          kind?: string
+          org_id?: string
+          permission_hash?: string
+          policy_revision?: number
+          property_ids?: string[]
+          purpose?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "community_task_scopes_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      community_worker_grants: {
+        Row: {
+          created_at: string
+          expires_at: string
+          principal_id: string
+          property_id: string
+          revoked_at: string | null
+        }
+        Insert: {
+          created_at?: string
+          expires_at: string
+          principal_id: string
+          property_id: string
+          revoked_at?: string | null
+        }
+        Update: {
+          created_at?: string
+          expires_at?: string
+          principal_id?: string
+          property_id?: string
+          revoked_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "community_worker_grants_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_worker_grants_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "community_worker_grants_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
             referencedRelation: "vw_property_marketing_setup"
             referencedColumns: ["property_id"]
           },
@@ -3941,9 +6009,13 @@ export type Database = {
           content: string
           content_hash: string | null
           embedding: string | null
+          embedding_model: string | null
+          embedding_recipe: string | null
+          evidence_id: string | null
           id: string
           page_type: string | null
           page_url: string
+          property_id: string
           scraped_at: string | null
         }
         Insert: {
@@ -3953,9 +6025,13 @@ export type Database = {
           content: string
           content_hash?: string | null
           embedding?: string | null
+          embedding_model?: string | null
+          embedding_recipe?: string | null
+          evidence_id?: string | null
           id?: string
           page_type?: string | null
           page_url: string
+          property_id: string
           scraped_at?: string | null
         }
         Update: {
@@ -3965,12 +6041,30 @@ export type Database = {
           content?: string
           content_hash?: string | null
           embedding?: string | null
+          embedding_model?: string | null
+          embedding_recipe?: string | null
+          evidence_id?: string | null
           id?: string
           page_type?: string | null
           page_url?: string
+          property_id?: string
           scraped_at?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "brain_competitor_evidence_owner"
+            columns: ["evidence_id", "property_id"]
+            isOneToOne: false
+            referencedRelation: "community_evidence"
+            referencedColumns: ["id", "property_id"]
+          },
+          {
+            foreignKeyName: "brain_competitor_owner"
+            columns: ["competitor_id", "property_id"]
+            isOneToOne: false
+            referencedRelation: "competitors"
+            referencedColumns: ["id", "property_id"]
+          },
           {
             foreignKeyName: "competitor_content_chunks_capture_id_fkey"
             columns: ["capture_id"]
@@ -4602,6 +6696,8 @@ export type Database = {
           last_used_at: string | null
           name: string
           org_id: string | null
+          original_file_id: string | null
+          original_page: number | null
           property_id: string | null
           quality_score: number | null
           rejection_reason: string | null
@@ -4660,6 +6756,8 @@ export type Database = {
           last_used_at?: string | null
           name: string
           org_id?: string | null
+          original_file_id?: string | null
+          original_page?: number | null
           property_id?: string | null
           quality_score?: number | null
           rejection_reason?: string | null
@@ -4718,6 +6816,8 @@ export type Database = {
           last_used_at?: string | null
           name?: string
           org_id?: string | null
+          original_file_id?: string | null
+          original_page?: number | null
           property_id?: string | null
           quality_score?: number | null
           rejection_reason?: string | null
@@ -4738,6 +6838,48 @@ export type Database = {
           width?: number | null
         }
         Relationships: [
+          {
+            foreignKeyName: "brain_asset_duplicate_owner"
+            columns: ["duplicate_of", "property_id"]
+            isOneToOne: false
+            referencedRelation: "content_assets"
+            referencedColumns: ["id", "property_id"]
+          },
+          {
+            foreignKeyName: "brain_asset_original_owner"
+            columns: ["original_file_id", "property_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_files"
+            referencedColumns: ["id", "property_id"]
+          },
+          {
+            foreignKeyName: "brain_asset_owner"
+            columns: ["property_id", "org_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id", "org_id"]
+          },
+          {
+            foreignKeyName: "brain_asset_owner"
+            columns: ["property_id", "org_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id", "org_id"]
+          },
+          {
+            foreignKeyName: "brain_asset_parent_owner"
+            columns: ["source_asset_id", "property_id"]
+            isOneToOne: false
+            referencedRelation: "content_assets"
+            referencedColumns: ["id", "property_id"]
+          },
+          {
+            foreignKeyName: "brain_asset_replacement_owner"
+            columns: ["replacement_asset_id", "property_id"]
+            isOneToOne: false
+            referencedRelation: "content_assets"
+            referencedColumns: ["id", "property_id"]
+          },
           {
             foreignKeyName: "content_assets_approved_by_fkey"
             columns: ["approved_by"]
@@ -7060,6 +9202,9 @@ export type Database = {
           content: string
           created_at: string | null
           embedding: string | null
+          embedding_model: string | null
+          embedding_recipe: string | null
+          evidence_id: string | null
           id: string
           metadata: Json | null
           original_file_name: string | null
@@ -7068,11 +9213,15 @@ export type Database = {
           original_file_type: string | null
           original_file_url: string | null
           property_id: string | null
+          search_text: unknown
         }
         Insert: {
           content: string
           created_at?: string | null
           embedding?: string | null
+          embedding_model?: string | null
+          embedding_recipe?: string | null
+          evidence_id?: string | null
           id?: string
           metadata?: Json | null
           original_file_name?: string | null
@@ -7081,11 +9230,15 @@ export type Database = {
           original_file_type?: string | null
           original_file_url?: string | null
           property_id?: string | null
+          search_text?: unknown
         }
         Update: {
           content?: string
           created_at?: string | null
           embedding?: string | null
+          embedding_model?: string | null
+          embedding_recipe?: string | null
+          evidence_id?: string | null
           id?: string
           metadata?: Json | null
           original_file_name?: string | null
@@ -7094,8 +9247,16 @@ export type Database = {
           original_file_type?: string | null
           original_file_url?: string | null
           property_id?: string | null
+          search_text?: unknown
         }
         Relationships: [
+          {
+            foreignKeyName: "brain_document_evidence_owner"
+            columns: ["evidence_id", "property_id"]
+            isOneToOne: false
+            referencedRelation: "community_evidence"
+            referencedColumns: ["id", "property_id"]
+          },
           {
             foreignKeyName: "documents_property_id_fkey"
             columns: ["property_id"]
@@ -7837,6 +9998,7 @@ export type Database = {
           org_id: string
           property_id: string
           state: string
+          storage_bucket: string
           storage_path: string
           updated_at: string
         }
@@ -7849,6 +10011,7 @@ export type Database = {
           org_id: string
           property_id: string
           state?: string
+          storage_bucket?: string
           storage_path: string
           updated_at?: string
         }
@@ -7861,6 +10024,7 @@ export type Database = {
           org_id?: string
           property_id?: string
           state?: string
+          storage_bucket?: string
           storage_path?: string
           updated_at?: string
         }
@@ -11957,8 +14121,12 @@ export type Database = {
           created_at: string
           created_by: string
           id: string
+          last_check_attempt_at: string | null
+          last_check_changed_at: string | null
+          last_check_success_at: string | null
           last_release_id: string | null
           latest_version_id: string | null
+          next_check_at: string | null
           org_id: string
           property_id: string
           updated_at: string
@@ -11968,8 +14136,12 @@ export type Database = {
           created_at?: string
           created_by: string
           id: string
+          last_check_attempt_at?: string | null
+          last_check_changed_at?: string | null
+          last_check_success_at?: string | null
           last_release_id?: string | null
           latest_version_id?: string | null
+          next_check_at?: string | null
           org_id: string
           property_id: string
           updated_at?: string
@@ -11979,8 +14151,12 @@ export type Database = {
           created_at?: string
           created_by?: string
           id?: string
+          last_check_attempt_at?: string | null
+          last_check_changed_at?: string | null
+          last_check_success_at?: string | null
           last_release_id?: string | null
           latest_version_id?: string | null
+          next_check_at?: string | null
           org_id?: string
           property_id?: string
           updated_at?: string
@@ -18043,6 +20219,159 @@ export type Database = {
           },
         ]
       }
+      property_intelligence_changes: {
+        Row: {
+          actor_id: string
+          after_value: Json
+          before_value: Json | null
+          created_at: string
+          id: string
+          input: Json
+          org_id: string
+          property_id: string
+          result: Json
+        }
+        Insert: {
+          actor_id: string
+          after_value: Json
+          before_value?: Json | null
+          created_at?: string
+          id: string
+          input: Json
+          org_id: string
+          property_id: string
+          result: Json
+        }
+        Update: {
+          actor_id?: string
+          after_value?: Json
+          before_value?: Json | null
+          created_at?: string
+          id?: string
+          input?: Json
+          org_id?: string
+          property_id?: string
+          result?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "property_intelligence_changes_actor_id_fkey"
+            columns: ["actor_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_intelligence_changes_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_intelligence_changes_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_intelligence_changes_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "property_intelligence_changes_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+        ]
+      }
+      property_intelligence_documents: {
+        Row: {
+          actor_id: string
+          created_at: string
+          id: string
+          key: string
+          kind: string
+          locked: boolean
+          org_id: string
+          payload: Json
+          property_id: string
+          revision: number
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          actor_id: string
+          created_at?: string
+          id?: string
+          key: string
+          kind: string
+          locked?: boolean
+          org_id: string
+          payload: Json
+          property_id: string
+          revision?: number
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          actor_id?: string
+          created_at?: string
+          id?: string
+          key?: string
+          kind?: string
+          locked?: boolean
+          org_id?: string
+          payload?: Json
+          property_id?: string
+          revision?: number
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "property_intelligence_documents_actor_id_fkey"
+            columns: ["actor_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_intelligence_documents_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_intelligence_documents_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_intelligence_documents_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "property_intelligence_documents_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+        ]
+      }
       property_legal_cancellations: {
         Row: {
           actor_id: string
@@ -19736,6 +22065,27 @@ export type Database = {
           unit_type?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "brain_unit_drawing_owner"
+            columns: ["floor_plan_image_asset_id", "property_id"]
+            isOneToOne: false
+            referencedRelation: "content_assets"
+            referencedColumns: ["id", "property_id"]
+          },
+          {
+            foreignKeyName: "brain_unit_owner"
+            columns: ["property_id", "org_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id", "org_id"]
+          },
+          {
+            foreignKeyName: "brain_unit_owner"
+            columns: ["property_id", "org_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id", "org_id"]
+          },
           {
             foreignKeyName: "property_units_floor_plan_image_asset_id_fkey"
             columns: ["floor_plan_image_asset_id"]
@@ -23486,8 +25836,10 @@ export type Database = {
           context_payload: Json
           created_at: string
           id: string
+          invalidated_at: string | null
           org_id: string
           property_id: string | null
+          scope_kind: string
           source_domain: string
           source_ref: string | null
         }
@@ -23497,8 +25849,10 @@ export type Database = {
           context_payload?: Json
           created_at?: string
           id?: string
+          invalidated_at?: string | null
           org_id: string
           property_id?: string | null
+          scope_kind?: string
           source_domain: string
           source_ref?: string | null
         }
@@ -23508,8 +25862,10 @@ export type Database = {
           context_payload?: Json
           created_at?: string
           id?: string
+          invalidated_at?: string | null
           org_id?: string
           property_id?: string | null
+          scope_kind?: string
           source_domain?: string
           source_ref?: string | null
         }
@@ -23854,6 +26210,7 @@ export type Database = {
           property_id: string | null
           queued_at: string
           retry_at: string | null
+          scope_kind: string
           stage: string
           started_at: string | null
           status_reason: string | null
@@ -23888,6 +26245,7 @@ export type Database = {
           property_id?: string | null
           queued_at?: string
           retry_at?: string | null
+          scope_kind?: string
           stage?: string
           started_at?: string | null
           status_reason?: string | null
@@ -23922,6 +26280,7 @@ export type Database = {
           property_id?: string | null
           queued_at?: string
           retry_at?: string | null
+          scope_kind?: string
           stage?: string
           started_at?: string | null
           status_reason?: string | null
@@ -23932,6 +26291,13 @@ export type Database = {
           workflow_run_id?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "brain_job_context_owner"
+            columns: ["context_snapshot_id", "property_id", "org_id"]
+            isOneToOne: false
+            referencedRelation: "shared_context_snapshots"
+            referencedColumns: ["id", "property_id", "org_id"]
+          },
           {
             foreignKeyName: "shared_jobs_context_snapshot_id_fkey"
             columns: ["context_snapshot_id"]
@@ -28743,6 +31109,265 @@ export type Database = {
           },
         ]
       }
+      siteforge_package_jobs: {
+        Row: {
+          actor_id: string
+          brain_context_id: string | null
+          community_deliverable_id: string | null
+          created_at: string
+          error_message: string | null
+          id: string
+          input_file_id: string | null
+          input_path: string | null
+          instructions: string
+          lease_until: string | null
+          model: string
+          org_id: string
+          package_bytes: number | null
+          package_hash: string | null
+          package_path: string | null
+          parent_id: string | null
+          property_id: string
+          request_hash: string
+          response_id: string | null
+          source_hash: string
+          source_snapshot: Json
+          state: string
+          target: string
+          updated_at: string
+          usage: Json | null
+        }
+        Insert: {
+          actor_id: string
+          brain_context_id?: string | null
+          community_deliverable_id?: string | null
+          created_at?: string
+          error_message?: string | null
+          id: string
+          input_file_id?: string | null
+          input_path?: string | null
+          instructions: string
+          lease_until?: string | null
+          model?: string
+          org_id: string
+          package_bytes?: number | null
+          package_hash?: string | null
+          package_path?: string | null
+          parent_id?: string | null
+          property_id: string
+          request_hash: string
+          response_id?: string | null
+          source_hash: string
+          source_snapshot: Json
+          state?: string
+          target: string
+          updated_at?: string
+          usage?: Json | null
+        }
+        Update: {
+          actor_id?: string
+          brain_context_id?: string | null
+          community_deliverable_id?: string | null
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          input_file_id?: string | null
+          input_path?: string | null
+          instructions?: string
+          lease_until?: string | null
+          model?: string
+          org_id?: string
+          package_bytes?: number | null
+          package_hash?: string | null
+          package_path?: string | null
+          parent_id?: string | null
+          property_id?: string
+          request_hash?: string
+          response_id?: string | null
+          source_hash?: string
+          source_snapshot?: Json
+          state?: string
+          target?: string
+          updated_at?: string
+          usage?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "siteforge_package_jobs_actor_id_fkey"
+            columns: ["actor_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_package_jobs_brain_context_id_fkey"
+            columns: ["brain_context_id"]
+            isOneToOne: false
+            referencedRelation: "shared_context_snapshots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_package_jobs_community_deliverable_id_fkey"
+            columns: ["community_deliverable_id"]
+            isOneToOne: false
+            referencedRelation: "community_generation_briefs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_package_jobs_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_package_jobs_parent_id_fkey"
+            columns: ["parent_id"]
+            isOneToOne: false
+            referencedRelation: "siteforge_package_jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_package_jobs_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_package_jobs_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "siteforge_package_jobs_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+        ]
+      }
+      siteforge_package_releases: {
+        Row: {
+          actor_id: string
+          approval_id: string | null
+          created_at: string
+          id: string
+          job_id: string
+          kind: string
+          org_id: string
+          package_hash: string
+          preview_id: string | null
+          property_id: string
+          receipt: Json
+          state: string
+          target_id: string
+          target_snapshot: Json
+          updated_at: string
+        }
+        Insert: {
+          actor_id: string
+          approval_id?: string | null
+          created_at?: string
+          id: string
+          job_id: string
+          kind: string
+          org_id: string
+          package_hash: string
+          preview_id?: string | null
+          property_id: string
+          receipt?: Json
+          state: string
+          target_id: string
+          target_snapshot: Json
+          updated_at?: string
+        }
+        Update: {
+          actor_id?: string
+          approval_id?: string | null
+          created_at?: string
+          id?: string
+          job_id?: string
+          kind?: string
+          org_id?: string
+          package_hash?: string
+          preview_id?: string | null
+          property_id?: string
+          receipt?: Json
+          state?: string
+          target_id?: string
+          target_snapshot?: Json
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "siteforge_package_releases_actor_id_fkey"
+            columns: ["actor_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_package_releases_approval_id_fkey"
+            columns: ["approval_id"]
+            isOneToOne: false
+            referencedRelation: "siteforge_package_releases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_package_releases_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "siteforge_package_jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_package_releases_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_package_releases_preview_id_fkey"
+            columns: ["preview_id"]
+            isOneToOne: false
+            referencedRelation: "siteforge_package_releases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_package_releases_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siteforge_package_releases_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "siteforge_package_releases_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "siteforge_package_releases_target_id_fkey"
+            columns: ["target_id"]
+            isOneToOne: false
+            referencedRelation: "siteforge_wordpress_targets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       siteforge_plan_versions: {
         Row: {
           availability_content_hash: string | null
@@ -33192,1287 +35817,6 @@ export type Database = {
           },
         ]
       }
-      property_intelligence_changes: {
-        Row: {
-          actor_id: string
-          after_value: Json
-          before_value: Json | null
-          created_at: string
-          id: string
-          input: Json
-          org_id: string
-          property_id: string
-          result: Json
-        }
-        Insert: {
-          actor_id: string
-          after_value: Json
-          before_value?: Json | null
-          created_at?: string
-          id: string
-          input: Json
-          org_id: string
-          property_id: string
-          result: Json
-        }
-        Update: {
-          actor_id?: string
-          after_value?: Json
-          before_value?: Json | null
-          created_at?: string
-          id?: string
-          input?: Json
-          org_id?: string
-          property_id?: string
-          result?: Json
-        }
-        Relationships: [
-          {
-            foreignKeyName: "property_intelligence_changes_actor_id_fkey"
-            columns: ["actor_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "property_intelligence_changes_org_id_fkey"
-            columns: ["org_id"]
-            isOneToOne: false
-            referencedRelation: "organizations"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "property_intelligence_changes_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "properties"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "property_intelligence_changes_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "vw_import_status"
-            referencedColumns: ["property_id"]
-          },
-          {
-            foreignKeyName: "property_intelligence_changes_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "vw_property_marketing_setup"
-            referencedColumns: ["property_id"]
-          },
-        ]
-      }
-      property_intelligence_documents: {
-        Row: {
-          actor_id: string
-          created_at: string
-          id: string
-          key: string
-          kind: string
-          locked: boolean
-          org_id: string
-          payload: Json
-          property_id: string
-          revision: number
-          status: string
-          updated_at: string
-        }
-        Insert: {
-          actor_id: string
-          created_at?: string
-          id?: string
-          key: string
-          kind: string
-          locked?: boolean
-          org_id: string
-          payload: Json
-          property_id: string
-          revision?: number
-          status?: string
-          updated_at?: string
-        }
-        Update: {
-          actor_id?: string
-          created_at?: string
-          id?: string
-          key?: string
-          kind?: string
-          locked?: boolean
-          org_id?: string
-          payload?: Json
-          property_id?: string
-          revision?: number
-          status?: string
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "property_intelligence_documents_actor_id_fkey"
-            columns: ["actor_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "property_intelligence_documents_org_id_fkey"
-            columns: ["org_id"]
-            isOneToOne: false
-            referencedRelation: "organizations"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "property_intelligence_documents_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "properties"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "property_intelligence_documents_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "vw_import_status"
-            referencedColumns: ["property_id"]
-          },
-          {
-            foreignKeyName: "property_intelligence_documents_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "vw_property_marketing_setup"
-            referencedColumns: ["property_id"]
-          },
-        ]
-      }
-      siteforge_client_decisions: {
-        Row: {
-          artifact_content_hash: string
-          artifact_id: string
-          canonical_url: string | null
-          certification_evidence_id: string | null
-          certification_report_hash: string | null
-          certified_at: string | null
-          created_at: string
-          decision: string
-          id: string
-          org_id: string
-          property_id: string
-          rationale: string
-          review_session_id: string
-          review_token_id: string | null
-          reviewer_email: string | null
-          reviewer_name: string | null
-          website_id: string
-        }
-        Insert: {
-          artifact_content_hash: string
-          artifact_id: string
-          canonical_url?: string | null
-          certification_evidence_id?: string | null
-          certification_report_hash?: string | null
-          certified_at?: string | null
-          created_at?: string
-          decision: string
-          id?: string
-          org_id: string
-          property_id: string
-          rationale: string
-          review_session_id: string
-          review_token_id?: string | null
-          reviewer_email?: string | null
-          reviewer_name?: string | null
-          website_id: string
-        }
-        Update: {
-          artifact_content_hash?: string
-          artifact_id?: string
-          canonical_url?: string | null
-          certification_evidence_id?: string | null
-          certification_report_hash?: string | null
-          certified_at?: string | null
-          created_at?: string
-          decision?: string
-          id?: string
-          org_id?: string
-          property_id?: string
-          rationale?: string
-          review_session_id?: string
-          review_token_id?: string | null
-          reviewer_email?: string | null
-          reviewer_name?: string | null
-          website_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "siteforge_client_decision_session_tenant_fkey"
-            columns: [
-              "review_session_id",
-              "org_id",
-              "property_id",
-              "website_id",
-            ]
-            isOneToOne: false
-            referencedRelation: "siteforge_review_sessions"
-            referencedColumns: ["id", "org_id", "property_id", "website_id"]
-          },
-          {
-            foreignKeyName: "siteforge_client_decision_token_tenant_fkey"
-            columns: [
-              "review_token_id",
-              "review_session_id",
-              "org_id",
-              "property_id",
-              "website_id",
-            ]
-            isOneToOne: false
-            referencedRelation: "siteforge_review_tokens"
-            referencedColumns: [
-              "id",
-              "review_session_id",
-              "org_id",
-              "property_id",
-              "website_id",
-            ]
-          },
-          {
-            foreignKeyName: "siteforge_client_decisions_artifact_id_fkey"
-            columns: ["artifact_id"]
-            isOneToOne: false
-            referencedRelation: "siteforge_blueprint_versions"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_client_decisions_certification_evidence_id_fkey"
-            columns: ["certification_evidence_id"]
-            isOneToOne: false
-            referencedRelation: "siteforge_certification_evidence"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_client_decisions_org_id_fkey"
-            columns: ["org_id"]
-            isOneToOne: false
-            referencedRelation: "organizations"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_client_decisions_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "properties"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_client_decisions_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "vw_import_status"
-            referencedColumns: ["property_id"]
-          },
-          {
-            foreignKeyName: "siteforge_client_decisions_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "vw_property_marketing_setup"
-            referencedColumns: ["property_id"]
-          },
-          {
-            foreignKeyName: "siteforge_client_decisions_review_session_id_fkey"
-            columns: ["review_session_id"]
-            isOneToOne: false
-            referencedRelation: "siteforge_review_sessions"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_client_decisions_review_token_id_fkey"
-            columns: ["review_token_id"]
-            isOneToOne: false
-            referencedRelation: "siteforge_review_tokens"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_client_decisions_website_id_fkey"
-            columns: ["website_id"]
-            isOneToOne: false
-            referencedRelation: "property_websites"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_client_decisions_website_id_fkey"
-            columns: ["website_id"]
-            isOneToOne: false
-            referencedRelation: "website_summary"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      siteforge_launch_confirmations: {
-        Row: {
-          artifact_content_hash: string
-          auth_event_id: string | null
-          auth_session_id: string | null
-          authentication_time: string | null
-          confirmation_hash: string
-          confirmation_kind: string
-          confirmation_payload: Json
-          confirmed_at: string
-          confirmed_by: string
-          created_at: string
-          expires_at: string
-          factor_id: string | null
-          id: string
-          ip_address_hash: string | null
-          launch_policy_content_hash: string
-          launch_policy_id: string
-          meets_required_aal: boolean | null
-          observed_aal: string
-          org_id: string
-          payload_hash: string
-          previous_confirmation_hash: string | null
-          property_id: string
-          reauthenticated_at: string | null
-          release_id: string
-          request_id: string
-          required_aal: string
-          user_agent_hash: string | null
-          website_id: string
-        }
-        Insert: {
-          artifact_content_hash: string
-          auth_event_id?: string | null
-          auth_session_id?: string | null
-          authentication_time?: string | null
-          confirmation_hash: string
-          confirmation_kind: string
-          confirmation_payload: Json
-          confirmed_at: string
-          confirmed_by: string
-          created_at?: string
-          expires_at: string
-          factor_id?: string | null
-          id?: string
-          ip_address_hash?: string | null
-          launch_policy_content_hash: string
-          launch_policy_id: string
-          meets_required_aal?: boolean | null
-          observed_aal: string
-          org_id: string
-          payload_hash: string
-          previous_confirmation_hash?: string | null
-          property_id: string
-          reauthenticated_at?: string | null
-          release_id: string
-          request_id: string
-          required_aal: string
-          user_agent_hash?: string | null
-          website_id: string
-        }
-        Update: {
-          artifact_content_hash?: string
-          auth_event_id?: string | null
-          auth_session_id?: string | null
-          authentication_time?: string | null
-          confirmation_hash?: string
-          confirmation_kind?: string
-          confirmation_payload?: Json
-          confirmed_at?: string
-          confirmed_by?: string
-          created_at?: string
-          expires_at?: string
-          factor_id?: string | null
-          id?: string
-          ip_address_hash?: string | null
-          launch_policy_content_hash?: string
-          launch_policy_id?: string
-          meets_required_aal?: boolean | null
-          observed_aal?: string
-          org_id?: string
-          payload_hash?: string
-          previous_confirmation_hash?: string | null
-          property_id?: string
-          reauthenticated_at?: string | null
-          release_id?: string
-          request_id?: string
-          required_aal?: string
-          user_agent_hash?: string | null
-          website_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "siteforge_launch_confirmation_policy_tenant_fkey"
-            columns: [
-              "launch_policy_id",
-              "org_id",
-              "property_id",
-              "website_id",
-              "launch_policy_content_hash",
-            ]
-            isOneToOne: false
-            referencedRelation: "siteforge_launch_policies"
-            referencedColumns: [
-              "id",
-              "org_id",
-              "property_id",
-              "website_id",
-              "content_hash",
-            ]
-          },
-          {
-            foreignKeyName: "siteforge_launch_confirmation_release_tenant_fkey"
-            columns: [
-              "release_id",
-              "org_id",
-              "property_id",
-              "website_id",
-              "artifact_content_hash",
-            ]
-            isOneToOne: false
-            referencedRelation: "siteforge_launch_releases"
-            referencedColumns: [
-              "id",
-              "org_id",
-              "property_id",
-              "website_id",
-              "artifact_content_hash",
-            ]
-          },
-          {
-            foreignKeyName: "siteforge_launch_confirmations_confirmed_by_fkey"
-            columns: ["confirmed_by"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_launch_confirmations_org_id_fkey"
-            columns: ["org_id"]
-            isOneToOne: false
-            referencedRelation: "organizations"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      siteforge_package_jobs: {
-        Row: {
-          actor_id: string
-          created_at: string
-          error_message: string | null
-          id: string
-          input_file_id: string | null
-          input_path: string | null
-          instructions: string
-          lease_until: string | null
-          model: string
-          org_id: string
-          package_bytes: number | null
-          package_hash: string | null
-          package_path: string | null
-          parent_id: string | null
-          property_id: string
-          request_hash: string
-          response_id: string | null
-          source_hash: string
-          source_snapshot: Json
-          state: string
-          target: string
-          updated_at: string
-          usage: Json | null
-        }
-        Insert: {
-          actor_id: string
-          created_at?: string
-          error_message?: string | null
-          id: string
-          input_file_id?: string | null
-          input_path?: string | null
-          instructions: string
-          lease_until?: string | null
-          model?: string
-          org_id: string
-          package_bytes?: number | null
-          package_hash?: string | null
-          package_path?: string | null
-          parent_id?: string | null
-          property_id: string
-          request_hash: string
-          response_id?: string | null
-          source_hash: string
-          source_snapshot: Json
-          state?: string
-          target: string
-          updated_at?: string
-          usage?: Json | null
-        }
-        Update: {
-          actor_id?: string
-          created_at?: string
-          error_message?: string | null
-          id?: string
-          input_file_id?: string | null
-          input_path?: string | null
-          instructions?: string
-          lease_until?: string | null
-          model?: string
-          org_id?: string
-          package_bytes?: number | null
-          package_hash?: string | null
-          package_path?: string | null
-          parent_id?: string | null
-          property_id?: string
-          request_hash?: string
-          response_id?: string | null
-          source_hash?: string
-          source_snapshot?: Json
-          state?: string
-          target?: string
-          updated_at?: string
-          usage?: Json | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "siteforge_package_jobs_actor_id_fkey"
-            columns: ["actor_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_package_jobs_org_id_fkey"
-            columns: ["org_id"]
-            isOneToOne: false
-            referencedRelation: "organizations"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_package_jobs_parent_id_fkey"
-            columns: ["parent_id"]
-            isOneToOne: false
-            referencedRelation: "siteforge_package_jobs"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_package_jobs_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "properties"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_package_jobs_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "vw_import_status"
-            referencedColumns: ["property_id"]
-          },
-          {
-            foreignKeyName: "siteforge_package_jobs_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "vw_property_marketing_setup"
-            referencedColumns: ["property_id"]
-          },
-        ]
-      }
-      siteforge_package_releases: {
-        Row: {
-          actor_id: string
-          approval_id: string | null
-          created_at: string
-          id: string
-          job_id: string
-          kind: string
-          org_id: string
-          package_hash: string
-          preview_id: string | null
-          property_id: string
-          receipt: Json
-          state: string
-          target_id: string
-          target_snapshot: Json
-          updated_at: string
-        }
-        Insert: {
-          actor_id: string
-          approval_id?: string | null
-          created_at?: string
-          id: string
-          job_id: string
-          kind: string
-          org_id: string
-          package_hash: string
-          preview_id?: string | null
-          property_id: string
-          receipt?: Json
-          state: string
-          target_id: string
-          target_snapshot: Json
-          updated_at?: string
-        }
-        Update: {
-          actor_id?: string
-          approval_id?: string | null
-          created_at?: string
-          id?: string
-          job_id?: string
-          kind?: string
-          org_id?: string
-          package_hash?: string
-          preview_id?: string | null
-          property_id?: string
-          receipt?: Json
-          state?: string
-          target_id?: string
-          target_snapshot?: Json
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "siteforge_package_releases_actor_id_fkey"
-            columns: ["actor_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_package_releases_approval_id_fkey"
-            columns: ["approval_id"]
-            isOneToOne: false
-            referencedRelation: "siteforge_package_releases"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_package_releases_job_id_fkey"
-            columns: ["job_id"]
-            isOneToOne: false
-            referencedRelation: "siteforge_package_jobs"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_package_releases_org_id_fkey"
-            columns: ["org_id"]
-            isOneToOne: false
-            referencedRelation: "organizations"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_package_releases_preview_id_fkey"
-            columns: ["preview_id"]
-            isOneToOne: false
-            referencedRelation: "siteforge_package_releases"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_package_releases_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "properties"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_package_releases_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "vw_import_status"
-            referencedColumns: ["property_id"]
-          },
-          {
-            foreignKeyName: "siteforge_package_releases_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "vw_property_marketing_setup"
-            referencedColumns: ["property_id"]
-          },
-          {
-            foreignKeyName: "siteforge_package_releases_target_id_fkey"
-            columns: ["target_id"]
-            isOneToOne: false
-            referencedRelation: "siteforge_wordpress_targets"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      siteforge_review_comments: {
-        Row: {
-          anchor: Json
-          artifact_id: string
-          author_email: string | null
-          author_name: string | null
-          author_profile_id: string | null
-          author_type: string
-          body: string
-          category: string
-          created_at: string
-          disposition_reason: string | null
-          id: string
-          org_id: string
-          page_path: string
-          parent_comment_id: string | null
-          property_id: string
-          resulting_artifact_id: string | null
-          review_session_id: string
-          revision_round_id: string | null
-          section_id: string | null
-          semantic_operations: Json
-          status: string
-          updated_at: string
-          viewport: string | null
-          website_id: string
-        }
-        Insert: {
-          anchor?: Json
-          artifact_id: string
-          author_email?: string | null
-          author_name?: string | null
-          author_profile_id?: string | null
-          author_type: string
-          body: string
-          category?: string
-          created_at?: string
-          disposition_reason?: string | null
-          id?: string
-          org_id: string
-          page_path: string
-          parent_comment_id?: string | null
-          property_id: string
-          resulting_artifact_id?: string | null
-          review_session_id: string
-          revision_round_id?: string | null
-          section_id?: string | null
-          semantic_operations?: Json
-          status?: string
-          updated_at?: string
-          viewport?: string | null
-          website_id: string
-        }
-        Update: {
-          anchor?: Json
-          artifact_id?: string
-          author_email?: string | null
-          author_name?: string | null
-          author_profile_id?: string | null
-          author_type?: string
-          body?: string
-          category?: string
-          created_at?: string
-          disposition_reason?: string | null
-          id?: string
-          org_id?: string
-          page_path?: string
-          parent_comment_id?: string | null
-          property_id?: string
-          resulting_artifact_id?: string | null
-          review_session_id?: string
-          revision_round_id?: string | null
-          section_id?: string | null
-          semantic_operations?: Json
-          status?: string
-          updated_at?: string
-          viewport?: string | null
-          website_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "siteforge_review_comment_parent_tenant_fkey"
-            columns: [
-              "parent_comment_id",
-              "review_session_id",
-              "org_id",
-              "property_id",
-              "website_id",
-            ]
-            isOneToOne: false
-            referencedRelation: "siteforge_review_comments"
-            referencedColumns: [
-              "id",
-              "review_session_id",
-              "org_id",
-              "property_id",
-              "website_id",
-            ]
-          },
-          {
-            foreignKeyName: "siteforge_review_comment_round_tenant_fkey"
-            columns: [
-              "revision_round_id",
-              "review_session_id",
-              "org_id",
-              "property_id",
-              "website_id",
-            ]
-            isOneToOne: false
-            referencedRelation: "siteforge_revision_rounds"
-            referencedColumns: [
-              "id",
-              "review_session_id",
-              "org_id",
-              "property_id",
-              "website_id",
-            ]
-          },
-          {
-            foreignKeyName: "siteforge_review_comment_session_tenant_fkey"
-            columns: [
-              "review_session_id",
-              "org_id",
-              "property_id",
-              "website_id",
-            ]
-            isOneToOne: false
-            referencedRelation: "siteforge_review_sessions"
-            referencedColumns: ["id", "org_id", "property_id", "website_id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_comments_artifact_id_fkey"
-            columns: ["artifact_id"]
-            isOneToOne: false
-            referencedRelation: "siteforge_blueprint_versions"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_comments_author_profile_id_fkey"
-            columns: ["author_profile_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_comments_org_id_fkey"
-            columns: ["org_id"]
-            isOneToOne: false
-            referencedRelation: "organizations"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_comments_parent_comment_id_fkey"
-            columns: ["parent_comment_id"]
-            isOneToOne: false
-            referencedRelation: "siteforge_review_comments"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_comments_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "properties"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_comments_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "vw_import_status"
-            referencedColumns: ["property_id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_comments_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "vw_property_marketing_setup"
-            referencedColumns: ["property_id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_comments_resulting_artifact_id_fkey"
-            columns: ["resulting_artifact_id"]
-            isOneToOne: false
-            referencedRelation: "siteforge_blueprint_versions"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_comments_review_session_id_fkey"
-            columns: ["review_session_id"]
-            isOneToOne: false
-            referencedRelation: "siteforge_review_sessions"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_comments_revision_round_id_fkey"
-            columns: ["revision_round_id"]
-            isOneToOne: false
-            referencedRelation: "siteforge_revision_rounds"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_comments_website_id_fkey"
-            columns: ["website_id"]
-            isOneToOne: false
-            referencedRelation: "property_websites"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_comments_website_id_fkey"
-            columns: ["website_id"]
-            isOneToOne: false
-            referencedRelation: "website_summary"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      siteforge_review_sessions: {
-        Row: {
-          artifact_content_hash: string
-          artifact_id: string
-          client_safe_summary: Json
-          closed_at: string | null
-          closes_at: string | null
-          id: string
-          instructions: string | null
-          opened_at: string
-          opened_by: string | null
-          org_id: string
-          property_id: string
-          status: string
-          title: string
-          website_id: string
-        }
-        Insert: {
-          artifact_content_hash: string
-          artifact_id: string
-          client_safe_summary?: Json
-          closed_at?: string | null
-          closes_at?: string | null
-          id?: string
-          instructions?: string | null
-          opened_at?: string
-          opened_by?: string | null
-          org_id: string
-          property_id: string
-          status?: string
-          title: string
-          website_id: string
-        }
-        Update: {
-          artifact_content_hash?: string
-          artifact_id?: string
-          client_safe_summary?: Json
-          closed_at?: string | null
-          closes_at?: string | null
-          id?: string
-          instructions?: string | null
-          opened_at?: string
-          opened_by?: string | null
-          org_id?: string
-          property_id?: string
-          status?: string
-          title?: string
-          website_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "siteforge_review_sessions_artifact_id_fkey"
-            columns: ["artifact_id"]
-            isOneToOne: false
-            referencedRelation: "siteforge_blueprint_versions"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_sessions_opened_by_fkey"
-            columns: ["opened_by"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_sessions_org_id_fkey"
-            columns: ["org_id"]
-            isOneToOne: false
-            referencedRelation: "organizations"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_sessions_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "properties"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_sessions_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "vw_import_status"
-            referencedColumns: ["property_id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_sessions_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "vw_property_marketing_setup"
-            referencedColumns: ["property_id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_sessions_website_id_fkey"
-            columns: ["website_id"]
-            isOneToOne: false
-            referencedRelation: "property_websites"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_sessions_website_id_fkey"
-            columns: ["website_id"]
-            isOneToOne: false
-            referencedRelation: "website_summary"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_tenant_fkey"
-            columns: ["website_id", "org_id", "property_id"]
-            isOneToOne: false
-            referencedRelation: "property_websites"
-            referencedColumns: ["id", "org_id", "property_id"]
-          },
-        ]
-      }
-      siteforge_review_tokens: {
-        Row: {
-          created_at: string
-          created_by: string | null
-          expires_at: string
-          id: string
-          last_used_at: string | null
-          org_id: string
-          permissions: Json
-          property_id: string
-          review_session_id: string
-          reviewer_email: string | null
-          reviewer_name: string | null
-          revoked_at: string | null
-          token_hash: string
-          website_id: string
-        }
-        Insert: {
-          created_at?: string
-          created_by?: string | null
-          expires_at: string
-          id?: string
-          last_used_at?: string | null
-          org_id: string
-          permissions?: Json
-          property_id: string
-          review_session_id: string
-          reviewer_email?: string | null
-          reviewer_name?: string | null
-          revoked_at?: string | null
-          token_hash: string
-          website_id: string
-        }
-        Update: {
-          created_at?: string
-          created_by?: string | null
-          expires_at?: string
-          id?: string
-          last_used_at?: string | null
-          org_id?: string
-          permissions?: Json
-          property_id?: string
-          review_session_id?: string
-          reviewer_email?: string | null
-          reviewer_name?: string | null
-          revoked_at?: string | null
-          token_hash?: string
-          website_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "siteforge_review_token_session_tenant_fkey"
-            columns: [
-              "review_session_id",
-              "org_id",
-              "property_id",
-              "website_id",
-            ]
-            isOneToOne: false
-            referencedRelation: "siteforge_review_sessions"
-            referencedColumns: ["id", "org_id", "property_id", "website_id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_tokens_created_by_fkey"
-            columns: ["created_by"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_tokens_org_id_fkey"
-            columns: ["org_id"]
-            isOneToOne: false
-            referencedRelation: "organizations"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_tokens_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "properties"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_tokens_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "vw_import_status"
-            referencedColumns: ["property_id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_tokens_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "vw_property_marketing_setup"
-            referencedColumns: ["property_id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_tokens_review_session_id_fkey"
-            columns: ["review_session_id"]
-            isOneToOne: false
-            referencedRelation: "siteforge_review_sessions"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_tokens_website_id_fkey"
-            columns: ["website_id"]
-            isOneToOne: false
-            referencedRelation: "property_websites"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_review_tokens_website_id_fkey"
-            columns: ["website_id"]
-            isOneToOne: false
-            referencedRelation: "website_summary"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      siteforge_revision_rounds: {
-        Row: {
-          assigned_to: string | null
-          created_at: string
-          due_at: string | null
-          id: string
-          org_id: string
-          property_id: string
-          requested_by_email: string | null
-          requested_by_name: string | null
-          resulting_artifact_id: string | null
-          resulting_content_hash: string | null
-          review_session_id: string
-          round_number: number
-          status: string
-          updated_at: string
-          website_id: string
-        }
-        Insert: {
-          assigned_to?: string | null
-          created_at?: string
-          due_at?: string | null
-          id?: string
-          org_id: string
-          property_id: string
-          requested_by_email?: string | null
-          requested_by_name?: string | null
-          resulting_artifact_id?: string | null
-          resulting_content_hash?: string | null
-          review_session_id: string
-          round_number: number
-          status?: string
-          updated_at?: string
-          website_id: string
-        }
-        Update: {
-          assigned_to?: string | null
-          created_at?: string
-          due_at?: string | null
-          id?: string
-          org_id?: string
-          property_id?: string
-          requested_by_email?: string | null
-          requested_by_name?: string | null
-          resulting_artifact_id?: string | null
-          resulting_content_hash?: string | null
-          review_session_id?: string
-          round_number?: number
-          status?: string
-          updated_at?: string
-          website_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "siteforge_revision_round_session_tenant_fkey"
-            columns: [
-              "review_session_id",
-              "org_id",
-              "property_id",
-              "website_id",
-            ]
-            isOneToOne: false
-            referencedRelation: "siteforge_review_sessions"
-            referencedColumns: ["id", "org_id", "property_id", "website_id"]
-          },
-          {
-            foreignKeyName: "siteforge_revision_rounds_assigned_to_fkey"
-            columns: ["assigned_to"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_revision_rounds_org_id_fkey"
-            columns: ["org_id"]
-            isOneToOne: false
-            referencedRelation: "organizations"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_revision_rounds_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "properties"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_revision_rounds_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "vw_import_status"
-            referencedColumns: ["property_id"]
-          },
-          {
-            foreignKeyName: "siteforge_revision_rounds_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "vw_property_marketing_setup"
-            referencedColumns: ["property_id"]
-          },
-          {
-            foreignKeyName: "siteforge_revision_rounds_resulting_artifact_id_fkey"
-            columns: ["resulting_artifact_id"]
-            isOneToOne: false
-            referencedRelation: "siteforge_blueprint_versions"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_revision_rounds_review_session_id_fkey"
-            columns: ["review_session_id"]
-            isOneToOne: false
-            referencedRelation: "siteforge_review_sessions"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_revision_rounds_website_id_fkey"
-            columns: ["website_id"]
-            isOneToOne: false
-            referencedRelation: "property_websites"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "siteforge_revision_rounds_website_id_fkey"
-            columns: ["website_id"]
-            isOneToOne: false
-            referencedRelation: "website_summary"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
     }
     Views: {
       brand_books: {
@@ -34631,6 +35975,2598 @@ export type Database = {
       }
     }
     Functions: {
+      _brain_accept_crm_reconciliation: {
+        Args: {
+          p_actor_id: string
+          p_check_id: string
+          p_evidence_hash: string
+          p_handoff_id: string
+          p_property_id: string
+          p_request_id: string
+        }
+        Returns: Json
+      }
+      _brain_append_shared_action_event: {
+        Args: {
+          p_action: string
+          p_actor_id: string
+          p_after: Json
+          p_before: Json
+          p_episode_id: string
+          p_evidence: string
+          p_id: string
+          p_links?: Json
+          p_phase: string
+          p_product: string
+          p_property_id: string
+          p_request: Json
+          p_result: Json
+        }
+        Returns: Json
+      }
+      _brain_apply_forgestudio_authorization: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_payload: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_apply_marketvision_extraction: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_apply_recorded_tour_action: {
+        Args: {
+          p_action: string
+          p_actor_id: string
+          p_input: Json
+          p_lead_id: string
+          p_property_id: string
+          p_request_id: string
+          p_source: string
+          p_tour_id: string
+        }
+        Returns: Json
+      }
+      _brain_apply_reviewflow_analysis: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_property_id: string
+          p_result: Json
+        }
+        Returns: Json
+      }
+      _brain_apply_reviewflow_intake: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_apply_reviewflow_response_generation: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_property_id: string
+          p_result: Json
+        }
+        Returns: Json
+      }
+      _brain_approve_crm_handoff: {
+        Args: {
+          p_actor_id: string
+          p_handoff_id: string
+          p_payload_hash: string
+          p_property_id: string
+          p_request_id: string
+        }
+        Returns: Json
+      }
+      _brain_approve_crm_mapping: {
+        Args: {
+          p_actor_id: string
+          p_preview_id: string
+          p_property_id: string
+          p_request_id: string
+        }
+        Returns: Json
+      }
+      _brain_assistant_fact_finish: {
+        Args: {
+          p_actor_id: string
+          p_after: Json
+          p_before: Json
+          p_id: string
+          p_input: Json
+          p_kind: string
+          p_property_id: string
+          p_result: Json
+        }
+        Returns: Json
+      }
+      _brain_assistant_fact_start: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_kind: string
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_begin_brand_asset_upload: {
+        Args: {
+          p_actor_id: string
+          p_input: Json
+          p_property_id: string
+          p_request_id: string
+        }
+        Returns: Json
+      }
+      _brain_begin_brand_operation: {
+        Args: {
+          p_actor_id: string
+          p_brand_asset_id: string
+          p_input: Json
+          p_kind: string
+          p_property_id: string
+          p_request_id: string
+          p_revision: number
+        }
+        Returns: Json
+      }
+      _brain_begin_brand_research: {
+        Args: {
+          p_actor_id: string
+          p_input: Json
+          p_property_id: string
+          p_request_id: string
+        }
+        Returns: Json
+      }
+      _brain_begin_forgestudio_asset_upload: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_begin_forgestudio_authorization: {
+        Args: {
+          p_actor_id: string
+          p_credentials: Json
+          p_id: string
+          p_payload: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_begin_forgestudio_generation: {
+        Args: {
+          p_actor_id: string
+          p_brief_id: string
+          p_id: string
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_begin_forgestudio_measurement: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_property_id: string
+          p_publication_id: string
+        }
+        Returns: Json
+      }
+      _brain_begin_forgestudio_media: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_begin_forgestudio_renewal: {
+        Args: {
+          p_actor_id: string
+          p_credential_fingerprint: string
+          p_credentials: Json
+          p_id: string
+          p_payload: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_begin_knowledge_file: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_begin_knowledge_search: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_model_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_begin_knowledge_web_capture: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_begin_marketvision_brand: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_model_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_begin_marketvision_brief: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_begin_marketvision_extraction: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_model_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_begin_marketvision_intake: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_preview: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_begin_marketvision_source: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_begin_reviewflow_analysis: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_model_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_begin_reviewflow_intake: {
+        Args: {
+          p_actor_id: string
+          p_fetch_input: Json
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_begin_reviewflow_response_generation: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_model_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_bi_report_source: {
+        Args: { p_actor_id: string; p_filters: Json; p_property_id: string }
+        Returns: Json
+      }
+      _brain_bind_tour_calendar_event: {
+        Args: {
+          p_actor_id: string
+          p_booking_id: string
+          p_calendar_id: string
+          p_credential_version: number
+          p_property_id: string
+          p_provider_event_id: string
+          p_reason: string
+          p_remote?: Json
+          p_request_id: string
+          p_verified_at?: string
+          p_version: number
+        }
+        Returns: Json
+      }
+      _brain_book_recorded_console_tour: {
+        Args: {
+          p_actor_id: string
+          p_input: Json
+          p_lead_id: string
+          p_property_id: string
+          p_request_id: string
+        }
+        Returns: Json
+      }
+      _brain_brand_context_v1: {
+        Args: {
+          p_operation_id: string
+          p_prepare?: boolean
+          p_scope_id: string
+        }
+        Returns: Json
+      }
+      _brain_cancel_bi_report: {
+        Args: { p_actor_id: string; p_id: string; p_property_id: string }
+        Returns: Json
+      }
+      _brain_cancel_brand_operation: {
+        Args: {
+          p_actor_id: string
+          p_decision_id: string
+          p_property_id: string
+          p_request_id: string
+        }
+        Returns: Json
+      }
+      _brain_cancel_brand_research: {
+        Args: {
+          p_actor_id: string
+          p_decision_id: string
+          p_property_id: string
+          p_request_id: string
+        }
+        Returns: Json
+      }
+      _brain_cancel_forgestudio_authorization: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_payload: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_cancel_lead_score_batch: {
+        Args: {
+          p_actor_id: string
+          p_batch_id: string
+          p_property_id: string
+          p_request_id: string
+        }
+        Returns: Json
+      }
+      _brain_cancel_unused_knowledge_decision: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_change_tour_schedule: {
+        Args: {
+          p_actor_id: string
+          p_change: Json
+          p_expected_version: number
+          p_lead_id: string
+          p_property_id: string
+          p_request_id: string
+          p_source: string
+          p_tour_id: string
+        }
+        Returns: Json
+      }
+      _brain_claim_forgestudio_authorization: {
+        Args: {
+          p_actor_id: string
+          p_code_hash: string
+          p_credential_fingerprint: string
+          p_id: string
+          p_platform: string
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_command_crm_bulk: {
+        Args: {
+          p_actor_id: string
+          p_batch_id: string
+          p_kind: string
+          p_manifest_hash: string
+          p_property_id: string
+          p_request_id: string
+        }
+        Returns: Json
+      }
+      _brain_command_crm_qualification: {
+        Args: {
+          p_actor_id: string
+          p_kind: string
+          p_operation_id: string
+          p_payload_hash: string
+          p_property_id: string
+          p_request_id: string
+        }
+        Returns: Json
+      }
+      _brain_commit_reviewflow_response_draft: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+          p_provenance?: Json
+        }
+        Returns: Json
+      }
+      _brain_complete_marketvision_brief: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_property_id: string
+          p_result: Json
+          p_source_hash: string
+        }
+        Returns: Json
+      }
+      _brain_continue_lead_score_batch: {
+        Args: { p_actor_id: string; p_batch_id: string; p_property_id: string }
+        Returns: Json
+      }
+      _brain_control_forgestudio_publication: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_payload: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_control_knowledge_search: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_control_lead_workflow: {
+        Args: {
+          p_action: string
+          p_actor_id: string
+          p_lead_id: string
+          p_property_id: string
+          p_workflow_id: string
+        }
+        Returns: Json
+      }
+      _brain_control_marketvision_brand: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_control_marketvision_extraction: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_control_marketvision_source: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_control_recorded_workflow: {
+        Args: {
+          p_action: string
+          p_actor_id: string
+          p_lead_id: string
+          p_property_id: string
+          p_request_id: string
+          p_workflow_id: string
+        }
+        Returns: Json
+      }
+      _brain_control_reviewflow_analysis: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_control_reviewflow_intake: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_control_reviewflow_response_generation: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_correct_lead_engagement: {
+        Args: {
+          p_actor_id: string
+          p_event_id: string
+          p_lead_id: string
+          p_property_id: string
+          p_reason: string
+          p_request_id: string
+        }
+        Returns: Json
+      }
+      _brain_correct_tour_no_show: {
+        Args: {
+          p_actor_id: string
+          p_lead_id: string
+          p_property_id: string
+          p_reason: string
+          p_request_id: string
+          p_source: string
+          p_tour_id: string
+        }
+        Returns: Json
+      }
+      _brain_create_marketvision_alert: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_create_recorded_integration_invite: {
+        Args: {
+          p_actor_id: string
+          p_capabilities: string[]
+          p_property_id: string
+          p_provider: string
+          p_request_id: string
+          p_token_hash: string
+        }
+        Returns: Json
+      }
+      _brain_decide_agency_observation: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_decide_bi_alert: {
+        Args: {
+          p_actor_id: string
+          p_derived: Json
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_decide_bi_csv: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_import_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_decide_bi_data_review: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_decide_bi_goal: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_decide_bi_query: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+          p_result: Json
+        }
+        Returns: Json
+      }
+      _brain_decide_bi_schedule: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_decide_console_search: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_decide_delivery: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_decide_forgestudio_media: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_payload: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_decide_geo_analysis: {
+        Args: {
+          p_actor_id: string
+          p_analysis_id: string
+          p_id: string
+          p_operation: string
+          p_preview_hash: string
+          p_property_id: string
+          p_reason: string
+        }
+        Returns: Json
+      }
+      _brain_decide_geo_evaluation: {
+        Args: {
+          p_actor_id: string
+          p_evaluation_id: string
+          p_id: string
+          p_operation: string
+          p_preview_hash: string
+          p_property_id: string
+          p_reason: string
+        }
+        Returns: Json
+      }
+      _brain_decide_geo_operator: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_decide_knowledge_file: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_decide_knowledge_web_capture: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_decide_lead_record: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_decide_legal_review: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_decide_luma_conversation: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_decide_luma_widget_operation: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_decide_marketvision_handoff: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_decide_marketvision_intake: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_decide_neighborhood_review: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_decide_onboarding_task: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_decide_pipeline: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_decide_property_intelligence: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_decide_readiness_review: {
+        Args: {
+          p_actor_id: string
+          p_calculation?: Json
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_decide_reviewflow_batch: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_decide_reviewflow_case: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_decide_reviewflow_configuration: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_decide_reviewflow_connection: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_decide_reviewflow_response: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_policy: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_decide_reviewflow_testimonial: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_disconnect_forgestudio_connection: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_payload: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_disconnect_recorded_calendar: {
+        Args: {
+          p_actor_id: string
+          p_property_id: string
+          p_provider?: string
+          p_request_id: string
+        }
+        Returns: Json
+      }
+      _brain_disconnect_recorded_email: {
+        Args: {
+          p_actor_id: string
+          p_property_id: string
+          p_provider?: string
+          p_request_id: string
+        }
+        Returns: Json
+      }
+      _brain_export_marketvision_brief: {
+        Args: {
+          p_actor_id: string
+          p_content: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_finish_brand_asset_upload: {
+        Args: {
+          p_actor_id: string
+          p_asset?: Json
+          p_error?: string
+          p_input: Json
+          p_property_id: string
+          p_request_id: string
+        }
+        Returns: Json
+      }
+      _brain_finish_brand_operation_v1: {
+        Args: {
+          p_claim_token: string
+          p_error?: string
+          p_request_id: string
+          p_result: Json
+          p_updates: Json
+        }
+        Returns: Json
+      }
+      _brain_finish_forgestudio_asset_upload: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_keep_separate?: boolean
+          p_payload: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_finish_forgestudio_generation: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_payload: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_finish_forgestudio_media: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_payload: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_finish_geo_evaluation: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_preview: Json
+          p_property_id: string
+          p_source_hash: string
+        }
+        Returns: Json
+      }
+      _brain_finish_geo_report: {
+        Args: {
+          p_actor_id: string
+          p_artifact: string
+          p_id: string
+          p_property_id: string
+          p_source_hash: string
+        }
+        Returns: Json
+      }
+      _brain_finish_reviewflow_analysis_request: {
+        Args: {
+          p_actor_id: string
+          p_after: Json
+          p_before: Json
+          p_id: string
+          p_input: Json
+          p_kind: string
+          p_links: Json
+          p_property_id: string
+          p_result: Json
+        }
+        Returns: Json
+      }
+      _brain_forgestudio_command_finish: {
+        Args: {
+          p_actor_id: string
+          p_after: Json
+          p_before: Json
+          p_id: string
+          p_kind: string
+          p_links?: Json
+          p_payload: Json
+          p_property_id: string
+          p_result: Json
+        }
+        Returns: Json
+      }
+      _brain_forgestudio_command_start: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_kind: string
+          p_payload: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_integration_replacement_review: {
+        Args: {
+          p_actor_id: string
+          p_capability: string
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_knowledge_decision_finish: {
+        Args: {
+          p_actor_id: string
+          p_after: Json
+          p_before: Json
+          p_id: string
+          p_input: Json
+          p_kind: string
+          p_material_id: string
+          p_property_id: string
+          p_result: Json
+        }
+        Returns: Json
+      }
+      _brain_knowledge_decision_start: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_kind: string
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_knowledge_file_finish: {
+        Args: {
+          p_actor_id: string
+          p_after: Json
+          p_before: Json
+          p_file_id: string
+          p_id: string
+          p_input: Json
+          p_kind: string
+          p_property_id: string
+          p_result: Json
+        }
+        Returns: Json
+      }
+      _brain_knowledge_file_start: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_kind: string
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_knowledge_web_finish: {
+        Args: {
+          p_actor_id: string
+          p_after: Json
+          p_before: Json
+          p_capture_id: string
+          p_id: string
+          p_input: Json
+          p_kind: string
+          p_property_id: string
+          p_result: Json
+        }
+        Returns: Json
+      }
+      _brain_knowledge_web_start: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_kind: string
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_lead_score_batch_status: {
+        Args: { p_actor_id: string; p_batch_id?: string; p_property_id: string }
+        Returns: Json
+      }
+      _brain_list_leadpulse_leads: {
+        Args: {
+          p_actor_id: string
+          p_bucket?: string
+          p_page?: number
+          p_property_id: string
+          p_search?: string
+        }
+        Returns: Json
+      }
+      _brain_manage_forgestudio_asset: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_payload: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_marketvision_brief_sources: {
+        Args: { p_actor_id: string; p_days: number; p_property_id: string }
+        Returns: Json
+      }
+      _brain_marketvision_decision_finish: {
+        Args: {
+          p_actor_id: string
+          p_after: Json
+          p_before: Json
+          p_id: string
+          p_input: Json
+          p_kind: string
+          p_property_id: string
+          p_resource_id: string
+          p_result: Json
+        }
+        Returns: Json
+      }
+      _brain_marketvision_decision_start: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_kind: string
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_observe_geo_report: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_outcome: string
+          p_property_id: string
+          p_report_id: string
+        }
+        Returns: Json
+      }
+      _brain_operate_agency_execution: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_permission_hash_v1: {
+        Args: { p_actor_id: string; p_properties: string[] }
+        Returns: string
+      }
+      _brain_prepare_bi_csv: {
+        Args: {
+          p_actor_id: string
+          p_cancel?: boolean
+          p_id: string
+          p_original: Json
+          p_parent_id?: string
+          p_preview: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_prepare_bi_export: {
+        Args: {
+          p_actor_id: string
+          p_format: string
+          p_id: string
+          p_property_id: string
+          p_report_id: string
+        }
+        Returns: Json
+      }
+      _brain_prepare_crm_bulk: {
+        Args: {
+          p_actor_id: string
+          p_lead_ids: string[]
+          p_property_id: string
+          p_request_id: string
+        }
+        Returns: Json
+      }
+      _brain_prepare_crm_qualification: {
+        Args: {
+          p_actor_id: string
+          p_integration_id: string
+          p_property_id: string
+          p_request_id: string
+          p_revision: number
+        }
+        Returns: Json
+      }
+      _brain_prepare_geo_analysis: {
+        Args: {
+          p_actor_id: string
+          p_batch_id: string
+          p_cancel?: boolean
+          p_crawl_id: string
+          p_id: string
+          p_parent_id?: string
+          p_plan: Json
+          p_property_id: string
+          p_source_hash: string
+        }
+        Returns: Json
+      }
+      _brain_prepare_geo_evaluation: {
+        Args: {
+          p_actor_id: string
+          p_cancel?: boolean
+          p_evaluator_version: string
+          p_id: string
+          p_property_id: string
+          p_run_id: string
+          p_source_hash: string
+        }
+        Returns: Json
+      }
+      _brain_prepare_geo_report: {
+        Args: {
+          p_actor_id: string
+          p_cancel?: boolean
+          p_id: string
+          p_options: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_prepare_marketvision_handoff: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_prepare_reviewflow_batch: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_model_template: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_prepare_siteforge_brief_export: {
+        Args: {
+          p_actor_id: string
+          p_brief_id: string
+          p_id: string
+          p_mode: string
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_preview_bi_schedule: {
+        Args: { p_actor_id: string; p_config: Json; p_property_id: string }
+        Returns: Json
+      }
+      _brain_preview_crm_handoff: {
+        Args: {
+          p_actor_id: string
+          p_handoff_id: string
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_preview_crm_mapping: {
+        Args: {
+          p_actor_id: string
+          p_integration_id: string
+          p_lead_id?: string
+          p_property_id: string
+          p_request_id: string
+          p_revision: number
+        }
+        Returns: Json
+      }
+      _brain_property_unit_decision_finish: {
+        Args: {
+          p_actor_id: string
+          p_after: Json
+          p_before: Json
+          p_id: string
+          p_input: Json
+          p_kind: string
+          p_property_id: string
+          p_result: Json
+          p_unit_id: string
+        }
+        Returns: Json
+      }
+      _brain_property_unit_decision_start: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_kind: string
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_read_agency_execution: {
+        Args: { p_actor_id: string; p_input?: Json; p_property_id: string }
+        Returns: Json
+      }
+      _brain_read_agency_observation: {
+        Args: { p_actor_id: string; p_input?: Json; p_property_id: string }
+        Returns: Json
+      }
+      _brain_read_agency_plan: {
+        Args: { p_actor_id: string; p_input: Json; p_property_id: string }
+        Returns: Json
+      }
+      _brain_read_assistant_facts: {
+        Args: { p_actor_id: string; p_input?: Json; p_property_id: string }
+        Returns: Json
+      }
+      _brain_read_bi_alerts: {
+        Args: { p_actor_id: string; p_input: Json; p_property_id: string }
+        Returns: Json
+      }
+      _brain_read_bi_csv: {
+        Args: {
+          p_actor_id: string
+          p_command_id?: string
+          p_hash?: string
+          p_id?: string
+          p_kind?: string
+          p_offset?: number
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_read_bi_data_review: {
+        Args: {
+          p_actor_id: string
+          p_command_id?: string
+          p_end?: string
+          p_hash?: string
+          p_kind?: string
+          p_offset?: number
+          p_property_id: string
+          p_review_id?: string
+          p_start?: string
+        }
+        Returns: Json
+      }
+      _brain_read_bi_goals: {
+        Args: { p_actor_id: string; p_input: Json; p_property_id: string }
+        Returns: Json
+      }
+      _brain_read_bi_queries: {
+        Args: { p_actor_id: string; p_input: Json; p_property_id: string }
+        Returns: Json
+      }
+      _brain_read_bi_reports: {
+        Args: { p_actor_id: string; p_input: Json; p_property_id: string }
+        Returns: Json
+      }
+      _brain_read_bi_schedules: {
+        Args: { p_actor_id: string; p_input: Json; p_property_id: string }
+        Returns: Json
+      }
+      _brain_read_calendar_sync_summary: {
+        Args: {
+          p_actor_id: string
+          p_calendar_id: string
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_read_console_search: {
+        Args: {
+          p_actor_id: string
+          p_hash?: string
+          p_id?: string
+          p_kind?: string
+          p_offset?: number
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_read_crm_bulk: {
+        Args: {
+          p_actor_id: string
+          p_batch_id?: string
+          p_page?: number
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_read_crm_handoffs: {
+        Args: { p_actor_id: string; p_page?: number; p_property_id: string }
+        Returns: Json
+      }
+      _brain_read_crm_monitor: {
+        Args: { p_actor_id: string; p_property_id: string }
+        Returns: Json
+      }
+      _brain_read_crm_qualifications: {
+        Args: { p_actor_id: string; p_property_id: string }
+        Returns: Json
+      }
+      _brain_read_crm_setup_operations: {
+        Args: { p_actor_id: string; p_property_id: string }
+        Returns: Json
+      }
+      _brain_read_crm_workspace: {
+        Args: { p_actor_id: string; p_property_id: string }
+        Returns: Json
+      }
+      _brain_read_delivery_receipt: {
+        Args: { p_actor_id: string; p_id: string; p_property_id: string }
+        Returns: Json
+      }
+      _brain_read_delivery_report: {
+        Args: { p_actor_id: string; p_property_id: string; p_report_id: string }
+        Returns: Json
+      }
+      _brain_read_delivery_workspace: {
+        Args: { p_actor_id: string; p_input?: Json; p_property_id: string }
+        Returns: Json
+      }
+      _brain_read_geo_analyses: {
+        Args: {
+          p_actor_id: string
+          p_batch_id?: string
+          p_crawl_id?: string
+          p_hash?: string
+          p_id?: string
+          p_kind?: string
+          p_offset?: number
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_read_geo_crawl_receipts: {
+        Args: {
+          p_actor_id: string
+          p_crawl_id: string
+          p_hash?: string
+          p_id?: string
+          p_offset?: number
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_read_geo_evaluations: {
+        Args: {
+          p_actor_id: string
+          p_hash?: string
+          p_id?: string
+          p_offset?: number
+          p_property_id: string
+          p_run_id?: string
+        }
+        Returns: Json
+      }
+      _brain_read_geo_measurements: {
+        Args: { p_actor_id: string; p_input?: Json; p_property_id: string }
+        Returns: Json
+      }
+      _brain_read_geo_operator: {
+        Args: { p_actor_id: string; p_input: Json; p_property_id: string }
+        Returns: Json
+      }
+      _brain_read_geo_reports: {
+        Args: {
+          p_actor_id: string
+          p_hash?: string
+          p_id?: string
+          p_offset?: number
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_read_knowledge_files: {
+        Args: { p_actor_id: string; p_input: Json; p_property_id: string }
+        Returns: Json
+      }
+      _brain_read_knowledge_materials: {
+        Args: { p_actor_id: string; p_input?: Json; p_property_id: string }
+        Returns: Json
+      }
+      _brain_read_knowledge_web_captures: {
+        Args: { p_actor_id: string; p_input: Json; p_property_id: string }
+        Returns: Json
+      }
+      _brain_read_knowledge_web_policy: {
+        Args: { p_actor_id: string; p_input?: Json; p_property_id: string }
+        Returns: Json
+      }
+      _brain_read_lead_activity: {
+        Args: {
+          p_actor_id: string
+          p_cursor?: string
+          p_lead_id: string
+          p_note_id?: string
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_read_lead_delivery_history: {
+        Args: {
+          p_actor_id: string
+          p_cursor?: Json
+          p_kind: string
+          p_lead_id: string
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_read_lead_records: {
+        Args: { p_actor_id: string; p_input: Json; p_property_id: string }
+        Returns: Json
+      }
+      _brain_read_lead_score_reviews: {
+        Args: { p_actor_id: string; p_lead_id: string; p_property_id: string }
+        Returns: Json
+      }
+      _brain_read_leadpulse_events: {
+        Args: {
+          p_actor_id: string
+          p_lead_id: string
+          p_limit?: number
+          p_offset?: number
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_read_leadpulse_insights: {
+        Args: { p_actor_id: string; p_days?: number; p_property_id: string }
+        Returns: Json
+      }
+      _brain_read_leadpulse_score: {
+        Args: {
+          p_actor_id: string
+          p_lead_id: string
+          p_property_id: string
+          p_score_id?: string
+        }
+        Returns: Json
+      }
+      _brain_read_legal_reviews: {
+        Args: { p_actor_id: string; p_input?: Json; p_property_id: string }
+        Returns: Json
+      }
+      _brain_read_luma_conversations: {
+        Args: {
+          p_actor_id: string
+          p_archived?: boolean
+          p_command_id?: string
+          p_conversation_id?: string
+          p_hash?: string
+          p_kind?: string
+          p_lead_id?: string
+          p_offset?: number
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_read_luma_overview: {
+        Args: { p_actor_id: string; p_property_id: string }
+        Returns: Json
+      }
+      _brain_read_luma_request_evidence: {
+        Args: {
+          p_actor_id: string
+          p_hash?: string
+          p_offset?: number
+          p_property_id: string
+          p_request_id?: string
+          p_review_id?: string
+        }
+        Returns: Json
+      }
+      _brain_read_luma_widget_operations: {
+        Args: {
+          p_actor_id: string
+          p_command_id?: string
+          p_hash?: string
+          p_offset?: number
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_read_marketvision_alerts: {
+        Args: {
+          p_actor_id: string
+          p_cursor?: string
+          p_limit?: number
+          p_property_id: string
+          p_view?: string
+        }
+        Returns: Json
+      }
+      _brain_read_marketvision_analysis: {
+        Args: { p_actor_id: string; p_days: number; p_property_id: string }
+        Returns: Json
+      }
+      _brain_read_marketvision_brand: {
+        Args: {
+          p_actor_id: string
+          p_competitor_id?: string
+          p_cursor?: string
+          p_property_id: string
+          p_request_id?: string
+          p_view?: string
+        }
+        Returns: Json
+      }
+      _brain_read_marketvision_brand_searches: {
+        Args: {
+          p_actor_id: string
+          p_after?: number
+          p_cursor?: string
+          p_property_id: string
+          p_request_id?: string
+        }
+        Returns: Json
+      }
+      _brain_read_marketvision_briefs: {
+        Args: {
+          p_actor_id: string
+          p_cursor?: string
+          p_property_id: string
+          p_request_id?: string
+        }
+        Returns: Json
+      }
+      _brain_read_marketvision_competitors: {
+        Args: {
+          p_active_only?: boolean
+          p_actor_id: string
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_read_marketvision_extractions: {
+        Args: {
+          p_actor_id: string
+          p_competitor_id: string
+          p_cursor?: string
+          p_property_id: string
+          p_request_id?: string
+        }
+        Returns: Json
+      }
+      _brain_read_marketvision_handoffs: {
+        Args: {
+          p_actor_id: string
+          p_brief_id?: string
+          p_cursor?: string
+          p_handoff_id?: string
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_read_marketvision_history: {
+        Args: {
+          p_actor_id: string
+          p_cursor?: string
+          p_property_id: string
+          p_resource_id?: string
+        }
+        Returns: Json
+      }
+      _brain_read_marketvision_intakes: {
+        Args: {
+          p_actor_id: string
+          p_cursor?: string
+          p_legacy?: boolean
+          p_property_id: string
+          p_request_id?: string
+        }
+        Returns: Json
+      }
+      _brain_read_marketvision_legacy_briefs: {
+        Args: {
+          p_actor_id: string
+          p_cursor?: string
+          p_property_id: string
+          p_request_id?: string
+        }
+        Returns: Json
+      }
+      _brain_read_marketvision_monitoring: {
+        Args: {
+          p_actor_id: string
+          p_cursor?: string
+          p_filter?: string
+          p_property_id: string
+          p_request_id?: string
+        }
+        Returns: Json
+      }
+      _brain_read_marketvision_sources: {
+        Args: {
+          p_actor_id: string
+          p_competitor_id: string
+          p_cursor?: string
+          p_property_id: string
+          p_request_id?: string
+        }
+        Returns: Json
+      }
+      _brain_read_neighborhood_reviews: {
+        Args: { p_actor_id: string; p_input?: Json; p_property_id: string }
+        Returns: Json
+      }
+      _brain_read_onboarding_tasks: {
+        Args: { p_actor_id: string; p_input?: Json; p_property_id: string }
+        Returns: Json
+      }
+      _brain_read_pipelines: {
+        Args: { p_actor_id: string; p_input: Json; p_property_id: string }
+        Returns: Json
+      }
+      _brain_read_property_knowledge: {
+        Args: { p_actor_id: string; p_input?: Json; p_property_id: string }
+        Returns: Json
+      }
+      _brain_read_property_setup: {
+        Args: {
+          p_actor_id: string
+          p_change_id?: string
+          p_cursor?: string
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_read_property_unit_review: {
+        Args: { p_actor_id: string; p_input: Json; p_property_id: string }
+        Returns: Json
+      }
+      _brain_read_published_delivery_reports: {
+        Args: { p_actor_id: string; p_offset?: number; p_property_id?: string }
+        Returns: Json
+      }
+      _brain_read_readiness_reviews: {
+        Args: { p_actor_id: string; p_input?: Json; p_property_id: string }
+        Returns: Json
+      }
+      _brain_read_reviewflow_insight_source: {
+        Args: {
+          p_actor_id: string
+          p_as_of: string
+          p_days: number
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_read_reviewflow_queue: {
+        Args: {
+          p_actor_id: string
+          p_bucket?: string
+          p_cursor?: string
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_read_reviewflow_recovery: {
+        Args: { p_actor_id: string; p_cursor?: string; p_property_id: string }
+        Returns: Json
+      }
+      _brain_read_reviewflow_statistics: {
+        Args: { p_actor_id: string; p_days?: number; p_property_id: string }
+        Returns: Json
+      }
+      _brain_read_reviewflow_testimonial_source: {
+        Args: { p_actor_id: string; p_property_id: string; p_review_id: string }
+        Returns: Json
+      }
+      _brain_read_siteforge_codex_briefs: {
+        Args: {
+          p_actor_id: string
+          p_brief_id?: string
+          p_cursor?: string
+          p_export_cursor?: string
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_read_siteforge_delivery_records: {
+        Args: {
+          p_actor_id: string
+          p_cursor?: string
+          p_property_id: string
+          p_record_id?: string
+          p_review_cursor?: string
+        }
+        Returns: Json
+      }
+      _brain_record_forgestudio_governance: {
+        Args: {
+          p_actor_id: string
+          p_decision: string
+          p_id: string
+          p_note: string
+          p_property_id: string
+          p_revision_id: string
+        }
+        Returns: Json
+      }
+      _brain_record_lead_engagement: {
+        Args: {
+          p_actor_id?: string
+          p_event_type: string
+          p_lead_id: string
+          p_metadata: Json
+          p_origin: string
+          p_property_id: string
+          p_request_key: string
+        }
+        Returns: Json
+      }
+      _brain_record_lead_return_note: {
+        Args: {
+          p_actor_id: string
+          p_content: string
+          p_lead_id: string
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_record_siteforge_delivery: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_recover_forgestudio_asset_upload: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_payload: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_recover_forgestudio_generation: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_payload: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_recover_marketvision_brief: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_refresh_forgestudio_sources: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_payload: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_release_assistant_facts: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_release_knowledge_material: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_release_property_unit: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_report_bi_export: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_outcome: string
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_report_forgestudio_metrics: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_payload: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_report_siteforge_brief_export: {
+        Args: {
+          p_actor_id: string
+          p_export_id: string
+          p_property_id: string
+          p_result: string
+        }
+        Returns: Json
+      }
+      _brain_request_crm_handoff: {
+        Args: {
+          p_actor_id?: string
+          p_lead_id: string
+          p_note?: string
+          p_origin: string
+          p_property_id: string
+          p_request_key: string
+        }
+        Returns: Json
+      }
+      _brain_request_crm_reconciliation: {
+        Args: {
+          p_actor_id: string
+          p_handoff_id: string
+          p_property_id: string
+          p_request_id: string
+        }
+        Returns: Json
+      }
+      _brain_request_crm_setup_operation: {
+        Args: {
+          p_actor_id: string
+          p_integration_id: string
+          p_kind: string
+          p_property_id: string
+          p_request_id: string
+          p_revision: number
+        }
+        Returns: Json
+      }
+      _brain_request_recorded_integration_replacement: {
+        Args: {
+          p_account_email: string
+          p_actor_id: string
+          p_capability: string
+          p_property_id: string
+          p_provider: string
+          p_request_id: string
+          p_revision: string
+        }
+        Returns: Json
+      }
+      _brain_request_reviewflow_analysis_recovery: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_request_reviewflow_manual_publication: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_request_reviewflow_response_generation_recovery: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_reserve_package_processing_v1: {
+        Args: {
+          p_cents: number
+          p_id: string
+          p_kind: string
+          p_operation: string
+        }
+        Returns: Json
+      }
+      _brain_resolve_scope_v1: {
+        Args: {
+          p_actor_id: string
+          p_property_ids: string[]
+          p_purpose: string
+        }
+        Returns: Json
+      }
+      _brain_review_brand_asset: {
+        Args: {
+          p_actor_id: string
+          p_asset_id: string
+          p_property_id: string
+          p_request_id: string
+          p_review: Json
+          p_revision: number
+        }
+        Returns: Json
+      }
+      _brain_review_forgestudio_attribution: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_payload: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_review_forgestudio_measurement: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_payload: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_review_forgestudio_publication_recovery: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_payload: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_review_forgestudio_revision: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_payload: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_review_lead_score: {
+        Args: {
+          p_actor_id: string
+          p_judgment: string
+          p_lead_id: string
+          p_property_id: string
+          p_reason: string
+          p_request_id: string
+          p_score_id: string
+        }
+        Returns: Json
+      }
+      _brain_review_luma_request: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+          p_request_id: string
+        }
+        Returns: Json
+      }
+      _brain_review_marketvision_alerts: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_review_marketvision_brand: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_review_marketvision_brief: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_review_recorded_tour_reminder: {
+        Args: {
+          p_actor_id: string
+          p_channel_id: string
+          p_input: Json
+          p_lead_id: string
+          p_property_id: string
+          p_request_id: string
+        }
+        Returns: Json
+      }
+      _brain_review_recorded_workflow_delivery: {
+        Args: {
+          p_actor_id: string
+          p_delivery_id: string
+          p_input: Json
+          p_lead_id: string
+          p_property_id: string
+          p_request_id: string
+        }
+        Returns: Json
+      }
+      _brain_review_reviewflow_manual_publication: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_review_siteforge_delivery: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_review_source_v1: {
+        Args: { p_review: Json; p_scope_id: string; p_version_id: string }
+        Returns: Json
+      }
+      _brain_review_tour_calendar_change: {
+        Args: {
+          p_actor_id: string
+          p_booking_id: string
+          p_event_id: string
+          p_observed_at: string
+          p_property_id: string
+          p_reason: string
+          p_request_id: string
+          p_resolution?: string
+          p_verified_at?: string
+          p_verified_calendar?: Json
+          p_verified_remote?: Json
+          p_version: number
+        }
+        Returns: Json
+      }
+      _brain_review_tour_reminder: {
+        Args: {
+          p_actor_id: string
+          p_channel_id: string
+          p_input: Json
+          p_lead_id: string
+          p_property_id: string
+          p_request_id: string
+        }
+        Returns: Json
+      }
+      _brain_review_tour_schedule_delivery: {
+        Args: {
+          p_actor_id: string
+          p_input: Json
+          p_lead_id: string
+          p_property_id: string
+          p_request_id: string
+          p_work_id: string
+        }
+        Returns: Json
+      }
+      _brain_review_workflow_delivery: {
+        Args: {
+          p_actor_id: string
+          p_delivery_id: string
+          p_input: Json
+          p_lead_id: string
+          p_property_id: string
+          p_request_id: string
+        }
+        Returns: Json
+      }
+      _brain_reviewflow_command_finish: {
+        Args: {
+          p_actor_id: string
+          p_after: Json
+          p_before: Json
+          p_id: string
+          p_input: Json
+          p_kind: string
+          p_links?: Json
+          p_property_id: string
+          p_result: Json
+        }
+        Returns: Json
+      }
+      _brain_reviewflow_command_start: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_kind: string
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_reviewflow_publication_target: {
+        Args: { p_actor_id: string; p_property_id: string; p_review_id: string }
+        Returns: Json
+      }
+      _brain_reviewflow_response_context: {
+        Args: { p_actor_id: string; p_property_id: string; p_review_id: string }
+        Returns: Json
+      }
+      _brain_revoke_recorded_integration_invite: {
+        Args: {
+          p_actor_id: string
+          p_invite_id: string
+          p_property_id: string
+          p_request_id: string
+        }
+        Returns: Json
+      }
+      _brain_run_lead_score_batch: {
+        Args: {
+          p_actor_id: string
+          p_lead_ids?: string[]
+          p_property_id: string
+          p_request_id: string
+          p_retry_batch_id?: string
+        }
+        Returns: Json
+      }
+      _brain_save_agency_plan: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_save_assistant_fact_draft: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_save_bi_report: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_save_brand_import_preview: {
+        Args: {
+          p_actor_id: string
+          p_base_revision: number
+          p_idempotency_key: string
+          p_input_hash: string
+          p_payload: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_save_brand_import_source: {
+        Args: {
+          p_actor_id: string
+          p_content: string
+          p_content_hash: string
+          p_input_hash: string
+          p_mime_type: string
+          p_name: string
+          p_property_id: string
+          p_request_id: string
+        }
+        Returns: Json
+      }
+      _brain_save_crm_mapping_review: {
+        Args: {
+          p_actor_id: string
+          p_credentials: Json
+          p_mapping: Json
+          p_platform: string
+          p_property_id: string
+          p_request_id: string
+          p_revision: number
+        }
+        Returns: Json
+      }
+      _brain_save_forgestudio_brief: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_payload: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_save_forgestudio_configuration: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_payload: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_save_forgestudio_revision: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_payload: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_save_forgestudio_social_config: {
+        Args: {
+          p_actor_id: string
+          p_encrypted_secret?: string
+          p_id: string
+          p_payload: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_save_knowledge_material: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_save_knowledge_web_policy: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_save_lead_note: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_lead_id: string
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_save_marketvision_brand_search: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_save_marketvision_competitor: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_save_marketvision_configuration: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_save_marketvision_listing: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_save_marketvision_unit: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_save_property_setup: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_save_property_unit_draft: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_save_recorded_luma_configuration: {
+        Args: {
+          p_actor_id: string
+          p_config: Json
+          p_expected_revision: string
+          p_operation: string
+          p_property_id: string
+          p_request_id: string
+        }
+        Returns: Json
+      }
+      _brain_save_reviewflow_insight_report: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+          p_result: Json
+        }
+        Returns: Json
+      }
+      _brain_save_siteforge_codex_brief: {
+        Args: {
+          p_actor_id: string
+          p_document: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_schedule_forgestudio_publications: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_payload: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      _brain_search_crm_bulk_leads: {
+        Args: {
+          p_actor_id: string
+          p_page?: number
+          p_property_id: string
+          p_search?: string
+        }
+        Returns: Json
+      }
+      _brain_set_recorded_tour_timezone: {
+        Args: {
+          p_actor_id: string
+          p_property_id: string
+          p_request_id: string
+          p_timezone: string
+        }
+        Returns: Json
+      }
+      _brain_stop_crm_handoff: {
+        Args: {
+          p_actor_id: string
+          p_handoff_id: string
+          p_property_id: string
+          p_request_id: string
+        }
+        Returns: Json
+      }
+      _brain_stop_crm_setup_operation: {
+        Args: {
+          p_actor_id: string
+          p_operation_id: string
+          p_property_id: string
+          p_request_id: string
+        }
+        Returns: Json
+      }
+      _brain_stop_forgestudio_generation: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_payload: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
       accept_crm_reconciliation: {
         Args: {
           p_actor_id: string
@@ -35307,6 +39243,419 @@ export type Database = {
         }
         Returns: Json
       }
+      brain_asset_current: {
+        Args: { p_asset_id: string; p_property_id: string }
+        Returns: boolean
+      }
+      brain_begin_model: {
+        Args: {
+          p_hash: string
+          p_id: string
+          p_model: string
+          p_output: number
+          p_scope_id: string
+          p_session_id: string
+          p_units: number
+        }
+        Returns: Json
+      }
+      brain_bind_generation: {
+        Args: {
+          p_context_id: string
+          p_deliverable_id?: string
+          p_id: string
+          p_kind: string
+          p_scope_id: string
+        }
+        Returns: Json
+      }
+      brain_brand_context: {
+        Args: {
+          p_deliverable_id?: string
+          p_operation_id: string
+          p_prepare?: boolean
+          p_scope_id: string
+        }
+        Returns: Json
+      }
+      brain_can: {
+        Args: {
+          p_actor_id: string
+          p_capability?: string
+          p_property_id: string
+        }
+        Returns: boolean
+      }
+      brain_canonical_context: {
+        Args: {
+          p_asset_ids?: string[]
+          p_property_id: string
+          p_purpose: string
+        }
+        Returns: Json
+      }
+      brain_channel_readiness: { Args: { p_scope_id: string }; Returns: Json }
+      brain_claim_work: {
+        Args: { p_limit?: number; p_worker: string }
+        Returns: Json
+      }
+      brain_connected_file_current: {
+        Args: { p_file_id: string }
+        Returns: boolean
+      }
+      brain_context: {
+        Args: {
+          p_asset_ids?: string[]
+          p_property_id: string
+          p_query?: string
+          p_scope_id: string
+        }
+        Returns: Json
+      }
+      brain_context_current: {
+        Args: { p_actor_id: string; p_context_id: string }
+        Returns: boolean
+      }
+      brain_documents: {
+        Args: {
+          p_ids?: string[]
+          p_property_id: string
+          p_purpose: string
+          p_query: string
+        }
+        Returns: Json
+      }
+      brain_due_connected_sources: { Args: { p_limit?: number }; Returns: Json }
+      brain_enqueue_extraction: { Args: { p_id: string }; Returns: Json }
+      brain_evidence_eligible: {
+        Args: {
+          p_audience: string
+          p_id: string
+          p_property_id: string
+          p_purpose: string
+        }
+        Returns: boolean
+      }
+      brain_feature_enabled: {
+        Args: { p_property_id: string; p_purpose: string }
+        Returns: boolean
+      }
+      brain_file_detail: {
+        Args: { p_file_id: string; p_scope_id: string }
+        Returns: Json
+      }
+      brain_file_limit: { Args: { p_mime: string }; Returns: number }
+      brain_finish_extraction: {
+        Args: {
+          p_claim_token: string
+          p_job_id: string
+          p_receipt: Json
+          p_renditions?: Json
+          p_worker: string
+        }
+        Returns: Json
+      }
+      brain_finish_model: {
+        Args: {
+          p_id: string
+          p_response: Json
+          p_scope_id: string
+          p_uncertain: boolean
+        }
+        Returns: Json
+      }
+      brain_finish_query: {
+        Args: {
+          p_embedding?: string
+          p_id: string
+          p_model: string
+          p_scope_id: string
+        }
+        Returns: boolean
+      }
+      brain_finish_source_schedule: {
+        Args: { p_lease_token: string; p_source_id: string; p_state: string }
+        Returns: Json
+      }
+      brain_generated_web_origin: {
+        Args: { p_property_id: string; p_url: string }
+        Returns: boolean
+      }
+      brain_generation_current: {
+        Args: { p_id: string; p_kind: string }
+        Returns: boolean
+      }
+      brain_heartbeat: {
+        Args: { p_job_id: string; p_worker: string }
+        Returns: boolean
+      }
+      brain_list_communities: {
+        Args: { p_actor_id: string; p_capability?: string }
+        Returns: Json
+      }
+      brain_measurement_coverage: {
+        Args: {
+          p_end: string
+          p_property_id: string
+          p_scope_id: string
+          p_start: string
+        }
+        Returns: Json
+      }
+      brain_measurement_hash: { Args: { p_rows: Json }; Returns: string }
+      brain_operational_status: { Args: { p_scope_id: string }; Returns: Json }
+      brain_permission_hash: {
+        Args: { p_actor_id: string; p_properties: string[] }
+        Returns: string
+      }
+      brain_portfolio_append: {
+        Args: {
+          p_body: string
+          p_evidence: Json
+          p_id: string
+          p_role: string
+          p_scope_id: string
+          p_session_id: string
+        }
+        Returns: Json
+      }
+      brain_portfolio_assets: {
+        Args: {
+          p_offset?: number
+          p_plans: boolean
+          p_property_id: string
+          p_scope_id: string
+        }
+        Returns: Json
+      }
+      brain_portfolio_history: {
+        Args: { p_scope_id: string; p_session_id: string }
+        Returns: Json
+      }
+      brain_portfolio_session: {
+        Args: { p_scope_id: string; p_session_id: string; p_title?: string }
+        Returns: Json
+      }
+      brain_prepare_deliverable: {
+        Args: {
+          p_asset_ids: string[]
+          p_id: string
+          p_output: Json
+          p_package_id: string
+          p_query: string
+          p_requirements: Json
+          p_review: Json
+          p_scope_id: string
+        }
+        Returns: Json
+      }
+      brain_prepare_query: {
+        Args: { p_property_id: string; p_query: string; p_scope_id: string }
+        Returns: Json
+      }
+      brain_project_memory: {
+        Args: { p_job_id: string; p_worker: string }
+        Returns: Json
+      }
+      brain_provider_cleanup: {
+        Args: { p_confirmed?: boolean; p_id?: string }
+        Returns: Json
+      }
+      brain_provider_compatible: {
+        Args: {
+          p_context_id: string
+          p_id: string
+          p_scope_id: string
+          p_session_id: string
+        }
+        Returns: boolean
+      }
+      brain_provider_lookup: {
+        Args: {
+          p_context_id?: string
+          p_kind: string
+          p_object_id: string
+          p_project: string
+          p_scope_id: string
+          p_session_id?: string
+        }
+        Returns: Json
+      }
+      brain_provider_parent_deleted: {
+        Args: { p_id: string }
+        Returns: boolean
+      }
+      brain_provider_read: {
+        Args: { p_id: string; p_scope_id: string }
+        Returns: Json
+      }
+      brain_provider_record: {
+        Args: { p_input: Json; p_scope_id: string }
+        Returns: Json
+      }
+      brain_public_context: {
+        Args: { p_config_id: string; p_query: string; p_session_id: string }
+        Returns: Json
+      }
+      brain_read_access: {
+        Args: { p_actor_id: string; p_property_id: string }
+        Returns: Json
+      }
+      brain_read_asset: {
+        Args: { p_asset_id: string; p_scope_id: string }
+        Returns: Json
+      }
+      brain_read_coordination: { Args: { p_scope_id: string }; Returns: Json }
+      brain_read_deliverable: {
+        Args: { p_id: string; p_scope_id: string }
+        Returns: Json
+      }
+      brain_read_processing_budgets: {
+        Args: { p_scope_id: string }
+        Returns: Json
+      }
+      brain_reconcile_work: { Args: never; Returns: Json }
+      brain_reconciliation: { Args: { p_scope_id: string }; Returns: Json }
+      brain_record_operation: {
+        Args: {
+          p_counts: Json
+          p_duration_ms: number
+          p_operation: string
+          p_scope_id: string
+          p_status: string
+        }
+        Returns: boolean
+      }
+      brain_replay_candidates: {
+        Args: { p_property_id: string }
+        Returns: {
+          eligible: boolean
+          id: string
+          kind: string
+          source_hash: string
+        }[]
+      }
+      brain_replay_catalog: {
+        Args: { p_offset?: number; p_scope_id: string }
+        Returns: Json
+      }
+      brain_replay_sources: {
+        Args: { p_id: string; p_records: Json; p_scope_id: string }
+        Returns: Json
+      }
+      brain_request_provider_cleanup: {
+        Args: { p_context_id: string }
+        Returns: Json
+      }
+      brain_reserve_package_processing: {
+        Args: {
+          p_cents: number
+          p_id: string
+          p_kind: string
+          p_operation: string
+        }
+        Returns: Json
+      }
+      brain_resolve_scope: {
+        Args: {
+          p_actor_id: string
+          p_property_ids: string[]
+          p_purpose: string
+        }
+        Returns: Json
+      }
+      brain_review_asset: {
+        Args: { p_id: string; p_input: Json; p_scope_id: string }
+        Returns: Json
+      }
+      brain_review_source: {
+        Args: { p_review: Json; p_scope_id: string; p_version_id: string }
+        Returns: Json
+      }
+      brain_rollout: {
+        Args: { p_actor_id: string; p_input?: Json; p_property_id: string }
+        Returns: Json
+      }
+      brain_run_maintenance: { Args: never; Returns: Json }
+      brain_save_context: {
+        Args: {
+          p_asset_ids: string[]
+          p_job_id?: string
+          p_property_id: string
+          p_query: string
+          p_scope_id: string
+        }
+        Returns: Json
+      }
+      brain_save_initiative: {
+        Args: { p_id: string; p_input: Json; p_scope_id: string }
+        Returns: Json
+      }
+      brain_save_package: {
+        Args: {
+          p_id: string
+          p_initiative_id: string
+          p_input: Json
+          p_scope_id: string
+        }
+        Returns: Json
+      }
+      brain_scope_capability: { Args: { p_purpose: string }; Returns: string }
+      brain_scope_current: {
+        Args: { p_actor_id?: string; p_property_id: string; p_scope_id: string }
+        Returns: boolean
+      }
+      brain_search: {
+        Args: {
+          p_embedding?: string
+          p_limit?: number
+          p_model?: string
+          p_property_id: string
+          p_query: string
+          p_scope_id: string
+        }
+        Returns: Json
+      }
+      brain_set_access: {
+        Args: {
+          p_actor_id: string
+          p_capabilities: string[]
+          p_expires_at: string
+          p_property_id: string
+          p_reason: string
+          p_revoke: boolean
+          p_target_actor_id: string
+        }
+        Returns: Json
+      }
+      brain_source_config: { Args: { p_source_id: string }; Returns: string }
+      brain_source_schedule: {
+        Args: {
+          p_enabled: boolean
+          p_hours: number
+          p_revision: number
+          p_scope_id: string
+          p_source_id: string
+        }
+        Returns: Json
+      }
+      brain_source_sync: {
+        Args: {
+          p_input?: Json
+          p_operation: string
+          p_run_id: string
+          p_scope_id: string
+          p_source_id: string
+        }
+        Returns: Json
+      }
+      brain_storage_owner: { Args: { p_name: string }; Returns: string }
+      brain_worker_can: { Args: { p_property_id: string }; Returns: boolean }
+      brain_worker_lease: { Args: { p_worker: string }; Returns: boolean }
+      brain_worker_object: {
+        Args: { p_name: string; p_write: boolean }
+        Returns: boolean
+      }
       brand_action_summary: {
         Args: {
           p_brand: Database["public"]["Tables"]["property_brand_assets"]["Row"]
@@ -35645,6 +39994,7 @@ export type Database = {
           property_id: string | null
           queued_at: string
           retry_at: string | null
+          scope_kind: string
           stage: string
           started_at: string | null
           status_reason: string | null
@@ -35758,6 +40108,10 @@ export type Database = {
           p_property_id: string
           p_provenance?: Json
         }
+        Returns: Json
+      }
+      community_brain_access_token_hook: {
+        Args: { event: Json }
         Returns: Json
       }
       complete_marketvision_brief: {
@@ -36271,6 +40625,15 @@ export type Database = {
         Returns: Json
       }
       decide_pipeline: {
+        Args: {
+          p_actor_id: string
+          p_id: string
+          p_input: Json
+          p_property_id: string
+        }
+        Returns: Json
+      }
+      decide_property_intelligence: {
         Args: {
           p_actor_id: string
           p_id: string
@@ -38548,6 +42911,10 @@ export type Database = {
         }
         Returns: Json
       }
+      record_siteforge_package_download: {
+        Args: { p_actor_id: string; p_job_id: string; p_property_id: string }
+        Returns: boolean
+      }
       record_tour_calendar_observation: {
         Args: {
           p_booking_id: string
@@ -39513,6 +43880,17 @@ export type Database = {
         }
         Returns: undefined
       }
+      save_marketing_import_report_v2: {
+        Args: {
+          p_connection_id: string
+          p_error?: string
+          p_job_id: string
+          p_receipt: Json
+          p_records: Json
+          p_token: string
+        }
+        Returns: undefined
+      }
       save_marketvision_brand_search: {
         Args: {
           p_actor_id: string
@@ -40010,120 +44388,6 @@ export type Database = {
         Returns: Json
       }
       validate_property_unit_data: { Args: { p_data: Json }; Returns: boolean }
-      decide_property_intelligence: {
-        Args: {
-          p_actor_id: string
-          p_id: string
-          p_input: Json
-          p_property_id: string
-        }
-        Returns: Json
-      }
-      record_siteforge_package_download: {
-        Args: { p_actor_id: string; p_job_id: string; p_property_id: string }
-        Returns: boolean
-      }
-      reserve_shared_execution_budget: {
-        Args: {
-          p_browser_runs?: number
-          p_budget_id: string
-          p_cost_cents?: number
-          p_input_tokens?: number
-          p_model_attempts?: number
-          p_output_tokens?: number
-          p_provider_calls?: number
-          p_repair_operations?: number
-        }
-        Returns: {
-          created_at: string
-          deadline_at: string | null
-          id: string
-          job_id: string | null
-          max_browser_runs: number
-          max_cost_cents: number
-          max_input_tokens: number
-          max_model_attempts: number
-          max_output_tokens: number
-          max_provider_calls: number
-          max_repair_operations: number
-          max_wall_seconds: number
-          metadata: Json
-          model_policy: Json
-          org_id: string
-          policy_version: string
-          property_id: string | null
-          reserved_cost_cents: number
-          reserved_input_tokens: number
-          reserved_output_tokens: number
-          started_at: string
-          status: string
-          updated_at: string
-          used_browser_runs: number
-          used_cost_cents: number
-          used_input_tokens: number
-          used_model_attempts: number
-          used_output_tokens: number
-          used_provider_calls: number
-          used_repair_operations: number
-          website_id: string | null
-        }
-        SetofOptions: {
-          from: "*"
-          to: "shared_execution_budgets"
-          isOneToOne: true
-          isSetofReturn: false
-        }
-      }
-      settle_shared_execution_budget: {
-        Args: {
-          p_budget_id: string
-          p_reserved_cost_cents?: number
-          p_reserved_input_tokens?: number
-          p_reserved_output_tokens?: number
-          p_used_cost_cents?: number
-          p_used_input_tokens?: number
-          p_used_output_tokens?: number
-        }
-        Returns: {
-          created_at: string
-          deadline_at: string | null
-          id: string
-          job_id: string | null
-          max_browser_runs: number
-          max_cost_cents: number
-          max_input_tokens: number
-          max_model_attempts: number
-          max_output_tokens: number
-          max_provider_calls: number
-          max_repair_operations: number
-          max_wall_seconds: number
-          metadata: Json
-          model_policy: Json
-          org_id: string
-          policy_version: string
-          property_id: string | null
-          reserved_cost_cents: number
-          reserved_input_tokens: number
-          reserved_output_tokens: number
-          started_at: string
-          status: string
-          updated_at: string
-          used_browser_runs: number
-          used_cost_cents: number
-          used_input_tokens: number
-          used_model_attempts: number
-          used_output_tokens: number
-          used_provider_calls: number
-          used_repair_operations: number
-          website_id: string | null
-        }
-        SetofOptions: {
-          from: "*"
-          to: "shared_execution_budgets"
-          isOneToOne: true
-          isSetofReturn: false
-        }
-      }
     }
     Enums: {
       geo_crawl_status_enum: "queued" | "running" | "completed" | "failed"
