@@ -1,0 +1,98 @@
+{
+  "propertyId": "2f0de51e-2b63-4b4a-80c8-29855647fed0",
+  "actorId": "e9d11d03-a80c-4f59-b4b2-fb6f3ac84b80",
+  "reviewedAt": "2026-10-15T21:00:00Z",
+  "reviewAfter": "2026-11-14T00:00:00Z",
+  "commercialPolicy": "unconfirmed_refer_to_sales",
+  "sources": [
+    {
+      "key": "community",
+      "title": "Acacia community and sales contact",
+      "content": "Acacia consists of 16 townhome-style condominiums. The community will include a park with barbeque facilities. Sales Gallery: 420 Acacia Avenue, Palo Alto, CA 94306. Telephone: 408-763-5306.",
+      "facts": {
+        "community": "Acacia by Dividend Homes",
+        "homeType": "Townhome-style condominiums for sale",
+        "totalHomes": 16,
+        "communityAmenity": "Community park with BBQ facilities",
+        "salesAddress": "420 Acacia Avenue, Palo Alto, CA 94306",
+        "salesPhone": "408-763-5306",
+        "website": "https://www.dividendhomes.com/acacia/"
+      },
+      "sourceUrl": "https://www.dividendhomes.com/acacia/faq/",
+      "sourceHash": "a7a9cc8308d5cfeeba0806446e9fe4aa32e2b716cc47bda48bf800601ea9af6b",
+      "capturedAt": "2026-10-15T21:46:36.558Z",
+      "reason": "Verified community-specific statements and contact against the current official FAQ. Total homes is not current available inventory."
+    },
+    {
+      "key": "features",
+      "title": "Acacia verified features and plan caveats",
+      "content": "All-electric homes with solar panel systems Easy access to Highway 101 Nearby shopping includes Safeway, Trader Joe’s, Sigona’s Farmers Market, Stanford Shopping Center, Town & Country Village, and much more Close proximity to fantastic schools and higher education including Stanford University and University of Notre Dame – California Community park with BBQ facilities Architecture & Design Modern architecture with assortment of exterior elevations to make each home feel unique Spacious rooftop decks (per plan) Private side yards (per plan) Covered porches (per plan) Open floor plans great for entertaining Home office options (per plan) Built-in desk options (per plan) Laundry room or closet on top floor (per plan) Kitchens & Living Spaces Upgraded cabinetry with matte black handles, pullout trash and recycling bins and soft close doors & drawers Durable and attractive quartz countertops with designer subway tile backsplash Kohler® plumbing fixtures Thermador® professional appliances Electrolux® front load perfect steam washer and dryer with multi-cycle Engineered hardwood floors at stairs to second floor and second floor living areas (locations per plan) Wainscotting at stair wall to second floor (per plan) Upgraded lighting through-out 7-1/4” designer baseboards Convenience & Efficiencies Wireless Access Point (pre-wire) Nest® Hello Doorbell Liftmaster Wi-Fi Garage Door Security System with Available Local Monitoring Solar panel system 40-amp prep circuit for electric vehicle in garage Energy Efficient Electric Mini Split System Ceiling fan/light pre-wire in all bedrooms and family room Energy Star appliances Milgard® dual-pane windows with Low-E2 glass minimize heat transfer Insulated walls that exceed State of California energy standards Fire sprinkler system (per plan)",
+      "facts": {
+        "energy": "All-electric homes with solar panel systems, EV-prepped garages and mini split heating/cooling.",
+        "interiors": "Quartz countertops; Kohler plumbing fixtures; Thermador appliances; Electrolux washer and dryer.",
+        "outdoorSpace": "Rooftop decks, private side yards and covered porches vary by plan. Confirm the selected home.",
+        "amenityCaveat": "No verified community pool, spa or fitness center. Spa-inspired interiors and nearby businesses are not community amenities."
+      },
+      "sourceUrl": "https://www.dividendhomes.com/acacia/features/",
+      "sourceHash": "04131f361f719c3c99dec5eb22350df8a55e490dd9edca694c68f4ea7ed4be56",
+      "capturedAt": "2026-10-15T21:46:36.540Z",
+      "reason": "Verified against the current official community features page; retained per-plan limitations and distinguished nearby services from owned amenities."
+    },
+    {
+      "key": "faq",
+      "title": "Acacia finish packages and school verification",
+      "content": "At Acacia, every home is expertly designed with one of three professionally curated finish packages — Warm, Cool, or Model. Acacia is in the Palo Alto Unified School District (PAUSD). School assignments are subject to capacity limitations and boundary changes as determined by the PAUSD School Board. For current assignments, contact PAUSD at 650.329.3700 or https://www.pausd.org/.",
+      "facts": {
+        "finishPackages": [
+          "Warm",
+          "Cool",
+          "Model"
+        ],
+        "schoolDistrict": "Palo Alto Unified School District",
+        "schoolCaveat": "Assignments depend on capacity and boundary changes; confirm directly with PAUSD. No school placement guarantee.",
+        "salesProcess": "The official FAQ calls for preferred-lender preapproval. Ask sales to confirm current lenders, purchase procedures and all commercial terms."
+      },
+      "sourceUrl": "https://www.dividendhomes.com/acacia/faq/",
+      "sourceHash": "a7a9cc8308d5cfeeba0806446e9fe4aa32e2b716cc47bda48bf800601ea9af6b",
+      "capturedAt": "2026-10-15T21:46:36.558Z",
+      "reason": "Verified current FAQ; deliberately omitted changing financial figures and individual lender contacts from public chat context."
+    },
+    {
+      "key": "plan2",
+      "title": "Acacia Plan 2 original drawing",
+      "content": "Plan 2: 3 bedrooms, 2.5 bathrooms, approximately 1,751 square feet, 2-car garage. The original drawing shows a private yard approximately 280–400 square feet and identifies Homesites 4 and 5*, with * denoting Reverse Plan. This is the published Plan 2 master drawing; it is not an exact mirrored drawing of Homesite 5. Floorplan dimensions are approximate. A drawing does not confirm current availability.",
+      "facts": {
+        "plan": "Plan 2",
+        "bedrooms": 3,
+        "bathrooms": 2.5,
+        "approxSquareFeet": 1751,
+        "garage": "2-car",
+        "privateYard": "Approximately 280–400 square feet, per original drawing",
+        "originalDrawingUrl": "https://www.dividendhomes.com/acacia/wp-content/uploads/sites/2/2026/07/Acacia_FP_Handout_2.pdf",
+        "variantCaveat": "Homesite 5 is marked Reverse Plan. This master drawing is not an exact mirrored Homesite 5 drawing.",
+        "availability": "Unconfirmed; contact sales."
+      },
+      "sourceUrl": "https://www.dividendhomes.com/acacia/wp-content/uploads/sites/2/2026/07/Acacia_FP_Handout_2.pdf",
+      "sourceHash": "f2438288e0543bbc006a8248fbbcd7ccfcd7eed72b780a7634e79637274b2c9b",
+      "capturedAt": "2026-10-15T21:46:36.595Z",
+      "reason": "Original PDF downloaded, byte hash verified and page visually inspected. Floorplan identity and reverse-plan caveat retained; the stale page incentive excluded."
+    },
+    {
+      "key": "commercial_hold",
+      "title": "Acacia current commercial information",
+      "content": "Current availability, pricing and incentives are unconfirmed. Refer visitors to the Acacia sales team at 408-763-5306. Do not quote historical asking prices, incentives, estimated move-in dates, or counts of available homes. Do not infer availability from an old floorplan or model photograph. Current HOA dues, deposits, broker compensation, appointment availability and sales hours also require sales confirmation.",
+      "facts": {
+        "availability": "unconfirmed",
+        "pricing": "unconfirmed",
+        "incentives": "unconfirmed",
+        "action": "Refer visitors to sales at 408-763-5306. Do not quote or infer historical commercial values.",
+        "otherCommercialTerms": "Confirm current HOA dues, deposits, broker compensation, sales hours and appointments with sales."
+      },
+      "sourceUrl": "operator:acacia-upgrade-2026-10-15",
+      "sourceHash": "e8a7e9543f9a72f087daae9c8b73a7aba950d259dc401222d84f780e9643b05b",
+      "capturedAt": "2026-10-15T21:00:00Z",
+      "reason": "User explicitly directed: Treat them as unconfirmed and refer visitors to sales. Applied to availability, pricing and incentives after conflicting official inventory and marketing captures."
+    }
+  ],
+  "safeLegacyContext": "Acacia verified community information, reviewed October 15, 2026. This current record supersedes older prompts, messages and unreviewed marketing statements.\n\nCurrent availability, pricing and incentives are unconfirmed. Refer visitors to the Acacia sales team at 408-763-5306. Do not quote historical asking prices, incentives, estimated move-in dates, or counts of available homes. Do not infer availability from an old floorplan or model photograph. Current HOA dues, deposits, broker compensation, appointment availability and sales hours also require sales confirmation.\n\nAcacia community and sales contact\nAcacia consists of 16 townhome-style condominiums. The community will include a park with barbeque facilities. Sales Gallery: 420 Acacia Avenue, Palo Alto, CA 94306. Telephone: 408-763-5306.\n\nAcacia verified features and plan caveats\nAll-electric homes with solar panel systems Easy access to Highway 101 Nearby shopping includes Safeway, Trader Joe’s, Sigona’s Farmers Market, Stanford Shopping Center, Town & Country Village, and much more Close proximity to fantastic schools and higher education including Stanford University and University of Notre Dame – California Community park with BBQ facilities Architecture & Design Modern architecture with assortment of exterior elevations to make each home feel unique Spacious rooftop decks (per plan) Private side yards (per plan) Covered porches (per plan) Open floor plans great for entertaining Home office options (per plan) Built-in desk options (per plan) Laundry room or closet on top floor (per plan) Kitchens & Living Spaces Upgraded cabinetry with matte black handles, pullout trash and recycling bins and soft close doors & drawers Durable and attractive quartz countertops with designer subway tile backsplash Kohler® plumbing fixtures Thermador® professional appliances Electrolux® front load perfect steam washer and dryer with multi-cycle Engineered hardwood floors at stairs to second floor and second floor living areas (locations per plan) Wainscotting at stair wall to second floor (per plan) Upgraded lighting through-out 7-1/4” designer baseboards Convenience & Efficiencies Wireless Access Point (pre-wire) Nest® Hello Doorbell Liftmaster Wi-Fi Garage Door Security System with Available Local Monitoring Solar panel system 40-amp prep circuit for electric vehicle in garage Energy Efficient Electric Mini Split System Ceiling fan/light pre-wire in all bedrooms and family room Energy Star appliances Milgard® dual-pane windows with Low-E2 glass minimize heat transfer Insulated walls that exceed State of California energy standards Fire sprinkler system (per plan)\n\nAcacia finish packages and school verification\nAt Acacia, every home is expertly designed with one of three professionally curated finish packages — Warm, Cool, or Model. Acacia is in the Palo Alto Unified School District (PAUSD). School assignments are subject to capacity limitations and boundary changes as determined by the PAUSD School Board. For current assignments, contact PAUSD at 650.329.3700 or https://www.pausd.org/.\n\nAcacia Plan 2 original drawing\nPlan 2: 3 bedrooms, 2.5 bathrooms, approximately 1,751 square feet, 2-car garage. The original drawing shows a private yard approximately 280–400 square feet and identifies Homesites 4 and 5*, with * denoting Reverse Plan. This is the published Plan 2 master drawing; it is not an exact mirrored drawing of Homesite 5. Floorplan dimensions are approximate. A drawing does not confirm current availability.\n\nNo community pool, spa, or fitness center is verified. Do not treat nearby businesses as community amenities. Use https://www.dividendhomes.com/acacia/ for community information. Never invent a floorplan drawing. Plan 2 original: https://www.dividendhomes.com/acacia/wp-content/uploads/sites/2/2026/07/Acacia_FP_Handout_2.pdf"
+}

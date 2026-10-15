@@ -1,0 +1,49 @@
+{
+  "receiptId": "d77250f0-88fa-537d-94be-0032b2414e8f",
+  "propertyId": "2f0de51e-2b63-4b4a-80c8-29855647fed0",
+  "snapshotHash": "5123b99d8a9e022e61aa64f80d339c4340060ab463228c9bd10728457ff8f897",
+  "recipe": "reviewed-community-adoption-v1",
+  "reviewHash": "402c4668332ec1facfbc48cccee16d16c3d1fec5eec9cb5b1eedcbda8333a716",
+  "sources": [
+    {
+      "key": "community",
+      "materialId": "04b1aac1-6489-56d6-9b13-a3bdc6387ad5",
+      "versionId": "5cf0d5e9-7548-5529-86d9-71489e0cf29e",
+      "evidenceId": "58e558c5-1afb-2a8a-efff-6b5cf6bd95ac",
+      "sourceHash": "a7a9cc8308d5cfeeba0806446e9fe4aa32e2b716cc47bda48bf800601ea9af6b"
+    },
+    {
+      "key": "features",
+      "materialId": "cf164e5b-c8f9-5422-bdad-2b232674ab9b",
+      "versionId": "db3772d2-2e3a-55cb-8261-97ec0919d8be",
+      "evidenceId": "bdaea263-8fe3-c857-4756-ed10a1dd1581",
+      "sourceHash": "04131f361f719c3c99dec5eb22350df8a55e490dd9edca694c68f4ea7ed4be56"
+    },
+    {
+      "key": "faq",
+      "materialId": "9a868cb9-bbe8-5dc7-93a3-221dc1b43963",
+      "versionId": "df2e91af-9463-5355-b977-48ed968038fd",
+      "evidenceId": "06d379af-2d62-afce-e48a-16b7b0fe696c",
+      "sourceHash": "a7a9cc8308d5cfeeba0806446e9fe4aa32e2b716cc47bda48bf800601ea9af6b"
+    },
+    {
+      "key": "plan2",
+      "materialId": "2927fea5-8db9-5e45-b869-025cd6fdf8fc",
+      "versionId": "c3bc067d-5da0-597d-971c-3a210b8db79e",
+      "evidenceId": "7448566a-4232-1fb3-d45a-a87ba58b52e2",
+      "sourceHash": "f2438288e0543bbc006a8248fbbcd7ccfcd7eed72b780a7634e79637274b2c9b"
+    },
+    {
+      "key": "commercial_hold",
+      "materialId": "da69d2e9-fb3f-5633-8406-97299515ef32",
+      "versionId": "cdbc1032-4edc-5873-b95a-e5e560bca27c",
+      "evidenceId": "0c508c96-267a-79cd-2e38-a19cb2721528",
+      "sourceHash": "e8a7e9543f9a72f087daae9c8b73a7aba950d259dc401222d84f780e9643b05b"
+    }
+  ],
+  "legacySourcesRetained": 5,
+  "legacyChunksRetained": 20,
+  "commercialPolicy": "unconfirmed_refer_to_sales",
+  "reviewAfter": "2026-11-14T00:00:00Z",
+  "activation": "separate_audited_rollout"
+}
