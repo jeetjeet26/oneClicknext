@@ -8,6 +8,7 @@ It does not fabricate embeddings, extraction receipts, or asset rights.
 import argparse
 import hashlib
 import json
+import re
 import uuid
 from pathlib import Path
 
@@ -22,6 +23,31 @@ def literal(value):
 
 def js(value):
     return literal(json.dumps(value, ensure_ascii=False, separators=(',', ':'))) + '::jsonb'
+
+
+def fact_payload(source, review, evidence):
+    fields = {'community': 'short_description', 'features': 'features_detail',
+              'faq': 'faqs', 'plan2': 'structured_facts', 'commercial_hold': 'restricted_claims'}
+    field = source.get('canonicalField') or fields.get(source['key'])
+    if field not in set(fields.values()):
+        raise ValueError('Select a supported canonical field for this adoption source')
+    lines = []
+    for key, value in source['facts'].items():
+        label = re.sub(r'(?<!^)(?=[A-Z])', ' ', key).capitalize()
+        rendered = '; '.join(map(str, value)) if isinstance(value, list) else str(value)
+        lines.append(label + ': ' + rendered)
+    value = '\n'.join(lines)
+    if not value or len(value) > 8000 or len(source['title']) > 200:
+        raise ValueError('Canonical fact exceeds the editor limits')
+    url = source['sourceUrl']
+    return field, {'field': field, 'value': value, 'source': source['title'],
+                   'sourceUrl': url if url.startswith(('https://', 'http://')) else '',
+                   'observedAt': source['capturedAt'][:10],
+                   'effectiveFrom': review['reviewedAt'][:10], 'effectiveTo': None,
+                   'reviewAfter': review['reviewAfter'][:10], 'confidence': None,
+                   'origin': 'staff' if url.startswith('operator:') else 'import',
+                   'visibility': 'public', 'sourceEvidenceId': evidence,
+                   'sourceHash': source['sourceHash']}
 
 
 def prepare(snapshot, review):
@@ -55,6 +81,7 @@ def prepare(snapshot, review):
     sql += [f"if exists(select 1 from public.assistant_fact_workspaces where property_id='{pid}')then raise exception 'Reviewed assistant workspace requires a separate adoption';end if;",
             f"if exists(select 1 from public.property_intelligence_documents where property_id='{pid}' and kind='fact' and status='approved')then raise exception 'Existing canonical facts require reconciliation';end if;"]
     sources = []
+    fact_fields = set()
     for source in review['sources']:
         body = source['content'].strip()
         if not body or len(body) > 6000 or len(source['sourceHash']) != 64:
@@ -76,11 +103,11 @@ def prepare(snapshot, review):
                 f"update public.knowledge_materials set latest_version_id='{version}',active_version_id='{version}' where id='{material}';",
                 f"insert into public.community_evidence(id,property_id,org_id,material_version_id,authority,audience,purposes,allowed_uses,content_hash,review_status,review_after,origin)values('{evidence}','{pid}','{org}','{version}','reviewed','public',{purposes},array['fact'],'{digest(body)}','approved',{after},'original');",
                 f"insert into public.documents(id,property_id,content,evidence_id,metadata)values('{chunk}','{pid}',{literal(body)},'{evidence}',{js({**source_input,'knowledge_material_id':material,'version_id':version,'title':source['title'],'source':'reviewed_adoption','chunk_index':0})});"]
-        payload = {'visibility': 'public', 'reviewAfter': review['reviewAfter'][:10],
-                   'effectiveFrom': review['reviewedAt'][:10], 'sourceEvidenceId': evidence,
-                   'sourceUrl': source['sourceUrl'], 'sourceHash': source['sourceHash'],
-                   'label': source['title'], 'value': source['facts']}
-        sql += [f"insert into public.property_intelligence_documents(id,property_id,org_id,kind,key,payload,status,actor_id)values('{fact}','{pid}','{org}','fact',{literal('adoption.'+source['key'])},{js(payload)},'approved','{actor}');"]
+        field, payload = fact_payload(source, review, evidence)
+        if field in fact_fields:
+            raise ValueError('Each reviewed adoption fact must have a distinct editor field')
+        fact_fields.add(field)
+        sql += [f"insert into public.property_intelligence_documents(id,property_id,org_id,kind,key,payload,status,actor_id)values('{fact}','{pid}','{org}','fact',{literal(field)},{js(payload)},'approved','{actor}');"]
         sources.append({'key':source['key'],'materialId':material,'versionId':version,'evidenceId':evidence,'sourceHash':source['sourceHash']})
     # Untested legacy extractions must not leak through canonical property/unit fields.
     # The originals remain in the receipt and source records for later reconciliation.

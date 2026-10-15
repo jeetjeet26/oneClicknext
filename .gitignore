@@ -112,3 +112,6 @@ Collection/
 
 .vercel
 .env*.local
+
+# Production-derived qualification data stays local.
+/docs/community-brain-release/2026-10-15-acacia/editor-facts.json

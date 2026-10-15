@@ -91,6 +91,13 @@ describe("property intelligence boundaries", () => {
       ),
     ).toBe(true);
   });
+  it("keeps adopted source provenance usable and intact in the facts editor", () => {
+    const migrated = { ...fact, sourceEvidenceId: "11111111-1111-c111-1111-111111111111", sourceHash: "a".repeat(64) };
+    expect(factSchema.parse(migrated)).toEqual(migrated);
+    expect(factUsable(document(migrated), "public", "2026-10-07")).toBe(true);
+    expect(factSchema.safeParse({ ...migrated, sourceHash: undefined }).success).toBe(false);
+    expect(factSchema.safeParse({ ...migrated, sourceEvidenceId: "not-an-evidence-id" }).success).toBe(false);
+  });
   it("rejects invalid conversion links and backwards effective dates", () => {
     expect(
       factSchema.safeParse({

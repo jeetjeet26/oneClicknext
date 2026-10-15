@@ -79,9 +79,14 @@ export const factSchema = z
     confidence: z.number().min(0).max(1).nullable(),
     origin: z.enum(["staff", "client", "import", "ai_suggested"]),
     visibility: z.enum(["public", "portal", "internal"]),
+    // Retain reviewed source identity when an adopted fact is edited or renewed.
+    sourceEvidenceId: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i).optional(),
+    sourceHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   })
   .strict()
   .superRefine((v, c) => {
+    if (Boolean(v.sourceEvidenceId) !== Boolean(v.sourceHash))
+      c.addIssue({ code: "custom", message: "Keep the reviewed evidence and source hash together." });
     if (v.effectiveFrom && v.effectiveTo && v.effectiveFrom > v.effectiveTo)
       c.addIssue({ code: "custom", message: "Effective dates are reversed." });
     if (v.reviewAfter < v.observedAt)
