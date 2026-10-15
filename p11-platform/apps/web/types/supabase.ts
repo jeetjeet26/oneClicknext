@@ -1,4 +1,4 @@
-// schema_migration_version: 20261014013217
+// schema_migration_version: 20261015214530
 export type Json =
   | string
   | number
@@ -8,6 +8,11 @@ export type Json =
   | Json[]
 
 export type Database = {
+  // Allows to automatically instantiate createClient with right options
+  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
+  __InternalSupabase: {
+    PostgrestVersion: "13.0.5"
+  }
   public: {
     Tables: {
       account_credential_events: {
@@ -3782,6 +3787,55 @@ export type Database = {
           },
         ]
       }
+      community_adoption_receipts: {
+        Row: {
+          actor_id: string
+          created_at: string
+          id: string
+          manifest: Json
+          property_id: string
+          source_snapshot_hash: string
+        }
+        Insert: {
+          actor_id: string
+          created_at?: string
+          id?: string
+          manifest: Json
+          property_id: string
+          source_snapshot_hash: string
+        }
+        Update: {
+          actor_id?: string
+          created_at?: string
+          id?: string
+          manifest?: Json
+          property_id?: string
+          source_snapshot_hash?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "community_adoption_receipts_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_adoption_receipts_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "community_adoption_receipts_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+        ]
+      }
       community_asset_bindings: {
         Row: {
           actor_id: string
@@ -3859,6 +3913,7 @@ export type Database = {
       }
       community_brain_settings: {
         Row: {
+          chat_activated_at: string | null
           consumers: string[]
           context_enabled: boolean
           feedback_enabled: boolean
@@ -3870,6 +3925,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          chat_activated_at?: string | null
           consumers?: string[]
           context_enabled?: boolean
           feedback_enabled?: boolean
@@ -3881,6 +3937,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          chat_activated_at?: string | null
           consumers?: string[]
           context_enabled?: boolean
           feedback_enabled?: boolean
@@ -36408,6 +36465,17 @@ export type Database = {
         }
         Returns: Json
       }
+      _brain_claim_recorded_luma_request_v1: {
+        Args: {
+          p_actor: string
+          p_key_hash: string
+          p_operation: string
+          p_property_id: string
+          p_raw_input: string
+          p_request_id: string
+        }
+        Returns: Json
+      }
       _brain_command_crm_bulk: {
         Args: {
           p_actor_id: string
@@ -39295,6 +39363,10 @@ export type Database = {
         Returns: Json
       }
       brain_channel_readiness: { Args: { p_scope_id: string }; Returns: Json }
+      brain_chat_release: {
+        Args: { p_config_id: string; p_session_id: string }
+        Returns: Json
+      }
       brain_claim_work: {
         Args: { p_limit?: number; p_worker: string }
         Returns: Json
