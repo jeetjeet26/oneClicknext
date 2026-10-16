@@ -1,4 +1,5 @@
 "use client";
+import { clientPortalHref } from "@/utils/client-portal/navigation";
 import { ClientProgress } from "./ClientProgress";
 import { FunnelSummary } from "./FunnelSummary";
 import { ClientPortalHeader } from "./ClientPortalHeader";
@@ -41,11 +42,11 @@ const date = (s: string) =>
   });
 const titles: Record<string, { title: string; description: string }> = {
   overview: {
-    title: "A clearer view of your properties.",
+    title: "Your properties at a glance",
     description: "Your latest results, together in one place.",
   },
   performance: {
-    title: "Performance, in perspective.",
+    title: "Performance",
     description:
       "Understand how your marketing is reaching people and generating interest.",
   },
@@ -289,13 +290,7 @@ export function ClientPortal({ view }: { view: string }) {
   }, [property, days, offset, requestKey]);
   const target = useCallback(
     (href: string, change: Record<string, string> = {}) => {
-      const q = new URLSearchParams(params);
-      q.delete("reportOffset");
-      for (const [k, v] of Object.entries(change)) {
-        if (v) q.set(k, v);
-        else q.delete(k);
-      }
-      return href + (q.size ? "?" + q.toString() : "");
+      return clientPortalHref(href, params, change);
     },
     [params],
   );
@@ -419,7 +414,7 @@ export function ClientPortal({ view }: { view: string }) {
               ) : (
                 <>
                   {!!data.incompleteMarketingRows && <div role="status" className="console-panel mb-5 p-5 text-sm">Some marketing records have missing measures. Results exclude {data.incompleteMarketingRows} incomplete records and may understate activity. Missing values have not been counted as zero.</div>}
-                  {["overview", "performance"].includes(view) && (
+                  {view === "performance" && (
                     <ClientProgress data={data} />
                   )}
                   {["overview", "performance"].includes(view) && (
@@ -470,14 +465,14 @@ export function ClientPortal({ view }: { view: string }) {
                             />
                           </div>
                           <p className="console-metric-value">{m.value}</p>
-                          <p className="mt-3 text-[11px] leading-relaxed text-slate-500">
+                          <p className="mt-3 text-sm leading-relaxed text-slate-500">
                             {m.note}
                           </p>
                         </section>
                       ))}
                     </div>
                   )}
-                  {["overview", "performance"].includes(view) && (
+                  {view === "performance" && (
                     <div className="mt-6 grid gap-6 xl:grid-cols-[1.8fr_1fr]">
                       <Trend data={data} />
                       <section className="console-panel">
@@ -543,6 +538,7 @@ export function ClientPortal({ view }: { view: string }) {
                       </section>
                     </div>
                   )}
+                  {view === "overview" && <section className="console-panel mt-6 flex flex-wrap items-center justify-between gap-4 p-5 sm:p-6"><div><h2 className="text-lg font-semibold">Understand your results</h2><p className="mt-1 text-sm text-slate-600">See trends, data coverage and reviewed next steps.</p></div><div className="flex flex-wrap gap-3"><Link className="console-action-primary" href={target('/client/performance')}>View results</Link><Link className="console-action" href={target('/client/insights')}>What changed?</Link></div></section>}
                   {["overview", "properties"].includes(view) && (
                     <section className="mt-6 console-panel">
                       <div className="console-panel-heading">

@@ -8,13 +8,15 @@ export function CommunitySources({propertyId}:{propertyId:string}) {
   const [sources,setSources]=useState<Source[]>([])
   const [busy,setBusy]=useState(false)
   const [message,setMessage]=useState('')
+  const [loading,setLoading]=useState(true),[readError,setReadError]=useState(''),[attempt,setAttempt]=useState(0)
   useEffect(()=>{
     let active=true
     fetch(`/api/community-brain/sources?propertyId=${propertyId}`,{cache:'no-store'})
       .then(async r=>{const v=await r.json();if(!r.ok)throw Error(v.error);if(active)setSources(v.sources)})
-      .catch(()=>{if(active)setMessage('Connected sources could not be loaded.')})
+      .catch(()=>{if(active)setReadError('Connected sources could not be loaded.')})
+      .finally(()=>{if(active)setLoading(false)})
     return()=>{active=false}
-  },[propertyId])
+  },[propertyId,attempt])
   async function sync(sourceId:string){
     setBusy(true);setMessage('Checking the configured folder and retaining changed originals…')
     try{
@@ -37,6 +39,7 @@ export function CommunitySources({propertyId}:{propertyId:string}) {
   return <section className="space-y-3 rounded-xl border p-5">
     <h2 className="font-medium">Connected originals</h2>
     <p className="text-sm text-muted-foreground">Drive and Dropbox use the same private file review process. Google documents are retained as versioned Office exports. Configure a source folder in the asset library; each folder supports up to 1,000 supported files at its top level.</p>
+    {loading&&<p role="status">Loading connected folders…</p>}{readError&&<div role="alert"><p>{readError}</p><button className="console-action mt-2" onClick={()=>{setLoading(true);setReadError('');setSources([]);setAttempt(value=>value+1)}}>Try again</button></div>}
     {message&&<p role="status" className="text-sm">{message}</p>}
     {sources.map(s=><div key={s.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3">
       <div><p className="text-sm">{s.external_folder_name??s.provider.replaceAll('_',' ')} · {s.status}</p>
@@ -49,7 +52,7 @@ export function CommunitySources({propertyId}:{propertyId:string}) {
       </select></label>
       <button className="rounded-lg border px-3 py-2 text-sm disabled:opacity-50" disabled={busy||s.status==='revoked'||s.status==='paused'} onClick={()=>void sync(s.id)}>Check and import originals</button>
     </div>)}
-    {sources.length===0&&<p className="text-sm">No connected folders for this community.</p>}
+    {!loading&&!readError&&sources.length===0&&<p className="text-sm">No connected folders for this community.</p>}
     <p className="text-xs text-muted-foreground">Scheduled checks use the access of the team member who enabled them and stop when that access or the source connection changes.</p>
   </section>
 }

@@ -145,8 +145,8 @@ function PropertyDashboardPage() {
 
   const tabs = [
     { id: 'overview' as Tab, label: 'Overview', icon: Building2 },
-    { id: 'facts' as Tab, label: 'Approved facts', icon: ClipboardCheck },
-    { id: 'knowledge' as Tab, label: 'Text & websites', icon: BookOpen },
+    { id: 'facts' as Tab, label: 'Facts', icon: ClipboardCheck },
+    { id: 'knowledge' as Tab, label: 'Sources', icon: BookOpen },
     { id: 'files' as Tab, label: 'Files & assets', icon: BookOpen },
     { id: 'checklist' as Tab, label: 'Onboarding', icon: ClipboardCheck },
   ]
@@ -181,7 +181,7 @@ function PropertyDashboardPage() {
       </div>
 
       {/* Tabs */}
-      <div aria-label="Property sections" className="bg-white rounded-xl border border-slate-200 p-1 flex gap-1 overflow-x-auto">
+      <div aria-label="Property sections" className="workspace-tabs">
         {tabs.map(tab => (
           <button
             key={tab.id}
@@ -189,7 +189,7 @@ function PropertyDashboardPage() {
             onClick={() => setActiveTab(tab.id)}
             className={`flex items-center gap-2 px-2 sm:px-4 py-2.5 rounded-lg whitespace-nowrap text-sm font-medium transition-colors flex-1 justify-center ${
               activeTab === tab.id
-                ? 'bg-indigo-600 text-white'
+                ? 'is-active'
                 : 'text-slate-600 hover:bg-slate-100'
             }`}
           >
@@ -224,6 +224,9 @@ function PropertyDashboardPage() {
           {/* Overview Tab */}
           {activeTab === 'overview' && (
             <div className="space-y-6">
+              <div className="workspace-steps">
+                {[['facts', 'Community facts', 'Review the information used in content and conversations.'], ['knowledge', 'Sources to review', 'Check websites, documents and written knowledge.'], ['files', 'Files and assets', 'Manage original files, images and approved assets.']].map(([id, title, description]) => <button type="button" key={id} onClick={() => setActiveTab(id as Tab)} className="console-panel p-5 text-left hover:border-orange-300"><h2 className="text-lg font-semibold">{title}</h2><p className="mt-2 text-sm text-slate-600">{description}</p><span className="mt-4 block text-sm font-medium text-[#a53212]">Open →</span></button>)}
+              </div>
               {/* Property Profile Card */}
               <PropertyProfileCard
                 profile={profile}
@@ -231,7 +234,7 @@ function PropertyDashboardPage() {
                 onUpdate={() => fetchData()}
               />
 
-              {/* Two Column Layout */}
+              <details className="workspace-disclosure"><summary>Contacts and data connections</summary><div className="workspace-disclosure-body">
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 {/* Contacts */}
                 <ContactsManager
@@ -248,6 +251,7 @@ function PropertyDashboardPage() {
                 />
               </div>
 
+              </div></details>
               {/* Brand Identity Section */}
               {currentProperty?.id && (
                 <BrandIdentitySection 
@@ -256,35 +260,7 @@ function PropertyDashboardPage() {
                 />
               )}
 
-              {/* Knowledge Summary */}
-              <div className="bg-gradient-to-br from-indigo-50 to-purple-50 rounded-xl border border-indigo-100 p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="font-semibold text-slate-900 flex items-center gap-2">
-                    <BookOpen className="h-5 w-5 text-indigo-500" />
-                    AI Knowledge Base
-                  </h3>
-                  <button
-                    onClick={() => setActiveTab('knowledge')}
-                    className="text-sm text-indigo-600 hover:text-indigo-700 font-medium"
-                  >
-                    View All →
-                  </button>
-                </div>
-                <div className="grid grid-cols-1 min-[420px]:grid-cols-3 gap-4">
-                  <div className="bg-white rounded-lg p-4 text-center">
-                    <p className="text-2xl font-bold text-indigo-600">{knowledgeData?.documentsCount ?? 'Unavailable'}</p>
-                    <p className="text-xs text-slate-500">Total Chunks</p>
-                  </div>
-                  <div className="bg-white rounded-lg p-4 text-center">
-                    <p className="text-2xl font-bold text-indigo-600">{knowledgeData?.sourceCount ?? 'Unavailable'}</p>
-                    <p className="text-xs text-slate-500">Sources</p>
-                  </div>
-                  <div className="bg-white rounded-lg p-4 text-center">
-                    <p className="text-2xl font-bold text-indigo-600">{knowledgeData?.uniqueDocuments ?? 'Unavailable'}</p>
-                    <p className="text-xs text-slate-500">Material groups</p>
-                  </div>
-                </div>
-              </div>
+
             </div>
           )}
 
@@ -293,9 +269,10 @@ function PropertyDashboardPage() {
           {/* Knowledge Base Tab */}
           {activeTab === 'knowledge' && (
             <div className="space-y-6">
-              <details className="rounded-xl border border-slate-200 bg-white p-5"><summary className="cursor-pointer font-medium">Chatbot publication and retained facts history</summary><p className="my-3 text-sm text-slate-600">Review the chatbot’s published snapshot and its source versions. Maintain current property information in Approved facts and property setup.</p><ChatbotContextStatusCard propertyId={currentProperty?.id || ''} /></details>
+
 
               <KnowledgeSourcesList
+                key={currentProperty.id}
                 sources={knowledgeData?.sources ?? []}
                 hasWebsiteSources={knowledgeData?.hasWebsiteSources}
                 documentsCount={knowledgeData?.documentsCount ?? 0}
@@ -306,12 +283,15 @@ function PropertyDashboardPage() {
                 onRefresh={() => fetchData()}
               />
 
+              <details open={query.has('assistantFactVersion')} className="rounded-xl border border-slate-200 bg-white p-5"><summary className="cursor-pointer font-medium">Chatbot publication and retained facts history</summary><p className="my-3 text-sm text-slate-600">Review the chatbot’s published snapshot and its source versions. Maintain current property information in Approved facts and property setup.</p><ChatbotContextStatusCard propertyId={currentProperty?.id || ''} /></details>
+
               {/* Property Units & Pricing */}
+              <details open={query.has('unitReview')} className="workspace-disclosure"><summary>Imported floor plans and pricing</summary><div className="workspace-disclosure-body">
               <PropertyUnitsCard
                 units={propertyUnits}
                 propertyId={currentProperty?.id || ''}
               />
-
+              </div></details>
 
             </div>
           )}

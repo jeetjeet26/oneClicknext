@@ -136,6 +136,8 @@ export function ReviewedRecordsWorkspace({ propertyId, propertyName, mode, initi
     [end, setEnd] = useState(today),
     [source, setSource] = useState(""),
     [account, setAccount] = useState("");
+  const editor = useRef<HTMLDetailsElement>(null);
+  const savedRecords = useRef<HTMLElement>(null);
   const draftKey = useRef<string | null>(null);
   const pending = useRef<{
     key: string;
@@ -153,6 +155,7 @@ export function ReviewedRecordsWorkspace({ propertyId, propertyName, mode, initi
     [propertyId, readOnly],
   );
   useEffect(() => {
+    if (tab === "insights" || tab === "campaigns") return;
     const c = new AbortController();
     void load(c.signal)
       .then((v) => {
@@ -162,7 +165,7 @@ export function ReviewedRecordsWorkspace({ propertyId, propertyName, mode, initi
         if (!c.signal.aborted) setError(e.message);
       });
     return () => c.abort();
-  }, [load]);
+  }, [load, tab]);
   const patch = (key: string, value: unknown) =>
     setDraft((d) => ({ ...d, [key]: value }));
   async function command(
@@ -199,9 +202,10 @@ export function ReviewedRecordsWorkspace({ propertyId, propertyName, mode, initi
       await load().then(setView);
       setMessage(
         operation === "save"
-          ? "Draft saved. Review it below before approving."
+          ? "Draft saved. Review the saved record before approving."
           : "Decision recorded.",
       );
+      if (operation === "save") { if (editor.current) editor.current.open = false; savedRecords.current?.scrollIntoView({ block: "start", behavior: "smooth" }); }
       setEditing(kind === "fact" || kind === "batch" ? null : data.document);
       if (kind === "fact") setDraft(blankFact());
       else if (kind !== "batch") setDraft({ ...data.document.payload });
@@ -287,6 +291,7 @@ export function ReviewedRecordsWorkspace({ propertyId, propertyName, mode, initi
     URL.revokeObjectURL(url);
   };
   const open = (doc: Document) => {
+    if (editor.current) { editor.current.open = true; editor.current.scrollIntoView({ block: "start", behavior: "smooth" }); }
     setEditing(doc);
     setDraft({ ...(doc.payload as Record<string, unknown>) });
     setTab(
@@ -303,6 +308,9 @@ export function ReviewedRecordsWorkspace({ propertyId, propertyName, mode, initi
   };
   function changeTab(value: string) {
     setTab(value);
+    setError("");
+    setMessage("");
+    if (editor.current) editor.current.open = false;
     setEditing(null);
     draftKey.current = null;
     setDraft(defaultDraft(value));
@@ -378,7 +386,7 @@ export function ReviewedRecordsWorkspace({ propertyId, propertyName, mode, initi
       setBusy(false);
     }
   }
-  const heading = mode === "facts" ? "Approved community facts" : mode === "creative" ? "Property design brief" : "Property intelligence";
+  const heading = mode === "facts" ? "Community facts" : mode === "creative" ? "Property design brief" : "Performance";
   const frozen =
     !!editing &&
     (editing.status === "measured" ||
@@ -396,24 +404,22 @@ export function ReviewedRecordsWorkspace({ propertyId, propertyName, mode, initi
   return (
     <div className={`${styles.surface} space-y-6 text-gray-900`}>
       <header>
-        <h1 className="text-3xl font-semibold tracking-tight">
-          {heading}
-        </h1>
+        {mode === "facts" ? <h2 className="text-2xl font-semibold tracking-tight">{heading}</h2> : <h1 className="text-3xl font-semibold tracking-tight">{heading}</h1>}
         <p className="mt-2 max-w-3xl text-sm leading-6 text-gray-600">
           {propertyName} · {mode === "facts"
-            ? "Review source-backed information used by this community’s website, chatbot and content."
+            ? "Review the facts used by this community’s website, chatbot and content. Drafts need approval before use."
             : mode === "creative"
               ? "Maintain the reusable design brief for this property. An approved website-specific direction in SiteForge takes precedence."
               : "Performance, market context and measured improvements for the selected property."}
         </p>
       </header>
-      {mode === "facts" && <p className="text-sm text-gray-600">These are the same reviewed records used by Community knowledge. Keep sources and approvals here; use <Link className="underline" href={`/dashboard/properties/${propertyId}/edit`}>property setup</Link> for identity and basic details, and <Link className="underline" href="/dashboard/floor-plans">Floorplans</Link> for current inventory.</p>}
+      {mode === "facts" && <p className="text-sm text-gray-600">Facts are reviewed statements about this community. Source approval and fact approval are separate. Use <Link className="underline" href={`/dashboard/properties/${propertyId}/edit`}>property setup</Link> for identity and basic details, and <Link className="underline" href="/dashboard/floor-plans">Floorplans</Link> for current inventory.</p>}
       {mode === "performance" && <div className="flex flex-wrap gap-4 text-sm"><Link className="underline" href="/dashboard/community?section=facts">View community knowledge</Link><Link className="underline" href="/dashboard/portfolio">Compare selected communities</Link></div>}
-      {mode === "performance" && <nav aria-label="Intelligence sections" className="flex flex-wrap gap-2">
+      {mode === "performance" && <nav aria-label="Performance sections" className="workspace-tabs">
         {[
           ["insights", "Overview"],
           ["campaigns", "Campaign performance"],
-          ["sources", "Measurement sources"],
+          ["sources", "Data sources"],
           ["decisions", "Recommendations"],
           ["experiments", "Experiments"],
         ].map(([id, label]) => (
@@ -421,7 +427,7 @@ export function ReviewedRecordsWorkspace({ propertyId, propertyName, mode, initi
             key={id}
             onClick={() => changeTab(id)}
             aria-current={tab === id ? "page" : undefined}
-            className={`rounded-lg border px-4 py-2 text-sm ${tab === id ? "bg-gray-900 text-white" : "bg-white"}`}
+            className={tab === id ? "is-active" : ""}
           >
             {label}
           </button>
@@ -448,6 +454,186 @@ export function ReviewedRecordsWorkspace({ propertyId, propertyName, mode, initi
       ) : (
         view && (
           <>
+            <section ref={savedRecords} className="console-panel scroll-mt-6 p-6">
+              <h2 className="text-xl font-semibold">
+                Saved{" "}
+                {tab === "facts"
+                  ? "facts"
+                  : tab === "sources"
+                    ? "imports"
+                    : tab === "decisions"
+                      ? "recommendations"
+                      : tab}
+              </h2>
+              <div className="mt-4 space-y-3">
+                {view.documents
+                  .filter((d) => d.kind === kind)
+                  .map((d) => (
+                    <article key={d.id} className="rounded-xl border p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <h3 className="font-medium">
+                            {d.kind === "fact"
+                              ? (fieldRegistry[
+                                  d.key as keyof typeof fieldRegistry
+                                ]?.[0] ?? d.key)
+                              : String(
+                                  (d.payload as Record<string, unknown>)
+                                    .title ??
+                                    (d.payload as Record<string, unknown>)
+                                      .source ??
+                                    d.key,
+                                )}
+                          </h3>
+                          <p className="mt-1 text-xs text-gray-500">
+                            <span className={`inline-flex rounded-full px-2 py-1 text-xs font-medium ${d.status === "approved" ? "bg-emerald-50 text-emerald-800" : d.status === "draft" ? "bg-amber-50 text-amber-900" : "bg-stone-100 text-stone-700"}`}>{d.status.charAt(0).toUpperCase() + d.status.slice(1).replaceAll("_", " ")}</span> · Version {d.revision}
+                            {d.locked ? " · Locked" : ""} ·{" "}
+                            {d.updated_at.slice(0, 10)}
+                          </p>
+                          {d.kind === "experiment" && (
+                            <p className="mt-1 select-all text-xs text-gray-500">
+                              Experiment reference: {d.id}
+                            </p>
+                          )}
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {view.canManage && (
+                            <>
+                              {d.kind === "batch" && (
+                                <button
+                                  className="console-action"
+                                  onClick={() =>
+                                    downloadBatch(batchSchema.parse(d.payload))
+                                  }
+                                >
+                                  Review observations
+                                </button>
+                              )}
+                              {d.kind !== "batch" && (
+                                <button
+                                  className="console-action"
+                                  onClick={() => open(d)}
+                                >
+                                  Review / edit
+                                </button>
+                              )}
+                              {d.status === "draft" && (
+                                <button
+                                  disabled={busy}
+                                  className="console-action"
+                                  onClick={() =>
+                                    void command(
+                                      d.kind,
+                                      d.key,
+                                      "approve",
+                                      undefined,
+                                      d,
+                                    )
+                                  }
+                                >
+                                  Approve
+                                </button>
+                              )}
+                              {["draft", "approved"].includes(d.status) && (
+                                <button
+                                  disabled={busy}
+                                  className="console-action"
+                                  onClick={() =>
+                                    void command(
+                                      d.kind,
+                                      d.key,
+                                      "withdraw",
+                                      undefined,
+                                      d,
+                                    )
+                                  }
+                                >
+                                  Withdraw
+                                </button>
+                              )}
+                              {["fact", "creative"].includes(d.kind) && (
+                                <button
+                                  disabled={busy}
+                                  className="console-action"
+                                  onClick={() =>
+                                    void command(
+                                      d.kind,
+                                      d.key,
+                                      d.locked ? "unlock" : "lock",
+                                      undefined,
+                                      d,
+                                    )
+                                  }
+                                >
+                                  {d.locked ? "Unlock" : "Lock"}
+                                </button>
+                              )}
+                              {d.kind === "experiment" &&
+                                d.status === "approved" && (
+                                  <button
+                                    disabled={busy}
+                                    className="console-action"
+                                    onClick={() =>
+                                      void command(
+                                        d.kind,
+                                        d.key,
+                                        "measure",
+                                        undefined,
+                                        d,
+                                      )
+                                    }
+                                  >
+                                    Review measured result
+                                  </button>
+                                )}
+                              {d.kind === "recommendation" &&
+                                d.status === "approved" && (
+                                  <button
+                                    disabled={busy}
+                                    className="console-action"
+                                    onClick={() =>
+                                      void command(
+                                        d.kind,
+                                        d.key,
+                                        "implement",
+                                        undefined,
+                                        d,
+                                      )
+                                    }
+                                  >
+                                    Record implementation
+                                  </button>
+                                )}
+                            </>
+                          )}
+                        </div>
+                      </div>
+                      <p className="mt-3 whitespace-pre-wrap text-sm leading-6">
+                        {String(
+                          (d.payload as Record<string, unknown>).value ??
+                            (d.payload as Record<string, unknown>).thesis ??
+                            (d.payload as Record<string, unknown>).rationale ??
+                            (d.payload as Record<string, unknown>).hypothesis ??
+                            "Reviewed source observations",
+                        )}
+                      </p>
+                      {d.kind === "batch" && (
+                        <p className="mt-2 text-sm">
+                          {(d.payload as Batch).rows.length} observations ·{" "}
+                          {(d.payload as Batch).start}–
+                          {(d.payload as Batch).end}
+                        </p>
+                      )}
+                    </article>
+                  ))}
+                {!view.documents.some((d) => d.kind === kind) && (
+                  <p className="text-sm text-gray-500">No saved items yet.</p>
+                )}
+              </div>
+            </section>
+            {view.canManage && <details ref={editor} className="workspace-disclosure scroll-mt-24">
+              <summary>{editing ? "Edit selected record" : tab === "facts" ? "Add or update a fact" : tab === "sources" ? "Review a new data import" : tab === "creative" ? "Edit design brief" : tab === "decisions" ? "Add a recommendation" : "Create an experiment"}</summary>
+              <div className="workspace-disclosure-body">
             {tab === "sources" ? (
               <section className="console-panel p-6">
                 <h2 className="text-xl font-semibold">Review a data import</h2>
@@ -645,9 +831,9 @@ export function ReviewedRecordsWorkspace({ propertyId, propertyName, mode, initi
                     : editing
                       ? editing.status === "implemented"
                         ? "Record observed result"
-                        : "Edit saved draft"
+                        : tab === "facts" ? "Update this fact" : "Edit saved draft"
                       : tab === "facts"
-                        ? "Add or review a property fact"
+                        ? "Add a fact"
                         : tab === "creative"
                           ? "Reusable property design brief"
                           : tab === "decisions"
@@ -703,7 +889,7 @@ export function ReviewedRecordsWorkspace({ propertyId, propertyName, mode, initi
                           )}
                         </select>
                       </label>
-                      {field("value", "Approved information", "textarea", true)}
+                      {field("value", "Fact information", "textarea", true)}
                       <div className="grid gap-4 sm:grid-cols-2">
                         {field(
                           "source",
@@ -1068,183 +1254,8 @@ export function ReviewedRecordsWorkspace({ propertyId, propertyName, mode, initi
                 </fieldset>
               </form>
             )}
-            <section className="console-panel p-6">
-              <h2 className="text-xl font-semibold">
-                Saved{" "}
-                {tab === "facts"
-                  ? "facts"
-                  : tab === "sources"
-                    ? "imports"
-                    : tab === "decisions"
-                      ? "recommendations"
-                      : tab}
-              </h2>
-              <div className="mt-4 space-y-3">
-                {view.documents
-                  .filter((d) => d.kind === kind)
-                  .map((d) => (
-                    <article key={d.id} className="rounded-xl border p-4">
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div>
-                          <h3 className="font-medium">
-                            {d.kind === "fact"
-                              ? (fieldRegistry[
-                                  d.key as keyof typeof fieldRegistry
-                                ]?.[0] ?? d.key)
-                              : String(
-                                  (d.payload as Record<string, unknown>)
-                                    .title ??
-                                    (d.payload as Record<string, unknown>)
-                                      .source ??
-                                    d.key,
-                                )}
-                          </h3>
-                          <p className="mt-1 text-xs text-gray-500">
-                            {d.status} · Version {d.revision}
-                            {d.locked ? " · Locked" : ""} ·{" "}
-                            {d.updated_at.slice(0, 10)}
-                          </p>
-                          {d.kind === "experiment" && (
-                            <p className="mt-1 select-all text-xs text-gray-500">
-                              Experiment reference: {d.id}
-                            </p>
-                          )}
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                          {view.canManage && (
-                            <>
-                              {d.kind === "batch" && (
-                                <button
-                                  className="console-action"
-                                  onClick={() =>
-                                    downloadBatch(batchSchema.parse(d.payload))
-                                  }
-                                >
-                                  Review observations
-                                </button>
-                              )}
-                              {d.kind !== "batch" && (
-                                <button
-                                  className="console-action"
-                                  onClick={() => open(d)}
-                                >
-                                  Review / edit
-                                </button>
-                              )}
-                              {d.status === "draft" && (
-                                <button
-                                  disabled={busy}
-                                  className="console-action"
-                                  onClick={() =>
-                                    void command(
-                                      d.kind,
-                                      d.key,
-                                      "approve",
-                                      undefined,
-                                      d,
-                                    )
-                                  }
-                                >
-                                  Approve
-                                </button>
-                              )}
-                              {["draft", "approved"].includes(d.status) && (
-                                <button
-                                  disabled={busy}
-                                  className="console-action"
-                                  onClick={() =>
-                                    void command(
-                                      d.kind,
-                                      d.key,
-                                      "withdraw",
-                                      undefined,
-                                      d,
-                                    )
-                                  }
-                                >
-                                  Withdraw
-                                </button>
-                              )}
-                              {["fact", "creative"].includes(d.kind) && (
-                                <button
-                                  disabled={busy}
-                                  className="console-action"
-                                  onClick={() =>
-                                    void command(
-                                      d.kind,
-                                      d.key,
-                                      d.locked ? "unlock" : "lock",
-                                      undefined,
-                                      d,
-                                    )
-                                  }
-                                >
-                                  {d.locked ? "Unlock" : "Lock"}
-                                </button>
-                              )}
-                              {d.kind === "experiment" &&
-                                d.status === "approved" && (
-                                  <button
-                                    disabled={busy}
-                                    className="console-action"
-                                    onClick={() =>
-                                      void command(
-                                        d.kind,
-                                        d.key,
-                                        "measure",
-                                        undefined,
-                                        d,
-                                      )
-                                    }
-                                  >
-                                    Review measured result
-                                  </button>
-                                )}
-                              {d.kind === "recommendation" &&
-                                d.status === "approved" && (
-                                  <button
-                                    disabled={busy}
-                                    className="console-action"
-                                    onClick={() =>
-                                      void command(
-                                        d.kind,
-                                        d.key,
-                                        "implement",
-                                        undefined,
-                                        d,
-                                      )
-                                    }
-                                  >
-                                    Record implementation
-                                  </button>
-                                )}
-                            </>
-                          )}
-                        </div>
-                      </div>
-                      <p className="mt-3 whitespace-pre-wrap text-sm leading-6">
-                        {String(
-                          (d.payload as Record<string, unknown>).value ??
-                            (d.payload as Record<string, unknown>).thesis ??
-                            (d.payload as Record<string, unknown>).rationale ??
-                            (d.payload as Record<string, unknown>).hypothesis ??
-                            "Reviewed source observations",
-                        )}
-                      </p>
-                      {d.kind === "batch" && (
-                        <p className="mt-2 text-sm">
-                          {(d.payload as Batch).rows.length} observations ·{" "}
-                          {(d.payload as Batch).start}–
-                          {(d.payload as Batch).end}
-                        </p>
-                      )}
-                    </article>
-                  ))}
-                {!view.documents.some((d) => d.kind === kind) && (
-                  <p className="text-sm text-gray-500">No saved items yet.</p>
-                )}
               </div>
-            </section>
+            </details>}
             {tab === "creative" && (
               <section className="console-panel p-6">
                 <h2 className="text-xl font-semibold">

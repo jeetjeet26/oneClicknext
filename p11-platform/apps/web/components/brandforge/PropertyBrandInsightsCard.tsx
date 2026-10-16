@@ -77,7 +77,7 @@ export function PropertyBrandInsightsCard({ propertyId, propertyName }: Property
     return <section className="rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-700" aria-label="Saved brand notes">
       {error?<p role="alert">{error}</p>:<p>No saved brand notes for {propertyName}. Review sources in BrandForge before starting an analysis.</p>}
       {error&&<button type="button" className="mr-4 mt-3 underline" onClick={()=>setRevision(v=>v+1)}>Retry saved brand notes</button>}
-      <Link className="mt-3 inline-block underline" href="/dashboard/brandforge">Review brand sources</Link>
+      <Link className="mt-3 inline-block underline" href={`/dashboard/brandforge/${propertyId}`}>Review brand sources</Link>
     </section>
   }
 

@@ -195,7 +195,7 @@ function LeadRow({ lead, onStatusChange, onSelect, isSelected, onToggleSelect, c
             linked: { icon: Link2, color: 'text-blue-600', bg: 'bg-blue-50', label: 'Linked' },
             failed: { icon: XCircle, color: 'text-red-600', bg: 'bg-red-50', label: 'Failed' },
             skipped: { icon: SkipForward, color: 'text-slate-400', bg: 'bg-slate-50', label: 'Skipped' },
-            dead_lettered: { icon: AlertTriangle, color: 'text-red-700', bg: 'bg-red-100', label: 'Dead Letter' },
+            dead_lettered: { icon: AlertTriangle, color: 'text-red-700', bg: 'bg-red-100', label: 'CRM delivery needs attention' },
         };
         const syncStatus = syncConfig[lead.crm_sync_status];
         if (!syncStatus)

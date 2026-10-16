@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import {
   portalActor,
   clientScope,
@@ -9,6 +10,6 @@ export default async function Page() {
   const scope = await clientScope(actor.id);
   const luma = await clientLumaProperties(scope);
   return (
-    <ClientInsights name={scope.name} hasConversations={luma.length > 0} />
+    <Suspense fallback={<p role="status" className="p-6">Loading results…</p>}><ClientInsights name={scope.name} properties={scope.properties} hasConversations={luma.length > 0} /></Suspense>
   );
 }

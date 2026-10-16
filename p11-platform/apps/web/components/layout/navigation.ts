@@ -48,27 +48,27 @@ export const navigationGroups = [
     items: [
       {
         href: "/dashboard/leads",
-        label: "TourSpark",
+        label: "Leads & tours",
         icon: Users,
-        description: "Leads and tours",
+        description: "TourSpark · Leads and tours",
       },
       {
         href: "/dashboard/lumaleasing",
-        label: "LumaLeasing",
+        label: "Conversations",
         icon: MessageSquare,
-        description: "Conversations and inquiries",
+        description: "LumaLeasing · Conversations and inquiries",
       },
       {
         href: "/dashboard/leadpulse",
-        label: "LeadPulse",
+        label: "Follow-up",
         icon: Flame,
-        description: "Follow-up and engagement",
+        description: "LeadPulse · Follow-up and engagement",
       },
       {
         href: "/dashboard/reviewflow",
-        label: "ReviewFlow AI",
+        label: "Reviews",
         icon: Star,
-        description: "Reviews and reputation",
+        description: "ReviewFlow · Reviews and reputation",
       },
     ],
   },
@@ -77,31 +77,31 @@ export const navigationGroups = [
     items: [
       {
         href: "/dashboard/siteforge",
-        label: "SiteForge",
+        label: "Website",
         icon: Globe,
-        description: "Website generation and packages",
+        description: "SiteForge · Website generation and packages",
       },
       {
         href: "/dashboard/forgestudio",
-        label: "ForgeStudio AI",
+        label: "Content studio",
         icon: Wand2,
-        description: "Creative and content",
+        description: "ForgeStudio · Creative and content",
       },
       {
         href: "/dashboard/marketvision",
-        label: "MarketVision 360",
+        label: "MarketVision",
         icon: TrendingUp,
         description: "Market intelligence",
       },
       {
         href: "/dashboard/propertyaudit",
-        label: "PropertyAudit",
+        label: "Website visibility",
         icon: Search,
-        description: "Visibility and website health",
+        description: "PropertyAudit · Visibility and website health",
       },
       {
         href: "/dashboard/intelligence",
-        label: "Property intelligence",
+        label: "Performance",
         icon: Sparkles,
         description: "Performance, market context and measured results",
       },
@@ -136,15 +136,9 @@ export const navigationGroups = [
       },
       {
         href: "/dashboard/pipelines",
-        label: "Pipelines",
+        label: "Data connections",
         icon: FileText,
         description: "Data imports and connections",
-      },
-      {
-        href: "/dashboard/luma",
-        label: "Luma AI Assistant",
-        icon: Bot,
-        description: "Your workspace assistant",
       },
       {
         href: "/dashboard/team",
@@ -168,9 +162,8 @@ export const settingsNavigation = {
   description: "Workspace preferences",
 };
 export const portalNavigation = [
-  { href: "/client", label: "Overview", icon: LayoutDashboard },
-  { href: "/client/insights", label: "Insights", icon: Sparkles },
-  { href: "/client/performance", label: "Performance", icon: BarChart3 },
+  { href: "/client", label: "Home", icon: LayoutDashboard },
+  { href: "/client/performance", label: "Results", icon: BarChart3 },
   { href: "/client/properties", label: "Properties", icon: Building2 },
   { href: "/client/reports", label: "Reports", icon: FileText },
   {

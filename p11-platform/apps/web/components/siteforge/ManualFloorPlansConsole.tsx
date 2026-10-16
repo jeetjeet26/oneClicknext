@@ -320,7 +320,8 @@ export function ManualFloorPlansConsole() {
               </div>
             </fieldset>
           ))}
-          {!drafts.length && <p className="rounded-lg bg-slate-50 p-6 text-center text-sm text-slate-500">No active manual floor plans. Preview and confirm to archive the final plan.</p>}
+          <a className="inline-block py-2 text-sm font-medium text-indigo-700 underline" href="/dashboard/community?section=knowledge&unitReview=1">Review imported floor plans in Community knowledge →</a>
+          {!drafts.length && <p className="rounded-lg bg-slate-50 p-6 text-center text-sm text-slate-500">No active manual floor plans. Add a plan below or review floor plans imported through community knowledge. If you just removed the last plan, preview and confirm to save that removal.</p>}
         </div>
 
         <div className="mt-5 flex flex-wrap gap-3">
@@ -344,12 +345,12 @@ export function ManualFloorPlansConsole() {
 
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <h2 className="font-semibold text-slate-900">SiteForge inventory-only refresh</h2>
-        <p className="mt-1 text-sm text-slate-500">This path replaces only inventory fields inside existing acf/plans-availability blocks. Copy, layout, design, and every other block are hash-guarded against changes.</p>
+        <p className="mt-1 text-sm text-slate-500">Update floor plan prices and availability on an existing website. Its design and other content stay unchanged.</p>
         {websites.length ? (
           <div className="mt-4 flex flex-wrap items-end gap-3">
             <label className="text-sm font-medium text-slate-700">
               Website
-              <select value={websiteId} onChange={(event) => { setWebsiteId(event.target.value); setRevisionPreview(null) }} className="mt-1 block min-w-72 rounded-lg border border-slate-300 px-3 py-2 font-normal">
+              <select value={websiteId} onChange={(event) => { setWebsiteId(event.target.value); setRevisionPreview(null) }} className="mt-1 block w-full max-w-full rounded-lg border border-slate-300 px-3 py-2 font-normal">
                 {websites.map((website) => <option key={website.id} value={website.id}>{website.id} · {website.generation_status || 'unknown'}</option>)}
               </select>
             </label>

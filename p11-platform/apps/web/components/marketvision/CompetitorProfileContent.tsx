@@ -4,10 +4,16 @@ import Link from 'next/link'
 import { currentClaims, type CompetitorProfile } from '@/utils/marketvision/profiles'
 
 export const profileDate = (value: string | null | undefined) => value && Number.isFinite(Date.parse(value))
-  ? new Date(value).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : 'Date unknown'
+  ? new Date(value).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }) : 'Date unknown'
 export const money = (value: number | null) => value === null ? 'Not available' : `$${value.toLocaleString()}`
 export function safeWebsite(value: string | null) {
   try { const url = new URL(value ?? ''); return ['http:', 'https:'].includes(url.protocol) ? url.href : undefined } catch { return undefined }
+}
+
+export function readableBrandText(value: string | null | undefined): string {
+  if (!value) return ''
+  try { const parsed: unknown = JSON.parse(value); if (Array.isArray(parsed) && parsed.every(item => typeof item === 'string')) return parsed.join(' · ') } catch { /* Plain text is already readable. */ }
+  return value
 }
 
 export function CompetitorProfileContent({ profile, compact = false }: { profile: CompetitorProfile; compact?: boolean }) {
@@ -15,7 +21,7 @@ export function CompetitorProfileContent({ profile, compact = false }: { profile
   const reviewed = profile.reviewedBrand?.disposition === 'published' && profile.reviewedBrand.sourceCurrent
   const groups = old ? [
     ['Positioning', old.positioning ? [old.positioning] : []], ['Target audience', old.audience ? [old.audience] : []],
-    ['Brand voice', [old.voice, old.personality].filter((v): v is string => Boolean(v))],
+    ['Brand voice', [old.voice, readableBrandText(old.personality)].filter((v): v is string => Boolean(v))],
     ['Differentiators', old.differentiators], ['Amenities highlighted', old.amenities],
     ...(!compact ? [['Services', old.services], ['Lifestyle', old.lifestyles], ['Community events', old.events],
       ['Messaging themes', old.themes], ['Calls to action', old.callsToAction]] : []),
@@ -27,14 +33,14 @@ export function CompetitorProfileContent({ profile, compact = false }: { profile
       <p className="text-xs text-slate-600">Reviewed {profileDate(profile.reviewedBrand?.createdAt)} · saved source evidence, not a live website check</p>
       {(compact ? ['positioning', 'audience', 'amenity'].flatMap(category => currentClaims(profile, category)).slice(0, 5) : profile.reviewedBrand!.claims.map(c => c.statement)).map((statement, i) => <p key={i}>{statement}</p>)}
     </section>}
-    {old ? <section className="space-y-3">
-      <div><h4 className="font-semibold">Historical brand analysis</h4><p className="text-xs text-slate-500">Analyzed {profileDate(old.analyzedAt)} · not verified as current</p></div>
+    {old ? <details className="space-y-3" open={!compact}>
+      <summary className="cursor-pointer"><span className="font-semibold">Historical brand analysis</span><span className="mt-1 block text-sm text-slate-500">Analyzed {profileDate(old.analyzedAt)} · not verified as current</span></summary>
       <dl className="space-y-3">{groups.filter(([, values]) => values.length).map(([label, values]) => <div key={label}>
         <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</dt>
         <dd className="mt-1 leading-relaxed">{compact ? values.slice(0, label === 'Amenities highlighted' ? 6 : 3).join(' · ') : values.join(' · ')}{compact && values.length > (label === 'Amenities highlighted' ? 6 : 3) && <span className="text-slate-500"> …</span>}</dd>
       </div>)}</dl>
       {!compact && (old.promotions.length > 0 || old.promotionalMessaging || old.urgency.length > 0) && <div className="rounded-lg bg-amber-50 p-3 text-amber-950"><h5 className="font-semibold">Previously observed offers</h5><p className="mb-2 text-xs">Historical only. Availability and expiry have not been verified.</p>{old.promotions.map((offer, i) => <p key={i}>{offer}</p>)}{old.promotionalMessaging && <p>{old.promotionalMessaging}</p>}{old.urgency.length > 0 && <p>{old.urgency.join(' · ')}</p>}</div>}
-    </section> : !reviewed && <p className="text-slate-500">No brand analysis saved yet. Pricing and property details remain available.</p>}
+    </details> : !reviewed && <p className="text-slate-500">No brand analysis saved yet. Pricing and property details remain available.</p>}
     {profile.amenities.length > 0 && <p><span className="font-semibold">Saved property amenities: </span>{profile.amenities.join(' · ')}</p>}
     {!compact && <Link href={`/dashboard/marketvision?tab=brand-intel&brandCompetitorId=${profile.id}`} className="inline-block text-indigo-700 underline">Review brand evidence and sources</Link>}
   </div>

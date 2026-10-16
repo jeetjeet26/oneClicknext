@@ -1063,8 +1063,8 @@
         >${earlierCursor ? '<button type="button" id="ll-earlier" style="margin:8px;padding:8px" '+(earlierBusy?'disabled':'')+'>'+(earlierBusy?'Loading earlier messages…':'Load earlier messages')+'</button>' : ''}${earlierError ? '<p role="alert">'+escapeHtml(earlierError)+'</p>' : ''}${messagesHtml}</div>
         <div class="ll-input-area">
           <div class="ll-input-row">
-            <input type="text" class="ll-input" id="ll-input" placeholder="Type a message..." ${isTyping ? 'disabled' : ''}>
-            <button class="ll-send" id="ll-send" style="background: ${config.primaryColor}" ${isTyping ? 'disabled' : ''}>
+            <input type="text" class="ll-input" id="ll-input" aria-label="Message to the leasing assistant" placeholder="Type a message..." ${isTyping ? 'disabled' : ''}>
+            <button class="ll-send" id="ll-send" aria-label="Send message" style="background: ${config.primaryColor}" ${isTyping ? 'disabled' : ''}>
               <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
             </button>
           </div>

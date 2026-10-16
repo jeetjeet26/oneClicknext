@@ -1,14 +1,23 @@
 "use client";
+import { useRouter, useSearchParams } from "next/navigation";
+import { clientPortalHref } from "@/utils/client-portal/navigation";
 import styles from "./intelligence.module.css";
 import { ClientPortalHeader } from "@/components/client-portal/ClientPortalHeader";
 import { InsightsView } from "./InsightsView";
 export function ClientInsights({
   name,
   hasConversations,
+  properties = [],
 }: {
   name: string;
   hasConversations: boolean;
+  properties?: Array<{ id: string; name: string }>;
 }) {
+  const params = useSearchParams();
+  const router = useRouter();
+  const propertyId = params.get('propertyId') || undefined;
+  const days = ['7', '30', '90'].includes(params.get('days') ?? '') ? params.get('days')! : '30';
+  const href = (path: string, change: Record<string, string> = {}) => clientPortalHref(path, params, change);
   return (
     <div className={`${styles.surface} console-shell portal-shell min-h-dvh`}>
       <a
@@ -21,25 +30,21 @@ export function ClientInsights({
         view="insights"
         name={name}
         hasConversations={hasConversations}
-        href={(path) => path}
+        href={href}
       />
       <main
         id="client-content"
         tabIndex={-1}
-        className="mx-auto max-w-7xl space-y-8 px-6 py-10"
+        className="portal-main space-y-6"
       >
-        <header>
-          <p className="text-xs font-medium uppercase tracking-widest text-[#b23c1f]">
-            Your portfolio
-          </p>
-          <h1 className="mt-3 text-3xl font-semibold tracking-tight text-gray-900">
-            Understand what changed.
-          </h1>
-          <p className="mt-3 text-gray-600">
-            Property comparisons, source coverage and reviewed next steps.
-          </p>
+        <header className="portal-page-heading">
+          <div><p className="console-kicker">{properties.find(p => p.id === propertyId)?.name ?? 'Your portfolio'}</p><h1>Changes &amp; explanations</h1><p>Understand recent changes and reviewed next steps.</p></div>
+          <div className="portal-filters">
+            <label><span className="sr-only">Property</span><select aria-label="Property" value={propertyId ?? ''} onChange={e => router.push(href('/client/insights', {propertyId: e.target.value}))}><option value="">All properties</option>{properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
+            <label><span className="sr-only">Reporting period</span><select aria-label="Reporting period" value={days} onChange={e => router.push(href('/client/insights', {days: e.target.value}))}><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option></select></label>
+          </div>
         </header>
-        <InsightsView client />
+        <InsightsView key={`${propertyId ?? 'all'}:${days}`} client propertyId={propertyId} propertyName={properties.find(p => p.id === propertyId)?.name} periodDays={Number(days)} />
       </main>
     </div>
   );

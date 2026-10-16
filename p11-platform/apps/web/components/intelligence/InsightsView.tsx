@@ -1,8 +1,11 @@
 "use client";
 import { ReportingDetail } from "./ReportingDetail";
-import { useState, useEffect, useCallback } from "react";
+import { MarketObservations } from "./MarketObservations";
+import { WorkspaceDisclosure, WorkspaceNotice } from "@/components/ui/WorkspaceSection";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { fieldRegistry } from "@/utils/intelligence/contracts";
 import type { Portfolio } from "@/utils/intelligence/portfolio";
+const displayDate = (value: string) => new Date(`${value}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 const day = (date: Date) => date.toISOString().slice(0, 10);
 const number = (v: number | null) =>
   v === null
@@ -12,20 +15,30 @@ export function InsightsView({
   client = false,
   propertyId,
   propertyName,
+  periodDays = 30,
 }: {
   client?: boolean;
   propertyId?: string;
   propertyName?: string;
+  periodDays?: number;
 }) {
   const [end, setEnd] = useState(() => day(new Date())),
     [start, setStart] = useState(() =>
-      day(new Date(Date.now() - 29 * 86400000)),
+      day(new Date(Date.now() - (periodDays - 1) * 86400000)),
     ),
     [data, setData] = useState<Portfolio | null>(null),
-    [error, setError] = useState(""),
+    [errorState, setErrorState] = useState<{ scope: string; message: string } | null>(null),
     [question, setQuestion] = useState(""),
-    [answer, setAnswer] = useState<string[]>([]),
-    [busy, setBusy] = useState(false);
+    [answerState, setAnswerState] = useState<{ scope: string; lines: string[] } | null>(null),
+    [busyScope, setBusyScope] = useState<string | null>(null);
+  const [refresh, setRefresh] = useState(0);
+  const [loadedScope, setLoadedScope] = useState("");
+  const questionRequest = useRef<AbortController | null>(null);
+  const scope = `${propertyId ?? "portfolio"}:${start}:${end}:${client}`;
+  const error = errorState?.scope === scope ? errorState.message : "";
+  const answer = answerState?.scope === scope ? answerState.lines : [];
+  const busy = busyScope === scope;
+  const setError = (message: string) => setErrorState({ scope, message });
   const endpoint = client ? "/api/client/intelligence" : "/api/intelligence";
   const load = useCallback(
     async (signal?: AbortSignal) => {
@@ -45,21 +58,27 @@ export function InsightsView({
   );
   useEffect(() => {
     const c = new AbortController();
+    questionRequest.current?.abort();
     void load(c.signal)
       .then((v) => {
         if (!c.signal.aborted) {
           setData(v);
-          setError("");
+          setLoadedScope(scope);
+          setErrorState(null);
+          setBusyScope(null);
         }
       })
       .catch((e) => {
-        if (!c.signal.aborted) setError(e.message);
+        if (!c.signal.aborted) { setErrorState({ scope, message: e.message }); setBusyScope(null); }
       });
-    return () => c.abort();
-  }, [load]);
+    return () => { c.abort(); questionRequest.current?.abort(); };
+  }, [load, refresh, scope]);
   async function ask(e: React.FormEvent) {
     e.preventDefault();
-    setBusy(true);
+    questionRequest.current?.abort();
+    const controller = new AbortController();
+    questionRequest.current = controller;
+    setBusyScope(scope);
     setError("");
     try {
       if (!client && !propertyId) throw new Error("Select a property to ask about its results.");
@@ -70,8 +89,9 @@ export function InsightsView({
         ...(propertyId ? { propertyId } : {}),
       });
       const r = client
-        ? await fetch(`${endpoint}?${params}`)
+        ? await fetch(`${endpoint}?${params}`, { signal: controller.signal })
         : await fetch(endpoint, {
+            signal: controller.signal,
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -84,17 +104,17 @@ export function InsightsView({
           });
       const body = await r.json();
       if (!r.ok) throw new Error(body.error);
-      setAnswer(body.answer);
+      if (!controller.signal.aborted) setAnswerState({ scope, lines: body.answer });
     } catch (e) {
-      setError((e as Error).message);
+      if (!controller.signal.aborted) setError((e as Error).message);
     } finally {
-      setBusy(false);
+      if (!controller.signal.aborted) setBusyScope(null);
     }
   }
   return (
     <div className="space-y-6 text-gray-900">
       <div className="flex flex-wrap items-end gap-4">
-        <label className="text-sm">
+        {!client && <><label className="text-sm">
           From
           <input
             aria-label="Insights start date"
@@ -103,7 +123,7 @@ export function InsightsView({
             onChange={(e) => {
               setData(null);
               setStart(e.target.value);
-              setAnswer([]);
+              setAnswerState(null);
               setError("");
             }}
             className="mt-1 block rounded-lg border bg-white p-2"
@@ -118,22 +138,18 @@ export function InsightsView({
             onChange={(e) => {
               setData(null);
               setEnd(e.target.value);
-              setAnswer([]);
+              setAnswerState(null);
               setError("");
             }}
             className="mt-1 block rounded-lg border bg-white p-2"
           />
         </label>
+        </>}
         <button
           className="console-action"
-          onClick={() => {
-            setError("");
-            void load()
-              .then(setData)
-              .catch((e) => setError(e.message));
-          }}
+          onClick={() => { setBusyScope(null); setAnswerState(null); setRefresh(value => value + 1); }}
         >
-          Refresh insights
+          Refresh results
         </button>
       </div>
       {error && (
@@ -141,34 +157,19 @@ export function InsightsView({
           {error}
         </p>
       )}
-      {!data && !error && <p role="status">Loading your property evidence…</p>}
-      {data && (
+      {(!data || loadedScope !== scope) && !error && <p role="status">Loading results…</p>}
+      {data && loadedScope === scope && (
         <>
-          <section className="console-panel p-6">
-            <h2 className="text-xl font-semibold">What needs attention</h2>
-            <p className="mt-2 text-sm text-gray-600">
-              Observed changes for {data.start} to {data.end}. Explanations
-              distinguish evidence from possible causes.
-            </p>
-            <ul className="mt-4 space-y-3">
-              {data.briefing.length ? (
-                data.briefing.map((s, i) => (
-                  <li
-                    key={i}
-                    className="border-l-2 border-[#df461b] pl-4 text-sm leading-6"
-                  >
-                    {s}
-                  </li>
-                ))
-              ) : (
-                <li className="text-sm">
-                  No rules identified a material exception in the available
-                  records. Review source coverage below.
-                </li>
-              )}
-            </ul>
-          </section>
-          <section className="console-panel overflow-x-auto p-6">
+          {data.properties.length === 1 ? <section className="console-panel p-6" aria-label="Performance summary">
+            <h2 className="text-xl font-semibold">{data.properties[0].score.name} at a glance</h2>
+            <dl className="workspace-stat-grid mt-5">{[
+              ["Marketing spend", data.properties[0].score.observedDays ? `$${number(data.properties[0].score.spend)}` : "Unavailable", `${data.properties[0].score.observedDays} of ${data.properties[0].score.days} days recorded`],
+              ["Recorded inquiries", number(data.properties[0].score.inquiries), "Inquiries first recorded in this period"],
+              ["Recorded tours", number(data.properties[0].score.tours), "Outcomes for those inquiries"],
+              ["Reported leases", number(data.properties[0].score.leases), "Outcomes for those inquiries"],
+            ].map(([label, value, note]) => <div className="workspace-stat" key={label}><dt>{label}</dt><dd>{value}</dd><p>{note}</p></div>)}</dl>
+            <p className="mt-4 text-sm text-gray-600">Marketing clicks: {data.properties[0].score.observedDays ? number(data.properties[0].score.clicks) : "Unavailable"}. These counts do not establish a connection between advertising and signed leases.</p>
+          </section> : <>          <section className="console-panel overflow-x-auto p-6">
             <h2 className="text-xl font-semibold">{propertyId ? `${propertyName ?? "Property"} performance` : "Property comparison"}</h2>
             <table className="mt-4 w-full text-left text-sm">
               <thead>
@@ -213,10 +214,33 @@ export function InsightsView({
               advertising-to-lease funnel.
             </p>
           </section>
+</>}
+          <section className="console-panel p-6">
+            <h2 className="text-xl font-semibold">What needs attention</h2>
+            <p className="mt-2 text-sm text-gray-600">
+              {displayDate(data.start)} to {displayDate(data.end)} · Based on the records available for this period.
+            </p>
+            <ul className="mt-4 space-y-3">
+              {data.briefing.length ? (
+                data.briefing.map((s, i) => (
+                  <li
+                    key={i}
+                    className="border-l-2 border-[#df461b] pl-4 text-sm leading-6"
+                  >
+                    {s}
+                  </li>
+                ))
+              ) : (
+                <li className="text-sm">
+                  No significant change was flagged in the available records. Check data coverage before drawing conclusions.
+                </li>
+              )}
+            </ul>
+          </section>
           <section className="console-panel p-6">
             <h2 className="text-xl font-semibold">Ask about these results</h2>
             <p className="mt-2 text-sm text-gray-600">
-              {propertyId ? "Review this property’s changes, missing sources and experiment results. Use the portfolio assistant to compare communities." : "Compare properties, review changes, find missing sources, or check experiment results. Answers use only your assigned properties."}
+              {propertyId ? (client ? "Review this community’s changes and next steps. Select All properties to compare your communities." : "Review this property’s changes, missing sources and experiment results. Use the portfolio assistant to compare communities.") : "Compare properties, review changes, find missing sources, or check experiment results. Answers use only your assigned properties."}
             </p>
             <form onSubmit={ask} className="mt-4 flex flex-wrap gap-3">
               <input
@@ -225,7 +249,7 @@ export function InsightsView({
                 onChange={(e) => setQuestion(e.target.value)}
                 maxLength={2000}
                 placeholder={propertyId ? "What changed in recorded tours?" : "Which properties have the most recorded tours?"}
-                className="min-w-64 flex-1 rounded-lg border p-3"
+                className="min-w-0 basis-64 flex-1 rounded-lg border p-3"
               />
               <button
                 className="console-action-primary"
@@ -242,8 +266,7 @@ export function InsightsView({
                   </p>
                 ))}
                 <p className="text-xs text-gray-500">
-                  Evidence: this authorized portfolio, {start}–{end}. Refresh to
-                  include later corrections.
+                  Based on available records for {start}–{end}. Refresh to include later corrections.
                 </p>
               </div>
             )}
@@ -275,8 +298,9 @@ export function InsightsView({
                 </details>
               )}
               {p.incompleteMarketingRows > 0 && <p role="status" className="mt-3 text-sm">Results exclude {p.incompleteMarketingRows} incomplete marketing records. Totals may understate activity; missing measures are not zero.</p>}
-              <ReportingDetail measures={p.periodMeasures} rates={p.stageRatios} attribution={p.attribution} spending={p.spending} />
-              <h3 className="mt-5 font-medium">Source coverage</h3>
+              <div className="my-5"><WorkspaceDisclosure title="How these results are calculated" description="Source totals, stage comparisons, spending and attribution"><ReportingDetail measures={p.periodMeasures} rates={p.stageRatios} attribution={p.attribution} spending={p.spending} /></WorkspaceDisclosure></div>
+              {p.score.observedDays < p.score.days && <WorkspaceNotice title="Marketing data is incomplete"><p>{p.score.observedDays} of {p.score.days} days have recorded marketing data. Totals may understate activity.</p></WorkspaceNotice>}
+              <div className="my-5"><WorkspaceDisclosure title="Check data coverage" description="Connected sources and the latest records">
               <div className="mt-3 grid gap-3 sm:grid-cols-2">
                 {p.coverage.map((c) => (
                   <div
@@ -293,9 +317,8 @@ export function InsightsView({
                   </div>
                 ))}
               </div>
-              <h3 className="mt-6 font-medium">
-                Experience and product observations
-              </h3>
+              </WorkspaceDisclosure></div>
+              <div className="my-5"><WorkspaceDisclosure title="Website and floor plan details" description="Device, search and floor plan measurements">
               {p.diagnostics.length ? (
                 <div className="mt-2 overflow-x-auto">
                   <table className="w-full text-left text-sm">
@@ -352,12 +375,9 @@ export function InsightsView({
                   observations are available.
                 </p>
               )}
-              <h3 className="mt-6 font-medium">
-                Market context and comparison
-              </h3>
-              <p className="mt-2 text-sm">
-                {p.score.market ?? "Market has not been reviewed."}
-              </p>
+              </WorkspaceDisclosure></div>
+              <MarketObservations property={p} client={client} />
+              <div className="mt-4"><WorkspaceDisclosure title="Compare with similar communities">
               {data.benchmarks
                 .filter((b) => b.propertyId === p.score.id)
                 .map((b) => (
@@ -370,32 +390,7 @@ export function InsightsView({
                     <span className="text-gray-500">{b.note}</span>
                   </p>
                 ))}
-              <div className="mt-3 space-y-2 text-sm">
-                {p.market.units.slice(0, 20).map((u) => (
-                  <p key={u.id}>
-                    {
-                      p.market.competitors.find((c) => c.id === u.competitor_id)
-                        ?.name
-                    }{" "}
-                    · {u.unit_type}:{" "}
-                    {u.rent_min === null
-                      ? "Rent unavailable"
-                      : `$${number(u.rent_min)}`}
-                    {u.rent_max && u.rent_max !== u.rent_min
-                      ? `–$${number(u.rent_max)}`
-                      : ""}{" "}
-                    · Observed{" "}
-                    {u.last_updated_at?.slice(0, 10) ?? "date unavailable"}
-                    <span className="block text-xs text-gray-500">{u.bedrooms} bedrooms · Available units: {u.available_count ?? "Unknown"} · Offer: {u.move_in_specials || "Not recorded"}</span>
-                    <span className="block text-xs text-gray-500">Price effective: {u.evidence?.effective_at?.slice(0, 10) ?? "Unknown"} · Source captured: {u.evidence?.captured_at?.slice(0, 10) ?? "Unknown"}</span>
-                    {u.evidence?.source_url && /^https?:\/\//i.test(u.evidence.source_url) && <a className="text-xs underline" href={u.evidence.source_url} target="_blank" rel="noopener noreferrer">View source</a>}
-                  </p>
-                ))}
-                <p className="text-xs text-gray-500">
-                  {p.market.note}
-                  {p.market.limited ? " Showing a limited recent sample." : ""}
-                </p>
-              </div>
+              </WorkspaceDisclosure></div>
               <details className="mt-5">
                 <summary className="cursor-pointer text-sm font-medium">
                   Recorded changes in this period
@@ -460,9 +455,7 @@ export function InsightsView({
               ))}
             </section>
           ))}
-          <p className="text-xs leading-5 text-gray-500">
-            {data.limitations.join(" ")}
-          </p>
+          <WorkspaceDisclosure title="About these results"><p className="text-sm leading-relaxed text-gray-600">{data.limitations.join(" ")}</p></WorkspaceDisclosure>
         </>
       )}
     </div>

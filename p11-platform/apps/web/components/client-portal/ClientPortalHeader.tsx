@@ -42,7 +42,7 @@ export function ClientPortalHeader({
             .map((item) => {
               const active =
                 item.href ===
-                (view === "overview" ? "/client" : "/client/" + view);
+                (view === "overview" ? "/client" : view === "insights" ? "/client/performance" : "/client/" + view);
               return (
                 <Link
                   key={item.href}
@@ -78,6 +78,10 @@ export function ClientPortalHeader({
           </button>
         </div>
       </header>
+      {["performance", "insights"].includes(view) && <nav aria-label="Results sections" className="workspace-tabs portal-results-nav">
+        <Link href={href('/client/performance')} aria-current={view === 'performance' ? 'page' : undefined}>Performance</Link>
+        <Link href={href('/client/insights')} aria-current={view === 'insights' ? 'page' : undefined}>Changes<span className="hidden sm:inline"> &amp; explanations</span></Link>
+      </nav>}
       {error && (
         <div role="alert" className="console-error mx-6 mt-4">
           {error}

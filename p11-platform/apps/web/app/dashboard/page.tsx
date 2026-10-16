@@ -153,7 +153,7 @@ export default function DashboardPage() {
       <div className="console-overview-metrics grid grid-cols-2 lg:grid-cols-4 gap-4">
         <MetricCard
           title="New inquiries"
-          value={data?.metrics.totalLeads.value ?? 0}
+          value={data?.metrics.totalLeads.value ?? "—"}
           change={data?.metrics.totalLeads.change}
           changeLabel="vs previous 30 days"
           icon={<Users size={20} />}
@@ -178,7 +178,7 @@ export default function DashboardPage() {
           subtitle={
             hasMarketingData
               ? "No leads this period"
-              : "No ad platform data connected"
+              : data ? "No marketing data for this period" : "Results unavailable"
           }
           icon={<DollarSign size={20} />}
           loading={loading}
@@ -195,7 +195,7 @@ export default function DashboardPage() {
             hasMarketingData ? data?.metrics.totalSpend.change : undefined
           }
           changeLabel="vs previous 30 days"
-          subtitle="No ad platform data connected"
+          subtitle={data ? "No marketing data for this period" : "Results unavailable"}
           icon={<TrendingUp size={20} />}
           loading={loading}
         />
@@ -215,7 +215,7 @@ export default function DashboardPage() {
               : undefined
           }
           changeLabel="pts vs previous 30 days"
-          subtitle="No visitor messages this period"
+          subtitle={data ? "No visitor messages this period" : "Results unavailable"}
           icon={<Bot size={20} />}
           loading={loading}
         />
@@ -233,7 +233,7 @@ export default function DashboardPage() {
               href="/dashboard/intelligence"
               className="text-sm text-[#a53212] hover:text-[#78260e] flex items-center gap-1"
             >
-              View property intelligence
+              View performance
               <ArrowRight size={14} />
             </Link>
           </div>
@@ -293,10 +293,9 @@ export default function DashboardPage() {
               <div className="h-12 w-12 bg-slate-100 rounded-xl flex items-center justify-center mx-auto mb-3">
                 <Zap size={24} className="text-slate-400" />
               </div>
-              <p className="text-slate-500 text-sm mb-1">No recent activity</p>
+              <p className="text-slate-500 text-sm mb-1">{data ? "No recent activity" : "Activity unavailable"}</p>
               <p className="text-slate-400 text-xs">
-                Activity will appear here as leads come in and conversations
-                happen
+                {data ? "Activity will appear here as leads come in and conversations happen." : "Try refreshing to load recent activity."}
               </p>
             </div>
           )}
@@ -311,8 +310,7 @@ export default function DashboardPage() {
             </h3>
             {!loading && !hasMarketingData && (
               <p className="text-xs text-slate-400 mb-4">
-                Connect an ad platform to see impressions, clicks, and CTR for
-                this community.
+                Marketing results are not available for this period. Check your data connections to see impressions, clicks and click-through rate.
               </p>
             )}
             <div className="space-y-4">
@@ -322,7 +320,7 @@ export default function DashboardPage() {
                   <span className="font-medium text-slate-900">
                     {loading
                       ? "..."
-                      : (data?.summary.impressions || 0).toLocaleString()}
+                      : hasMarketingData ? (data?.summary.impressions ?? 0).toLocaleString() : "Unavailable"}
                   </span>
                 </div>
                 <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
@@ -341,7 +339,7 @@ export default function DashboardPage() {
                   <span className="font-medium text-slate-900">
                     {loading
                       ? "..."
-                      : (data?.summary.clicks || 0).toLocaleString()}
+                      : hasMarketingData ? (data?.summary.clicks ?? 0).toLocaleString() : "Unavailable"}
                   </span>
                 </div>
                 <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
@@ -359,11 +357,11 @@ export default function DashboardPage() {
               </div>
               <div>
                 <div className="flex justify-between text-sm mb-1.5">
-                  <span className="text-slate-600">CTR</span>
+                  <span className="text-slate-600">Click-through rate</span>
                   <span className="font-medium text-slate-900">
                     {loading
                       ? "..."
-                      : `${(data?.summary.ctr || 0).toFixed(2)}%`}
+                      : hasMarketingData ? `${(data?.summary.ctr ?? 0).toFixed(2)}%` : "Unavailable"}
                   </span>
                 </div>
                 <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
@@ -393,7 +391,7 @@ export default function DashboardPage() {
                 <p className="text-xs text-slate-500">
                   {loading
                     ? "..."
-                    : `${data?.metrics.documentsCount || 0} document sections`}
+                    : data ? `${data.metrics.documentsCount ?? 0} document sections` : "Knowledge status unavailable"}
                 </p>
               </div>
             </div>
@@ -437,10 +435,10 @@ export default function DashboardPage() {
                 </div>
                 <div className="flex-1">
                   <p className="text-sm font-medium text-slate-900">
-                    Open leasing assistant
+                    Open conversations
                   </p>
                   <p className="text-xs text-slate-500">
-                    Property knowledge and conversation testing
+                    Review inquiries and test the leasing assistant
                   </p>
                 </div>
                 <ArrowRight size={16} className="text-slate-400" />

@@ -17,7 +17,7 @@ describe('knowledge and performance ownership',()=>{
   })
   it('keeps the knowledge editor free of performance navigation',()=>{
     const html=renderToStaticMarkup(React.createElement(ReviewedRecordsWorkspace,{propertyId:'amli-aero',propertyName:'AMLI Aero',mode:'facts'}))
-    expect(html).toContain('Approved community facts')
+    expect(html).toContain('Community facts')
     expect(html).not.toContain('Intelligence sections')
     expect(html).not.toContain('Campaign performance')
   })
