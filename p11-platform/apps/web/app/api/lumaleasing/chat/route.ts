@@ -5,6 +5,7 @@ import { badRequest,buildCorsHeaders,corsPreflightResponse,rateLimited,serverErr
 import { auditLog,getRequestIp } from '@/utils/services/audit-logger';
 import { upsertLeadByContact } from '@/utils/services/lead-upsert';
 import { budgetedLumaCompletion } from '@/utils/services/luma-ai-budget';
+import { groundVisitorContact } from '@/utils/services/luma-contact-grounding';
 import { linkLumaVisitorLead,saveLumaMessage,withLumaRequest } from '@/utils/services/luma-requests';
 import { chatLimiter,getRateLimitKey,rateLimitHeaders } from '@/utils/services/rate-limiter';
 import { createRequestContext } from '@/utils/services/request-context';
@@ -131,12 +132,14 @@ async function extractAndProcessConversation(
   const conversationText = messages
     .map(m => `${m.role.toUpperCase()}: ${m.content}`)
     .join('\n').slice(-6000);
+  const visitorText = messages.filter(message => message.role === 'user')
+    .map(message => message.content).join('\n').slice(-6000);
 
   // Extract structured data using LLM
-  const extractionPrompt = `Analyze this conversation and extract any contact information and tour booking requests.
+  const extractionPrompt = `Analyze these visitor messages and extract their own contact information and tour booking requests.
 
-CONVERSATION:
-${conversationText}
+VISITOR MESSAGES:
+${visitorText}
 
 Extract the following if mentioned by the USER (not the assistant):
 1. Lead contact info: first name, last name, email, phone number
@@ -144,6 +147,7 @@ Extract the following if mentioned by the USER (not the assistant):
 
 IMPORTANT:
 - Only extract info explicitly provided by the user
+- Do not treat property sales contact details, quoted replies, or questions about someone else's contact information as the visitor's own details
 - For dates, convert relative dates (like "tomorrow", "next Monday") to actual dates based on today being ${new Date().toISOString().split('T')[0]}
 - For times, use 24-hour format (HH:MM)
 - If info is not provided, use null
@@ -177,6 +181,10 @@ Respond with ONLY valid JSON in this exact format:
     if (!rawJson) throw new Error('The retained contact extraction returned no usable result.');
 
     const data: ExtractedData = JSON.parse(rawJson);
+    const contact = groundVisitorContact(data.lead, messages);
+    // A model instruction alone cannot prevent copying an assistant's sales
+    // referral into a new lead. Require visitor evidence before any write.
+    if (data.lead) data.lead = { ...data.lead, ...contact };
     // Avoid logging extracted PII (name/email/phone/notes). Capture only
     // structured presence flags so we keep observability without leaking
     // contact data into shared log sinks.
@@ -190,6 +198,8 @@ Respond with ONLY valid JSON in this exact format:
       hasTourDate: Boolean(data.tour?.date),
       hasTourTime: Boolean(data.tour?.time),
     });
+
+    if (!contact.email && !contact.phone) return;
 
     // Generate conversation summary for lead notes
     const summaryPrompt = `Summarize this conversation in 2-3 concise sentences for a CRM note. Focus on:

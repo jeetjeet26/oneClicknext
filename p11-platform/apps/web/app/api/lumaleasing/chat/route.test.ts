@@ -1203,11 +1203,15 @@ describe('LumaLeasing chat route', () => {
     expect(openAiChatCreateMock).toHaveBeenCalled()
   })
 
-  it('reuses extracted phone-only leads and avoids duplicating summary notes', async () => {
+  it.each([
+    { label: 'reuses a visitor phone and avoids duplicating summary notes', visitor: 'You can call me at 5551112222', extractedPhone: '5551112222', extractedEmail: null, savesContact: true },
+    { label: 'rejects an assistant sales number even when extraction proposes it', visitor: 'How many bedrooms does Plan 2 have?', extractedPhone: '5552223333', extractedEmail: null, savesContact: false },
+    { label: 'saves a visitor phone without copying an assistant email', visitor: 'You can call me at 5551112222', extractedPhone: '5551112222', extractedEmail: 'sales@example.test', savesContact: true },
+  ])('$label', async ({ visitor, extractedPhone, extractedEmail, savesContact }) => {
     validateBodyMock.mockReturnValue({
       success: true,
       data: {
-        messages: [{ role: 'user', content: 'You can call me at 5551112222' }],
+        messages: [{ role: 'user', content: visitor }],
         sessionId: 'session-1',
         leadInfo: null,
       },
@@ -1230,7 +1234,7 @@ describe('LumaLeasing chat route', () => {
         choices: [{ message: { content: 'Thanks for sharing that.' } }],
       })
       .mockResolvedValueOnce({
-        choices: [{ message: { content: '{"lead":{"first_name":null,"last_name":null,"email":null,"phone":"5551112222"},"tour":{"requested":false,"date":null,"time":null,"notes":null}}' } }],
+        choices: [{ message: { content: JSON.stringify({ lead: { first_name: null, last_name: null, email: extractedEmail, phone: extractedPhone }, tour: null }) } }],
       })
       .mockResolvedValueOnce({
         choices: [{ message: { content: 'Prospect asked for pricing details.' } }],
@@ -1328,7 +1332,7 @@ describe('LumaLeasing chat route', () => {
                   limit: vi.fn().mockResolvedValue({
                     data: [{
                       role: 'assistant',
-                      content: 'Server-trusted prior reply',
+                      content: 'Contact sales at 5552223333 or sales@example.test.',
                       created_at: '2026-07-31T12:00:00.000Z',
                     }],
                     error: null,
@@ -1401,7 +1405,7 @@ describe('LumaLeasing chat route', () => {
         'x-api-key': 'test-key',
       },
       body: JSON.stringify({
-        messages: [{ role: 'user', content: 'You can call me at 5551112222' }],
+        messages: [{ role: 'user', content: visitor }],
         sessionId: 'session-1',
       }),
     }) as NextRequest
@@ -1416,14 +1420,21 @@ describe('LumaLeasing chat route', () => {
       conversationId: 'conv-1',
     })
     expect(leadsInsertMock).not.toHaveBeenCalled()
-    expect(upsertLeadByContactMock).toHaveBeenCalledWith(
+    if (savesContact) expect(upsertLeadByContactMock).toHaveBeenCalledWith(
       expect.objectContaining({
         phone: '5551112222',
+        email: null,
         update: expect.objectContaining({
           notes: 'Prospect asked for pricing details.',
         }),
       })
     )
+    else expect(upsertLeadByContactMock).not.toHaveBeenCalled()
+    const extractionPrompt = openAiChatCreateMock.mock.calls[1][0].messages[0].content
+    expect(extractionPrompt).toContain(visitor)
+    expect(extractionPrompt).not.toContain('5552223333')
+    expect(extractionPrompt).not.toContain('sales@example.test')
+    expect(openAiChatCreateMock).toHaveBeenCalledTimes(savesContact ? 3 : 2)
     expect(syncLeadToCRMMock).not.toHaveBeenCalled()
     expect(recordLeadNoteAndSyncToCRMMock).not.toHaveBeenCalled()
     expect(startWorkflowMock).not.toHaveBeenCalled()
@@ -1431,11 +1442,11 @@ describe('LumaLeasing chat route', () => {
       expect.arrayContaining([
         expect.objectContaining({
           role: 'assistant',
-          content: 'Server-trusted prior reply',
+          content: 'Contact sales at 5552223333 or sales@example.test.',
         }),
         expect.objectContaining({
           role: 'user',
-          content: 'You can call me at 5551112222',
+          content: visitor,
         }),
       ])
     )

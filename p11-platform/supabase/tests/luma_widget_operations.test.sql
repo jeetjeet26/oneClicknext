@@ -8,6 +8,9 @@ insert into public.organizations(id,name)values(pg_temp.i(1),'Luma widget SQL fi
 insert into auth.users(id,instance_id,aud,role,email,email_confirmed_at,created_at,updated_at)select pg_temp.i(n),'00000000-0000-0000-0000-000000000000','authenticated','authenticated','luma-widget-'||n||'@fixture.invalid',clock_timestamp(),clock_timestamp(),clock_timestamp()from generate_series(101,103)n;
 insert into public.profiles(id,org_id,role)select pg_temp.i(n),pg_temp.i(case when n=103 then 2 else 1 end),case when n=102 then'viewer'else'admin'end from generate_series(101,103)n on conflict(id)do update set org_id=excluded.org_id,role=excluded.role;
 insert into public.properties(id,org_id,name)values(pg_temp.i(201),pg_temp.i(1),'Luma widget SQL property'),(pg_temp.i(202),pg_temp.i(2),'Luma widget other property');
+-- Community Brain requires explicit grants even within the same organization.
+select public.brain_set_access(pg_temp.i(101),pg_temp.i(201),pg_temp.i(101),array['read','manage','download'],null,false,'Fixture widget management');
+select public.brain_set_access(pg_temp.i(101),pg_temp.i(201),pg_temp.i(102),array['read'],null,false,'Fixture widget read access');
 insert into public.lumaleasing_config(property_id,api_key,is_active)values(pg_temp.i(201),'luma_private_fixture_original',true);
 create function pg_temp.read_it(actor int default 101,offset_n int default 0,hash text default null)returns jsonb language sql as $$select public.read_luma_widget_operations(pg_temp.i(actor),pg_temp.i(201),null,offset_n,hash)$$;
 create function pg_temp.decide(n int,input jsonb,actor int default 101)returns jsonb language sql as $$select public.decide_luma_widget_operation(pg_temp.i(n),pg_temp.i(actor),pg_temp.i(201),input)$$;
@@ -45,7 +48,7 @@ select pg_temp.check_it(public.read_luma_widget_operations(pg_temp.i(102),pg_tem
 select pg_temp.check_it(pg_temp.decide(310,jsonb_build_object('operation','report','preparationId',pg_temp.i(307),'artifactHash',repeat('0',64),'outcome','copied'))->>'state'='invalid_input','wrong artifact cannot report an outcome');
 -- Reuse the actual managed upload/review lifecycle for logos.
 insert into st values('upload',public.begin_forgestudio_asset_upload(pg_temp.i(501),pg_temp.i(201),pg_temp.i(101),jsonb_build_object('contentHash',repeat('a',64),'size',100,'mimeType','image/png','extension','png','metadata','{"name":"Private original logo","description":"Retained source","asset_type":"image","rights_status":"unknown","rights_metadata":{"license":"Private license note"},"tags":[]}'::jsonb)));
-select public.finish_forgestudio_asset_upload(pg_temp.i(501),pg_temp.i(201),pg_temp.i(101),jsonb_build_object('contentHash',repeat('a',64),'storagePath',(select v->>'storagePath'from st where k='upload'),'storageBucket','property-assets','storageVerified',true,'fileUrl','https://example.invalid/retained-logo.png'));
+select public.finish_forgestudio_asset_upload(pg_temp.i(501),pg_temp.i(201),pg_temp.i(101),jsonb_build_object('contentHash',repeat('a',64),'storagePath',(select v->>'storagePath'from st where k='upload'),'storageBucket',(select v->>'storageBucket'from st where k='upload'),'storageVerified',true,'fileUrl','https://example.invalid/retained-logo.png'));
 select pg_temp.check_it(pg_temp.logo(311)->>'state'='asset_changed','unapproved logo is held');
 select public.manage_forgestudio_asset(pg_temp.i(502),pg_temp.i(201),pg_temp.i(101),(select jsonb_build_object('assetId',id,'revision',governance_revision,'action','review','reason','Review exact logo usage','review',jsonb_build_object('approval_status','approved','rights_status','owned'))from public.content_assets where id=pg_temp.i(501)));
 select pg_temp.check_it(pg_temp.logo(312,501,102)->>'state'='forbidden','viewer cannot select a logo');

@@ -8,6 +8,9 @@ insert into public.organizations(id,name)values(pg_temp.i(1),'Luma model SQL fix
 insert into auth.users(id,instance_id,aud,role,email,email_confirmed_at,created_at,updated_at)select pg_temp.i(n),'00000000-0000-0000-0000-000000000000','authenticated','authenticated','luma-model-'||n||'@fixture.invalid',clock_timestamp(),clock_timestamp(),clock_timestamp()from generate_series(101,103)n;
 insert into public.profiles(id,org_id,role)select pg_temp.i(n),pg_temp.i(case when n=103 then 2 else 1 end),case when n=102 then'viewer'else'admin'end from generate_series(101,103)n on conflict(id)do update set org_id=excluded.org_id,role=excluded.role;
 insert into public.properties(id,org_id,name)values(pg_temp.i(201),pg_temp.i(1),'Luma model SQL property'),(pg_temp.i(202),pg_temp.i(2),'Luma model other property');
+-- Community Brain requires explicit grants even within the same organization.
+select public.brain_set_access(pg_temp.i(101),pg_temp.i(201),pg_temp.i(101),array['read','manage'],null,false,'Fixture model evidence management');
+select public.brain_set_access(pg_temp.i(101),pg_temp.i(201),pg_temp.i(102),array['read'],null,false,'Fixture model evidence read access');
 insert into public.lumaleasing_config(id,property_id,api_key,is_active)values(pg_temp.i(301),pg_temp.i(201),'synthetic-model-key',true);
 insert into public.conversations(id,property_id,channel)values(pg_temp.i(401),pg_temp.i(201),'widget');
 create function pg_temp.claim(n int,body text default '{"messages":[{"role":"user","content":"Exact private request"}]}')returns jsonb language sql as $$select public.claim_recorded_luma_request(pg_temp.i(201),pg_temp.i(n),'chat',body,'synthetic-actor',encode(sha256(convert_to('synthetic-model-key','UTF8')),'hex'))$$;
